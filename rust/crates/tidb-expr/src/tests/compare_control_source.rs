@@ -145,11 +145,13 @@ pub(crate) fn shape(expr: &Expression) -> String {
 /// TestCompareFunctionWithRefine` over its whole 36-row table.
 ///
 /// Rows whose Go output is a comment rather than a `==>` translation pin the
-/// UNREFINED shape this tier deliberately keeps where Go folds or re-types:
+/// structural comparison this tier retains where Go folds or re-types:
 /// the `isExceptional` constant-folding arm of `refineArgs`
 /// (`builtin_compare.go:1884-1906`) and the NE-against-DOUBLE argument wrap
-/// are shape-only optimizations there (identical per-row answers), recorded
-/// in [`refine_exceptional_folds_are_not_modeled`].
+/// remain shape-only gaps. Rust still selects the normal comparison signature
+/// for those original operands, so the retained shape includes its DOUBLE
+/// casts; the optimization and warning-count differences are recorded in
+/// [`refine_exceptional_folds_are_not_modeled`].
 #[test]
 fn test_compare_function_with_refine() {
     let rows: [(&str, &str); 35] = [
@@ -166,12 +168,23 @@ fn test_compare_function_with_refine() {
         // NOTE: this row's constant is an unquoted DECIMAL literal.
         ("a > 1.1", "gt(col(Some(Long)), Const:INT:1)"),
         ("a >= '1.1'", "ge(col(Some(Long)), Const:INT:2)"),
-        // Go folds the condition into a constant "0".
-        ("a = '1.1'", "eq(col(Some(Long)), Const:STR:1.1)"),
-        // Go folds it too.
-        ("a <=> '1.1'", "nulleq(col(Some(Long)), Const:STR:1.1)"),
-        // Go: ne(cast(a, double BINARY), 1.1) -- DOUBLE re-typing unmodeled.
-        ("a != '1.1'", "ne(col(Some(Long)), Const:STR:1.1)"),
+        // Go folds the condition into a constant "0"; Rust retains the
+        // generated DOUBLE comparison signature while that fold is pending.
+        (
+            "a = '1.1'",
+            "eq(cast_double(col(Some(Long))), cast_double(Const:STR:1.1))",
+        ),
+        // Go folds it too; Rust retains the generated DOUBLE signature.
+        (
+            "a <=> '1.1'",
+            "nulleq(cast_double(col(Some(Long))), cast_double(Const:STR:1.1))",
+        ),
+        // Go: ne(cast(a, double BINARY), 1.1) -- DOUBLE re-typing remains
+        // shape-only here, including both structural casts.
+        (
+            "a != '1.1'",
+            "ne(cast_double(col(Some(Long))), cast_double(Const:STR:1.1))",
+        ),
         // Mirrored rows through `symmetricOp`.
         ("'1' < a", "lt(Const:INT:1, col(Some(Long)))"),
         ("'1' <= a", "le(Const:INT:1, col(Some(Long)))"),
@@ -184,16 +197,25 @@ fn test_compare_function_with_refine() {
         ("'1.1' <= a", "le(Const:INT:2, col(Some(Long)))"),
         ("'1.1' > a", "gt(Const:INT:2, col(Some(Long)))"),
         ("'1.1' >= a", "ge(Const:INT:1, col(Some(Long)))"),
-        // Go folds it ("0").
-        ("'1.1' = a", "eq(Const:STR:1.1, col(Some(Long)))"),
-        // Go folds it ("0").
-        ("'1.1' <=> a", "nulleq(Const:STR:1.1, col(Some(Long)))"),
-        // Go: ne(1.1, cast(a, double BINARY)).
-        ("'1.1' != a", "ne(Const:STR:1.1, col(Some(Long)))"),
+        // Go folds it ("0"); Rust retains the generated DOUBLE signature.
+        (
+            "'1.1' = a",
+            "eq(cast_double(Const:STR:1.1), cast_double(col(Some(Long))))",
+        ),
+        // Go folds it ("0"); Rust retains the generated DOUBLE signature.
+        (
+            "'1.1' <=> a",
+            "nulleq(cast_double(Const:STR:1.1), cast_double(col(Some(Long))))",
+        ),
+        // Go: ne(1.1, cast(a, double BINARY)); Rust keeps both casts.
+        (
+            "'1.1' != a",
+            "ne(cast_double(Const:STR:1.1), cast_double(col(Some(Long))))",
+        ),
         // Go folds it ("0": the conversion overflows and EQ is exceptional).
         (
             "'123456789123456711111189' = a",
-            "eq(Const:STR:123456789123456711111189, col(Some(Long)))",
+            "eq(cast_double(Const:STR:123456789123456711111189), cast_double(col(Some(Long))))",
         ),
         // Go folds it ("0", the ETDecimal EQ branch). The DECIMAL column wrap
         // this tier produces matches Go's own cast arm of generateCmpSigs.
@@ -231,6 +253,15 @@ fn test_compare_function_with_refine() {
     }
 }
 
+/// Go refines the integer/string constant before `generateCmpSigs` wraps
+/// comparison arguments.  Keep this ordering visible at the AST rewriter
+/// boundary, where no later context-aware pass has run yet.
+#[test]
+fn ast_rewrite_refines_integer_constant_before_comparison_casts() {
+    let built = rewritten("a < '1.0'", &IntColA(true));
+    assert_eq!(shape(&built), "lt(col(Some(Long)), Const:INT:1)");
+}
+
 /// go-parity-gap: twelve rows of `TestCompareFunctionWithRefine` whose GO
 /// output comes from arms this tier deliberately does not model --
 ///
@@ -243,9 +274,10 @@ fn test_compare_function_with_refine() {
 /// `builtin_compare.rs` documents these drops as shape-only (identical
 /// per-row answers; plan speed/warning-count differences), so the port pins
 /// the surviving shapes inside [`test_compare_function_with_refine`] instead
-/// of asserting outputs it cannot reproduce.
+/// of asserting outputs it cannot reproduce; those retained structural rows
+/// include the comparison casts selected for their original operand types.
 #[test]
-#[ignore = "go-parity-gap: refineArgs' isExceptional constant folding and the NE-vs-DOUBLE arg re-type are unmodeled (documented shape-only drops); unrefined shapes pinned directly"]
+#[ignore = "go-parity-gap: refineArgs' isExceptional constant folding and the NE-vs-DOUBLE arg re-type are unmodeled (documented shape-only drops); retained structural shapes are pinned directly"]
 fn refine_exceptional_folds_are_not_modeled() {}
 
 /// GO PORT of `pkg/expression/builtin_compare_test.go:80 TestCompare`
@@ -354,15 +386,19 @@ fn test_compare() {
     //   asserted here:
     {
         let built = rewritten("d < '123'", &DecColD);
-        assert_eq!(shape(&built), "lt(col(Some(NewDecimal)), Const:STR:123)");
+        assert_eq!(
+            shape(&built),
+            "lt(col(Some(NewDecimal)), cast_decimal(Const:STR:123))"
+        );
     }
-    // - `<datetime column> <cmp> <const>`: the string constant becomes a
-    //   DATETIME-typed folded constant exactly like Go's build-time wrap.
+    // - `<datetime column> <cmp> <const>`: the context-free rewriter keeps
+    //   Go's DATETIME comparison cast structurally; a real builder folds this
+    //   constant through its statement context.
     let mut built = rewritten("b < '2020-01-01'", &TypedColB(FieldTypeCode::Datetime));
     refine_comparisons(&mut built, &Ctx::default()).unwrap();
     assert_eq!(
         shape(&built),
-        "lt(col(Some(Datetime)), Const:STR:2020-01-01 00:00:00.000000)"
+        "lt(col(Some(Datetime)), cast_datetime(Const:STR:2020-01-01))"
     );
     // - `<json column> <cmp> <const int expression>`: Go re-types the int
     //   constant to JSON (the null-equal bytes keep the same ordering).
@@ -370,9 +406,9 @@ fn test_compare() {
     refine_comparisons(&mut built, &Ctx::default()).unwrap();
     assert_eq!(
         shape(&built),
-        // The int constant keeps its INT label under this tier; Go\x27s re-type to
-        // JSON happens per-row at signature selection (see module header note).
-        "lt(col(Some(Json)), Const:INT:1)"
+        // The int constant keeps its INT label inside the structural cast;
+        // Go's re-type to JSON happens in the selected signature.
+        "lt(col(Some(Json)), cast_json(Const:INT:1))"
     );
 
     // Callers overriding a comparison's derived collation after construction

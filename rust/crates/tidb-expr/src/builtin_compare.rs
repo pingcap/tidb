@@ -543,6 +543,36 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
     Ok(())
 }
 
+/// Applies the comparison refinement that does not require a statement
+/// context while an AST binary expression is being built.
+///
+/// Go's `compareFunctionClass.getFunction` runs `refineArgs` before
+/// `generateCmpSigs`, but the context-free Rust rewriter cannot call the full
+/// refinement pass: temporal conversion needs the session timezone and string
+/// conversion may need to report warnings.  The integer/non-integer constant
+/// rule is independent of both.  Running that rule here preserves Go's
+/// rounded integer constants (for example `a < '1.0'` -> `a < 1`) before
+/// comparison signature casts are selected.  A later context-aware
+/// [`refine_comparisons`] pass remains responsible for the session-sensitive
+/// rules and warning policy.
+pub(crate) fn refine_integer_comparison_for_rewrite(name: &str, arguments: &mut [Expression]) {
+    let Some(mirrored) = symmetric_op(name) else {
+        return;
+    };
+    let [left, right] = arguments else {
+        return;
+    };
+    let eval_type = |expression: &Expression| expression.static_type().map(FieldType::eval_type);
+    let left_is_int = eval_type(left) == Some(EvalType::Int);
+    let right_is_int = eval_type(right) == Some(EvalType::Int);
+    // `NoColumns` supplies the warning sink required by the shared converter;
+    // the context-free rewrite has no statement to which those warnings could
+    // be attached.  Real statement construction reruns the full rule with its
+    // own `Columns` implementation.
+    let ctx = crate::context::NoColumns;
+    refine_int_operand_constant(left, right, left_is_int, right_is_int, name, mirrored, &ctx);
+}
+
 /// Runs Go `compareFunctionClass.getFunction`'s comparison-only refinement
 /// for the expression at `expr`, without rebuilding already-constructed
 /// descendants. `NewFunction` calls this root form for the one function it is

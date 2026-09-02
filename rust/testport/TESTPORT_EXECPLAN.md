@@ -49,6 +49,14 @@ For each bounded behavior cluster:
   default, signed width, and atomic update behavior. Details are in
   `receipts/util_tikvutil.md`.
 
+- 2026-09-03: aligned Rust `tidb-expr` comparison refinement ordering with Go
+  master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. The AST rewriter now
+  applies the context-independent integer/string constant rule before
+  comparison signature casts, so floor/ceiling rewrites such as
+  `a < '1.0'` retain Go's `a < 1` shape. A focused source regression and the
+  complete comparison-control table pass; the package receipt records the
+  complete inventory, clean fail-before output, and Ready validation.
+
 - 2026-09-03: aligned the Rust `tidb-ast` `Expr::ConvertUsing::format`
   boundary with Go master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`.
   Go's `FuncCallExpr.Format` prints this parsed form as a generic lowercase

@@ -444,3 +444,55 @@ type or the stale DECIMAL test label; value evaluation and the existing binary
 literal conversion are unchanged. The new provenance marker retains a cloned
 expression for later context evaluation, which adds allocation only when a
 folded subtree contains a parameter/deferred argument.
+
+## Rust follow-up: comparison refinement before AST signature casts
+
+The rolling Go authority remains `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5` (2026-09-03). Before editing, the
+complete direct `pkg/expression` inventory was rechecked at 137 artifacts and
+128,744 lines (68 production files, 60 tests, seven generated sources,
+`BUILD.bazel`, and `OWNERS`); the recursive package boundary is 208 artifacts
+and 146,247 lines. The Rust `tidb-expr` owner remains 175 tracked artifacts
+and 105,908 lines, including production modules, in-module and standalone
+tests, generated-test inputs, fixtures/support, benchmarks, Cargo metadata,
+and the aggregate test build input. No Go, Bazel, generated output, fixture,
+platform, or build artifact changed.
+
+Go's `compareFunctionClass.getFunction` calls `refineArgs` before
+`generateCmpSigs` (`pkg/expression/builtin_compare.go:1769-1991`). The old Rust
+AST rewriter selected `GetAccurateCmpType`-equivalent casts first and only then
+ran the compatibility refinement walk, so an integer column compared with a
+string numeric constant stayed in the DOUBLE domain (`a < '1.0'` became
+`lt(cast_double(a), cast_double('1.0'))`) and could not receive Go's floor or
+ceiling rewrite. Rust now runs the context-independent integer/non-integer
+constant rule before comparison wrappers. The later context-aware pass still
+owns temporal conversion and warning reporting; the context-free helper uses
+the warning-discarding `NoColumns` sink because AST rewriting has no statement
+context.
+
+The source-derived `ast_rewrite_refines_integer_constant_before_comparison_casts`
+regression asserts the ordering directly, and the complete
+`test_compare_function_with_refine` table now passes, including mirrored
+operators and floor/ceiling boundaries. The signature-tail expectations in
+`test_compare` were also corrected to describe the compatibility walk's
+structural DECIMAL, DATETIME, JSON, and DOUBLE casts rather than claiming
+context-aware constant folding on a context-free tree. A clean pre-fix
+`702fb48550` worktree failed the focused source table before the first row:
+`left: "lt(cast_double(col(Some(Long))), cast_double(Const:STR:1.0))"`,
+`right: "lt(col(Some(Long)), Const:INT:1)"`. The fixed focused regressions
+pass.
+
+Ready validation for this follow-up used the dependency-closed `tidb-expr`
+owner and repository gates:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib compare_control_source -- --nocapture --test-threads=1` — 12 passed, 5 documented gap tests ignored.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --all-targets` — pass.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,098 passed, 0 failed, 133 documented gap tests ignored.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint`, and `git diff --check` — pass.
+
+Correctness risk is limited to conversion warnings during the context-free AST
+pass: those are intentionally discarded until a statement-aware refinement is
+run, while the rounded constant and comparison domain now match Go.
+Compatibility risk is limited to callers that inspect the retained structural
+casts for Go's still-unmodeled exceptional constant folds; value comparison
+semantics are unchanged.

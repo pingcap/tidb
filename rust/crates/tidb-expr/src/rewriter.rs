@@ -437,6 +437,7 @@ fn binary_expression(
                 }
             }
             if crate::builtin_compare::infer_compare_type(name).is_some() {
+                crate::builtin_compare::refine_integer_comparison_for_rewrite(name, &mut args);
                 crate::builtin_compare::prepare_json_comparison_args(&mut args);
                 crate::builtin_compare::wrap_comparison_arguments(
                     &mut args,
