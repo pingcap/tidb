@@ -213,7 +213,7 @@ func TestStmtFiles(t *testing.T) {
 			require.NotNil(t, snapshot)
 			require.NotNil(t, snapshot.file)
 
-			columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}
+			columns := []*model.ColumnInfo{{Name: pmodel.NewCIStr(DigestStr)}}
 			ctx, cancel := context.WithCancel(context.Background())
 			rowsCh := make(chan [][]types.Datum, 2)
 			errCh := make(chan error, 2)

@@ -272,8 +272,7 @@ func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
 
 	p := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, ok := getLogicalMemTable(t, dom, se, p, ca.sql)
-		require.True(t, ok, ca.sql)
+		logicalMemTable := getLogicalMemTable(t, dom, se, p, ca.sql)
 		extractor, ok := logicalMemTable.Extractor.(*plannercore.StatementsSummaryExtractor)
 		require.True(t, ok, ca.sql)
 		require.NotNil(t, extractor.CoarseTimeRange, ca.sql)

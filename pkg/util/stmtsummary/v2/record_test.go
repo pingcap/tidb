@@ -17,11 +17,7 @@ package stmtsummary
 import (
 	"testing"
 
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
->>>>>>> 78cac443a4f (planner, util: fix statement summary history and display correctness (#70159))
 	"github.com/stretchr/testify/require"
 )
 

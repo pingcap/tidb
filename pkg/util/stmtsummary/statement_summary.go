@@ -422,7 +422,6 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 	stmts := make([]*BindableStmt, 0, len(values))
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
-<<<<<<< HEAD
 		func() {
 			ssbd.Lock()
 			defer ssbd.Unlock()
@@ -452,15 +451,6 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 				}
 			}
 		}()
-=======
-		ssbd.Lock()
-		if ssbd.history.Len() > 0 {
-			newHistory := list.New()
-			newHistory.PushBack(ssbd.history.Back().Value)
-			ssbd.history = newHistory
-		}
-		ssbd.Unlock()
->>>>>>> 78cac443a4f (planner, util: fix statement summary history and display correctness (#70159))
 	}
 	return stmts
 }
