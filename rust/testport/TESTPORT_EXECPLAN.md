@@ -152,6 +152,14 @@ For each bounded behavior cluster:
   ignored source-shaped regression is live. Details are appended to
   `receipts/parser_ast.md` and `receipts/b059.md`.
 
+- 2026-09-03: closed the parser-owned portion of the remaining `pkg/parser/ast`
+  visitor gaps. `tidb-parser` now applies a balanced visitor over the exact
+  Go multi-statement DDL/DML scripts (including the foreign-key tail,
+  UNION-with-hints, LOAD DATA, and IMPORT forms); its existing procedure
+  source-row and visitor tests are recorded as the owner-side closure as
+  well. The AST-crate carriers remain ignored only for dependency direction.
+  Details are appended to `receipts/parser_ast.md` and `receipts/b058.md`.
+
 - 2026-09-03: completed the adjacent Rust `tidb-expr` scalar-function
   `Hash64`/`Equals` boundary against the same Go authority. The structural
   function tag, name, nullable return type, argument count, and recursive

@@ -58,36 +58,37 @@ fn test_misc_visitor_cover() {
 /// `pkg/parser/ast/misc_test.go::TestDDLVisitorCoverMisc`.
 #[test]
 fn test_ddl_visitor_cover_misc() {
-    for sql in [
-        "CREATE TABLE t (c1 SMALLINT UNSIGNED, c2 INT UNSIGNED)",
-        "ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b",
-        "ALTER TABLE t ADD COLUMN (a INT, CONSTRAINT c CHECK (a > 0))",
-        "CREATE INDEX t_i ON t (id)",
-        "CREATE DATABASE test CHARACTER SET utf8",
-        "DROP DATABASE test",
-        "DROP INDEX t_i ON t",
-        "DROP TABLE t",
-        "TRUNCATE TABLE t",
-    ] {
-        assert_full_visitor_traversal(sql);
-    }
+    assert_full_visitor_traversal_multi(
+        r#"CREATE TABLE t (c1 SMALLINT UNSIGNED, c2 INT UNSIGNED);
+ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b;
+ALTER TABLE t ADD COLUMN (a INT, CONSTRAINT CHECK (a > 0));
+CREATE INDEX t_i ON t (id);
+CREATE DATABASE test CHARACTER SET utf8;
+DROP DATABASE test;
+DROP INDEX t_i ON t;
+DROP TABLE t;
+TRUNCATE t;
+CREATE TABLE t (jobAbbr CHAR(4) NOT NULL,
+CONSTRAINT FOREIGN KEY (jobabbr) REFERENCES ffxi_jobtype (jobabbr)
+ON DELETE CASCADE ON UPDATE CASCADE);"#,
+    );
 }
 
 /// `pkg/parser/ast/misc_test.go::TestDMLVistorCover`.
 #[test]
 fn test_dml_vistor_cover() {
-    for sql in [
-        "DELETE FROM somelog WHERE user = 'jcole' ORDER BY timestamp_column LIMIT 1",
-        "DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id",
-        "SELECT * FROM t WHERE EXISTS(SELECT * FROM t k WHERE t.c = k.c HAVING SUM(c) = 1)",
-        "INSERT INTO t_copy SELECT * FROM t WHERE t.x > 5",
-        "UPDATE t1 SET col1 = col1 + 1, col2 = col1",
-        "SHOW CREATE TABLE t",
-        "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE t FIELDS TERMINATED BY 'ab' ENCLOSED BY 'b'",
-        "IMPORT INTO t FROM '/file.csv'",
-    ] {
-        assert_full_visitor_traversal(sql);
-    }
+    assert_full_visitor_traversal_multi(
+        r#"DELETE FROM somelog WHERE user = 'jcole' ORDER BY timestamp_column LIMIT 1;
+DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;
+SELECT * FROM t WHERE EXISTS(SELECT * FROM t k WHERE t.c = k.c HAVING SUM(c) = 1);
+INSERT INTO t_copy SELECT * FROM t WHERE t.x > 5;
+(SELECT /*+ TIDB_INLJ(t1) */ a FROM t1 WHERE a=10 AND b=1) UNION
+(SELECT /*+ TIDB_SMJ(t2) */ a FROM t2 WHERE a=11 AND b=2) ORDER BY a LIMIT 10;
+UPDATE t1 SET col1 = col1 + 1, col2 = col1;
+SHOW CREATE TABLE t;
+LOAD DATA INFILE '/tmp/t.csv' INTO TABLE t FIELDS TERMINATED BY 'ab' ENCLOSED BY 'b';
+IMPORT INTO t FROM '/file.csv'"#,
+    );
 }
 
 #[test]

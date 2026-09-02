@@ -76,19 +76,21 @@ and all Go test entries as one package-level change.
 
 ## Validation
 
-Profile: Ready for this documentation-only boundary receipt.
+Profile: Ready for this parser-owner visitor coverage follow-up.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test . -count=1 (from pkg/parser): PASS; 0.525s
 Exact Go-master detached worktree: go test . -count=1: PASS; 0.446s
-cargo +nightly-2026-08-22 test -p tidb-parser --test all -- --test-threads=1: PASS; 90 passed, 1 ignored
+cargo +nightly-2026-08-22 test -p tidb-parser --lib -- --test-threads=1: PASS; 730 passed
+cargo +nightly-2026-08-22 test -p tidb-parser --test all -- --test-threads=1: PASS; 91 passed, 1 ignored
 cargo +nightly-2026-08-22 fmt --all -- --check: PASS
 Pinned-Go make lint: PASS
 git diff --check: PASS
 ```
 
-No Go/Rust/Bazel/module source changed, so `make bazel_prepare` is not required
-for this receipt. Generated artifacts remain unmodified.
+No Go source, generated output, or Bazel/module metadata changed, so
+`make bazel_prepare` is not required for this Rust test-only receipt.
+Generated artifacts remain unmodified.
 
 ## Risks and next boundary
 
@@ -101,3 +103,22 @@ for this receipt. Generated artifacts remain unmodified.
 - Performance: generated parsers and keyword tables affect every SQL parse;
   any replacement must be benchmarked against the Go package.
 
+## Rust follow-up: exact AST visitor script coverage
+
+The complete Go root inventory remains the 33-artifact, 64,892-line package
+recorded above. The Rust owner already carried the procedure source-row and
+visitor tests, but the miscellaneous AST visitor tests had only isolated
+statement samples. `tests::misc::test_ddl_visitor_cover_misc` and
+`tests::misc::test_dml_vistor_cover` now execute the exact Go multi-statement
+scripts through `parse_multi`, including the foreign-key DDL tail,
+UNION-with-hints query, LOAD DATA, and IMPORT forms. A shared test helper
+applies the balanced visitor to every returned statement, preserving the Go
+enter/leave traversal contract.
+
+This is test-only owner coverage; no parser production or generated artifact
+changed. The corresponding `pkg/parser/ast` AST-crate carriers remain
+documentary ignored tests because `tidb-ast` cannot depend on `tidb-parser`.
+
+Validation: the two focused visitor tests, the complete `tidb-parser` library
+and aggregate test targets, pinned Rust formatting, repository `make lint`,
+and `git diff --check` all pass in the current Ready run.

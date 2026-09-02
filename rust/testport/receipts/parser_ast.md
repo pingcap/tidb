@@ -213,3 +213,39 @@ Correctness and compatibility risk are limited to the closed semantic-command
 mapping and synthetic AST restore; existing parsed SHOW CREATE kinds and
 session execution paths are unchanged. The new enum variant has no runtime
 I/O or performance-sensitive behavior.
+
+## Rust follow-up: parser-owned AST visitor scripts
+
+The complete `pkg/parser/ast` inventory remains the 36-artifact, 34,448-line
+tree recorded above. Its `misc_test.go` and `procedure_test.go` visitor rows
+were previously represented only by ignored AST-crate carriers because those
+tests parse SQL through `pkg/parser`; the Rust dependency direction is the
+same (`tidb-ast` cannot depend on `tidb-parser`). The actual parser owner
+already had the procedure source-row and visitor tests, but its miscellaneous
+coverage used only isolated statements and omitted the exact Go multi-statement
+scripts.
+
+`tidb-parser` now runs the complete Go DDL and DML visitor scripts through
+`parse_multi`, including the foreign-key DDL tail, UNION-with-hints query,
+LOAD DATA, and IMPORT statements. A shared parser-test helper applies the
+balanced visitor to every parsed statement, preserving the Go contract that
+both full and skip-child traversals enter and leave each node. The existing
+procedure source-row and visitor tests are recorded as the owner-side closure
+for the corresponding AST gaps.
+
+Pre-fix proof: the newly restored DML script initially failed because the
+multi-line Rust literal removed statement-separating whitespace
+(`t3WHERE`); preserving the Go script's boundaries made the focused test pass.
+No production parser behavior changed; this batch strengthens executable
+coverage at the real grammar owner.
+
+Ready validation:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-parser --lib tests::misc::test_ddl_visitor_cover_misc -- --nocapture --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-parser --lib tests::misc::test_dml_vistor_cover -- --nocapture --test-threads=1` — passed after the pre-fix literal-boundary failure.
+- The existing parser procedure source-row and visitor tests remain active in `tidb-parser`; the parser aggregate and pinned format/lint gates are required before commit.
+
+Risk is limited to test coverage and receipt ownership: parser acceptance and
+AST restore behavior are unchanged by this test-only follow-up. The AST
+crate's documentary ignored carriers remain explicit because cross-crate
+dependency direction has not changed.

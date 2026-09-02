@@ -63,6 +63,22 @@ fn plain_key_parts(names: &[&str]) -> Vec<IndexPart> {
 /// Individual owner tests supply the original Go vectors; the shared helper
 /// only checks the invariant common to all of them.
 fn assert_full_visitor_traversal(sql: &str) {
+    let mut statement = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    assert_full_visitor_traversal_statement(&mut statement, sql);
+}
+
+/// Runs the same balanced visitor over every statement returned by Go's
+/// multi-statement parser. This keeps parse-boundary coverage separate from
+/// the single-statement helper above while preserving the visitor invariant.
+fn assert_full_visitor_traversal_multi(sql: &str) {
+    let mut statements = parse_multi(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    assert!(!statements.is_empty(), "{sql}");
+    for statement in &mut statements {
+        assert_full_visitor_traversal_statement(statement, sql);
+    }
+}
+
+fn assert_full_visitor_traversal_statement(statement: &mut Stmt, sql: &str) {
     #[derive(Default)]
     struct BalancedVisitor {
         entered: usize,
@@ -83,7 +99,6 @@ fn assert_full_visitor_traversal(sql: &str) {
 
     use tidb_ast::Visitable;
 
-    let mut statement = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
     let mut visitor = BalancedVisitor::default();
     assert!(statement.accept(&mut visitor), "{sql}");
     assert!(visitor.entered > 0, "{sql}");
