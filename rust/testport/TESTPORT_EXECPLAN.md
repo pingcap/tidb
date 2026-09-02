@@ -114,6 +114,15 @@ For each bounded behavior cluster:
   `receipts/session_syssession.md` and
   `docs/operations/session-syssession-audit-execplan.md`.
 
+- 2026-09-02: refreshed the complete `pkg/util/sqlexec/mock` boundary at
+  current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: three
+  artifacts and 152 lines covering BUILD metadata, the exact context key, and
+  the complete generated three-method restricted executor mock. The
+  dependency-closed `tidb-sqlexec-mock` owner remains aligned; both Go package
+  probes and three focused Rust tests pass. Details are in
+  `receipts/util_sqlexec_mock.md` and
+  `docs/operations/util-sqlexec-mock-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/stringutil`
   inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four artifacts and
   927 lines, including all source tests, benchmarks, the goleak harness, and
@@ -2994,7 +3003,8 @@ For each bounded behavior cluster:
       distinct `tidb-sqlexec-mock` owner: preserve the context-key identity
       and the generated restricted-executor mock's full three-method
       contract without introducing a second SQL interface. The atomic
-      inventory and WIP gates are in `receipts/util_sqlexec_mock.md`.
+      inventory and Ready gates are in `receipts/util_sqlexec_mock.md` and
+      `docs/operations/util-sqlexec-mock-audit-execplan.md`.
 - [x] Complete the pinned `pkg/statistics/handle/util` package in a distinct
       `tidb-stats-handle-util` owner: remove five partial policy modules,
       implement every production artifact over shared model/executor/session

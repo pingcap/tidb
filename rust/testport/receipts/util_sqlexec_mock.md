@@ -1,16 +1,16 @@
 # `pkg/util/sqlexec/mock` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned Go source: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
-The package has exactly three artifacts, all read in full:
-
-- `BUILD.bazel` — one public Go library over the two source files;
-- `mock.go` — the zero-sized restricted-executor context key and its exact
-  `"__MockRestrictedSQLExecutor"` string identity;
-- `restricted_sql_executor_mock.go` — the MockGen output for all three methods
-  of `sqlexec.RestrictedSQLExecutor`.
+The package has exactly three artifacts and 152 lines, all read in full:
+`BUILD.bazel` (18 lines), `mock.go` (23), and
+`restricted_sql_executor_mock.go` (111). BUILD defines one public Go library
+over the two source files; `mock.go` owns the zero-sized restricted-executor
+context key and exact `"__MockRestrictedSQLExecutor"` identity; the generated
+file covers all three methods of `sqlexec.RestrictedSQLExecutor`.
 
 There is no `doc.go`, package test, fixture, benchmark, platform variant, or
 generator input in this package. The generated file records its external
@@ -35,14 +35,15 @@ statistics consumer's `intest` context-value dispatch belongs to the complete
 
 ## Validation
 
-Profile: WIP. This is one atomic support package in the continuing parity
+Profile: **Ready**. This is one atomic support package in the continuing parity
 audit, not a repository-wide readiness claim.
 
-- Complete pinned-package diff gate: passed.
-- Pinned Go package test: passed; the package has no test files.
-- `cargo test --manifest-path rust/Cargo.toml -p tidb-sqlexec-mock`: passed,
-  3 tests plus doc tests.
-- Scoped `cargo fmt --check` and `git diff --check`: passed.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/sqlexec/mock` — empty; all three Go artifacts are unchanged at Go master.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/sqlexec/mock -count=1` — passed in the active worktree and in the exact detached Go-master worktree `/tmp/tidb-go-latest-c605` (`[no test files]`). Failpoint and generated/platform scans found no additional package-local test or variant surface.
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-sqlexec-mock` — passed, 3 tests plus doc tests.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed.
+- `git diff --check -- rust/testport/receipts/util_sqlexec_mock.md rust/docs/operations/util-sqlexec-mock-audit-execplan.md rust/testport/TESTPORT_EXECPLAN.md` — passed.
+- Commit, push, pull, and remote SHA verification are recorded for this receipt refresh.
 
 No Go or Bazel source changed, so `make bazel_prepare` is not required.
 
