@@ -1244,18 +1244,20 @@ For each bounded behavior cluster:
   `receipts/dumpformat_parquetfile.md` and
   `rust/docs/operations/dumpformat-parquetfile-audit-execplan.md`.
 
-- 2026-09-01: audited the complete Go-master `pkg/ingestor/globalsort`
-  package before editing: 17 tracked artifacts and 6,814 lines, including the
-  external engine, object-store readers, merge and merge-v2 operators, range
-  splitter, metadata/file-group planner, benchmark/profiler helpers, all
-  source tests, the 3K-file stress surface, and the 41-shard BUILD target.
-  Current-master changes add the errdef dependency, grouped merge target-file
-  accounting, multi-directory cleanup, and explicit too-many-files errors;
-  those source and test deltas were included in the inventory. The complete
-  failpoint-enabled Go suite passed. Rust has only DXF step/resource metadata,
-  with no dependency-closed owner for global-sort SST execution, so no
-  Rust-only behavior was removed and no speculative implementation was added.
-  Recorded the explicit boundary in `receipts/ingestor_globalsort.md`.
+- 2026-09-02: completed the current Go-master `pkg/ingestor/globalsort`
+  package batch after reading all 17 tracked artifacts and 6,814 lines,
+  including the external engine, object-store readers, merge and merge-v2
+  operators, range splitter, metadata/file-group planner, benchmark/profiler
+  helpers, all source tests, the 3K-file stress surface, and the 41-shard BUILD
+  target. Restored grouped merge target-file accounting, nil split semantics,
+  multi-directory cleanup, and explicit `GlobalSort:TooManyDataFiles`
+  validation; focused regressions failed before the fix and pass afterward, as
+  does the complete failpoint-enabled suite. Rust has only DXF step/resource
+  metadata, with no dependency-closed owner for global-sort SST execution, so
+  no Rust-only behavior was removed and no speculative implementation was
+  added. Ready lint and diff checks pass; `make bazel_prepare` is blocked only
+  by the missing local Bazel executable. Recorded the explicit boundary in
+  `receipts/ingestor_globalsort.md`.
 
 - 2026-09-01: audited the complete Go-master `pkg/ingestor/simplesst`
   package before making any change: 19 tracked artifacts and 6,545 lines,

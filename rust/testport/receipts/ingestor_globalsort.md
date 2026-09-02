@@ -1,7 +1,7 @@
 # `pkg/ingestor/globalsort` — complete Go-master parity boundary receipt
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01).
+`94eb995357f34b7bab4889a82f0405797046447d` (2026-09-02).
 
 ## Complete inventory
 
@@ -28,7 +28,7 @@ or additional build artifacts beyond the package BUILD target.
 | `split.go` | 326 | `1672c9e41cc8c87babd6d9346a2f788caa457ecc` | `22e2bfa1cfb0a71deb04831e7f27a2f0f5eb2eb72c4ac18173bdb4d0793b2a0b` | range-property heap, range/job/region split boundaries, and active files |
 | `split_test.go` | 603 | `b8c9a78c437c24a7b780a892e7007b797958f7fd` | `b30d656e4440577ba59c9e57d5a15f7964b471c80f90e3324f4390773f4f5b40` | property invariants, strict overlap, 3K-file stress, and range sizing |
 | `testutil.go` | 123 | `c10ea3a45e2d4f51108bb4aca405f09e248ec63a` | `eb0bd37561aa15b782a649359097b695d2ebfc4d19e98da665dec631fc63ab4c` | test storage metadata and read/compare helper |
-| `util.go` | 385 | `02a9a04889c44ca614261e417ff250603f930647` | `f477390f3aa2ae066a71b56ae367c2219e8b75e354329064981e5580408eb394` | cleanup, JSON external metadata, path helpers, and file-group division |
+| `util.go` | 385 | `604e0299ca7a97a105f7b48017722e6655ba34f5` | `d0b14ef7e09beb3201895d5b9949ebe3b51d45166a2ca451e17a107189b41001` | cleanup, JSON external metadata, path helpers, and file-group division |
 | `util_test.go` | 562 | `84cf4d3d2cfef91d07f6ad6a39e6094c1b0ec97f` | `63397bb34ff68b7d01592c30d448e338ce022e6f15d3ea5c6e24cb5b3cf03f86` | cleanup, metadata marshal, path, and target-file-limit tests |
 
 The current Go-master delta from the earlier pinned source is recorded here in
@@ -58,17 +58,31 @@ remains an explicit parity boundary.
 
 ## Validation and risk
 
-Profile: **WIP** for this documentation-only boundary record. No Go, Bazel,
-module, or Rust source changed, so `make bazel_prepare` and Ready lint are not
-required for this batch. The package uses failpoints; the canonical wrapper
-enabled and disabled them around the complete package suite.
+Profile: **Ready** for this package-level parity batch. The package uses
+failpoints; the canonical wrapper enabled and disabled them around the complete
+package suite. The pre-fix focused regression failed because nil input produced
+an empty non-nil split slice; the post-fix focused regressions and full suite
+pass.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/ingestor/globalsort -count=1
-# passed: all package tests in 10.354s; external-storage-only tests skipped
-# because -testing-storage-uri was not provided; failpoints cleaned to refcount 0
+go test ./pkg/ingestor/globalsort -run '^(TestSplitDataFiles|TestCleanUpFiles|TestDivideMergeSortDataFilesBasic)$' -count=1 -vet=off
+# passed: focused nil-split, multi-directory cleanup, and target-limit regressions
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+./tools/check/failpoint-go-test.sh ./pkg/ingestor/globalsort -count=1 -vet=off
+# passed: all package tests in 10.554s; failpoints cleaned to refcount 0
+
+make lint
+# passed
+
+git diff --check
+# passed
+
+make bazel_prepare
+# blocked: bazel executable is not installed in the local environment
 ```
 
 Not verified here: a live object-storage service, distributed DXF/global-sort
