@@ -50,6 +50,14 @@ For each bounded behavior cluster:
   unavailable Bazel executable. The focused `pkg/executor/join` regression is
   recorded in its own package receipt.
 
+- 2026-09-02: completed a focused `pkg/executor/join` Go-package batch against
+  Go master `1c1a334d2be1dce64888b6e1f054462c566b0734`: inventoried all 47
+  direct artifacts (45 Go files, BUILD, and OWNERS), restored the
+  `TestAntiSemiJoinTypeNullBuildKey` regression and its BUILD dependency, and
+  verified it through the paired codec fix. The nested join test packages and
+  Rust distributed join integration remain explicit boundaries. Details are in
+  `receipts/executor_join.md`.
+
 - 2026-09-02: completed a bounded `pkg/planner/core/operator/physicalop`
   Go-package batch against Go master `1c1a334d2b`: restored
   `StorageEngineUsage` and `HasSingleScanIndexJoin` with focused physical-tree
