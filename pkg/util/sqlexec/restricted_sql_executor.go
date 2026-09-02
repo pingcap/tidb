@@ -61,6 +61,7 @@ type ExecOption struct {
 	AnalyzeSnapshot    *bool
 	TrackSysProc       func(id uint64, ctx sysproctrack.TrackProc) error
 	UnTrackSysProc     func(id uint64)
+	SessionVarsSetup   SessionVarsSetup
 	PartitionPruneMode string
 	SnapshotTS         uint64
 	AnalyzeVer         int
@@ -68,7 +69,6 @@ type ExecOption struct {
 	IgnoreWarning      bool
 	UseCurSession      bool
 	EnableDDLAnalyze   bool
-	SessionVarsSetup   SessionVarsSetup
 }
 
 // SessionVarsSetup configures the session variables used by a restricted SQL
