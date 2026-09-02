@@ -69,12 +69,37 @@ fn extract_master_unit_table_matches_source() {
 /// `MINUTE_SECOND -> 1010`, `HOUR_MICROSECOND -> 101010123456`,
 /// `HOUR_SECOND -> 101010`, `HOUR_MINUTE -> 1010`,
 /// `DAY_MICROSECOND -> 11101010123456`, `DAY_SECOND -> 11101010`,
-/// `DAY_MINUTE -> 111010`, `DAY_HOUR -> 1110`. This crate's composite
-/// extractor answers 0 / time-part-zero for these inputs today, so pinning
-/// them live would fail; nothing here pretends the divergence away.
+/// `DAY_MINUTE -> 111010`, `DAY_HOUR -> 1110`.
 #[test]
-#[ignore = "go-parity-gap: EXTRACT composite units over a string WITH fractional seconds drop the HH:MM:SS part (parse_time_hms rejects the fsp suffix in time_fn/calendar.rs)"]
-fn extract_composite_units_over_fractional_strings_diverge() {}
+fn extract_composite_units_over_fractional_strings_match_source() {
+    let text = "'2011-11-11 10:10:10.123456'";
+    let table = [
+        ("SECOND_MICROSECOND", "10123456"),
+        ("MINUTE_MICROSECOND", "1010123456"),
+        ("MINUTE_SECOND", "1010"),
+        ("HOUR_MICROSECOND", "101010123456"),
+        ("HOUR_SECOND", "101010"),
+        ("HOUR_MINUTE", "1010"),
+        ("DAY_MICROSECOND", "11101010123456"),
+        ("DAY_SECOND", "11101010"),
+        ("DAY_MINUTE", "111010"),
+        ("DAY_HOUR", "1110"),
+    ];
+    for (unit, expect) in table {
+        assert_eq!(
+            e(&format!("extract({unit} from {text})")),
+            format!("INT:{expect}"),
+            "EXTRACT({unit} FROM {text})"
+        );
+    }
+
+    // Clock-unit input uses the duration formulas, but it must retain the
+    // fractional suffix in the *_MICROSECOND forms as Go does.
+    assert_eq!(
+        e("extract(second_microsecond from '10:10:10.123456')"),
+        "INT:10123456"
+    );
+}
 
 /// The three rows of `pkg/expression/evaluator_test.go:606 TestMod`.
 #[test]

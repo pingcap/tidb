@@ -5581,6 +5581,12 @@ For each bounded behavior cluster:
   re-inventoried before editing (208 artifacts, including tests, generated
   inputs/outputs, support files, and BUILD metadata); the executable regression
   and fail-before evidence are recorded in `rust/testport/receipts/b073.md`.
+- `pkg/expression` EXTRACT composite units now retain fractional seconds like
+  Go master. The datetime and duration formulas append the parsed six-digit
+  microsecond component for `SECOND_MICROSECOND`, `MINUTE_MICROSECOND`,
+  `HOUR_MICROSECOND`, and `DAY_MICROSECOND`; the complete inventory, focused
+  regression, and fail-before evidence are recorded in
+  `rust/testport/receipts/b073.md`.
 
 ## Outcomes & Retrospective
 
