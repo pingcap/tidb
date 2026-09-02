@@ -128,14 +128,14 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 
 	// The upgrade is idempotent and must not overwrite an existing setting.
 	MustExec(t, se, "set global tidb_enable_adaptive_limit_scan=ON")
-	upgradeToVer284(se, version283)
+	upgradeToVer287(se, version286)
 	assertValue(vardef.On)
 
-	// Simulate a v283 cluster where this unreleased variable does not exist.
+	// Simulate a v286 cluster where this unreleased variable does not exist.
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version283)))
-	RevertVersionAndVariables(t, se, version283)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version286)))
+	RevertVersionAndVariables(t, se, version286)
 	MustExec(t, se, fmt.Sprintf(
 		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBEnableAdaptiveLimitScan,

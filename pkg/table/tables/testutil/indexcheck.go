@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,7 +42,7 @@ func CheckIndexKVCount(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, ta
 		}
 	}
 
-	enc := codec.NewEncoder(collate.NewCollationEnabled())
+	enc := codec.NewEncoder(tbl.UseNewCollate())
 	minimumKey, _, err := tablecodec.GenIndexKey(enc, time.Local, tbl.Meta(), idx.Meta(), tbl.Meta().ID, nil, nil, nil)
 	require.NoError(t, err)
 

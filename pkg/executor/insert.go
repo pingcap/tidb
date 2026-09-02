@@ -369,6 +369,10 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	err := insertRows(ctx, e)
 	if err != nil {
+		// Rebase errors can bypass InsertValues.handleErr.
+		if autoid.IsRPCRetryLimitError(err) {
+			return err
+		}
 		terr, ok := errors.Cause(err).(*terror.Error)
 		if ok && len(e.OnDuplicate) == 0 && terr.Code() == errno.ErrAutoincReadFailed {
 			ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()

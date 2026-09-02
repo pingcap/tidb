@@ -177,7 +177,7 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 	require.NoError(t, err)
 	handles := []tidbkv.Handle{tidbkv.IntHandle(1), tidbkv.IntHandle(2), commonHandle}
 
-	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1})
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1}})
 	require.NoError(t, err)
 	for name, tikvCodec := range map[string]tikv.Codec{
 		"api v1": tikv.NewCodecV1(tikv.ModeTxn),
@@ -234,7 +234,7 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 	}
 
 	t.Run("decode key error", func(t *testing.T) {
-		codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1})
+		codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1}})
 		require.NoError(t, err)
 		store := &codecStorage{codec: codecV2}
 		pairCh := make(chan *simplesst.KVPair, 1)

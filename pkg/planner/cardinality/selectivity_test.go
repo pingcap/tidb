@@ -809,7 +809,7 @@ func TestVirtualColumnIndexEstimation(t *testing.T) {
 	// would skip the most selective column and heavily over-estimate the row
 	// count. Verify that estimation falls back to the index statistics instead.
 	// See https://github.com/pingcap/tidb/issues/69134.
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
@@ -848,6 +848,77 @@ func TestVirtualColumnIndexEstimation(t *testing.T) {
 	estRows, err = strconv.ParseFloat(rows[0][1].(string), 64)
 	require.NoError(t, err)
 	require.Greater(t, estRows, 10.0)
+
+	// A virtual column at the beginning of a composite index is mapped back to
+	// that index for single-column estimation. Verify that the recursive index
+	// estimate is propagated into exponential backoff instead of being dropped.
+	tk.MustExec(`create table t3(
+		txn_seq varchar(30) primary key,
+		status varchar(2),
+		flag varchar(1),
+		batch_num varchar(20),
+		txn_suffix varchar(1) as (substr(txn_seq, 30, 1)) virtual,
+		index idx_suffix_first(txn_suffix, status, flag, batch_num),
+		index idx_suffix_second(txn_suffix, status, batch_num, flag)
+	)`)
+	tk.MustExec(`insert into t3(txn_seq, status, flag, batch_num)
+		select concat(lpad(x.a, 29, '0'), mod(x.a, 10)),
+			if(mod(x.a, 10) = 9, '00', '01'), '1', 'batch'
+		from (with recursive x as (
+			select 1 as a union all select a + 1 from x where a < 500
+		) select a from x) as x`)
+	tk.MustExec("analyze table t3 all columns with 10 topn")
+	// Virtual columns have no column statistics, while both indexes have TopN.
+	require.Empty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't3' and column_name = 'txn_suffix' and is_index = 0").Rows())
+	require.NotEmpty(t, tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't3' and column_name = 'idx_suffix_first' and is_index = 1").Rows())
+	require.NotEmpty(t, tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't3' and column_name = 'idx_suffix_second' and is_index = 1").Rows())
+	tk.MustQuery("select count(*) from t3 where txn_suffix = '9' and status = '00'").Check(testkit.Rows("50"))
+
+	getIndexScanEstRows := func(sql string) float64 {
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "IndexRangeScan") {
+				estRows, err := strconv.ParseFloat(row[1].(string), 64)
+				require.NoError(t, err)
+				return estRows
+			}
+		}
+		t.Fatalf("no IndexRangeScan in plan for %q", sql)
+		return 0
+	}
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
+	require.NoError(t, err)
+	firstCandidate := table.Meta().FindIndexByName("idx_suffix_first")
+	fallbackCandidate := table.Meta().FindIndexByName("idx_suffix_second")
+	require.NotNil(t, firstCandidate)
+	require.NotNil(t, fallbackCandidate)
+	require.Less(t, firstCandidate.ID, fallbackCandidate.ID)
+
+	func() {
+		var firstCandidateFailed, fallbackCandidateSucceeded bool
+		fpName := "github.com/pingcap/tidb/pkg/planner/cardinality/afterRecursiveIndexEstimation"
+		require.NoError(t, failpoint.EnableCall(fpName, func(idxID int64, countResult *statistics.RowEstimate, recursiveErr *error) {
+			switch idxID {
+			case firstCandidate.ID:
+				firstCandidateFailed = true
+				*countResult = statistics.RowEstimate{}
+				*recursiveErr = fmt.Errorf("injected recursive estimation error for index %d", idxID)
+			case fallbackCandidate.ID:
+				fallbackCandidateSucceeded = firstCandidateFailed && *recursiveErr == nil
+			}
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+		}()
+
+		estRows = getIndexScanEstRows("select * from t3 use index(idx_suffix_second) where txn_suffix = '9' and status = '00'")
+		require.True(t, firstCandidateFailed)
+		require.True(t, fallbackCandidateSucceeded)
+		require.InDelta(t, 50.0, estRows, 0.01)
+	}()
+
+	estRows = getIndexScanEstRows("select * from t3 use index(idx_suffix_first) where txn_suffix = '9' and status = '00'")
+	require.InDelta(t, 50.0, estRows, 0.01)
 }
 
 func TestNewIndexWithColumnStats(t *testing.T) {
@@ -1791,6 +1862,75 @@ func TestIndexRangeEstimationWithTruncatedHandleRange(t *testing.T) {
 	estRows, opInfo = indexScanRow("select * from tu use index(ia) where a = 5 and id > 10")
 	require.Contains(t, opInfo, "range:[5,5]", "unsigned handle must not extend the execution range")
 	require.Equal(t, "10.00", estRows)
+}
+
+// TestIndexRangeEstimationWithPrefixedCommonHandle covers a clustered handle whose leading
+// column is a prefixed index column. The handle appended to a non-unique secondary index
+// stores that column truncated, so the execution ranges must keep prefix semantics and
+// re-check the predicate as a filter. Estimation follows a different route: a tuple
+// comparison spanning the index column and the whole handle reaches Selectivity() without
+// a filled access path (through the index merge OR path estimation), where the ranges are
+// built from the length slice assembled in Selectivity() itself. That slice must hold one
+// entry per column of the extended index key; see issue #70532, where the appended handle
+// counted as a single column and range building read past the end of the slice.
+func TestIndexRangeEstimationWithPrefixedCommonHandle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(p1 varchar(64), p2 int, c int, primary key(p1(2), p2) clustered, key ic(c))")
+	vals := make([]string, 0, 100)
+	for i := 1; i <= 100; i++ {
+		// Every p1 shares the same 2-character prefix, so the prefix stored in the index
+		// key carries no information beyond "some row of this table".
+		vals = append(vals, fmt.Sprintf("('pp_%03d', %d, %d)", i, i, i%10))
+	}
+	tk.MustExec("insert into t values " + strings.Join(vals, ","))
+	tk.MustExec("analyze table t all columns")
+
+	// Returns the estRows and operator info of the named operator in the plan.
+	planRow := func(sql, operator string) (estRows, operatorInfo string) {
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), operator) {
+				return row[1].(string), row[4].(string)
+			}
+		}
+		t.Fatalf("no %s in plan for %q", operator, sql)
+		return "", ""
+	}
+
+	// Equality on the prefixed handle column ranges over the stored prefix only, and the
+	// full predicate stays as a filter on the table side, where the untruncated value is
+	// available.
+	sql := "select * from t use index(ic) where c = 5 and p1 = 'pp_055'"
+	_, opInfo := planRow(sql, "IndexRangeScan")
+	require.Contains(t, opInfo, `range:[5 "pp",5 "pp"]`, "the handle range must use the stored prefix")
+	_, opInfo = planRow(sql, "Selection")
+	require.Contains(t, opInfo, `eq(test.t.p1, "pp_055")`, "the prefixed predicate must be re-checked")
+	tk.MustQuery(sql).Check(testkit.Rows("pp_055 55 5"))
+
+	// The column after the prefixed one is still ranged over: the prefix only widens its
+	// own dimension of the key.
+	sql = "select * from t use index(ic) where c = 5 and p1 = 'pp_055' and p2 = 55"
+	_, opInfo = planRow(sql, "IndexRangeScan")
+	require.Contains(t, opInfo, `range:[5 "pp" 55,5 "pp" 55]`, "the handle range must keep the p2 dimension")
+	tk.MustQuery(sql).Check(testkit.Rows("pp_055 55 5"))
+
+	// A tuple comparison spanning the index column and the whole handle. Planning this
+	// panicked before the length slice was extended per appended column. The estimate is
+	// the Selectivity() result over the tuple predicate: the appended dimensions are
+	// estimated from the handle columns' own statistics, which hold untruncated values,
+	// so the bounds handed to estimation stay untruncated as well.
+	sql = "select * from t where (c, p1, p2) > (5, 'pp_055', 55)"
+	estRows, _ := planRow(sql, "Selection")
+	require.Equal(t, "40.00", estRows)
+	require.Len(t, tk.MustQuery(sql).Rows(), 44)
+
+	sql = "select * from t use index(ic) where (c, p1, p2) > (5, 'pp_055', 55)"
+	estRows, opInfo = planRow(sql, "IndexRangeScan")
+	require.Contains(t, opInfo, `range:[5 "pp",5 +inf], (5,+inf]`, "the handle range must use the stored prefix")
+	require.Equal(t, "50.00", estRows)
+	require.Len(t, tk.MustQuery(sql).Rows(), 44)
 }
 
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
@@ -2941,4 +3081,38 @@ func TestUninitializedStats(t *testing.T) {
 	tk.MustQuery("explain analyze format = 'brief' select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';")
 	tk.MustQuery("show stats_histograms").CheckNotContain("allEvicted")
 	tk.MustQuery("explain analyze format = 'brief' select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
+}
+
+// TestEqualEstimateOnZeroRepeatBucketUpper covers equality estimation on a
+// bucket upper that carries no point frequency. Merged global histograms
+// produce such buckets when an upper falls on a merge cut, and the sampled
+// builder produces them when the estimated NDV exceeds the histogram's row
+// count. A bucket upper is a value observed in the data, so a zero Repeat
+// means "not recorded" rather than "no rows", and the estimate must fall
+// back to the uniform average instead of reporting an exact zero.
+func TestEqualEstimateOnZeroRepeatBucketUpper(t *testing.T) {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	colInfo := &model.ColumnInfo{ID: 1, FieldType: *tp}
+	// 200 rows over an NDV of 100, so the uniform average is 2 per value.
+	hg := statistics.NewHistogram(colInfo.ID, 100, 0, 0, tp, 2, 0)
+	lo1, up1 := types.NewIntDatum(1), types.NewIntDatum(50)
+	lo2, up2 := types.NewIntDatum(51), types.NewIntDatum(100)
+	hg.AppendBucket(&lo1, &up1, 100, 0) // no frequency recorded for 50
+	hg.AppendBucket(&lo2, &up2, 200, 5) // 100 was observed 5 times
+	col := &statistics.Column{
+		Histogram:         *hg,
+		Info:              colInfo,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	sctx := mock.NewContext()
+
+	est, err := getColumnRowCount(sctx, col, getRange(50, 50), 200, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, 2.0, est.Est,
+		"a zero Repeat must fall back to the uniform average, not report zero rows")
+
+	est, err = getColumnRowCount(sctx, col, getRange(100, 100), 200, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, 5.0, est.Est, "an observed Repeat must still be used as is")
 }

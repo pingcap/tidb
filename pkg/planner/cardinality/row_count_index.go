@@ -433,8 +433,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	histCnt, matched := idx.Histogram.EqualRowCount(sctx, val, true)
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
+	// A zero Repeat means no point frequency was recorded for this upper
+	// bound, not that the value has no rows. See equalRowCount in
+	// row_count_column.go.
 	// also check if this last bucket end value is underrepresented
-	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+	if matched && histCnt > 0 && !IsLastBucketEndValueUnderrepresented(sctx,
 		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return statistics.DefaultRowEst(histCnt)
 	}
@@ -501,14 +504,16 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 				if idxStats == nil || statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxID) {
 					continue
 				}
-				foundStats = true
 				countResult, err := GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan, nil)
-				if err == nil {
-					break
+				failpoint.InjectCall("afterRecursiveIndexEstimation", idxID, &countResult, &err)
+				if err != nil {
+					continue
 				}
 				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
 				selectivity = countResult.Est / float64(realtimeCnt)
-				maxSel = min(maxSel, countResult.MaxEst/float64(coll.RealtimeCount))
+				maxSel = min(maxSel, countResult.MaxEst/float64(realtimeCnt))
+				foundStats = true
+				break
 			}
 		}
 		if !foundStats {

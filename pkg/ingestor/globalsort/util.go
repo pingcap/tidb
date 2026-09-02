@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -290,44 +291,95 @@ func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
 }
 
-// DivideMergeSortDataFiles divides the data files into multiple groups for
-// merge sort. Each group will be assigned to a node for sorting.
-// The number of files in each group is limited to MaxMergeSortFileCountStep.
-func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([][]string, error) {
+// DivideMergeSortDataFiles divides data files into groups, one per merge-sort
+// subtask. It balances groups in rounds of nodeCnt to use all available
+// resources. It also limits each group's input files and caps the total target
+// files so the following ingest step can read them all.
+//
+// Known issue: the target file count is exact only when merge execution uses
+// the same concurrency passed here. Distributed add-index and IMPORT INTO do
+// not persist that concurrency in merge subtask metadata; they derive it again
+// from the current execution resource. If the resource changes after planning,
+// the merge subtasks can produce more files than estimated here and exceed the
+// total file count expected by the ingest step. Fixing this requires pinning the
+// concurrency across planning, merge execution, and ingest, or revalidating and
+// regenerating all pending merge groups when it changes.
+//
+// since we have a 4000 hard limit on the target file count, when the concurrency
+// is larger than 16 (4000/250), DivideMergeSortDataFiles might incorrectly return
+// ErrTooManyDataFiles on some input, such as:
+//
+//	file-count=940001 / nodeCnt=2 / concurrency=17
+//
+// the 4000 is an experience value which came from internal tests where the max
+// node spec we used is 16c, we haven't tested on 32c or 64c. maybe we can remove
+// this 4000 hard limit, and calculate the limit by concurrency * 250.
+//
+// suppose we have a 8c node with cpu:mem = 1:4, but on the node only 7c and
+// 26.9GiB memory is available to tidb-server, below table give the max supported
+// row KV size before reporting ErrTooManyDataFiles for different params. such
+// as for 1 secondary index, with concurrency=1, the max all supported row KV
+// size is from 29.56TiB (when each index kv size = row kv size) to 92.98 TiB
+// (when each index kv size = 0.1 * row kv size).
+//
+//	| Index Count | Concurrency 1 | Concurrency 3  |  Concurrency 7  |
+//	| ----------: | ------------: | -------------: | --------------: |
+//	|    No index |     121.6 TiB |      364.8 TiB |       851.2 TiB |
+//	|     1 index | 29.6–93.0 TiB | 88.7–279.0 TiB | 206.9–650.9 TiB |
+//	|  16 indexes |  6.7–18.5 TiB |  20.0–55.6 TiB |  46.7–129.6 TiB |
+//	| 128 indexes |   1.0–2.7 TiB |    2.9–8.1 TiB |    6.7–18.8 TiB |
+//
+// if the 8c node is with cpu:mem = 1:2, the max supported kv size is around
+// half of above table.
+func DivideMergeSortDataFiles(files []string, nodeCnt, concurrency int) ([][]string, error) {
 	if nodeCnt == 0 {
 		return nil, errors.Errorf("unsupported zero node count")
 	}
-	if len(dataFiles) == 0 {
+	if len(files) == 0 {
 		return [][]string{}, nil
 	}
-	adjustedMergeSortFileCountStep := simplesst.GetAdjustedMergeSortFileCountStep(mergeConc)
-	dataFilesCnt := len(dataFiles)
-	result := make([][]string, 0, nodeCnt)
-	batches := len(dataFiles) / adjustedMergeSortFileCountStep
-	rounds := batches / nodeCnt
-	for range rounds * nodeCnt {
-		result = append(result, dataFiles[:adjustedMergeSortFileCountStep])
-		dataFiles = dataFiles[adjustedMergeSortFileCountStep:]
+	maxFiles := simplesst.GetAdjustedMergeSortFileCountStep(concurrency)
+	fileCnt := len(files)
+	groups := make([][]string, 0, nodeCnt)
+	// Part 1: Fill complete rounds of maximum-sized groups so every available
+	// subtask slot has work.
+	fullGroupCnt := fileCnt / maxFiles / nodeCnt * nodeCnt
+	for range fullGroupCnt {
+		groups = append(groups, files[:maxFiles])
+		files = files[maxFiles:]
 	}
-	remainder := dataFilesCnt - (nodeCnt * rounds * adjustedMergeSortFileCountStep)
-	if remainder == 0 {
-		return result, nil
+	targetCnt := fullGroupCnt * getTargetFileCount(maxFiles, concurrency)
+	targetLimit := int(simplesst.GetAdjustedMergeSortOverlapThreshold(concurrency))
+	remaining := fileCnt - fullGroupCnt*maxFiles
+	if remaining == 0 {
+		if targetCnt > targetLimit {
+			return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(fileCnt, concurrency, targetLimit)
+		}
+		return groups, nil
 	}
-	// adjust node cnt for remainder files to avoid having too much target files.
-	adjustNodeCnt := nodeCnt
-	maxTargetFilesPerSubtask := max(simplesst.MergeSortMaxSubtaskTargetFiles, mergeConc)
-	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(simplesst.GetAdjustedMergeSortOverlapThreshold(mergeConc)) {
-		adjustNodeCnt--
-		if adjustNodeCnt == 0 {
-			return nil, errors.Errorf("unexpected zero node count, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)
+
+	// Part 2: Divide the remaining files evenly while preserving parallelism
+	// and keeping the target file count within the ingest limit.
+	minFiles := 32 // Each subtask should merge at least 32 files.
+	maxGroups := max(min(remaining/minFiles, nodeCnt), 1)
+	minGroups := (remaining + maxFiles - 1) / maxFiles
+	groupCnt := 0
+	// Prefer more groups for parallelism while staying within the ingest limit.
+	for candidateCnt := maxGroups; candidateCnt >= minGroups; candidateCnt-- {
+		candidateTargetCnt := targetCnt + getGroupedTargetFileCount(remaining, candidateCnt, concurrency)
+		if candidateTargetCnt <= targetLimit {
+			groupCnt = candidateCnt
+			break
 		}
 	}
-	minimalFileCount := 32 // Each subtask should merge at least 32 files.
-	adjustNodeCnt = max(min(remainder/minimalFileCount, adjustNodeCnt), 1)
-	sizes := mathutil.Divide2Batches(remainder, adjustNodeCnt)
-	for _, s := range sizes {
-		result = append(result, dataFiles[:s])
-		dataFiles = dataFiles[s:]
+	if groupCnt == 0 {
+		return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(fileCnt, concurrency, targetLimit)
 	}
-	return result, nil
+
+	sizes := mathutil.Divide2Batches(remaining, groupCnt)
+	for _, size := range sizes {
+		groups = append(groups, files[:size])
+		files = files[size:]
+	}
+	return groups, nil
 }

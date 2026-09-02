@@ -63,7 +63,13 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestRunMain(*testing.T) {
+func cleanupMainTestResources() {
+	memory.CleanupGlobalMemArbitratorForTest()
+}
+
+func TestRunMain(t *testing.T) {
+	t.Cleanup(cleanupMainTestResources)
+
 	var args []string
 	for _, arg := range os.Args {
 		switch {
@@ -83,6 +89,17 @@ func TestRunMain(*testing.T) {
 	}()
 
 	<-waitCh
+}
+
+func TestCleanupMainTestResourcesStopsGlobalMemArbitrator(t *testing.T) {
+	baseline := goleak.IgnoreCurrent()
+
+	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
+
+	cleanupMainTestResources()
+
+	require.NoError(t, goleak.Find(baseline))
 }
 
 func TestCalculateMemoryLimit(t *testing.T) {

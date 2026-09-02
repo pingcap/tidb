@@ -2264,7 +2264,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			continue
 		}
 
-		if len(privData) > 0 {
+		// Only touch mysql.global_priv when the statement carries a REQUIRE clause
+		// that maps to a global_priv value; otherwise ALTER USER would clobber the
+		// existing TLS requirements (SUBJECT/SAN/ISSUER/CIPHER) with an empty value.
+		// A token-issuer-only REQUIRE yields empty privData and is stored elsewhere.
+		if len(s.AuthTokenOrTLSOptions) > 0 && len(privData) > 0 {
 			sql := new(strings.Builder)
 			sqlescape.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			_, err := sqlExecutor.ExecuteInternal(ctx, sql.String())

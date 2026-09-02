@@ -21,8 +21,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -520,8 +522,17 @@ const (
 	// version283 backfills analyze default bucket and TopN global variables.
 	version283 = 283
 
-	// version284 materializes adaptive LIMIT scan as OFF for upgraded clusters when no persisted value exists.
+	// version284 migrate tidb_disable_txn_file (from TiDB-CSE) to tidb_enable_txn_file and inverts its value.
 	version284 = 284
+
+	// version285 creates materialized view maintenance system tables.
+	version285 = 285
+
+	// version286 adds the OPERATE VIEW static privilege.
+	version286 = 286
+
+	// version287 materializes adaptive LIMIT scan as OFF for upgraded clusters when no persisted value exists.
+	version287 = 287
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -535,7 +546,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version284
+var currentBootstrapVersion int64 = version287
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -724,6 +735,9 @@ var (
 		{version: version282, fn: upgradeToVer282},
 		{version: version283, fn: upgradeToVer283},
 		{version: version284, fn: upgradeToVer284},
+		{version: version285, fn: upgradeToVer285},
+		{version: version286, fn: upgradeToVer286},
+		{version: version287, fn: upgradeToVer287},
 	}
 )
 
@@ -2280,6 +2294,61 @@ func upgradeToVer283(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer284(s sessionapi.Session, _ int64) {
+	if kerneltype.IsClassic() {
+		return
+	}
+
+	const legacyVariable = "tidb_disable_txn_file"
+	// TODO: Delete the legacy variable after rolling upgrade and downgrade compatibility is no longer required.
+
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			failpoint.InjectCall("afterUpgradeToVer284Rollback", s)
+			logutil.BgLogger().Fatal("upgradeToVer284 error", zap.Error(err))
+			return
+		}
+		mustExecute(s, "COMMIT")
+		failpoint.InjectCall("afterUpgradeToVer284Commit", s)
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%? FOR UPDATE;", mysql.SystemDB, mysql.GlobalVariablesTable, legacyVariable)
+	if err != nil {
+		return
+	}
+	failpoint.InjectCall("afterUpgradeToVer284Read", s)
+	if len(rows) == 0 {
+		return
+	}
+
+	_, err = sqlexec.ExecSQL(ctx, s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable,
+		vardef.TiDBEnableTxnFile, variable.BoolToOnOff(!variable.TiDBOptOn(rows[0].GetString(0))))
+	if err != nil {
+		return
+	}
+	failpoint.InjectCall("afterUpgradeToVer284Replace", s)
+	failpoint.Inject("mockUpgradeToVer284Error", func() {
+		err = context.Canceled
+	})
+}
+
+func upgradeToVer285(s sessionapi.Session, _ int64) {
+	for _, tbl := range systemTablesOfMaterializedViewNextGenVersion {
+		doReentrantDDL(s, tbl.SQL)
+	}
+}
+
+func upgradeToVer286(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
+}
+
+func upgradeToVer287(s sessionapi.Session, _ int64) {
 	// Fresh clusters persist ON during initial bootstrap. Preserve old executor
 	// behavior for upgraded clusters without overwriting an explicit value.
 	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)

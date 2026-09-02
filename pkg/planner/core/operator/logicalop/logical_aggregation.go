@@ -456,8 +456,6 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
 // *************************** end implementation of logicalPlan interface ***************************
 
 // HasDistinct shows whether LogicalAggregation has functions with distinct.

@@ -317,6 +317,10 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
+	// TiDBQueryCopStoreLimit is used to limit TiKV cop request concurrency for each store within a single query.
+	// A value of 0 disables the limit.
+	TiDBQueryCopStoreLimit = "tidb_query_cop_store_limit"
+
 	// TiDBAnalyzeDistSQLScanConcurrency is the number of concurrent workers to scan regions to collect statistics (FMSketch, Samples).
 	// For auto analyze, the value is controlled by tidb_sysproc_scan_concurrency variable.
 	// This variable was introduced in v7.6.0 to separate the scan concurrency of ANALYZE operations from normal queries. See: https://github.com/pingcap/tidb/pull/48829
@@ -324,6 +328,10 @@ const (
 	// Starting from v7.6.0, this variable also controls the scan concurrency of index serial scans during ANALYZE. See: https://github.com/pingcap/tidb/pull/50639
 	// For versions earlier than v7.6.0, the scan concurrency of index serial scans during ANALYZE is controlled by the tidb_index_serial_scan_concurrency variable.
 	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
+
+	// TiDBAnalyzeStoreBatchSize is the maximum number of child Region tasks grouped with one main Region task
+	// in a store-batched Analyze request. 0 disables store batching for Analyze.
+	TiDBAnalyzeStoreBatchSize = "tidb_analyze_store_batch_size"
 
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
@@ -796,6 +804,10 @@ const (
 	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
 
+	// TiDBColumnarStorageEnabled is the cluster-level gate for adding TiFlash replicas
+	// when cse.columnar-store-type = "columnar" / "both".
+	TiDBColumnarStorageEnabled = "tidb_columnar_storage_enabled"
+
 	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.
 	TiDBSuperReadOnly = "tidb_super_read_only"
 
@@ -1029,7 +1041,8 @@ const (
 	TiDBOptUseInvisibleIndexes = "tidb_opt_use_invisible_indexes"
 	// TiDBAnalyzePartitionConcurrency is the number of concurrent workers to save statistics to the system tables.
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
-	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
+	// TiDBMergePartitionStatsConcurrency is deprecated. It is kept for backward compatibility
+	// but no longer affects behavior. Global stats always use the combined merge algorithm.
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
 	// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	TiDBEnableAsyncMergeGlobalStats = "tidb_enable_async_merge_global_stats"
@@ -1050,6 +1063,9 @@ const (
 
 	// TiDBEnablePlanReplayerContinuousCapture indicates whether to enable continuous capture
 	TiDBEnablePlanReplayerContinuousCapture = "tidb_enable_plan_replayer_continuous_capture"
+
+	// TiDBPlanReplayerFileRetentionTime indicates how long to retain non-capture plan replayer files.
+	TiDBPlanReplayerFileRetentionTime = "tidb_plan_replayer_file_retention_time"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
@@ -1143,12 +1159,21 @@ const (
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+	// TiDBEnableSharedLockUpgrade indicates whether shared locks are allowed to upgrade to exclusive locks
+	// during pessimistic locking.
+	TiDBEnableSharedLockUpgrade = "tidb_enable_shared_lock_upgrade"
 
 	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
 
 	// TiDBEnableCachePrepareStmt indicates whether to support cache prepare stmt in plan cache.
 	TiDBEnableCachePrepareStmt = "tidb_enable_cache_prepare_stmt"
+
+	// TiDBEnableTxnFile is used to control whether to enable file-based transaction feature.
+	TiDBEnableTxnFile = "tidb_enable_txn_file"
+
+	// TiDBTxnFileMinMutationSize is the minimum mutation size for using file-based transactions.
+	TiDBTxnFileMinMutationSize = "tidb_txn_file_min_mutation_size"
 )
 
 // TiDB vars that have only global scope
@@ -1244,6 +1269,21 @@ const (
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// The "exp" prefix in the following embedding system variables means experimental.
+	// TiDBExpEmbedJinaAIAPIKey is the API key to use when calling Jina embedding API.
+	TiDBExpEmbedJinaAIAPIKey = "tidb_exp_embed_jina_ai_api_key"
+	// TiDBExpEmbedOpenAIAPIKey is the API key to use when calling OpenAI-compatible embedding API.
+	TiDBExpEmbedOpenAIAPIKey = "tidb_exp_embed_openai_api_key"
+	// TiDBExpEmbedOpenAIAPIBase is the base URL to use when calling OpenAI-compatible embedding API.
+	TiDBExpEmbedOpenAIAPIBase = "tidb_exp_embed_openai_api_base"
+	// TiDBExpEmbedCohereAPIKey is the API key to use when calling Cohere embedding API.
+	TiDBExpEmbedCohereAPIKey = "tidb_exp_embed_cohere_api_key"
+	// TiDBExpEmbedHuggingFaceAPIKey is the API key to use when calling Hugging Face embedding API.
+	TiDBExpEmbedHuggingFaceAPIKey = "tidb_exp_embed_huggingface_api_key"
+	// TiDBExpEmbedNvidiaNIMAPIKey is the API key to use when calling NVIDIA NIM embedding API.
+	TiDBExpEmbedNvidiaNIMAPIKey = "tidb_exp_embed_nvidia_nim_api_key"
+	// TiDBExpEmbedGeminiAPIKey is the API key to use when calling Gemini embedding API.
+	TiDBExpEmbedGeminiAPIKey = "tidb_exp_embed_gemini_api_key"
 	// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
 	// It is very similar to the `tidb_build_stats_concurrency` variable, but it is used for the auto analyze feature.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
@@ -1458,7 +1498,9 @@ const (
 	DefIndexJoinBatchSize               = 25000
 	DefIndexLookupSize                  = 20000
 	DefDistSQLScanConcurrency           = 15
+	DefTiDBQueryCopStoreLimit           = 15
 	DefAnalyzeDistSQLScanConcurrency    = 4
+	DefTiDBAnalyzeStoreBatchSize        = 4
 	DefBuildStatsConcurrency            = 2
 	DefBuildSamplingStatsConcurrency    = 2
 	DefAutoAnalyzeRatio                 = 0.5
@@ -1526,6 +1568,7 @@ const (
 	DefInitChunkSize                    = 32
 	DefMinPagingSize                    = int(paging.MinPagingSize)
 	DefMaxPagingSize                    = int(paging.MinAllowedMaxPagingSize)
+	DefTiDBEmbedOpenAIAPIBase           = "https://api.openai.com/v1"
 	// DefPagingSizeBytes defaults to 0 (byte-budget paging disabled).
 	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
 	// is non-burstable (has limited burst).
@@ -1628,6 +1671,7 @@ const (
 	DefTiDBRedactLog                        = Off
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
+	DefTiDBColumnarStorageEnabled           = true // missing rows keep historical SET TIFLASH REPLICA behavior
 	DefTiDBShardAllocateStep                = math.MaxInt64
 	DefTiDBPointGetCache                    = false
 	DefTiDBEnableTelemetry                  = true
@@ -1743,23 +1787,22 @@ const (
 	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
 	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize                  int32  = 10240
-	MinDDLReorgBatchSize                  int32  = 32
-	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
-	MinExpensiveTxnTimeThreshold          uint64 = 60 // 60s
-	DefTiDBAutoBuildStatsConcurrency             = DefBuildStatsConcurrency
-	DefTiDBSysProcScanConcurrency                = DefAnalyzeDistSQLScanConcurrency
-	DefTiDBRcWriteCheckTs                        = false
-	DefTiDBForeignKeyChecks                      = true
-	DefTiDBForeignKeyCheckInSharedLock           = false
-	DefTiDBOptAdvancedJoinHint                   = true
-	DefTiDBAnalyzePartitionConcurrency           = 2
-	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
-	DefTiDBCostModelVer                          = 2
-	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20
-	DefTiDBMergePartitionStatsConcurrency        = 1
-	DefTiDBServerMemoryLimitGCTrigger            = 0.7
-	DefTiDBEnableGOGCTuner                       = true
+	MaxDDLReorgBatchSize                int32  = 10240
+	MinDDLReorgBatchSize                int32  = 32
+	MinExpensiveQueryTimeThreshold      uint64 = 10 // 10s
+	MinExpensiveTxnTimeThreshold        uint64 = 60 // 60s
+	DefTiDBAutoBuildStatsConcurrency           = DefBuildStatsConcurrency
+	DefTiDBSysProcScanConcurrency              = DefAnalyzeDistSQLScanConcurrency
+	DefTiDBRcWriteCheckTs                      = false
+	DefTiDBForeignKeyChecks                    = true
+	DefTiDBForeignKeyCheckInSharedLock         = false
+	DefTiDBOptAdvancedJoinHint                 = true
+	DefTiDBAnalyzePartitionConcurrency         = 2
+	DefTiDBOptRangeMaxSize                     = 64 * int64(size.MB) // 64 MB
+	DefTiDBCostModelVer                        = 2
+	DefTiDBServerMemoryLimitSessMinSize        = 128 << 20
+	DefTiDBServerMemoryLimitGCTrigger          = 0.7
+	DefTiDBEnableGOGCTuner                     = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold                 float64 = 0.6
 	DefTiDBGOGCMaxValue                               = 500
@@ -1772,6 +1815,7 @@ const (
 	DefTiDBEnableReusechunk                           = true
 	DefTiDBUseAlloc                                   = false
 	DefTiDBEnablePlanReplayerCapture                  = true
+	DefTiDBPlanReplayerFileRetentionTime              = 7 * 24 * time.Hour
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
 	DefTiDBTTLScanBatchSize                           = 500
@@ -1845,6 +1889,7 @@ const (
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
+	DefTiDBEnableSharedLockUpgrade                    = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 	DefTiDBAccelerateUserCreationUpdate               = false
@@ -1862,9 +1907,21 @@ const (
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
 	DefConnectAttrsSize             int64 = 4096
 	DefTiDBEnableConnectionEventLog       = false
+	// DefTiDBEnableTxnFile is the default value of `tidb_enable_txn_file`.
+	// Leaving `tikv-client.txn-chunk-writer-addr` empty disables file-based transactions for this TiDB instance.
+	// Apply it to every TiDB instance to disable the feature cluster-wide.
+	DefTiDBEnableTxnFile = false
+	// DefTiDBTxnFileMinMutationSize is 0, so the threshold defaults to `tikv-client.txn-file-min-mutation-size`.
+	DefTiDBTxnFileMinMutationSize = 0
+	// MinTiDBTxnFileMinMutationSize is the minimum valid nonzero value for `tidb_txn_file_min_mutation_size`.
+	MinTiDBTxnFileMinMutationSize = 1 << 20 // 1 MiB
 )
 
 const (
+	// MaxTiDBAnalyzeStoreBatchSize is the upper bound for child Region tasks in one Analyze store batch.
+	// The limit is conservative because tasks run serially and results stay buffered until finalization, so larger batches
+	// can increase RPC tail latency, timeout risk, and TiKV memory usage. It may be adjusted based on production observations.
+	MaxTiDBAnalyzeStoreBatchSize uint64 = 8
 	// MinTiDBAnalyzeDefaultNumBuckets is the lower bound for the default ANALYZE bucket count.
 	MinTiDBAnalyzeDefaultNumBuckets int64 = 1
 	// MaxTiDBAnalyzeDefaultNumBuckets is the upper bound for the default ANALYZE bucket count.
@@ -2002,8 +2059,18 @@ var (
 	ServiceScope                    = atomic.NewString("")
 	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI                 = atomic.NewString("")
-	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
-	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
+	EmbedJinaAPIKey                 = atomic.NewString("")
+	EmbedOpenAIAPIKey               = atomic.NewString("")
+	EmbedOpenAIAPIBase              = atomic.NewString("")
+	EmbedCohereAPIKey               = atomic.NewString("")
+	EmbedHuggingFaceAPIKey          = atomic.NewString("")
+	EmbedNvidiaNIMAPIKey            = atomic.NewString("")
+	EmbedGeminiAPIKey               = atomic.NewString("")
+	// EmbeddingConfigVersion invalidates cached embeddings when a dynamic
+	// provider credential or endpoint changes without putting secrets in cache keys.
+	EmbeddingConfigVersion = atomic.NewUint64(0)
+	IgnoreInlistPlanDigest = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
+	TxnEntrySizeLimit      = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
 	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))

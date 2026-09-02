@@ -368,6 +368,26 @@ func (e *baseSumDistinct4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext
 	return nil
 }
 
+func (e *baseSumDistinct4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4SumDistinctFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4SumDistinctFloat64(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseSumDistinct4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseSumDistinct4Float64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4SumDistinctFloat64)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4SumDistinctFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 type sum4PartialDistinctFloat64 struct {
 	baseSumDistinct4Float64
 }
@@ -443,6 +463,26 @@ func (e *baseSumDistinct4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext
 	}
 	chk.AppendMyDecimal(e.ordinal, sum)
 	return nil
+}
+
+func (e *baseSumDistinct4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4SumDistinctDecimal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4SumDistinctDecimal(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseSumDistinct4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseSumDistinct4Decimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4SumDistinctDecimal)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4SumDistinctDecimal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }
 
 type sum4PartialDistinct4Decimal struct {

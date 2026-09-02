@@ -20,8 +20,7 @@ import (
 	"net/url"
 	"strings"
 
-	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
-	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
+	osscredentials "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -52,6 +51,9 @@ const (
 	gcsEndpoint = "storage.googleapis.com"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
+	// Tencent COS supports both its legacy and current endpoint domains.
+	domainTencentcloudLegacy = "myqcloud.com"
+	domainTencentcloud       = "tencentcos.cn"
 )
 
 // NewS3Storage initialize a new s3 storage for metadata.
@@ -110,6 +112,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	cfg, err := config.LoadDefaultConfig(ctx, configOpts...)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if strings.Contains(qs.Endpoint, domainAliyun) {
+		cfg.Credentials = aws.NewCredentialsCache(&fallbackCredentialsProvider{
+			primary:  cfg.Credentials,
+			fallback: newOssRAMCredentialsProvider(),
+		})
 	}
 
 	// Handle HTTP client configuration
@@ -339,6 +347,10 @@ func isGCSS3Compatible(qs *backuppb.S3) bool {
 	return host == gcsEndpoint || strings.HasSuffix(host, "."+gcsEndpoint)
 }
 
+func isTencentCOSEndpoint(endpoint string) bool {
+	return strings.Contains(endpoint, domainTencentcloudLegacy) || strings.Contains(endpoint, domainTencentcloud)
+}
+
 // IsObjectLockEnabled checks whether the S3 bucket has Object Lock enabled.
 func IsObjectLockEnabled(svc S3API, options *backuppb.S3) bool {
 	input := &s3.GetObjectLockConfigurationInput{
@@ -372,41 +384,68 @@ func NewS3StorageForTest(svc S3API, options *backuppb.S3, accessRec *recording.A
 	)
 }
 
-// auto access without ak / sk.
+// autoNewCred returns credentials explicitly configured in the backend or
+// Tencent CVM role credentials for COS endpoints. Other credentials are
+// resolved by the AWS SDK's default credential chain.
 func autoNewCred(qs *backuppb.S3) (cred aws.CredentialsProvider, err error) {
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
 		return credentials.NewStaticCredentialsProvider(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken), nil
 	}
-	endpoint := qs.Endpoint
-	// if endpoint is empty,return no error and run default(aws) follow.
-	if endpoint == "" {
-		return nil, nil
+	if isTencentCOSEndpoint(qs.Endpoint) {
+		return createTencentCOSCred()
 	}
-	// if it Contains 'aliyuncs', fetch the sts token.
-	if strings.Contains(endpoint, domainAliyun) {
-		return createOssRAMCred()
-	}
-	// other case ,return no error and run default(aws) follow.
 	return nil, nil
 }
 
-// Object Storage Service (OSS) provided by alibaba cloud
-func createOssRAMCred() (aws.CredentialsProvider, error) {
-	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
+type fallbackCredentialsProvider struct {
+	primary  aws.CredentialsProvider
+	fallback aws.CredentialsProvider
+}
+
+func (p *fallbackCredentialsProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
+	var primaryErr error
+	if p.primary != nil {
+		cred, err := p.primary.Retrieve(ctx)
+		if err == nil {
+			return cred, nil
+		}
+		primaryErr = err
+	}
+	cred, err := p.fallback.Retrieve(ctx)
+	if err != nil && primaryErr != nil {
+		return aws.Credentials{}, errors.Annotatef(err, "AWS credential chain failed (%v), and Alibaba Cloud ECS RAM fallback failed", primaryErr)
+	}
+	return cred, err
+}
+
+// ossRAMCredentialsProvider retrieves credentials from the Alibaba Cloud ECS
+// instance metadata service. It is kept behind fallbackCredentialsProvider so
+// metadata is queried only after the complete AWS credential chain fails.
+type ossRAMCredentialsProvider struct {
+	provider osscredentials.CredentialsProvider
+}
+
+func newOssRAMCredentialsProvider() aws.CredentialsProvider {
+	// The outer AWS CredentialsCache refreshes this provider based on Expires,
+	// so avoid adding a second credential cache here.
+	return &ossRAMCredentialsProvider{provider: osscredentials.NewEcsRoleCredentialsProviderWithoutRefresh()}
+}
+
+func (p *ossRAMCredentialsProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
+	cred, err := p.provider.GetCredentials(ctx)
 	if err != nil {
 		log.Warn("failed to get aliyun ram credential", zap.Error(err))
-		return nil, nil
+		return aws.Credentials{}, errors.Trace(err)
 	}
-	var aliCred, ok = cred.(*alicred.StsTokenCredential)
-	if !ok {
-		return nil, errors.Errorf("invalid credential type %T", cred)
+	awsCred := aws.Credentials{
+		AccessKeyID:     cred.AccessKeyID,
+		SecretAccessKey: cred.AccessKeySecret,
+		SessionToken:    cred.SecurityToken,
+		Source:          "AlibabaCloudECSRAMRole",
 	}
-	// In AWS SDK v2, we create a static credentials provider with the STS token
-	// The credential chain (env vars, shared credentials, etc.) is already handled
-	// by the LoadDefaultConfig process, so we just return the STS credentials
-	return credentials.NewStaticCredentialsProvider(
-		aliCred.AccessKeyId,
-		aliCred.AccessKeySecret,
-		aliCred.AccessKeyStsToken,
-	), nil
+	if cred.Expires != nil {
+		awsCred.CanExpire = true
+		awsCred.Expires = *cred.Expires
+	}
+	return awsCred, nil
 }

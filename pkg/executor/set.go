@@ -179,14 +179,16 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if auditPlugin.OnGlobalVariableEvent != nil {
-				auditPlugin.OnGlobalVariableEvent(context.Background(), e.Ctx().GetSessionVars(), name, valStr)
+				auditPlugin.OnGlobalVariableEvent(
+					context.Background(),
+					e.Ctx().GetSessionVars(),
+					name,
+					redactSysVarValue(name, valStr),
+				)
 			}
 			return nil
 		})
-		showValStr := valStr
-		if name == vardef.TiDBCloudStorageURI {
-			showValStr = ast.RedactURL(showValStr)
-		}
+		showValStr := redactSysVarValue(name, valStr)
 		logstr := "set global var"
 		if v.IsInstance {
 			logstr = "set instance var"
@@ -279,6 +281,29 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	// autocommit, timezone, etc
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
+}
+
+func redactSysVarValue(name, value string) string {
+	switch strings.ToLower(name) {
+	case vardef.TiDBCloudStorageURI:
+		return ast.RedactURL(value)
+	case vardef.TiDBExpEmbedJinaAIAPIKey,
+		vardef.TiDBExpEmbedOpenAIAPIKey,
+		vardef.TiDBExpEmbedCohereAPIKey,
+		vardef.TiDBExpEmbedHuggingFaceAPIKey,
+		vardef.TiDBExpEmbedNvidiaNIMAPIKey,
+		vardef.TiDBExpEmbedGeminiAPIKey:
+		return redactAPIKey(value)
+	default:
+		return value
+	}
+}
+
+func redactAPIKey(value string) string {
+	if value == "" {
+		return ""
+	}
+	return "******"
 }
 
 func notifyExternalWorkloadGCLifeTime(ctx context.Context, sctx sessionctx.Context, setValue string) {

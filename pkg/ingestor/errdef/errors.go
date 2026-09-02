@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// errors of ingest API
+// Errors used by ingestor components.
 var (
 	ErrNoLeader              = errors.Normalize("region has no leader, region '%d'", errors.RFCCodeText("KV:ErrNoLeader"))
 	ErrKVEpochNotMatch       = errors.Normalize("epoch not match", errors.RFCCodeText("Ingest:EpochNotMatch"))
@@ -32,6 +32,7 @@ var (
 	ErrKVDiskFull            = errors.Normalize("store disk full", errors.RFCCodeText("Ingest:StoreDiskFull"))
 	ErrKVIngestFailed        = errors.Normalize("ingest tikv failed", errors.RFCCodeText("Ingest:ErrKVIngestFailed"))
 	ErrKVRaftProposalDropped = errors.Normalize("raft proposal dropped", errors.RFCCodeText("Ingest:ErrKVRaftProposalDropped"))
+	ErrTooManyDataFiles      = errors.Normalize("cannot merge %d data files with concurrency %d into at most %d target files", errors.RFCCodeText("GlobalSort:TooManyDataFiles"))
 )
 
 // IsKVDiskFullError returns whether err is caused by TiKV reporting disk full.

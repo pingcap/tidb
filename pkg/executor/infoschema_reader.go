@@ -63,7 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -386,6 +386,16 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 	if len(chunkRows) == 0 {
 		return nil
 	}
+	var filter privileges.UserAttrFilter
+	viewer := sctx.GetSessionVars().User
+	if viewer != nil {
+		filter = privileges.NewUserAttrFilter(
+			sctx.GetSessionVars().ActiveRoles,
+			viewer.Username,
+			viewer.Hostname,
+			privilege.GetPrivilegeManager(sctx),
+		)
+	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
 		if chunkRow.Len() != 3 {
@@ -393,6 +403,9 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		}
 		user := chunkRow.GetString(0)
 		host := chunkRow.GetString(1)
+		if filter != nil && !filter.Visible(user, host) {
+			continue
+		}
 		// Compatible with results in MySQL
 		var attribute any
 		if attribute = chunkRow.GetString(2); attribute == "" {
@@ -630,17 +643,31 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls []*model.TableInfo) {
-	needUpdate := false
+// buildTableSizeStats reads the statistics needed to fill the size-related
+// columns of information_schema.tables and .partitions for the given tables.
+// It returns nil when no such column is requested, in which case the getters
+// report zero and no system table is read. When only TABLE_ROWS is requested it
+// reads just mysql.stats_meta and skips the more expensive mysql.stats_histograms;
+// see https://github.com/pingcap/tidb/issues/69818.
+func (e *memtableRetriever) buildTableSizeStats(sctx sessionctx.Context, tbls []*model.TableInfo) *statsStorage.TableSizeStats {
+	needRowCount := false
+	needColLength := false
+findCols:
 	for _, col := range e.columns {
-		// only the following columns need stats cache.
-		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
-			needUpdate = true
-			break
+		// only the following columns need statistics.
+		switch col.Name.O {
+		case "TABLE_ROWS":
+			needRowCount = true
+		case "AVG_ROW_LENGTH", "DATA_LENGTH", "INDEX_LENGTH":
+			// The size columns are derived from both the row counts and the
+			// column lengths.
+			needRowCount = true
+			needColLength = true
+			break findCols
 		}
 	}
-	if !needUpdate {
-		return
+	if !needRowCount {
+		return nil
 	}
 
 	tableIDs := make([]int64, 0, len(tbls))
@@ -650,16 +677,21 @@ func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls
 				tableIDs = append(tableIDs, def.ID)
 			}
 		}
+		// Even for partitioned tables, we must read the stats for the main table
+		// itself. This is necessary because the global index length from the
+		// table also needs to be included.
+		// For further details, see: https://github.com/pingcap/tidb/issues/54173
 		tableIDs = append(tableIDs, tbl.ID)
 	}
-	// Even for partitioned tables, we must update the stats cache for the main table itself.
-	// This is necessary because the global index length from the table also needs to be included.
-	// For further details, see: https://github.com/pingcap/tidb/issues/54173
-	err := cache.TableRowStatsCache.UpdateByID(sctx, tableIDs...)
+	statsSizes, err := statsStorage.GetTableSizeStats(sctx, needColLength, tableIDs...)
 	if err != nil {
-		logutil.BgLogger().Warn("cannot update stats cache for tables", zap.Error(err))
+		// A statistics read failure only affects the size-related columns, so we
+		// keep serving the query with zeroed sizes rather than failing it.
+		logutil.BgLogger().Warn("cannot read stats for tables", zap.Error(err))
+		intest.AssertNoError(err)
+		return nil
 	}
-	intest.AssertNoError(err)
+	return statsSizes
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
@@ -668,6 +700,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 	checker privilege.Manager,
 	schema ast.CIStr,
 	table *model.TableInfo,
+	statsSizes *statsStorage.TableSizeStats,
 	rows [][]types.Datum,
 ) ([][]types.Datum, error) {
 	collation := table.Collate
@@ -715,7 +748,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 		}
 		storageClass := table.StorageClassString()
 
-		rowCount, avgRowLength, dataLength, indexLength := cache.TableRowStatsCache.EstimateDataLength(table)
+		rowCount, avgRowLength, dataLength, indexLength := statsSizes.EstimateDataLength(table)
 
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
@@ -901,13 +934,13 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.updateStatsCacheIfNeed(sctx, tables)
+	statsSizes := e.buildTableSizeStats(sctx, tables)
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
 	}
 	for i, table := range tables {
-		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows)
+		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, statsSizes, rows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1309,7 +1342,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.updateStatsCacheIfNeed(sctx, tables)
+	statsSizes := e.buildTableSizeStats(sctx, tables)
 	for i, table := range tables {
 		schema := schemas[i]
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
@@ -1328,8 +1361,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 
 		var rowCount, dataLength, indexLength uint64
 		if table.GetPartitionInfo() == nil {
-			rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
-			dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, table.ID, rowCount)
+			rowCount = statsSizes.GetTableRows(table.ID)
+			dataLength, indexLength = statsSizes.GetDataAndIndexLength(table, table.ID, rowCount)
 			avgRowLength := uint64(0)
 			if rowCount != 0 {
 				avgRowLength = dataLength / rowCount
@@ -1376,8 +1409,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				if !ex.HasPartition(pi.Name.L) || !ex.HasPartitionID(pi.ID) {
 					continue
 				}
-				rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)
-				dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, pi.ID, rowCount)
+				rowCount = statsSizes.GetTableRows(pi.ID)
+				dataLength, indexLength = statsSizes.GetDataAndIndexLength(table, pi.ID, rowCount)
 				avgRowLength := uint64(0)
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
@@ -4167,7 +4200,7 @@ func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err
 
 	if meta != nil {
 		keyspaceName = meta.Name
-		keyspaceID = fmt.Sprintf("%d", meta.Id)
+		keyspaceID = fmt.Sprintf("%d", meta.GetId())
 		if len(meta.Config) > 0 {
 			keyspaceCfg, err = json.Marshal(meta.Config)
 			if err != nil {

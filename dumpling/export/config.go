@@ -65,6 +65,8 @@ const (
 	flagCsvNullValue             = "csv-null-value"
 	flagSQL                      = "sql"
 	flagFilter                   = "filter"
+	flagColumnFilter             = "column-filter"
+	flagColumnFilterFile         = "column-filter-file"
 	flagCaseSensitive            = "case-sensitive"
 	flagDumpEmptyDatabase        = "dump-empty-database"
 	flagTidbMemQuotaQuery        = "tidb-mem-quota-query"
@@ -178,6 +180,8 @@ type Config struct {
 	Databases         []string
 
 	TableFilter         filter.Filter `json:"-"`
+	columnFilter        columnFilterConfig
+	columnProjection    map[tableName]columnProjection
 	Where               string
 	FileType            string
 	ServerInfo          version.ServerInfo
@@ -378,6 +382,12 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagSQL, "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
 	_ = flags.MarkHidden(flagSQL)
 	flags.StringSliceP(flagFilter, "f", []string{"*.*", DefaultTableFilter}, "filter to select which tables to dump")
+	flags.StringArray(
+		flagColumnFilter,
+		nil,
+		`Inline TOML column filter rule for data output projection. Can be specified multiple times. Example: --column-filter '{ matcher = ["db.tbl"], columns = ["*", "!col"] }'. Unmatched tables are dumped with all columns; column rules are case-insensitive. Mutually exclusive with --column-filter-file. Requires --no-schemas/-m and cannot be used with --sql`,
+	)
+	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data output projection. Unmatched tables are dumped with all columns; column rules are case-insensitive. Requires --no-schemas/-m and cannot be used with --sql")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
 	flags.Uint64(flagTidbMemQuotaQuery, UnspecifiedSize, "The maximum memory limit for a single SQL statement, in bytes.")
@@ -601,6 +611,34 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	columnFilters, err := flags.GetStringArray(flagColumnFilter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	columnFilterFile, err := flags.GetString(flagColumnFilterFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(columnFilters) > 0 && strings.TrimSpace(columnFilterFile) != "" {
+		return errors.New("can't specify both --column-filter and --column-filter-file at the same time")
+	}
+	if len(columnFilters) > 0 {
+		if err = validateColumnFilterOptions(conf, flagColumnFilter); err != nil {
+			return errors.Trace(err)
+		}
+		conf.columnFilter, err = parseColumnFilterArgs(columnFilters, caseSensitive)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else if strings.TrimSpace(columnFilterFile) != "" {
+		if err = validateColumnFilterOptions(conf, flagColumnFilterFile); err != nil {
+			return errors.Trace(err)
+		}
+		conf.columnFilter, err = parseColumnFilterConfig(columnFilterFile, caseSensitive)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	outputFilenameFormat, err := flags.GetString(flagOutputFilenameTemplate)
 	if err != nil {
 		return errors.Trace(err)
@@ -707,6 +745,16 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+func validateColumnFilterOptions(conf *Config, flagName string) error {
+	if conf.SQL != "" {
+		return errors.Errorf("can't specify both --sql and --%s at the same time", flagName)
+	}
+	if !conf.NoSchemas {
+		return errors.Errorf("--%s requires --no-schemas/-m", flagName)
+	}
 	return nil
 }
 

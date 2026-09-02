@@ -4,6 +4,8 @@ package export
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/docker/go-units"
@@ -54,6 +56,226 @@ func TestGetConfTables(t *testing.T) {
 	actualDBTables, err := GetConfTables(tablesList)
 	require.NoError(t, err)
 	require.Equal(t, expectedDBTables, actualDBTables)
+}
+
+func TestColumnFilters(t *testing.T) {
+	columnFilter := columnFilterConfig{
+		Filters: []columnFilterRule{
+			{Matcher: []string{"db1.*"}, Columns: []string{"*", "!c*"}},
+			{Matcher: []string{"db1.t1"}, Columns: []string{"c2"}},
+			{Matcher: []string{"db1.t2"}, Columns: []string{"*", "!c3"}},
+		},
+	}
+	require.NoError(t, columnFilter.compileForOption(false, flagColumnFilterFile))
+
+	selectedFields, selectedIndexes, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3", "d"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"C2", "d"}, selectedFields)
+	require.Equal(t, []int{1, 3}, selectedIndexes)
+
+	selectedFields, selectedIndexes, err = columnFilter.applyToColumns("db2", "t1", []string{"c1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c1"}, selectedFields)
+	require.Equal(t, []int{0}, selectedIndexes)
+
+	selectedFields, selectedIndexes, err = columnFilter.applyToColumns("db1", "t2", []string{"c1", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c1"}, selectedFields)
+	require.Equal(t, []int{0}, selectedIndexes)
+
+	columnFilter = columnFilterConfig{
+		Filters: []columnFilterRule{
+			{Matcher: []string{"db1.t1"}},
+		},
+	}
+	err = columnFilter.compileForOption(false, flagColumnFilterFile)
+	require.ErrorContains(t, err, "--column-filter-file filter 0 requires at least one column rule")
+}
+
+func TestParseColumnFilterFile(t *testing.T) {
+	path := writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db1.t1", "db2.t2"]
+columns = ["c1", "C2"]
+`)
+	columnFilter, err := parseColumnFilterConfig(path, false)
+	require.NoError(t, err)
+	selectedFields, selectedIndexes, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c1", "C2"}, selectedFields)
+	require.Equal(t, []int{0, 1}, selectedIndexes)
+
+	columnFilter, err = parseColumnFilterConfig(path, true)
+	require.NoError(t, err)
+	selectedFields, selectedIndexes, err = columnFilter.applyToColumns("DB1", "T1", []string{"c1", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c1", "c3"}, selectedFields)
+	require.Equal(t, []int{0, 1}, selectedIndexes)
+
+	path = writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db.t"]
+columns = ["/unterminated"]
+`)
+	_, err = parseColumnFilterConfig(path, false)
+	require.ErrorContains(t, err, "failed to parse --column-filter-file filter 0 columns")
+
+	path = writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db.t"]
+colums = ["*"]
+`)
+	_, err = parseColumnFilterConfig(path, false)
+	require.ErrorContains(t, err, "--column-filter-file contains unknown TOML keys: filters.colums")
+
+	for _, content := range []string{
+		`
+[[filters]]
+matcher = ["db.t"]
+`,
+		`
+[[filters]]
+matcher = ["db.t"]
+columns = []
+`,
+	} {
+		path = writeColumnFilterFileForTest(t, content)
+		_, err = parseColumnFilterConfig(path, false)
+		require.ErrorContains(t, err, "--column-filter-file filter 0 requires at least one column rule")
+	}
+}
+
+func TestParseColumnFilterFileFlag(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t, "--no-schemas")
+	require.Empty(t, conf.columnFilter.Filters)
+
+	path := writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db1.t1"]
+columns = ["*", "!c1", "!c2"]
+
+[[filters]]
+matcher = ["db2.t2"]
+columns = ["*", "!c3"]
+`)
+	conf = parseConfigFromArgsForTest(t,
+		"--no-schemas",
+		"--column-filter-file", path,
+	)
+	selectedFields, selectedIndexes, err := conf.columnFilter.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c3"}, selectedFields)
+	require.Equal(t, []int{2}, selectedIndexes)
+
+	_, err = parseConfigFromArgsForTestWithErr(t, "--column-filter-file", path)
+	require.ErrorContains(t, err, "--column-filter-file requires --no-schemas/-m")
+
+	_, err = parseConfigFromArgsForTestWithErr(t,
+		"--no-schemas",
+		"--column-filter-file", path,
+		"--sql", "select * from t",
+	)
+	require.ErrorContains(t, err, "can't specify both --sql and --column-filter-file at the same time")
+}
+
+func TestParseColumnFilterFlag(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db1.t1"], columns = ["*", "!c1", "!c2"] }`,
+		"--column-filter", `{ matcher = ["db2.t2"], columns = ["c3"] }`,
+	)
+	selectedFields, selectedIndexes, err := conf.columnFilter.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c3"}, selectedFields)
+	require.Equal(t, []int{2}, selectedIndexes)
+
+	selectedFields, selectedIndexes, err = conf.columnFilter.applyToColumns("db2", "t2", []string{"c1", "c2", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c3"}, selectedFields)
+	require.Equal(t, []int{2}, selectedIndexes)
+
+	_, err = parseConfigFromArgsForTestWithErr(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db.t"], columns = ["/unterminated"] }`,
+	)
+	require.ErrorContains(t, err, "failed to parse --column-filter filter 0 columns")
+
+	_, err = parseConfigFromArgsForTestWithErr(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db.t"], colums = ["*"] }`,
+	)
+	require.ErrorContains(t, err, "--column-filter contains unknown TOML keys: filter.colums")
+
+	for _, arg := range []string{
+		`{ matcher = ["db.t"] }`,
+		`{ matcher = ["db.t"], columns = [] }`,
+	} {
+		_, err = parseConfigFromArgsForTestWithErr(t,
+			"--no-schemas",
+			"--column-filter", arg,
+		)
+		require.ErrorContains(t, err, "--column-filter filter 0 requires at least one column rule")
+	}
+
+	_, err = parseConfigFromArgsForTestWithErr(t,
+		"--column-filter", `{ matcher = ["db.t"], columns = ["*"] }`,
+	)
+	require.ErrorContains(t, err, "--column-filter requires --no-schemas/-m")
+
+	_, err = parseConfigFromArgsForTestWithErr(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db.t"], columns = ["*"] }`,
+		"--sql", "select * from t",
+	)
+	require.ErrorContains(t, err, "can't specify both --sql and --column-filter at the same time")
+}
+
+func TestColumnFilterConflict(t *testing.T) {
+	path := writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db.t"]
+columns = ["*"]
+`)
+	_, err := parseConfigFromArgsForTestWithErr(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db.t"], columns = ["*"] }`,
+		"--column-filter-file", path,
+	)
+	require.ErrorContains(t, err, "can't specify both --column-filter and --column-filter-file at the same time")
+}
+
+func TestColumnFilterOptions(t *testing.T) {
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	require.NoError(t, validateColumnFilterOptions(conf, flagColumnFilterFile))
+
+	conf = DefaultConfig()
+	conf.NoSchemas = true
+	conf.SQL = "select * from t"
+	require.ErrorContains(
+		t,
+		validateColumnFilterOptions(conf, flagColumnFilterFile),
+		"can't specify both --sql and --column-filter-file at the same time",
+	)
+
+	conf = DefaultConfig()
+	require.ErrorContains(t, validateColumnFilterOptions(conf, flagColumnFilterFile), "--column-filter-file requires --no-schemas/-m")
+}
+
+func writeColumnFilterFileForTest(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "column-filter.toml")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
+
+func newColumnFilterConfigForTest(t *testing.T, filters ...columnFilterRule) columnFilterConfig {
+	t.Helper()
+	columnFilter := columnFilterConfig{
+		Filters: filters,
+	}
+	require.NoError(t, columnFilter.compileForOption(false, flagColumnFilterFile))
+	return columnFilter
 }
 
 func TestParseParquetDefaultFlags(t *testing.T) {

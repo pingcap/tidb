@@ -27,6 +27,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -51,6 +52,49 @@ import (
 	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
+
+type fakeExternalWorkloadManager struct {
+	role         config.ExternalWorkloadRole
+	updatedValue *bool
+}
+
+func (m *fakeExternalWorkloadManager) Close() error { return nil }
+func (m *fakeExternalWorkloadManager) Role() config.ExternalWorkloadRole {
+	return m.role
+}
+func (*fakeExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
+func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context, time.Duration) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) AbortGCV2(context.Context) error { return nil }
+func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, time.Duration) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.Duration) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RegisterTTLTableInfo(context.Context, int64, bool) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) DeleteTTLTableInfo(context.Context, int64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleTTLTask(context.Context, uint64) error {
+	return nil
+}
+func (m *fakeExternalWorkloadManager) UpdateTTLJobEnable(_ context.Context, ttlJobEnable bool) error {
+	m.updatedValue = &ttlJobEnable
+	return nil
+}
+func (*fakeExternalWorkloadManager) RegisterAutoAnalyze(context.Context, uint64) error {
+	return nil
+}
+func (*fakeExternalWorkloadManager) RecycleAutoAnalyze(context.Context, uint64) error {
+	return nil
+}
 
 func TestInfo(t *testing.T) {
 	t.Skip("TestInfo will hang currently, it should be fixed later")
@@ -219,6 +263,44 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	dom.Close()
 	isClose = dom.isClose()
 	require.True(t, isClose)
+}
+
+func TestUpdateExternalWorkloadTTLJobEnableOnlyFromMaster(t *testing.T) {
+	dom := NewMockDomain()
+	master := &fakeExternalWorkloadManager{role: config.RoleMaster}
+	dom.SetExternalWorkloadManager(master)
+	require.NoError(t, dom.updateExternalWorkloadTTLJobEnable(context.Background(), false))
+	require.NotNil(t, master.updatedValue)
+	require.False(t, *master.updatedValue)
+
+	ttlWorker := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
+	dom.SetExternalWorkloadManager(ttlWorker)
+	require.NoError(t, dom.updateExternalWorkloadTTLJobEnable(context.Background(), true))
+	require.Nil(t, ttlWorker.updatedValue)
+}
+
+func TestShouldStartTTLJobManagerWithExternalWorkloadRole(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	dom := NewMockDomain()
+	require.True(t, dom.shouldStartTTLJobManager())
+
+	dom.SetExternalWorkloadManager(&fakeExternalWorkloadManager{role: config.RoleMaster})
+	require.False(t, dom.shouldStartTTLJobManager())
+
+	dom.SetExternalWorkloadManager(&fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker})
+	require.True(t, dom.shouldStartTTLJobManager())
+
+	dom.SetExternalWorkloadManager(nil)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.ExternalWorkload.Enable = true
+		conf.ExternalWorkload.Role = config.RoleMaster
+	})
+	require.False(t, dom.shouldStartTTLJobManager())
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.ExternalWorkload.Role = config.RoleTTLTaskWorker
+	})
+	require.False(t, dom.shouldStartTTLJobManager())
 }
 
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.

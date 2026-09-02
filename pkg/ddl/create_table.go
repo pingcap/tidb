@@ -56,9 +56,15 @@ import (
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args *model.CreateTableArgs) (*model.TableInfo, error) {
+func createTable(w *worker, jobCtx *jobContext, job *model.Job, r autoid.Requirement, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
+
+	// Create table ... / Create table like ... / BR BatchCreateTableWithInfo need to check whether
+	// columnar storage is enabled or not.
+	if err := w.checkCreateTableColumnarStorage(job, tbInfo); err != nil {
+		return tbInfo, errors.Trace(err)
+	}
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name.L)
@@ -231,7 +237,7 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
-	tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+	tbInfo, err = createTable(w, jobCtx, job, &asAutoIDRequirement{
 		store:     w.store,
 		autoidCli: w.autoidCli,
 	}, args)
@@ -249,6 +255,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
+	if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+		return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+	}
+
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, errors.Trace(err)
@@ -262,7 +272,7 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
 		// public state.
 		// when `br` restores table, the state of `tbInfo` will be public.
-		tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+		tbInfo, err = createTable(w, jobCtx, job, &asAutoIDRequirement{
 			store:     w.store,
 			autoidCli: w.autoidCli,
 		}, args)
@@ -292,6 +302,9 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+		if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
 		}
 
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -330,7 +343,7 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			}
 			tableInfos = append(tableInfos, tableInfo)
 		} else {
-			tbInfo, err := createTable(jobCtx, stubJob, &asAutoIDRequirement{
+			tbInfo, err := createTable(w, jobCtx, stubJob, &asAutoIDRequirement{
 				store:     w.store,
 				autoidCli: w.autoidCli,
 			}, tblArgs)
@@ -352,11 +365,39 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			return ver, errors.Trace(err)
 		}
 	}
+	if err = w.registerTTLTablesToExternalWorkload(jobCtx.ctx, job, tableInfos); err != nil {
+		return ver, err
+	}
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, tableInfos)
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) registerTTLTablesToExternalWorkload(
+	ctx context.Context,
+	job *model.Job,
+	tableInfos []*model.TableInfo,
+) error {
+	registeredTTLTableIDs := make([]int64, 0, len(tableInfos))
+	for i := range tableInfos {
+		if err := w.registerTTLTableToExternalWorkload(ctx, tableInfos[i]); err != nil {
+			for j := len(registeredTTLTableIDs) - 1; j >= 0; j-- {
+				compensateTableID := registeredTTLTableIDs[j]
+				if compensateErr := w.deleteTTLTableFromExternalWorkload(ctx, compensateTableID); compensateErr != nil {
+					logutil.DDLLogger().Warn("failed to roll back TTL table registration in external workload controller",
+						zap.Int64("tableID", compensateTableID),
+						zap.Error(compensateErr))
+				}
+			}
+			return cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+		if tableInfos[i] != nil && tableInfos[i].TTLInfo != nil && tableInfos[i].TTLInfo.Enable {
+			registeredTTLTableIDs = append(registeredTTLTableIDs, tableInfos[i].ID)
+		}
+	}
+	return nil
 }
 
 func createTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
@@ -558,6 +599,9 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
 					return errors.Trace(err)
 				}
+				if err := checkEmbedTextGeneratedColumn(colDef.Name.Name.L, option.Expr, option.Stored); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 		if containsColumnOption(colDef, ast.ColumnOptionAutoIncrement) {
@@ -596,6 +640,25 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 		colName := colDef.Name.Name.L
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
 			return errors.Trace(err)
+		}
+	}
+
+	embedTextCols := make(map[string]struct{})
+	for _, colDef := range colDefs {
+		for _, option := range colDef.Options {
+			if option.Tp == ast.ColumnOptionGenerated && expression.IsEmbedTextFuncCall(option.Expr) {
+				embedTextCols[colDef.Name.Name.L] = struct{}{}
+			}
+		}
+	}
+	for colName, colInfo := range colName2Generation {
+		if !colInfo.generated {
+			continue
+		}
+		for depCol := range colInfo.dependences {
+			if _, ok := embedTextCols[depCol]; ok {
+				return embedTextDependencyErr(colName, depCol)
+			}
 		}
 	}
 	return nil

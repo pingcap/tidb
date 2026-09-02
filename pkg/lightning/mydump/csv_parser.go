@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -50,12 +49,11 @@ type CSVParser struct {
 	blockParser
 	cfg *config.CSVConfig
 
-	comma          []byte
-	quote          []byte
-	newLine        []byte
-	startingBy     []byte
-	escapedBy      string
-	unescapeRegexp *regexp.Regexp
+	comma      []byte
+	quote      []byte
+	newLine    []byte
+	startingBy []byte
+	escapedBy  string
 
 	charsetConvertor *CharsetConvertor
 	// These variables are used with IndexAnyByte to search a byte slice for the
@@ -144,7 +142,6 @@ func NewCSVParser(
 	}
 
 	escFlavor := escapeFlavorNone
-	var r *regexp.Regexp
 	if len(cfg.FieldsEscapedBy) > 0 {
 		escFlavor = escapeFlavorMySQL
 		quoteStopSet = append(quoteStopSet, cfg.FieldsEscapedBy[0])
@@ -152,10 +149,6 @@ func NewCSVParser(
 		// we need special treatment of the NULL value \N, used by MySQL.
 		if !cfg.NotNull && slices.Contains(cfg.FieldNullDefinedBy, cfg.FieldsEscapedBy+`N`) {
 			escFlavor = escapeFlavorMySQLWithNull
-		}
-		r, err = regexp.Compile(`(?s)` + regexp.QuoteMeta(cfg.FieldsEscapedBy) + `.`)
-		if err != nil {
-			return nil, errors.Trace(err)
 		}
 	}
 	metrics, _ := metric.FromContext(ctx)
@@ -168,7 +161,6 @@ func NewCSVParser(
 		newLine:           []byte(lineTerminator),
 		startingBy:        []byte(cfg.LinesStartingBy),
 		escapedBy:         cfg.FieldsEscapedBy,
-		unescapeRegexp:    r,
 		escFlavor:         escFlavor,
 		quoteByteSet:      makeByteSet(quoteStopSet),
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
@@ -210,7 +202,7 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 		return input.content, true, nil
 	}
 	if len(parser.escapedBy) > 0 {
-		unescaped = unescape(unescaped, "", parser.escFlavor, parser.escapedBy[0], parser.unescapeRegexp)
+		unescaped = unescape(unescaped, "", parser.escFlavor, parser.escapedBy[0])
 	}
 	if !(len(parser.quote) > 0 && parser.quotedNullIsText && input.quoted) {
 		// this branch represents "quote is not configured" or "quoted null is null" or "this field has no quote"

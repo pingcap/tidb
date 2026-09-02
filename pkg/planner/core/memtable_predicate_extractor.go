@@ -383,22 +383,25 @@ func (helper *extractHelper) extractLikePatternCol(
 			continue
 		}
 
-		var canBuildPattern bool
+		var canBuildPattern, isPrefilter bool
 		var pattern string
 		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
 		if fn.FuncName.L == ast.LogicOr && !toLower {
-			canBuildPattern, pattern = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern, isPrefilter = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern, isPrefilter = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		}
 		if canBuildPattern && toLower {
 			pattern = strings.ToLower(pattern)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
-		} else {
+		}
+		// A prefilter narrows the scan but is not exactly equivalent to the
+		// predicate, so it is pushed down *and* kept for a scalar recheck.
+		if !canBuildPattern || isPrefilter {
 			remained = append(remained, expr)
 		}
 	}
@@ -411,40 +414,51 @@ func (helper extractHelper) extractOrLikePattern(
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	predicates := expression.SplitDNFItems(orFunc)
 	if len(predicates) == 0 {
-		return false, ""
+		return false, "", false
 	}
 
 	patternBuilder := make([]string, 0, len(predicates))
 	for _, predicate := range predicates {
 		fn, ok := predicate.(*expression.ScalarFunction)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
 
-		ok, partPattern := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+		ok, partPattern, partIsPrefilter := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
+		// One inexact branch makes the whole disjunction inexact.
+		isPrefilter = isPrefilter || partIsPrefilter
 		patternBuilder = append(patternBuilder, partPattern)
 	}
-	return true, strings.Join(patternBuilder, "|")
+	return true, strings.Join(patternBuilder, "|"), isPrefilter
 }
 
+// extractLikePattern builds the pushed-down pattern for a single predicate.
+// toLower reports whether the caller folds case on both the pattern and the
+// scanned value, which decides how a case-insensitive ILIKE is represented.
+// isPrefilter reports that the pattern only narrows the scan and is not exactly
+// equivalent to the predicate, so the caller must keep a scalar recheck.
 func (helper extractHelper) extractLikePattern(
 	ctx base.PlanContext,
 	fn *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	var colName string
 	var datums []types.Datum
@@ -453,21 +467,62 @@ func (helper extractHelper) extractLikePattern(
 		colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 	}
 	if colName != extractColName {
-		return false, ""
+		return false, "", false
 	}
 	switch fn.FuncName.L {
 	case ast.EQ:
-		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$", false
 	case ast.Like, ast.Ilike:
-		if needLike2Regexp {
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
+		// diverge from the original predicate (issue #69653). The escape has to
+		// be resolvable at plan time: for a constant escape (including the
+		// default '\' and the empty escape of NO_BACKSLASH_ESCAPES) we compile
+		// the regexp with it; a non-constant/deferred escape can't be resolved
+		// here, so we skip extraction and let the scalar predicate be rechecked.
+		escape, ok := likeEscapeConst(fn)
+		if !ok {
+			return false, "", false
 		}
-		return true, datums[0].GetString()
+		if !needLike2Regexp {
+			return true, datums[0].GetString(), false
+		}
+		pattern = stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
+		// ILIKE matches case-insensitively while the pattern above is
+		// case-sensitive. Callers that fold case (toLower) lower both the pattern
+		// and the scanned value, so it stays equivalent there. Callers that do
+		// not -- the cluster log path sends the pattern verbatim in
+		// SearchLogRequest.Patterns -- get a case-insensitive group instead, so
+		// an "ERROR" line still matches `message ILIKE '%error%'`. The scoped
+		// (?i:...) form keeps the flag from leaking across a '|' when several
+		// patterns are combined into one disjunction. Case folding there is the
+		// regexp engine's rather than ILIKE's, so it is only a prefilter and the
+		// predicate is rechecked.
+		if fn.FuncName.L == ast.Ilike && !toLower {
+			return true, "(?i:" + pattern + ")", true
+		}
+		return true, pattern, false
 	case ast.Regexp, ast.RegexpLike:
-		return true, datums[0].GetString()
+		return true, datums[0].GetString(), false
 	default:
-		return false, ""
+		return false, "", false
 	}
+}
+
+// likeEscapeConst returns the ESCAPE byte of a LIKE/ILIKE ScalarFunction when
+// it is a plan-time constant (ok=true). The escape must be constant so the
+// pushed-down pattern can be compiled to match the predicate exactly (issue
+// #69653); a non-constant, deferred, or parameterized escape returns ok=false,
+// telling the caller to skip pushdown and keep a scalar recheck.
+func likeEscapeConst(fn *expression.ScalarFunction) (byte, bool) {
+	args := fn.GetArgs()
+	if len(args) < 3 {
+		return 0, false
+	}
+	escape, ok := args[2].(*expression.Constant)
+	if !ok || escape.DeferredExpr != nil || escape.ParamMarker != nil {
+		return 0, false
+	}
+	return byte(escape.Value.GetInt64()), true
 }
 
 func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {

@@ -46,8 +46,8 @@ type Manager interface {
 	// UpdateGCLifeTime reports that the user's gc_life_time has changed.
 	UpdateGCLifeTime(ctx context.Context, gcLifeTime time.Duration) error
 
-	// RegisterTTLTask reports that a table with TTL has been created or altered.
-	RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error
+	// RegisterTTLTableInfo reports that a table's TTL metadata has been created or altered.
+	RegisterTTLTableInfo(ctx context.Context, tableID int64, ttlJobEnable bool) error
 	// DeleteTTLTableInfo reports that TTL was removed from a table, or the
 	// table was dropped.
 	DeleteTTLTableInfo(ctx context.Context, tableID int64) error

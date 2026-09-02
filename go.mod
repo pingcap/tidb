@@ -13,12 +13,10 @@ require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
 	github.com/alibabacloud-go/tea v1.3.11
-	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.2.3
 	github.com/aliyun/credentials-go v1.4.7
 	github.com/apache/arrow-go/v18 v18.6.1-0.20260713210906-efc145c067b6
 	github.com/apache/skywalking-eyes v0.4.0
-	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/ashanbrown/forbidigo/v2 v2.3.0
 	github.com/ashanbrown/makezero v1.2.0
 	github.com/aws/aws-sdk-go-v2 v1.41.5
@@ -100,9 +98,9 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260721064811-683dad8fa368
+	github.com/pingcap/kvproto v0.0.0-20260820070758-623e58e60fa9
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
-	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
+	github.com/pingcap/metering_sdk v0.0.0-20260814062708-9e3b68cd9adf
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20260623093813-5f9928e91afe
@@ -121,9 +119,10 @@ require (
 	github.com/spkg/bom v1.0.0
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.142
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260724023932-61ecd7c11416
-	github.com/tikv/pd/client v0.0.0-20260708075407-4e05b9d2c2d3
+	github.com/tikv/client-go/v2 v2.0.8-0.20260831055105-6793680de8f2
+	github.com/tikv/pd/client v0.0.0-20260805103528-afa43111d149
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -143,16 +142,16 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96
-	golang.org/x/net v0.55.0
+	golang.org/x/net v0.56.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.43.0
-	golang.org/x/text v0.37.0
+	golang.org/x/term v0.44.0
+	golang.org/x/text v0.39.0
 	golang.org/x/time v0.14.0
-	golang.org/x/tools v0.45.0
+	golang.org/x/tools v0.47.0
 	google.golang.org/api v0.230.0
-	google.golang.org/grpc v1.82.0
+	google.golang.org/grpc v1.82.1
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.12
@@ -191,6 +190,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.28.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.33.2 // indirect
+	github.com/clbanning/mxj v1.8.4 // indirect
 	github.com/clbanning/mxj/v2 v2.7.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cockroachdb/fifo v0.0.0-20240606204812-0bbfbd93a7ce // indirect
@@ -198,14 +198,18 @@ require (
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/ldez/grignotin v0.10.1 // indirect
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/mozillazg/go-httpheader v0.2.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
 	github.com/segmentio/fasthash v1.0.3 // indirect
+	github.com/tencentyun/cos-go-sdk-v5 v0.7.74 // indirect
 	github.com/tidwall/gjson v1.14.4 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
@@ -280,7 +284,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/influxdata/tdigest v0.0.1
 	github.com/jfcg/sixb v1.3.8 // indirect
-	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jonboulle/clockwork v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12
 	github.com/klauspost/cpuid v1.3.1 // indirect
@@ -342,9 +345,9 @@ require (
 	go.opentelemetry.io/otel/sdk v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
-	golang.org/x/crypto v0.52.0 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20260209203927-2842357ff358 // indirect
-	golang.org/x/mod v0.36.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
 	google.golang.org/genproto v0.0.0-20250324211829-b45e905df463 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect

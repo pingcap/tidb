@@ -111,6 +111,7 @@ type jobContext struct {
 	jobArgs model.JobArgs
 
 	// TODO reorg part of code couple this struct so much, remove it later.
+	// oldDDLCtx is injected by jobScheduler.getJobRunCtx for worker-run DDL jobs.
 	oldDDLCtx     *ddlCtx
 	lockStartTime time.Time
 }

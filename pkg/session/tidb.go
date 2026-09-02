@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
@@ -62,11 +64,16 @@ type domainMap struct {
 	domains map[string]*domain.Domain
 }
 
+type domainCreateOptions struct {
+	extWorkloadMgr          extworkload.Manager
+	serverInfoSyncerOptions []serverinfo.SyncerOption
+}
+
 // Get or create the domain for store.
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, nil)
+	return dm.getWithEtcdClient(store, nil, nil, domainCreateOptions{})
 }
 
 // GetOrCreateWithEtcdClient gets or creates the domain for store with etcd client.
@@ -74,10 +81,21 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 // Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
 // the actual schema filter of the returned `Domain` is the one when the domain were created.
 func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, filter)
+	return dm.getWithEtcdClient(store, nil, filter, domainCreateOptions{})
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
+func (dm *domainMap) getDomainForGlobalVarInit(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, systemDBFilter{}, domainCreateOptions{
+		serverInfoSyncerOptions: []serverinfo.SyncerOption{serverinfo.WithoutStatusEndpointClaim()},
+	})
+}
+
+func (dm *domainMap) getWithEtcdClient(
+	store kv.Storage,
+	etcdClient *clientv3.Client,
+	schemaFilter issyncer.Filter,
+	opts domainCreateOptions,
+) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -112,7 +130,9 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 			},
 			etcdClient,
 			schemaFilter,
+			opts.serverInfoSyncerOptions...,
 		)
+		d.SetExternalWorkloadManager(opts.extWorkloadMgr)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
@@ -298,6 +318,16 @@ func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql 
 	}
 }
 
+func shouldRollbackTxnOnError(txn kv.Transaction, err error) bool {
+	if !txn.Valid() {
+		return false
+	}
+	if kv.ErrSharedLockLost.Equal(err) {
+		return true
+	}
+	return txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(err)
+}
+
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	isInternal := false
 	if internal := se.txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
@@ -309,8 +339,16 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
-		} else if se.txn.Valid() && se.txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(meetsErr) {
-			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
+		} else if shouldRollbackTxnOnError(&se.txn, meetsErr) {
+			if kv.ErrSharedLockLost.Equal(meetsErr) {
+				logutil.BgLogger().Info(
+					"rollbackTxn for shared lock loss",
+					zap.Uint64("txn", se.txn.StartTS()),
+					zap.Error(meetsErr),
+				)
+			} else {
+				logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
+			}
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
 		}

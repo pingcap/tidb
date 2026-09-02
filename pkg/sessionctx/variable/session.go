@@ -811,6 +811,9 @@ type SessionVars struct {
 	MemQuota
 	BatchSize
 	PipelinedDMLConfig
+	// QueryCopStoreLimit limits TiKV cop request concurrency for each store within a single query.
+	// A value of 0 disables the limit.
+	QueryCopStoreLimit int
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -1711,8 +1714,6 @@ type SessionVars struct {
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
-	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
-	AnalyzePartitionMergeConcurrency int
 
 	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	EnableAsyncMergeGlobalStats bool
@@ -1756,6 +1757,9 @@ type SessionVars struct {
 	// PlanReplayerFinishedTaskKey used to record the finished plan replayer task key in order not to record the
 	// duplicate task in plan replayer continues capture
 	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
+
+	// AnalyzeStoreBatchSize is the child-task limit for Analyze store batches. 0 disables Analyze store batching.
+	AnalyzeStoreBatchSize int
 
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
@@ -1891,6 +1895,10 @@ type SessionVars struct {
 	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
+
+	// EnableSharedLockUpgrade indicates whether shared locks may be upgraded to exclusive locks during
+	// pessimistic locking.
+	EnableSharedLockUpgrade bool
 
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
@@ -2470,6 +2478,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		AnalyzeStoreBatchSize:            vardef.DefTiDBAnalyzeStoreBatchSize,
 		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
@@ -2509,10 +2518,12 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
+	vars.QueryCopStoreLimit = vardef.DefTiDBQueryCopStoreLimit
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,

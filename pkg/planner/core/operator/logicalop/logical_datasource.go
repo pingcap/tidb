@@ -518,8 +518,6 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
 // *************************** end implementation of logicalPlan interface ***************************
 
 func (ds *DataSource) buildTableGather() base.LogicalPlan {

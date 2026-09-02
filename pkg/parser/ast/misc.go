@@ -1016,7 +1016,11 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Name)
 		ctx.WritePlain("=")
 	}
-	if n.Name == TiDBCloudStorageURI {
+	if n.IsSystem && isEmbeddingAPIKeySysVar(n.Name) {
+		// API keys must not be exposed through statement restoration used by
+		// processlist, statement logging, and audit paths.
+		ctx.WriteString("******")
+	} else if n.Name == TiDBCloudStorageURI {
 		// need to redact the url for safety when `show processlist;`
 		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
 	} else if err := n.Value.Restore(ctx); err != nil {
@@ -1029,6 +1033,20 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+func isEmbeddingAPIKeySysVar(name string) bool {
+	_, ok := embeddingAPIKeySysVars[strings.ToLower(name)]
+	return ok
+}
+
+var embeddingAPIKeySysVars = map[string]struct{}{
+	"tidb_exp_embed_jina_ai_api_key":     {},
+	"tidb_exp_embed_openai_api_key":      {},
+	"tidb_exp_embed_cohere_api_key":      {},
+	"tidb_exp_embed_huggingface_api_key": {},
+	"tidb_exp_embed_nvidia_nim_api_key":  {},
+	"tidb_exp_embed_gemini_api_key":      {},
 }
 
 // Accept implements Node interface.
@@ -1317,7 +1335,7 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // SecureText implements SensitiveStatement interface.
-// need to redact the tidb_cloud_storage_url for safety when `show processlist;`
+// Sensitive variable values are redacted by VariableAssignment.Restore.
 func (n *SetStmt) SecureText() string {
 	redactedStmt := *n
 	var sb strings.Builder
