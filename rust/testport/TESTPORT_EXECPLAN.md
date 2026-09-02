@@ -42,6 +42,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed the Go-master `pkg/parser` materialized-view DDL
+  syntax delta in one parser-package batch. Before editing, the full root
+  parser inventory (33 artifacts, 64,956 lines, generated grammar/keyword
+  inputs and outputs, and 150 test/benchmark/fuzz entries) and nested
+  `pkg/parser/ast` inventory (36 artifacts, 34,448 lines, visitor generator,
+  generated output, and fixture) were read. Rust now owns all six typed DDL
+  forms, canonical restore, visitor/label/semantic wiring, parser precedence,
+  Go-compatible option/purge diagnostics, and the four missing generated
+  lexer keywords. Twelve Go source forms plus duplicate/order/incomplete
+  regressions pass. The Go change is parser/AST-only; no dependency-closed
+  refresh/log executor exists, so Rust retains an explicit unsupported-DDL
+  boundary. Details are in `receipts/parser_materialized_view.md`.
+
 - 2026-09-02: completed the current Go-master `pkg/ddl` root inventory before
   editing: 139 direct artifacts (63 production, 74 tests, `BUILD.bazel`, and
   `OWNERS`), 89,091 Go/BUILD lines, and 1,016 top-level test/benchmark

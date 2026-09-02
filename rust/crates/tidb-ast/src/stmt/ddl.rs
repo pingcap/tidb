@@ -187,6 +187,10 @@ pub enum DdlStmt {
     CreateTable(Box<CreateTableStmt>),
     /// A `CREATE [OR REPLACE] VIEW` statement.
     CreateView(Box<CreateViewStmt>),
+    /// A `CREATE MATERIALIZED VIEW` statement.
+    CreateMaterializedView(Box<crate::CreateMaterializedViewStmt>),
+    /// A `CREATE MATERIALIZED VIEW LOG` statement.
+    CreateMaterializedViewLog(Box<crate::CreateMaterializedViewLogStmt>),
     /// A standalone `CREATE [UNIQUE] INDEX` statement.
     CreateIndex(Box<CreateIndexStmt>),
     /// A standalone `DROP INDEX` statement.
@@ -237,6 +241,14 @@ pub enum DdlStmt {
         /// The view names in source order.
         names: Vec<Vec<String>>,
     },
+    /// An `ALTER MATERIALIZED VIEW` statement.
+    AlterMaterializedView(Box<crate::AlterMaterializedViewStmt>),
+    /// An `ALTER MATERIALIZED VIEW LOG` statement.
+    AlterMaterializedViewLog(Box<crate::AlterMaterializedViewLogStmt>),
+    /// A `DROP MATERIALIZED VIEW` statement.
+    DropMaterializedView(Box<crate::DropMaterializedViewStmt>),
+    /// A `DROP MATERIALIZED VIEW LOG` statement.
+    DropMaterializedViewLog(Box<crate::DropMaterializedViewLogStmt>),
     /// A `DROP {DATABASE | SCHEMA} [IF EXISTS] name` statement.
     DropDatabase {
         /// Whether missing databases are ignored.
@@ -343,6 +355,12 @@ impl DdlStmt {
         match self {
             Self::CreateTable(table) => table.restore_into(out),
             Self::CreateView(view) => view.restore_into(out),
+            Self::CreateMaterializedView(view) => {
+                view.restore_into(out, &RestoreContext::default())
+            }
+            Self::CreateMaterializedViewLog(log) => {
+                log.restore_into(out, &RestoreContext::default())
+            }
             Self::CreateIndex(index) => index.restore_into(out),
             Self::DropIndex(index) => index.restore_into(out),
             Self::AlterTable(table) => table.restore_into(out),
@@ -355,6 +373,8 @@ impl DdlStmt {
         match self {
             Self::CreateTable(table) => table.restore_into_with_context(out, context),
             Self::CreateView(view) => view.restore_into(out),
+            Self::CreateMaterializedView(view) => view.restore_into(out, context),
+            Self::CreateMaterializedViewLog(log) => log.restore_into(out, context),
             Self::CreateIndex(index) => index.restore_into_with_context(out, context),
             Self::DropIndex(index) => index.restore_into_with_context(out, context),
             Self::CreateDatabase {
@@ -467,6 +487,10 @@ impl DdlStmt {
                     push_name_path(out, name);
                 }
             }
+            Self::AlterMaterializedView(statement) => statement.restore_into(out),
+            Self::AlterMaterializedViewLog(statement) => statement.restore_into(out),
+            Self::DropMaterializedView(statement) => statement.restore_into(out),
+            Self::DropMaterializedViewLog(statement) => statement.restore_into(out),
             Self::DropDatabase { if_exists, name } => {
                 out.push_str("DROP DATABASE ");
                 if *if_exists {
@@ -844,6 +868,18 @@ impl crate::Visitable for DdlStmt {
                 }
                 let _ = field_0;
             }
+            Self::CreateMaterializedView(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CreateMaterializedViewLog(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
             Self::CreateIndex(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {
                     return false;
@@ -929,6 +965,30 @@ impl crate::Visitable for DdlStmt {
             Self::DropView { if_exists, names } => {
                 let _ = if_exists;
                 let _ = names;
+            }
+            Self::AlterMaterializedView(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterMaterializedViewLog(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropMaterializedView(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropMaterializedViewLog(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
             }
             Self::DropDatabase { if_exists, name } => {
                 let _ = if_exists;

@@ -166,6 +166,15 @@ pub use index::{
 mod create_view;
 pub use create_view::CreateViewStmt;
 
+#[path = "ddl/materialized_view.rs"]
+mod materialized_view;
+pub use materialized_view::{
+    AlterMaterializedViewAction, AlterMaterializedViewLogAction, AlterMaterializedViewLogStmt,
+    AlterMaterializedViewStmt, CreateMaterializedViewLogStmt, CreateMaterializedViewStmt,
+    DropMaterializedViewLogStmt, DropMaterializedViewStmt, MLogAccumulationAlertClause,
+    MLogPurgeClause, MViewRefreshClause, MViewRefreshMethod,
+};
+
 /// The non-default `ALGORITHM` characteristic of a standalone `DROP INDEX`.
 ///
 /// Go stores `DEFAULT` too, but its restore omits it. Keeping only visible

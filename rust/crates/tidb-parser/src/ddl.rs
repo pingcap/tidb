@@ -50,6 +50,8 @@ mod field_type;
 mod index;
 #[path = "ddl/column/inline_key.rs"]
 mod inline_key;
+#[path = "ddl/materialized_view.rs"]
+mod materialized_view;
 #[path = "ddl_partition.rs"]
 mod partition;
 #[path = "ddl/table_option.rs"]

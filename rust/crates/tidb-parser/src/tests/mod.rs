@@ -175,6 +175,7 @@ mod label;
 mod lateral_recursive_cte_source;
 mod load_data;
 mod masking;
+mod materialized_view_source;
 mod misc;
 mod multi_statement_source;
 mod named_table_constraints;
