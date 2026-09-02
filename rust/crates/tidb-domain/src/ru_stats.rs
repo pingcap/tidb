@@ -122,14 +122,14 @@
 //!    local midnight, which is why the file's doc comment insists the
 //!    interval must not exceed 24h. Reproduced.
 //!
-//! ## Where this port is deliberately more conservative than Go
+//! ## Deliberate Go panic boundaries
 //!
-//! - `GCOutdatedRecords` reads `rows[0].GetInt64(0)` with no length check and
-//!   would panic on an empty result set. [`RuStatsDeps::query_single_count`]
-//!   returns `Option<i64>` so an implementor cannot report "no rows" as
-//!   zero, and [`RuStatsWriter::gc_outdated_records`] turns `None` into
-//!   [`RuStatsError::MissingCountRow`]. Failing loudly is the safe direction:
-//!   a fabricated zero would silently disable GC forever.
+//! - `GCOutdatedRecords` reads `rows[0].GetInt64(0)` with no length check.
+//!   [`RuStatsDeps::query_single_count`] returns `Option<i64>` so an
+//!   implementor cannot report "no rows" as zero, and
+//!   [`RuStatsWriter::gc_outdated_records`] panics on `None`, preserving Go's
+//!   impossible-empty-result boundary instead of inventing a zero that would
+//!   silently disable GC forever.
 //! - `generateSQL` dereferences `stats.Latest` unguarded. Here `latest` is an
 //!   `Option` and the absent case is [`RuStatsError::MissingLatestStats`]
 //!   rather than a panic. That case is unreachable from
@@ -182,9 +182,6 @@ pub enum RuStatsError {
     /// restricted SQL executor. Go wraps these with `errors.Trace`, which
     /// adds a stack annotation and no semantics.
     Other(String),
-    /// The `SELECT count(*)` for GC returned no row at all. Go would panic on
-    /// `rows[0]`; see the module doc.
-    MissingCountRow,
     /// [`generate_sql`] was handed an [`RuStats`] with no `latest`. Go would
     /// nil-dereference; see the module doc.
     MissingLatestStats,
@@ -194,7 +191,6 @@ impl std::fmt::Display for RuStatsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Other(msg) => f.write_str(msg),
-            Self::MissingCountRow => f.write_str("ru stats gc count query returned no row"),
             Self::MissingLatestStats => f.write_str("ru stats has no latest daily stats"),
         }
     }
@@ -595,10 +591,14 @@ impl<D: RuStatsDeps, Tz: TimeZone> RuStatsWriter<D, Tz> {
     ///
     /// The `<=` is Go's and is load-bearing; see the module doc, behavior 1.
     ///
+    /// # Panics
+    /// When the count query yields no row. Go indexes `rows[0]` directly, so
+    /// an empty result is an impossible-shape panic rather than a recoverable
+    /// application error.
+    ///
     /// # Errors
-    /// [`RuStatsError::MissingCountRow`] when the count query yields no row,
-    /// or whatever the executor reports. A failed delete aborts the loop
-    /// with the remaining batches undone, as in Go.
+    /// Whatever the executor reports. A failed delete aborts the loop with
+    /// the remaining batches undone, as in Go.
     pub fn gc_outdated_records(
         &self,
         last_end_time: &DateTime<chrono::FixedOffset>,
@@ -610,7 +610,7 @@ impl<D: RuStatsDeps, Tz: TimeZone> RuStatsWriter<D, Tz> {
         let total_count = self
             .deps
             .query_single_count(&count_sql)?
-            .ok_or(RuStatsError::MissingCountRow)?;
+            .expect("GCOutdatedRecords requires the count(*) result row (Go rows[0] access)");
 
         let delete_sql = gc_delete_sql(&gc_end_date);
         for _ in 0..gc_loop_count(total_count) {
@@ -757,7 +757,7 @@ pub fn generate_sql(stats: &RuStats) -> Result<Option<String>, RuStatsError> {
 mod tests {
     use std::cell::RefCell;
 
-    use chrono::{FixedOffset, TimeZone as _, Utc};
+    use chrono::{FixedOffset, Utc};
     use chrono_tz::Tz;
 
     use super::*;
@@ -1096,10 +1096,9 @@ mod tests {
         assert_eq!(w.deps.statements.borrow().len(), 1);
     }
 
-    /// WRITTEN. Go would panic on `rows[0]`; this reports instead, and does
-    /// not delete anything.
+    /// TRANSCREATED. Go indexes `rows[0]` without checking the result length.
     #[test]
-    fn gc_reports_a_missing_count_row_instead_of_inventing_zero() {
+    fn gc_panics_on_a_missing_count_row_like_go() {
         let tz = Tz::UTC;
         let deps = MockDeps {
             gc_count_missing: true,
@@ -1107,10 +1106,10 @@ mod tests {
         };
         let now = at(tz, 2024, 5, 1, 0, 0, 0);
         let w = writer(deps, now, tz);
-        assert_eq!(
-            w.gc_outdated_records(&now.fixed_offset()),
-            Err(RuStatsError::MissingCountRow)
-        );
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = w.gc_outdated_records(&now.fixed_offset());
+        }))
+        .is_err());
         assert_eq!(w.deps.statements.borrow().len(), 1);
     }
 
