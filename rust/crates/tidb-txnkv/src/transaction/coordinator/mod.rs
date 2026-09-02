@@ -585,6 +585,12 @@ pub(super) enum RecoveryPhase {
 }
 
 pub(super) fn classify_key_error(error: &KvrpcKeyError) -> TransactionCause {
+    if let Some(shared_lock_lost) = error.shared_lock_lost.as_ref() {
+        return TransactionCause::SharedLockLost {
+            start_ts: shared_lock_lost.start_ts,
+            key: tikv_client::redact::key(&shared_lock_lost.key),
+        };
+    }
     if let Some(already_exists) = error.already_exist.as_ref() {
         return TransactionCause::AlreadyExists {
             key: already_exists.key.clone(),
@@ -704,7 +710,8 @@ mod tests {
     use super::*;
     use crate::region::{RegionBackoffKind, RegionTerminalError};
     use tidb_proto::{
-        KvrpcAlreadyExist, KvrpcAssertion, KvrpcAssertionFailed, KvrpcLockInfo, KvrpcWriteConflict,
+        kvrpcpb::SharedLockLost, KvrpcAlreadyExist, KvrpcAssertion, KvrpcAssertionFailed,
+        KvrpcLockInfo, KvrpcWriteConflict,
     };
 
     #[test]
@@ -765,6 +772,19 @@ mod tests {
         assert!(matches!(
             classify_key_error(&lock),
             TransactionCause::Lock { key, .. } if key == b"l"
+        ));
+
+        let shared_lock_lost = KvrpcKeyError {
+            shared_lock_lost: Some(SharedLockLost {
+                start_ts: 101,
+                key: b"key".to_vec(),
+            }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&shared_lock_lost),
+            TransactionCause::SharedLockLost { start_ts, key }
+                if start_ts == 101 && key == "6B6579"
         ));
         assert!(matches!(
             classify_key_error(&KvrpcKeyError::default()),

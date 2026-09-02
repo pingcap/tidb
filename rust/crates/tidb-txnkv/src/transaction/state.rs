@@ -37,6 +37,14 @@ pub enum TransactionCause {
         /// TiKV conflict diagnostic.
         detail: String,
     },
+    /// TiKV confirmed that shared-lock ownership was lost during an upgrade.
+    /// The key is rendered under the source redaction policy at classification.
+    SharedLockLost {
+        /// Transaction start timestamp.
+        start_ts: u64,
+        /// Redacted encoded key text used by the source error message.
+        key: String,
+    },
     /// A lock prevented a determinate mutation result.
     Lock {
         /// Exact encoded locked key.
@@ -87,6 +95,10 @@ impl std::fmt::Display for TransactionCause {
             | Self::Transport { detail }
             | Self::Timestamp { detail }
             | Self::InvalidResponse { detail } => formatter.write_str(detail),
+            Self::SharedLockLost { start_ts, key } => write!(
+                formatter,
+                "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS={start_ts}, key={key}"
+            ),
         }
     }
 }

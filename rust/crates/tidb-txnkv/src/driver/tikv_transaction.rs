@@ -512,6 +512,10 @@ fn classify_cause(error: &TikvTransactionError) -> crate::transaction::Transacti
                 detail: client_error.to_string(),
             }
         }
+        ClientError::SharedLockLost(shared_lock_lost) => TransactionCause::SharedLockLost {
+            start_ts: shared_lock_lost.shared_lock_lost.start_ts,
+            key: tikv_client::redact::key(&shared_lock_lost.shared_lock_lost.key),
+        },
         ClientError::ResolveLockError(locks) => TransactionCause::Lock {
             key: locks
                 .first()
@@ -522,6 +526,30 @@ fn classify_cause(error: &TikvTransactionError) -> crate::transaction::Transacti
         _ => TransactionCause::Transport {
             detail: client_error.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_cause, TikvTransactionError};
+    use crate::transaction::TransactionCause;
+    use tikv_client::proto::kvrpcpb::SharedLockLost;
+
+    #[test]
+    fn client_shared_lock_lost_keeps_the_source_identity() {
+        let error = TikvTransactionError::Client(tikv_client::Error::SharedLockLost(
+            tikv_client::error::SharedLockLostError {
+                shared_lock_lost: SharedLockLost {
+                    start_ts: 101,
+                    key: b"key".to_vec(),
+                },
+            },
+        ));
+        assert!(matches!(
+            classify_cause(&error),
+            TransactionCause::SharedLockLost { start_ts, key }
+                if start_ts == 101 && key == "6B6579"
+        ));
     }
 }
 

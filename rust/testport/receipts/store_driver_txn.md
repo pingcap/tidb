@@ -67,6 +67,79 @@ Focused regressions cover the KeyError-to-deadlock conversion, typed shared
 lock loss, shared-to-exclusive buffer transition, and the exact 9015 message,
 code, and key redaction position.
 
+## Rust-only parity follow-up: shared-lock-loss classification
+
+The earlier receipt stopped at the wire/client error boundary. This follow-up
+closes the remaining dependency-closed transaction path without changing Go
+source: direct `kvrpcpb.KeyError.shared_lock_lost` responses and the vendored
+client's `Error::SharedLockLost` now become a typed
+`TransactionCause::SharedLockLost { start_ts, key }`. The key is rendered once
+at classification with the client-go-compatible uppercase hexadecimal or `?`
+redaction policy, so later SQL conversion cannot accidentally expose or
+reformat it. `tidb-exec` maps that terminal cause to the registered
+`[tikv:9015]Shared lock was lost during lock upgrade; transaction cannot
+continue, txnStartTS=..., key=...` error and retains the transaction-ending
+scope. Existing lock-upgrade conflicts still use the separate synthetic
+non-retryable deadlock path. Session rollback policy remains an explicit
+`pkg/session` boundary as recorded below.
+
+The focused regressions are
+`transaction::coordinator::tests::commit_key_errors_keep_executor_visible_identity`,
+`driver::tikv_transaction::tests::client_shared_lock_lost_keeps_the_source_identity`,
+and `pessimistic_lock_error::tests::shared_lock_lost_keeps_tikv_9015_and_ends_the_transaction`.
+
+Fail-before was recorded with the focused `tidb-txnkv` test added but the
+implementation removed: compilation failed with `E0599` at both new call
+sites because `TransactionCause::SharedLockLost` did not exist. After the fix:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml \
+  -p tidb-txnkv --lib client_shared_lock_lost_keeps_the_source_identity -- --nocapture
+# passed: 1 test
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml \
+  -p tidb-txnkv --lib commit_key_errors_keep_executor_visible_identity -- --nocapture
+# passed: 1 test
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml \
+  -p tidb-exec --lib shared_lock_lost_keeps_tikv_9015_and_ends_the_transaction -- --nocapture
+# passed: 1 test
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-txnkv -p tidb-exec
+# passed; existing warnings only
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... RUST_MIN_STACK=67108864 \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-txnkv --test all -- --test-threads=1
+# passed: 412 tests; 11 real-TiKV tests ignored by their source harnesses
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-exec --lib -- --test-threads=1
+# passed: 333 tests
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+# passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+
+git diff --check
+# passed
+```
+
+The broader `--all-targets` check remains unavailable because the existing
+standalone `tidb-txnkv` `lock_resolver_source` target imports
+`crate::ResolvingLock` instead of `tidb_txnkv::ResolvingLock`; the ordinary
+owner check and aggregate owner suite above compile and pass.
+
 ## Validation
 
 Profile: **Ready** for this package batch.
