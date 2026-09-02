@@ -216,6 +216,15 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	require.True(t, isClose)
 }
 
+func TestPlanReplayerGCDefaultDurationUsesVardef(t *testing.T) {
+	original := vardef.GetPlanReplayerFileRetentionTime()
+	t.Cleanup(func() { vardef.SetPlanReplayerFileRetentionTime(original) })
+
+	retention := 2 * time.Hour
+	vardef.SetPlanReplayerFileRetentionTime(retention)
+	require.Equal(t, retention, planReplayerGCDefaultDuration())
+}
+
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.
 // We have to skip some of the test in such case.
 // https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42

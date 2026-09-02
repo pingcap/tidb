@@ -1867,10 +1867,17 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(do.ctx, time.Hour, time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(do.ctx, planReplayerGCDefaultDuration(), time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")
+}
+
+// planReplayerGCDefaultDuration returns the configurable retention for
+// non-capture plan-replayer files. Keeping this lookup at the domain boundary
+// ensures each GC round observes the latest global setting.
+func planReplayerGCDefaultDuration() time.Duration {
+	return vardef.GetPlanReplayerFileRetentionTime()
 }
 
 // GetHistoricalStatsWorker gets historical workers

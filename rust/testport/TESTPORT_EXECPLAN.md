@@ -4280,6 +4280,18 @@ For each bounded behavior cluster:
 - [ ] Run Ready validation and self-review only when the requested parity scope
       is genuinely complete enough for a final-status claim.
 
+- 2026-09-02: completed a bounded `pkg/domain` Go-package batch against Go
+  master `1c1a334d2be1dce64888b6e1f054462c566b0734`: the
+  `DumpFileGcCheckerLoop` now reads the process-global plan-replayer file
+  retention setting on each GC round, and a focused domain regression pins
+  that lookup. The complete direct root inventory is 31 artifacts and 9,140
+  lines; nested domain packages remain separate boundaries. The Rust
+  `tidb-domain` GC primitive already accepts caller-supplied durations, so no
+  Rust production edit was needed. Focused and full failpoint-aware Go domain
+  suites pass; lint, Rust formatting, and diff checks are Ready gates, while
+  `make bazel_prepare` is blocked by the unavailable Bazel executable. Details
+  are in `receipts/domain_plan_replayer_retention.md`.
+
 ## Decision Log
 
 - Decision: keep top-level `pkg/util/logutil` on the existing
