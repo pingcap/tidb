@@ -2073,6 +2073,15 @@ For each bounded behavior cluster:
   The owner now imports the canonical vardef spellings exactly like Go. The
   complete inventory and WIP gates are in `receipts/util_tiflash.md`.
 
+- 2026-09-02: re-audited the complete two-artifact `pkg/util/tiflash`
+  boundary at current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`
+  (81 lines, no source tests or hidden variants). The dependency-closed
+  `tidb-txnkv::tiflash` owner and distsql projection remain aligned after the
+  earlier Rust-only surface removal; current and detached Go probes plus the
+  focused distsql consumer test pass. The Ready receipt and living plan are in
+  `receipts/util_tiflash.md` and
+  `operations/util-tiflash-audit-execplan.md`.
+
 - 2026-09-02: completed and re-audited the unclaimed Go `pkg/util/cgroup`
   package against latest master `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
   Read and mapped all nine production, test, platform, and Bazel artifacts;
@@ -2902,7 +2911,8 @@ For each bounded behavior cluster:
       owner: preserve Go's open native-integer policy and exact fallbacks,
       consume vardef's three canonical spellings, retain the threshold and
       distsql propagation, and remove alias/adapter/constant/test extras. The
-      atomic inventory and WIP gates are in `receipts/util_tiflash.md`.
+      atomic inventory and Ready gates are in `receipts/util_tiflash.md` and
+      `operations/util-tiflash-audit-execplan.md`.
 - [x] Complete the pinned `pkg/util/disk` package in `tidb-util`: restore the
       exact temp-directory lifecycle and both tracker constructors, route its
       real server/chunk/memory-alarm consumers through them, and remove the

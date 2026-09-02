@@ -1,12 +1,12 @@
 # Complete `pkg/util/tiflash` package receipt
 
-Status: package behavior complete against the pinned Go source. This is a WIP
-package claim inside the ongoing repository parity goal, not a Ready claim.
+Status: package behavior complete against the current Go-master source. This
+is a Ready package claim inside the ongoing repository parity goal.
 
 ## Pinned inventory
 
-Behavioral source: Go commit
-`e2788410d8d696605e8cb002585877a063ccc909`.
+Behavioral source: Go `origin/master` commit
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 | Artifact | Lines | Blob |
 | --- | ---: | --- |
@@ -45,16 +45,21 @@ exercises the real consumer rather than inventing tests for this package.
 
 ## Validation
 
-WIP commands, run from `rust/`:
+Profile: **Ready**. Commands run from the repository root:
 
-    cargo fmt --all -- --check
-    cargo check --offline -p tidb-txnkv -p tidb-distsql
-    cargo test --offline -p tidb-distsql --test all tiflash_replica_read_source -- --nocapture
-    git diff --check
+    PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/tiflash -count=1
+    # same command in /tmp/tidb-go-latest-c605
+    PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go list -f '{{.GoFiles}}|{{.IgnoredGoFiles}}|{{.TestGoFiles}}' ./pkg/util/tiflash
+    # same command in /tmp/tidb-go-latest-c605
+    env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-distsql --test all tiflash_replica_read_source -- --nocapture
+    env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+    git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/tiflash
+    git diff --check -- rust/testport/receipts/util_tiflash.md rust/docs/operations/util-tiflash-audit-execplan.md rust/testport/TESTPORT_EXECPLAN.md
 
-The Bazel preparation gate is not required: no Go/Bazel/module source changed.
-The Cargo lockfile changes only because `tidb-txnkv` now consumes the existing
-workspace `tidb-vardef` crate, matching the pinned Go dependency.
+The Bazel preparation gate is not required: no Go/Bazel/module source changed
+in this boundary refresh. The Cargo lockfile changes from the earlier Rust
+owner work are retained because `tidb-txnkv` consumes the existing workspace
+`tidb-vardef` crate, matching the pinned Go dependency.
 
 ## Risk
 
