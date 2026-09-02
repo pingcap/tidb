@@ -420,7 +420,7 @@ pub struct KvTable {
     /// The table id (Go `TableInfo.ID`), the record-key prefix.
     pub table_id: i64,
     /// `(row count, average row length, data length, index length)` from Go
-    /// `StatsTableRowCache.EstimateDataLength` for this catalog image.
+    /// `TableSizeStats.EstimateDataLength` for this catalog image.
     storage_statistics: (u64, u64, u64, u64),
     /// Per-physical-partition values used by Go
     /// `information_schema.PARTITIONS`. The logical table's aggregate stays
@@ -863,7 +863,7 @@ impl KvTable {
         self.storage_statistics = statistics;
     }
 
-    /// Go `StatsTableRowCache.EstimateDataLength` for this catalog image.
+    /// Go `TableSizeStats.EstimateDataLength` for this catalog image.
     #[must_use]
     pub const fn storage_statistics(&self) -> (u64, u64, u64, u64) {
         self.storage_statistics
@@ -879,7 +879,7 @@ impl KvTable {
             .insert(physical_id, statistics);
     }
 
-    /// Go `StatsTableRowCache.GetTableRows` plus
+    /// Go `TableSizeStats.GetTableRows` plus
     /// `GetDataAndIndexLength` for one physical partition.
     #[must_use]
     pub fn partition_storage_statistics(&self, physical_id: i64) -> (u64, u64, u64, u64) {
@@ -887,6 +887,12 @@ impl KvTable {
             .get(&physical_id)
             .copied()
             .unwrap_or_default()
+    }
+
+    /// Clears statement-derived information-schema size values.
+    pub fn clear_storage_statistics(&mut self) {
+        self.storage_statistics = (0, 0, 0, 0);
+        self.partition_storage_statistics.clear();
     }
 
     /// Rebinds a freshly loaded table to a collation mode its outer plan

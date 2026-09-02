@@ -35,7 +35,10 @@ use tidb_exec::cluster_predicate_column::ColumnStatsTimeInfo;
 use tidb_exec::cluster_predicate_column::{
     load_column_stats_usage, load_column_stats_usage_for_table,
 };
-use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
+use tidb_exec::cluster_stats_load::{
+    ClusterStatsItem, ClusterStatsLoader, ClusterTableStats, ColumnLength, TableRowCount,
+    TableSizeStats,
+};
 use tidb_exec::cluster_stats_dump::{
     load_table_stats_payload, table_historical_stats_to_json,
     table_stats_to_json_from_loaded,
@@ -574,12 +577,12 @@ fn the_analyze_version_round_trips_through_the_stored_row() {
     );
 }
 
-/// Go `StatsTableRowCache.UpdateByID` issues one restricted read against
-/// `stats_meta` and one against non-index `stats_histograms`. The cluster
-/// adapter must read those durable rows directly, deduplicate its `IN` IDs,
-/// and never substitute the separately loaded planner-statistics snapshot.
+/// Go `TableSizeStats` issues one restricted read against `stats_meta` and one
+/// against non-index `stats_histograms`. The cluster adapter must read those
+/// durable rows directly, deduplicate its `IN` IDs, and never substitute the
+/// separately loaded planner-statistics snapshot.
 #[test]
-fn table_row_cache_source_reads_requested_storage_rows() {
+fn table_size_stats_source_reads_requested_storage_rows() {
     let mut store = bootstrapped();
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
     for (table_id, row_count, column_id) in [(4242, 10, 11), (5151, 20, 12)] {
@@ -606,11 +609,11 @@ fn table_row_cache_source_reads_requested_storage_rows() {
             .load_table_row_counts(&mut store, &[5151, 4242, 5151])
             .expect("row counts load"),
         vec![
-            tidb_stats_handle_cache::TableRowCount {
+            TableRowCount {
                 table_id: 4242,
                 count: 10,
             },
-            tidb_stats_handle_cache::TableRowCount {
+            TableRowCount {
                 table_id: 5151,
                 count: 20,
             },
@@ -621,12 +624,12 @@ fn table_row_cache_source_reads_requested_storage_rows() {
             .load_column_lengths(&mut store, &[5151, 4242, 5151])
             .expect("column lengths load"),
         vec![
-            tidb_stats_handle_cache::ColumnLength {
+            ColumnLength {
                 table_id: 4242,
                 histogram_id: 11,
                 total_size: 40_000,
             },
-            tidb_stats_handle_cache::ColumnLength {
+            ColumnLength {
                 table_id: 5151,
                 histogram_id: 12,
                 total_size: 40_000,
@@ -639,6 +642,52 @@ fn table_row_cache_source_reads_requested_storage_rows() {
         4,
         "two unique IDs produce two keyed scans for each restricted read"
     );
+}
+
+/// Go's `TableSizeStats` is statement-local and clamps a negative persisted
+/// variable-column size to zero. A later statement starts with empty maps
+/// rather than observing a process-wide row-cache value.
+#[test]
+fn table_size_stats_are_statement_local_and_clamp_negative_sizes() {
+    let table = TableInfo {
+        id: 4242,
+        columns: vec![
+            ColumnInfo {
+                id: 1,
+                offset: 0,
+                field_type: tidb_datatype::FieldType::new(
+                    tidb_datatype::FieldTypeCode::LongLong,
+                ),
+                state: SchemaState::PUBLIC,
+                ..ColumnInfo::default()
+            },
+            ColumnInfo {
+                id: 2,
+                offset: 1,
+                field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
+                state: SchemaState::PUBLIC,
+                ..ColumnInfo::default()
+            },
+        ]
+        .into(),
+        ..TableInfo::default()
+    };
+    let stats = TableSizeStats::from_rows(
+        vec![TableRowCount {
+            table_id: 4242,
+            count: 7,
+        }],
+        vec![ColumnLength {
+            table_id: 4242,
+            histogram_id: 2,
+            total_size: -9,
+        }],
+    );
+    assert_eq!(stats.estimate_data_length(&table), (7, 8, 56, 0));
+
+    let next_statement = TableSizeStats::default();
+    assert_eq!(next_statement.get_table_rows(4242), 0);
+    assert_eq!(next_statement.estimate_data_length(&table), (0, 0, 0, 0));
 }
 
 /// Pinned `handletest.TestIncrementalModifyCountUpdate`: ANALYZE samples from

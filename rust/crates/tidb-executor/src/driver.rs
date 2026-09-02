@@ -543,6 +543,42 @@ pub fn physical_plan_needs_table_storage_statistics(
         .any(|child| physical_plan_needs_table_storage_statistics(child))
 }
 
+/// Answers Go `buildTableSizeStats`'s `needColLength` decision after logical
+/// column pruning. `TABLE_ROWS` needs only `mysql.stats_meta`; the variable-
+/// width size columns additionally require the more expensive histogram read.
+#[must_use]
+pub fn physical_plan_needs_table_storage_column_lengths(
+    plan: &tidb_planner::physical::PhysicalPlan,
+) -> bool {
+    if let tidb_planner::physical::PhysicalPlan::CTE(cte) = plan {
+        if physical_plan_needs_table_storage_column_lengths(&cte.seed_plan)
+            || cte
+                .recursive_plan
+                .as_deref()
+                .is_some_and(physical_plan_needs_table_storage_column_lengths)
+        {
+            return true;
+        }
+    }
+    if let tidb_planner::physical::PhysicalPlan::MemTable(scan) = plan {
+        let table_uses_stats = scan.table_name.eq_ignore_ascii_case("TABLES")
+            || scan.table_name.eq_ignore_ascii_case("PARTITIONS");
+        if table_uses_stats
+            && scan.columns.iter().any(|column| {
+                matches!(
+                    column.name.to_ascii_uppercase().as_str(),
+                    "AVG_ROW_LENGTH" | "DATA_LENGTH" | "INDEX_LENGTH"
+                )
+            })
+        {
+            return true;
+        }
+    }
+    plan.children()
+        .iter()
+        .any(|child| physical_plan_needs_table_storage_column_lengths(child))
+}
+
 /// Resolves every column named by one `MATCH` expression against the SELECT's
 /// complete FROM scope and returns whether Go's LIKE fallback may treat them
 /// as strings. This is the same resolved-type question

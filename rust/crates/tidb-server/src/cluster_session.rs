@@ -1230,6 +1230,8 @@ mod tests {
     fn loaded_column_ndv_reaches_grouped_cluster_plans() {
         struct FixedStorageStatistics {
             calls: Arc<std::sync::atomic::AtomicUsize>,
+            column_length_requests: Arc<std::sync::Mutex<Vec<bool>>>,
+            fail: Arc<std::sync::atomic::AtomicBool>,
             values: tidb_session::TableStorageStatistics,
         }
 
@@ -1237,8 +1239,16 @@ mod tests {
             fn load_table_storage_statistics(
                 &self,
                 _resource_group: &str,
+                need_column_lengths: bool,
             ) -> Result<Vec<tidb_session::TableStorageStatistics>, String> {
                 self.calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                self.column_length_requests
+                    .lock()
+                    .unwrap()
+                    .push(need_column_lengths);
+                if self.fail.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err("stats read failed".to_owned());
+                }
                 Ok(vec![self.values.clone()])
             }
         }
@@ -1308,8 +1318,12 @@ mod tests {
             &LocalTableAutoIds::default(),
         );
         let storage_stats_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let column_length_requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let fail_storage_stats = Arc::new(std::sync::atomic::AtomicBool::new(false));
         session.set_table_storage_stats_provider(Arc::new(FixedStorageStatistics {
             calls: Arc::clone(&storage_stats_reads),
+            column_length_requests: Arc::clone(&column_length_requests),
+            fail: Arc::clone(&fail_storage_stats),
             values: tidb_session::TableStorageStatistics {
                 table_id,
                 table: (3_000_065, 24, 72_001_560, 0),
@@ -1338,6 +1352,7 @@ mod tests {
             0,
             "Go skips the two restricted reads when no size column is requested"
         );
+        assert!(column_length_requests.lock().unwrap().is_empty());
         let StmtResult::Rows(rows) = session
             .run(
                 "SELECT TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH \
@@ -1361,6 +1376,21 @@ mod tests {
             storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
             1
         );
+        assert_eq!(*column_length_requests.lock().unwrap(), vec![true]);
+        {
+            let catalog = session.shared_catalog();
+            let catalog = catalog.lock().unwrap();
+            let tidb_executor::TableEntry::Kv(table) =
+                catalog.table_in("app", "order_line").expect("table")
+            else {
+                panic!("order_line is a base table")
+            };
+            assert_eq!(
+                table.storage_statistics(),
+                (0, 0, 0, 0),
+                "statement-local TableSizeStats must not mutate the shared catalog"
+            );
+        }
         let StmtResult::Rows(rows) = session
             .run(
                 "WITH s AS (SELECT TABLE_ROWS FROM information_schema.tables \
@@ -1377,6 +1407,11 @@ mod tests {
             2,
             "the resolved memory-table scan inside a CTE must refresh"
         );
+        assert_eq!(
+            *column_length_requests.lock().unwrap(),
+            vec![true, false],
+            "TABLE_ROWS alone reads stats_meta without scanning stats_histograms"
+        );
         session
             .run(
                 "SELECT TABLE_NAME FROM information_schema.partitions \
@@ -1387,6 +1422,21 @@ mod tests {
             storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
             3,
             "Go does not column-prune PARTITIONS, so its full scan refreshes the cache"
+        );
+        fail_storage_stats.store(true, std::sync::atomic::Ordering::Release);
+        let StmtResult::Rows(rows) = session
+            .run(
+                "SELECT TABLE_ROWS FROM information_schema.tables \
+                 WHERE TABLE_SCHEMA = 'app' AND TABLE_NAME = 'order_line'",
+            )
+            .unwrap()
+        else {
+            panic!("failed statistics read remains a successful information-schema query")
+        };
+        assert_eq!(
+            rows,
+            vec![vec![Datum::Int(0)]],
+            "Go's nil TableSizeStats zeroes the statement instead of retaining prior values"
         );
         let StmtResult::Rows(rows) = session
             .run(

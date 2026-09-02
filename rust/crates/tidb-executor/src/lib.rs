@@ -221,14 +221,15 @@ pub use driver::{
     },
     bind_parameters, bind_prepared_statement, bind_statement, build_prepared_dml_plan,
     fts_columns_are_strings, parameter_count, parsed_parameter_count,
-    physical_plan_needs_table_storage_statistics, plan_query_meta_stmt, plan_select_meta_stmt,
-    run_delete_in, run_delete_on, run_delete_stmt, run_delete_stmt_with_physical, run_insert_in,
-    run_insert_on, run_insert_reporting, run_insert_stmt, run_insert_stmt_with_physical,
-    run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,
-    run_select_meta_stmt, run_select_meta_stmt_with_physical, run_select_on, run_set_opr_stmt,
-    run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical, Catalog,
-    DriverError, MemTable, MysqlError, PreparedDmlExecution, PreparedDmlPlan, SchemaErrorKind,
-    SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
+    physical_plan_needs_table_storage_column_lengths, physical_plan_needs_table_storage_statistics,
+    plan_query_meta_stmt, plan_select_meta_stmt, run_delete_in, run_delete_on, run_delete_stmt,
+    run_delete_stmt_with_physical, run_insert_in, run_insert_on, run_insert_reporting,
+    run_insert_stmt, run_insert_stmt_with_physical, run_query_meta_stmt_with_physical, run_select,
+    run_select_meta_in, run_select_meta_on, run_select_meta_stmt,
+    run_select_meta_stmt_with_physical, run_select_on, run_set_opr_stmt, run_update_in,
+    run_update_on, run_update_stmt, run_update_stmt_with_physical, Catalog, DriverError, MemTable,
+    MysqlError, PreparedDmlExecution, PreparedDmlPlan, SchemaErrorKind, SelectMeta, TableEntry,
+    TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{

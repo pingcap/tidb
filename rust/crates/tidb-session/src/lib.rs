@@ -292,7 +292,7 @@ pub trait AnalyzeStatusProvider: Send + Sync {
     ) -> i64;
 }
 
-/// Go `StatsTableRowCache` values consumed by one logical table's
+/// Go `TableSizeStats` values consumed by one logical table's
 /// `information_schema.TABLES` and `information_schema.PARTITIONS` rows.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TableStorageStatistics {
@@ -304,14 +304,16 @@ pub struct TableStorageStatistics {
     pub partitions: Vec<(i64, (u64, u64, u64, u64))>,
 }
 
-/// Fresh restricted-storage boundary used by Go's information-schema row
-/// and column-length cache.
+/// Fresh restricted-storage boundary used by Go's information-schema
+/// `TableSizeStats` reader.
 pub trait TableStorageStatsProvider: Send + Sync {
-    /// Runs the two pinned restricted reads and returns estimates for the
-    /// current schema image. A read failure is warning-only at the caller.
+    /// Runs the pinned restricted reads and returns estimates for the current
+    /// schema image. The histogram-size read is skipped when only
+    /// `TABLE_ROWS` is requested. A read failure is warning-only at the caller.
     fn load_table_storage_statistics(
         &self,
         resource_group: &str,
+        need_column_lengths: bool,
     ) -> Result<Vec<TableStorageStatistics>, String>;
 }
 

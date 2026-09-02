@@ -1837,7 +1837,8 @@ impl Catalog {
 
     /// Replaces the statement-time `information_schema` storage estimates
     /// without moving either catalog epoch. Go keeps these values in the
-    /// independent process-wide `StatsTableRowCache`, not in `InfoSchema`.
+    /// statement-local `TableSizeStats`; the catalog overlay is only a Rust
+    /// executor transport detail.
     pub fn set_table_storage_statistics(
         &mut self,
         table_id: i64,
@@ -1857,6 +1858,19 @@ impl Catalog {
                     table.set_partition_storage_statistics(*physical_id, *statistics);
                 }
                 return;
+            }
+        }
+    }
+
+    /// Clears statement-derived information-schema storage estimates from a
+    /// scratch catalog after a failed Go `TableSizeStats` read.
+    pub fn clear_table_storage_statistics(&mut self) {
+        for database in self.databases.values_mut() {
+            for entry in database.tables.values_mut() {
+                let TableEntry::Kv(table) = Arc::make_mut(entry) else {
+                    continue;
+                };
+                table.clear_storage_statistics();
             }
         }
     }

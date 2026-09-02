@@ -539,8 +539,14 @@ impl Session {
             tidb_executor::plan_query_meta_stmt(query, &planning_catalog, current_db, ctx)?;
         let needs_storage_stats =
             tidb_executor::physical_plan_needs_table_storage_statistics(&physical);
-        let scratch =
-            self.materialize_information_schema_catalog(table_names, ctx, needs_storage_stats)?;
+        let needs_column_lengths =
+            tidb_executor::physical_plan_needs_table_storage_column_lengths(&physical);
+        let scratch = self.materialize_information_schema_catalog(
+            table_names,
+            ctx,
+            needs_storage_stats,
+            needs_column_lengths,
+        )?;
         tidb_executor::run_query_meta_stmt_with_physical(
             query,
             Some(&mut physical),
@@ -590,34 +596,47 @@ impl Session {
         mut table_names: Vec<String>,
         ctx: &tidb_executor::StmtContext,
         needs_storage_stats: bool,
+        needs_column_lengths: bool,
     ) -> Result<Catalog, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        let mut storage_statistics = None;
+        let mut storage_statistics_failed = false;
         if needs_storage_stats
             && table_names.iter().any(|name| {
                 name.eq_ignore_ascii_case("TABLES") || name.eq_ignore_ascii_case("PARTITIONS")
             })
         {
             if let Some(provider) = &self.table_storage_stats {
-                match provider.load_table_storage_statistics(&self.active_resource_group) {
-                    Ok(statistics) => self.with_catalog_mut(|catalog| {
-                        for table in statistics {
-                            catalog.set_table_storage_statistics(
-                                table.table_id,
-                                table.table,
-                                &table.partitions,
-                            );
-                        }
-                        Ok(())
-                    })?,
-                    // Pinned `updateStatsCacheIfNeed` logs the restricted-read
-                    // error and serves the previously cached estimates.
-                    Err(error) => eprintln!(
+                match provider.load_table_storage_statistics(
+                    &self.active_resource_group,
+                    needs_column_lengths,
+                ) {
+                    Ok(statistics) => storage_statistics = Some(statistics),
+                    // Pinned `buildTableSizeStats` logs the restricted-read
+                    // error and returns nil, so all size getters report zero
+                    // for this statement.
+                    Err(error) => {
+                        storage_statistics_failed = true;
+                        eprintln!(
                         "{{\"event\":\"information_schema_stats_refresh_failed\",\"error\":{}}}",
                         serde_json::to_string(&error)
                             .unwrap_or_else(|_| "\"unprintable\"".to_owned())
-                    ),
+                        )
+                    }
                 }
+            }
+        }
+        let mut scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
+        if storage_statistics_failed {
+            scratch.clear_table_storage_statistics();
+        } else if let Some(statistics) = storage_statistics {
+            for table in statistics {
+                scratch.set_table_storage_statistics(
+                    table.table_id,
+                    table.table,
+                    &table.partitions,
+                );
             }
         }
         let mut materialized = Vec::with_capacity(table_names.len());
@@ -634,13 +653,7 @@ impl Session {
             } else if table_name.eq_ignore_ascii_case("TIDB_INDEX_USAGE") {
                 let visibility = self.schema_visibility();
                 let collector = std::sync::Arc::clone(&self.index_usage_collector);
-                self.with_catalog_mut(|catalog| {
-                    Ok(infoschema::tidb_index_usage_rows(
-                        catalog,
-                        &visibility,
-                        collector.as_ref(),
-                    ))
-                })?
+                infoschema::tidb_index_usage_rows(&scratch, &visibility, collector.as_ref())
             } else if table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS") {
                 self.tidb_statements_stats_table_rows(&columns)
             } else if table_name.eq_ignore_ascii_case("TIDB_TRX") {
@@ -669,26 +682,18 @@ impl Session {
                 self.cluster_info_table_rows()
             } else {
                 let visibility = self.schema_visibility();
-                self.with_catalog_mut(|catalog| {
-                    Ok(
-                        infoschema::table_rows(&table_name, catalog, &visibility, ctx)
-                            .unwrap_or_default(),
-                    )
-                })?
+                infoschema::table_rows(&table_name, &scratch, &visibility, ctx).unwrap_or_default()
             };
             materialized.push((table_name, columns, rows));
         }
-        self.with_catalog_mut(|catalog| {
-            let mut scratch = catalog.clone();
-            for (table_name, columns, rows) in materialized {
-                scratch.register_mem_in(
-                    infoschema::INFORMATION_SCHEMA,
-                    &table_name,
-                    tidb_executor::MemTable { columns, rows },
-                );
-            }
-            Ok(scratch)
-        })
+        for (table_name, columns, rows) in materialized {
+            scratch.register_mem_in(
+                infoschema::INFORMATION_SCHEMA,
+                &table_name,
+                tidb_executor::MemTable { columns, rows },
+            );
+        }
+        Ok(scratch)
     }
 
     /// Go `stmtSummaryRetriever.initSummaryRowsReader` for the cumulative

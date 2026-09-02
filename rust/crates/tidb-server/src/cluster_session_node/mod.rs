@@ -183,7 +183,7 @@ use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::ClusterCatalog;
 use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_load_stats::prepare_cluster_load_stats;
-use tidb_exec::cluster_stats_load::ClusterStatsLoader;
+use tidb_exec::cluster_stats_load::{ClusterStatsLoader, TableSizeStats};
 use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
@@ -203,7 +203,6 @@ use tidb_session::{
     GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange,
     TableStorageStatistics, TableStorageStatsProvider,
 };
-use tidb_stats_handle_cache::{StatsTableRowSource, TABLE_ROW_STATS_CACHE};
 
 use tidb_exec::cluster_table_storage::LockKeysOutcome;
 
@@ -398,44 +397,11 @@ struct ClusterTableStorageStatsProvider {
     catalog: Arc<SharedClusterCatalog>,
 }
 
-struct ClusterTableRowSource<'a> {
-    transactions: &'a Arc<dyn ClusterTransactions>,
-    catalog: &'a Arc<SharedClusterCatalog>,
-    resource_group: &'a str,
-}
-
-impl StatsTableRowSource for ClusterTableRowSource<'_> {
-    type Error = String;
-
-    fn table_row_counts(
-        &self,
-        table_ids: &[i64],
-    ) -> Result<Vec<tidb_stats_handle_cache::TableRowCount>, Self::Error> {
-        let snapshot = self.transactions.open_snapshot(self.resource_group)?;
-        let catalog = self.catalog.load();
-        let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
-        loader
-            .load_table_row_counts(&mut SnapshotMetaSnapshot::new(snapshot), table_ids)
-            .map_err(|error| error.to_string())
-    }
-
-    fn column_lengths(
-        &self,
-        table_ids: &[i64],
-    ) -> Result<Vec<tidb_stats_handle_cache::ColumnLength>, Self::Error> {
-        let snapshot = self.transactions.open_snapshot(self.resource_group)?;
-        let catalog = self.catalog.load();
-        let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
-        loader
-            .load_column_lengths(&mut SnapshotMetaSnapshot::new(snapshot), table_ids)
-            .map_err(|error| error.to_string())
-    }
-}
-
 impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
     fn load_table_storage_statistics(
         &self,
         resource_group: &str,
+        need_column_lengths: bool,
     ) -> Result<Vec<TableStorageStatistics>, String> {
         let catalog = self.catalog.load();
         let physical_ids = catalog
@@ -452,14 +418,28 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
                 )
             })
             .collect::<Vec<_>>();
-        TABLE_ROW_STATS_CACHE.update_by_id(
-            &ClusterTableRowSource {
-                transactions: &self.transactions,
-                catalog: &self.catalog,
-                resource_group,
-            },
-            &physical_ids,
-        )?;
+
+        // Go's TableSizeStats reads stats_meta for every statement, and only
+        // reads stats_histograms when a size column is retained after pruning.
+        // Keep the two reads statement-local instead of publishing a process-
+        // wide row cache or mutating the shared catalog image.
+        let row_snapshot = self.transactions.open_snapshot(resource_group)?;
+        let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
+        let rows = loader
+            .load_table_row_counts(&mut SnapshotMetaSnapshot::new(row_snapshot), &physical_ids)
+            .map_err(|error| error.to_string())?;
+        let lengths = if need_column_lengths {
+            let length_snapshot = self.transactions.open_snapshot(resource_group)?;
+            loader
+                .load_column_lengths(
+                    &mut SnapshotMetaSnapshot::new(length_snapshot),
+                    &physical_ids,
+                )
+                .map_err(|error| error.to_string())?
+        } else {
+            Vec::new()
+        };
+        let stats = TableSizeStats::from_rows(rows, lengths);
 
         Ok(catalog
             .databases
@@ -471,9 +451,9 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
                     .into_iter()
                     .flat_map(|partition| partition.read().definitions.snapshot())
                     .map(|definition| {
-                        let row_count = TABLE_ROW_STATS_CACHE.get_table_rows(definition.id);
-                        let (data_length, index_length) = TABLE_ROW_STATS_CACHE
-                            .get_data_and_index_length(table, definition.id, row_count);
+                        let row_count = stats.get_table_rows(definition.id);
+                        let (data_length, index_length) =
+                            stats.get_data_and_index_length(table, definition.id, row_count);
                         let average_row_length = if row_count == 0 {
                             0
                         } else {
@@ -487,7 +467,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
                     .collect();
                 TableStorageStatistics {
                     table_id: table.id,
-                    table: TABLE_ROW_STATS_CACHE.estimate_data_length(table),
+                    table: stats.estimate_data_length(table),
                     partitions,
                 }
             })

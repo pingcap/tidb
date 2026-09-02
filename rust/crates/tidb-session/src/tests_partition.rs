@@ -3457,10 +3457,9 @@ fn information_schema_partitions_reports_gos_rows() {
         "the ordinal is ONE-based and the description is the stored bound"
     );
 
-    // Go refreshes the process-wide row/length cache immediately before the
-    // PARTITIONS retriever when any of these four columns is requested. Feed
-    // the resulting catalog image directly here; the cluster provider path
-    // has its own storage-boundary regression.
+    // Feed a statement-time TableSizeStats result into the catalog image
+    // directly here; the cluster provider path has its own storage-boundary
+    // regression.
     {
         let shared = session.shared_catalog();
         let mut catalog = shared.lock().unwrap();

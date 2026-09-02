@@ -60,6 +60,7 @@ use std::sync::{Arc, RwLock};
 
 use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode,
+    UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
 };
 use tidb_model::table_info::TableInfo;
 use tidb_stats::cmsketch::{
@@ -69,13 +70,163 @@ use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{
     ColAndIdxExistenceMap, Column, ColumnInfo, HistColl, Index, IndexInfo, StatsLoadedStatus, Table,
 };
-use tidb_stats_handle_cache::{ColumnLength, StatsMetaRow, TableRowCount};
+use tidb_stats_handle_cache::StatsMetaRow;
 
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::mysql_system_tables::{
     scan_system_table, scan_system_table_index_prefixed, scan_system_table_prefixed, SystemRow,
     SystemTableError, SystemTableView,
 };
+
+/// One `mysql.stats_meta` row consumed by the information-schema size reader.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TableRowCount {
+    /// Physical table ID.
+    pub table_id: i64,
+    /// Persisted row count.
+    pub count: u64,
+}
+
+/// One non-index `mysql.stats_histograms` row consumed by the information-schema size reader.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ColumnLength {
+    /// Physical table ID.
+    pub table_id: i64,
+    /// Column histogram ID.
+    pub histogram_id: i64,
+    /// Persisted total column size. Negative values are clamped to zero.
+    pub total_size: i64,
+}
+
+/// Per-query row counts and variable-width column sizes used by the
+/// information-schema `TABLES` and `PARTITIONS` readers.
+///
+/// Go's `TableSizeStats` is deliberately not process-global: every statement
+/// reads `stats_meta`, and optionally `stats_histograms`, into a fresh value.
+#[derive(Clone, Debug, Default)]
+pub struct TableSizeStats {
+    table_rows: BTreeMap<i64, u64>,
+    column_lengths: BTreeMap<(i64, i64), u64>,
+}
+
+impl TableSizeStats {
+    /// Builds one statement-local value from the two restricted reads.
+    #[must_use]
+    pub fn from_rows(rows: Vec<TableRowCount>, lengths: Vec<ColumnLength>) -> Self {
+        Self {
+            table_rows: rows
+                .into_iter()
+                .map(|row| (row.table_id, row.count))
+                .collect(),
+            column_lengths: lengths
+                .into_iter()
+                .map(|row| {
+                    (
+                        (row.table_id, row.histogram_id),
+                        u64::try_from(row.total_size.max(0)).expect("nonnegative i64 fits in u64"),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// Go `TableSizeStats.GetTableRows`.
+    #[must_use]
+    pub fn get_table_rows(&self, table_id: i64) -> u64 {
+        self.table_rows.get(&table_id).copied().unwrap_or_default()
+    }
+
+    /// Go `TableSizeStats.GetColLength`.
+    #[must_use]
+    fn get_column_length(&self, table_id: i64, histogram_id: i64) -> u64 {
+        self.column_lengths
+            .get(&(table_id, histogram_id))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Go `TableSizeStats.EstimateDataLength`.
+    #[must_use]
+    pub fn estimate_data_length(&self, table: &TableInfo) -> (u64, u64, u64, u64) {
+        let mut row_count = self.get_table_rows(table.id);
+        let (mut data_length, mut index_length) =
+            self.get_data_and_index_length(table, table.id, row_count);
+        if let Some(partition) = table.get_partition_info() {
+            row_count = 0;
+            data_length = 0;
+            for definition in partition.read().definitions.snapshot() {
+                let partition_rows = self.get_table_rows(definition.id);
+                row_count = row_count.wrapping_add(partition_rows);
+                let (partition_data, partition_index) =
+                    self.get_data_and_index_length(table, definition.id, partition_rows);
+                data_length = data_length.wrapping_add(partition_data);
+                index_length = index_length.wrapping_add(partition_index);
+            }
+        }
+        let average_row_length = if row_count == 0 {
+            0
+        } else {
+            data_length / row_count
+        };
+        if table.is_sequence() {
+            row_count = 1;
+        }
+        (row_count, average_row_length, data_length, index_length)
+    }
+
+    /// Go `TableSizeStats.GetDataAndIndexLength`.
+    #[must_use]
+    pub fn get_data_and_index_length(
+        &self,
+        table: &TableInfo,
+        physical_id: i64,
+        row_count: u64,
+    ) -> (u64, u64) {
+        let mut column_lengths = vec![0_u64; table.columns.len()];
+        let mut data_length = 0_u64;
+        for (offset, column) in table.columns.iter_deref().enumerate() {
+            let column = column.read();
+            if column.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
+            let storage_length = column.field_type.storage_length();
+            let length = if storage_length == VAR_STORAGE_LEN {
+                self.get_column_length(physical_id, column.id)
+            } else {
+                row_count.wrapping_mul(storage_length as u64)
+            };
+            data_length = data_length.wrapping_add(length);
+            column_lengths[offset] = length;
+        }
+
+        let partitioned = table.get_partition_info().is_some();
+        let mut index_length = 0_u64;
+        for index in table.indices.iter_deref() {
+            let index = index.read();
+            if index.state != tidb_model::SchemaState::PUBLIC {
+                continue;
+            }
+            if partitioned {
+                if index.global && table.id != physical_id {
+                    continue;
+                }
+                if !index.global && table.id == physical_id {
+                    continue;
+                }
+            }
+            for index_column in index.columns.iter_deref() {
+                let index_column = index_column.read();
+                let length = if index_column.length == UNSPECIFIED_LENGTH {
+                    column_lengths[index_column.offset as usize]
+                } else {
+                    row_count.wrapping_mul(index_column.length as u64)
+                };
+                index_length = index_length.wrapping_add(length);
+            }
+        }
+        (data_length, index_length)
+    }
+}
 
 /// Go `statistics.UTCWithAllowInvalidDateCtx`, as conversion flags.
 ///

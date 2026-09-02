@@ -3171,12 +3171,18 @@ For each bounded behavior cluster:
       exists. Inventory and Ready blocker gates are in
       `receipts/statistics_handle_cache_metrics_audit.md` and
       `docs/operations/statistics-handle-cache-metrics-audit-execplan.md`.
-- [x] Audit the complete pinned root `pkg/statistics/handle/cache` package.
-      Remove three private-helper carriers and eight supplemental tests: Go's
-      package behavior is the integrated atomic cache, SQL row cache, metrics,
-      LFU/map selection, publication, update, and benchmark surface. The root
-      stays unclaimed while its LFU and metric dependencies are absent. The
-      full inventory is in `receipts/statistics_handle_cache_audit.md`.
+- [x] Re-audit the complete root `pkg/statistics/handle/cache` package at Go
+      master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: five artifacts and
+      1,051 lines, with two tests, six benchmark shapes, and no fixtures or
+      generated/platform variants. Remove the obsolete Rust-only process-wide
+      `StatsTableRowCache` (Go deleted `stats_table_row_cache.go`), move its
+      replacement to statement-local `TableSizeStats` reads, skip histogram
+      reads for TABLE_ROWS-only projections, keep estimates off the shared
+      catalog, and zero them on restricted-read failure. Root cache refresh,
+      batching, lifecycle, health, and backend behavior remain aligned. The
+      full inventory and Ready gates are in
+      `receipts/statistics_handle_cache_audit.md`; the living implementation
+      log is `docs/operations/statistics-handle-cache-audit-execplan.md`.
 - [x] Audit the complete pinned `pkg/statistics/handle/history` package.
       Remove the maximum-version-only carrier and its three source-absent
       tests. Go owns a session-backed history service with filtering,
