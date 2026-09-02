@@ -2244,8 +2244,12 @@ For each bounded behavior cluster:
   `tidb-stats-handle-usage-collector` owner. Moved its three source tests out
   of the aggregate statistics crate, removed a source-absent capacity test,
   preserved repeated worker starts and the source channel behavior after
-  close, and rewired index usage to consume the package directly. Inventory
-  and WIP gates are in `receipts/statistics_handle_usage_collector.md`.
+  close, and rewired index usage to consume the package directly. The
+  2026-09-02 Go-master re-audit read all 289 lines and found no source-vs-owner
+  behavior gap or Rust-only production path; the nil `closeCh` close regression
+  remains executable. Inventory and Ready gates are in
+  `receipts/statistics_handle_usage_collector.md` and
+  `docs/operations/statistics-handle-usage-collector-audit-execplan.md`.
 - 2026-08-29: completed the pinned Go
   `pkg/statistics/handle/internal` support package in
   `tidb-stats-handle-internal`. Removed Rust's opaque, caller-encoded table
@@ -3080,8 +3084,9 @@ For each bounded behavior cluster:
       `tidb-stats-handle-usage-collector`: preserve both bounded channels,
       synchronous timeout escalation, worker priority/drain/close behavior,
       and all three source tests while removing the supplemental capacity
-      assertion. The atomic inventory and WIP gates are in
-      `receipts/statistics_handle_usage_collector.md`.
+      assertion. The atomic inventory and Ready gates are in
+      `receipts/statistics_handle_usage_collector.md` and
+      `docs/operations/statistics-handle-usage-collector-audit-execplan.md`.
 - [x] Complete the pinned `pkg/statistics/handle/usage/indexusage` package in
       `tidb-stats-handle-usage-indexusage`: own the real model-driven GC,
       samples, global/session/statement collectors, four source tests, and
