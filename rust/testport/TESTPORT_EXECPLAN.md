@@ -4310,6 +4310,17 @@ For each bounded behavior cluster:
   checks as Ready gates; `make bazel_prepare` is blocked by the unavailable
   Bazel executable. Details are in `receipts/meta_autoid_audit.md`.
 
+- 2026-09-02: completed a bounded direct `pkg/planner` Go-package batch against
+  Go master `1c1a334d2be1dce64888b6e1f054462c566b0734`. Restored the optimizer's
+  TiKV-only/TiFlash-only alternative rounds, mixed-engine and storage-hint
+  gates, per-invocation cleanup closures, and Explain/binding hint warning
+  coverage; added a focused gate/restoration regression and BUILD test target.
+  The focused and full failpoint-aware package suites pass, as do lint, Rust
+  formatting, and diff checks; `make bazel_prepare` is blocked by the missing
+  local Bazel executable. Full mock TiFlash MPP fixture execution remains a
+  separate nested-package boundary. Details are in
+  `receipts/planner_engine_rounds.md`.
+
 ## Decision Log
 
 - Decision: keep top-level `pkg/util/logutil` on the existing
