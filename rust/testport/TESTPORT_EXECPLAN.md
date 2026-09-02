@@ -3638,6 +3638,14 @@ For each bounded behavior cluster:
       suite, Ready lint/format, and diff checks pass. Transaction-driver and
       session consumption remain adjacent package boundaries documented in
       `receipts/errno_audit.md`.
+- 2026-09-02: completed the `pkg/errno` Go-package batch in one commit after
+      pulling the latest Go master (`febee17ec716d86b1e355e5400ef9e4f4f190bad`).
+      Restored the 9015 constant and exact redacted message in `errcode.go` and
+      `errname.go`, added the focused catalog regression, and ran the full Go
+      package test and Ready lint/diff gates. `make bazel_prepare` is required
+      for the new top-level test and remains blocked by the missing local Bazel
+      executable; the Rust catalog and downstream transaction/session
+      consumers remain the documented boundaries.
 - 2026-09-01: audited all five Go-master `pkg/keyspace` artifacts (404 lines,
       17 production function/method declarations, three tests, and one
       benchmark) including the package contract, Bazel target, and every
