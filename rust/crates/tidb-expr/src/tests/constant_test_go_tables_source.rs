@@ -406,12 +406,22 @@ fn constant_folding_sees_through_internal_charset_transcodes() {
 
 /// Master row 6 of `pkg/expression/constant_test.go:274
 /// TestConstantFoldingCharsetConvert`: `concat('中文' @gbk_bin,
-/// '\xd2\xbb' @binary)` must yield BINARY bytes [D6,D0,CE,C4,D2,BB] -- the
-/// character-set half transcoded to ITS OWN encoding. This crate's CONCAT
-/// keeps the UTF-8 payload ([228,184,173,230,150,135,210,187]) instead.
+/// '\xd2\xbb' @binary)` must yield BINARY bytes [D6,D0,CE,C4,D2,BB], with
+/// the character-set half transcoded to its own encoding.
 #[test]
-#[ignore = "go-parity-gap: folded CONCAT over a GBK-tagged constant plus a BINARY constant keeps UTF-8 bytes instead of transcoding the character half to its own encoding"]
-fn constant_folding_charset_binary_result_diverges() {}
+fn constant_folding_charset_binary_result_matches_source() {
+    let folded = folded_datum_of(build(
+        "concat",
+        vec![
+            tagged_string_const("中文", "gbk", "gbk_bin"),
+            raw_binary_const(&[0xd2, 0xbb]),
+        ],
+    ));
+    assert_eq!(
+        folded.as_raw_bytes(),
+        Some(&[0xd6, 0xd0, 0xce, 0xc4, 0xd2, 0xbb][..])
+    );
+}
 
 /// First two tables of `pkg/expression/constant_test.go:72
 /// TestConstantPropagation`: constants walk through an equality class and an

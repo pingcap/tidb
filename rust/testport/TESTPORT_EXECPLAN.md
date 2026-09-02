@@ -5592,6 +5592,12 @@ For each bounded behavior cluster:
   `BuildCastFunction` boundary. Duration, temporal, invalid-cast warning, and
   inexact numeric regressions plus the complete inventory are recorded in
   `rust/testport/receipts/expression_collation_audit.md`.
+- `pkg/expression` mixed-charset constant folding now follows Go's
+  derive-before-`HandleBinaryLiteral` order. A GBK-tagged `CONCAT` argument is
+  encoded before a raw BINARY suffix is appended, producing
+  `D6D0CEC4D2BB`; direct `NewFunction` and AST-rewriter construction share the
+  same wrapper, with inventory and fail-before evidence in
+  `rust/testport/receipts/b073.md`.
 
 ## Outcomes & Retrospective
 

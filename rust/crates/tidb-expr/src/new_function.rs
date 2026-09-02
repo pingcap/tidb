@@ -65,12 +65,14 @@
 //!     retType = builtinRetTp }`; the Rust rule is the same statement with
 //!     "the table produced an answer" standing in for "the signature's
 //!     `getRetTp` is not `TypeUnspecified`".
-//!   - Collation derivation on the built node does NOT happen here. Go
-//!     derives it inside `getFunction` via `deriveCollation`. A node built by
-//!     this file carries [`crate::expr_collation::CollationInfo`]'s default
-//!     until something sets it. This is the single largest gap in this file
-//!     and it is why callers that care about collation still go through
-//!     [`crate::rewriter`].
+//!   - Collation derivation and `HandleBinaryLiteral` wrapping run here in the
+//!     same order as Go's `newBaseBuiltinFuncWithTp` for string-bearing calls:
+//!     derive the result charset first, then wrap non-legacy string arguments
+//!     when the function consumes a binary result. The ordinary AST rewriter
+//!     shares the same wrapping helper, so direct `NewFunction` callers and
+//!     rewritten SQL cannot disagree on charset bytes. Purely numeric calls
+//!     retain their existing metadata so constant-propagation rebuilds stay
+//!     structurally identical.
 //!
 //! - **Four special-cased names are refused, not built.** `newFunctionImpl`
 //!   opens with a switch that hands four names to dedicated node builders
@@ -122,7 +124,7 @@ use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use crate::{Columns, EvalError};
 use tidb_ast::CiString;
-use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
 
 /// Go `ScalarFunctionCallBack` (`scalar_function.go:295`): a hook run on the
 /// freshly built node before folding, able to reject or replace it.
@@ -294,6 +296,34 @@ pub fn new_function_impl(
         })
         .unwrap_or(ret_type);
 
+    // Collation participates in Go's construction-time conversion only when
+    // the call produces a string or consumes one. Numeric-only rebuilds (for
+    // example constant propagation's `gt(INT, INT)`) deliberately keep the
+    // pre-existing result metadata; those nodes do not consult collation and
+    // their structural identity is observable by the rewrite passes.
+    let derive_collation = (ret_type.code() != FieldTypeCode::Unspecified
+        && ret_type.eval_type() == EvalType::String)
+        || func_args.iter().any(|arg| {
+            arg.static_type()
+                .is_some_and(|field_type| field_type.eval_type() == EvalType::String)
+        });
+    let derived = if derive_collation {
+        Some(crate::collation_derive::derive_collation_with_connection(
+            func_name,
+            &func_args,
+            ret_type.eval_type(),
+            ctx.connection_charset_info(),
+        )?)
+    } else {
+        None
+    };
+    let func_args = match &derived {
+        Some(derived) => {
+            crate::rewriter::wrap_binary_literals(func_name, &derived.charset, func_args)
+        }
+        None => func_args,
+    };
+
     let function = ScalarFunction::new(CiString::new(registered_name), ret_type, func_args);
     let function = match check_or_init {
         Some(callback) => callback(function)?,
@@ -301,6 +331,10 @@ pub fn new_function_impl(
     };
 
     let mut expr = Expression::ScalarFunction(function);
+    if let Some(derived) = &derived {
+        crate::collation_derive::apply_derived_collation(&mut expr, derived);
+        crate::rewriter::restore_function_result_charset(&mut expr)?;
+    }
     fold_constant_in_mode(&mut expr, ctx, fold);
     Ok(expr)
 }

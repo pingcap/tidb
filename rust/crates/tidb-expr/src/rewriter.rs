@@ -306,7 +306,7 @@ fn constant_string(text: &str) -> Expression {
 /// charset, is wrapped with the implicit `to_binary` call that performs the
 /// UTF-8 -> charset transcode. See `crate::convert_charset` for why that is
 /// the only place the bytes ever change.
-fn wrap_binary_literals(
+pub(crate) fn wrap_binary_literals(
     name: &str,
     result_charset: &str,
     args: Vec<Expression>,
@@ -336,6 +336,20 @@ fn wrap_binary_literals(
             ))
         })
         .collect()
+}
+
+/// Reapplies the result-charset rules whose Go function classes override the
+/// generic collation derivation after `newBaseBuiltinFuncWithTp` returns.
+pub(crate) fn restore_function_result_charset(expr: &mut Expression) -> Result<(), EvalError> {
+    let Expression::ScalarFunction(func) = expr else {
+        return Ok(());
+    };
+    if returns_binary_string(func.func_name.lowercase()) {
+        if let Some(field_type) = func.ret_type.as_mut() {
+            set_binary_charset(field_type);
+        }
+    }
+    result_type::restore_char_result_charset(func)
 }
 
 /// Applies the two `ETReal` argument declarations of Go's
@@ -628,14 +642,7 @@ fn derive_tree_collation_with_connection(
     crate::collation_derive::apply_derived_collation(expr, &ec);
     // Some getFunction implementations overwrite generic derivation with a
     // fixed result charset. Reapply those source-owned result rules last.
-    if let Expression::ScalarFunction(func) = expr {
-        if returns_binary_string(func.func_name.lowercase()) {
-            if let Some(ft) = func.ret_type.as_mut() {
-                set_binary_charset(ft);
-            }
-        }
-        result_type::restore_char_result_charset(func)?;
-    }
+    restore_function_result_charset(expr)?;
     Ok(())
 }
 
@@ -1546,6 +1553,22 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             if lowered == "tidb_version" {
                 ret_type.set_flen(i64::try_from(resolver.tidb_info_len()).unwrap_or(i64::MAX));
             }
+            // Go derives the function collation before applying
+            // `HandleBinaryLiteral`. In particular, CONCAT with a binary
+            // operand has a binary result, so a non-legacy argument such as
+            // GBK must be wrapped with `to_binary` before the node is built.
+            // The tree-level derivation below still stamps the complete
+            // `ExprCollation` (including coercibility and repertoire), but
+            // this early charset/collation result is needed for the
+            // construction-time conversion decision itself.
+            let derived = crate::collation_derive::derive_collation_with_connection(
+                &lowered,
+                &rewritten,
+                ret_type.eval_type(),
+                resolver.connection_charset_info(),
+            )?;
+            ret_type.set_charset_name(derived.charset);
+            ret_type.set_collation_name(derived.collation);
             let rewritten = wrap_binary_literals(&lowered, ret_type.charset_name(), rewritten);
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(&lowered),
@@ -1889,6 +1912,48 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// `HandleBinaryLiteral` runs after collation derivation in Go. A BINARY
+    /// CONCAT result therefore encodes the GBK argument before appending the
+    /// raw suffix; deriving only after construction would retain UTF-8 bytes.
+    #[test]
+    fn concat_derives_binary_before_wrapping_gbk_string() {
+        struct GbkResolver;
+
+        impl ColumnResolver for GbkResolver {
+            fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
+                None
+            }
+
+            fn connection_charset_info(&self) -> (&str, &str) {
+                ("gbk", "gbk_bin")
+            }
+
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+        }
+
+        let expression = Expr::Func {
+            name: "CONCAT".to_owned(),
+            args: vec![
+                Expr::String("中文".to_owned()),
+                Expr::Hex("D2BB".to_owned()),
+            ],
+            origin_position: 0,
+        };
+        let rewritten = rewrite_expr_resolved(&expression, &GbkResolver).unwrap();
+        let mut chunk = Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        let value = rewritten
+            .eval(&NoColumns, chunk.get_row(0))
+            .expect("mixed-charset CONCAT evaluates");
+
+        assert_eq!(
+            value.as_raw_bytes(),
+            Some(&[0xd6, 0xd0, 0xce, 0xc4, 0xd2, 0xbb][..])
+        );
     }
 
     /// `IS NULL` / `IS TRUE` / `IS FALSE` (and their `IS NOT` forms) return
