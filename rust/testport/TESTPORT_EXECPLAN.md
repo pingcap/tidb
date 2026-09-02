@@ -43,6 +43,16 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-09-02: refreshed the complete Go-master
+  `pkg/statistics/handle/internal` boundary at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two artifacts and 68 lines,
+  with no source tests, fixtures, generated/platform variants, or build
+  extras. The single Rust helper remains an actual-table equality owner for
+  Go's count, histogram text, CMSketch, TopN, and existence-map semantics;
+  current/detached probes, owner checks, and Ready gates pass. Details are in
+  `receipts/statistics_handle_internal.md` and
+  `docs/operations/statistics-handle-internal-audit-execplan.md`.
+
+- 2026-09-02: refreshed the complete Go-master
   `pkg/statistics/handle/logutil` boundary at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two artifacts and 67 lines,
   with no source tests, fixtures, generated/platform variants, or build
@@ -3063,8 +3073,9 @@ For each bounded behavior cluster:
 - [x] Complete the pinned `pkg/statistics/handle/internal` support package in
       `tidb-stats-handle-internal`: replace the opaque snapshot workaround
       with `AssertTableEqual` over actual statistics tables, and remove its
-      three non-Go tests. The atomic inventory and WIP gates are in
-      `receipts/statistics_handle_internal.md`.
+      three non-Go tests. The current Go-master inventory and Ready gates are
+      in `receipts/statistics_handle_internal.md` and
+      `docs/operations/statistics-handle-internal-audit-execplan.md`.
 - [x] Complete the pinned `pkg/statistics/handle/usage/collector` package in
       `tidb-stats-handle-usage-collector`: preserve both bounded channels,
       synchronous timeout escalation, worker priority/drain/close behavior,
