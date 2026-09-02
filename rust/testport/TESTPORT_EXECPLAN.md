@@ -42,6 +42,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: restored the shared multipart-upload contract in the complete
+  `pkg/objstore/storeapi` inventory (three artifacts, 402 lines, with no
+  generated/platform/fixture inputs). `MaxUploadParts = 10000` and the exact
+  `ErrExceedMaxUploadParts` sentinel now match Go master, with a focused
+  regression that failed before the symbols existed and passes afterward. The
+  legacy `ReadSeekCloser` alias remains until its `dumpformat` callers migrate
+  as one package. Go tests and scoped lint pass; the Ready repository lint
+  profile reports 986 pre-existing var-naming diagnostics outside this package,
+  and Bazel preparation is blocked only by the unavailable executable. Details are in
+  `receipts/objstore_storeapi.md`.
+
 - 2026-09-02: restored the two self-contained Go-master runtime deltas in the
   complete `pkg/types` inventory (61 artifacts, including the nested
   `parser_driver` support package): checked `uint64` vector-size arithmetic

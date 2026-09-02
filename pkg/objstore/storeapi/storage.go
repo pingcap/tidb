@@ -25,6 +25,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 )
@@ -114,6 +115,14 @@ type WriterOption struct {
 	Concurrency int
 	PartSize    int64
 }
+
+// MaxUploadParts is the maximum number of parts a single multipart-uploaded
+// object may have. S3, GCS and OSS all cap this at 10000.
+const MaxUploadParts = 10000
+
+// ErrExceedMaxUploadParts is returned by a Create'd writer when a single object
+// would need more than MaxUploadParts parts.
+var ErrExceedMaxUploadParts = errors.New("data exceeds the object store's per-object multipart upload part limit")
 
 // ReaderOption reader option.
 type ReaderOption struct {

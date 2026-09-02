@@ -57,3 +57,8 @@ func TestGetHTTPRange(t *testing.T) {
 	require.False(t, full)
 	require.EqualValues(t, "bytes=50-", val)
 }
+
+func TestMultipartUploadLimit(t *testing.T) {
+	require.Equal(t, 10000, MaxUploadParts)
+	require.EqualError(t, ErrExceedMaxUploadParts, "data exceeds the object store's per-object multipart upload part limit")
+}
