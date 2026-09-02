@@ -1075,15 +1075,15 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         MAX_DISK_STR => |_, _, _, stats| Datum::new_int(stats.max_disk),
         KV_TIME_STR => |_, _, _, stats| Datum::new_int(nanos(stats.sum_kv_total)),
         AVG_KV_TIME_STR => {
-            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_kv_total), stats.commit_count))
+            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_kv_total), stats.exec_count))
         }
         PD_TIME_STR => |_, _, _, stats| Datum::new_int(nanos(stats.sum_pd_total)),
         AVG_PD_TIME_STR => {
-            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_pd_total), stats.commit_count))
+            |_, _, _, stats| Datum::new_int(avg_int(nanos(stats.sum_pd_total), stats.exec_count))
         }
         BACKOFF_TOTAL_TIME_STR => |_, _, _, stats| Datum::new_int(nanos(stats.sum_backoff_total)),
         AVG_BACKOFF_TOTAL_TIME_STR => |_, _, _, stats| {
-            Datum::new_int(avg_int(nanos(stats.sum_backoff_total), stats.commit_count))
+            Datum::new_int(avg_int(nanos(stats.sum_backoff_total), stats.exec_count))
         },
         WRITE_SQL_RESP_TIME_STR => {
             |_, _, _, stats| Datum::new_int(nanos(stats.sum_write_sql_resp_total))
@@ -1091,7 +1091,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
         AVG_WRITE_SQL_RESP_TIME_STR => |_, _, _, stats| {
             Datum::new_int(avg_int(
                 nanos(stats.sum_write_sql_resp_total),
-                stats.commit_count,
+                stats.exec_count,
             ))
         },
         AVG_TIDB_CPU_TIME_STR => {
@@ -1218,7 +1218,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::statement_summary::tests::generate_any_exec_info;
-    use crate::statement_summary::StmtExecInfo;
+    use crate::statement_summary::{StmtDigestKey, StmtExecInfo, TableEntry};
 
     /// Go `boTxnLockName`.
     const BO_TXN_LOCK_NAME: &str = "txnlock";
@@ -1477,6 +1477,75 @@ pub(crate) mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// Go `78cac443a4`: execution-time averages use `execCount`, even when
+    /// only some executions commit a transaction.
+    #[test]
+    fn execution_average_columns_use_exec_count() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        let reader = new_stmt_summary_reader_with_column_names_for_test(&ss_map, &[]);
+        let stats = StmtSummaryStats {
+            exec_count: 4,
+            commit_count: 2,
+            sum_kv_total: Duration::from_nanos(100),
+            sum_pd_total: Duration::from_nanos(200),
+            sum_backoff_total: Duration::from_nanos(300),
+            sum_write_sql_resp_total: Duration::from_nanos(400),
+            ..StmtSummaryStats::default()
+        };
+
+        for (name, expected) in [
+            (AVG_KV_TIME_STR, 25),
+            (AVG_PD_TIME_STR, 50),
+            (AVG_BACKOFF_TOTAL_TIME_STR, 75),
+            (AVG_WRITE_SQL_RESP_TIME_STR, 100),
+        ] {
+            let factory = column_value_factory(name)
+                .unwrap_or_else(|| panic!("missing column value factory: {name}"));
+            assert_eq!(
+                factory(&reader, None, None, &stats),
+                Datum::new_int(expected),
+                "{name}"
+            );
+        }
+    }
+
+    /// Go `78cac443a4`: skipped empty table entries must not leave a dangling
+    /// comma in `TABLE_NAMES`.
+    #[test]
+    fn table_names_skip_empty_tables() {
+        let mut info = generate_any_exec_info();
+        let stmt_ctx = Arc::get_mut(&mut info.stmt_ctx).expect("test context is unique");
+        stmt_ctx.tables = vec![
+            TableEntry {
+                db: "db1".to_owned(),
+                table: String::new(),
+            },
+            TableEntry {
+                db: "DB2".to_owned(),
+                table: "TB2".to_owned(),
+            },
+            TableEntry {
+                db: "db3".to_owned(),
+                table: String::new(),
+            },
+        ];
+
+        let ss_map = StmtSummaryByDigestMap::new();
+        ss_map.set_begin_time_for_cur_interval(chrono::Utc::now().timestamp() + 60);
+        ss_map.add_statement(&info);
+        let mut key = StmtDigestKey::new();
+        key.init(
+            &info.schema_name,
+            &info.digest,
+            &info.prev_sql_digest,
+            &info.plan_digest,
+            &info.resource_group_name,
+            "",
+        );
+        let summary = ss_map.summary_map_get(&key).expect("summary must exist");
+        assert_eq!(summary.lock().unwrap().table_names, "db2.tb2");
     }
 
     /// Go `fmt.Sprintf("%v", datum.GetValue())`, the rendering Go's `match`

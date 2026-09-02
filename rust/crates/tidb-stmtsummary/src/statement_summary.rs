@@ -1141,19 +1141,18 @@ impl StmtSummaryByDigest {
     fn init(&mut self, sei: &StmtExecInfo) -> bool {
         // Use "," to separate table names to support FIND_IN_SET.
         let mut buffer = String::new();
-        let table_count = sei.stmt_ctx.tables.len();
-        for (i, value) in sei.stmt_ctx.tables.iter().enumerate() {
+        for value in &sei.stmt_ctx.tables {
             // In `create database` statement, DB name is not empty but table
             // name is empty.
             if value.table.is_empty() {
                 continue;
             }
+            if !buffer.is_empty() {
+                buffer.push(',');
+            }
             buffer.push_str(&value.db.to_lowercase());
             buffer.push('.');
             buffer.push_str(&value.table.to_lowercase());
-            if i < table_count - 1 {
-                buffer.push(',');
-            }
         }
         let table_names = buffer;
 
@@ -1264,11 +1263,15 @@ impl StmtSummaryByDigest {
                 return Vec::new();
             }
         }
-        self.history
+        let mut summaries: Vec<_> = self
+            .history
             .iter()
+            .rev()
             .take(history_size)
             .map(Arc::clone)
-            .collect()
+            .collect();
+        summaries.reverse();
+        summaries
     }
 }
 
@@ -1588,9 +1591,9 @@ impl StmtSummaryByDigestMap {
 
         for value in values {
             let mut ssbd = value.lock().unwrap();
-            if let Some(front) = ssbd.history.front().map(Arc::clone) {
+            if let Some(back) = ssbd.history.back().map(Arc::clone) {
                 let mut new_history = VecDeque::new();
-                new_history.push_front(front);
+                new_history.push_back(back);
                 ssbd.history = new_history;
             }
         }
@@ -3346,9 +3349,28 @@ pub(crate) mod tests {
         let datum = reader.get_stmt_summary_history_rows();
         assert_eq!(datum.len(), 10);
 
+        let value = ss_map.summary_map_get(&key).expect("summary must exist");
+        let summary = value.lock().unwrap();
+        let history = summary.collect_history_summaries(None, 2);
+        let begin_times: Vec<i64> = history
+            .iter()
+            .map(|element| element.lock().unwrap().begin_time)
+            .collect();
+        assert_eq!(begin_times, vec![now + 100, now + 110]);
+        drop(summary);
+
         ss_map.set_history_size(5);
         let datum = reader.get_stmt_summary_history_rows();
         assert_eq!(datum.len(), 5);
+
+        ss_map.clear_history();
+        let summary = value.lock().unwrap();
+        assert_eq!(summary.history.len(), 1);
+        assert_eq!(
+            summary.history.back().unwrap().lock().unwrap().begin_time,
+            now + 110
+        );
+        drop(summary);
 
         // test eviction
         ss_map.clear();

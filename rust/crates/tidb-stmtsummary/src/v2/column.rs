@@ -396,21 +396,18 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
         AVG_DISK_STR => |_, record| Datum::new_int(avg_int(record.sum_disk, record.exec_count)),
         MAX_DISK_STR => |_, record| Datum::new_int(record.max_disk),
         AVG_KV_TIME_STR => {
-            |_, record| Datum::new_int(avg_int(nanos(record.sum_kv_total), record.commit_count))
+            |_, record| Datum::new_int(avg_int(nanos(record.sum_kv_total), record.exec_count))
         }
         AVG_PD_TIME_STR => {
-            |_, record| Datum::new_int(avg_int(nanos(record.sum_pd_total), record.commit_count))
+            |_, record| Datum::new_int(avg_int(nanos(record.sum_pd_total), record.exec_count))
         }
-        AVG_BACKOFF_TOTAL_TIME_STR => |_, record| {
-            Datum::new_int(avg_int(
-                nanos(record.sum_backoff_total),
-                record.commit_count,
-            ))
-        },
+        AVG_BACKOFF_TOTAL_TIME_STR => {
+            |_, record| Datum::new_int(avg_int(nanos(record.sum_backoff_total), record.exec_count))
+        }
         AVG_WRITE_SQL_RESP_TIME_STR => |_, record| {
             Datum::new_int(avg_int(
                 nanos(record.sum_write_sql_resp_total),
-                record.commit_count,
+                record.exec_count,
             ))
         },
         AVG_TIDB_CPU_TIME_STR => {
@@ -694,6 +691,36 @@ mod tests {
             row.set_datums(&[datum]);
             assert!(
                 (row.to_row().get_float64(0) - expected).abs() < f64::EPSILON,
+                "{name}"
+            );
+        }
+    }
+
+    /// Go `78cac443a4`: execution-time averages use `execCount`, even when
+    /// only some executions commit a transaction.
+    #[test]
+    fn execution_average_columns_use_exec_count() {
+        let record = StmtRecord {
+            exec_count: 4,
+            commit_count: 2,
+            sum_kv_total: Duration::from_nanos(100),
+            sum_pd_total: Duration::from_nanos(200),
+            sum_backoff_total: Duration::from_nanos(300),
+            sum_write_sql_resp_total: Duration::from_nanos(400),
+            ..StmtRecord::default()
+        };
+        let expected = [
+            (AVG_KV_TIME_STR, 25),
+            (AVG_PD_TIME_STR, 50),
+            (AVG_BACKOFF_TOTAL_TIME_STR, 75),
+            (AVG_WRITE_SQL_RESP_TIME_STR, 100),
+        ];
+        for (name, value) in expected {
+            let factory =
+                column_factory(name).unwrap_or_else(|| panic!("missing column factory: {name}"));
+            assert_eq!(
+                factory(&MockColumnInfo, &record),
+                Datum::new_int(value),
                 "{name}"
             );
         }

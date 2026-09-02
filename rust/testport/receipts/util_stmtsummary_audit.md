@@ -99,6 +99,43 @@ unrelated in-progress `pkg/statistics/handle/util` edit references the absent
 and was preserved. The Rust owner and executor/infoschema/planner integration
 remain explicit boundaries; no speculative Rust changes were made.
 
+## Rust owner follow-up: current-master history and execution averages
+
+The complete 22-artifact Go inventory above remains the package boundary for
+this Rust-only follow-up. The relevant current-master source is
+`78cac443a4f46c13bfe27eb247b5c80657952547` (`planner, util: fix statement
+summary history and display correctness`), already recorded in the preceding
+Go-master follow-up. Before editing, the Rust owner was read across all seven
+production modules (`statement_summary.rs`, `evicted.rs`, `reader.rs`, and
+`v2/{column,record,stmtsummary}.rs`) and its existing unit fixtures/tests.
+
+The old Rust owner still diverged in four source-visible paths:
+
+* v1 and evicted history collection took the oldest `historySize` entries,
+  while Go takes the newest entries and restores chronological order;
+* `clear_history` retained the front entry instead of the current back entry;
+* v1 and v2 KV/PD/backoff/write-response averages divided by `commitCount`
+  instead of `execCount`;
+* v1/v2 table-name builders inserted delimiters using the original index, so
+  skipped empty table entries left a trailing comma, and v2 records retained
+  unformatted normalized SQL.
+
+Focused Rust regressions were added for latest-interval ordering and reset,
+evicted history selection, all four execution-average columns in both
+surfaces, empty-table filtering, and v2 normalized-SQL formatting. Each
+pre-fix probe failed with the old result (oldest intervals, commit-based
+averages, or `db2.tb2,`); the corrected probes pass.
+
+Validation for this Rust follow-up:
+
+* `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-stmtsummary --lib` — complete owner suite passes after the fix.
+* `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-stmtsummary --all-targets` — passes.
+* pinned workspace formatting, `make lint`, and `git diff --check` — pass.
+
+No Go source was edited. The v2 logger/history-reader/table harness and the
+executor/infoschema/planner integration remain explicit boundaries as stated
+above; this batch only aligns behavior represented by the native Rust owner.
+
 ## Validation (Ready profile)
 
 - Failpoint-enabled Go root targeted run:

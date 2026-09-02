@@ -496,18 +496,18 @@ impl Default for StmtRecord {
 pub fn new_stmt_record(info: &StmtExecInfo) -> StmtRecord {
     // Use "," to separate table names to support FIND_IN_SET.
     let mut buffer = String::new();
-    for (i, value) in info.stmt_ctx.tables.iter().enumerate() {
+    for value in &info.stmt_ctx.tables {
         // In `create database` statement, DB name is not empty but table name
         // is empty.
         if value.table.is_empty() {
             continue;
         }
+        if !buffer.is_empty() {
+            buffer.push(',');
+        }
         buffer.push_str(&value.db.to_lowercase());
         buffer.push('.');
         buffer.push_str(&value.table.to_lowercase());
-        if i < info.stmt_ctx.tables.len() - 1 {
-            buffer.push(',');
-        }
     }
     let table_names = buffer;
     let mut plan_digest = info.plan_digest.clone();
@@ -536,7 +536,7 @@ pub fn new_stmt_record(info: &StmtExecInfo) -> StmtRecord {
         digest: info.digest.clone(),
         plan_digest,
         stmt_type: info.stmt_ctx.stmt_type.clone(),
-        normalized_sql: info.normalized_sql.clone(),
+        normalized_sql: format_sql(&info.normalized_sql),
         table_names,
         is_internal: info.is_internal,
         binding_sql,
@@ -1677,5 +1677,33 @@ mod tests {
         assert_eq!(items["ia_remote_exec_count"], serde_json::json!(2));
 
         store_global_config(restore);
+    }
+
+    /// Go `78cac443a4`: v2 records skip empty table entries and format the
+    /// normalized SQL with the package's length limit.
+    #[test]
+    fn stmt_record_latest_history_and_table_contracts() {
+        let mut info = generate_stmt_exec_info_4_test("digest");
+        let stmt_ctx = Arc::get_mut(&mut info.stmt_ctx).expect("test context is unique");
+        stmt_ctx.tables = vec![
+            TableEntry {
+                db: "db1".to_owned(),
+                table: String::new(),
+            },
+            TableEntry {
+                db: "DB2".to_owned(),
+                table: "TB2".to_owned(),
+            },
+            TableEntry {
+                db: "db3".to_owned(),
+                table: String::new(),
+            },
+        ];
+        info.normalized_sql = "x".repeat(DEFAULT_MAX_SQL_LENGTH as usize + 1);
+
+        let mut record = new_stmt_record(&info);
+        record.add(&info);
+        assert_eq!(record.table_names, "db2.tb2");
+        assert_eq!(record.normalized_sql, format_sql(&info.normalized_sql));
     }
 }

@@ -5741,6 +5741,14 @@ For each bounded behavior cluster:
   string/DATETIME/string source regression is active; pre-fix failure,
   inventory, validation, and the unrelated concurrent owner compile blocker
   are recorded in `rust/testport/receipts/expression_collation_audit.md`.
+- `pkg/util/stmtsummary` Rust ownership now follows the current-master
+  history/display fixes from `78cac443a4`: v1 and evicted history readers keep
+  the newest intervals in chronological order, history reset preserves the
+  current interval, KV/PD/backoff/write-response averages divide by execution
+  count, v1/v2 table-name builders skip empty entries without dangling commas,
+  and v2 records format normalized SQL. Focused fail-before regressions and
+  the complete seven-file Rust owner inventory are recorded in
+  `rust/testport/receipts/util_stmtsummary_audit.md`; no Go source was edited.
 
 ## Outcomes & Retrospective
 

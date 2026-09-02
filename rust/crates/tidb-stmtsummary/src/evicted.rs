@@ -216,7 +216,9 @@ impl StmtSummaryByDigestEvicted {
         &self,
         history_size: usize,
     ) -> Vec<&StmtSummaryByDigestEvictedElement> {
-        self.history.iter().take(history_size).collect()
+        let mut summaries: Vec<_> = self.history.iter().rev().take(history_size).collect();
+        summaries.reverse();
+        summaries
     }
 }
 
@@ -753,6 +755,28 @@ mod tests {
             get_all_evicted(&ssbde),
             "{begin: 9, end: 10, count: 1}, {begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}"
         );
+    }
+
+    /// Go `78cac443a4`: history collection keeps the newest retained
+    /// intervals, but returns them oldest-to-newest for the history table.
+    #[test]
+    fn evicted_history_collection_keeps_latest_intervals() {
+        let mut evicted = StmtSummaryByDigestEvicted::new();
+        for begin_time in [10, 20, 30] {
+            evicted
+                .history
+                .push_back(StmtSummaryByDigestEvictedElement::new(
+                    begin_time,
+                    begin_time + 10,
+                ));
+        }
+
+        let latest = evicted.collect_history_summaries(2);
+        let intervals: Vec<(i64, i64)> = latest
+            .iter()
+            .map(|element| (element.begin_time, element.end_time))
+            .collect();
+        assert_eq!(intervals, vec![(20, 30), (30, 40)]);
     }
 
     /// Go `TestMapToEvictedCountDatum`: `stmtSummaryByDigestMap.ToEvictedCountDatum`.
