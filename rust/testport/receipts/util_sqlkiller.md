@@ -1,10 +1,11 @@
 # `pkg/util/sqlkiller` — complete Go-master package transcreation
 
-Status: Ready for this atomic package batch. This is not a repository-wide
-parity or PR-readiness claim.
+Status: complete dependency-closed audit at the current Go-master authority;
+the SQLKiller concurrent-reset behavior and source regression are restored.
+This is not a repository-wide parity or PR-readiness claim.
 
 Go source: `origin/master`
-`db35d47066648fe73abce6318d53fc625df51490` (which includes
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02), including
 `5af03a2e108d70b151c32ba4620cfcaedcaf4502`, “prevent SQLKiller state races
 during concurrent reset”).
 
@@ -28,8 +29,8 @@ The Go package has exactly three direct artifacts, all read in full:
 
 There is no `doc.go`, `main_test.go`, benchmark, fuzz test, fixture or
 `testdata`, generated source/input, platform/build-tag variant, README, or
-ownership artifact. The checkout's Go copy is the pre-`5af03a2e10` version;
-the Go-master delta is the three-artifact race-fix/test addition listed
+ownership artifact. The hparser checkout's Go copy was the pre-`5af03a2e10`
+version; this batch restores the three-artifact race-fix/test addition listed
 above.
 
 ## Function inventory and Rust mapping
@@ -80,10 +81,14 @@ Profile: Ready. Commands run from the repository root:
   reads, declaration inventory, and `git diff HEAD origin/master --
   pkg/util/sqlkiller` — passed; confirmed all three source artifacts and the
   Go-master race-fix delta.
+- Pre-fix detached worktree run with the new test — failed at compile time
+  because the old `getKillError` signature could not accept the captured event
+  description.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH
-  GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test
-  ./pkg/util/sqlkiller -count=1` — passed compilation (`[no test files]` on
-  this pre-`5af03a2e10` checkout).
+  GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10
+  TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh
+  pkg/util/sqlkiller -run '^TestSQLKillerConcurrentReset$' -count=1` — passed.
+- The same failpoint wrapper with `pkg/util/sqlkiller -count=1` — passed.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler
   DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib
   cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --locked
@@ -99,10 +104,9 @@ Profile: Ready. Commands run from the repository root:
   GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
 - `git diff --check` — passed.
 
-No Go source, import block, Bazel file, or module dependency changed in this
-Rust-only batch, so `make bazel_prepare` is not required. The Go-master test
-itself was read in full but not executed from an alternate worktree; the
-pre-race checkout package compiled successfully.
+Go production, test, and Bazel files changed, so `make bazel_prepare` was
+required and is blocked locally because the `bazel` executable is not
+installed. The canonical failpoint wrapper was used for both Go runs.
 
 ## Risks and unverified scope
 
