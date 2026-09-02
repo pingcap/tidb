@@ -1,5 +1,30 @@
 # `pkg/bindinfo` — Go-master parity boundary receipt
 
+## Follow-up batch — value-form binding admission
+
+Comparison source: Go `origin/master` at
+`1c1a334d2be1dce64888b6e1f054462c566b0734`.
+The complete inventory below remains the package boundary: 25 artifacts,
+7,917 lines, all production/test/support files, JSON fixtures, ownership
+metadata, and Bazel targets were read before this edit. There are no generated
+production files or platform variants.
+
+Go master now gates `MatchSQLBindingWithCache` through `mayHaveSQLBinding`.
+INSERT/REPLACE `VALUES` and `SET` forms are not binding-capable (bindings are
+for the `... SELECT` shape), while EXPLAIN delegates the decision to its
+wrapped statement. The Go helper and parser matrix regression were restored.
+The Rust `tidb-session` matcher applies the same recursive filter to
+`DmlStmt::With` and `InsertStmt::source`, so stored bindings remain available
+to administrative operations but value-form DML and EXPLAIN do not publish a
+false `last_plan_from_binding` hit. The Rust regression covers INSERT,
+REPLACE, and EXPLAIN value forms and failed before the filter (`1` instead of
+`0`).
+
+This is a bounded behavior fix, not a package-complete transcreation claim.
+Automatic-binding persistence, manager/session integration, and the remaining
+Go plan-generation AST visitor migration stay at the explicit boundaries
+described below.
+
 Comparison source: Go `origin/master` at commit
 `5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
 
@@ -62,6 +87,22 @@ cached-select, cached-DML, and fallback execution, including error returns.
 The focused regression `a_prepared_binding_is_published_when_the_plan_cache_is_disabled`
 failed before the change (`["0", "0"]`) and passes after it
 (`["0", "1"]`).
+
+## Follow-up validation
+
+- Before the implementation, the Rust selector
+  `tests_binding::insert_values_bindings_do_not_match` failed with
+  `last_plan_from_binding = 1`; after the filter it passes.
+- The Go failpoint-aware selector `TestMayHaveSQLBinding` failed to compile
+  before restoring the helper and passes afterward. The full failpoint-aware
+  package run was attempted but was killed with exit 137 after emitting
+  excessive existing integration logs; no package assertion failure was
+  reported.
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-session --lib insert_values_bindings_do_not_match -- --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed for the Rust batch.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed as the Ready gate.
+- `make bazel_prepare` is required because Go production/test files changed;
+  it remains blocked locally because no `bazel` executable is installed.
 
 ## Validation and risk
 

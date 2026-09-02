@@ -68,6 +68,38 @@ fn a_session_with_no_binding_reports_no_match() {
     assert_eq!(matched(&mut session), "0");
 }
 
+/// Go's `mayHaveSQLBinding` excludes INSERT/REPLACE value forms from the
+/// plan-binding matcher. A binding is still accepted and stored, but it must
+/// not mark the subsequent DML (or EXPLAIN of that DML) as bound.
+#[test]
+fn insert_values_bindings_do_not_match() {
+    let mut session = binding_session();
+    session
+        .run(
+            "create session binding for insert into t values (4,40) \
+             using insert into t values (4,40)",
+        )
+        .expect("create insert binding");
+    session.run("insert into t values (4,40)").expect("insert");
+    assert_eq!(matched(&mut session), "0");
+
+    session
+        .run(
+            "create session binding for replace into t values (5,50) \
+             using replace into t values (5,50)",
+        )
+        .expect("create replace binding");
+    session
+        .run("replace into t values (5,50)")
+        .expect("replace");
+    assert_eq!(matched(&mut session), "0");
+
+    session
+        .run("explain insert into t values (6,60)")
+        .expect("explain insert");
+    assert_eq!(matched(&mut session), "0");
+}
+
 /// Pinned Go `pkg/planner/core/hint_test.go`:
 /// `TestSetVarTimestampHintsWorksWithBindings` and
 /// `TestSetVarInQueriesAndBindingsWorkTogether`.

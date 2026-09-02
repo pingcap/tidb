@@ -42,6 +42,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed a bounded `pkg/bindinfo` Go-package batch against
+  Go master `1c1a334d2b`: restored `mayHaveSQLBinding` and its parser matrix,
+  excluding INSERT/REPLACE `VALUES` and `SET` forms while preserving
+  `... SELECT` and EXPLAIN delegation. The Rust `tidb-session` matcher now
+  applies the same recursive filter, with a fail-before/pass-after regression
+  covering INSERT, REPLACE, and EXPLAIN. The complete 25-artifact inventory
+  remains the atomic boundary; the focused Go and Rust tests pass, the broad
+  Go package run was killed by existing log/resource pressure (exit 137), and
+  Bazel preparation is blocked by the missing local executable. Details are in
+  `receipts/bindinfo.md`.
+
 - 2026-09-02: completed a follow-up `pkg/store/copr` Go-package batch against
   Go master `1c1a334d2b`: updated the dependency-closed client-go API-v2 pin,
   retained source-shaped bucket-version cache handling, and added the focused

@@ -27,6 +27,26 @@ use tidb_executor::DriverError;
 use crate::binding::{self, Binding, SOURCE_MANUAL, STATUS_ENABLED};
 use crate::{Session, StmtOutput};
 
+/// Go `bindinfo.mayHaveSQLBinding`: INSERT/REPLACE value forms have no
+/// binding-capable SELECT source. Keep the filter at the matcher boundary so
+/// stored bindings remain visible to administrative operations while ordinary
+/// DML and EXPLAIN do not report a false match.
+fn may_have_sql_binding(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Query(_) => true,
+        Stmt::Dml(dml) => may_have_dml_binding(dml),
+        _ => true,
+    }
+}
+
+fn may_have_dml_binding(dml: &tidb_ast::DmlStmt) -> bool {
+    match dml {
+        tidb_ast::DmlStmt::With { statement, .. } => may_have_dml_binding(statement),
+        tidb_ast::DmlStmt::Insert(insert) => insert.source.is_some(),
+        _ => true,
+    }
+}
+
 /// A GLOBAL binding is a ROW in `mysql.bind_info` (bootstrapped by
 /// `crate::bootstrap`), written and read with the same statements Go's
 /// `bindingOperator` issues -- CREATE marks the older rows for the same
@@ -437,6 +457,9 @@ impl Session {
     /// nothing matched, so a session with no bindings pays one map-emptiness
     /// test and nothing else.
     pub(crate) fn bind_statement_hints_with_sql(&mut self, stmt: &Stmt) -> Option<(Stmt, String)> {
+        if !may_have_sql_binding(stmt) {
+            return None;
+        }
         // The Go shape is a cache-size test before any digest is computed;
         // here the global "cache" is the table itself, so its side of the
         // test is a row count (see [`Self::has_global_binding_rows`]).
