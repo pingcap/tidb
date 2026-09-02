@@ -708,6 +708,42 @@ func (b *builtinRightShiftSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	return nil
 }
 
+func (*builtinRightShiftBinarySig) vectorized() bool {
+	return true
+}
+
+func (b *builtinRightShiftBinarySig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	arg0, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(arg0)
+	if err := b.args[0].VecEvalString(ctx, input, arg0); err != nil {
+		return err
+	}
+
+	arg1, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(arg1)
+	if err := b.args[1].VecEvalInt(ctx, input, arg1); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	result.ReserveString(n)
+	shifts := arg1.Int64s()
+	for i := range n {
+		if arg0.IsNull(i) || arg1.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(rightShiftBinaryString(arg0.GetString(i), uint64(shifts[i])))
+	}
+	return nil
+}
+
 func (b *builtinRealIsTrueSig) vectorized() bool {
 	return true
 }

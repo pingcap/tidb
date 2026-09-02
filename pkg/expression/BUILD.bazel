@@ -158,6 +158,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "bench_test.go",
+        "binary_right_shift_blob_test.go",
         "builtin_arithmetic_test.go",
         "builtin_arithmetic_vec_test.go",
         "builtin_cast_bench_test.go",
