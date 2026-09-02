@@ -213,7 +213,9 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) err
 		}
 	}
 	if err := rc.afterSystemTablesReplaced(tablesRestored); err != nil {
-		return errors.Annotate(err, "error during extra works after system tables replaced")
+		for _, e := range multierr.Errors(err) {
+			log.Warn("error during reconfigurating the system tables", zap.String("database", sysDB), logutil.ShortError(e))
+		}
 	}
 	return nil
 }
