@@ -391,9 +391,9 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	return builder
 }
 
-// SetCoprRequestRateLimit sets a shared in-flight cop request limiter for this request.
-func (builder *RequestBuilder) SetCoprRequestRateLimit(rateLimit *util.RateLimit) *RequestBuilder {
-	builder.Request.CoprRequestRateLimit = rateLimit
+// SetCoprRequestLimiter sets a shared in-flight cop request limiter for this request.
+func (builder *RequestBuilder) SetCoprRequestLimiter(limiter *kv.CoprRequestLimiter) *RequestBuilder {
+	builder.Request.CoprRequestLimiter = limiter
 	return builder
 }
 
@@ -504,6 +504,27 @@ func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprReques
 func (builder *RequestBuilder) SetConnIDAndConnAlias(connID uint64, connAlias string) *RequestBuilder {
 	builder.ConnID = connID
 	builder.ConnAlias = connAlias
+	return builder
+}
+
+// SetStoreBatchSize sets the per-store batching limit. A non-positive value
+// disables store batching.
+func (builder *RequestBuilder) SetStoreBatchSize(storeBatchSize int) *RequestBuilder {
+	builder.StoreBatchSize = storeBatchSize
+	return builder
+}
+
+// SetAllowBatchTaskDataMerge opts into batching without row-count hints and lets
+// TiKV merge child data into the main response.
+func (builder *RequestBuilder) SetAllowBatchTaskDataMerge(allow bool) *RequestBuilder {
+	builder.AllowBatchTaskDataMerge = allow
+	return builder
+}
+
+// SetExecuteBatchTasksSerially asks the store to run the primary task and all
+// batched child tasks one at a time.
+func (builder *RequestBuilder) SetExecuteBatchTasksSerially(executeSerially bool) *RequestBuilder {
+	builder.ExecuteBatchTasksSerially = executeSerially
 	return builder
 }
 

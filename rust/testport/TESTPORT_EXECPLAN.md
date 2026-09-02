@@ -42,6 +42,20 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: refreshed the complete Go-master `pkg/store/copr` root
+  boundary at `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7`: 20 direct
+  artifacts, 11,165 lines, 177 function declarations, and 61
+  test/benchmark declarations, with no package docs, fixtures, generated
+  source, or platform variants. The package now carries Go's request/query
+  coprocessor limiter callback, cancellation and wait statistics, merged
+  StoreBatch response handling, safe pre-dispatch whole-batch rebuild, exact
+  fallback accounting, read-pool runtime details, and all current focused
+  regressions while retaining the child-lock fix. The nested `copr_test` and
+  `metrics` packages remain separate boundaries; its integration tests await
+  the owning executor/distsql API migration. Rust has no dependency-closed
+  `pkg/store/copr` worker owner, so no speculative Rust facade was added.
+  Details are in `receipts/store_copr.md`.
+
 - 2026-09-02: completed the bounded shared-lock-loss rollback audit for the
   complete Go-master `pkg/session` root package at
   `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (behavior introduced by
@@ -118,6 +132,15 @@ For each bounded behavior cluster:
   zero as disabled, and added a focused propagation regression. Focused and
   full mock tests passed; the required Bazel-prepare gate was attempted and
   blocked by the unavailable local executable.
+
+- 2026-09-02: completed a follow-up `pkg/distsql` Go-package batch to reconnect
+  the typed cop-request limiter after the `pkg/kv` API migration. The request
+  builder now projects `kv.CoprRequestLimiter`, the query-scoped limiter is
+  copied from `DistSQLContext`, and Go-master store-batching option setters are
+  restored. The focused request-builder regression passes under failpoint
+  enablement; `make bazel_prepare` remains blocked by the unavailable local
+  Bazel executable. The executor merge-sort caller is a separate package
+  boundary and remains queued for its own migration.
 
 - 2026-09-02: completed the Go-master `pkg/parser` materialized-view DDL
   syntax delta in one parser-package batch. Before editing, the full root

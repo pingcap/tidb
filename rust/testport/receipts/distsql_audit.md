@@ -56,6 +56,30 @@ unary transport still clears the per-request batch size for ordinary retries,
 which is the source `BuildCopIterator` ownership rule; the new opt-in flags
 remain immutable metadata and are only serialized when a task is sent.
 
+## Follow-up Go package batch: cop-request limiter handoff
+
+The current Go-master dependency snapshot (`a74cc596996d`, pulled 2026-09-02)
+uses `kv.CoprRequestLimiter` rather than the removed client-go `RateLimit` field.
+`RequestBuilder.SetCoprRequestLimiter` now stores that typed limiter, the
+query-scoped limiter is copied from `DistSQLContext` in `Select`, and the
+store-batching option setters are restored. `TestRequestBuilderCoprRequestLimiter`
+covers the limiter pointer and all three request-option projections; the
+pre-fix build failed with `Request.CoprRequestRateLimit undefined` when the
+dependent copr test package was compiled.
+
+Ready evidence for this bounded batch:
+
+- failpoint-wrapped `pkg/distsql` focused test
+  `TestRequestBuilderCoprRequestLimiter` passes;
+- `git diff --check` passes;
+- `make lint` and `make bazel_prepare` remain completion gates for the package
+  commit (the latter is expected to be blocked locally because Bazel is not
+  installed).
+
+The executor-side merge-sort caller still passes the legacy rate-limit type;
+that is a separate `pkg/executor` package boundary and is intentionally not
+claimed by this receipt.
+
 ## Validation and boundaries
 
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-distsql --test all -- --test-threads=1` — 252 passed, 2 ignored.
