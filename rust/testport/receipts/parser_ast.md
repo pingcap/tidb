@@ -181,3 +181,35 @@ and `CHAR(... USING ...)`; valid charset canonicalization is unchanged.
 Compatibility risk is reduced because invalid names now preserve Go's error
 class/code and raw token. No hot-path evaluation or allocation behavior
 changes beyond the short-lived validation string.
+
+## Rust follow-up: `SHOW CREATE IMPORT` semantic command
+
+The complete 36-artifact `pkg/parser/ast` inventory remains unchanged at Go
+master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. The source `sem_test.go`
+walks the closed `ShowStmtType` domain, which includes `ShowCreateImport`.
+Before this follow-up, the Rust `tidb-ast` owner had no corresponding enum
+variant, so the source-shaped carrier was an ignored gap even though the
+semantic command is pure AST behavior and does not require parser syntax.
+
+`ShowCreateKind::Import` is now part of the AST model, restores as
+`SHOW CREATE IMPORT`, participates in visitor traversal, and maps through
+`Stmt::sem_command()` to the exact Go command string. The former ignored
+`show_command_create_import` regression is live and asserts that mapping.
+No parser production claims that SQL `SHOW CREATE IMPORT` is accepted; Go's
+source case is an enum-domain semantic check only.
+
+Pre-fix proof: activating the test failed to compile because
+`ShowCreateKind::Import` did not exist. After adding the variant and all
+exhaustive mappings, the focused test passes; the AST/parser/session
+all-target check also passes.
+
+Ready validation:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-ast --test all show_command_create_import -- --nocapture --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-ast -p tidb-parser -p tidb-session --all-targets` — passed.
+- Pinned Rust formatting, repository `make lint`, and `git diff --check` are the remaining Ready gates for this batch.
+
+Correctness and compatibility risk are limited to the closed semantic-command
+mapping and synthetic AST restore; existing parsed SHOW CREATE kinds and
+session execution paths are unchanged. The new enum variant has no runtime
+I/O or performance-sensitive behavior.

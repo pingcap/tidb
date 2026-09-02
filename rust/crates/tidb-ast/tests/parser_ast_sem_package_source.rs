@@ -71,8 +71,7 @@ fn empty_show_create(kind: ShowCreateKind) -> AdminStmt {
 ///
 /// Go iterates `ShowStmtType` from 1 to `showTpCount-1` on a zero `ShowStmt`
 /// and requires a non-UNKNOWN SEM command. Rust has no integer SHOW domain
-/// and no `ShowCreateImport` AST (Go's `ShowCreateImport` is in that loop);
-/// every remaining source SHOW kind is constructed below.
+/// every source SHOW kind is constructed below.
 #[test]
 fn show_command() {
     let cases: Vec<(AdminStmt, &str)> = vec![
@@ -441,14 +440,13 @@ fn show_command() {
     }
 }
 
-/// `pkg/parser/ast/sem_test.go::TestShowCommand` gap: Go's `ShowCreateImport`
-/// integer kind is in the `showTpCount` loop, but Rust has no corresponding
-/// AST node (SEM maps it to `SHOW CREATE IMPORT`).
-// go-parity-gap: Rust has no ShowCreateImport AST/SEM command variant.
+/// `pkg/parser/ast/sem_test.go::TestShowCommand`'s `ShowCreateImport` row.
 #[test]
-#[ignore = "go-parity-gap: ShowCreateImport AST/SEM command is not transcreated"]
 fn show_command_create_import() {
-    panic!("ShowCreateImport has no Rust AST node");
+    assert_eq!(
+        admin(empty_show_create(ShowCreateKind::Import)).sem_command(),
+        "SHOW CREATE IMPORT"
+    );
 }
 
 /// `pkg/parser/ast/sem_test.go::TestAdminCommand`.

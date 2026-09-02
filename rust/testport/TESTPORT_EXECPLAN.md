@@ -146,6 +146,12 @@ For each bounded behavior cluster:
   names; the source-shaped parser table is live and passing. Details are
   appended to `receipts/parser_ast.md` and `receipts/b058.md`.
 
+- 2026-09-03: aligned Rust `tidb-ast` semantic commands with Go's
+  `ShowCreateImport` enum case. `ShowCreateKind::Import` now participates in
+  AST restore/visitor paths and maps to `SHOW CREATE IMPORT`; the former
+  ignored source-shaped regression is live. Details are appended to
+  `receipts/parser_ast.md` and `receipts/b059.md`.
+
 - 2026-09-03: completed the adjacent Rust `tidb-expr` scalar-function
   `Hash64`/`Equals` boundary against the same Go authority. The structural
   function tag, name, nullable return type, argument count, and recursive

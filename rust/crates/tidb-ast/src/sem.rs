@@ -200,6 +200,7 @@ impl AdminStmt {
                 ShowCreateKind::Procedure => "SHOW CREATE PROCEDURE",
                 ShowCreateKind::PlacementPolicy => "SHOW CREATE PLACEMENT POLICY",
                 ShowCreateKind::ResourceGroup => "SHOW CREATE RESOURCE GROUP",
+                ShowCreateKind::Import => "SHOW CREATE IMPORT",
             },
             Self::ShowCreateUser(_) => "SHOW CREATE USER",
             Self::ShowVariables(_) => "SHOW VARIABLES",

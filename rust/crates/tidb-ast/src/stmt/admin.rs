@@ -422,6 +422,7 @@ impl AdminStmt {
                     ShowCreateKind::Procedure => "PROCEDURE ",
                     ShowCreateKind::PlacementPolicy => "PLACEMENT POLICY ",
                     ShowCreateKind::ResourceGroup => "RESOURCE GROUP ",
+                    ShowCreateKind::Import => "IMPORT ",
                 });
                 if *if_not_exists {
                     out.push_str("IF NOT EXISTS ");
