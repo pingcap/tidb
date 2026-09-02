@@ -58,6 +58,16 @@ For each bounded behavior cluster:
   Rust distributed join integration remain explicit boundaries. Details are in
   `receipts/executor_join.md`.
 
+- 2026-09-02: completed a bounded `pkg/meta/model` Go-package batch against Go
+  master `1c1a334d2be1dce64888b6e1f054462c566b0734`. The complete direct
+  inventory covers 23 artifacts and 9,454 lines; restored the v2-only
+  `SkipColumnarStorageGate` field and the separate `IndexArg.AutoPreSplit`
+  marker, with v1 compatibility and focused JSON/job-argument regressions. The
+  focused and full failpoint-aware model suites pass; lint, Rust formatting,
+  and diff checks pass, while `make bazel_prepare` is blocked by the missing
+  local Bazel executable. Details are in
+  `receipts/meta_model_job_args.md`.
+
 - 2026-09-02: completed a bounded `pkg/planner/core/operator/physicalop`
   Go-package batch against Go master `1c1a334d2b`: restored
   `StorageEngineUsage` and `HasSingleScanIndexJoin` with focused physical-tree

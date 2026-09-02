@@ -766,6 +766,54 @@ func TestGetSetTiFlashReplicaArgs(t *testing.T) {
 			require.Equal(t, inArgsWithReset.ResetAvailable, true)
 		}
 	}
+	// SkipColumnarStorageGate is persisted only in v2 job arguments.
+	inArgsWithSkipGate := &SetTiFlashReplicaArgs{
+		TiflashReplica: ast.TiFlashReplicaSpec{
+			Count:  3,
+			Labels: []string{"TiFlash1", "TiFlash2", "TiFlash3"},
+			Hypo:   true,
+		},
+		ResetAvailable:          true,
+		SkipColumnarStorageGate: true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j4 := &Job{}
+		require.NoError(t, j4.Decode(getJobBytes(t, inArgsWithSkipGate, v, ActionSetTiFlashReplica)))
+		args, err := GetSetTiFlashReplicaArgs(j4)
+		require.NoError(t, err)
+		require.Equal(t, inArgsWithSkipGate.TiflashReplica, args.TiflashReplica)
+		if v == JobVersion2 {
+			require.True(t, args.ResetAvailable)
+			require.True(t, args.SkipColumnarStorageGate)
+		} else {
+			require.False(t, args.SkipColumnarStorageGate)
+		}
+	}
+}
+
+func TestIndexArgAutoPreSplitIsSeparateFromManualSplit(t *testing.T) {
+	inArgs := &ModifyIndexArgs{IndexArgs: []*IndexArg{{AutoPreSplit: true}}}
+	for _, version := range []JobVersion{JobVersion1, JobVersion2} {
+		job := &Job{}
+		require.NoError(t, job.Decode(getJobBytes(t, inArgs, version, ActionAddIndex)))
+		args, err := GetModifyIndexArgs(job)
+		require.NoError(t, err)
+		require.Equal(t, version == JobVersion2, args.IndexArgs[0].AutoPreSplit)
+		require.Nil(t, args.IndexArgs[0].SplitOpt)
+	}
+
+	job := &Job{Version: JobVersion2, Type: ActionAddIndex}
+	job.FillArgs(inArgs)
+	_, err := job.Encode(true)
+	require.NoError(t, err)
+	var raw struct {
+		IndexArgs []struct {
+			SplitOpt *struct{} `json:"split_opt,omitempty"`
+		} `json:"index_args,omitempty"`
+	}
+	require.NoError(t, json.Unmarshal(job.RawArgs, &raw))
+	require.Len(t, raw.IndexArgs, 1)
+	require.Nil(t, raw.IndexArgs[0].SplitOpt)
 }
 
 func TestGetUpdateTiFlashReplicaStatusArgs(t *testing.T) {
