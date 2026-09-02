@@ -63,9 +63,9 @@ impl Coercibility {
     pub const IGNORABLE: Coercibility = Coercibility(6);
 
     /// Go `coerString[c]`: the display name used in collation-mismatch errors.
-    /// Returns `None` for out-of-range values (Go would panic on the slice index).
+    /// Direct indexing preserves Go's panic for an invalid coercibility value.
     #[must_use]
-    pub fn name(self) -> Option<&'static str> {
+    pub fn name(self) -> &'static str {
         const COER_STRING: [&str; 7] = [
             "EXPLICIT",
             "NONE",
@@ -75,9 +75,9 @@ impl Coercibility {
             "NUMERIC",
             "IGNORABLE",
         ];
-        usize::try_from(self.0)
-            .ok()
-            .and_then(|i| COER_STRING.get(i).copied())
+        let index = usize::try_from(self.0)
+            .expect("Coercibility must be non-negative when naming a collation error");
+        COER_STRING[index]
     }
 }
 
@@ -298,10 +298,10 @@ mod tests {
 
     #[test]
     fn coercibility_names() {
-        assert_eq!(Coercibility::EXPLICIT.name(), Some("EXPLICIT"));
-        assert_eq!(Coercibility::IGNORABLE.name(), Some("IGNORABLE"));
-        assert_eq!(Coercibility(7).name(), None);
-        assert_eq!(Coercibility(-1).name(), None);
+        assert_eq!(Coercibility::EXPLICIT.name(), "EXPLICIT");
+        assert_eq!(Coercibility::IGNORABLE.name(), "IGNORABLE");
+        assert!(std::panic::catch_unwind(|| Coercibility(7).name()).is_err());
+        assert!(std::panic::catch_unwind(|| Coercibility(-1).name()).is_err());
         assert!(Coercibility::EXPLICIT < Coercibility::NONE);
     }
 

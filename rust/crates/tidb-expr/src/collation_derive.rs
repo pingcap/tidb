@@ -239,7 +239,7 @@ pub fn illegal_mix_collation_err(func_name: &str, args: &[Expression]) -> EvalEr
         format!(
             "({},{})",
             ret_type_of(e).collation_name(),
-            coercibility_of(e).name().unwrap_or("EXPLICIT")
+            coercibility_of(e).name()
         )
     };
     match args.len() {

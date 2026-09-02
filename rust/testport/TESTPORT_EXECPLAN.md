@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: aligned the Rust `tidb-expr` collation-name boundary with Go
+  master `a85e0fd5df`. After inventorying all 137 root `pkg/expression`
+  artifacts and all 175 `tidb-expr` owner artifacts, changed
+  `Coercibility::name` from a Rust-only `Option` refusal to direct indexing of
+  Go's seven-entry `coerString`; invalid signed/out-of-range values now panic
+  instead of silently formatting as `EXPLICIT`. Updated the formatter and
+  added the focused invalid-value regression. The package receipt is
+  `receipts/expression_collation_audit.md`; the full library run has 1,076
+  passes, nine documented baseline failures, and 139 ignored gap tests.
+
 - 2026-09-02: extended the bounded Rust-only `tidb-planner` child-accessor
   batch against Go master `a85e0fd5df` after the first validation exposed the
   physical sequence-construction boundary. Logical and physical sequence
