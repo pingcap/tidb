@@ -35,6 +35,7 @@
 //! - [`iterator`] <- `iterator.go`
 //! - [`load_dump`] <- `load_dump.go`
 //! - [`detector`] <- `tikv/detector.go`
+//! - [`tikv_util`] <- `tikv/util.go`
 //! - [`lockwaiter`] <- `util/lockwaiter/lockwaiter.go`
 //!
 //! # The one structural narrowing: no `unsafe`
@@ -120,6 +121,7 @@ mod tests_mockstore_part1_go_parity;
 mod tests_tikv_util_go_parity;
 #[cfg(test)]
 mod testutil;
+pub(crate) mod tikv_util;
 pub mod tso;
 
 pub use arena::{Arena, ArenaAddr, NULL_ARENA_ADDR, REUSE_SAFE_DURATION};

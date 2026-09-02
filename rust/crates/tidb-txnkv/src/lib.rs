@@ -144,6 +144,7 @@ pub use error::{
     ERR_TXN_RETRYABLE, ERR_TXN_TOO_LARGE, ERR_WRITE_CONFLICT, ERR_WRITE_CONFLICT_IN_TIDB,
     TXN_RETRYABLE_MARK,
 };
+pub use farmhash::fingerprint64;
 pub use fault_injection::{
     new_injected_storage, new_injected_store, InjectedSnapshot, InjectedStore, InjectedTransaction,
     InjectionConfig, KvSnapshot, KvStorage, KvTransaction,

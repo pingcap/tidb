@@ -126,7 +126,7 @@ fn hash_len_33_to_64(input: &[u8]) -> u64 {
 }
 
 /// Returns the stable 64-bit fingerprint TiKV stores in `deadlock_key_hash`.
-pub(crate) fn fingerprint64(input: &[u8]) -> u64 {
+pub fn fingerprint64(input: &[u8]) -> u64 {
     let len = input.len();
     if len <= 16 {
         return hash_len_0_to_16(input);

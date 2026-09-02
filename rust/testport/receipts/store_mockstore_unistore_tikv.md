@@ -3,8 +3,10 @@
 ## Source and inventory
 
 - Go comparison source: fetched `origin/master` at
-  `c6054025ed4c32ab3672a2a24ea46892714d21ec`; the behavior repair is upstream
-  commit `2964713e267`.
+  `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`; the behavior repair is upstream
+  commit `2964713e267`. The package has no source diff between the previous
+  audited authority (`c6054025ed4c32ab3672a2a24ea46892714d21ec`) and this
+  current master authority.
 - The complete package inventory after this batch is 16 artifacts and 9,286
   lines: `BUILD.bazel`; ten production Go files (`deadlock.go`, `detector.go`,
   `inner_server.go`, `mock_region.go`, `mvcc.go`, `region.go`, `server.go`,
@@ -17,6 +19,28 @@
 - Fifteen artifacts were already byte-identical to Go master. `server.go` was
   missing only the 11-line deterministic deadlock failpoint and is now also
   byte-identical.
+
+## Rust follow-up: utility helper alignment
+
+The Rust owner now implements the remaining `util.go` behavior in
+`rust/crates/tidb-unistore/src/tikv_util.rs`: half-open end-key comparison,
+in-place sorted de-duplication, mutation/raw-key/user-key FarmHash pipelines,
+and nil-preserving byte cloning. The existing source-backed FarmHash
+implementation in `tidb-txnkv` is re-exported for reuse rather than copied;
+the 64-bit values therefore remain identical to `github.com/dgryski/go-farm`.
+The Go table vectors are live Rust regressions in
+`tests_tikv_util_go_parity.rs`, including empty, duplicate, binary, and
+mutation/key entry points.
+
+Before this batch those three table tests were ignored parity stubs and there
+was no Rust utility owner. The focused Rust utility tests now pass (four tests).
+The ordinary `tidb-unistore` test target still has an unrelated pre-existing
+compile blocker in its parent `InProcessClient` test seam: the full transport
+construction requires `SynchronousBatchRequestDispatcher`, which that client
+does not yet implement. The focused utility run used a temporary validation
+only implementation of that parent seam and removed it before this commit;
+the production diff remains limited to the utility owner and shared FarmHash
+export.
 
 ## Gap and implementation
 
@@ -60,3 +84,7 @@ only because this workspace has no `bazel` executable.
 - This receipt completes the mock TiKV package, not the much larger
   `pkg/executor` or server commontest packages; their remaining deltas stay
   explicit for their atomic audits.
+- The Rust utility functions have no caller in the current unistore execution
+  graph, so `cargo check --lib` reports dead-code warnings; keeping them
+  crate-visible preserves the complete helper contract for the pending scan
+  and coprocessor caller alignments.

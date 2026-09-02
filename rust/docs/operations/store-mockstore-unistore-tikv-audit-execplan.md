@@ -4,7 +4,9 @@
 
 Complete the `pkg/store/mockstore/unistore/tikv` Go-master package and restore
 the consumer rule that a one-shot `LOAD DATA LOCAL INFILE` stream must not be
-reopened during pessimistic-lock retry.
+reopened during pessimistic-lock retry. Keep the Rust owner aligned with the
+package's private utility helpers as their in-memory TiKV callers are
+transcreated.
 
 ## Scope and inventory
 
@@ -22,6 +24,11 @@ edits are supporting cross-package behavior and do not claim those packages.
    client-local LOAD DATA plan.
 3. Restore and run the focused connection-synchronization regression.
 4. Run Ready validation and record the Bazel prerequisite result.
+5. Implement `util.go`'s range, hash, de-duplication, and nil-preserving-copy
+   helpers in `tidb-unistore`, reusing the source-backed FarmHash implementation
+   from `tidb-txnkv`.
+6. Turn the existing ignored Go-table utility stubs into live Rust regressions
+   and run the focused Rust test set.
 
 ## Validation and exit criteria
 
@@ -38,3 +45,9 @@ binary must be recorded rather than hidden. Receipt:
 - `make lint` and `git diff --check` pass.
 - `make bazel_prepare` was attempted with the pinned Go environment and is
   blocked only because this workspace has no `bazel` executable.
+- The four focused Rust utility regressions pass. The regular
+  `tidb-unistore` test target remains blocked by the unrelated parent
+  `InProcessClient` missing `SynchronousBatchRequestDispatcher`; the focused
+  run used and removed a temporary validation-only implementation, leaving no
+  parent-client production diff. `cargo check --lib` and the shared FarmHash
+  test pass.
