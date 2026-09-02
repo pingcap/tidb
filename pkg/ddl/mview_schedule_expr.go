@@ -71,7 +71,8 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 	nextExpr string,
 	scheduleTimeZone *time.Location,
 	logNullUpdate func(schemaName string, tableName string, nullExprClause string, startExpr string, nextExpr string),
-) (*int64, bool, error) {
+) (nextUnixSeconds *int64, shouldUpdate bool, err error) {
+	// shouldUpdate reports whether the persisted NEXT_* value should be overwritten.
 	startExpr = strings.TrimSpace(startExpr)
 	nextExpr = strings.TrimSpace(nextExpr)
 	if startExpr == "" && nextExpr == "" {
@@ -83,22 +84,11 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 		return nil, false, errors.Trace(err)
 	}
 
-	evalExprToDatetime := func(exprSQL string) (*types.Time, error) {
-		t, err := evalCreateMaterializedViewScheduleExprToDatetime(ddlSess, exprSQL)
-		if err != nil {
-			return nil, err
-		}
-		if t == nil {
-			return nil, nil
-		}
-		return t, nil
-	}
-
 	// START WITH takes precedence unless it is near now and NEXT is present.
 	if startExpr != "" {
-		startAt, err := evalExprToDatetime(startExpr)
+		startAt, err := evalCreateMaterializedViewScheduleExprToDatetime(ddlSess, startExpr)
 		if err != nil {
-			return nil, true, err
+			return nil, false, errors.Trace(err)
 		}
 		if startAt == nil {
 			logNullUpdate(schemaName, tableName, "START WITH", startExpr, nextExpr)
@@ -111,13 +101,13 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 
 		goNow, err := nowTime.GoTime(scheduleTimeZone)
 		if err != nil {
-			return nil, true, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		nearNowThreshold := types.NewTime(types.FromGoTime(goNow.Add(10*time.Second)), nowTime.Type(), nowTime.Fsp())
 		if startAt.Compare(nearNowThreshold) < 0 {
-			nextAt, err := evalExprToDatetime(nextExpr)
+			nextAt, err := evalCreateMaterializedViewScheduleExprToDatetime(ddlSess, nextExpr)
 			if err != nil {
-				return nil, true, err
+				return nil, false, errors.Trace(err)
 			}
 			if nextAt == nil {
 				logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
@@ -131,9 +121,9 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 	}
 
 	if nextExpr != "" {
-		nextAt, err := evalExprToDatetime(nextExpr)
+		nextAt, err := evalCreateMaterializedViewScheduleExprToDatetime(ddlSess, nextExpr)
 		if err != nil {
-			return nil, true, err
+			return nil, false, errors.Trace(err)
 		}
 		if nextAt == nil {
 			logNullUpdate(schemaName, tableName, "NEXT", startExpr, nextExpr)
@@ -142,7 +132,7 @@ func deriveCreateMaterializedScheduleNextUnixSeconds(
 		nextUnixSeconds, err := expression.MaterializedScheduleTimeToUnixSeconds(nextAt, scheduleTimeZone)
 		return nextUnixSeconds, true, errors.Trace(err)
 	}
-	return nil, false, nil
+	return
 }
 
 func logCreateMaterializedViewNextUnixSecondsUpdateNull(

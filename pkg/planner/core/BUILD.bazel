@@ -180,6 +180,7 @@ go_library(
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/mviewutil",
         "//pkg/util/paging",
         "//pkg/util/parser",
         "//pkg/util/plancodec",

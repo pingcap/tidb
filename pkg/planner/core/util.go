@@ -19,15 +19,41 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
+
+// CheckMViewReadable checks whether a read on a materialized view should be rejected because
+// its initial build is not ready yet.
+func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
+	if tableInfo == nil || tableInfo.MaterializedView == nil {
+		return nil
+	}
+	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
+	if initBuildState.IsReady() {
+		return nil
+	}
+	if sv.InMaterializedViewMaintenance {
+		if !sv.InRestrictedSQL {
+			return plannererrors.ErrInternal.GenWithStack(
+				"materialized view maintenance should only run in restricted SQL mode",
+			)
+		}
+		return nil
+	}
+	if aliasName == "" {
+		aliasName = tableInfo.Name.O
+	}
+	return errors.New(initBuildState.AccessErrorMessage(aliasName))
+}
 
 // IsReadOnly check whether the ast.Node is a read only statement.
 func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {

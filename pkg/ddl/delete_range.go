@@ -476,7 +476,8 @@ func doBatchDeleteTablesRange(ctx context.Context, wrapper DelRangeExecWrapper, 
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
 	wrapper.PrepareParamsList(len(tableIDs) * 5)
-	for i, tableID := range tableIDs {
+	rowCount := 0
+	for _, tableID := range tableIDs {
 		tableID, ok := wrapper.RewriteTableID(tableID)
 		if !ok {
 			continue
@@ -485,12 +486,16 @@ func doBatchDeleteTablesRange(ctx context.Context, wrapper DelRangeExecWrapper, 
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		startKeyEncoded := hex.EncodeToString(startKey)
 		endKeyEncoded := hex.EncodeToString(endKey)
-		buf.WriteString(insertDeleteRangeSQLValue)
-		if i != len(tableIDs)-1 {
+		if rowCount > 0 {
 			buf.WriteString(",")
 		}
+		buf.WriteString(insertDeleteRangeSQLValue)
 		elemID := ea.allocForPhysicalID(tableID)
 		wrapper.AppendParamsList(jobID, elemID, startKeyEncoded, endKeyEncoded)
+		rowCount++
+	}
+	if rowCount == 0 {
+		return nil
 	}
 
 	return errors.Trace(wrapper.ConsumeDeleteRange(ctx, buf.String()))

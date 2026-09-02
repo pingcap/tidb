@@ -466,7 +466,7 @@ func TestMaterializedViewCommentLength(t *testing.T) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec(createMVSQL("mv_comment_truncated", commentTooLong))
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1628|"+errTooLongComment("mv_comment_truncated")))
-	tk.MustQuery("select length(table_comment) from information_schema.tables where table_schema = 'test' and table_name = 'mv_comment_truncated'").Check(testkit.Rows(fmt.Sprintf("%d", maxTableCommentLength)))
+	tk.MustQuery("select length(table_comment) from information_schema.tables where table_schema = 'test' and table_name = 'mv_comment_truncated'").Check(testkit.Rows(strconv.Itoa(maxTableCommentLength)))
 }
 
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
@@ -482,6 +482,52 @@ func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	err = tk.ExecToErr("create materialized view mv_bad_start (a, s, cnt) refresh fast start with 1 next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	require.ErrorContains(t, err, "REFRESH START WITH expression must return DATETIME/TIMESTAMP")
 	tk.MustExec("create materialized view mv_ok (a, s, cnt) refresh fast start with now() next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+}
+
+func TestCreateMaterializedViewRejectsUnsupportedSelectClauses(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t (a, b)")
+
+	tests := []struct {
+		name    string
+		sql     string
+		errPart string
+	}{
+		{
+			name:    "cte",
+			sql:     "create materialized view mv_cte (a, s, cnt) as with cte as (select a from t) select a, sum(b), count(1) from t group by a",
+			errPart: "common table expressions",
+		},
+		{
+			name:    "locking clause",
+			sql:     "create materialized view mv_lock (a, s, cnt) as select a, sum(b), count(1) from t group by a for update",
+			errPart: "locking clauses",
+		},
+		{
+			name:    "select into",
+			sql:     "create materialized view mv_into (a, s, cnt) as select a, sum(b), count(1) from t group by a into outfile '/tmp/mv.out'",
+			errPart: "SELECT INTO",
+		},
+		{
+			name:    "as of",
+			sql:     "create materialized view mv_as_of (a, s, cnt) as select a, sum(b), count(1) from t as of timestamp now() group by a",
+			errPart: "AS OF",
+		},
+		{
+			name:    "table sample",
+			sql:     "create materialized view mv_sample (a, s, cnt) as select a, sum(b), count(1) from t tablesample system (50) group by a",
+			errPart: "TABLESAMPLE",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tk.ExecToErr(tt.sql)
+			require.ErrorContains(t, err, tt.errPart)
+		})
+	}
 }
 
 func TestCreateTableLikeShouldNotCarryMaterializedViewMetadata(t *testing.T) {
@@ -717,6 +763,29 @@ func TestCreateMaterializedViewRefreshInfoUpsertFailureRollback(t *testing.T) {
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
 
+func TestCreateMaterializedViewLogPurgeInfoFailureRollback(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+
+	const failpointName = "github.com/pingcap/tidb/pkg/ddl/mockInsertMLogPurgeTableNotExists"
+	require.NoError(t, failpoint.Enable(failpointName, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	err := tk.ExecToErr("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	require.ErrorContains(t, err, "tidb_mlog_purge_info")
+	tk.MustQuery("show tables like '$mlog$t'").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from mysql.tidb_mlog_purge_info").Check(testkit.Rows("0"))
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Nil(t, baseTable.Meta().MaterializedViewBase)
+}
+
 func TestCreateMaterializedViewRetryWithResidualBuildRowsRollback(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
@@ -817,7 +886,7 @@ func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 }
 
 func TestCreateMaterializedViewHistoryJobSchemaVersion(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
@@ -832,6 +901,12 @@ func TestCreateMaterializedViewHistoryJobSchemaVersion(t *testing.T) {
 	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.SchemaVersion, int64(0))
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_hist_schema_ver"))
+	require.NoError(t, err)
+	require.NotNil(t, historyJob.BinlogInfo.TableInfo)
+	require.Equal(t, mvTable.Meta().ID, historyJob.BinlogInfo.TableInfo.ID)
+	require.Equal(t, mvTable.Meta().Name, historyJob.BinlogInfo.TableInfo.Name)
 }
 
 func TestCreateMaterializedViewCancelRollback(t *testing.T) {
@@ -1120,6 +1195,8 @@ func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond)
 
 	tk.MustQuery("show tables like 'mv_pause'").Check(testkit.Rows("mv_pause"))
+	err := tk.ExecToErr("select * from mv_pause")
+	require.ErrorContains(t, err, "initial build is in progress")
 	tkCtl.MustQuery("admin resume ddl jobs " + jobID).Check(testkit.Rows(jobID + " successful"))
 	select {
 	case err := <-ddlDone:

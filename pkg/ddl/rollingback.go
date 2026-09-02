@@ -288,7 +288,6 @@ func rollingbackCreateMaterializedView(_ *jobContext, job *model.Job) (ver int64
 		job.State = model.JobStateRollingback
 		return ver, dbterror.ErrCancelledDDLJob
 	default:
-		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
 	}
 }

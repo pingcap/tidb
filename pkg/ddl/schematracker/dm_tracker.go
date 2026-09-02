@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -325,93 +324,19 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		return err
 	}
 
-	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Columns))
-	for _, col := range baseTable.Columns {
-		colMap[col.Name.L] = col
-	}
-	seenCols := make(map[string]struct{}, len(s.Cols))
-	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
-	for _, c := range s.Cols {
-		if _, exists := seenCols[c.L]; exists {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
-		}
-		seenCols[c.L] = struct{}{}
-		if c.L == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) || c.L == strings.ToLower(model.MaterializedViewLogOldNewColumnName) {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
-		}
-		baseCol := colMap[c.L]
-		if baseCol == nil {
-			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
-		}
-		if err := ddl.CheckMaterializedViewLogColumnSupported(baseCol); err != nil {
-			return err
-		}
-		ft := ddl.FieldTypeForMaterializedViewLogColumn(baseCol)
-		colDefs = append(colDefs, &ast.ColumnDef{Name: &ast.ColumnName{Name: c}, Tp: &ft})
-	}
-	metaCols := []struct {
-		name string
-		tp   byte
-		flen int
-	}{
-		{name: model.MaterializedViewLogDMLTypeColumnName, tp: mysql.TypeVarchar, flen: 1},
-		{name: model.MaterializedViewLogOldNewColumnName, tp: mysql.TypeTiny, flen: 4},
-	}
-	for _, metaCol := range metaCols {
-		ft := field_types.NewFieldType(metaCol.tp)
-		ft.SetFlen(metaCol.flen)
-		ft.SetFlag(mysql.NotNullFlag)
-		colDefs = append(colDefs, &ast.ColumnDef{Name: &ast.ColumnName{Name: ast.NewCIStr(metaCol.name)}, Tp: ft})
-	}
-
-	createTableStmt := &ast.CreateTableStmt{
-		Table:   &ast.TableName{Schema: schemaName, Name: mlogName},
-		Cols:    colDefs,
-		Options: s.Options,
-	}
-	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(ctx,
+	mlogTableInfo, err := ddl.BuildMaterializedViewLogTableInfo(
+		ctx,
+		schemaName,
+		schema.Charset,
+		schema.Collate,
+		nil,
+		baseTable,
+		s,
 		metabuild.WithSuppressTooLongIndexErr(true),
 		metabuild.WithClusteredIndexDefMode(vardef.ClusteredIndexDefModeOff),
 	)
-	mlogTableInfo, err := ddl.BuildTableInfoWithStmt(metaBuildCtx, createTableStmt, schema.Charset, schema.Collate, nil)
 	if err != nil {
 		return err
-	}
-
-	var purgeMethod, purgeStartWith, purgeNext string
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-	logAccumulationAlertRows, err := ddl.BuildMLogAccumulationAlertRows(s.AccumulationAlert)
-	if err != nil {
-		return err
-	}
-	if s.Purge != nil {
-		if s.Purge.Immediate {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
-		}
-		purgeMethod = "DEFERRED"
-		if s.Purge.StartWith != nil {
-			purgeStartWith, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
-			if err != nil {
-				return err
-			}
-		}
-		if s.Purge.Next == nil {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
-		}
-		purgeNext, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
-		if err != nil {
-			return err
-		}
-	}
-	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:              baseTable.ID,
-		Columns:                  s.Cols,
-		PurgeMethod:              purgeMethod,
-		PurgeStartWith:           purgeStartWith,
-		PurgeNext:                purgeNext,
-		LogAccumulationAlertRows: logAccumulationAlertRows,
-		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
-		PurgeScheduleTimeZone:    model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 	}
 	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
 		return err

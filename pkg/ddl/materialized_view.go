@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -42,6 +43,7 @@ import (
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -81,6 +83,116 @@ func CheckMaterializedViewLogColumnSupported(col *model.ColumnInfo) error {
 	return checkMaterializedViewLogColumnSupportedForOp("CREATE MATERIALIZED VIEW LOG", col)
 }
 
+// BuildMaterializedViewLogTableInfo builds the table and metadata for a materialized view log.
+func BuildMaterializedViewLogTableInfo(
+	ctx sessionctx.Context,
+	schemaName ast.CIStr,
+	schemaCharset string,
+	schemaCollate string,
+	placementPolicyRef *model.PolicyRefInfo,
+	baseTableInfo *model.TableInfo,
+	stmt *ast.CreateMaterializedViewLogStmt,
+	metaBuildOptions ...metabuild.Option,
+) (*model.TableInfo, error) {
+	mlogName := model.MaterializedViewLogTableName(baseTableInfo.Name)
+	if err := checkTooLongTable(mlogName); err != nil {
+		return nil, err
+	}
+
+	colMap := make(map[string]*model.ColumnInfo, len(baseTableInfo.Columns))
+	for _, col := range baseTableInfo.Columns {
+		colMap[col.Name.L] = col
+	}
+	seenCols := make(map[string]struct{}, len(stmt.Cols))
+	colDefs := make([]*ast.ColumnDef, 0, len(stmt.Cols)+2)
+	for _, c := range stmt.Cols {
+		if _, exists := seenCols[c.L]; exists {
+			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+		}
+		seenCols[c.L] = struct{}{}
+		if c.L == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) || c.L == strings.ToLower(model.MaterializedViewLogOldNewColumnName) {
+			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+		}
+		baseCol := colMap[c.L]
+		if baseCol == nil {
+			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, stmt.Table.Name.O)
+		}
+		if err := CheckMaterializedViewLogColumnSupported(baseCol); err != nil {
+			return nil, err
+		}
+		ft := FieldTypeForMaterializedViewLogColumn(baseCol)
+		colDefs = append(colDefs, &ast.ColumnDef{Name: &ast.ColumnName{Name: c}, Tp: &ft})
+	}
+
+	metaCols := []struct {
+		name string
+		tp   byte
+		flen int
+	}{
+		{name: model.MaterializedViewLogDMLTypeColumnName, tp: mysql.TypeVarchar, flen: 1},
+		{name: model.MaterializedViewLogOldNewColumnName, tp: mysql.TypeTiny, flen: 4},
+	}
+	for _, metaCol := range metaCols {
+		ft := field_types.NewFieldType(metaCol.tp)
+		ft.SetFlen(metaCol.flen)
+		ft.SetFlag(mysql.NotNullFlag)
+		colDefs = append(colDefs, &ast.ColumnDef{Name: &ast.ColumnName{Name: ast.NewCIStr(metaCol.name)}, Tp: ft})
+	}
+
+	createTableStmt := &ast.CreateTableStmt{
+		Table:   &ast.TableName{Schema: schemaName, Name: mlogName},
+		Cols:    colDefs,
+		Options: stmt.Options,
+	}
+	mlogTableInfo, err := BuildTableInfoWithStmt(
+		NewMetaBuildContextWithSctx(ctx, metaBuildOptions...),
+		createTableStmt,
+		schemaCharset,
+		schemaCollate,
+		placementPolicyRef,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var purgeMethod, purgeStartWith, purgeNext string
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	logAccumulationAlertRows, err := BuildMLogAccumulationAlertRows(stmt.AccumulationAlert)
+	if err != nil {
+		return nil, err
+	}
+	if stmt.Purge != nil {
+		if stmt.Purge.Immediate {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
+		}
+		purgeMethod = "DEFERRED"
+		if stmt.Purge.StartWith != nil {
+			purgeStartWith, err = BuildAndValidateMViewScheduleExpr(ctx, stmt.Purge.StartWith, "PURGE START WITH")
+			if err != nil {
+				return nil, err
+			}
+		}
+		if stmt.Purge.Next == nil {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+		}
+		purgeNext, err = BuildAndValidateMViewScheduleExpr(ctx, stmt.Purge.Next, "PURGE NEXT")
+		if err != nil {
+			return nil, err
+		}
+	}
+	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
+		BaseTableID:              baseTableInfo.ID,
+		Columns:                  stmt.Cols,
+		PurgeMethod:              purgeMethod,
+		PurgeStartWith:           purgeStartWith,
+		PurgeNext:                purgeNext,
+		LogAccumulationAlertRows: logAccumulationAlertRows,
+		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
+		PurgeScheduleTimeZone:    model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+	}
+	return mlogTableInfo, nil
+}
+
 func errUnsupportedMaterializedViewOnPartitionTable(op string) error {
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(op + " on partition table")
 }
@@ -109,8 +221,8 @@ func applyMViewExecutionSessionVars(
 		sessVars,
 		target,
 		variable.MViewExecutionSessionVarsApplyConfig{
-			MaintainMemQuotaVarName:             variable.TiDBMemQuotaQuery,
-			MaintainIsolationReadEnginesVarName: variable.TiDBIsolationReadEngines,
+			MaintainMemQuotaVarName:             vardef.TiDBMemQuotaQuery,
+			MaintainIsolationReadEnginesVarName: vardef.TiDBIsolationReadEngines,
 			CaptureAppliedVars:                  variable.CaptureAppliedMViewExecutionSessionVars,
 			BestEffort:                          bestEffort,
 			InjectApplyError:                    maybeMockMViewExecutionSessionVarApplyError,
@@ -155,18 +267,18 @@ func AddMViewExecutionSessionVarsToJob(job *model.Job, sessVars *variable.Sessio
 		job.SessionVars = make(map[string]string)
 	}
 	target := variable.CaptureMViewExecutionSessionVars(sessVars)
-	job.AddSystemVars(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(target.MaintainMemQuota, 10))
-	job.AddSystemVars(variable.TiDBMVMaintainIsolationReadEngines, target.IsolationReadEngines)
-	job.AddSystemVars(variable.TiDBMaxTiFlashThreads, strconv.FormatInt(target.TiFlashMaxThreads, 10))
-	job.AddSystemVars(variable.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtJoin, 10))
-	job.AddSystemVars(variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtAgg, 10))
-	job.AddSystemVars(variable.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtSort, 10))
-	job.AddSystemVars(variable.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(target.TiFlashMemQuotaQueryPerNode, 10))
-	job.AddSystemVars(variable.TiFlashQuerySpillRatio, strconv.FormatFloat(target.TiFlashQuerySpillRatio, 'f', -1, 64))
-	job.AddSystemVars(variable.TiFlashFineGrainedShuffleStreamCount, strconv.FormatInt(target.FineGrainedStreamCount, 10))
-	job.AddSystemVars(variable.TiFlashFineGrainedShuffleBatchSize, strconv.FormatUint(target.FineGrainedBatchSize, 10))
-	job.AddSystemVars(variable.TiDBMViewMaintainImportThreads, strconv.Itoa(target.ImportThreads))
-	job.AddSystemVars(variable.TiDBMViewMaintainImportDiskQuota, target.ImportDiskQuota)
+	job.AddSystemVars(vardef.TiDBMVMaintainMemQuota, strconv.FormatInt(target.MaintainMemQuota, 10))
+	job.AddSystemVars(vardef.TiDBMVMaintainIsolationReadEngines, target.IsolationReadEngines)
+	job.AddSystemVars(vardef.TiDBMaxTiFlashThreads, strconv.FormatInt(target.TiFlashMaxThreads, 10))
+	job.AddSystemVars(vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtJoin, 10))
+	job.AddSystemVars(vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtAgg, 10))
+	job.AddSystemVars(vardef.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtSort, 10))
+	job.AddSystemVars(vardef.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(target.TiFlashMemQuotaQueryPerNode, 10))
+	job.AddSystemVars(vardef.TiFlashQuerySpillRatio, strconv.FormatFloat(target.TiFlashQuerySpillRatio, 'f', -1, 64))
+	job.AddSystemVars(vardef.TiFlashFineGrainedShuffleStreamCount, strconv.FormatInt(target.FineGrainedStreamCount, 10))
+	job.AddSystemVars(vardef.TiFlashFineGrainedShuffleBatchSize, strconv.FormatUint(target.FineGrainedBatchSize, 10))
+	job.AddSystemVars(vardef.TiDBMViewMaintainImportThreads, strconv.Itoa(target.ImportThreads))
+	job.AddSystemVars(vardef.TiDBMViewMaintainImportDiskQuota, target.ImportDiskQuota)
 }
 
 // MViewExecutionSessionVarsFromJob reconstructs MV execution vars from a DDL job.
@@ -176,44 +288,44 @@ func MViewExecutionSessionVarsFromJob(job *model.Job, defaultSessVars *variable.
 		return target, nil
 	}
 
-	if val, ok := job.GetSystemVars(variable.TiDBMVMaintainMemQuota); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMVMaintainMemQuota); ok {
 		target.MaintainMemQuota = variable.TidbOptInt64(val, target.MaintainMemQuota)
 	}
-	if val, ok := job.GetSystemVars(variable.TiDBMVMaintainIsolationReadEngines); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMVMaintainIsolationReadEngines); ok {
 		target.IsolationReadEngines = val
 	}
-	if val, ok := job.GetSystemVars(variable.TiDBMaxTiFlashThreads); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMaxTiFlashThreads); ok {
 		target.TiFlashMaxThreads = variable.TidbOptInt64(val, target.TiFlashMaxThreads)
 	}
-	if val, ok := job.GetSystemVars(variable.TiDBMaxBytesBeforeTiFlashExternalJoin); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMaxBytesBeforeTiFlashExternalJoin); ok {
 		target.TiFlashMaxBytesBeforeExtJoin = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtJoin)
 	}
-	if val, ok := job.GetSystemVars(variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy); ok {
 		target.TiFlashMaxBytesBeforeExtAgg = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtAgg)
 	}
-	if val, ok := job.GetSystemVars(variable.TiDBMaxBytesBeforeTiFlashExternalSort); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMaxBytesBeforeTiFlashExternalSort); ok {
 		target.TiFlashMaxBytesBeforeExtSort = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtSort)
 	}
-	if val, ok := job.GetSystemVars(variable.TiFlashMemQuotaQueryPerNode); ok {
+	if val, ok := job.GetSystemVars(vardef.TiFlashMemQuotaQueryPerNode); ok {
 		target.TiFlashMemQuotaQueryPerNode = variable.TidbOptInt64(val, target.TiFlashMemQuotaQueryPerNode)
 	}
-	if val, ok := job.GetSystemVars(variable.TiFlashQuerySpillRatio); ok {
+	if val, ok := job.GetSystemVars(vardef.TiFlashQuerySpillRatio); ok {
 		ratio, err := strconv.ParseFloat(val, 64)
 		if err != nil {
-			return variable.MViewExecutionSessionVars{}, errors.Annotatef(err, "invalid %s", variable.TiFlashQuerySpillRatio)
+			return variable.MViewExecutionSessionVars{}, errors.Annotatef(err, "invalid %s", vardef.TiFlashQuerySpillRatio)
 		}
 		target.TiFlashQuerySpillRatio = ratio
 	}
-	if val, ok := job.GetSystemVars(variable.TiFlashFineGrainedShuffleStreamCount); ok {
+	if val, ok := job.GetSystemVars(vardef.TiFlashFineGrainedShuffleStreamCount); ok {
 		target.FineGrainedStreamCount = variable.TidbOptInt64(val, target.FineGrainedStreamCount)
 	}
-	if val, ok := job.GetSystemVars(variable.TiFlashFineGrainedShuffleBatchSize); ok {
+	if val, ok := job.GetSystemVars(vardef.TiFlashFineGrainedShuffleBatchSize); ok {
 		target.FineGrainedBatchSize = uint64(variable.TidbOptInt64(val, int64(target.FineGrainedBatchSize)))
 	}
-	if val, ok := job.GetSystemVars(variable.TiDBMViewMaintainImportThreads); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMViewMaintainImportThreads); ok {
 		target.ImportThreads = variable.TidbOptInt(val, target.ImportThreads)
 	}
-	if val, ok := job.GetSystemVars(variable.TiDBMViewMaintainImportDiskQuota); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMViewMaintainImportDiskQuota); ok {
 		target.ImportDiskQuota = val
 	}
 	return target, nil
@@ -265,7 +377,6 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		return err
 	}
 	baseTableInfo := baseTable.Meta()
-	baseTableID := baseTableInfo.ID
 	if !isValidMaterializedViewLogBaseTable(schemaName.L, baseTableInfo) {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
@@ -274,105 +385,23 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	}
 
 	mlogName := model.MaterializedViewLogTableName(baseTableInfo.Name)
-	if err := checkTooLongTable(mlogName); err != nil {
-		return err
-	}
 	if _, err = is.TableByName(e.ctx, schemaName, mlogName); err == nil {
 		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogName})
 	} else if !infoschema.ErrTableNotExists.Equal(err) {
 		return err
 	}
 
-	colMap := make(map[string]*model.ColumnInfo, len(baseTableInfo.Columns))
-	for _, col := range baseTableInfo.Columns {
-		colMap[col.Name.L] = col
-	}
-	seenCols := make(map[string]struct{}, len(s.Cols))
-	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
-	for _, c := range s.Cols {
-		if _, exists := seenCols[c.L]; exists {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
-		}
-		seenCols[c.L] = struct{}{}
-		if c.L == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) || c.L == strings.ToLower(model.MaterializedViewLogOldNewColumnName) {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
-		}
-		baseCol := colMap[c.L]
-		if baseCol == nil {
-			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
-		}
-		if err := CheckMaterializedViewLogColumnSupported(baseCol); err != nil {
-			return err
-		}
-		ft := FieldTypeForMaterializedViewLogColumn(baseCol)
-		colDefs = append(colDefs, &ast.ColumnDef{Name: &ast.ColumnName{Name: c}, Tp: &ft})
-	}
-
-	metaCols := []struct {
-		name string
-		tp   byte
-		flen int
-	}{
-		{name: model.MaterializedViewLogDMLTypeColumnName, tp: mysql.TypeVarchar, flen: 1},
-		{name: model.MaterializedViewLogOldNewColumnName, tp: mysql.TypeTiny, flen: 4},
-	}
-	for _, metaCol := range metaCols {
-		ft := field_types.NewFieldType(metaCol.tp)
-		ft.SetFlen(metaCol.flen)
-		ft.SetFlag(mysql.NotNullFlag)
-		colDefs = append(colDefs, &ast.ColumnDef{Name: &ast.ColumnName{Name: ast.NewCIStr(metaCol.name)}, Tp: ft})
-	}
-
-	createTableStmt := &ast.CreateTableStmt{
-		Table:   &ast.TableName{Schema: schemaName, Name: mlogName},
-		Cols:    colDefs,
-		Options: s.Options,
-	}
-	mlogTableInfo, err := BuildTableInfoWithStmt(
-		NewMetaBuildContextWithSctx(ctx),
-		createTableStmt,
+	mlogTableInfo, err := BuildMaterializedViewLogTableInfo(
+		ctx,
+		schemaName,
 		schema.Charset,
 		schema.Collate,
 		schema.PlacementPolicyRef,
+		baseTableInfo,
+		s,
 	)
 	if err != nil {
 		return err
-	}
-
-	var purgeMethod, purgeStartWith, purgeNext string
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-	logAccumulationAlertRows, err := BuildMLogAccumulationAlertRows(s.AccumulationAlert)
-	if err != nil {
-		return err
-	}
-	if s.Purge != nil {
-		if s.Purge.Immediate {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
-		}
-		purgeMethod = "DEFERRED"
-		if s.Purge.StartWith != nil {
-			purgeStartWith, err = BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
-			if err != nil {
-				return err
-			}
-		}
-		if s.Purge.Next == nil {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
-		}
-		purgeNext, err = BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
-		if err != nil {
-			return err
-		}
-	}
-	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:              baseTableID,
-		Columns:                  s.Cols,
-		PurgeMethod:              purgeMethod,
-		PurgeStartWith:           purgeStartWith,
-		PurgeNext:                purgeNext,
-		LogAccumulationAlertRows: logAccumulationAlertRows,
-		DefinitionSQLMode:        ctx.GetSessionVars().SQLMode,
-		PurgeScheduleTimeZone:    model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 	}
 
 	job := &model.Job{
@@ -486,8 +515,43 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	// Derive MV physical column types from the query output schema.
 	exec := ctx.GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
+	definitionSQLMode := sessionVars.SQLMode
+	definitionDivPrecisionIncrement := sessionVars.DivPrecisionIncrement
+	definitionTimeZone := sessionVars.TimeZone
+	setupDefinitionSession := sqlexec.ExecOptionWithSessionVarsSetup(func(vars *variable.SessionVars) func() {
+		originalSQLMode := vars.SQLMode
+		originalDivPrecisionIncrement := vars.DivPrecisionIncrement
+		originalTimeZone := vars.TimeZone
+		originalTypeFlags := vars.StmtCtx.TypeFlags()
+		originalErrLevels := vars.StmtCtx.ErrLevels()
+		originalStmtTimeZone := vars.StmtCtx.TimeZone()
+
+		vars.SQLMode = definitionSQLMode
+		vars.DivPrecisionIncrement = definitionDivPrecisionIncrement
+		vars.TimeZone = definitionTimeZone
+		vars.StmtCtx.SetTypeFlags(reorgTypeFlagsWithSQLMode(definitionSQLMode))
+		vars.StmtCtx.SetErrLevels(reorgErrLevelsWithSQLMode(definitionSQLMode))
+		vars.StmtCtx.SetTimeZone(definitionTimeZone)
+
+		return func() {
+			vars.SQLMode = originalSQLMode
+			vars.DivPrecisionIncrement = originalDivPrecisionIncrement
+			vars.TimeZone = originalTimeZone
+			vars.StmtCtx.SetTypeFlags(originalTypeFlags)
+			vars.StmtCtx.SetErrLevels(originalErrLevels)
+			if originalStmtTimeZone != nil {
+				vars.StmtCtx.SetTimeZone(originalStmtTimeZone)
+			} else {
+				vars.StmtCtx.SetTimeZone(vars.Location())
+			}
+		}
+	})
 	/* #nosec G202: selectSQL is restored from AST (single statement, no user-provided placeholders). */
-	_, resultFields, err := exec.ExecRestrictedSQL(kctx, nil, "SELECT * FROM ("+selectSQL+") AS `tidb_mv_query` LIMIT 0")
+	_, resultFields, err := exec.ExecRestrictedSQL(
+		kctx,
+		[]sqlexec.OptionFuncAlias{setupDefinitionSession},
+		"SELECT * FROM ("+selectSQL+") AS `tidb_mv_query` LIMIT 0",
+	)
 	if err != nil {
 		return err
 	}
@@ -594,7 +658,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err := initMaterializedViewReorgMetaFromVariables(job, ctx); err != nil {
 		return err
 	}
-	job.AddSystemVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	AddMViewExecutionSessionVarsToJob(job, sessionVars)
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
 		TableInfo:    mvTableInfo,
@@ -605,7 +669,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 
 	var scatterScope string
-	if val, ok := jobW.GetSystemVars(variable.TiDBScatterRegion); ok {
+	if val, ok := jobW.GetSystemVars(vardef.TiDBScatterRegion); ok {
 		scatterScope = val
 	}
 	return errors.Trace(e.createTableWithInfoPost(ctx, mvTableInfo, jobW.SchemaID, scatterScope))
@@ -784,6 +848,9 @@ func validateCreateMaterializedViewQuery(
 	if fromTbl.Schema.L != baseTableName.Schema.L || fromTbl.Name.L != baseTableName.Name.L {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports a single base table")
 	}
+	if err := mviewutil.CheckMaterializedViewSelect(sel); err != nil {
+		return nil, err
+	}
 
 	if sel.GroupBy == nil || len(sel.GroupBy.Items) == 0 {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW requires GROUP BY clause")
@@ -884,7 +951,7 @@ func validateCreateMaterializedViewQuery(
 			}
 			aggFunc := strings.ToLower(expr.F)
 			if aggFunc != ast.AggFuncCount && aggFunc != ast.AggFuncSum && aggFunc != ast.AggFuncMin && aggFunc != ast.AggFuncMax {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW" + " agg " + expr.F)
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW: agg %s", expr.F)
 			}
 			switch aggFunc {
 			case ast.AggFuncCount:
@@ -934,8 +1001,6 @@ func validateCreateMaterializedViewQuery(
 					hasMinOrMax = true
 				}
 				usedCols[colName] = struct{}{}
-			default:
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW" + " agg " + expr.F)
 			}
 		default:
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported SELECT expression in CREATE MATERIALIZED VIEW")

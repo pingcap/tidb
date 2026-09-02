@@ -68,7 +68,12 @@ type ExecOption struct {
 	IgnoreWarning      bool
 	UseCurSession      bool
 	EnableDDLAnalyze   bool
+	SessionVarsSetup   SessionVarsSetup
 }
+
+// SessionVarsSetup configures the session variables used by a restricted SQL
+// execution and returns a function that restores the original values.
+type SessionVarsSetup func(vars *variable.SessionVars) func()
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
 type OptionFuncAlias = func(option *ExecOption)
@@ -112,6 +117,13 @@ var ExecOptionUseCurSession = func(option *ExecOption) {
 // UseCurSession is false by default, sometimes we set it explicitly for readability
 var ExecOptionUseSessionPool = func(option *ExecOption) {
 	option.UseCurSession = false
+}
+
+// ExecOptionWithSessionVarsSetup configures the internal session used by ExecRestrictedSQL.
+var ExecOptionWithSessionVarsSetup = func(setup SessionVarsSetup) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.SessionVarsSetup = setup
+	}
 }
 
 // ExecOptionWithSnapshot tells ExecRestrictedStmt/SQL to use a snapshot.

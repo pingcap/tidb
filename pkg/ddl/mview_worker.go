@@ -47,6 +47,9 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: invalid job args")
 	}
+	if job.IsRollingback() {
+		return w.rollbackCreateMaterializedViewLog(jobCtx, job, mlogTableInfo)
+	}
 	baseTableID := mlogTableInfo.MaterializedViewLog.BaseTableID
 	if baseTableID == 0 {
 		job.State = model.JobStateCancelled
@@ -90,7 +93,7 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 	}
 	if err = w.upsertCreateMaterializedViewLogPurgeInfo(jobCtx, job.SchemaName, mlogTableInfo); err != nil {
 		if dbterror.ErrInvalidDDLJob.Equal(err) {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 		}
 		return ver, errors.Trace(err)
 	}
@@ -102,6 +105,46 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 		return ver, errors.Trace(err)
 	}
 	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, []*model.TableInfo{baseTblInfo, mlogTableInfo})
+	return ver, nil
+}
+
+func (w *worker) rollbackCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job, mlogTableInfo *model.TableInfo) (ver int64, _ error) {
+	actualTblInfo, err := getTableInfo(jobCtx.metaMut, job.TableID, job.SchemaID)
+	if err != nil && !infoschema.ErrDatabaseNotExists.Equal(err) && !infoschema.ErrTableNotExists.Equal(err) {
+		return ver, errors.Trace(err)
+	}
+
+	droppingTblInfo := mlogTableInfo
+	if actualTblInfo != nil {
+		droppingTblInfo = actualTblInfo
+	}
+	extraInfos, err := updateMaterializedViewBaseInfoOnDrop(jobCtx, job, droppingTblInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	for _, extra := range extraInfos {
+		if err := updateTable(jobCtx.metaMut, extra.schemaID, extra.tblInfo, true); err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+	if actualTblInfo != nil {
+		if err := jobCtx.metaMut.DropTableOrView(job.SchemaID, job.TableID); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err := jobCtx.metaMut.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+	if err := w.deleteMaterializedViewLogPurgeInfo(jobCtx, job.TableID); err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StateNone
+	ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	return ver, nil
 }
 
@@ -236,12 +279,6 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 				job.State = model.JobStateRollingback
 				return ver, nil
 			}
-			if errors.Cause(err) == context.Canceled {
-				// IMPORT FROM SELECT has no resumable checkpoint in this path.
-				// Fail fast and rollback the whole CREATE MATERIALIZED VIEW job to avoid duplicate build attempts.
-				job.State = model.JobStateRollingback
-				return ver, errors.Trace(err)
-			}
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
@@ -275,7 +312,6 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 		finished := make([]*model.TableInfo, 0, len(baseTableIDs)+1)
-		finished = append(finished, mviewTableInfo)
 		for _, id := range baseTableIDs {
 			base, getErr := getTableInfo(jobCtx.metaMut, id, job.SchemaID)
 			if getErr != nil {
@@ -283,6 +319,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			}
 			finished = append(finished, base)
 		}
+		finished = append(finished, mviewTableInfo)
 		job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, finished)
 		return ver, nil
 	default:
@@ -398,7 +435,7 @@ func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, 
 			continue
 		}
 		processed[baseID] = struct{}{}
-		base, err := jobCtx.metaMut.GetTable(job.SchemaID, baseID)
+		base, err := getTableInfo(jobCtx.metaMut, baseID, job.SchemaID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return nil, errors.Trace(err)
@@ -475,7 +512,7 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 	return len(rows) > 0, nil
 }
 
-func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *model.Job, currentDB string) (func(), error) {
+func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *model.Job, mviewTableInfo *model.TableInfo, currentDB string) (func(), error) {
 	if job == nil || job.ReorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
@@ -496,6 +533,9 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	if err != nil {
 		restore(sessCtx)
 		return nil, errors.Trace(err)
+	}
+	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
+		sessVars.DivPrecisionIncrement = mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
 	}
 	sessVars.CurrentDB = currentDB
 	sessVars.InMaterializedViewMaintenance = true
@@ -541,7 +581,7 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, job.SchemaName)
+	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)
@@ -568,7 +608,7 @@ func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, job.SchemaName)
+	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)

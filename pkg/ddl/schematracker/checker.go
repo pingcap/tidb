@@ -284,9 +284,11 @@ func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.Cr
 	if err != nil || d.closed.Load() {
 		return err
 	}
+	count := ctx.GetSessionVars().StmtCtx.WarningCount()
 	if err := d.tracker.CreateMaterializedViewLog(ctx, stmt); err != nil {
 		panic(err)
 	}
+	ctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
 	schemaName := stmt.Table.Schema
 	if schemaName.O == "" {
 		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)

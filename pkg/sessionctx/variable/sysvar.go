@@ -444,25 +444,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ","), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		engines := strings.Split(normalizedValue, ",")
-		var formatVal string
-		for i, engine := range engines {
-			engine = strings.TrimSpace(engine)
-			if i != 0 {
-				formatVal += ","
-			}
-			switch {
-			case strings.EqualFold(engine, kv.TiKV.Name()):
-				formatVal += kv.TiKV.Name()
-			case strings.EqualFold(engine, kv.TiFlash.Name()):
-				formatVal += kv.TiFlash.Name()
-			case strings.EqualFold(engine, kv.TiDB.Name()):
-				formatVal += kv.TiDB.Name()
-			default:
-				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBIsolationReadEngines, normalizedValue)
-			}
-		}
-		return formatVal, nil
+		return normalizeIsolationReadEnginesValue(vardef.TiDBIsolationReadEngines, normalizedValue)
 	}, SetSession: func(s *SessionVars, val string) error {
 		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {

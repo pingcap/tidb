@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
@@ -5637,6 +5638,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	case *ast.CreateMaterializedViewStmt:
 		err := checkForUserVariables(v.Select)
 		if err != nil {
+			return nil, err
+		}
+		if err := mviewutil.CheckMaterializedViewSelect(v.Select); err != nil {
 			return nil, err
 		}
 		nodeW := resolve.NewNodeWWithCtx(v.Select, b.resolveCtx)
