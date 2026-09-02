@@ -42,6 +42,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed a Rust-only `tidb-codec` alignment follow-up for Go
+  master `febee17ec716d86b1e355e5400ef9e4f4f190bad` (hash join v2 TypeNull
+  build-key regression). The complete Rust owner inventory covers 52 tracked
+  manifest, production, unit/integration test, benchmark, and generated-test
+  inputs (14,222 lines; the aggregate build script emits `OUT_DIR/all_tests.rs`;
+  no platform-specific variant exists). `serialize_keys` now marks every
+  `FieldTypeCode::Null` row as a skipped NULL key even when row-backed input
+  carries a non-NULL placeholder datum, preventing collision with an empty
+  byte key. The focused source regression fails before the change and passes
+  after it. Details are recorded in `receipts/util_codec_audit.md`; the
+  complete crate suite, pinned Rust formatting, `make lint`, and diff checks
+  are the Ready gates for this batch.
+
 - 2026-09-02: synchronized the bounded `pkg/infoschema/perfschema` Go
   package with fetched Go master `a85e0fd5df`. The complete eight-artifact
   inventory (1,597 counted lines including the two binary profile fixtures)

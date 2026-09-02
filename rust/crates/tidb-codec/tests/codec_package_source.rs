@@ -717,6 +717,24 @@ fn source_serialize_keys_modes_and_nulls() {
 }
 
 #[test]
+fn source_serialize_keys_marks_type_null_columns_as_null() {
+    // A TypeNull chunk has no payload.  Keep a non-NULL placeholder datum in
+    // the row to model the typed-column path: Go's codec uses the field type
+    // itself to call canSkip, so this row must not remain an empty valid key.
+    let rows = vec![vec![Datum::new_bytes(Vec::new())]];
+    let (keys, nulls) = serialize_keys(
+        &rows,
+        &[0],
+        &[FieldType::new(FieldTypeCode::Null)],
+        &[SerializeMode::Normal],
+        None,
+    )
+    .unwrap();
+    assert_eq!(keys, vec![Vec::<u8>::new()]);
+    assert_eq!(nulls, [true]);
+}
+
+#[test]
 fn source_enum_set_hash_modes() {
     let enum_value = Datum::new_enum(
         tidb_datatype::MysqlEnum::new("A", 1),

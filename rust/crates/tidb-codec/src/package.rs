@@ -537,7 +537,11 @@ pub fn serialize_keys(
             let value = row
                 .get(column_index)
                 .ok_or(CodecError::InvalidEncoding("serialize column index"))?;
-            if value.is_null() {
+            // Go's `TypeNull` column is null for every row, even when the
+            // row-backed representation carries a non-NULL placeholder
+            // datum. Mark it before serializing so an empty NULL key cannot
+            // collide with an empty byte key in hash join v2.
+            if field_type.code() == FieldTypeCode::Null || value.is_null() {
                 nulls[row_index] = true;
                 keys[row_index].clear();
                 break;

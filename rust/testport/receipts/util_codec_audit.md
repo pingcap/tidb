@@ -53,7 +53,7 @@ owner already marks null join keys before serialization.
 ## Rust ownership and parity decision
 
 The package is owned by `rust/crates/tidb-codec`; its complete tracked owner,
-test, benchmark, and manifest inventory is 52 files (14,212 lines), with the
+test, benchmark, and manifest inventory is 52 files (14,222 lines), with the
 workspace `aggregate-tests.rs` build script generating `OUT_DIR/all_tests.rs`.
 There are no target-specific codec variants; `cfg(test)` blocks are ordinary
 unit-test modules. The prior `b038` audit established the complete source-test
@@ -75,6 +75,27 @@ compatibility assertion additionally proves the retained method wrapper emits
 the same raw value bytes. The complete source-derived codec suite continues to
 cover datum hash equality and all collation-aware group/row/column hash paths.
 
+## Rust follow-up: TypeNull join-key parity
+
+Go master `febee17ec716d86b1e355e5400ef9e4f4f190bad` fixes the hash-join-v2
+NULL build-key regression by making the `TypeNull` branch invoke `canSkip` in
+both key pre-allocation and serialization. Rust already treated an explicit
+`Datum::Null` as a skipped key, but a row-backed typed-column path can carry a
+non-NULL placeholder datum for `FieldTypeCode::Null`. Before this follow-up,
+`serialize_keys` therefore emitted an empty key without setting its NULL
+marker, allowing it to collide with an empty BLOB key. The Rust package now
+marks every `FieldTypeCode::Null` row as NULL before encoding, matching the Go
+field-type contract while preserving the existing empty-key bytes.
+
+The focused regression is
+`source_serialize_keys_marks_type_null_columns_as_null` in
+`rust/crates/tidb-codec/tests/codec_package_source.rs`; it supplies an empty
+byte placeholder under `FieldTypeCode::Null` and requires an empty serialized
+key plus a true NULL marker. The package inventory above includes every Rust
+production module, unit/integration source, benchmark, manifest, aggregate
+test build script, generated `OUT_DIR/all_tests.rs` artifact, and platform
+variant audit; no target-specific Rust codec source exists.
+
 ## Validation
 
 Profile: Ready for this package batch; the repository-wide audit is still
@@ -88,6 +109,10 @@ continuing.
 - Focused `codec_package_source` run including the raw-byte hash regression — 63 passed.
 - Focused `tidb-expr` hash-group-key/EncodeValue regression — passed (1).
 - Focused `tidb-executor` hash-group-key consumer regression — passed (1).
+- Before the Rust follow-up,
+  `source_serialize_keys_marks_type_null_columns_as_null` failed with
+  `nulls == [false]`; after the fix it passes with `[true]`.
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-codec --test all source_serialize_keys_marks_type_null_columns_as_null -- --nocapture` — passed.
 - `cargo +nightly-2026-08-22 check --offline --locked -p tidb-codec -p tidb-expr -p tidb-executor --all-targets` — passed.
 - `cargo +nightly-2026-08-22 check --offline --locked -p tidb-codec --benches` — passed.
 - `cargo +nightly-2026-08-22 fmt --all -- --check`, `make lint`, and
@@ -113,6 +138,9 @@ Follow-up validation for the current-master TypeNull path:
 - Correctness: low; comparable keys still use the immutable encoder mode,
   while values and hash codes now have one non-collating implementation just
   as Go master does.
+- TypeNull join keys now follow the field type rather than any placeholder
+  datum, so NULL keys cannot hash-match empty byte keys. Explicit datum NULL
+  handling remains unchanged.
 - Compatibility: the three removed methods were Rust-only; all searched
   workspace consumers now call the package-level functions.
 - Performance: the executor's generic non-string hash branch now obtains a
