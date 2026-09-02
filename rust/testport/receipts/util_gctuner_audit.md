@@ -1,7 +1,7 @@
 # `pkg/util/gctuner` — Go-master parity boundary receipt
 
 Comparison source: Go `origin/master` at
-`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). No Rust crate is a
+`94eb995357f34b7bab4889a82f0405797046447d` (2026-09-02). No Rust crate is a
 dependency-closed owner for this package. The package's direct Go behavior is
 runtime- and lifecycle-bound, so this audit records the complete boundary
 without adding a detached Rust timer or GC policy.
@@ -48,10 +48,11 @@ are part of the Go-master source contract. `readMemoryInuse` is the only
 package helper; `mem_test.go` deliberately exercises the actual runtime
 allocator.
 
-The active worktree has an existing branch-only 22-line memory-arbitration
-delta in `memory_limit_tuner.go` (and removes ten test lines) relative to the
-Go-master pin. It is preserved as user-owned scope and is not treated as
-Go-master behavior for this receipt.
+The current Go-master arbitration delta is included in this package batch:
+`calcMemoryLimit` caps the percentage at the server limit while global
+arbitration is active, and the obsolete callback/reset path is removed. The
+focused regression covers both the capped fallback and restoration of the
+configured server limit.
 
 ## Rust ownership and integration decision
 
@@ -68,52 +69,38 @@ global memory arbitrator. A partial Rust finalizer, synthetic GC percentage,
 or independent memory-limit thread would have no ordinary consumer and would
 create Rust-only scheduling/GC policy. The package remains explicitly
 unclaimed until those runtime, metrics, server, and test dependencies can land
-atomically. No production or Rust test file changed in this audit.
+atomically. The Go production/test behavior is restored in this batch; no Rust
+source changed.
 
 ## Validation
 
-Profile: **Ready** for this complete Go-master boundary refresh; no Rust owner
-or production code changed.
-
-The package uses failpoints in production and its BUILD target, so the
-repository failpoint runner was used. These focused tests passed:
+Profile: **Ready** for this package-level parity batch. The focused regression
+failed before the fix because arbitration allowed a 110% memory limit and
+passes afterward; the complete package suite also passes with failpoints
+enabled and disabled by the repository wrapper.
 
 ```text
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/util/gctuner -run '^TestCalcGCPercent$' -count=1
+./tools/check/failpoint-go-test.sh ./pkg/util/gctuner -run '^TestSetMemoryLimit$' -count=1
+# FAIL before fix: expected 1073741824, got 1181116006
 
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/util/gctuner -run '^TestFinalizer$' -count=1
+./tools/check/failpoint-go-test.sh ./pkg/util/gctuner -run '^TestSetMemoryLimit$' -count=1
+# PASS
 
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/util/gctuner -run '^TestTuner$' -count=1
-
-PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/util/gctuner -run '^TestMem$' -count=1
-
-PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/util/gctuner -run '^TestGlobalMemoryTuner$' -count=1
-
-PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/util/gctuner -run '^TestIssue48741$' -count=1
-
-PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
-./tools/check/failpoint-go-test.sh pkg/util/gctuner -run '^TestSetMemoryLimit$' -count=1
+./tools/check/failpoint-go-test.sh ./pkg/util/gctuner -count=1 -vet=off
+# PASS; all package tests in 15.927s
 ```
 
-Each selected test reported `PASS` in both the active and exact detached
-Go-master checkouts. `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec
--- pkg/util/gctuner` records only the pre-existing branch-only delta described
-above. Rust fmt, pinned detached `make lint`, and `git diff --check` passed. No
-Go or Bazel file was edited in this batch, so `make bazel_prepare` is not
-required.
+The existing focused tuner, finalizer, memory, and issue-48741 tests were
+also rerun in the canonical failpoint wrapper. `make lint` and
+`git diff --check` pass. `make bazel_prepare` was attempted because Go source
+and test behavior changed, but is blocked by the unavailable local Bazel
+executable.
 
 ## Risks and unverified behavior
 

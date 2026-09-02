@@ -3757,12 +3757,15 @@ For each bounded behavior cluster:
       each focused test (the long issue-48741 test passed before wrapper
       cleanup exceeded its outer poll window), so no partial Rust runtime
       owner was added. Details are in `receipts/util_gctuner_audit.md`.
-- 2026-09-02: re-audited all nine `pkg/util/gctuner` Go-master artifacts at
-      `c6054025ed4c32ab3672a2a24ea46892714d21ec` (993 lines). The detached
-      source contract and focused failpoint tests pass, while Rust still has
-      no dependency-closed finalizer/GOGC/memory-limit owner. An existing
-      branch-only memory-arbitration delta is recorded but preserved; details
-      are in `receipts/util_gctuner_audit.md` and
+- 2026-09-02: completed the nine-artifact, 993-line `pkg/util/gctuner`
+      package batch against current Go master `94eb995357f34b7bab4889a82f0405797046447d`.
+      The arbitration-safe server-limit cap and removal of the obsolete global
+      callback/reset path are restored; the focused regression failed before
+      the fix and passes afterward, as does the full failpoint-wrapped suite.
+      Rust still has no dependency-closed finalizer/GOGC/memory-limit owner, so
+      no Rust-only behavior was added. Ready lint and diff checks pass; Bazel
+      preparation is blocked only by the missing local executable. Details are
+      in `receipts/util_gctuner_audit.md` and
       `docs/operations/util-gctuner-audit-execplan.md`.
 - 2026-09-01: inventoried all five Go-master `pkg/domain/serverinfo`
       artifacts (2,295 lines, including the embedded-etcd/fault harness and
@@ -4587,6 +4590,11 @@ For each bounded behavior cluster:
   `servermemorylimit` are supporting packages with distinct contracts; a
   detached Rust GC thread or synthetic runtime policy would be Rust-only
   behavior. Date/Author: 2026-09-01, Codex.
+- Decision: retain `pkg/util/gctuner` as an explicit Rust integration boundary
+  after restoring the current Go arbitration cap and deleting the obsolete Go
+  callback/reset path. These changes do not create a Rust owner; the complete
+  runtime and lifecycle contract remains unclaimed. Date/Author: 2026-09-02,
+  Codex.
 
 ## Surprises & Discoveries
 
