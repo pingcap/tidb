@@ -103,6 +103,17 @@ For each bounded behavior cluster:
   `receipts/util_tracing.md` and
   `docs/operations/util-tracing-audit-execplan.md`.
 
+- 2026-09-02: re-audited the complete `pkg/session/syssession` boundary at
+  current Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: eight
+  artifacts and 3,130 lines, including the `!codes` support variant, full
+  unit/integration tests, package harness, and flaky 21-shard BUILD target.
+  The single `tidb-syssession` owner retains the complete ownership/pool
+  state machine and timer integration; active and detached failpoint-wrapped
+  Go suites pass after the documented flaky retry, with fourteen Rust owner
+  tests and eight timer integration tests passing. Details are in
+  `receipts/session_syssession.md` and
+  `docs/operations/session-syssession-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/util/stringutil`
   inventory at `c6054025ed4c32ab3672a2a24ea46892714d21ec`: four artifacts and
   927 lines, including all source tests, benchmarks, the goleak harness, and
@@ -2976,8 +2987,9 @@ For each bounded behavior cluster:
       `tidb-syssession` owner: replace the executor-local policy fragments
       with the full owner/operation/pool lifecycle, remove ignored empty
       carriers, and migrate timer storage off its local session/pool
-      imitation. The atomic inventory and WIP gates are in
-      `receipts/session_syssession.md`.
+      imitation. The atomic inventory and Ready gates are in
+      `receipts/session_syssession.md` and
+      `docs/operations/session-syssession-audit-execplan.md`.
 - [x] Complete the pinned `pkg/util/sqlexec/mock` support package in a
       distinct `tidb-sqlexec-mock` owner: preserve the context-key identity
       and the generated restricted-executor mock's full three-method

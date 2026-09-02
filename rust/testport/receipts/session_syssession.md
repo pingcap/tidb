@@ -1,21 +1,22 @@
 # `pkg/session/syssession` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned Go source: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02).
 
 ## Complete inventory
 
-The complete pinned package was read before implementation:
-
-- `pool.go` and `session.go` — all production source;
-- `session_test_util.go` — the `!codes` support build variant;
-- `pool_test.go`, `session_test.go`, and `session_integration_test.go` — all
-  functional tests;
-- `main_test.go` — setup and goroutine-leak harness;
-- `BUILD.bazel` — production/test sources, dependencies, timeout, flakiness,
-  and shard metadata.
-
-There is no `doc.go`, fixture, benchmark, generated source, platform-specific
-source, or other package-local artifact at the pin.
+The package has exactly eight artifacts and 3,130 lines: `BUILD.bazel` (57
+lines), `main_test.go` (34), `pool.go` (354), `pool_test.go` (433), `session.go`
+(603), `session_integration_test.go` (230), `session_test.go` (1,356), and
+`session_test_util.go` (63). The production library is `pool.go`, `session.go`,
+and the `!codes` support variant `session_test_util.go`; the test surface has
+14 session tests, five pool tests, two integration tests, and the
+package-wide `TestMain` harness. `BUILD.bazel` records a flaky, 21-shard
+target and all source/dependency metadata. There is no `doc.go`, fixture,
+benchmark, generated source, platform-specific source, or other
+package-local artifact at the pin. Default and `codes` file selection was
+verified in both the active and detached checkouts. The checkout package is
+byte-identical to the pin.
 
 ## Rust ownership and integration
 
@@ -56,25 +57,23 @@ and panic/close tests prove deterministic guard cleanup.
 
 ## Validation
 
-Profile: WIP. This completes one atomic Go package inside the continuing
-repository parity audit; it is not a repository-wide readiness claim.
+Profile: **Ready**. This completes one atomic Go package inside the
+continuing repository parity audit; it is not a repository-wide readiness
+claim.
 
-- Complete pinned-package diff gate: passed.
-- The deterministic pinned Go unit suite passed. The complete Go target and
-  an exact retry of
-  `TestDomainAdvancedSessionPoolPutBackDirtySession/resultSetNotClose` both
-  failed in the unchanged pinned Go package because the pool retained one
-  session where the test expected zero. The package's Bazel target is marked
-  flaky, and `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909
-  -- pkg/session/syssession` passed.
-- The pinned Go internal-session registry integration test passed.
-- `cargo test -p tidb-syssession --lib`: passed, 14 tests.
-- `cargo test -p tidb-timer --test all table_store_sql_test`: passed, 8 tests.
-- `cargo check -p tidb-exec -p tidb-session -p tidb-timer
-  -p tidb-syssession`: passed.
-- Scoped `cargo fmt --check` and `git diff --check`: passed.
+- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/session/syssession` — empty; all eight Go artifacts are unchanged at Go master.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh pkg/session/syssession -count=1` — passed in the active worktree (7.5s) and on the exact detached Go-master worktree `/tmp/tidb-go-latest-c605` after a retry; the target is marked flaky in BUILD metadata. The first detached run exposed the known `resultSetNotClose` pool-size race, while the immediate isolated subtest and full retry passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go list -f '{{.GoFiles}}|{{.TestGoFiles}}|{{.XTestGoFiles}}' ./pkg/session/syssession` and the same command with `-tags=codes` — passed in both checkouts; the `!codes` support variant is selected only in the default build.
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-syssession --lib` — passed, 14 tests.
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-timer --test all table_store_sql_test` — passed, 8 integration tests.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed.
+- `git diff --check -- rust/testport/receipts/session_syssession.md rust/docs/operations/session-syssession-audit-execplan.md rust/testport/TESTPORT_EXECPLAN.md` — passed.
+- Commit, push, pull, and remote SHA verification are recorded for this receipt refresh.
 
-No Go or Bazel source changed, so `make bazel_prepare` is not required.
+No Go or Bazel source changed, so `make bazel_prepare` is not required. The
+existing owner validation also passed the focused `tidb-exec`/`tidb-session`/
+`tidb-timer`/`tidb-syssession` compile checks; no new regression carrier was
+needed because this audit batch changed no production behavior.
 
 ## Risk
 
