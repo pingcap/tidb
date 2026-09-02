@@ -42,6 +42,21 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed the bounded shared-lock-loss rollback audit for the
+  complete Go-master `pkg/session` root package at
+  `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (behavior introduced by
+  `94eb995357f34b7bab4889a82f0405797046447d`). The direct package inventory
+  covers 26 artifacts and 20,094 lines, including all production/tests,
+  `BUILD.bazel`, and `OWNERS`, with no package docs, fixtures, generated
+  source, or platform variants. Go now rolls back valid transactions on the
+  shared-lock-lost catalog error while preserving pessimistic deadlock
+  behavior, returns the original error, records abort metrics, and has a
+  three-case regression. The Rust `tidb-session` owner lacks a
+  dependency-closed shared-lock error/statement-abort path, so session
+  rollback wiring remains an explicit boundary; typed low-level decoding is
+  covered by the separate `pkg/store/driver/txn` batch. Details are in
+  `receipts/session_tidb_shared_lock.md`.
+
 - 2026-09-02: audited the complete Go-master `pkg/store/driver/txn`
   boundary at `94eb995357f34b7bab4889a82f0405797046447d`: 12 tracked
   artifacts, 2,208 lines, 114 functions, and eight test declarations, with
