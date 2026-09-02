@@ -550,22 +550,6 @@ fn min_commit_ts_pushes_keep_the_floor_until_a_commit_above_it() {
 // the transcreation can flip #[ignore] into a runnable check.
 // ---------------------------------------------------------------------------
 
-/// Go `TestMockPDServiceDiscovery` (`pd_test.go:101`). Master's
-/// `normalizeMockPDAddrs` keeps every address `pkg/util.NormalizeServiceURL`
-/// accepts, and master accepts unix family endpoints verbatim — three
-/// clients with URLs `http://127.0.0.1:2379`, `http://172.32.21.32:2379`,
-/// `unix://localhost:m0`. The workspace helper rejects them.
-#[test]
-#[ignore = "go-parity-gap: pkg/util/service_url.go NormalizeServiceURL is not transcreated; \
-           tidb-txnkv's normalize_mock_pd_url rejects unix:// so only 2 of Go's 3 clients exist"]
-fn mock_pd_service_discovery_keeps_the_unix_endpoint() {
-    // ("invalid_pd_address", invalid)
-    // ("127.0.0.1:2379", http://127.0.0.1:2379)
-    // ("http://172.32.21.32:2379", http://172.32.21.32:2379)
-    // ("unix://localhost:m0", unix://localhost:m0)
-    panic!("blocked on transcreating pkg/util/service_url.go (NormalizeServiceURL)");
-}
-
 /// Go `TestGetAllMembersUsesInjectedPDAddrs` (`pd_test.go:121`): a client
 /// built over normalized injected addrs answers GetMembersResponse with one
 /// member per addr — each member's ClientUrls holds exactly that URL — and

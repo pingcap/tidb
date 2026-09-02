@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: removed the stale Rust-only Unix-endpoint gap stub from the
+  `pkg/store/mockstore/unistore` carrier. The dependency-closed
+  `tidb-txnkv::unistore` owner already runs the full Go-derived service URL
+  regression, so the duplicate `#[ignore]` function that only panicked was
+  deleted and the package receipt now records the active owner test. No Go or
+  production Rust source changed.
+
 - 2026-09-03: aligned Rust `tidb-expr` DECIMAL-to-DOUBLE metadata
   propagation with Go master `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`.
   `wrap_with_cast_as_real` now updates an owned DECIMAL child to Go's
