@@ -42,6 +42,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed the bounded `pkg/metrics` Go-package batch against
+  current Go master `78cac443a4f46c13bfe27eb247b5c80657952547` as one
+  package commit. The complete inventory covers 60 artifacts and 139,824
+  lines, including all production/tests, build/ownership metadata,
+  alertmanager rules, Jsonnet inputs, generator scripts, and generated Grafana
+  dashboards. Restored RUV3 metric/label definitions and registration, removed
+  obsolete memory-arbitrator labels, and synchronized the resource-control
+  dashboards. The pre-fix regression failed on missing RUV3 symbols; focused
+  and tagged full package tests pass. No dependency-closed Rust shared-registry
+  owner exists, so that boundary remains explicit in `receipts/metrics.md`.
+  Bazel preparation remains blocked by the unavailable local executable.
+
 - 2026-09-02: completed the bounded `pkg/privilege/privileges` Go package
   batch against Go master
   `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete direct inventory
