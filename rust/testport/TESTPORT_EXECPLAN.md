@@ -42,6 +42,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: corrected the complete Go-master
+  `pkg/statistics/handle/util` boundary at
+  `c6054025ed4c32ab3672a2a24ea46892714d21ec`: seven root artifacts and 927
+  lines, plus a separately owned 49-line nested package. Rust now refreshes
+  analyze-store batch size in the exact source order, applies the timeout
+  failpoint at the explicit-context row boundary, and exposes the missing
+  caller-context option path; the Rust-only merge-concurrency reset was
+  removed. The focused tests failed before and pass after the fix, and both
+  Go package variants, 21 Rust owner tests, 258 statistics consumer tests,
+  the server compile, and Ready gates pass. Details are in
+  `receipts/statistics_handle_util.md` and
+  `docs/operations/statistics-handle-util-audit-execplan.md`.
+
 - 2026-09-02: refreshed the complete Go-master
   `pkg/util/servermemorylimit` inventory at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: three artifacts and 375 lines,
@@ -3009,8 +3022,9 @@ For each bounded behavior cluster:
       `tidb-stats-handle-util` owner: remove five partial policy modules,
       implement every production artifact over shared model/executor/session
       contracts, and replace its four ignored source tests with executable
-      behavior. The atomic inventory and WIP gates are in
-      `receipts/statistics_handle_util.md`.
+      behavior. The current Go-master inventory, corrections, and Ready gates
+      are in `receipts/statistics_handle_util.md` and
+      `docs/operations/statistics-handle-util-audit-execplan.md`.
 - [x] Complete the pinned `pkg/statistics/handle/util/test` support package in
       `tidb-stats-handle-util-test`: match a typed request context, preserve
       the wrong-type panic and exact description, remove the string-only

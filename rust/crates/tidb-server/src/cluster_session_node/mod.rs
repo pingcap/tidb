@@ -3434,6 +3434,18 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
         );
     }
 
+    fn set_analyze_store_batch_size(&self, value: &str) -> Result<(), tidb_sqlexec::SqlExecError> {
+        self.with_session(|session| {
+            match session.session.set_internal_system_var(
+                tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE,
+                value,
+            ) {
+                Ok(()) | Err(tidb_session::VarError::GlobalOnlyVariable(_)) => Ok(()),
+                Err(error) => Err(stats_session_error(format!("{error:?}"))),
+            }
+        })
+    }
+
     fn set_enable_historical_stats(&self, enabled: bool) {
         self.set_var(
             tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS,
@@ -3474,13 +3486,6 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
         self.set_var(
             tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS,
             if enabled { "ON" } else { "OFF" },
-        );
-    }
-
-    fn set_analyze_partition_merge_concurrency(&self, concurrency: i64) {
-        self.set_var(
-            tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY,
-            concurrency.to_string(),
         );
     }
 

@@ -70,6 +70,8 @@ pub trait StatsSessionContext: SessionContext {
     fn set_analyze_partition_concurrency(&self, concurrency: i64);
     /// Go `AnalyzeVersion`.
     fn set_analyze_version(&self, version: i64);
+    /// Go `SessionVars.SetSystemVar(tidb_analyze_store_batch_size, value)`.
+    fn set_analyze_store_batch_size(&self, value: &str) -> Result<(), SqlExecError>;
     /// Go `EnableHistoricalStats`.
     fn set_enable_historical_stats(&self, enabled: bool);
     /// Go `PartitionPruneMode.Store`.
@@ -82,8 +84,6 @@ pub trait StatsSessionContext: SessionContext {
     fn set_analyze_skip_column_types(&self, value: BTreeSet<String>);
     /// Go `SkipMissingPartitionStats`.
     fn set_skip_missing_partition_stats(&self, enabled: bool);
-    /// Go `AnalyzePartitionMergeConcurrency`.
-    fn set_analyze_partition_merge_concurrency(&self, concurrency: i64);
     /// Go `LockWaitTimeout`, in milliseconds.
     fn set_lock_wait_timeout(&self, milliseconds: i64);
     /// Go `SessionVars.SetSystemVar(time_zone, value)`.
@@ -160,6 +160,11 @@ pub fn update_sctx_vars_for_stats<C: StatsSessionContext + ?Sized>(
     let value = context.global_system_var(tidb_vars::TIDB_ANALYZE_VERSION)?;
     context.set_analyze_version(parse_i64(tidb_vars::TIDB_ANALYZE_VERSION, &value)?);
 
+    // Auto Analyze uses the latest global value instead of the potentially
+    // stale value held by its pooled internal session.
+    let value = context.global_system_var(tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE)?;
+    context.set_analyze_store_batch_size(&value)?;
+
     let value = context.global_system_var(tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)?;
     context.set_enable_historical_stats(tidb_opt_on(&value));
 
@@ -174,12 +179,6 @@ pub fn update_sctx_vars_for_stats<C: StatsSessionContext + ?Sized>(
 
     let value = context.global_system_var(tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS)?;
     context.set_skip_missing_partition_stats(tidb_opt_on(&value));
-
-    let value = context.global_system_var(tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY)?;
-    context.set_analyze_partition_merge_concurrency(parse_i64(
-        tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY,
-        &value,
-    )?);
 
     let value = context.global_system_var(INNODB_LOCK_WAIT_TIMEOUT)?;
     context.set_lock_wait_timeout(parse_i64(INNODB_LOCK_WAIT_TIMEOUT, &value)?.wrapping_mul(1_000));
@@ -315,10 +314,6 @@ pub fn exec_rows<C: StatsSessionContext + ?Sized>(
     sql: &str,
     arguments: &[SqlArg<'_>],
 ) -> Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>), SqlExecError> {
-    #[cfg(feature = "failpoints")]
-    fail::fail_point!("ExecRowsTimeout", |_| {
-        return Err(error("inject timeout error"));
-    });
     exec_rows_with_ctx(&*STATS_CONTEXT, context, sql, arguments)
 }
 
@@ -329,6 +324,10 @@ pub fn exec_rows_with_ctx<C: StatsSessionContext + ?Sized>(
     sql: &str,
     arguments: &[SqlArg<'_>],
 ) -> Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>), SqlExecError> {
+    #[cfg(feature = "failpoints")]
+    fail::fail_point!("ExecRowsTimeout", |_| {
+        return Err(error("inject timeout error"));
+    });
     if tidb_util::intest::IN_TEST {
         if let Some(mock) = context.mock_restricted_sql_executor() {
             return mock.exec_restricted_sql(
@@ -354,9 +353,23 @@ pub fn exec_with_opts<C: StatsSessionContext + ?Sized>(
     sql: &str,
     arguments: &[SqlArg<'_>],
 ) -> Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>), SqlExecError> {
-    context
-        .restricted_sql_executor()
-        .exec_restricted_sql(&*STATS_CONTEXT, options, sql, arguments)
+    exec_with_opts_with_ctx(&*STATS_CONTEXT, context, options, sql, arguments)
+}
+
+/// Go `ExecWithOptsWithCtx`.
+pub fn exec_with_opts_with_ctx<C: StatsSessionContext + ?Sized>(
+    execution_context: &dyn ExecutionContext,
+    context: &C,
+    options: &[OptionFuncAlias],
+    sql: &str,
+    arguments: &[SqlArg<'_>],
+) -> Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>), SqlExecError> {
+    context.restricted_sql_executor().exec_restricted_sql(
+        execution_context,
+        options,
+        sql,
+        arguments,
+    )
 }
 
 /// Go `DurationToTS`. `duration_nanoseconds` is the signed representation of
@@ -386,6 +399,7 @@ pub fn is_special_global_index(index: &IndexInfo, table: &TableInfo) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::any::TypeId;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -406,6 +420,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingExecutor {
         calls: Mutex<Vec<String>>,
+        context_types: Mutex<Vec<TypeId>>,
         errors: Mutex<HashMap<String, String>>,
     }
 
@@ -443,11 +458,15 @@ mod tests {
 
         fn exec_restricted_sql(
             &self,
-            _context: &dyn ExecutionContext,
+            context: &dyn ExecutionContext,
             _options: &[OptionFuncAlias],
             sql: &str,
             _arguments: &[SqlArg<'_>],
         ) -> Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>), SqlExecError> {
+            self.context_types
+                .lock()
+                .unwrap()
+                .push(context.as_any().type_id());
             self.answer(sql)
         }
     }
@@ -485,12 +504,12 @@ mod tests {
         async_merge: bool,
         partition_concurrency: i64,
         analyze_version: i64,
+        analyze_store_batch_size: String,
         historical: bool,
         prune_mode: String,
         snapshot: bool,
         skip_types: BTreeSet<String>,
         skip_missing: bool,
-        merge_concurrency: i64,
         lock_wait_ms: i64,
         location: String,
         statement_location: String,
@@ -522,6 +541,10 @@ mod tests {
                     ),
                     (tidb_vars::TIDB_ANALYZE_VERSION.to_owned(), "2".to_owned()),
                     (
+                        tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE.to_owned(),
+                        "4".to_owned(),
+                    ),
+                    (
                         tidb_vars::TIDB_ENABLE_HISTORICAL_STATS.to_owned(),
                         "1".to_owned(),
                     ),
@@ -540,10 +563,6 @@ mod tests {
                     (
                         tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS.to_owned(),
                         "ON".to_owned(),
-                    ),
-                    (
-                        tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY.to_owned(),
-                        "3".to_owned(),
                     ),
                     (INNODB_LOCK_WAIT_TIMEOUT.to_owned(), "50".to_owned()),
                     (TIME_ZONE.to_owned(), "UTC".to_owned()),
@@ -626,6 +645,11 @@ mod tests {
             self.state.lock().unwrap().analyze_version = version;
         }
 
+        fn set_analyze_store_batch_size(&self, value: &str) -> Result<(), SqlExecError> {
+            self.state.lock().unwrap().analyze_store_batch_size = value.to_owned();
+            Ok(())
+        }
+
         fn set_enable_historical_stats(&self, enabled: bool) {
             self.state.lock().unwrap().historical = enabled;
         }
@@ -648,10 +672,6 @@ mod tests {
 
         fn set_skip_missing_partition_stats(&self, enabled: bool) {
             self.state.lock().unwrap().skip_missing = enabled;
-        }
-
-        fn set_analyze_partition_merge_concurrency(&self, concurrency: i64) {
-            self.state.lock().unwrap().merge_concurrency = concurrency;
         }
 
         fn set_lock_wait_timeout(&self, milliseconds: i64) {
@@ -691,12 +711,12 @@ mod tests {
                 tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS,
                 tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY,
                 tidb_vars::TIDB_ANALYZE_VERSION,
+                tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE,
                 tidb_vars::TIDB_ENABLE_HISTORICAL_STATS,
                 tidb_vars::TIDB_PARTITION_PRUNE_MODE,
                 tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT,
                 tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES,
                 tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS,
-                tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY,
                 INNODB_LOCK_WAIT_TIMEOUT,
                 TIME_ZONE,
             ]
@@ -705,6 +725,7 @@ mod tests {
         assert!(state.async_merge);
         assert_eq!(state.partition_concurrency, 2);
         assert_eq!(state.analyze_version, 2);
+        assert_eq!(state.analyze_store_batch_size, "4");
         assert!(state.historical);
         assert_eq!(state.prune_mode, "dynamic");
         assert!(!state.snapshot);
@@ -713,10 +734,40 @@ mod tests {
             BTreeSet::from(["blob".to_owned(), "json".to_owned()])
         );
         assert!(state.skip_missing);
-        assert_eq!(state.merge_concurrency, 3);
         assert_eq!(state.lock_wait_ms, 50_000);
         assert_eq!(state.location, "UTC");
         assert_eq!(state.statement_location, "UTC");
+    }
+
+    #[test]
+    fn analyze_store_batch_size_is_loaded_before_historical_stats() {
+        let context = MockContext::new();
+        update_sctx_vars_for_stats(&context).unwrap();
+        let reads = context.reads.lock().unwrap();
+        let version = reads
+            .iter()
+            .position(|name| name == tidb_vars::TIDB_ANALYZE_VERSION)
+            .unwrap();
+        let batch_size = reads
+            .iter()
+            .position(|name| name == tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE)
+            .unwrap();
+        let historical = reads
+            .iter()
+            .position(|name| name == tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
+            .unwrap();
+        assert!(version < batch_size && batch_size < historical);
+    }
+
+    #[test]
+    fn exec_with_opts_with_ctx_forwards_the_caller_context() {
+        let context = MockContext::new();
+        let caller_context = tidb_sqlexec::BackgroundContext;
+        exec_with_opts_with_ctx(&caller_context, &context, &[], "select 1", &[]).unwrap();
+        assert_eq!(
+            *context.executor.context_types.lock().unwrap(),
+            [TypeId::of::<tidb_sqlexec::BackgroundContext>()]
+        );
     }
 
     #[test]
@@ -911,6 +962,9 @@ mod tests {
         let _scenario = fail::FailScenario::setup();
         fail::cfg("ExecRowsTimeout", "return").unwrap();
         let returned = exec_rows(&MockContext::new(), "select 1", &[]).unwrap_err();
+        assert_eq!(returned.to_string(), "inject timeout error");
+        let returned =
+            exec_rows_with_ctx(&*STATS_CONTEXT, &MockContext::new(), "select 1", &[]).unwrap_err();
         assert_eq!(returned.to_string(), "inject timeout error");
         fail::remove("ExecRowsTimeout");
     }
