@@ -805,7 +805,7 @@ func pruneStorageClassTransitionHistory(ctx context.Context, se *sess.Session) e
 		return errors.Errorf("unexpected storage class transition history boundary rows: %d", len(rows))
 	}
 	failpoint.InjectCall("afterStorageClassTransitionHistoryPruneSnapshot")
-	finishTime := rows[0].GetTime(0)
+	finishTime := rows[0].GetTime(0).String()
 	tableID := rows[0].GetInt64(1)
 	startTS := rows[0].GetUint64(2)
 	direction := rows[0].GetString(3)
