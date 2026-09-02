@@ -99,12 +99,10 @@
 //!   upstream today. It is therefore not modelled, and no `noop_funcs_mode`
 //!   accessor is added to [`crate::Columns`] for a branch that has no members.
 //!
-//! - **`defaultScalarFunctionCheck`'s `ast.Grouping` branch is dropped.** It
-//!   downcasts `function.Function` to `*BuiltinGroupingImplSig` to assert
-//!   `isMetaInited`. The Rust node holds no signature object, so there is
-//!   nothing to downcast; [`crate::grouping::GroupingFunction`] owns that
-//!   metadata separately and validates it at its own construction. Building a
-//!   `grouping` node here therefore does NOT reproduce Go's
+//! - **`defaultScalarFunctionCheck`'s `ast.Grouping` branch is carried by the
+//!   node.** [`ScalarFunction::set_grouping_metadata`] is the Rust spelling of
+//!   `BuiltinGroupingImplSig.SetMetadata`; the default callback rejects a
+//!   grouping node until that metadata is installed, reproducing Go's
 //!   "grouping meta data hasn't been initialized" error.
 //!
 //! - **`typeInferForNull` drops its `EvalContext`.** Go needs it for
@@ -203,11 +201,15 @@ pub fn type_infer_for_null(args: &mut [Expression]) {
 
 /// Go `defaultScalarFunctionCheck` (`scalar_function.go:298`).
 ///
-/// Go's only check is the `ast.Grouping` metadata assertion, which this port
-/// cannot express -- see the module header's `defaultScalarFunctionCheck`
-/// narrowing. The function is kept so the callback plumbing matches Go's and
-/// so future checks have the same place to land.
+/// Grouping is the one built-in whose signature carries planner-installed
+/// state. The source rejects a fresh node until `SetMetadata` has run; the
+/// Rust node carries the same state directly and exposes the same guard.
 fn default_scalar_function_check(function: ScalarFunction) -> Result<ScalarFunction, EvalError> {
+    if function.func_name.lowercase() == "grouping" && !function.has_grouping_metadata() {
+        return Err(EvalError::Unsupported(
+            "grouping meta data hasn't been initialized, try use function clone instead",
+        ));
+    }
     Ok(function)
 }
 
@@ -342,7 +344,14 @@ pub fn new_function_impl(
         None => func_args,
     };
 
-    let function = ScalarFunction::new(CiString::new(registered_name), ret_type, func_args);
+    let mut function = ScalarFunction::new(CiString::new(registered_name), ret_type, func_args);
+    // Go's grouping signature marks its result as an unsigned BIGINT because
+    // the returned bits encode multiple grouping flags.
+    if func_name == "grouping" {
+        if let Some(ret_type) = function.ret_type.as_mut() {
+            ret_type.add_flags(FieldTypeFlags::UNSIGNED);
+        }
+    }
     let function = match check_or_init {
         Some(callback) => callback(function)?,
         None => function,

@@ -107,6 +107,46 @@ impl GroupingMetadata {
     pub fn grouping_marks(&self) -> &[BTreeSet<u64>] {
         &self.grouping_marks
     }
+
+    /// Evaluates one grouping id using this validated metadata.
+    pub fn eval(&self, grouping_id: u64) -> u64 {
+        let mut result = 0u64;
+        match self.mode {
+            GroupingMode::BitAnd => {
+                for mark in &self.grouping_marks {
+                    result <<= 1;
+                    let key = *mark
+                        .iter()
+                        .next()
+                        .expect("validated bit-and mark has one element");
+                    if grouping_id & key == 0 {
+                        result += 1;
+                    }
+                }
+            }
+            GroupingMode::NumericCmp => {
+                for mark in &self.grouping_marks {
+                    result <<= 1;
+                    let key = *mark
+                        .iter()
+                        .next()
+                        .expect("validated numeric-compare mark has one element");
+                    if grouping_id <= key {
+                        result += 1;
+                    }
+                }
+            }
+            GroupingMode::NumericSet => {
+                for mark in &self.grouping_marks {
+                    result <<= 1;
+                    if !mark.contains(&grouping_id) {
+                        result += 1;
+                    }
+                }
+            }
+        }
+        result
+    }
 }
 
 /// Pure scalar implementation of TiDB's rewritten `GROUPING` function.
@@ -162,43 +202,7 @@ impl GroupingFunction {
     /// The Go signature returns an `int64` carrying an unsigned result flag;
     /// this typed leaf exposes the same bits directly as `u64`.
     pub fn eval(&self, grouping_id: u64) -> Result<u64, GroupingMetadataError> {
-        let metadata = self.metadata()?;
-        let mut result = 0u64;
-        match metadata.mode {
-            GroupingMode::BitAnd => {
-                for mark in &metadata.grouping_marks {
-                    result <<= 1;
-                    let key = *mark
-                        .iter()
-                        .next()
-                        .expect("validated bit-and mark has one element");
-                    if grouping_id & key == 0 {
-                        result += 1;
-                    }
-                }
-            }
-            GroupingMode::NumericCmp => {
-                for mark in &metadata.grouping_marks {
-                    result <<= 1;
-                    let key = *mark
-                        .iter()
-                        .next()
-                        .expect("validated numeric-compare mark has one element");
-                    if grouping_id <= key {
-                        result += 1;
-                    }
-                }
-            }
-            GroupingMode::NumericSet => {
-                for mark in &metadata.grouping_marks {
-                    result <<= 1;
-                    if !mark.contains(&grouping_id) {
-                        result += 1;
-                    }
-                }
-            }
-        }
-        Ok(result)
+        Ok(self.metadata()?.eval(grouping_id))
     }
 }
 

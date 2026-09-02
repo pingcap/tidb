@@ -31,10 +31,17 @@
 //! built with that post-inference shape directly; the inference step itself
 //! is outside what this crate models.
 
+use std::collections::BTreeSet;
+
 use crate::column::Column;
 use crate::constant::Constant;
+use crate::context::{EvalError, NoColumns};
+use crate::expr_util::{column_substitute_impl, PreservingFunctionBuilder, SubstituteOptions};
 use crate::expression::{expressions_semantic_equal, ConstLevel, Expression};
+use crate::grouping::GroupingMode;
+use crate::new_function::new_function_with_init;
 use crate::scalar_function::ScalarFunction;
+use crate::schema::Schema;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 
@@ -220,21 +227,102 @@ fn test_expression_semantic_equal() {
     assert!(expressions_semantic_equal(&or_left, &or_right));
 }
 
-/// go-parity-gap: `TestColumnSubstituteGroupingCleansHashCode`
-/// (`scalar_function_test.go:139`) builds a `grouping(col0)` node carrying
-/// `BuiltinGroupingImplSig` metadata via `NewFunctionWithInit` +
-/// `SetMetadata(tipb.GroupingMode_ModeBitAnd, ...)`, primes its CANONICAL
-/// hash code with `CanonicalHashCode()`, substitutes col0->col1 through
-/// `ColumnSubstituteImpl`, and requires the substitution to have dropped the
-/// stale canonical code. This crate's `ColumnSubstituteImpl`
-/// ([`crate::expr_util::substitute`]) cleans the plain hashcode only because
-/// the grouping special case is DEFERRED (`scalar_function.rs:340`): a
-/// `grouping` ScalarFunction cannot carry
-/// [`crate::grouping::GroupingMetadata`] yet, so the source's metadata-bearing
-/// canonical bytes cannot be reproduced at this boundary.
+/// GO PORT of `TestColumnSubstituteGroupingCleansHashCode`
+/// (`scalar_function_test.go:139`). The source builds a metadata-bearing
+/// `grouping(col0)` node through `NewFunctionWithInit` + `SetMetadata`, primes
+/// its cached hash, substitutes col0->col1 through `ColumnSubstituteImpl`, and
+/// requires both the grouping metadata and the argument-derived hash to
+/// survive the clone while the stale hash is discarded.
 #[test]
-#[ignore = "go-parity-gap: grouping-metadata-bearing ScalarFunction nodes (SetMetadata path) plus CanonicalHashCode cleaning are deferred in scalar_function.rs"]
-fn test_column_substitute_grouping_cleans_hash_code() {}
+fn test_column_substitute_grouping_cleans_hash_code() {
+    fn grouping(column_id: i64) -> ScalarFunction {
+        let init = |mut function: ScalarFunction| {
+            function
+                .set_grouping_metadata(GroupingMode::BitAnd, vec![BTreeSet::from([1_u64])])
+                .expect("valid grouping metadata");
+            Ok(function)
+        };
+        let mut column = Column::new(column_id, longlong_type());
+        column.index = 0;
+        let expression = new_function_with_init(
+            &NoColumns,
+            "grouping",
+            longlong_type(),
+            &init,
+            vec![Expression::Column(column)],
+        )
+        .expect("grouping function builds");
+        let Expression::ScalarFunction(function) = expression else {
+            panic!("grouping construction must return a scalar function")
+        };
+        function
+    }
+
+    let mut original = grouping(1);
+    let original_hash = original.hash_code().to_vec();
+    let original_canonical = original.canonical_hash_code();
+
+    let builder = PreservingFunctionBuilder;
+    let options = SubstituteOptions::new(&builder);
+    let schema = Schema::new(vec![Column::new(1, longlong_type())]);
+    let outcome = column_substitute_impl(
+        &Expression::ScalarFunction(original.clone()),
+        &schema,
+        &[Expression::Column({
+            let mut column = Column::new(2, longlong_type());
+            column.index = 0;
+            column
+        })],
+        false,
+        &options,
+    );
+    assert!(outcome.substituted);
+    let Expression::ScalarFunction(mut changed) = outcome.expr else {
+        panic!("grouping substitution must return a scalar function")
+    };
+
+    let mut expected = grouping(2);
+    assert_eq!(changed.grouping_metadata(), expected.grouping_metadata());
+    assert_ne!(original_hash, changed.hash_code());
+    assert_eq!(changed.hash_code(), expected.hash_code());
+    assert_ne!(original_canonical, changed.canonical_hash_code());
+    assert_eq!(
+        changed.canonical_hash_code(),
+        expected.canonical_hash_code()
+    );
+
+    let mut input = tidb_chunk::chunk::Chunk::new_with_capacity(&[longlong_type()], 2);
+    input.append_int64(0, 1);
+    input.append_int64(0, 0);
+    assert_eq!(
+        changed.eval(&NoColumns, input.get_row(0)).unwrap(),
+        Datum::UInt(0)
+    );
+    assert_eq!(
+        changed.eval(&NoColumns, input.get_row(1)).unwrap(),
+        Datum::UInt(1)
+    );
+}
+
+/// GO PORT of `defaultScalarFunctionCheck`'s grouping guard
+/// (`scalar_function.go:298`): a grouping node without planner metadata is
+/// rejected before constant folding, while `NewFunctionWithInit` can install
+/// the metadata and build the same node successfully.
+#[test]
+fn grouping_construction_requires_metadata() {
+    let result = crate::new_function::new_function(
+        &NoColumns,
+        "grouping",
+        longlong_type(),
+        vec![Expression::Column(Column::new(1, longlong_type()))],
+    );
+    assert_eq!(
+        result.unwrap_err(),
+        EvalError::Unsupported(
+            "grouping meta data hasn't been initialized, try use function clone instead",
+        )
+    );
+}
 
 /// GO PORT of `scalar_function_test.go:179` `TestIssue23309`: a NOT NULL
 /// flagged column compared against NULL keeps a NULL-typed operand whose

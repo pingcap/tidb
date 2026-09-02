@@ -214,9 +214,18 @@ For each bounded behavior cluster:
   ordering, directed comparison reversal, `NOT` comparison rewrites, and
   cast result-type identity. The source-shaped semantic-equality table is
   live with a pre-fix compile-failure record and passes the focused Ready
-  test; grouping metadata and the separate `Values`/`Hash64` gaps remain
-  explicit. Details are appended to
+  test; the separate `Values` gap remains explicit. Details are appended to
   `receipts/expression_collation_audit.md`.
+
+- 2026-09-03: aligned Rust `tidb-expr` grouping metadata and scalar-function
+  hash identity with Go master `049e0e2ba79d`. `ScalarFunction` now carries
+  validated `GROUPING` mode/mark metadata, rejects uninitialized default
+  construction, emits Go-compatible deterministic `ReHashCode` bytes,
+  preserves metadata through column substitution, marks builder results
+  unsigned, and evaluates grouping IDs with NULL propagation. The former
+  ignored `TestColumnSubstituteGroupingCleansHashCode` is live, with a
+  clean-tree fail-before record and focused Ready regressions. Details are
+  appended to `receipts/expression_collation_audit.md`.
 
 - 2026-09-03: aligned Rust `tidb-parser` charset diagnostics with Go
   `pkg/parser/ast/functions_test.go::{TestConvert,TestChar}`. `CONVERT(...

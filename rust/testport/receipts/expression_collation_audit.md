@@ -250,9 +250,8 @@ The focused source-derived `test_expression_semantic_equal` now covers
 commutativity, nested canonical children, and negative direct-order/name
 cases. On the pre-fix tree, activating this test failed to compile because
 `Expression::canonical_hash_code` did not exist; the fixed test passes.
-Grouping metadata remains an explicit gap because the Rust node model does not
-yet carry Go's `BuiltinGroupingImplSig` metadata, and the separate `Values`
-and `Hash64` parity gaps are unchanged.
+At that point grouping metadata remained an explicit gap; the follow-up below
+closes that gap while the separate `Values` parity gap remains unchanged.
 
 Validation for this follow-up used the Ready profile:
 
@@ -600,3 +599,58 @@ limited to callers that relied on the prior absence of a generic API or on
 unpropagated DECIMAL metadata; value evaluation and non-ETReal paths are
 unchanged. Performance impact is one expression-tree clone during explicit
 decorrelation, matching Go's scalar rebuild and avoiding aliasing.
+
+## Rust follow-up: grouping metadata and hash identity
+
+The rolling Go authority remains `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5` (2026-09-03). Before editing, the
+complete direct `pkg/expression` inventory was rechecked at 137 artifacts and
+128,744 lines (68 production files, 60 tests, seven generated sources,
+`BUILD.bazel`, and `OWNERS`); the recursive package boundary remains 208
+artifacts and 146,247 lines. The Rust `tidb-expr` owner was rechecked at 175
+tracked artifacts and 105,908 lines, including all production modules,
+in-module and standalone tests, generated-test inputs, fixtures/support,
+benchmarks, Cargo metadata, and the aggregate test build input. The relevant
+Go sources and tests were read in full before editing:
+`pkg/expression/builtin_grouping.go`, `scalar_function.go`,
+`scalar_function_test.go`, `builtin.go`, and `util.go`. No Go, Bazel, generated,
+fixture, platform, or build artifact changed.
+
+Go's `BuiltinGroupingImplSig.SetMetadata` validates and stores the grouping
+mode/marks, `defaultScalarFunctionCheck` rejects an uninitialized `GROUPING`
+node, and `ReHashCode` appends the mode, mark count, each mark's size, and its
+sorted keys (`pkg/expression/builtin_grouping.go:73-91`,
+`scalar_function.go:298-305,757-785`). The Rust `GroupingFunction` already
+implemented the pure bit-and, numeric-compare, and numeric-set algorithms, but
+`ScalarFunction` had no metadata carrier: `NewFunction` silently accepted an
+uninitialized grouping node, hashes omitted metadata, substitution could not
+prove metadata preservation, and scalar evaluation had no grouping branch.
+Rust now carries validated `GroupingMetadata` on `ScalarFunction`, exposes the
+source `SetMetadata`/initialization guard, appends deterministic Go-compatible
+hash bytes, preserves the metadata through clone/substitution, marks builder
+results unsigned, and evaluates grouping IDs with NULL propagation.
+
+The focused source-derived regressions activate
+`TestColumnSubstituteGroupingCleansHashCode` and add the construction guard.
+They verify metadata survives column substitution, stale argument hashes are
+discarded and recomputed to the expected column, canonical identity changes
+with the column, and bit-and evaluation returns the Go grouping flags for IDs
+1 and 0. On a clean pre-fix `1e9681ed23` worktree, the guard test failed because
+`new_function("grouping", ...)` returned `Ok(ScalarFunction { ... })` instead
+of the required initialization error; the fixed tests pass.
+
+Validation for this follow-up used the Ready profile:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib test_column_substitute_grouping_cleans_hash_code -- --nocapture --test-threads=1` — focused substitution/hash/evaluation regression passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib grouping_construction_requires_metadata -- --nocapture --test-threads=1` — uninitialized construction guard passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --all-targets` — owner all-target compile passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,104 passed, 0 failed, and 131 documented gap tests ignored.
+- `rustfmt +nightly-2026-08-22 --edition 2021 --check` over the four edited Rust source files, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint`, and `git diff --check` — formatting, lint, and whitespace gates.
+
+Correctness risk is limited to `GROUPING` nodes: metadata is validated before
+use, hash bytes sort each mark's keys exactly as Go does, and NULL grouping IDs
+remain NULL. Compatibility risk is that callers which relied on the prior
+Rust-only acceptance of uninitialized grouping nodes now receive the source
+initialization error. The standalone `GroupingFunction` API remains intact;
+there is no new performance-sensitive loop beyond the source-required mark
+encoding and evaluation.

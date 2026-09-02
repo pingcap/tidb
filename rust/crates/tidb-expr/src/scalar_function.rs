@@ -22,22 +22,23 @@
 //! is a separate, larger unit built on `EvalContext`/`chunk.Row`.
 //!
 //! Ported: the struct and its argument-structural methods, recursive
-//! `Decorrelate`, const-level rules, the common `ReHashCode` path, structural
-//! `Hash64`/`Equals`, and evaluation
-//! for operators plus the builtin families owned by the shared dispatch
-//! modules. Unknown builtin names fail explicitly. Remaining structural gaps
-//! are the `Grouping` branch of `ReHashCode` (needs
-//! `BuiltinGroupingImplSig`), per-signature collation, and `MemoryUsage`.
+//! `Decorrelate`, const-level rules, the common `ReHashCode` path (including
+//! `Grouping` metadata), structural `Hash64`/`Equals`, and evaluation for
+//! operators plus the builtin families owned by the shared dispatch modules.
+//! Unknown builtin names fail explicitly. Remaining structural gaps are
+//! per-signature collation and `MemoryUsage`.
 
+use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
 
 use crate::context::{Columns, EvalError};
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, SCALAR_FUNCTION_FLAG};
+use crate::grouping::{GroupingMetadata, GroupingMetadataError, GroupingMode};
 use crate::schema::Schema;
 use tidb_ast::{BinaryOp, CiString, UnaryOp};
 use tidb_chunk::row::Row;
-use tidb_codec::encode_compact_bytes;
+use tidb_codec::{encode_compact_bytes, encode_int};
 use tidb_datatype::{Datum, EvalType, FieldType};
 
 const MAX_ADVISORY_LOCK_TIMEOUT_SECS: i64 = 1_073_741_824;
@@ -243,6 +244,12 @@ pub struct ScalarFunction {
     pub args: Vec<Expression>,
     /// Lazily-filled `HashCode` cache (Go `hashcode`).
     hashcode: Vec<u8>,
+    /// Go `BuiltinGroupingImplSig` metadata installed by `SetMetadata`.
+    ///
+    /// Grouping is built through `NewFunctionWithInit`, so carrying the
+    /// validated metadata on the node is what lets clones and substitution
+    /// preserve the function's grouping-id semantics and hash identity.
+    grouping_metadata: Option<GroupingMetadata>,
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
     pub collation: CollationInfo,
@@ -336,6 +343,35 @@ impl ScalarFunction {
         self.json_schema_cache = Default::default();
     }
 
+    /// Go `BuiltinGroupingImplSig.SetMetadata`: install validated grouping
+    /// mode/mark metadata on a `grouping` scalar function and invalidate its
+    /// cached hash code. A failed replacement leaves the metadata
+    /// uninitialized, matching the source signature's `isMetaInited` flag.
+    pub fn set_grouping_metadata(
+        &mut self,
+        mode: GroupingMode,
+        grouping_marks: Vec<BTreeSet<u64>>,
+    ) -> Result<(), GroupingMetadataError> {
+        self.clean_hash_code();
+        self.grouping_metadata = None;
+        let metadata = GroupingMetadata::new(mode, grouping_marks)?;
+        self.grouping_metadata = Some(metadata);
+        Ok(())
+    }
+
+    /// Returns the validated grouping metadata installed on this function.
+    pub fn grouping_metadata(&self) -> Result<&GroupingMetadata, GroupingMetadataError> {
+        self.grouping_metadata
+            .as_ref()
+            .ok_or(GroupingMetadataError::Uninitialized)
+    }
+
+    /// Whether this function has completed the source `SetMetadata` step.
+    #[must_use]
+    pub fn has_grouping_metadata(&self) -> bool {
+        self.grouping_metadata.is_some()
+    }
+
     /// Go `ScalarFunction.Decorrelate`: recursively decorrelate every
     /// argument and invalidate hashes/caches derived from the old tree.
     ///
@@ -373,11 +409,8 @@ impl ScalarFunction {
 
     /// Go `HashCode` (`ReHashCode`), cached on first call:
     /// `[scalarFunctionFlag, EncodeCompactBytes(FuncName.L), arg.HashCode()...]`,
-    /// plus, for `cast`, a trailing byte for the target `EvalType`.
-    ///
-    /// DEFERRED: the `grouping` special case (needs `BuiltinGroupingImplSig`).
-    /// A `grouping(...)` node therefore hashes without its grouping-mode/marks;
-    /// no consumer relies on this yet, but it must be completed with that sig.
+    /// plus, for `cast`, a trailing byte for the target `EvalType`, or, for
+    /// `grouping`, the mode, mark count, each mark's size, and sorted keys.
     pub fn hash_code(&mut self) -> &[u8] {
         if !self.hashcode.is_empty() {
             return &self.hashcode;
@@ -393,10 +426,33 @@ impl ScalarFunction {
         for code in arg_codes {
             self.hashcode.extend_from_slice(&code);
         }
+        let name = self.func_name.lowercase();
         // Cast is special: its result type is effectively an argument.
-        if self.func_name.lowercase() == "cast" {
+        if name == "cast" {
             if let Some(rt) = &self.ret_type {
                 self.hashcode.push(rt.eval_type() as u8);
+            }
+        }
+        if name == "grouping" {
+            let metadata = self
+                .grouping_metadata
+                .as_ref()
+                .expect("grouping metadata is not initialized");
+            encode_int(&mut self.hashcode, metadata.mode() as u8 as i64);
+            encode_int(
+                &mut self.hashcode,
+                i64::try_from(metadata.grouping_marks().len()).expect("grouping mark count fits"),
+            );
+            for mark in metadata.grouping_marks() {
+                encode_int(
+                    &mut self.hashcode,
+                    i64::try_from(mark.len()).expect("grouping mark size fits"),
+                );
+                for key in mark {
+                    // Go casts the uint64 key to int64 before EncodeInt;
+                    // preserve the same two's-complement bit pattern.
+                    encode_int(&mut self.hashcode, *key as i64);
+                }
             }
         }
         &self.hashcode
@@ -758,6 +814,25 @@ impl ScalarFunction {
         let name = self.func_name.lowercase();
         if name == "json_schema_valid" {
             return self.json_schema_cache.eval(&self.args, ctx, row);
+        }
+        // Go `BuiltinGroupingImplSig.evalInt`: the planner installs grouping
+        // metadata before execution, the grouping-id argument is evaluated
+        // as an int64 carrier, and NULL propagates without invoking the
+        // grouping algorithm.
+        if name == "grouping" {
+            let [argument] = self.args.as_slice() else {
+                return Err(EvalError::WrongParameterCount("grouping"));
+            };
+            let grouping_id = crate::arg_eval_type::eval_int(&argument.eval(ctx, row)?)?;
+            let Some(grouping_id) = grouping_id else {
+                return Ok(Datum::Null);
+            };
+            let metadata = self
+                .grouping_metadata
+                .as_ref()
+                .ok_or(EvalError::Unsupported("Meta data is not initialized"))?;
+            let result = metadata.eval(grouping_id as u64);
+            return Ok(Datum::UInt(result));
         }
         if let Some(op) = binary_op_for_name(name) {
             if self.args.len() == 2 {
