@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"testing"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -130,6 +132,59 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
 	require.Equal(t, int64(23640), bytesConsumed1)
+}
+
+func TestIndexReaderPartitionRangesUseMemoryTracker(t *testing.T) {
+	sctx := mock.NewContext()
+	partition0 := tables.MockTableFromMeta(&model.TableInfo{ID: 101})
+	partition1 := tables.MockTableFromMeta(&model.TableInfo{ID: 102})
+	rangeMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e := &IndexReaderExecutor{
+		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
+		index:                      &model.IndexInfo{ID: 1},
+		partitions:                 []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
+		ranges:                     []*ranger.Range{generateIndexRange(1, 1)},
+		rangeMemTracker:            rangeMemTracker,
+		dummy:                      true,
+	}
+
+	require.NoError(t, e.Open(context.Background()))
+	require.Greater(t, rangeMemTracker.BytesConsumed(), int64(0))
+	require.Nil(t, e.memTracker)
+}
+
+func TestIndexLookUpPartitionRangesUseMemoryTracker(t *testing.T) {
+	sctx := mock.NewContext()
+	partition0 := tables.MockTableFromMeta(&model.TableInfo{ID: 101})
+	partition1 := tables.MockTableFromMeta(&model.TableInfo{ID: 102})
+	rangeMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e := &IndexLookUpExecutor{
+		indexLookUpExecutorContext: newIndexLookUpExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
+		index:                      &model.IndexInfo{ID: 1},
+		prunedPartitions:           []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
+		partitionTableMode:         true,
+		ranges:                     []*ranger.Range{generateIndexRange(1, 1)},
+		rangeMemTracker:            rangeMemTracker,
+	}
+
+	require.NoError(t, e.buildTableKeyRanges())
+	require.Greater(t, rangeMemTracker.BytesConsumed(), int64(0))
+
+	executorMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e.rangeMemTracker = nil
+	e.memTracker = executorMemTracker
+	require.NoError(t, e.buildTableKeyRanges())
+	require.Greater(t, executorMemTracker.BytesConsumed(), int64(0))
+}
+
+func TestGetMergeSortSharedCoprRequestLimiter(t *testing.T) {
+	require.Nil(t, getMergeSortSharedCoprRequestLimiter(false, 8))
+	limiter := getMergeSortSharedCoprRequestLimiter(true, 3)
+	require.NotNil(t, limiter)
+	require.Equal(t, 6, limiter.Capacity())
+	require.Equal(t, 2, getMergeSortIndexScanConcurrency(true, 8, 4))
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {

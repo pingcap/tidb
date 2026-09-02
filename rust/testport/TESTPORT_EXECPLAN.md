@@ -42,6 +42,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: audited the complete Go-master root `pkg/executor` boundary
+  before editing: 173 direct artifacts and 101,740 lines, including 171 Go
+  production/test files, `BUILD.bazel`, and `OWNERS`, with 1,395
+  test/benchmark/fuzz declarations and 2,633 functions. Recursive inspection
+  covered 519 artifacts, 69 nested build/ownership files, eight testdata
+  fixtures, and the separate executor subpackages. This bounded batch restores
+  IndexJoin range-memory tracking and the typed merge-sort coprocessor
+  limiter handoff, with focused regressions in the existing package test
+  suite. Rust `tidb-executor` has no dependency-closed owner for these Go
+  executor consumers, so the remaining root and nested executor differences
+  stay explicit boundaries. Details are in
+  `receipts/executor_root_distsql_indexjoin.md`.
+
 - 2026-09-02: refreshed the complete Go-master `pkg/store/copr` root
   boundary at `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7`: 20 direct
   artifacts, 11,165 lines, 177 function declarations, and 61
