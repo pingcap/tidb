@@ -4955,7 +4955,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
-	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4985,6 +4985,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			SQLMode:                 sqlMode,
 			Global:                  false,
 			IsPK:                    true,
+			AutoPreSplit:            autoPreSplit,
 			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
@@ -5275,7 +5276,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5314,6 +5315,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
+			AutoPreSplit:            autoPreSplit,
 			SplitOpt:                splitOpt,
 			ConditionString:         conditionString,
 		}},
@@ -5333,13 +5335,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
-func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {
+func buildIndexPreSplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, bool, error) {
 	if indexOpt == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	opt := indexOpt.SplitOpt
 	if opt == nil {
-		return nil, nil
+		return nil, indexOpt.AutoPreSplit, nil
 	}
 	if len(opt.ValueLists) > 0 {
 		valLists := make([][]string, 0, len(opt.ValueLists))
@@ -5350,7 +5352,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 				rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 				err := exp.Restore(rCtx)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, false, errors.Trace(err)
 				}
 				values = append(values, sb.String())
 			}
@@ -5359,7 +5361,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		return &model.IndexArgSplitOpt{
 			Num:        opt.Num,
 			ValueLists: valLists,
-		}, nil
+		}, false, nil
 	}
 
 	lowers := make([]string, 0, len(opt.Lower))
@@ -5368,7 +5370,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 		err := expL.Restore(rCtx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		lowers = append(lowers, sb.String())
 	}
@@ -5378,21 +5380,21 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 		err := expU.Restore(rCtx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		uppers = append(uppers, sb.String())
 	}
 	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if opt.Num > maxSplitRegionNum {
-		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+		return nil, false, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
 	} else if opt.Num < 1 {
-		return nil, errors.Errorf("Split index region num should be greater than 0")
+		return nil, false, errors.Errorf("Split index region num should be greater than 0")
 	}
 	return &model.IndexArgSplitOpt{
 		Lower: lowers,
 		Upper: uppers,
 		Num:   opt.Num,
-	}, nil
+	}, false, nil
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
