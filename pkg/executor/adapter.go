@@ -1844,31 +1844,6 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 		return
 	}
 	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
-
-	weights := sessVars.RUV2Weights()
-	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
-
-	dctx := a.Ctx.GetDistSQLCtx()
-	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
-		return
-	}
-	tikvRU := ruDetail.TiKVRUV2()
-	tiflashRU := ruDetail.TiflashRU()
-	if tikvRU > 0 || tidbRU > 0 || tiflashRU > 0 {
-		dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, tikvRU, tidbRU, tiflashRU)
-	}
-}
-
-func calculateStatementTotalRUV2(metrics *execdetails.RUV2Metrics, weights execdetails.RUV2Weights, ruDetail *util.RUDetails) float64 {
-	var tiKVRU, tiFlashRU float64
-	if ruDetail != nil {
-		tiKVRU = ruDetail.TiKVRUV2()
-		tiFlashRU = ruDetail.TiflashRU()
-	}
-	if metrics == nil {
-		return tiKVRU + tiFlashRU
-	}
-	return metrics.TotalRU(weights, tiKVRU, tiFlashRU)
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
@@ -2318,7 +2293,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
 	stmtExecInfo.RUDetail = ruDetail
-	stmtExecInfo.TotalRUV2 = calculateStatementTotalRUV2(sessVars.RUV2Metrics, sessVars.RUV2Weights(), ruDetail)
+	stmtExecInfo.TotalRUV2 = stmtCtx.GetRUV3Total()
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()

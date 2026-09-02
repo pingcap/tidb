@@ -242,11 +242,32 @@ func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
 	finalized statementRUFinalizedSnapshot,
 ) {
+	if stmt != nil && stmt.Ctx != nil {
+		if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil && sessVars.StmtCtx != nil {
+			sessVars.StmtCtx.SetRUV3Total(finalized.result.TotalRU)
+		}
+	}
+	reportStatementRUV3ConsumptionSafely(stmt, finalized.result.TotalRU)
 	publishStatementRUMetricsSafely(finalized)
 	publishStatementRUCalibrationSafely(stmt, statementRUCalibrationSnapshot{
 		State: finalized.calibrationState,
 		Units: finalized.units,
 	})
+}
+
+func reportStatementRUV3ConsumptionSafely(stmt *ExecStmt, totalRU float64) {
+	defer func() {
+		_ = recover()
+	}()
+	if stmt == nil || stmt.Ctx == nil || totalRU <= 0 {
+		return
+	}
+	dctx := stmt.Ctx.GetDistSQLCtx()
+	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
+		return
+	}
+	// TODO: distinguish TiDB/KV/Flash RU.
+	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, 0, totalRU, 0)
 }
 
 // publishStatementRUMetricsSafely projects one immutable finalized snapshot to
@@ -265,6 +286,10 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 		statementRUScanByteWeight*finalized.units.ScanBytes +
 			statementRUNetByteWeight*finalized.units.NetBytes,
 	)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitCPUWork).Add(finalized.units.CPUWork)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitScanBytes).Add(finalized.units.ScanBytes)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitNetBytes).Add(finalized.units.NetBytes)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitFrontendCompileBytes).Add(finalized.units.FrontendCompileBytes)
 }
 
 func publishStatementRUCalibrationSafely(
