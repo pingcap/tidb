@@ -57,12 +57,19 @@ import (
 {{ end }}
 {{ define "SetNull" }}{{if .Output.Fixed}}result.SetNull(i, true){{else}}result.AppendNull(){{end}} // fixed: {{.Output.Fixed }}{{ end }}
 {{ define "ConvertStringToDuration" }}
+		tc := typeCtx(ctx)
+		if len(arg1) == 0 {
+			// Unlike storing '' into a TIME column, ADDTIME/SUBTIME never treat an
+			// empty duration argument as zero: MySQL always warns and returns NULL.
+			tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", arg1))
+			{{ template "SetNull" . }}
+			continue
+		}
 		{{ if and (ne .SigName "builtinAddStringAndStringSig") (ne .SigName "builtinSubStringAndStringSig") }}
 		if !isDuration(arg1) {
 			{{ template "SetNull" . }}
 			continue
 		}{{ end }}
-		tc := typeCtx(ctx)
 		arg1Duration, _, err := types.ParseDuration(tc, arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -191,24 +198,10 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 
 	{{ else if or (eq .SigName "builtinAddDatetimeAndStringSig") (eq .SigName "builtinSubDatetimeAndStringSig") }}
 	 	{{ template "CheckZeroDate" . }}
-		{{ if eq $.FuncName "AddTime" }}
 		{{ template "ConvertStringToDuration" . }}
+		{{ if eq $.FuncName "AddTime" }}
 		output, err := arg0.Add(typeCtx(ctx), arg1Duration)
 		{{ else }}
-		if !isDuration(arg1) {
-			result.SetNull(i, true) // fixed: true
-			continue
-		}
-		tc := typeCtx(ctx)
-		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
-		if err != nil {
-			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				tc.AppendWarning(err)
-				result.SetNull(i, true) // fixed: true
-				continue
-			}
-			return err
-		}
 		output, err := arg0.Add(typeCtx(ctx), arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
@@ -438,11 +431,37 @@ func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, resu
 			continue
 		}
 
+		{{- if and $AIsString $BIsString }}
+			lhsStr := buf0.GetString(i)
+			rhsStr := buf1.GetString(i)
+			if len(lhsStr) == 0 || len(rhsStr) == 0 {
+				// Unlike storing '' into a TIME column, TIMEDIFF never treats an empty
+				// duration argument as zero: MySQL always warns and returns NULL.
+				empty := lhsStr
+				if len(rhsStr) == 0 {
+					empty = rhsStr
+				}
+				tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", empty))
+				result.SetNull(i, true)
+				continue
+			}
+		{{- end }}
+
 		{{- if $AIsString }}
+			{{- if not $BIsString }}
+			lhsStr := buf0.GetString(i)
+			if len(lhsStr) == 0 {
+				// Unlike storing '' into a TIME column, TIMEDIFF never treats an empty
+				// duration argument as zero: MySQL always warns and returns NULL.
+				tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", lhsStr))
+				result.SetNull(i, true)
+				continue
+			}
+			{{- end }}
 			{{ if $BIsDuration }} lhsDur, _, lhsIsDuration,
 			{{- else if $BIsTime }} _, lhsTime, lhsIsDuration,
 			{{- else if $BIsString }} lhsDur, lhsTime, lhsIsDuration,
-			{{- end }}  err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
+			{{- end }}  err := convertStringToDuration(tc, lhsStr, b.tp.GetDecimal())
 			if err != nil  {
 				return err
 			}
@@ -465,10 +484,20 @@ func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, resu
 		{{- end }}
 
 		{{- if $BIsString }}
+			{{- if not $AIsString }}
+			rhsStr := buf1.GetString(i)
+			if len(rhsStr) == 0 {
+				// Unlike storing '' into a TIME column, TIMEDIFF never treats an empty
+				// duration argument as zero: MySQL always warns and returns NULL.
+				tc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", rhsStr))
+				result.SetNull(i, true)
+				continue
+			}
+			{{- end }}
 			{{ if $AIsDuration }} rhsDur, _, rhsIsDuration,
 			{{- else if $AIsTime }}_, rhsTime, rhsIsDuration,
 			{{- else if $AIsString }} rhsDur, rhsTime, rhsIsDuration,
-			{{- end}}  err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
+			{{- end}}  err := convertStringToDuration(tc, rhsStr, b.tp.GetDecimal())
 			if err != nil  {
 				return err
 			}

@@ -201,3 +201,60 @@ SELECT TIMESTAMPADD(HOUR, 1, '2025-03-30 02:30:00');
 SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', '2025-03-30 02:30:00');
 SELECT UNIX_TIMESTAMP('2025-03-30 02:30:00');
 SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2025-03-30 02:30:00'));
+
+# https://github.com/pingcap/tidb/issues/69902
+# MySQL treats an empty string as a zero TIME value even in strict mode.
+DROP TABLE IF EXISTS t_empty_time;
+CREATE TABLE t_empty_time(t TIME, t3 TIME(3));
+INSERT INTO t_empty_time VALUES ('', '');
+SELECT t, t3 FROM t_empty_time;
+INSERT INTO t_empty_time VALUES ('01:02:03', '01:02:03.456');
+UPDATE t_empty_time SET t = '', t3 = '' WHERE t = '01:02:03';
+SELECT t, t3 FROM t_empty_time;
+DROP TABLE t_empty_time;
+
+# Unlike storing '' into a TIME column, CAST/TIME()/ADDTIME/SUBTIME/TIMEDIFF
+# never treat an empty duration argument as zero: MySQL always warns and
+# returns NULL for these.
+--enable_warnings
+SELECT CAST('' AS TIME);
+SELECT TIME('');
+SELECT ADDTIME('01:00:00', '');
+SELECT SUBTIME('01:00:00', '');
+SELECT ADDTIME('', '01:00:00');
+SELECT SUBTIME('', '01:00:00');
+SELECT TIMEDIFF('', '01:00:00');
+SELECT TIMEDIFF('01:00:00', '');
+--disable_warnings
+
+# Same checks under forced vectorized execution, since the scalar and
+# vectorized code paths for these builtins are implemented separately.
+DROP TABLE IF EXISTS t_empty_time_vec;
+CREATE TABLE t_empty_time_vec(a VARCHAR(20), b VARCHAR(20));
+INSERT INTO t_empty_time_vec VALUES ('01:00:00', ''), ('', '01:00:00');
+--enable_warnings
+SELECT CAST(a AS TIME), CAST(b AS TIME) FROM t_empty_time_vec ORDER BY a;
+SELECT TIME(a), TIME(b) FROM t_empty_time_vec ORDER BY a;
+SELECT ADDTIME(a, b) FROM t_empty_time_vec ORDER BY a;
+SELECT SUBTIME(a, b) FROM t_empty_time_vec ORDER BY a;
+SELECT TIMEDIFF(a, b) FROM t_empty_time_vec ORDER BY a;
+--disable_warnings
+DROP TABLE t_empty_time_vec;
+
+# Same as above, but with a typed (non-string) left argument, exercising the
+# Datetime/Duration-and-String ADDTIME/SUBTIME overloads.
+DROP TABLE IF EXISTS t_empty_time_typed_left;
+CREATE TABLE t_empty_time_typed_left(dt DATETIME, dur TIME, s VARCHAR(20));
+INSERT INTO t_empty_time_typed_left VALUES ('2025-01-01 01:00:00', '01:00:00', '');
+--enable_warnings
+SELECT ADDTIME(dt, s), ADDTIME(dur, s) FROM t_empty_time_typed_left;
+SELECT SUBTIME(dt, s), SUBTIME(dur, s) FROM t_empty_time_typed_left;
+--disable_warnings
+
+# Force vectorized execution for the same typed-left overloads.
+INSERT INTO t_empty_time_typed_left VALUES ('2025-01-01 02:00:00', '02:00:00', '01:00:00');
+--enable_warnings
+SELECT ADDTIME(dt, s), ADDTIME(dur, s) FROM t_empty_time_typed_left ORDER BY dt;
+SELECT SUBTIME(dt, s), SUBTIME(dur, s) FROM t_empty_time_typed_left ORDER BY dt;
+--disable_warnings
+DROP TABLE t_empty_time_typed_left;

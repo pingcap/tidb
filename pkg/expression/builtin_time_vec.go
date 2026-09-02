@@ -2414,8 +2414,18 @@ func (b *builtinTimeSig) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, re
 			continue
 		}
 
-		fsp := 0
 		expr := buf.GetString(i)
+		if len(expr) == 0 {
+			// Unlike storing '' into a TIME column, TIME() never treats an empty
+			// string as a zero duration: MySQL always warns and returns NULL.
+			if err := tc.HandleTruncate(types.ErrTruncatedWrongVal.FastGenByArgs("time", expr)); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+
+		fsp := 0
 		if idx := strings.Index(expr, "."); idx != -1 {
 			fsp = len(expr) - idx - 1
 		}
