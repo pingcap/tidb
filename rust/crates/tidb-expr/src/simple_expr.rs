@@ -519,8 +519,18 @@ pub fn build_simple_expr(
 /// `target`, so its flen/decimal/charset drive evaluation.
 pub(crate) fn build_cast_function(
     expr: Expression,
-    target: FieldType,
+    mut target: FieldType,
 ) -> Result<Expression, EvalError> {
+    // Go's BuildCastFunctionWithCheck mutates only its DeepCopy of the target:
+    // a nullable source makes the cast result nullable even when the caller's
+    // requested target carries NotNullFlag. Keep the option-owned target
+    // untouched while matching the source nullability in the built node.
+    if expr
+        .static_type()
+        .is_some_and(|source| !source.has_flag(FieldTypeFlags::NOT_NULL))
+    {
+        target.del_flags(FieldTypeFlags::NOT_NULL);
+    }
     let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
     let name = match target.code() {
         FieldTypeCode::Year => "cast_year",
@@ -992,6 +1002,45 @@ mod tests {
             expr.eval(&NoColumns, chunk.get_row(0)).expect("eval"),
             Datum::new_string(*b"6")
         );
+    }
+
+    #[test]
+    fn cast_target_not_null_follows_source_nullability_without_mutating_target() {
+        let nullable_source = TestColumnInfo::new("a", 0, FieldTypeCode::LongLong);
+        let mut nonnull_source = TestColumnInfo::new("b", 1, FieldTypeCode::LongLong);
+        nonnull_source
+            .field_type
+            .add_flags(FieldTypeFlags::NOT_NULL);
+        let table = vec![nullable_source, nonnull_source];
+        let ids = SimplePlanColumnIdAllocator::new(0);
+        let mut target = FieldType::new(FieldTypeCode::LongLong);
+        target.add_flags(FieldTypeFlags::NOT_NULL);
+
+        let nullable_options = BuildOptions::new()
+            .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
+            .expect("table options")
+            .with_cast_expr_to(target.clone());
+        let nullable =
+            parse_simple_expr(&NoResolver, "a", &nullable_options).expect("nullable cast builds");
+        let Expression::ScalarFunction(nullable_cast) = nullable else {
+            panic!("nullable source should build a cast function")
+        };
+        let nullable_type = nullable_cast.ret_type.as_ref().expect("cast type");
+        assert_eq!(nullable_type.code(), FieldTypeCode::LongLong);
+        assert!(!nullable_type.has_flag(FieldTypeFlags::NOT_NULL));
+
+        let nonnull_options = BuildOptions::new()
+            .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
+            .expect("table options")
+            .with_cast_expr_to(target.clone());
+        let nonnull =
+            parse_simple_expr(&NoResolver, "b", &nonnull_options).expect("non-null cast builds");
+        let Expression::ScalarFunction(nonnull_cast) = nonnull else {
+            panic!("non-null source should build a cast function")
+        };
+        let nonnull_type = nonnull_cast.ret_type.as_ref().expect("cast type");
+        assert!(nonnull_type.has_flag(FieldTypeFlags::NOT_NULL));
+        assert!(target.has_flag(FieldTypeFlags::NOT_NULL));
     }
 
     /// Go `ParseSimpleExpr`'s empty-string guard.

@@ -259,7 +259,6 @@ fn cast_ret_type_flags_and_charset_drive_evaluated_result() {
 /// (`builtin_cast.go:2616-2619`: source nullable ⇒ DelFlag NotNull on the
 /// COPY) never reaches the caller's option storage.
 #[test]
-#[ignore = "go-parity-gap: tidb-expr simple_expr::build_cast_function keeps the NOT_NULL flag Go strips from a nullable-source cast copy (builtin_cast.go:2616-2619); second build still reports NOT_NULL today"]
 fn cast_ret_type_clones_share_nothing_across_builds() {
     let mut target = FieldType::new(FieldTypeCode::LongLong);
     target.add_flags(FieldTypeFlags::NOT_NULL);

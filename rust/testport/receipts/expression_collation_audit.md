@@ -216,3 +216,44 @@ timing without changing the context-free rewriter path. Compatibility risk is
 that invalid temporal/numeric constants now become NULL or typed constants at
 build time, as in Go. JSON and non-constant operands retain their prior paths;
 there is no new performance-sensitive loop.
+
+## Rust follow-up: cast target nullability
+
+The rolling Go authority remains `origin/master` at
+`17daba3dfde858eebef60f6e4e1bb37268269225`. Before this follow-up, the
+dependency-closed `pkg/expression` owner was rechecked file by file: 137 direct
+artifacts and 128,744 lines at the root (68 production files, 60 tests, seven
+generated sources, `BUILD.bazel`, and `OWNERS`), 208 artifacts and 146,247
+lines recursively. The Rust `tidb-expr` owner contains 175 tracked artifacts;
+after the focused regression it has 105,358 lines. Its production, test,
+fixture/support, generated-input, platform, and build metadata surfaces were
+read before editing; no Go, Bazel, generated output, fixture, platform, or
+build artifact changed.
+
+Go's `BuildCastFunctionWithCheck` (`pkg/expression/builtin_cast.go:2616-2619`)
+deep-copies the requested cast target and removes `NotNullFlag` from that copy
+when the source expression is nullable. The old Rust
+`simple_expr::build_cast_function` retained the flag, making a nullable
+`cast(a as signed)` report NOT NULL and leaving the source-shaped planner test
+ignored. Rust now strips only the copied target when `expr.static_type()` is
+nullable; a NOT NULL source keeps the flag and the `BuildOptions` target is
+never mutated.
+
+The focused `tidb-expr` regression checks nullable and NOT NULL sources,
+independent built ret types, and target immutability. The planner source test
+`core_expression_eval_source::cast_ret_type_clones_share_nothing_across_builds`
+is now active. A clean pre-fix `bc00456157` worktree with only the regression
+test failed on the retained NOT_NULL assertion; the fixed tree passes both the
+expression and planner tests.
+
+Validation used the Ready profile:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib simple_expr::tests::cast_target_not_null_follows_source_nullability_without_mutating_target -- --nocapture --test-threads=1` — focused regression passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-planner --test all cast_ret_type_clones_share_nothing_across_builds -- --nocapture --test-threads=1` — source-shaped planner regression passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked -p tidb-expr --all-targets` and `... check --offline --locked -p tidb-planner --all-targets` — owner all-target checks passed.
+- `cargo +nightly-2026-08-22 fmt --all -- --check`, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint`, and `git diff --check` — Ready formatting, lint, and whitespace gates passed.
+
+Correctness risk is limited to cast result metadata for nullable versus NOT
+NULL sources. Compatibility risk is limited to restoring Go's nullable result
+flag while preserving caller-owned target metadata; no evaluation algorithm or
+performance-sensitive loop changes.

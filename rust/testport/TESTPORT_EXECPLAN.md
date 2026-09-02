@@ -5535,6 +5535,13 @@ For each bounded behavior cluster:
   protocol-synchronization regression passes. See
   `rust/testport/receipts/store_mockstore_unistore_tikv.md` and
   `rust/docs/operations/store-mockstore-unistore-tikv-audit-execplan.md`.
+  The Rust owner now also implements every helper in the audited `util.go`
+  (range boundary, sorted de-duplication, FarmHash pipelines, and
+  nil-preserving copies) with live Go-table regressions; the existing exact
+  FarmHash implementation is shared from `tidb-txnkv`. The focused utility
+  tests pass, while the ordinary unistore test target remains blocked by the
+  pre-existing parent `InProcessClient` synchronous-dispatcher bound, as
+  detailed in the receipt.
 
 - `pkg/store/gcworker` is restored to Go master in one package batch: after a
   successful keyspace-level GC round, the worker recycles completed GCV2 work
@@ -5605,6 +5612,13 @@ For each bounded behavior cluster:
   crate and companion difftest inventories, pre-fix failures, focused
   regressions, and the aggregate-target API blocker are recorded in
   `rust/testport/receipts/planner_rule_child_access.md`.
+- The `pkg/expression` cast builder now strips `NOT_NULL` from the copied cast
+  target when its source is nullable, matching Go's
+  `BuildCastFunctionWithCheck` while preserving caller-owned target metadata.
+  The focused `tidb-expr` regression and the now-active planner source test
+  `cast_ret_type_clones_share_nothing_across_builds`, inventory, pre-fix
+  failure, and Ready validation are recorded in
+  `rust/testport/receipts/expression_collation_audit.md` and `b087.md`.
 
 ## Outcomes & Retrospective
 
