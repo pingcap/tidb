@@ -273,10 +273,13 @@ fn depth_costs_no_host_stack() {
     let mut cursor = plan;
     loop {
         let dummy = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::default());
-        match cursor.set_child(0, dummy) {
-            Some(child) => cursor = child,
-            None => break,
+        if cursor.children().is_empty() {
+            break;
         }
+        let child = cursor
+            .set_child(0, dummy)
+            .expect("child 0 exists while dismantling the chain");
+        cursor = child;
     }
 }
 

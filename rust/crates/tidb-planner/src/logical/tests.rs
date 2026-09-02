@@ -97,11 +97,16 @@ fn set_child_replaces_and_returns_the_previous_node() {
     let previous = tree.set_child(0, source(9, &[7])).expect("child 0 exists");
     assert_eq!(previous.id(), 1);
     assert_eq!(tree.children()[0].id(), 9);
-    // Go panics on an out-of-range index; this refuses instead.
-    assert!(tree.set_child(4, source(10, &[8])).is_none());
     assert_eq!(tree.base().child_len(), 1);
     tree.dismantle();
     previous.dismantle();
+}
+
+#[test]
+#[should_panic(expected = "index out of bounds")]
+fn set_child_panics_on_an_out_of_range_index_like_go() {
+    let mut tree = selection(2, source(1, &[1]));
+    let _ = tree.set_child(4, source(10, &[8]));
 }
 
 #[test]
@@ -285,12 +290,19 @@ fn join_child_stats_and_schema_only_answers_for_a_join() {
     assert_eq!(r.map(StatsInfo::row_count), Some(5.0));
     assert!(ls.is_some() && rs.is_some());
 
-    // Go's base body panics for a non-join; this refuses.
+    // Go's base body panics for a non-join; preserve that boundary.
     let unary = selection(4, source(5, &[1]));
-    assert!(unary.get_join_child_stats_and_schema().is_none());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        unary.get_join_child_stats_and_schema()
+    }))
+    .is_err());
     // And GetChildStatsAndSchema answers for the unary node.
     assert!(unary.get_child_stats_and_schema().is_some());
-    assert!(source(6, &[1]).get_child_stats_and_schema().is_none());
+    let leaf = source(6, &[1]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        leaf.get_child_stats_and_schema()
+    }))
+    .is_err());
     tree.dismantle();
     unary.dismantle();
 }

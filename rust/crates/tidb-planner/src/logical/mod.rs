@@ -226,11 +226,10 @@ impl BaseLogicalPlan {
 
     /// Go `SetChild(i, child)` (`<19th>`).
     ///
-    /// Go panics on an out-of-range index; this returns the previous child so
-    /// a caller can neither lose it nor silently write past the end.
+    /// Go panics on an out-of-range index; indexing the child vector preserves
+    /// that contract instead of adding a Rust-only refusal path.
     pub fn set_child(&mut self, i: usize, child: LogicalPlan) -> Option<LogicalPlan> {
-        let slot = self.children.get_mut(i)?;
-        Some(std::mem::replace(slot, child))
+        Some(std::mem::replace(&mut self.children[i], child))
     }
 
     /// Go `ChildLen()` (`base_logical_plan.go:389`).
@@ -1233,26 +1232,27 @@ impl LogicalPlan {
     }
 
     /// Go `GetChildStatsAndSchema()` (`<26th>`): the first child's stats and
-    /// schema. Go indexes `Children()[0]` and panics on a leaf; this returns
-    /// `None`.
+    /// schema. Go indexes `Children()[0]` and panics on a leaf; callers must
+    /// provide a child rather than relying on a Rust-only `None` fallback.
     #[must_use]
     pub fn get_child_stats_and_schema(&self) -> Option<(Option<&StatsInfo>, Option<&Schema>)> {
-        let child = self.children().first()?;
+        let child = &self.children()[0];
         Some((child.stats_info(), child.schema()))
     }
 
     /// Go `GetJoinChildStatsAndSchema()` (`<27th>`): both children's stats and
-    /// schemas. Go's base body PANICS, so only a two-child operator may
-    /// answer; `None` is that refusal without the panic.
+    /// schemas. Go's base body panics for non-join operators and the join
+    /// implementation indexes both children; preserve those failure
+    /// boundaries instead of returning a Rust-only `None`.
     #[must_use]
     pub fn get_join_child_stats_and_schema(&self) -> Option<JoinChildStatsAndSchema<'_>> {
         // Go's override lives on `LogicalJoin` (`logical_join.go:775`), and
         // `LogicalApply` PROMOTES it through the embedding.
         if !matches!(self, Self::Join(_) | Self::Apply(_)) {
-            return None;
+            panic!("baseLogicalPlan.GetJoinChildStatsAndSchema() should never be called.");
         }
         let children = self.children();
-        let (left, right) = (children.first()?, children.get(1)?);
+        let (left, right) = (&children[0], &children[1]);
         Some((
             left.stats_info(),
             right.stats_info(),

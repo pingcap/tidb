@@ -501,9 +501,15 @@ fn set_child_replaces_and_returns_the_previous_node() {
     let previous = tree.set_child(0, scan(9, &[7])).expect("child 0 exists");
     assert_eq!(previous.id(), 1);
     assert_eq!(tree.children()[0].id(), 9);
-    assert!(tree.set_child(3, scan(10, &[8])).is_none());
     tree.dismantle();
     previous.dismantle();
+}
+
+#[test]
+#[should_panic(expected = "index out of bounds")]
+fn set_child_panics_on_an_out_of_range_index_like_go() {
+    let mut tree = selection(2, scan(1, &[1]));
+    let _ = tree.set_child(3, scan(10, &[8]));
 }
 
 #[test]

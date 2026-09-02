@@ -42,6 +42,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed a bounded Rust-only `tidb-planner` child-accessor
+  alignment against Go master `a85e0fd5df`. The Rust base logical and physical
+  plans now preserve Go's direct-index panic contract for `SetChild`; logical
+  child stats access likewise panics on absent children, and the base join
+  accessor panics for non-join operators while join/apply access indexes both
+  children. Focused logical/physical regressions cover the invalid-index and
+  invalid-shape boundaries, with a pre-fix baseline proving the old logical
+  `SetChild` returned `None`. This is a Rust-only bounded change and does not
+  claim completion of the larger Go planner packages; details are in
+  `receipts/planner_child_accessors.md`.
+
 - 2026-09-02: completed a Rust-only `tidb-codec` alignment follow-up for Go
   master `febee17ec716d86b1e355e5400ef9e4f4f190bad` (hash join v2 TypeNull
   build-key regression). The complete Rust owner inventory covers 52 tracked

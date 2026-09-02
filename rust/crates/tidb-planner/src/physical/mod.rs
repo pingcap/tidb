@@ -122,11 +122,10 @@ impl BasePhysicalPlan {
         self.children = children;
     }
 
-    /// Go `SetChild(i, child)` (`<9th>`); returns the replaced child rather
-    /// than panicking on an out-of-range index.
+    /// Go `SetChild(i, child)` (`<9th>`); indexing preserves Go's panic on an
+    /// out-of-range index while returning the replaced child for valid slots.
     pub fn set_child(&mut self, i: usize, child: PhysicalPlan) -> Option<PhysicalPlan> {
-        let slot = self.children.get_mut(i)?;
-        Some(std::mem::replace(slot, child))
+        Some(std::mem::replace(&mut self.children[i], child))
     }
 
     /// Takes the children, leaving the node childless.
