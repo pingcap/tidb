@@ -45,17 +45,15 @@ Side effects
 
 Documentation
 
-- [ ] Affects user behaviors
-- [ ] Contains syntax changes
-- [ ] Contains variable changes
-- [ ] Contains experimental features
-- [ ] Changes MySQL compatibility
+- [ ] Affects user documentation at <https://docs.pingcap.com/>
 
 ### Release note
 
-<!-- compatibility change, improvement, bugfix, and new feature need a release note -->
+<!-- Select this option for changes visible to TiDB users or operators, such as compatibility changes, improvements, bug fixes, or new features. Leave this option unselected for internal changes with no user-facing impact, such as debug changes, flaky test fixes, code refactoring, or internal configurations that are not exposed to users. -->
 
-Please refer to [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html) to write a quality release note.
+- [ ] Needs to be included in the user-facing release notes
+
+<!-- If selected, you can either write a release note below following [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html) (**recommended**), or leave it as `None`, in which case the release note bot will automatically generate one when preparing the release notes file. -->
 
 ```release-note
 None
