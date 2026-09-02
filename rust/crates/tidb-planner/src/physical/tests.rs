@@ -527,6 +527,37 @@ fn schema_falls_through_to_the_first_child() {
 }
 
 #[test]
+fn sequence_schema_uses_the_last_main_query_child_like_go() {
+    let mut base = BasePhysicalPlan::with_id(3, "Sequence", 0);
+    base.set_children(vec![scan(1, &[11]), scan(2, &[22, 23])]);
+    let sequence = PhysicalPlan::Sequence(PhysicalSequence { base });
+    let schema = sequence.schema().expect("main query child schema");
+    assert_eq!(
+        schema
+            .columns
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<Vec<_>>(),
+        vec![22, 23]
+    );
+    sequence.dismantle();
+}
+
+#[test]
+fn childless_sequence_schema_uses_its_stamped_build_schema() {
+    let mut base = BasePhysicalPlan::with_id(3, "Sequence", 0);
+    base.base.set_schema(Some(Schema::new(vec![Column::new(
+        31,
+        FieldType::new(FieldTypeCode::LongLong),
+    )])));
+    let sequence = PhysicalPlan::Sequence(PhysicalSequence { base });
+    assert_eq!(
+        sequence.schema().expect("stamped schema").columns[0].unique_id,
+        31
+    );
+}
+
+#[test]
 fn stats_propagate_and_stats_count_reads_the_row_count() {
     let mut tree = selection(2, scan(1, &[1]));
     assert!(tree.stats_count().is_none());
@@ -568,7 +599,10 @@ fn plan_cost_ver1_sums_the_children_and_caches() {
 #[test]
 fn child_req_props_round_trip() {
     let mut tree = hash_join(3, scan(1, &[1]), scan(2, &[2]));
-    assert!(tree.child_req_prop(0).is_none());
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { tree.child_req_prop(0) }))
+            .is_err()
+    );
     tree.base_mut()
         .set_children_req_props(vec![Some(PhysicalProperty::default()), None]);
     assert!(tree.child_req_prop(0).is_some());
@@ -576,8 +610,18 @@ fn child_req_props_round_trip() {
     tree.base_mut()
         .set_xth_child_req_props(1, Some(PhysicalProperty::default()));
     assert!(tree.child_req_prop(1).is_some());
-    assert!(tree.child_req_prop(7).is_none());
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { tree.child_req_prop(7) }))
+            .is_err()
+    );
     tree.dismantle();
+}
+
+#[test]
+#[should_panic(expected = "index out of bounds")]
+fn child_req_prop_setter_panics_on_an_out_of_range_index_like_go() {
+    let mut tree = hash_join(3, scan(1, &[1]), scan(2, &[2]));
+    tree.base_mut().set_xth_child_req_props(3, None);
 }
 
 #[test]

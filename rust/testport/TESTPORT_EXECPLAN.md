@@ -42,6 +42,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: extended the bounded Rust-only `tidb-planner` child-accessor
+  batch against Go master `a85e0fd5df` after the first validation exposed the
+  physical sequence-construction boundary. Logical and physical sequence
+  schema dispatch now selects the last attached main-query child (while a
+  childless physical sequence can still use its stamped construction schema),
+  sequence helper/stat inputs panic on impossible empty shapes like Go, logical
+  output-name dispatch preserves schema-producer ownership, and physical
+  child-request property access direct-indexes like Go. Added focused
+  regressions for each boundary; the package inventory and validation details
+  remain in `receipts/planner_child_accessors.md`.
+
 - 2026-09-02: completed a bounded Rust-only `tidb-planner` child-accessor
   alignment against Go master `a85e0fd5df`. The Rust base logical and physical
   plans now preserve Go's direct-index panic contract for `SetChild`; logical

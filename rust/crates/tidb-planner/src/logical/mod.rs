@@ -600,16 +600,24 @@ impl LogicalPlan {
 
     /// Go `BaseLogicalPlan.Schema()` (`base_logical_plan.go:102`): the
     /// operator's own schema when it produces one, otherwise the first
-    /// child's.
+    /// child's. `LogicalSequence` overrides Go's base method and uses its last
+    /// child (the main query) instead.
     ///
-    /// Go indexes `p.children[0]` unconditionally and panics on a leaf with no
-    /// schema of its own; this returns `None` there instead.
+    /// The enum keeps the crate's optional-schema representation for a
+    /// schema-producer leaf that has not materialized its schema yet.
     #[must_use]
     pub fn schema(&self) -> Option<&Schema> {
+        if let Self::Sequence(_) = self {
+            let child = self
+                .children()
+                .last()
+                .expect("LogicalSequence.Schema requires a child");
+            return child.schema();
+        }
         if let Some(schema) = self.base().base.schema() {
             return Some(schema);
         }
-        self.base().children().first().and_then(Self::schema)
+        self.children().first().and_then(Self::schema)
     }
 
     /// Go `BaseLogicalPlan.OutputNames()` (`base_logical_plan.go:107`), with
@@ -620,18 +628,54 @@ impl LogicalPlan {
         if !own.is_empty() {
             return own;
         }
-        self.base()
-            .children()
-            .first()
-            .map_or(&[][..], Self::output_names)
+        self.children().first().map_or(&[][..], Self::output_names)
     }
 
     /// Go `BaseLogicalPlan.SetOutputNames(names)` (`base_logical_plan.go:112`),
-    /// which forwards to `children[0]`. With no child the names land here.
+    /// which forwards to `children[0]`; a schema-producing leaf stores the
+    /// names locally, matching Go's `LogicalSchemaProducer` override.
     pub fn set_output_names(&mut self, names: Vec<tidb_datatype::FieldName>) {
-        match self.base_mut().children_mut().first_mut() {
-            Some(child) => child.set_output_names(names),
-            None => self.base_mut().base.set_output_names(names),
+        if matches!(
+            self,
+            Self::Projection(_)
+                | Self::Join(_)
+                | Self::Apply(_)
+                | Self::Aggregation(_)
+                | Self::Limit(_)
+                | Self::TopN(_)
+                | Self::UnionAll(_)
+                | Self::PartitionUnionAll(_)
+                | Self::Window(_)
+                | Self::CTE(_)
+                | Self::CTETable(_)
+                | Self::DataSource(_)
+                | Self::TableScan(_)
+                | Self::IndexScan(_)
+                | Self::Expand(_)
+                | Self::MemTable(_)
+                | Self::Show(_)
+                | Self::ShowDDLJobs(_)
+                | Self::TiKVSingleGather(_)
+                | Self::TableDual(_)
+        ) {
+            self.base_mut().base.set_output_names(names);
+            return;
+        }
+        if self.children().is_empty() {
+            self.base_mut().base.set_output_names(names);
+            return;
+        }
+        let child = &mut self.base_mut().children_mut()[0];
+        match child {
+            // These operators inherit BaseLogicalPlan.SetOutputNames and
+            // continue forwarding down their first child.
+            Self::Selection(_)
+            | Self::Sort(_)
+            | Self::MaxOneRow(_)
+            | Self::Lock(_)
+            | Self::Sequence(_)
+            | Self::UnionScan(_) => child.set_output_names(names),
+            _ => child.set_output_names(names),
         }
     }
 

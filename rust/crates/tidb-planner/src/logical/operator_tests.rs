@@ -2879,10 +2879,13 @@ fn sequence_addresses_only_its_last_child() {
         LogicalSequence::schema(&schemas).unwrap().columns[0].unique_id,
         9
     );
-    assert!(LogicalSequence::schema(&[]).is_none());
+    assert!(std::panic::catch_unwind(|| LogicalSequence::schema(&[])).is_err());
     assert_eq!(LogicalSequence::predicate_push_down_child(4), Some(3));
     assert_eq!(LogicalSequence::prune_columns_child(4), Some(3));
-    assert_eq!(LogicalSequence::predicate_push_down_child(0), None);
+    assert!(
+        std::panic::catch_unwind(|| { LogicalSequence::predicate_push_down_child(0) }).is_err()
+    );
+    assert!(std::panic::catch_unwind(|| LogicalSequence::prune_columns_child(0)).is_err());
 }
 
 /// Go `LogicalSequence.DeriveStats` (`logical_sequence.go:82`): the LAST
@@ -2904,7 +2907,10 @@ fn sequence_adopts_the_last_child_profile_and_reports_its_reload_flag() {
     assert!((stats.row_count() - 77.0).abs() < 1e-9);
     // No reload flags at all defaults to reloaded.
     assert!(op.derive_stats(&children, &[]).unwrap().1);
-    assert!(op.derive_stats(&[], &[true]).is_none());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        op.derive_stats(&[], &[true])
+    }))
+    .is_err());
 
     let info = op.prepare_possible_properties(&[
         Some(PossiblePropertiesInfo {

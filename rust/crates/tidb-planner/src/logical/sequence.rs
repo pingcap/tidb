@@ -57,10 +57,14 @@ impl LogicalSequence {
     /// child's, which is the main query's.
     ///
     /// Go indexes `Children()[ChildLen()-1]` and panics on a childless
-    /// sequence; `None` is that refusal without the panic.
+    /// sequence; direct indexing preserves that boundary.
     #[must_use]
     pub fn schema(children_schemas: &[Schema]) -> Option<&Schema> {
-        children_schemas.last()
+        Some(
+            children_schemas
+                .last()
+                .expect("LogicalSequence.Schema requires a child"),
+        )
     }
 
     /// Go `LogicalSequence.PredicatePushDown(predicates)`
@@ -71,7 +75,10 @@ impl LogicalSequence {
     /// Returns the index of the child that receives them.
     #[must_use]
     pub const fn predicate_push_down_child(child_len: usize) -> Option<usize> {
-        child_len.checked_sub(1)
+        Some(match child_len.checked_sub(1) {
+            Some(index) => index,
+            None => panic!("LogicalSequence.PredicatePushDown requires a child"),
+        })
     }
 
     /// Go `LogicalSequence.PruneColumns(parentUsedCols)`
@@ -80,7 +87,10 @@ impl LogicalSequence {
     /// main query UNCHANGED — a sequence reads no column of its own.
     #[must_use]
     pub const fn prune_columns_child(child_len: usize) -> Option<usize> {
-        child_len.checked_sub(1)
+        Some(match child_len.checked_sub(1) {
+            Some(index) => index,
+            None => panic!("LogicalSequence.PruneColumns requires a child"),
+        })
     }
 
     /// Go `LogicalSequence.DeriveStats(childStats, _, _, reloads)`
@@ -95,7 +105,10 @@ impl LogicalSequence {
         child_stats: &[StatsInfo],
         reloads: &[bool],
     ) -> Option<(StatsInfo, bool)> {
-        let stats = child_stats.last()?.clone();
+        let stats = child_stats
+            .last()
+            .expect("LogicalSequence.DeriveStats requires a child")
+            .clone();
         self.base.base.set_stats(Some(stats.clone()));
         let reload = reloads.last().copied().unwrap_or(true);
         Some((stats, reload))

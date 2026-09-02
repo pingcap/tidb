@@ -137,7 +137,7 @@ impl BasePhysicalPlan {
     /// Go `GetChildReqProps(idx)` (`<4th>`).
     #[must_use]
     pub fn child_req_prop(&self, idx: usize) -> Option<&PhysicalProperty> {
-        self.children_req_props.get(idx)?.as_ref()
+        self.children_req_props[idx].as_ref()
     }
 
     /// Go `SetChildrenReqProps(reqProps)` (`base_physical_plan.go:356`).
@@ -147,9 +147,7 @@ impl BasePhysicalPlan {
 
     /// Go `SetXthChildReqProps(x, reqProps)` (`base_physical_plan.go:361`).
     pub fn set_xth_child_req_props(&mut self, x: usize, prop: Option<PhysicalProperty>) {
-        if let Some(slot) = self.children_req_props.get_mut(x) {
-            *slot = prop;
-        }
+        self.children_req_props[x] = prop;
     }
 
     /// Go `SetProbeParents(probeParents)` (`<17th>`), carried as plan ids
@@ -2765,14 +2763,23 @@ impl PhysicalPlan {
     }
 
     /// Go `BasePhysicalPlan.Schema()` (`base_physical_plan.go:150`): the
-    /// operator's own schema, else the first child's. Go panics on a leaf
-    /// with neither; this returns `None`.
+    /// operator's own schema, else the first child's. `PhysicalSequence`
+    /// overrides Go's base method and uses its last child (the main query)
+    /// when children have been attached. During physical-plan construction a
+    /// sequence may carry only its stamped schema, so preserve that own value
+    /// while it is still childless.
     #[must_use]
     pub fn schema(&self) -> Option<&Schema> {
+        if let Self::Sequence(_) = self {
+            if let Some(child) = self.children().last() {
+                return child.schema();
+            }
+            return self.base().base.schema();
+        }
         if let Some(schema) = self.base().base.schema() {
             return Some(schema);
         }
-        self.base().children().first().and_then(Self::schema)
+        self.children().first().and_then(Self::schema)
     }
 
     /// Go `Plan.StatsInfo()` (`<11th>`, inherited from `baseimpl.Plan`).

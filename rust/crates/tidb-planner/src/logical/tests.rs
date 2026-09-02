@@ -136,13 +136,65 @@ fn schema_falls_through_to_the_first_child() {
             .collect::<Vec<_>>(),
         vec![11, 12]
     );
-    // A childless node with no schema of its own has none.
+    // A schema-producing leaf may have no materialized schema yet.
     let bare = LogicalPlan::TableDual(LogicalTableDual {
         base: BaseLogicalPlan::with_id(1, "TableDual", 0),
         row_count: 1,
     });
     assert!(bare.schema().is_none());
     tree.dismantle();
+}
+
+#[test]
+fn sequence_schema_uses_the_last_main_query_child_like_go() {
+    let mut base = BaseLogicalPlan::with_id(3, LogicalSequence::TYPE, 0);
+    base.set_children(vec![source(1, &[11]), source(2, &[22, 23])]);
+    let sequence = LogicalPlan::Sequence(LogicalSequence::new(base));
+    let schema = sequence.schema().expect("main query child schema");
+    assert_eq!(
+        schema
+            .columns
+            .iter()
+            .map(|column| column.unique_id)
+            .collect::<Vec<_>>(),
+        vec![22, 23]
+    );
+    sequence.dismantle();
+}
+
+#[test]
+fn schema_producer_leaf_keeps_output_names_locally() {
+    let mut bare = LogicalPlan::TableDual(LogicalTableDual {
+        base: BaseLogicalPlan::with_id(1, "TableDual", 0),
+        row_count: 1,
+    });
+    let names = vec![tidb_datatype::FieldName::default()];
+    bare.set_output_names(names.clone());
+    assert_eq!(bare.output_names(), names.as_slice());
+}
+
+#[test]
+fn schema_producer_leaf_without_names_returns_empty_output_names() {
+    let bare = LogicalPlan::TableDual(LogicalTableDual {
+        base: BaseLogicalPlan::with_id(1, "TableDual", 0),
+        row_count: 1,
+    });
+    assert!(bare.output_names().is_empty());
+}
+
+#[test]
+fn schema_producer_parent_keeps_output_names_off_its_child() {
+    let mut base = BaseLogicalPlan::with_id(2, "Projection", 0);
+    base.set_children(vec![source(1, &[11])]);
+    let mut projection = LogicalPlan::Projection(LogicalProjection {
+        base,
+        ..LogicalProjection::default()
+    });
+    let names = vec![tidb_datatype::FieldName::default()];
+    projection.set_output_names(names.clone());
+    assert_eq!(projection.output_names(), names.as_slice());
+    assert!(projection.children()[0].output_names().is_empty());
+    projection.dismantle();
 }
 
 #[test]
