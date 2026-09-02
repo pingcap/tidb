@@ -516,8 +516,9 @@ fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut E
 ///
 /// Go runs this inside `getFunction` (`:1984`), where the comparison is
 /// constructed. This tier also retains a tree walk for comparisons assembled
-/// before a real function builder is available, but accepts the concrete
-/// `Columns` context so the generated cast nodes can follow Go's
+/// before a real function builder is available. That compatibility walk keeps
+/// its context-free structural casts; the real builder uses
+/// [`refine_comparison`] so generated casts can follow Go's
 /// `BuildCastFunction` constant-folding boundary.
 ///
 /// Ported: the `int non-constant [cmp] non-int constant` arm (`:1811-1833`)
@@ -528,14 +529,18 @@ fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut E
 /// `refineArgsByUnsignedFlag` (`:1919`) and the plan-cache guard
 /// `allowCmpArgsRefining4PlanCache` (`:1789`) -- which matters only once
 /// refined plans are cached across parameter values.
-pub fn refine_comparisons<C: Columns>(expr: &mut Expression, ctx: &C) -> Result<(), EvalError> {
-    let Expression::ScalarFunction(function) = expr else {
-        return Ok(());
-    };
-    for arg in &mut function.args {
-        refine_comparisons(arg, ctx)?;
+pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
+    if let Expression::ScalarFunction(function) = expr {
+        for arg in &mut function.args {
+            refine_comparisons(arg, ctx)?;
+        }
     }
-    refine_comparison(expr, ctx)
+    if refine_comparison_core(expr, ctx)? {
+        if let Expression::ScalarFunction(function) = expr {
+            wrap_comparison_arguments(&mut function.args, ctx.connection_charset_info())?;
+        }
+    }
+    Ok(())
 }
 
 /// Runs Go `compareFunctionClass.getFunction`'s comparison-only refinement
@@ -547,18 +552,35 @@ pub(crate) fn refine_comparison<C: Columns>(
     expr: &mut Expression,
     ctx: &C,
 ) -> Result<(), EvalError> {
+    let ctx_dyn: &dyn Columns = ctx;
+    if refine_comparison_core(expr, ctx_dyn)? {
+        if let Expression::ScalarFunction(function) = expr {
+            wrap_comparison_arguments_with_context(
+                &mut function.args,
+                ctx.connection_charset_info(),
+                ctx,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Applies Go's comparison argument refinement before either wrapper chooses
+/// the comparison signature. The caller decides whether the generated casts
+/// have a real construction context and therefore can be folded immediately.
+fn refine_comparison_core(expr: &mut Expression, ctx: &dyn Columns) -> Result<bool, EvalError> {
     let Expression::ScalarFunction(function) = expr else {
-        return Ok(());
+        return Ok(false);
     };
     let name = function.func_name.lowercase();
     let Some(mirrored) = symmetric_op(name) else {
-        return Ok(());
+        return Ok(false);
     };
     let [left, right] = function.args.as_mut_slice() else {
-        return Ok(());
+        return Ok(false);
     };
     if name == "nulleq" && rewrite_invalid_duration_null_eq(left, right, ctx)? {
-        return Ok(());
+        return Ok(false);
     }
     refine_args(left, right, name, mirrored, ctx);
     fold_temporal_comparison_string_constant(left, right, ctx)?;
@@ -568,8 +590,7 @@ pub(crate) fn refine_comparison<C: Columns>(
     wrap_integer_operand_for_decimal_compare(left, right);
     wrap_year_operand_for_datetime_compare(left, right);
     prepare_json_comparison_args(&mut function.args);
-    wrap_comparison_arguments_with_context(&mut function.args, ctx.connection_charset_info(), ctx)?;
-    Ok(())
+    Ok(true)
 }
 
 /// Go `compareFunctionClass.generateCmpSigs`: cast both operands to the
@@ -1010,7 +1031,7 @@ mod tests {
             infer_compare_type(op).unwrap(),
             vec![left, right],
         ));
-        refine_comparisons(&mut expr, &sink).unwrap();
+        refine_comparison(&mut expr, &sink).unwrap();
         (expr, sink.warnings.into_inner())
     }
 
@@ -1103,7 +1124,7 @@ mod tests {
             vec![duration_column(), string_constant("not-a-time")],
         ));
         assert!(matches!(
-            refine_comparisons(&mut expr, &StrictSink),
+            refine_comparison(&mut expr, &StrictSink),
             Err(EvalError::TruncatedWrongValue(_))
         ));
     }

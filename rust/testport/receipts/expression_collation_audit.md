@@ -182,10 +182,11 @@ Go's `BuildCastFunctionWithCheck` (`pkg/expression/builtin_cast.go`) calls
 comparison wrapper previously retained `cast_time`, `cast_duration`,
 `cast_double`, and similar scalar nodes because it had no evaluation context;
 this was Rust-only observable shape and moved conversion warnings to row
-evaluation. `refine_comparisons` now carries its concrete `Columns` context
-through comparison signature generation and folds the newly-created cast in
-the same normal mode. The no-context AST rewriter helper remains structural,
-and JSON casts remain intentionally unfurled, matching Go's exception.
+evaluation. The real function-builder path now carries its concrete `Columns`
+context through comparison signature generation and folds the newly-created
+cast in the same normal mode. The no-context AST rewriter and compatibility
+tree walk remain structural, and JSON casts remain intentionally unfurled,
+matching Go's exception.
 
 The focused source-derived regressions cover valid and invalid duration casts
 (including NULL-safe equality), DATE/DATETIME string casts (including one
@@ -195,12 +196,18 @@ equality whose unrefined string is cast to a REAL constant. A clean pre-fix
 `builtin_compare::tests::invalid_duration_constants_are_rewritten_once_on_either_side`
 because the valid operand was still `ScalarFunction(cast_time(Const:...))`
 instead of a `Constant`; the fixed tree passes all 13 focused comparison tests.
+The first cut also folded casts in the older no-context compatibility walk;
+the source helper regressions for nullable integer and ENUM operands failed on
+`43764fc6f8` because their unchanged arguments became typed constants. The
+final split limits folding to the real builder, and both compatibility tests
+pass without weakening the new cast-folding assertions.
 
 Validation used the Ready profile:
 
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib builtin_compare::tests -- --nocapture --test-threads=1` — 13 focused tests passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib tests::compare_control_source::test_refine_args_with_ -- --nocapture --test-threads=1` — both compatibility-walk helper regressions passed.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked -p tidb-expr --all-targets` — owner all-target compile passed.
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,083 passed, seven pre-existing failures (compare-control shape expectations, constant-fold/const-level expectations, and the shared unary-minus hex expectation), and 136 documented gap tests ignored.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,085 passed, six remaining failures (two compare-control shapes, two constant-fold rows, one const-level row, and the shared unary-minus hex expectation), and 135 documented gap tests ignored.
 - `cargo +nightly-2026-08-22 fmt --all -- --check`, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint`, and `git diff --check` — formatting, lint, and whitespace gates passed.
 
 Correctness risk is limited to non-JSON casts created by comparison signature
