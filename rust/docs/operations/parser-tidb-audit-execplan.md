@@ -2,29 +2,26 @@
 
 ## Objective
 
-Inventory the complete parser feature-ID package, compare its Go-master
-contract with Rust consumers, and record an explicit dependency boundary.
+Inventory every Go artifact in the parser feature-ID package, restore the
+Go-master feature registry, add a focused regression, and record the Rust
+ownership boundary.
 
-## Completed
+## Progress
 
-- Read both pinned artifacts (75 lines, twelve constants, one function, and
-  public BUILD metadata).
-- Verified the hparser branch is byte-identical to Go master.
-- Searched all Rust crates and found no dependency-closed owner for the public
-  `CanParseFeature` allowlist; no speculative API or Rust-only behavior was
-  added.
-- Ran current and exact Go-master package compile checks plus Ready gates.
+- [x] (2026-09-02) Read all two pre-edit artifacts (75 lines), including BUILD
+      metadata; confirmed no fixtures, generated/platform variants, or hidden
+      package test inputs.
+- [x] (2026-09-02) Restored `FeatureIDPreSplit`, its deprecated compatibility
+      alias, and `FeatureIDAutoPreSplit` allowlisting.
+- [x] (2026-09-02) Added `TestCanParseFeaturePreSplitVariants` and the Bazel
+      test target.
+- [x] (2026-09-02) Ran the Ready gates, committed only this package plus its
+      receipt/ExecPlan, pushed to `hparser-integration`, verified the remote
+      SHA, and fast-forward pulled.
 
-## Validation gate
+## Constraints and ownership
 
-- [x] Current parser/tidb package compiles.
-- [x] Exact Go-master parser/tidb package compiles.
-- [x] Ready Rust formatting, repository lint, and diff checks pass.
-- [ ] Push receipt/ExecPlan with the next batch, verify remote SHAs, and pull
-      `origin/hparser-integration`.
-
-## Remaining boundary
-
-If Rust begins consuming feature-gated parser comments, introduce the registry
-with source-derived allowlist tests and parser/planner integration as one
-dependency-closed change.
+The registry is Go-owned. No Rust crate currently consumes it, so no
+dependency-free Rust facade should be introduced. `make bazel_prepare` is
+required by the BUILD/test-target change but is expected to remain blocked by
+the missing local Bazel executable.
