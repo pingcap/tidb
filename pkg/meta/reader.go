@@ -62,6 +62,7 @@ type Reader interface {
 	GetSystemDBID() (int64, error)
 	GetSchemaCacheSize() (size uint64, isNull bool, err error)
 	GetBootstrapVersion() (int64, error)
+	GetStarterBootstrapVersion() (int64, error)
 }
 
 // NewReader creates a meta Reader in snapshot.

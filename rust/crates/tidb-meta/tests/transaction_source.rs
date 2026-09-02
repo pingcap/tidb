@@ -1002,6 +1002,11 @@ fn bootstrap_schema_diff_and_raw_bdr_role_round_trip() {
     assert_eq!(meta.bootstrap_version().unwrap(), 1);
     meta.finish_bootstrap(10).unwrap();
     assert_eq!(meta.bootstrap_version().unwrap(), 10);
+    assert_eq!(meta.starter_bootstrap_version().unwrap(), 0);
+    meta.finish_starter_bootstrap(1).unwrap();
+    assert_eq!(meta.starter_bootstrap_version().unwrap(), 1);
+    meta.finish_starter_bootstrap(10).unwrap();
+    assert_eq!(meta.starter_bootstrap_version().unwrap(), 10);
 
     let diff = SchemaDiff {
         version: 100,
@@ -1273,6 +1278,10 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
         (key::MASKING_POLICY_GLOBAL_ID, Mutator::masking_policy_id),
         (key::SCHEMA_VERSION, Mutator::schema_version),
         (key::BOOTSTRAP, Mutator::bootstrap_version),
+        (
+            key::STARTER_BOOTSTRAP,
+            Mutator::starter_bootstrap_version,
+        ),
     ] {
         assert_eq!(
             getter(&with_string_value(logical_key, b"x")),

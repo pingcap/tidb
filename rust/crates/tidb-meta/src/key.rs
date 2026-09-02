@@ -37,6 +37,8 @@ pub const SCHEMA_VERSION: &[u8] = b"SchemaVersionKey";
 pub const DBS: &[u8] = b"DBs";
 /// Go `mBootstrapKey`.
 pub const BOOTSTRAP: &[u8] = b"BootstrapKey";
+/// Go `mStarterBootstrapKey`.
+pub const STARTER_BOOTSTRAP: &[u8] = b"StarterBootstrapKey";
 /// Go `mPolicies`.
 pub const POLICIES: &[u8] = b"Policies";
 /// Go `mMaskingPolicies`.
@@ -363,6 +365,13 @@ pub fn schema_version_kv_key() -> Vec<u8> {
 #[must_use]
 pub fn bootstrap_kv_key() -> Vec<u8> {
     encode_string_data_key(BOOTSTRAP)
+}
+
+/// The raw KV key holding the starter bootstrap version. Go
+/// `Mutator.GetStarterBootstrapVersion`.
+#[must_use]
+pub fn starter_bootstrap_kv_key() -> Vec<u8> {
+    encode_string_data_key(STARTER_BOOTSTRAP)
 }
 
 /// The raw KV key holding Go `Mutator.GetBDRRole`.

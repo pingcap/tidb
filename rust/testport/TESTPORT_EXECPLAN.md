@@ -4347,6 +4347,17 @@ For each bounded behavior cluster:
   separate nested-package boundary. Details are in
   `receipts/planner_engine_rounds.md`.
 
+- 2026-09-02: completed the direct `pkg/meta` starter-bootstrap batch against
+  Go master `1c1a334d2be1dce64888b6e1f054462c566b0734`. The complete seven-
+  artifact, 4,107-line inventory was read before editing. Restored Go's
+  `StarterBootstrapKey` mutator/Reader accessors and materialized-view
+  next-generation boot-table version 3, then added matching Rust `tidb-meta`
+  key, transaction, malformed-scalar, and round-trip coverage. Focused and
+  full failpoint-aware Go tests plus the focused Rust test pass; Rust format,
+  lint, and diff checks pass. `make bazel_prepare` is required by the Go
+  package change but is locally blocked by the missing Bazel executable.
+  Details are in `receipts/meta_starter_bootstrap.md`.
+
 ## Decision Log
 
 - Decision: keep top-level `pkg/util/logutil` on the existing

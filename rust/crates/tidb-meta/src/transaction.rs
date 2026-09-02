@@ -66,6 +66,8 @@ impl NextGenBootTableVersion {
     pub const BASE: Self = Self(1);
     /// Adds `mysql.tidb_masking_policy`.
     pub const MASKING_POLICY: Self = Self(2);
+    /// Adds materialized-view maintenance metadata tables.
+    pub const MATERIALIZED_VIEW: Self = Self(3);
 }
 
 /// Go `DDLTableVersion`.
@@ -1695,6 +1697,19 @@ impl<T: RawTransaction> Mutator<T> {
     pub fn finish_bootstrap(&self, version: i64) -> Result<()> {
         let mut transaction = self.lock()?;
         TxStructure::meta(&mut *transaction).set(key::BOOTSTRAP, &value::encode_int_value(version))
+    }
+
+    /// Go `Mutator.GetStarterBootstrapVersion`.
+    pub fn starter_bootstrap_version(&self) -> Result<i64> {
+        let mut transaction = self.lock()?;
+        TxStructure::meta(&mut *transaction).get_int64(key::STARTER_BOOTSTRAP)
+    }
+
+    /// Go `Mutator.FinishStarterBootstrap`.
+    pub fn finish_starter_bootstrap(&self, version: i64) -> Result<()> {
+        let mut transaction = self.lock()?;
+        TxStructure::meta(&mut *transaction)
+            .set(key::STARTER_BOOTSTRAP, &value::encode_int_value(version))
     }
 
     /// Go `Mutator.GetSchemaDiff`.

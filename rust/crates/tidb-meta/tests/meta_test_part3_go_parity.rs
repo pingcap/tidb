@@ -171,6 +171,7 @@ fn boot_table_version_writes_only_the_next_gen_key() {
         meta.next_gen_boot_table_version().unwrap(),
         NextGenBootTableVersion::BASE
     );
+    assert_eq!(NextGenBootTableVersion::MATERIALIZED_VIEW.0, 3);
     // Make sure we use the correct key.
     assert_eq!(meta.ddl_table_version().unwrap(), DdlTableVersion::INIT);
 }

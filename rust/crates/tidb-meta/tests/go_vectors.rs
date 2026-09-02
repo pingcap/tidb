@@ -119,6 +119,10 @@ fn named_string_key_helpers_agree_with_the_generic_encoder() {
         key::bootstrap_kv_key(),
         encode_string_data_key(key::BOOTSTRAP)
     );
+    assert_eq!(
+        key::starter_bootstrap_kv_key(),
+        encode_string_data_key(key::STARTER_BOOTSTRAP)
+    );
 }
 
 // --- Hash-data keys: m + EncodeBytes(key) + 'h' + EncodeBytes(field) --------
