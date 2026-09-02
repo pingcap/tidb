@@ -42,6 +42,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: aligned the Rust `tidb-ast` SET restoration security boundary
+  with Go master `17daba3dfd`. The complete `pkg/parser/ast` inventory remains
+  36 tracked artifacts (34,448 lines, including generated visitor inputs and
+  output, support tests, fixture, and three BUILD files). Go's six-entry
+  `embeddingAPIKeySysVars` allowlist now has a case-insensitive Rust owner:
+  matching system assignments restore as `'******'`, while user variables and
+  similarly named future variables retain their values. Added the focused
+  source-derived regression and `SetStmt::secure_text()` API, and completed
+  the existing `IndexOptions::auto_pre_split` restore fixture exposed by the
+  all-target AST gate; details and Ready evidence are in
+  `receipts/parser_ast.md`.
+
 - 2026-09-02: aligned the Rust `tidb-domain` RU-statistics GC boundary with
   Go master `a85e0fd5df`. After enumerating the complete 31-artifact root
   `pkg/domain` boundary and all 17 `tidb-domain` owner artifacts, changed

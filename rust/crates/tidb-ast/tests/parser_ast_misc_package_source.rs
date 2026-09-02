@@ -31,6 +31,7 @@ use tidb_ast::{
     TrafficCaptureOption, TrafficReplayOption, TrafficStmt, TransactionMode, UserSpec,
     Visitable, Visitor,
 };
+use tidb_parser::parse;
 
 fn column(path: &[&str]) -> Expr {
     Expr::Column(path.iter().map(|name| name.to_string()).collect())
@@ -1411,13 +1412,46 @@ fn redact_traffic_stmt() {
     );
 }
 
-// go-parity-gap: TestSetStmtSecureTextRedactsEmbeddingAPIKeys needs
-// `SetStmt.SecureText`'s embedding API-key sysvar redaction
-// (`SET @@GLOBAL.<key>='******'`); that transcreation does not exist yet —
-// there is no secure-text entry point for SET at all.
 #[test]
-#[ignore = "go-parity-gap: embedding API-key sysvar redaction is not transcreated"]
-fn set_stmt_secure_text_redacts_embedding_api_keys() {}
+fn set_stmt_secure_text_redacts_embedding_api_keys() {
+    let keys = [
+        "tidb_exp_embed_jina_ai_api_key",
+        "tidb_exp_embed_openai_api_key",
+        "tidb_exp_embed_cohere_api_key",
+        "tidb_exp_embed_huggingface_api_key",
+        "tidb_exp_embed_nvidia_nim_api_key",
+        "tidb_exp_embed_gemini_api_key",
+    ];
+    for name in keys {
+        let sql = format!("SET @@GLOBAL.{name} = 'secret-api-key'");
+        let stmt = parse(&sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        let Stmt::Session(session_stmt) = &stmt else {
+            panic!("{sql}: expected a session statement");
+        };
+        let SessionStmt::Set(set_stmt) = session_stmt.as_ref() else {
+            panic!("{sql}: expected a generic SET statement");
+        };
+        assert_eq!(
+            set_stmt.secure_text(),
+            format!("SET @@GLOBAL.`{name}`='******'"),
+            "{sql}"
+        );
+    }
+
+    // A similarly named user variable is not a system API-key configuration.
+    let stmt = parse("SET @tidb_exp_embed_openai_api_key = 'ordinary-user-value'")
+        .expect("user-variable SET should parse");
+    assert!(stmt.restore().contains("ordinary-user-value"));
+    assert!(!stmt.restore().contains("******"));
+
+    // Only the explicit Go allowlist is sensitive; a future-looking name is not.
+    let stmt = parse(
+        "SET @@GLOBAL.tidb_exp_embed_future_api_key = 'ordinary-system-value'",
+    )
+    .expect("ordinary system SET should parse");
+    assert!(stmt.restore().contains("ordinary-system-value"));
+    assert!(!stmt.restore().contains("******"));
+}
 
 /// `pkg/parser/ast/misc_test.go::TestSetPwdStmtSecureText`.
 ///

@@ -965,6 +965,7 @@ mod tests {
             visibility: Some(IndexVisibility::Invisible),
             primary_key_storage: Some(PrimaryKeyStorage::Clustered),
             global: true,
+            auto_pre_split: false,
             pre_split_regions: Some(IndexPreSplitRegions::Boundaries(SplitOption::By(vec![
                 vec![Expr::Int("1".to_string())],
             ]))),

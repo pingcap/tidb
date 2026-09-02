@@ -1,11 +1,11 @@
 # `pkg/parser/ast` — complete package parity receipt
 
-Pinned Go source: `5e8a1a229a7591ddac49a0cd3b795587c2595ab9`
-(`origin/master`).
+Pinned Go source: `17daba3dfde858eebef60f6e4e1bb37268269225`
+(`origin/master`, fetched 2026-09-02).
 
 ## Complete inventory
 
-The package has exactly 36 tracked artifacts and 34,426 text lines. The
+The package has exactly 36 tracked artifacts and 34,448 text lines. The
 inventory below includes every production file, generated visitor output and
 input, test/support file, testdata fixture, and all three BUILD files.
 
@@ -15,9 +15,9 @@ input, test/support file, testdata fixture, and all three BUILD files.
 | `ast.go` | 290 | `f4f6a7bb94683ff79c4711554ea6fc429f5cdd6e` |
 | `base.go` | 441 | `5ff88977daf46adadee1cbac378331cdb2e8eae2` |
 | `base_test.go` | 347 | `30f5e9c2191a9a8c96d968c3ac29bc5856cb32ee` |
-| `ddl.go` | 6,024 | `1ecd11e7ba0f72ca15a632d6711be1bc6ef01d0e` |
+| `ddl.go` | 6,044 | `88ab9306f40f2750c8388bc5664f36422f4c64ea` |
 | `ddl_partition_visitor_test.go` | 306 | `98e2c808428c1a15573714cccda3e8a134f29a84` |
-| `ddl_test.go` | 1,123 | `5ed8a463c3db63df7bc9b43adab1e945089a899e` |
+| `ddl_test.go` | 1,125 | `1ef8c57c1247ad368c7b8ca8c32e5c2b5f4b14ed` |
 | `dml.go` | 4,379 | `d4c4ac8b5d09930f4b7d7b7bae6d3e23323e5f5b` |
 | `dml_test.go` | 676 | `ed15a8f98fe9a7b30248ffa5d550ff87c3ed557f` |
 | `expressions.go` | 1,734 | `0594d84affe39b3a6763c08de0e83c7291c609fb` |
@@ -76,6 +76,19 @@ These changes are coupled to parser grammar, AST consumers, planner/executor
 materialized-view support, and generated visitor build rules. They cannot be
 made dependency-closed by copying one file.
 
+## Current-master follow-up
+
+The fetched Go master adds the closed `embeddingAPIKeySysVars` allowlist and
+redacts those six system-variable values in `VariableAssignment.Restore`
+(`misc.go:1019-1049`). The Rust `tidb-ast` owner now carries the same
+case-insensitive allowlist, emits the literal `'******'` for matching
+`SystemVariableAssignment`s, and exposes `SetStmt::secure_text()` for the
+same processlist/logging/audit boundary. User variables and similarly named
+future system variables remain unredacted, matching the Go regression table.
+The same AST-package batch also fills the new `IndexOptions::auto_pre_split`
+field in its in-module restore fixture, keeping the owner’s all-target test
+build complete after the existing pre-split port.
+
 ## Rust ownership and parity result
 
 `rust/crates/tidb-ast` is a partial source-shaped owner with mutable
@@ -84,24 +97,38 @@ provide the Go-master replacement-preserving plus in-place visitor pair,
 generated visitor API, materialized-view AST nodes, or full-join semantics;
 those omissions cross `tidb-parser`, planner, executor, and generated-model
 boundaries. No dependency-closed Rust implementation can therefore satisfy
-this Go package today. No Rust-only behavior was removed and no speculative
-AST facade was added.
+this Go package today. The bounded security behavior above is implemented in
+the existing AST restore owner; no speculative AST facade was added.
 
 ## Validation
 
-Profile: Ready for this documentation-only boundary receipt.
+Profile: Ready for the Rust AST behavior and receipt update.
 
 ```text
-PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh ./pkg/parser/ast -count=1
-PASS; 0.426s; failpoint refcount 0
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-ast --test all -- --test-threads=1
+PASS; 127 passed, 0 failed, 9 ignored.
 
-Detached origin/master (`5e8a1a229a7591ddac49a0cd3b795587c2595ab9`) exact-package
-failpoint suite: PASS; 0.485s; failpoint refcount 0.
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-ast --all-targets
+PASS.
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh ./pkg/parser/ast -count=1
+PASS; 0.435s; failpoint refcount 0.
 ```
 
-No Go/Rust/Bazel/module source changed in this receipt, so `make bazel_prepare`
-is not required. Rust formatting, repository lint, and `git diff --check` are
-run for the combined commit batch.
+Only Rust sources, Rust source tests, and parity documentation changed in this
+batch. No Go file, import section, Bazel target, or module dependency changed,
+so `make bazel_prepare` is not required. The Rust package test, all-target
+compile, formatter, repository lint, and whitespace checks above are the Ready
+gates for this batch.
 
 ## Risks and next boundary
 
