@@ -76,6 +76,14 @@ For each bounded behavior cluster:
   regression. Focused and full vardef tests passed; the broader vardef/runtime
   and variable registry deltas remain explicit package boundaries.
 
+- 2026-09-02: completed the bounded `pkg/sessionctx/variable` Go-package
+  batch in one commit after restoring its dependent vardef constants. Added
+  `SessionVars.QueryCopStoreLimit` default initialization, the validated
+  global/session sysvar and hint registration, and a focused default/update
+  regression. The failpoint-aware focused and full variable suites plus lint
+  passed; `make bazel_prepare` was attempted and blocked by the unavailable
+  local Bazel executable. Remaining variable-system deltas stay separate.
+
 - 2026-09-02: completed the Go-master `pkg/parser` materialized-view DDL
   syntax delta in one parser-package batch. Before editing, the full root
   parser inventory (33 artifacts, 64,956 lines, generated grammar/keyword

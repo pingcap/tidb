@@ -163,6 +163,20 @@ func TestTiDBMaxKeysRead(t *testing.T) {
 	require.True(t, sv.IsHintUpdatableVerified)
 }
 
+func TestTiDBQueryCopStoreLimit(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiDBQueryCopStoreLimit)
+	require.NotNil(t, sv)
+	require.True(t, sv.IsHintUpdatableVerified)
+	require.Equal(t, vardef.DefTiDBQueryCopStoreLimit, vars.QueryCopStoreLimit)
+	require.Equal(t, strconv.Itoa(vardef.DefTiDBQueryCopStoreLimit), sv.Value)
+
+	require.NoError(t, sv.SetSessionFromHook(vars, "3"))
+	require.Equal(t, 3, vars.QueryCopStoreLimit)
+	require.NoError(t, sv.SetSessionFromHook(vars, "0"))
+	require.Equal(t, 0, vars.QueryCopStoreLimit)
+}
+
 func TestGetMaxKeysRead(t *testing.T) {
 	vars := NewSessionVars(nil)
 	vars.MaxKeysRead = 100

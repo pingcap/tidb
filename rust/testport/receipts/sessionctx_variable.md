@@ -1,7 +1,7 @@
 # `pkg/sessionctx/variable` Go-master parity receipt
 
 Comparison source: Go `origin/master` at commit
-`5e8a1a229a7591ddac49a0cd3b795587c2595ab9` (2026-09-01).
+`febee17ec716d86b1e355e5400ef9e4f4f190bad` (2026-09-02).
 
 This receipt records a bounded, dependency-closed behavior batch within the
 large variable package. It does not claim that the complete `SessionVars`,
@@ -10,7 +10,7 @@ transcreated. Those remaining owners stay explicit below.
 
 ## Complete Go package inventory
 
-The package has exactly 31 tracked artifacts and 18,433 lines in the comparison
+The package has exactly 31 tracked artifacts and 18,540 lines in the comparison
 snapshot: 6 production Go files, 10 production/test support files, 11 Go test
 files, 3 Bazel files, and `OWNERS`. Every production file, test, fixture/build
 input, generated/platform variant, benchmark, and nested `tests/slowlog`
@@ -31,13 +31,13 @@ artifact was read before editing.
 | `removed.go` | 68 |
 | `removed_test.go` | 29 |
 | `sequence_state.go` | 69 |
-| `session.go` | 3,987 |
-| `setvar_affect.go` | 157 |
+| `session.go` | 3,995 |
+| `setvar_affect.go` | 158 |
 | `slow_log.go` | 1,216 |
 | `statusvar.go` | 178 |
 | `statusvar_test.go` | 66 |
-| `sysvar.go` | 4,337 |
-| `sysvar_test.go` | 2,333 |
+| `sysvar.go` | 4,354 |
+| `sysvar_test.go` | 2,413 |
 | `tests/BUILD.bazel` | 43 |
 | `tests/main_test.go` | 35 |
 | `tests/session_test.go` | 1,083 |
@@ -48,7 +48,7 @@ artifact was read before editing.
 | `tidb_vars.go` | 69 |
 | `variable.go` | 594 |
 | `varsutil.go` | 557 |
-| `varsutil_test.go` | 727 |
+| `varsutil_test.go` | 728 |
 
 There are no checked-in fixtures, generated files, platform-specific source
 variants, fuzz corpora, or generator inputs beyond the three Bazel manifests.
@@ -81,6 +81,15 @@ there only as leaf-crate documentation: their executable owner is now
 `tidb-session`, which can exercise the real registry and SQL global-write
 path without introducing a forbidden vardef→session dependency.
 
+The 2026-09-02 Go package batch restores the missing query cop-store limit
+contract in the complete `pkg/sessionctx/variable` boundary: a
+`SessionVars.QueryCopStoreLimit` field initialized to the Go default, the
+global/session `tidb_query_cop_store_limit` registration with Go validation and
+setter semantics, and hint-updatable registration. `TestTiDBQueryCopStoreLimit`
+pins default initialization and session updates. This is a bounded package
+batch; the unrelated embedding, transaction-file, outer-join, and other
+variable deltas remain explicit boundaries for later package work.
+
 ## Regression and validation evidence
 
 Go-master focused source regressions were run in the detached worktree at the
@@ -91,7 +100,39 @@ PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chen
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh ./pkg/sessionctx/variable -run 'Test(TxnFileSysVars|TiDBAnalyzeStoreBatchSize|EnableFullOuterJoin|TiDBForeignKeyCheckInSharedLockGate)$' -count=1
 ```
 
-Both commands passed. Rust source-shaped regressions and owner checks passed:
+The new focused command passed in 0.556s before the full run; the pre-fix
+compile failed first on the missing `vardef` query-limit constants and then on
+the missing `SessionVars` field. The full variable package failpoint-aware run
+passed in 0.534s. Rust source-shaped regressions and owner checks passed:
+
+```text
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex \
+./tools/check/failpoint-go-test.sh ./pkg/sessionctx/variable -run '^TestTiDBQueryCopStoreLimit$' -count=1 -vet=off
+# passed in 0.556s
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex \
+./tools/check/failpoint-go-test.sh ./pkg/sessionctx/variable -count=1 -vet=off
+# passed in 0.534s
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex \
+make lint
+# passed
+
+git diff --check
+# passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex \
+make bazel_prepare
+# blocked: make: bazel: No such file or directory
+```
 
 ```text
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-session --lib embedding -- --test-threads=1
@@ -108,8 +149,11 @@ before this batch is committed and pushed:
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
 ```
 
-No Go source, import block, Bazel file, or Go module dependency changed, so
-`make bazel_prepare` is not required for this Rust-only batch.
+Go production and test sources changed, and a new top-level regression was
+added, so `make bazel_prepare` was required and attempted; it is blocked
+locally because `bazel` is not installed (`make: bazel: No such file or
+directory`). The concurrent worktree also carries unrelated Go module updates;
+they were not staged in this package commit.
 
 ## Risks and remaining boundaries
 
