@@ -20,6 +20,22 @@ use tidb_ast::{
 use tidb_parser::{parse, parse_multi, parse_multi_with_sql_mode, parse_with_sql_mode, SqlMode};
 
 #[test]
+fn test_parentheses_depth_limit() {
+    let sql = format!("SELECT {}1{}", "(".repeat(10_001), ")".repeat(10_001));
+    let error = parse(&sql).expect_err("deeply nested parentheses must be rejected");
+    assert!(
+        error
+            .message
+            .contains("parentheses nesting depth exceeds maximum 10000"),
+        "unexpected error: {error:?}"
+    );
+    let multi_error = parse_multi(&sql).expect_err("multi-statement parsing shares the guard");
+    assert!(multi_error
+        .message
+        .contains("parentheses nesting depth exceeds maximum 10000"));
+}
+
+#[test]
 fn test_insert_statement_memory_allocation() {
     let sql = format!("insert t values (1){}", ",(1)".repeat(1000));
     let Stmt::Dml(statement) = parse(&sql).expect("the 1,001-row INSERT parses") else {

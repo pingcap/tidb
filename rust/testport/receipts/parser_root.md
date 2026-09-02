@@ -122,3 +122,28 @@ documentary ignored tests because `tidb-ast` cannot depend on `tidb-parser`.
 Validation: the two focused visitor tests, the complete `tidb-parser` library
 and aggregate test targets, pinned Rust formatting, repository `make lint`,
 and `git diff --check` all pass in the current Ready run.
+
+## Rust follow-up: parser and optimizer-hint parentheses depth
+
+Go master `e2b6ce7333` adds a 10,000-level `maxParenthesesDepth` guard to both
+the SQL scanner and the dedicated optimizer-hint scanner. Before this
+follow-up, Rust tokenized all parentheses and entered its recursive expression
+parser; a 10,001-level `SELECT` nesting therefore aborted with a process stack
+overflow instead of returning a parser error. The Rust `tidb-parser` owner now
+computes the maximum nesting from the token stream before recursive parsing,
+returns `parentheses nesting depth exceeds maximum 10000` from both single- and
+multi-statement entrypoints, and reports the same diagnostic from standalone
+`parse_hint`.
+
+The focused regressions are
+`parser_root_source::test_parentheses_depth_limit` and
+`parser_hint_source::test_max_optimizer_hint_parentheses_depth`. The former
+was run before the fix and reproduced the Rust stack-overflow abort; both tests
+pass after the guard. No Go source, generated parser output, or Bazel metadata
+was edited. The AST-depth half of the Go change remains a separate boundary:
+Rust's recursive unary/parenthesized expression construction needs an
+iterative parser change before that 11,000-node test can be activated safely.
+
+Validation for this follow-up is recorded in the package batch: focused
+parser/hint regressions, the full owner check and test suite, pinned Rust
+formatting, `make lint`, and `git diff --check`.

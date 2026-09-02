@@ -757,6 +757,14 @@ pub fn parse_hint(input: &str, ansi_quotes: bool, initial_line: usize) -> HintPa
     };
 
     let mut parser = Parser::new_hint_with_ansi_quotes(inner, ansi_quotes);
+    if let Some(error) = &parser.paren_depth_error {
+        return HintParseResult {
+            hints: Vec::new(),
+            diagnostics: vec![HintDiagnostic {
+                message: error.message.clone(),
+            }],
+        };
+    }
     let mut hints = Vec::new();
     let mut diagnostics = Vec::new();
     while !parser.at_eof() {

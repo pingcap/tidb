@@ -342,6 +342,23 @@ fn test_parse_hint() {
 }
 
 #[test]
+fn test_max_optimizer_hint_parentheses_depth() {
+    let input = format!(
+        "/*+LEADING({}t{})*/",
+        "(".repeat(10_001),
+        ")".repeat(10_001)
+    );
+    let result = parse_hint(&input, false, 1);
+    assert!(
+        result.diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("parentheses nesting depth exceeds maximum 10000")),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn test_hint_error() {
     let parsed = parse_with_warnings(
         "select /*+ tidb_unknown(T1,t2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1",

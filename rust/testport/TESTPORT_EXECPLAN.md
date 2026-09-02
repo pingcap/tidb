@@ -53,6 +53,17 @@ For each bounded behavior cluster:
   pre-fix failures recorded at `sequence.rs:219`; details are in the b110
   follow-up receipt. No Go source was edited.
 
+- 2026-09-03: aligned the Rust `tidb-parser` SQL and optimizer-hint scanners
+  with Go master `e2b6ce7333`'s 10,000-level parentheses guard. Rust now
+  computes token nesting before recursive parsing and returns the matching
+  `parentheses nesting depth exceeds maximum 10000` diagnostic from SQL,
+  multi-statement, and standalone hint entrypoints. The focused SQL regression
+  reproduced a pre-fix process stack overflow and both SQL/hint regressions now
+  pass. No Go source or generated parser output changed; the separate Go AST
+  visitor-depth check remains explicit because Rust's recursive expression
+  construction requires an iterative parser change before activation. Details
+  are appended to `receipts/parser_root.md`.
+
 - 2026-09-03: aligned the Rust `tidb-expr` expression-tree
   `Decorrelate` and `PropagateType(ETReal)` surfaces with Go master
   `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. Constants and plain columns now

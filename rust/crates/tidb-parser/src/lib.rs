@@ -242,6 +242,9 @@ fn parse_with_full_configuration(
 }
 
 fn parse_one_with_parser(sql: &str, p: &mut Parser) -> PResult<Stmt> {
+    if let Some(error) = &p.paren_depth_error {
+        return Err(error.clone());
+    }
     let start = p.peek().offset;
     let mut stmt = p.parse_statement()?;
     let end = if p.is_op(";") {
@@ -483,6 +486,9 @@ fn parse_multi_with_configuration(
 }
 
 fn parse_multi_with_parser(sql: &str, p: &mut Parser) -> PResult<Vec<Stmt>> {
+    if let Some(error) = &p.paren_depth_error {
+        return Err(error.clone());
+    }
     let mut statements = Vec::new();
     let mut source_start = statement_source_start(sql, 0);
     while p.is_op(";") {
@@ -558,6 +564,33 @@ struct Parser {
     pipes_as_concat: bool,
     strict_double_type_check: bool,
     warnings: Vec<HintDiagnostic>,
+    paren_depth_error: Option<ParseError>,
+}
+
+/// Bounds user-controlled nesting before recursive parsing can exhaust the
+/// parser stack. This is Go's `maxParenthesesDepth` guard.
+const MAX_PARENTHESES_DEPTH: usize = 10_000;
+
+fn parentheses_depth_error(toks: &[Token]) -> Option<ParseError> {
+    let mut depth = 0;
+    for token in toks {
+        if token.kind == TokenKind::Op && token.text == "(" {
+            depth += 1;
+            if depth > MAX_PARENTHESES_DEPTH {
+                return Some(ParseError {
+                    message: format!(
+                        "parentheses nesting depth exceeds maximum {MAX_PARENTHESES_DEPTH}"
+                    ),
+                    offset: token.end_offset,
+                    near_offset: token.offset,
+                    errno: None,
+                });
+            }
+        } else if token.kind == TokenKind::Op && token.text == ")" && depth > 0 {
+            depth -= 1;
+        }
+    }
+    None
 }
 
 impl Parser {
@@ -597,6 +630,7 @@ impl Parser {
         let mut lexer = Lexer::new(sql).with_sql_mode(sql_mode);
         lexer.set_support_window_func(support_window_functions);
         let (toks, lexer_warnings) = lexer.tokenize_with_warnings();
+        let paren_depth_error = parentheses_depth_error(&toks);
         Parser {
             source: sql.to_owned(),
             toks,
@@ -616,6 +650,7 @@ impl Parser {
                 .into_iter()
                 .map(|message| HintDiagnostic { message })
                 .collect(),
+            paren_depth_error,
         }
     }
 
@@ -705,15 +740,17 @@ impl Parser {
     /// TiDB uses a dedicated hint lexer, including a narrower query-block
     /// token boundary around dots.
     fn new_hint_with_ansi_quotes(sql: &str, ansi_quotes: bool) -> Self {
+        let toks = Lexer::new(sql)
+            .with_sql_mode(SqlMode {
+                ansi_quotes,
+                ..SqlMode::default()
+            })
+            .with_hint_mode()
+            .tokenize();
+        let paren_depth_error = parentheses_depth_error(&toks);
         Parser {
             source: sql.to_owned(),
-            toks: Lexer::new(sql)
-                .with_sql_mode(SqlMode {
-                    ansi_quotes,
-                    ..SqlMode::default()
-                })
-                .with_hint_mode()
-                .tokenize(),
+            toks,
             pos: 0,
             enable_mariadb: false,
             param_marker_position: 0,
@@ -727,6 +764,7 @@ impl Parser {
             pipes_as_concat: false,
             strict_double_type_check: true,
             warnings: Vec::new(),
+            paren_depth_error,
         }
     }
 
