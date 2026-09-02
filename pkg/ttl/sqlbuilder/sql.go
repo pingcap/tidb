@@ -165,21 +165,8 @@ func (b *SQLBuilder) WriteDelete() error {
 	return nil
 }
 
-// WriteCommonCondition writes a new condition
+// WriteCommonCondition writes a new condition for physical key values.
 func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
-	return b.writeCondition(cols, op, dp, writeDatum)
-}
-
-func (b *SQLBuilder) writeCursorCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
-	return b.writeCondition(cols, op, dp, writePhysicalKeyDatum)
-}
-
-func (b *SQLBuilder) writeCondition(
-	cols []*model.ColumnInfo,
-	op string,
-	dp []types.Datum,
-	datumWriter func(*format.RestoreCtx, types.Datum, *types.FieldType) error,
-) error {
 	switch b.state {
 	case writeSelOrDel:
 		b.restoreCtx.WritePlain(" WHERE ")
@@ -194,7 +181,7 @@ func (b *SQLBuilder) writeCondition(
 	b.restoreCtx.WritePlain(" ")
 	b.restoreCtx.WritePlain(op)
 	b.restoreCtx.WritePlain(" ")
-	return b.writeDataPointWith(cols, dp, datumWriter)
+	return b.writeDataPoint(cols, dp)
 }
 
 // WriteExpireCondition writes a condition with the time column
@@ -240,7 +227,7 @@ func (b *SQLBuilder) WriteInCondition(cols []*model.ColumnInfo, dps ...[]types.D
 		} else {
 			b.restoreCtx.WritePlain(", ")
 		}
-		if err := b.writeKeyDataPoint(cols, v); err != nil {
+		if err := b.writeDataPoint(cols, v); err != nil {
 			return err
 		}
 	}
@@ -304,15 +291,7 @@ func (b *SQLBuilder) writeColNames(cols []*model.ColumnInfo, writeBrackets bool)
 	}
 }
 
-func (b *SQLBuilder) writeKeyDataPoint(cols []*model.ColumnInfo, dp []types.Datum) error {
-	return b.writeDataPointWith(cols, dp, writePhysicalKeyDatum)
-}
-
-func (b *SQLBuilder) writeDataPointWith(
-	cols []*model.ColumnInfo,
-	dp []types.Datum,
-	datumWriter func(*format.RestoreCtx, types.Datum, *types.FieldType) error,
-) error {
+func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) error {
 	writeBrackets := len(cols) > 1
 	if len(cols) != len(dp) {
 		return errors.Errorf("col count not match %d != %d", len(cols), len(dp))
@@ -329,7 +308,7 @@ func (b *SQLBuilder) writeDataPointWith(
 		} else {
 			b.restoreCtx.WritePlain(", ")
 		}
-		if err := datumWriter(b.restoreCtx, d, &cols[i].FieldType); err != nil {
+		if err := writePhysicalKeyDatum(b.restoreCtx, d, &cols[i].FieldType); err != nil {
 			return err
 		}
 	}
@@ -456,15 +435,15 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 			val := []types.Datum{d}
 			var err error
 			if i < len(g.stack)-1 {
-				err = b.writeCursorCondition(col, "=", val)
+				err = b.WriteCommonCondition(col, "=", val)
 			} else if g.firstBuild {
 				// When `g.firstBuild == true`, that means we are querying rows after range start, because range is defined
 				// as [start, end), we should use ">=" to find the rows including start key.
-				err = b.writeCursorCondition(col, ">=", val)
+				err = b.WriteCommonCondition(col, ">=", val)
 			} else {
 				// Otherwise when `g.firstBuild != true`, that means we are continuing with the previous result, we should use
 				// ">" to exclude the previous row.
-				err = b.writeCursorCondition(col, ">", val)
+				err = b.WriteCommonCondition(col, ">", val)
 			}
 			if err != nil {
 				return "", err
@@ -473,7 +452,7 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	if len(g.keyRangeEnd) > 0 {
-		if err := b.writeCursorCondition(g.tbl.KeyColumns[0:len(g.keyRangeEnd)], "<", g.keyRangeEnd); err != nil {
+		if err := b.WriteCommonCondition(g.tbl.KeyColumns[0:len(g.keyRangeEnd)], "<", g.keyRangeEnd); err != nil {
 			return "", err
 		}
 	}
