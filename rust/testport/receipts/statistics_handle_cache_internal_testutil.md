@@ -1,16 +1,19 @@
 # `pkg/statistics/handle/cache/internal/testutil` → `tidb-stats-handle-cache-internal-testutil`
 
-Pinned source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned source: `c6054025ed4c32ab3672a2a24ea46892714d21ec` (Go `master` at the
+audit boundary).
 
 ## Atomic inventory
 
-| Artifact | Lines | Git blob | Rust owner |
-| --- | ---: | --- | --- |
-| `BUILD.bazel` | 14 | `bca31c934cc04e651524816942cf7877f9621d9b` | workspace member and crate manifest |
-| `testutil.go` | 95 | `ca2c179152567e3feaa22a7632d06d8d8ee17ce2` | `src/lib.rs` |
+| Artifact | Lines | Git blob | SHA-256 | Rust owner |
+| --- | ---: | --- | --- | --- |
+| `BUILD.bazel` | 14 | `bca31c934cc04e651524816942cf7877f9621d9b` | `f0158b92c287531f9c6b289eebf5dea7ed85a7ae1d64815d6e40ac2eb723ce07` | workspace target and crate manifest |
+| `testutil.go` | 95 | `ca2c179152567e3feaa22a7632d06d8d8ee17ce2` | `3abb61788e60bcb9fe086e2609a77d15195d0a449ed0da498eb3f8309982c21a` | `src/lib.rs` |
 
 The support package has no generated, platform-specific, test, fixture-file,
-or benchmark artifacts.
+or benchmark artifacts. This is the complete two-artifact, 109-line Go
+package; the current checkout is byte-identical to the pinned Go master
+source.
 
 ## Behavior mapping
 
@@ -34,11 +37,16 @@ accounting, or append behavior.
 
 ## Validation
 
-WIP profile: this is a source-test-free support package, so the package gate is
-strict compilation/linting plus the affected statistics owner gate.
+Ready profile: this is a source-test-free support package, so the package gate
+is strict compilation/linting plus the affected statistics owner gate.
 
-- `cargo check --locked -p tidb-stats-handle-cache-internal-testutil`
-- `cargo clippy --locked -p tidb-stats-handle-cache-internal-testutil --no-deps -- -D warnings`
-- `cargo nextest run --locked -p tidb-stats -E 'not test(/bench/)' --no-fail-fast`
-- `rustfmt --edition 2021 --check crates/tidb-stats-handle-cache-internal-testutil/src/lib.rs crates/tidb-stats/src/lib.rs`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/statistics/handle/cache/internal/testutil -count=1` (current checkout; `[no test files]`)
+- same pinned Go command in `/tmp/tidb-go-latest-c605` (detached Go master; `[no test files]`)
+- `env OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-cache-internal-testutil`
+- `env OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 clippy --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-cache-internal-testutil --no-deps -- -D warnings`
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- pinned `make lint`
 - `git diff --check`
+
+No Go or Bazel source changed; `make bazel_prepare` is not required for this
+documentation-only receipt refresh.

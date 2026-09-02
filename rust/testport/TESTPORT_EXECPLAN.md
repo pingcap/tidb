@@ -3132,12 +3132,14 @@ For each bounded behavior cluster:
       owner. Inventory, gap disposition, and Ready gates are in
       `receipts/statistics_handle_cache_internal_lfu_audit.md` and
       `docs/operations/statistics-handle-cache-internal-lfu-audit-execplan.md`.
-- [x] Complete the pinned `pkg/statistics/handle/cache/internal/testutil`
-      support package in `tidb-stats-handle-cache-internal-testutil`: construct
-      actual statistics tables, optional production payloads, full-load
-      status, native memory accounting, and both append helpers; remove the
-      shape-only carrier and source-absent tests. The atomic inventory and WIP
-      gates are in `receipts/statistics_handle_cache_internal_testutil.md`.
+- [x] Re-audit the complete `pkg/statistics/handle/cache/internal/testutil`
+      support package at Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`:
+      two artifacts and 109 lines, with no source tests or hidden variants.
+      The native owner constructs actual tables with optional CMS/TopN/
+      histogram payloads, full-load status, native memory accounting, and both
+      append helpers. The receipt and Ready gates are in
+      `receipts/statistics_handle_cache_internal_testutil.md` and
+      `docs/operations/statistics-handle-cache-internal-testutil-audit-execplan.md`.
 - [x] Audit the complete pinned `pkg/statistics/handle/cache/metrics` package.
       Remove the label-only Rust carrier and its two source-absent tests: the
       Go package exposes eight initialized Prometheus handles, not label
