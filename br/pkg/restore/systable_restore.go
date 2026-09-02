@@ -207,6 +207,9 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) err
 					logutil.ShortError(err),
 					zap.Stringer("table", tableName),
 				)
+				if berrors.Is(err, berrors.ErrUnsupportedSystemTable) {
+					continue
+				}
 				return errors.Annotatef(err, "error during merging temporary tables into system tables, table: %s", tableName)
 			}
 			tablesRestored = append(tablesRestored, tableName.L)
