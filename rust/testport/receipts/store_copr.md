@@ -1,75 +1,131 @@
 # `pkg/store/copr` Go-master parity receipt
 
 Status: Ready for this focused package batch. The receipt covers the complete
-root Go package inventory at Go `origin/master` `94eb995357f34b7bab4889a82f0405797046447d`;
-it is not a repository-wide parity claim.
+root Go package inventory at Go `origin/master`
+`a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02); it is not a
+repository-wide parity claim.
 
 ## Complete inventory
 
 All root production, test, build, and support artifacts were read before the
-edit. The root package has 20 tracked artifacts and 10,649 lines. There is no
-`doc.go`, generated Go source/input, platform-specific variant, fixture, or
-benchmark fixture. The nested `copr_test` and `metrics` directories are
-separate Go packages and remain separate receipt boundaries.
+edit. The root package has 20 tracked artifacts and 11,165 lines. It has 61
+top-level test/benchmark declarations and 177 function declarations in total.
+There is no `doc.go`, generated Go source/input, platform-specific variant,
+fixture, or benchmark fixture. The nested `copr_test` and `metrics`
+directories are separate Go packages and remain separate receipt boundaries.
 
-| Artifact | Lines | Git blob |
+| Artifact | Lines | Surface |
 | --- | ---: | --- |
-| `BUILD.bazel` | 128 | `1dff7d834976c871417db6989772dfe5307645df` |
-| `batch_coprocessor.go` | 1,739 | `2fe7defee64374fe313d00950f6ef45cd7919b43` |
-| `batch_coprocessor_test.go` | 587 | `42fb6e46be7d4297b3fae36d2425236160d3b2c1` |
-| `batch_request_sender.go` | 119 | `5c6d9a6cbe1927395b5331b744c60899f2d93cdf` |
-| `coprocessor.go` | 3,061 | `12d44cb352562b47a9f72aee90138d8b4238a254` |
-| `coprocessor_cache.go` | 224 | `01da36c3c3df458901011c1be7ed129eeab4cce1` |
-| `coprocessor_cache_test.go` | 259 | `24929e858830557a396c59697babb72baf9dc129` |
-| `coprocessor_test.go` | 1,213 | `bcf0cb42443feb01d18f46e426008d3e2aa776ba` |
-| `ema.go` | 64 | `dbeaf3ea16d9e9576cebf6cdea79a95397fd07ff` |
-| `ema_test.go` | 183 | `f4619594355ec39c7fff2d233f416ef81d33d69c` |
-| `key_ranges.go` | 165 | `d1d27077152aef556b7dd538c2f94538106a6b38` |
-| `key_ranges_test.go` | 126 | `e2893a3fef1c69596a998633074a50ee54d44efc` |
-| `main_test.go` | 47 | `ad6f13003c5043b448ce7de2e5aa6b5a06894b7f` |
-| `mpp.go` | 357 | `b692def3d29e83f7e7cfb797d7ce622fb3cebe18` |
-| `mpp_probe.go` | 335 | `8043e9f316c2c19556167d3aa41d6863174a3e35` |
-| `mpp_probe_test.go` | 229 | `387bc90ff3d73e6746b8d008de727bfbb6cbd12c` |
-| `range_diagnostics.go` | 94 | `14c360df8286aae87c4dbdd9ce87993e3b176684` |
-| `region_cache.go` | 1,024 | `6e7ec9edf5364110ae3d8127959190a6ac77fce4` |
-| `region_cache_test.go` | 539 | `337eedd2524644bd9bb7b9558e71d2aeda535eb9` |
-| `store.go` | 156 | `bfb635bcafaf8dee17d39a7f597d0db075d7da3c` |
+| `BUILD.bazel` | 130 | library/test target and dependencies |
+| `batch_coprocessor.go` | 1,739 | TiFlash batch task construction |
+| `batch_coprocessor_test.go` | 587 | batch task and topology tests |
+| `batch_request_sender.go` | 119 | region batch RPC sender |
+| `coprocessor.go` | 3,270 | task building, workers, retries, runtime stats |
+| `coprocessor_cache.go` | 224 | coprocessor cache |
+| `coprocessor_cache_test.go` | 259 | cache tests |
+| `coprocessor_test.go` | 1,518 | task, limiter, response, and retry tests |
+| `ema.go` | 64 | paging EMA |
+| `ema_test.go` | 183 | EMA tests |
+| `key_ranges.go` | 165 | key-range representation |
+| `key_ranges_test.go` | 126 | key-range tests |
+| `main_test.go` | 47 | package test setup |
+| `mpp.go` | 357 | MPP request plumbing |
+| `mpp_probe.go` | 335 | MPP store probing |
+| `mpp_probe_test.go` | 229 | MPP probe tests |
+| `range_diagnostics.go` | 94 | range diagnostics |
+| `region_cache.go` | 1,024 | region and bucket cache |
+| `region_cache_test.go` | 539 | region-cache tests |
+| `store.go` | 156 | coprocessor store wrapper |
 
-## Behavior and Rust boundary
+The nested `copr_test` package contains its own `BUILD.bazel`, helper test
+source, and test main; the nested `metrics` package contains its own build and
+metrics source. Their callers were inventoried but are not folded into this
+root-package line count.
 
-Go commit `0c53024bd3` fixed store-batched coprocessor lock handling: each
-`StoreBatchTaskResponse` owns its own `Locked` payload, which must be passed to
-`handleLockErr` so the child task's lock is resolved and retried through the
-ordinary fallback path. The branch was incorrectly reading the parent
-response's lock field, silently skipping child-lock resolution. The production
-fix uses the already-extracted `lockErr` value and leaves batching, retry, and
-fallback sequencing unchanged.
+## Go behavior restored
 
-`TestHandleBatchCopResponseResolvesChildLock` constructs a real mock TiKV
-store, supplies a child-only pessimistic lock, and asserts the lock resolver
-performs its RPC. It failed before the fix (`RPCStatsCount` 0) and passes after
-the fix (`RPCStatsCount` 1), alongside the existing bucket-version regression.
+This batch brings the complete root package to the fetched Go-master behavior
+after the earlier child-lock and bucket-version fixes:
 
-The Rust owner is the dependency-closed `tidb-distsql`/`tidb-txnkv` transport
-surface, which already models the StoreBatchTask wire envelope and lock
-recovery primitives. It does not own Go's `pkg/store/copr` worker lifecycle, so
-no Rust-only behavior was invented or removed in this batch. The live TiKV
-batch-worker integration and remaining runtime-stat differences stay explicit
-boundaries in `receipts/distsql_audit.md`.
+- `CoprRequestLimiter` is attached to each TiKV physical RPC attempt through
+  client-go's `RequestAttemptLimiter`. Query-scoped per-store limiters take
+  precedence over the request-wide fallback, cancellation and iterator
+  completion stop waits, and blocking wait time is exposed through
+  `LimiterWaitStats`.
+- Store batching now advertises `AllowBatchTaskDataMerge` and
+  `ExecuteBatchTasksSerially`, accepts unhinted/non-DAG tasks only when the
+  caller opts into the merged-response contract, and rebuilds a whole batch
+  only for client-go's synthetic pre-dispatch region error. Responses with a
+  context or any child data are reconciled task-by-task to avoid replaying
+  successful work.
+- A merged child response contributes execution details without emitting an
+  empty result; unanswered or region/lock-failed children are counted as one
+  fallback even when a retry fans out across multiple regions. Read-pool
+  execution details and limiter waits are retained in the iterator runtime
+  statistics, including nil-safe collection paths.
+- The prior `StoreBatchTaskResponse` child-lock resolver remains intact and is
+  covered with the existing RPC-count regression.
+
+The focused root regressions cover limiter precedence/cancellation/wait stats,
+merged and unanswered child responses, safe region-cache-miss rebuilding,
+fallback accounting after a split, child-lock resolution, and bucket-version
+updates. The nested integration tests additionally cover request/query limiter
+concurrency, batch-store construction, and runaway-checker accounting.
+
+## Rust boundary
+
+Rust has no dependency-closed owner for Go's `pkg/store/copr` worker lifecycle,
+region-cache retry orchestration, client-go request-attempt callback, or
+TiDB-specific runtime-stat aggregation. The Rust `tidb-distsql`/`tidb-txnkv`
+owners remain lower-level transport boundaries; no speculative coprocessor
+facade or Rust-only execution path was added or removed here.
 
 ## Ready validation
 
-- Focused pre-fix regression: `go test ./pkg/store/copr -run '^TestHandleBatchCopResponseResolvesChildLock$' -count=1 -vet=off` failed as expected.
-- Focused post-fix tests: failpoint-wrapped `TestHandleBatchCopResponse(ResolvesChildLock|UpdatesChildBucketsOnVersionNotMatch)` passed.
-- Full package: `./tools/check/failpoint-go-test.sh ./pkg/store/copr -count=1 -vet=off` passed (all tests).
-- `make bazel_prepare` was attempted as required for the new test/imports but is blocked because `bazel` is not installed; the two exact Gazelle test dependencies were added to `BUILD.bazel`.
-- `make lint` and `git diff --check` are required completion gates for this batch and are recorded with the commit.
+- Pre-fix package compilation failed at the old `CoprRequestRateLimit`
+  references after `pkg/kv` had restored Go master's typed limiter fields;
+  this was the direct signal for the migration in this batch.
+- Focused root regressions passed:
+
+  ```text
+  PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+  GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+  TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh pkg/store/copr \
+    -run 'Test(CoprRequestLimiter|HandleBatchCopResponse|BuildTasks)$' \
+    -count=1 -vet=off
+  # passed
+  ```
+
+- Full root package suite passed with the same failpoint wrapper:
+
+  ```text
+  PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+  GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+  TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh pkg/store/copr \
+    -count=1 -vet=off
+  # passed (44.440s)
+  ```
+
+- The nested `pkg/store/copr/copr_test` run in the integration worktree is
+  currently blocked by the separate executor/distsql migration still calling
+  `SetCoprRequestRateLimit`; the coherent Go-master snapshot is the source
+  reference for those tests until that owning package lands.
+- `make bazel_prepare` was attempted with the pinned Go environment and is
+  blocked because the local `bazel` executable is unavailable. The root and
+  nested BUILD dependency/shard changes are included in this batch.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all --
+  --check` and `git diff --check` passed. Repository `make lint` is a Ready
+  gate for the final worktree; current integration lint remains coupled to
+  unrelated in-progress migrations.
 
 ## Risks and remaining work
 
-Correctness risk is limited to the previously skipped child-lock resolution;
-the existing resolver handles the lock type and retry semantics. Compatibility
-risk is limited to additional test dependencies. Performance is unchanged on
-the no-lock path and now performs the intended resolver work when a child lock
-is reported. External live-TiKV/PD behavior, Bazel analysis, and the nested
-`copr_test`/`metrics` packages were not changed or claimed complete here.
+Correctness risk is concentrated in response-shape handling: only a proven
+pre-dispatch fake region error permits whole-batch rebuild, while any possible
+child result uses flat reconciliation. Compatibility risk is limited to the
+client-go retry callback and the two advertised StoreBatch flags; older stores
+continue to use per-task responses. The no-limiter and no-batch paths retain
+their previous allocation and scheduling behavior. Live TiKV/PD behavior,
+Bazel analysis, the nested package's current-branch test run, and a Rust
+coprocessor worker implementation remain unverified or explicitly outside
+this package boundary.
