@@ -515,11 +515,10 @@ fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut E
 /// to every comparison in an already-built expression tree.
 ///
 /// Go runs this inside `getFunction` (`:1984`), where the comparison is
-/// constructed. This tier builds comparisons in several places (binary
-/// operators, `BETWEEN`, the simple `CASE`), none of which holds an
-/// evaluation context, so the refinement runs as one pass over the finished
-/// tree instead. It reads only the two arguments -- exactly what `refineArgs`
-/// reads -- so the placement changes nothing about the result.
+/// constructed. This tier also retains a tree walk for comparisons assembled
+/// before a real function builder is available, but accepts the concrete
+/// `Columns` context so the generated cast nodes can follow Go's
+/// `BuildCastFunction` constant-folding boundary.
 ///
 /// Ported: the `int non-constant [cmp] non-int constant` arm (`:1811-1833`)
 /// and its mirror through `symmetricOp` (`:1836-1854`), and the
@@ -529,7 +528,7 @@ fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut E
 /// `refineArgsByUnsignedFlag` (`:1919`) and the plan-cache guard
 /// `allowCmpArgsRefining4PlanCache` (`:1789`) -- which matters only once
 /// refined plans are cached across parameter values.
-pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
+pub fn refine_comparisons<C: Columns>(expr: &mut Expression, ctx: &C) -> Result<(), EvalError> {
     let Expression::ScalarFunction(function) = expr else {
         return Ok(());
     };
@@ -544,7 +543,10 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
 /// descendants. `NewFunction` calls this root form for the one function it is
 /// constructing; [`refine_comparisons`] remains the compatibility walk for an
 /// AST tree whose nodes were built before a real function builder was wired.
-pub(crate) fn refine_comparison(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
+pub(crate) fn refine_comparison<C: Columns>(
+    expr: &mut Expression,
+    ctx: &C,
+) -> Result<(), EvalError> {
     let Expression::ScalarFunction(function) = expr else {
         return Ok(());
     };
@@ -566,7 +568,7 @@ pub(crate) fn refine_comparison(expr: &mut Expression, ctx: &dyn Columns) -> Res
     wrap_integer_operand_for_decimal_compare(left, right);
     wrap_year_operand_for_datetime_compare(left, right);
     prepare_json_comparison_args(&mut function.args);
-    wrap_comparison_arguments(&mut function.args, ctx.connection_charset_info())?;
+    wrap_comparison_arguments_with_context(&mut function.args, ctx.connection_charset_info(), ctx)?;
     Ok(())
 }
 
@@ -609,12 +611,39 @@ pub(crate) fn wrap_comparison_arguments(
         EvalType::Json => wrap_with_cast_as_json(expression),
         EvalType::VectorFloat32 => wrap_with_cast_as_vector_float32(expression),
     };
-    let wrapped = arguments
+    *arguments = arguments
         .iter()
         .cloned()
         .map(wrap)
         .collect::<Result<Vec<_>, _>>()?;
-    *arguments = wrapped;
+    Ok(())
+}
+
+/// Comparison signature generation's context-aware wrapper.
+///
+/// Go's `generateCmpSigs` calls `WrapWithCastAs*`, which delegates to
+/// `BuildCastFunction`; that builder folds every wholly-constant cast except
+/// JSON before the comparison signature is returned. The AST rewriter also
+/// uses [`wrap_comparison_arguments`] without an evaluation context, so keep
+/// that structural path intact and perform the source-shaped fold only when
+/// the real comparison builder supplies its `Columns` context.
+fn wrap_comparison_arguments_with_context<C: Columns>(
+    arguments: &mut Vec<Expression>,
+    connection: (&str, &str),
+    ctx: &C,
+) -> Result<(), EvalError> {
+    wrap_comparison_arguments(arguments, connection)?;
+    // `BuildCastFunction` folds its newly-built cast in the statement
+    // context. This is observable for temporal and numeric constants: the
+    // comparison receives a `Constant`, not a Rust-only cast node, and
+    // conversion warnings are raised once during construction.
+    for argument in arguments {
+        crate::constant_fold::fold_constant_in_mode(
+            argument,
+            ctx,
+            crate::constant_fold::ConstantFoldMode::Normal,
+        );
+    }
     Ok(())
 }
 
@@ -1008,7 +1037,13 @@ mod tests {
         }
 
         let (valid, warnings) = refine("nulleq", duration_column(), string_constant("10:00:00"));
-        assert_eq!(constant_of(&valid, 1), Datum::new_string("10:00:00"));
+        assert_eq!(
+            constant_of(&valid, 1),
+            Datum::Duration(tidb_datatype::MySqlDuration::from_raw_parts(
+                10 * 3_600 * 1_000_000_000,
+                6,
+            ))
+        );
         assert!(warnings.is_empty(), "{warnings:?}");
 
         let null = Expression::Constant(Constant::new_null());
@@ -1041,18 +1076,13 @@ mod tests {
             assert_eq!(target.decimal(), 6);
         }
 
-        // An UNPARSEABLE constant is left in place: folding it to NULL would
-        // silence the per-row 1292 `Incorrect datetime value` warnings the
-        // evaluated comparison raises (`ops::time_compare_ordering`), which
-        // is the warning surface a live session observes.
+        // Go's BuildCastFunction folds this invalid non-JSON cast while the
+        // comparison signature is built. The folded NULL keeps the source's
+        // one 1292 warning, but moves it to construction time rather than
+        // leaving a Rust-only cast node for per-row evaluation.
         let (invalid, warnings) = refine("lt", date_column(), string_constant("not-a-datetime"));
-        assert!(
-            constant_of(&invalid, 1)
-                .sql_string()
-                .is_ok_and(|text| text == "not-a-datetime"),
-            "an unparseable constant must stay unfolded"
-        );
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(constant_of(&invalid, 1), Datum::Null);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
     }
 
     #[test]
@@ -1177,9 +1207,9 @@ mod tests {
     /// computes the right (empty) answer -- captured: `a = '3.5'` returns no
     /// row and warns zero times.
     #[test]
-    fn an_inexact_equality_is_left_unrefined() {
+    fn an_inexact_equality_casts_the_unrefined_constant_like_go() {
         let (expr, _) = refine("eq", int_column(), string_constant("3.5"));
-        assert_eq!(constant_of(&expr, 1), Datum::new_string("3.5"));
+        assert_eq!(constant_of(&expr, 1), Datum::Real(3.5));
     }
 
     /// An overflowing constant is Go's other `isExceptional`; left unrefined

@@ -162,3 +162,50 @@ use the Go string domain, and other temporal/numeric comparison domains are
 unchanged. Compatibility risk is confined to replacing a Rust panic with the
 Go duration comparison or NULL result; there is no new externally visible
 state or performance-sensitive path.
+
+## Rust follow-up: comparison signature cast folding
+
+The rolling Go authority is `origin/master` at
+`17daba3dfde858eebef60f6e4e1bb37268269225`. Before editing, the complete
+`pkg/expression` root was re-inventoried: 137 direct artifacts and 128,744
+lines (68 production files, 60 tests, seven generated sources, `BUILD.bazel`,
+and `OWNERS`), with 208 artifacts and 146,247 lines across its nested package
+boundaries. The Rust `tidb-expr` owner was rechecked at 175 artifacts and
+104,998 lines, including all production/test/support files, standalone
+fixtures, generated inputs, platform variants, build metadata, and the shared
+`rust/scripts/aggregate-tests.rs` input. No Go, Bazel, generated output,
+fixture, platform, or build artifact was changed.
+
+Go's `BuildCastFunctionWithCheck` (`pkg/expression/builtin_cast.go`) calls
+`FoldConstant` for every non-JSON cast returned while
+`compareFunctionClass.generateCmpSigs` builds its comparison signature. Rust's
+comparison wrapper previously retained `cast_time`, `cast_duration`,
+`cast_double`, and similar scalar nodes because it had no evaluation context;
+this was Rust-only observable shape and moved conversion warnings to row
+evaluation. `refine_comparisons` now carries its concrete `Columns` context
+through comparison signature generation and folds the newly-created cast in
+the same normal mode. The no-context AST rewriter helper remains structural,
+and JSON casts remain intentionally unfurled, matching Go's exception.
+
+The focused source-derived regressions cover valid and invalid duration casts
+(including NULL-safe equality), DATE/DATETIME string casts (including one
+1292 warning and a folded NULL for an invalid value), and an inexact numeric
+equality whose unrefined string is cast to a REAL constant. A clean pre-fix
+`a65edecc10` worktree failed
+`builtin_compare::tests::invalid_duration_constants_are_rewritten_once_on_either_side`
+because the valid operand was still `ScalarFunction(cast_time(Const:...))`
+instead of a `Constant`; the fixed tree passes all 13 focused comparison tests.
+
+Validation used the Ready profile:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib builtin_compare::tests -- --nocapture --test-threads=1` — 13 focused tests passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked -p tidb-expr --all-targets` — owner all-target compile passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,083 passed, seven pre-existing failures (compare-control shape expectations, constant-fold/const-level expectations, and the shared unary-minus hex expectation), and 136 documented gap tests ignored.
+- `cargo +nightly-2026-08-22 fmt --all -- --check`, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint`, and `git diff --check` — formatting, lint, and whitespace gates passed.
+
+Correctness risk is limited to non-JSON casts created by comparison signature
+generation with a real context; it restores Go's constant value and warning
+timing without changing the context-free rewriter path. Compatibility risk is
+that invalid temporal/numeric constants now become NULL or typed constants at
+build time, as in Go. JSON and non-constant operands retain their prior paths;
+there is no new performance-sensitive loop.

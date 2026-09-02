@@ -5587,6 +5587,11 @@ For each bounded behavior cluster:
   `HOUR_MICROSECOND`, and `DAY_MICROSECOND`; the complete inventory, focused
   regression, and fail-before evidence are recorded in
   `rust/testport/receipts/b073.md`.
+- `pkg/expression` comparison signature generation now folds non-JSON cast
+  constants with the real `Columns` context, matching Go's
+  `BuildCastFunction` boundary. Duration, temporal, invalid-cast warning, and
+  inexact numeric regressions plus the complete inventory are recorded in
+  `rust/testport/receipts/expression_collation_audit.md`.
 
 ## Outcomes & Retrospective
 
