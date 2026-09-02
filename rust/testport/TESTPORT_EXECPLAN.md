@@ -269,6 +269,14 @@ For each bounded behavior cluster:
   `receipts/ddl_auto_presplit_audit.md`; this is one package-level batch, not a
   repository-wide parity claim.
 
+- 2026-09-02: repaired the focused Rust `pkg/ddl` automatic-pre-split test
+  helpers after the datatype owner removed its blanket `FieldType::default()`
+  implementation. The two existing quantile regressions now construct the
+  source-shaped `LongLong` field type explicitly; the `tidb-exec` owner suite
+  passes 8 tests and the broader automatic-pre-split source suite passes 3.
+  This compile-correctness follow-up changes no production planner behavior;
+  details are recorded in `receipts/ddl_auto_presplit_audit.md`.
+
 - 2026-09-02: refreshed and completed the Go-master
   `pkg/statistics/handle/storage` package boundary at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: all 12 production, test, and

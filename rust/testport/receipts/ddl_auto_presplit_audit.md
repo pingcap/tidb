@@ -83,6 +83,13 @@ the same durable marker and its dependency-closed planning half:
 No Rust-only automatic-pre-split behavior was found to remove. Existing
 manual `PRE_SPLIT_REGIONS` behavior remains separate and takes precedence.
 
+The focused Rust planner helpers now construct the source-shaped integer
+`FieldType` explicitly with `FieldType::new(FieldTypeCode::LongLong)`. The
+datatype owner intentionally has no `Default` implementation, so the prior
+test-only `FieldType::default()` calls prevented the `tidb-exec` library (and
+unrelated owner tests) from compiling. This is a compile-correctness repair;
+planner behavior and production code are unchanged.
+
 ## Focused regression matrix
 
 | Go behavior | Rust evidence | Status |
@@ -123,6 +130,12 @@ env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime
     DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
     cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-exec -q
 # PASS (existing warnings only)
+
+env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler \
+    DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib \
+    cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+      -p tidb-exec --lib cluster_auto_id -- --test-threads=1
+# PASS: 8 tests; this owner compile gate also covers auto_pre_split unit helpers
 
 make lint
 # PASS

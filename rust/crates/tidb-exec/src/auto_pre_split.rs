@@ -359,14 +359,29 @@ fn codec_index(index: &IndexInfo) -> Result<CodecIndexInfo, AutoPreSplitError> {
 #[cfg(test)]
 mod tests {
     use super::{merge_values, sample_values, weighted_value};
-    use tidb_datatype::Datum;
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
     #[test]
     fn topn_and_histogram_values_merge_before_quantile_sampling() {
         let values = vec![
-            weighted_value(Datum::new_int(10), 15, &tidb_datatype::FieldType::default()).unwrap(),
-            weighted_value(Datum::new_int(10), 5, &tidb_datatype::FieldType::default()).unwrap(),
-            weighted_value(Datum::new_int(20), 20, &tidb_datatype::FieldType::default()).unwrap(),
+            weighted_value(
+                Datum::new_int(10),
+                15,
+                &FieldType::new(FieldTypeCode::LongLong),
+            )
+            .unwrap(),
+            weighted_value(
+                Datum::new_int(10),
+                5,
+                &FieldType::new(FieldTypeCode::LongLong),
+            )
+            .unwrap(),
+            weighted_value(
+                Datum::new_int(20),
+                20,
+                &FieldType::new(FieldTypeCode::LongLong),
+            )
+            .unwrap(),
         ];
         let (merged, total) = merge_values(values);
         assert_eq!(total, 40);
@@ -378,8 +393,18 @@ mod tests {
     #[test]
     fn one_value_crossing_multiple_thresholds_is_emitted_once() {
         let values = vec![
-            weighted_value(Datum::new_int(10), 60, &tidb_datatype::FieldType::default()).unwrap(),
-            weighted_value(Datum::new_int(20), 40, &tidb_datatype::FieldType::default()).unwrap(),
+            weighted_value(
+                Datum::new_int(10),
+                60,
+                &FieldType::new(FieldTypeCode::LongLong),
+            )
+            .unwrap(),
+            weighted_value(
+                Datum::new_int(20),
+                40,
+                &FieldType::new(FieldTypeCode::LongLong),
+            )
+            .unwrap(),
         ];
         assert_eq!(
             sample_values(&values, 100, 0.2),
