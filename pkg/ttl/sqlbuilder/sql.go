@@ -52,12 +52,11 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 	return expr.Restore(restoreCtx)
 }
 
-// writeCursorDatum writes a datum used by a pagination or task-range predicate.
-// ENUM is physically ordered by its numeric ordinal rather than its display
-// string, so its cursor must use the ordinal form as well.
-// DELETE key predicates intentionally keep using writeDatum: their equality
-// comparisons do not depend on the physical ordering.
-func writeCursorDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
+// writePhysicalKeyDatum writes a datum used to locate or order a physical key.
+// ENUM must use its numeric ordinal: ordinal 0 (the special error value) and an
+// explicitly declared empty-string member have the same display value, so the
+// display string is neither a stable cursor nor an exact key predicate.
+func writePhysicalKeyDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
 	if d.IsNull() {
 		restoreCtx.WriteKeyWord("NULL")
 		return nil
@@ -176,7 +175,7 @@ func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, d
 }
 
 func (b *SQLBuilder) writeCursorCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
-	return b.writeCondition(cols, op, dp, writeCursorDatum)
+	return b.writeCondition(cols, op, dp, writePhysicalKeyDatum)
 }
 
 func (b *SQLBuilder) writeCondition(
@@ -223,7 +222,7 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 	return nil
 }
 
-// WriteInCondition writes an IN condition
+// WriteInCondition writes an IN condition for physical key values.
 func (b *SQLBuilder) WriteInCondition(cols []*model.ColumnInfo, dps ...[]types.Datum) error {
 	switch b.state {
 	case writeSelOrDel:
@@ -245,7 +244,7 @@ func (b *SQLBuilder) WriteInCondition(cols []*model.ColumnInfo, dps ...[]types.D
 		} else {
 			b.restoreCtx.WritePlain(", ")
 		}
-		if err := b.writeDataPoint(cols, v); err != nil {
+		if err := b.writeKeyDataPoint(cols, v); err != nil {
 			return err
 		}
 	}
@@ -309,8 +308,8 @@ func (b *SQLBuilder) writeColNames(cols []*model.ColumnInfo, writeBrackets bool)
 	}
 }
 
-func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) error {
-	return b.writeDataPointWith(cols, dp, writeDatum)
+func (b *SQLBuilder) writeKeyDataPoint(cols []*model.ColumnInfo, dp []types.Datum) error {
+	return b.writeDataPointWith(cols, dp, writePhysicalKeyDatum)
 }
 
 func (b *SQLBuilder) writeDataPointWith(

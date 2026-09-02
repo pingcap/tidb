@@ -620,11 +620,61 @@ func TestEnumPaginationUsesPhysicalValues(t *testing.T) {
 
 	deleteSQL, err := sqlbuilder.BuildDeleteSQL(tbl, boundary, time.Unix(1, 0).UTC())
 	require.NoError(t, err)
-	require.Contains(t, deleteSQL, "WHERE (`e`, `id`) IN (('a', 7))")
+	require.Contains(t, deleteSQL, "WHERE (`e`, `id`) IN ((2, 7))")
 	for _, generatedSQL := range []string{sql, rangeSQL, deleteSQL} {
 		_, _, err = parser.New().Parse(generatedSQL, "", "")
 		require.NoError(t, err, generatedSQL)
 	}
+}
+
+func TestEnumClusteredPKDeleteUsesPhysicalValues(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table ttl_enum_delete(
+		e enum('', 'a') not null,
+		id bigint not null,
+		expired_at datetime not null,
+		primary key(e, id) clustered
+	) TTL=expired_at + interval 1 hour`)
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec(`insert into ttl_enum_delete values
+		(0, 1, '2024-01-01 00:00:00'),
+		('', 1, '2024-01-01 00:00:00')`)
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_enum_delete"))
+	require.NoError(t, err)
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+	expire := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Delete ordinal 1 first while ordinal 0 still exists. Both display as an
+	// empty string, so a string key predicate could delete the wrong row.
+	ordinal1 := [][]types.Datum{{
+		types.NewMysqlEnumDatum(types.Enum{Name: "", Value: 1}),
+		types.NewIntDatum(1),
+	}}
+	deleteOrdinal1, err := sqlbuilder.BuildDeleteSQL(ttlTbl, ordinal1, expire)
+	require.NoError(t, err)
+	require.Contains(t, deleteOrdinal1, "WHERE (`e`, `id`) IN ((1, 1))")
+	plan := tk.MustQuery("explain format='brief' " + deleteOrdinal1)
+	plan.CheckContain("Point_Get")
+	plan.CheckNotContain("TableFullScan")
+	tk.MustExec(deleteOrdinal1)
+	tk.MustQuery("select e+0, id from ttl_enum_delete order by e, id").Check(testkit.Rows("0 1"))
+
+	ordinal0 := [][]types.Datum{{
+		types.NewMysqlEnumDatum(types.Enum{Name: "", Value: 0}),
+		types.NewIntDatum(1),
+	}}
+	deleteOrdinal0, err := sqlbuilder.BuildDeleteSQL(ttlTbl, ordinal0, expire)
+	require.NoError(t, err)
+	require.Contains(t, deleteOrdinal0, "WHERE (`e`, `id`) IN ((0, 1))")
+	plan = tk.MustQuery("explain format='brief' " + deleteOrdinal0)
+	plan.CheckContain("Point_Get")
+	plan.CheckNotContain("TableFullScan")
+	tk.MustExec(deleteOrdinal0)
+	tk.MustQuery("select e+0, id from ttl_enum_delete").Check(testkit.Rows())
 }
 
 func TestEnumClusteredPKPaginationUsesRangeScan(t *testing.T) {
