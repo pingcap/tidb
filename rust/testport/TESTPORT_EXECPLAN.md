@@ -1048,15 +1048,16 @@ For each bounded behavior cluster:
   trait was added. Recorded the explicit boundary in
   `receipts/objstore_storeapi.md`.
 
-- 2026-09-01: audited the complete Go-master `pkg/objstore/s3like` package
+- 2026-09-02: refreshed the complete Go-master `pkg/objstore/s3like` package
   before editing: eight root artifacts and 1,424 lines, including all S3-like
   response/client contracts, ranged reader and async writer, metrics,
-  permissions, retry adapter, options/flags, CRUD/walk/range/presign paths, and
-  the focused permission test. The exact current-master delta adds retry-log
-  suppression and positive presign-expiration validation. Rust has no
-  dependency-closed S3-compatible backend owner, so no Rust-only behavior was
-  removed and no speculative cloud stack was added. Recorded the explicit
-  boundary in `receipts/objstore_s3like.md`.
+  permissions, retry adapter, options/flags, CRUD/walk/range/presign paths,
+  and the generated mock boundary. Restored Go master's retry-log suppressor
+  and positive presign-expiration validation, with focused regressions in the
+  existing permission test target. Rust has no dependency-closed S3-compatible
+  backend owner, so no Rust-only behavior was removed and no speculative cloud
+  stack was added. Ready evidence and the explicit parity boundary are in
+  `receipts/objstore_s3like.md`.
 
 - 2026-09-01: audited the separate generated Go package
   `pkg/objstore/s3like/mock` in full: its 2 tracked artifacts and 261 lines,
@@ -3140,12 +3141,15 @@ For each bounded behavior cluster:
       append helpers. The receipt and Ready gates are in
       `receipts/statistics_handle_cache_internal_testutil.md` and
       `docs/operations/statistics-handle-cache-internal-testutil-audit-execplan.md`.
-- [x] Audit the complete pinned `pkg/statistics/handle/cache/metrics` package.
-      Remove the label-only Rust carrier and its two source-absent tests: the
-      Go package exposes eight initialized Prometheus handles, not label
-      metadata, and completing it requires the absent atomic `pkg/metrics`
-      owner. The inventory is in
-      `receipts/statistics_handle_cache_metrics_audit.md`.
+- [x] Re-audit the complete `pkg/statistics/handle/cache/metrics` package at Go
+      master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two artifacts and 67
+      lines, with eight initialized Prometheus handles and no source tests,
+      fixtures, generated/platform variants, or benchmarks. The obsolete
+      label-only Rust carrier is removed, while the remaining private-vector
+      seed stays explicitly unclaimed until the atomic `pkg/metrics` owner
+      exists. Inventory and Ready blocker gates are in
+      `receipts/statistics_handle_cache_metrics_audit.md` and
+      `docs/operations/statistics-handle-cache-metrics-audit-execplan.md`.
 - [x] Audit the complete pinned root `pkg/statistics/handle/cache` package.
       Remove three private-helper carriers and eight supplemental tests: Go's
       package behavior is the integrated atomic cache, SQL row cache, metrics,
