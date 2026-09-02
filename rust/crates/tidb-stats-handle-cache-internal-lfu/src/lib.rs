@@ -42,7 +42,12 @@ impl KeySetShard {
     }
 
     fn shard(&self, key: i64) -> &RwLock<HashMap<i64, Arc<Table>>> {
-        &self.shards[(key as usize) % KEY_SET_COUNT]
+        let index = key % KEY_SET_COUNT as i64;
+        let index = match usize::try_from(index) {
+            Ok(index) => index,
+            Err(_) => panic!("negative table ID is not a valid Go shard index: {key}"),
+        };
+        &self.shards[index]
     }
 
     fn get(&self, key: i64) -> Option<Arc<Table>> {
@@ -211,7 +216,13 @@ impl Lfu {
     }
 
     fn with_internal_cost(total_mem_cost: i64, ignore_internal_cost: bool) -> Result<Self, String> {
-        let cost = adjust_mem_cost(total_mem_cost)?;
+        let mut cost = adjust_mem_cost(total_mem_cost)?;
+        // Go's intest.InTest path avoids an oversized TinyLFU sketch when the
+        // caller asks for the default quota. The test-only constructor passes
+        // this same mode through `ignore_internal_cost`.
+        if ignore_internal_cost && total_mem_cost == 0 {
+            cost = 5_000_000;
+        }
         metrics::capacity_gauge().set(cost as f64);
         let state = Arc::new(State {
             tables: KeySetShard::new(),
@@ -429,5 +440,18 @@ mod tests {
 
         assert_eq!(cache.cost(), one_table_cost);
         assert_eq!(cache.len(), 3);
+    }
+
+    #[test]
+    #[should_panic]
+    fn negative_table_id_matches_go_shard_indexing() {
+        let cache = Lfu::new_for_test(100).expect("LFU");
+        cache.put(-1, new_mock_statistics_table(1, 1, true, false, false));
+    }
+
+    #[test]
+    fn test_mode_zero_capacity_uses_go_override() {
+        let cache = Lfu::new_for_test(0).expect("LFU");
+        assert_eq!(cache.primary().expect("primary").max_cost(), 5_000_000);
     }
 }

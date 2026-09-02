@@ -3121,12 +3121,16 @@ For each bounded behavior cluster:
       by shared Rust cache ownership. The receipt, focused owner tests, and
       Ready gates are in `receipts/statistics_handle_cache_internal_mapcache.md`
       and `docs/operations/statistics-handle-cache-internal-mapcache-audit-execplan.md`.
-- [x] Audit the pinned `pkg/statistics/handle/cache/internal/lfu` package as
-      one five-artifact unit and remove its table-free key-set, shard,
-      caller-memory, source-absent test, and stale function-batch carriers.
-      The package remains explicitly unclaimed until complete pinned
-      Ristretto behavior is available. The inventory is in
-      `receipts/statistics_handle_cache_internal_lfu_audit.md`.
+- [x] Re-audit the complete `pkg/statistics/handle/cache/internal/lfu` unit at
+      Go master `c6054025ed4c32ab3672a2a24ea46892714d21ec`: all five source and
+      BUILD artifacts (782 lines), ten race-enabled source tests, and no hidden
+      fixtures or generated/platform variants. The Rust owner now reproduces
+      Go's negative-ID shard failure and test-mode zero-quota override through
+      focused regressions; the package remains explicitly unclaimed for full
+      parity until the external Ristretto dependency has a complete pinned
+      owner. Inventory, gap disposition, and Ready gates are in
+      `receipts/statistics_handle_cache_internal_lfu_audit.md` and
+      `docs/operations/statistics-handle-cache-internal-lfu-audit-execplan.md`.
 - [x] Complete the pinned `pkg/statistics/handle/cache/internal/testutil`
       support package in `tidb-stats-handle-cache-internal-testutil`: construct
       actual statistics tables, optional production payloads, full-load
