@@ -21,8 +21,9 @@
 //! dispatch (the `builtinFunc` `eval*` methods, keyed by `tipb.ScalarFuncSig`)
 //! is a separate, larger unit built on `EvalContext`/`chunk.Row`.
 //!
-//! Ported: the struct and its argument-structural methods, const-level rules,
-//! the common `ReHashCode` path, structural `Hash64`/`Equals`, and evaluation
+//! Ported: the struct and its argument-structural methods, recursive
+//! `Decorrelate`, const-level rules, the common `ReHashCode` path, structural
+//! `Hash64`/`Equals`, and evaluation
 //! for operators plus the builtin families owned by the shared dispatch
 //! modules. Unknown builtin names fail explicitly. Remaining structural gaps
 //! are the `Grouping` branch of `ReHashCode` (needs
@@ -33,6 +34,7 @@ use std::hash::{Hash, Hasher};
 use crate::context::{Columns, EvalError};
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, SCALAR_FUNCTION_FLAG};
+use crate::schema::Schema;
 use tidb_ast::{BinaryOp, CiString, UnaryOp};
 use tidb_chunk::row::Row;
 use tidb_codec::encode_compact_bytes;
@@ -332,6 +334,23 @@ impl ScalarFunction {
         self.in_string_non_const_args.clear();
         self.in_string_has_null = false;
         self.json_schema_cache = Default::default();
+    }
+
+    /// Go `ScalarFunction.Decorrelate`: recursively decorrelate every
+    /// argument and invalidate hashes/caches derived from the old tree.
+    ///
+    /// Expressions are owned values in Rust, so this method rebuilds a clone
+    /// rather than mutating an aliased node as Go does.
+    #[must_use]
+    pub fn decorrelate(&self, schema: Option<&Schema>) -> Self {
+        let mut decorrelated = self.clone();
+        decorrelated.args = self
+            .args
+            .iter()
+            .map(|argument| argument.decorrelate(schema))
+            .collect();
+        decorrelated.invalidate_cached_arguments();
+        decorrelated
     }
 
     /// Go `GetStaticType` / `GetType` (which ignores its `EvalContext`).

@@ -24,9 +24,9 @@
 //! Go uses (`abs`, `plus`, `rand`, `uuid`, `getparam`) and direct node
 //! construction only where Go's own walk leaves an unfolded node in place.
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, Decimal, EvalType, FieldType, FieldTypeCode};
 
-use crate::column::Column;
+use crate::column::{Column, CorrelatedColumn};
 use crate::constant::{Constant, ParamMarker};
 use crate::context::NoColumns;
 use crate::expr_util::{FunctionBuilder, RealFunctionBuilder};
@@ -51,7 +51,7 @@ fn int_type() -> FieldType {
 /// - `NewZero().Equal(ctx, NewOne())` is false: binary-compare over values.
 ///
 /// The `Decorrelate(nil)`-identity and `PropagateType(ETReal)` assertions of
-/// the same Go test stay with the ignored-gap stub below.
+/// the same Go test are covered by the focused parity test below.
 #[test]
 fn test_constant_core_invariants() {
     let zero = Expression::Constant(Constant::new(Datum::Int(0), int_type()));
@@ -65,15 +65,61 @@ fn test_constant_core_invariants() {
     assert!(!zero.equal(&one));
 }
 
-/// go-parity-gap: TestConstant's remainder --
-/// `NewZero().Decorrelate(nil).Equal(ctx, NewZero())` and the
-/// `PropagateType(ctx.GetEvalCtx(), types.ETReal, con...)` block that re-types
-/// a DECIMAL constant to flen 48 / decimal 30 -- is not representable: this
-/// crate defers `Expression.Decorrelate` (see column.rs's module-header DEFERRED
-/// list) and has no ported `PropagateType`.
 #[test]
-#[ignore = "go-parity-gap: Decorrelate and PropagateType are deferred units in tidb-expr, so TestConstant's Decorrelate-identity and ETReal-retyping assertions have no carrier"]
-fn test_constant_decorrelate_and_propagate_type_fragments() {}
+fn test_constant_decorrelate_and_propagate_type_fragments() {
+    let zero = Expression::Constant(Constant::new(Datum::Int(0), int_type()));
+    assert!(zero.decorrelate(None).equal(&zero));
+
+    let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
+    decimal_type.set_flen(9);
+    decimal_type.set_decimal(8);
+    let mut decimal = Expression::Constant(Constant::new(
+        Datum::Decimal(Decimal::from_literal("5.04600000")),
+        decimal_type,
+    ));
+    crate::expression::propagate_type(&mut decimal, EvalType::Real);
+    let ty = decimal.static_type().expect("constant has a static type");
+    assert_eq!(ty.code(), FieldTypeCode::NewDecimal);
+    assert_eq!(ty.flen(), 48);
+    assert_eq!(ty.decimal(), 30);
+}
+
+/// GO PORT of `pkg/expression/scalar_function.go:451`.
+///
+/// Scalar decorrelation must recurse into arguments and leave the original
+/// owned tree untouched, while an outer schema turns a matching correlated
+/// column into its plain-column form.
+#[test]
+fn test_scalar_function_decorrelate_rebuilds_arguments() {
+    let column = Column::new(42, int_type());
+    let expression = Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("plus"),
+        int_type(),
+        vec![Expression::CorrelatedColumn(CorrelatedColumn::new(
+            column.clone(),
+        ))],
+    ));
+    assert!(expression.is_correlated());
+
+    let schema = Schema::new(vec![column]);
+    let decorrelated = expression.decorrelate(Some(&schema));
+    assert!(!decorrelated.is_correlated());
+    let Expression::ScalarFunction(function) = decorrelated else {
+        panic!("decorrelation must preserve the scalar-function node");
+    };
+    assert!(matches!(function.args.as_slice(), [Expression::Column(_)]));
+    assert!(expression.is_correlated());
+}
+
+/// Go's `CorrelatedColumn.Decorrelate(nil)` dereferences the schema pointer;
+/// preserve that invalid-call boundary instead of inventing a Rust fallback.
+#[test]
+#[should_panic(expected = "CorrelatedColumn::decorrelate requires a schema")]
+fn test_correlated_decorrelate_requires_schema() {
+    let expression =
+        Expression::CorrelatedColumn(CorrelatedColumn::new(Column::new(42, int_type())));
+    let _ = expression.decorrelate(None);
+}
 
 /// GO PORT of `pkg/expression/expression_test.go:157 TestIsBinaryLiteral`.
 ///

@@ -23,18 +23,17 @@
 //!
 //! SEED SCOPE (grown incrementally, like `meta/model` was): the [`Column`]
 //! variant plus [`Schema`] are ported here (the type every plan node exposes).
-//! DEFERRED variants and behavior: `Constant`, `ScalarFunction`,
-//! `CorrelatedColumn`, and the ~30 `Eval*`/`GetType(ctx)`/`ResolveIndices`/
+//! DEFERRED behavior: the ~30 `Eval*`/`GetType(ctx)`/`ResolveIndices`/
 //! `ExplainInfo` methods of the interface (they need `EvalContext`,
 //! `chunk.Row`, and the `builtinFunc` dispatch). Structural, context-free
-//! methods (identity, hash code, canonical semantic hash, const-level) are
-//! ported now.
+//! methods (identity, decorrelation, type propagation, hash code, canonical
+//! semantic hash, const-level) are ported now for all four node variants.
 
 pub use crate::column::{Column, CorrelatedColumn};
 pub use crate::constant::{Constant, ParamMarker};
 pub use crate::scalar_function::ScalarFunction;
 pub use crate::schema::{KeyInfo, Schema};
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, MAX_DECIMAL_WIDTH};
 
 // Type tags written as the first byte of an expression `HashCode`
 // (`pkg/expression/expression.go`).
@@ -42,6 +41,11 @@ pub(crate) const CONSTANT_FLAG: u8 = 0;
 pub(crate) const COLUMN_FLAG: u8 = 1;
 pub(crate) const SCALAR_FUNCTION_FLAG: u8 = 3;
 pub(crate) const PARAMETER_FLAG: u8 = 4;
+
+/// Go `mysql.NotFixedDec` (`pkg/parser/mysql/type.go`).
+const NOT_FIXED_DEC: i64 = 31;
+/// Go `mysql.MaxRealWidth` (`pkg/parser/mysql/type.go`).
+const MAX_REAL_WIDTH: i64 = 23;
 
 /// Go `ConstLevel` (a `uint`): how constant an expression is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -518,6 +522,70 @@ fn proof_from_constant(constant: &Constant) -> NullRejectProof {
     }
 }
 
+/// Borrows an expression's own declared result type for context-free metadata
+/// propagation.
+fn ret_type_mut(expr: &mut Expression) -> Option<&mut FieldType> {
+    match expr {
+        Expression::Column(column) => column.ret_type.as_mut(),
+        Expression::Constant(constant) => constant.ret_type.as_mut(),
+        Expression::CorrelatedColumn(column) => column.column.ret_type.as_mut(),
+        Expression::ScalarFunction(function) => function.ret_type.as_mut(),
+    }
+}
+
+/// Replaces an expression's result metadata with the type propagated by an
+/// enclosing cast. This is the context-free portion of Go's
+/// `Expression.PropagateType` (`pkg/expression/expression.go:1238-1308`).
+///
+/// Go currently has only one caller, `builtinCastDecimalAsRealSig`, and only
+/// implements `ETReal`. Taking the expression by mutable reference keeps the
+/// same observable metadata update while Rust ownership makes Go's defensive
+/// leaf clones unnecessary.
+pub(crate) fn propagate_type(expr: &mut Expression, eval_type: EvalType) {
+    if eval_type != EvalType::Real {
+        return;
+    }
+    let Some(source) = expr.static_type().cloned() else {
+        return;
+    };
+    let old_flen = source.flen();
+    let old_decimal = source.decimal();
+    let mut new_decimal = NOT_FIXED_DEC;
+    let mut new_flen = if old_decimal != NOT_FIXED_DEC {
+        15 + 2 + new_decimal
+    } else {
+        MAX_REAL_WIDTH
+    };
+    // For float(M,D), double(M,D), or decimal(M,D), M must be >= D.
+    if new_flen < new_decimal {
+        new_flen = old_flen - old_decimal + new_decimal;
+    }
+    if old_flen != new_flen || old_decimal != new_decimal {
+        if source.code() == FieldTypeCode::NewDecimal {
+            if new_decimal > tidb_datatype::MAX_DECIMAL_SCALE {
+                new_decimal = tidb_datatype::MAX_DECIMAL_SCALE;
+            }
+            // The input data must not overflow under the new type. Extend the
+            // fractional part only as far as the DECIMAL precision limit
+            // allows while preserving the original integer width.
+            if old_flen - old_decimal > new_flen - new_decimal {
+                if new_decimal > old_decimal {
+                    let increment = (new_decimal - old_decimal).min(MAX_DECIMAL_WIDTH - old_flen);
+                    new_flen = old_flen + increment;
+                    new_decimal = old_decimal + increment;
+                } else {
+                    new_flen = old_flen;
+                    new_decimal = old_decimal;
+                }
+            }
+        }
+        if let Some(target) = ret_type_mut(expr) {
+            target.set_flen_under_limit(new_flen);
+            target.set_decimal_under_limit(new_decimal);
+        }
+    }
+}
+
 impl Expression {
     /// Go `Expression.HashCode`: the type-tagged canonical byte encoding used as
     /// a map/dedup key. Structural and context-free.
@@ -568,6 +636,30 @@ impl Expression {
             Expression::Constant(c) => c.const_level(),
             Expression::CorrelatedColumn(c) => c.const_level(),
             Expression::ScalarFunction(c) => c.const_level(),
+        }
+    }
+
+    /// Go `Expression.Decorrelate`: recursively remove correlated references
+    /// that belong to the supplied outer schema.
+    ///
+    /// Rust returns a rebuilt expression tree because nodes are owned values;
+    /// this is equivalent to Go's in-place mutation for scalar functions and
+    /// preserves the input expression for callers that still need it. `None`
+    /// models Go's nil schema pointer: it is valid for constants and plain
+    /// columns, while a correlated node panics on the same invalid
+    /// dereference as Go.
+    #[must_use]
+    pub fn decorrelate(&self, schema: Option<&Schema>) -> Expression {
+        match self {
+            Expression::Column(column) => column.decorrelate(),
+            Expression::Constant(constant) => Expression::Constant(constant.clone()),
+            Expression::CorrelatedColumn(column) => {
+                let schema = schema.expect("CorrelatedColumn::decorrelate requires a schema");
+                column.decorrelate(schema)
+            }
+            Expression::ScalarFunction(function) => {
+                Expression::ScalarFunction(function.decorrelate(schema))
+            }
         }
     }
 

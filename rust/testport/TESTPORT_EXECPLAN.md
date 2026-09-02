@@ -42,6 +42,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: aligned the Rust `tidb-expr` expression-tree
+  `Decorrelate` and `PropagateType(ETReal)` surfaces with Go master
+  `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. Constants and plain columns now
+  support identity decorrelation, correlated columns are recursively replaced
+  through an outer schema, and scalar-function argument caches are invalidated
+  on rebuild; a nil schema on a correlated node retains Go's panic boundary.
+  The shared ETReal propagation helper now applies Go's DECIMAL
+  width/scale safeguards and is used by the aggregate real-cast wrapper. The
+  focused constant/scalar regression, owner all-target check, full owner suite,
+  file-scoped rustfmt, and Ready lint gates pass; the package receipt records
+  the complete inventory and the clean fail-before compile errors.
+
 - 2026-09-03: removed the stale Rust-only Unix-endpoint gap stub from the
   `pkg/store/mockstore/unistore` carrier. The dependency-closed
   `tidb-txnkv::unistore` owner already runs the full Go-derived service URL

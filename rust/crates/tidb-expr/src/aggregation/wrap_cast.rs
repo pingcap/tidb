@@ -161,7 +161,7 @@ pub fn wrap_with_cast_as_real(mut expr: Expression) -> Result<Expression, EvalEr
     let source = type_of(&expr);
     let source_is_decimal = source.eval_type() == EvalType::Decimal;
     if source_is_decimal {
-        propagate_decimal_type_to_real(&mut expr);
+        crate::expression::propagate_type(&mut expr, EvalType::Real);
     }
     if source.eval_type() == EvalType::Real {
         return Ok(expr);
@@ -172,49 +172,6 @@ pub fn wrap_with_cast_as_real(mut expr: Expression) -> Result<Expression, EvalEr
     set_bin_chs_cln_flag(&mut tp);
     tp.add_flags(source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL));
     build_cast_function(expr, tp)
-}
-
-/// Go `PropagateType(ctx, ETReal, expr)` for a DECIMAL operand of
-/// `builtinCastDecimalAsRealSig` (`pkg/expression/expression.go:1238-1308`).
-/// The caller owns the expression node in Rust, so mutating its result type is
-/// already unaliased; no Go-style clone is needed. The real cast's declared
-/// width/scale is reflected on the decimal child before execution and display.
-fn propagate_decimal_type_to_real(expr: &mut Expression) {
-    let Some(source) = expr.static_type().cloned() else {
-        return;
-    };
-    if source.eval_type() != EvalType::Decimal {
-        return;
-    }
-    let old_flen = source.flen();
-    let old_decimal = source.decimal();
-    let mut new_decimal = NOT_FIXED_DEC;
-    let mut new_flen = if old_decimal != NOT_FIXED_DEC {
-        15 + 2 + new_decimal
-    } else {
-        MAX_REAL_WIDTH
-    };
-    if new_flen < new_decimal {
-        new_flen = old_flen - old_decimal + new_decimal;
-    }
-    if old_flen - old_decimal > new_flen - new_decimal {
-        if new_decimal > old_decimal {
-            let increment = (new_decimal - old_decimal).min(MAX_DECIMAL_WIDTH - old_flen);
-            new_flen = old_flen + increment;
-            new_decimal = old_decimal + increment;
-        } else {
-            new_flen = old_flen;
-            new_decimal = old_decimal;
-        }
-    }
-    if old_flen == new_flen && old_decimal == new_decimal {
-        return;
-    }
-    let Some(target) = ret_type_mut(expr) else {
-        return;
-    };
-    target.set_flen_under_limit(new_flen);
-    target.set_decimal_under_limit(new_decimal);
 }
 
 /// Go `minimalDecimalLenForHoldingInteger` (`builtin_cast.go:2713`).

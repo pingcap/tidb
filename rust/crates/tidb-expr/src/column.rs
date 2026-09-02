@@ -18,8 +18,8 @@
 //! column identity/equality, lazily-cached hash code, correlation/const-level).
 //! DEFERRED (need `EvalContext`/`chunk.Row`, or reproduce Go struct byte sizes):
 //! all `Eval*`, `StringWithCtx`/`ExplainInfo`, `ResolveIndices`, `RemapColumn`,
-//! `Decorrelate`, and `MemoryUsage`. `CorrelatedColumn` is deferred with the
-//! other node variants.
+//! and `MemoryUsage`. `CorrelatedColumn` evaluation remains deferred, while
+//! both column variants' structural `Decorrelate` methods are ported.
 
 use std::hash::{Hash, Hasher};
 

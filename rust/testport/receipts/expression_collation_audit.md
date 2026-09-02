@@ -543,3 +543,60 @@ remains a DECIMAL value and only its declared DOUBLE-compatible width/scale is
 adjusted. Compatibility risk is limited to callers that intentionally inspect
 the old unpropagated child metadata; the cast value and all non-DECIMAL cast
 paths are unchanged.
+
+## Rust follow-up: expression decorrelation and ETReal propagation
+
+The rolling Go authority remains `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5` (2026-09-03). Before editing, the
+complete direct `pkg/expression` inventory was rechecked at 137 artifacts and
+128,744 lines (68 production files, 60 tests, seven generated sources,
+`BUILD.bazel`, and `OWNERS`); the recursive package boundary remains 208
+artifacts and 146,247 lines. The Rust `tidb-expr` owner was rechecked at 175
+tracked artifacts and 105,908 lines, including production modules, in-module
+and standalone tests, generated-test inputs, fixtures/support, benchmarks,
+Cargo metadata, and the aggregate test build input. No Go, Bazel, generated
+output, fixture, platform, or build artifact changed.
+
+Go's `Constant.Decorrelate` is an identity, `Column.Decorrelate` preserves a
+plain column, `CorrelatedColumn.Decorrelate` replaces a column contained by the
+outer schema, and `ScalarFunction.Decorrelate` recursively rewrites arguments
+then calls `CleanHashCode` (`pkg/expression/constant.go:539`,
+`column.go:207,691`, `scalar_function.go:451`). Rust previously had only the
+leaf column methods; an expression tree had no generic decorrelation carrier.
+Rust now rebuilds all four owned node variants, recursively decorrelating
+scalar arguments and invalidating every argument-derived cache on the rebuilt
+function. The optional schema represents Go's `nil` call for schema-independent
+nodes; a supplied schema follows the correlated-column membership rule, and a
+correlated node with `None` panics on the same invalid nil dereference as Go.
+
+Go's `Expression.PropagateType` currently implements only `ETReal`, using
+`setDataTypeDouble` and DECIMAL precision/scale safeguards before the decimal
+cast (`pkg/expression/expression.go:1238-1308`). Rust previously kept this
+behavior private to the aggregate cast wrapper. The calculation is now the
+shared expression-level helper and the wrapper delegates to it, so the
+constant and nested expression paths expose Go's `flen=48`, `decimal=30`
+metadata while preserving the DECIMAL value domain.
+
+The focused regression was applied to a clean pre-fix `06e5a9af6d` worktree;
+it failed to compile with missing `Expression::decorrelate` and
+`expression::propagate_type` symbols. The fixed tests cover constant identity,
+DECIMAL metadata propagation, recursive correlated-column replacement, the
+invalid nil-schema boundary, and preservation of the input tree; all six tests
+pass.
+
+Ready validation for this follow-up used the dependency-closed `tidb-expr`
+owner and repository gates:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib expression_null_const_source -- --nocapture --test-threads=1` — 6 passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --all-targets` — pass.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,102 passed, 0 failed, 132 documented gap tests ignored.
+- `env PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — pass.
+- Direct `rustfmt +nightly-2026-08-22 --edition 2021 --check` over the five edited Rust source files and `git diff --check` — pass. The repository-wide `cargo fmt --all -- --check` was also rerun and reports only unrelated uncommitted `tidb-stmtsummary` formatting hunks, which this Rust expression batch does not own.
+
+Correctness risk is limited to expression-tree ownership and metadata: the
+decorrelator returns a rebuilt tree and drops stale scalar caches, while
+propagation changes only declared type width/scale. Compatibility risk is
+limited to callers that relied on the prior absence of a generic API or on
+unpropagated DECIMAL metadata; value evaluation and non-ETReal paths are
+unchanged. Performance impact is one expression-tree clone during explicit
+decorrelation, matching Go's scalar rebuild and avoiding aliasing.
