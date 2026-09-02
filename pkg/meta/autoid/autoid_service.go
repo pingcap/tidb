@@ -503,31 +503,14 @@ func (d *ClientDiscover) ResetConn(reason error) {
 }
 
 func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
-	ctx, cancel := context.WithTimeout(context.Background(), singlePointWriteOperationTimeout)
-	defer cancel()
-	return sp.transfer(ctx, databaseID, tableID)
+	return sp.transfer(databaseID, tableID)
 }
 
-func (sp *singlePointAlloc) transfer(ctx context.Context, databaseID, tableID int64) error {
+func (sp *singlePointAlloc) transfer(databaseID, tableID int64) error {
 	sp.stateMu.Lock()
 	defer sp.stateMu.Unlock()
-	if sp.dbID == databaseID && sp.tblID == tableID {
-		return nil
-	}
-	// Re-fetch the authoritative source base because a cold allocator may not have observed IDs allocated by other TiDBs.
-	_, _, err := sp.alloc(ctx, 0, 1, 1)
-	if err != nil {
-		return err
-	}
-	transferBase := sp.lastAllocated.Load()
-	sourceDBID, sourceTableID := sp.dbID, sp.tblID
 	sp.dbID = databaseID
 	sp.tblID = tableID
-	if err := sp.rebase(ctx, transferBase, false); err != nil {
-		sp.dbID = sourceDBID
-		sp.tblID = sourceTableID
-		return err
-	}
 	return nil
 }
 
