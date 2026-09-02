@@ -42,6 +42,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: synchronized the bounded `pkg/infoschema/perfschema` Go
+  package with fetched Go master `a85e0fd5df`. The complete eight-artifact
+  inventory (1,597 counted lines including the two binary profile fixtures)
+  remains recorded in `receipts/infoschema_perfschema.md`. Current Go master
+  retains the production profile-request logger but has removed the global
+  logger-replacement regression and its test-only zap dependencies; the
+  package BUILD target and test imports now match that source. The
+  failpoint-aware package suite passes in a detached Go-master worktree;
+  `make lint`, Rust formatting, and diff checks are the Ready gates, while
+  `make bazel_prepare` remains blocked by the unavailable Bazel executable.
+
 - 2026-09-02: completed the Analyze consumer follow-up in the root
   `pkg/executor` boundary against Go master
   `78cac443a4f46c13bfe27eb247b5c80657952547`. The five-file batch propagates
