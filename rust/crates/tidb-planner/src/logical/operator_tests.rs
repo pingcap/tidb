@@ -3898,3 +3898,65 @@ fn the_last_operators_are_wired_into_the_enum() {
         .iter()
         .all(|plan| plan.extract_correlated_cols().is_empty()));
 }
+
+// ***** ExtractColGroups child-access boundaries *****
+
+/// Go `LogicalJoin.ExtractColGroups` (`logical_join.go:628`) indexes
+/// `p.Children()[0]` unconditionally for the left-side outer join types.
+#[test]
+fn join_extract_col_groups_panics_on_a_childless_left_outer_join_like_go() {
+    let join = LogicalPlan::Join(LogicalJoin::new(
+        BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0),
+        LogicalJoinType::LeftOuter,
+    ));
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        join.extract_col_groups(&[vec![column(1)]])
+    }))
+    .is_err());
+}
+
+/// Go indexes `p.Children()[1].Schema()` for `RightOuterJoin` — a lone child
+/// panics too, before the schema is even inspected.
+#[test]
+fn join_extract_col_groups_panics_on_a_single_child_right_outer_join_like_go() {
+    let mut base = BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0);
+    base.set_children(vec![LogicalPlan::TableDual(super::LogicalTableDual {
+        base: BaseLogicalPlan::with_id(2, "TableDual", 0),
+        row_count: 1,
+    })]);
+    let join = LogicalPlan::Join(LogicalJoin::new(base, LogicalJoinType::RightOuter));
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        join.extract_col_groups(&[vec![column(1)]])
+    }))
+    .is_err());
+    join.dismantle();
+}
+
+/// Go `LogicalApply.ExtractColGroups` (`logical_apply.go:250`) indexes
+/// `la.Children()[0]` for the left-side outer join types.
+#[test]
+fn apply_extract_col_groups_panics_on_a_childless_apply_like_go() {
+    let apply = LogicalPlan::Apply(LogicalApply::new(
+        BaseLogicalPlan::with_id(1, LogicalApply::TYPE, 0),
+        LogicalJoinType::LeftOuter,
+    ));
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        apply.extract_col_groups(&[vec![column(1)]])
+    }))
+    .is_err());
+}
+
+/// Go `LogicalWindow.ExtractColGroups` (`logical_window.go:427`) checks
+/// `len(colGroups) == 0` first, so empty groups never reach the child index.
+#[test]
+fn window_extract_col_groups_only_indexes_the_child_for_non_empty_groups() {
+    let window = LogicalPlan::Window(LogicalWindow::new(
+        BaseLogicalPlan::with_id(1, LogicalWindow::TYPE, 0),
+        Vec::new(),
+    ));
+    assert!(window.extract_col_groups(&[]).is_empty());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        window.extract_col_groups(&[vec![column(1)]])
+    }))
+    .is_err());
+}

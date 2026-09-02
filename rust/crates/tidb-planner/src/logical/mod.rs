@@ -1049,14 +1049,17 @@ impl LogicalPlan {
                     extracted.push(left_keys);
                     extracted.push(right_keys);
                 }
+                // Go indexes the outer child unconditionally
+                // (`p.Children()[0].Schema()` / `p.Children()[1].Schema()`);
+                // only the schema itself may be absent.
                 let outer_schema = match op.join_type {
                     crate::find_best_task::LogicalJoinType::LeftOuter
                     | crate::find_best_task::LogicalJoinType::LeftOuterSemi
                     | crate::find_best_task::LogicalJoinType::AntiLeftOuterSemi => {
-                        self.children().first().and_then(|child| child.schema())
+                        self.children()[0].schema()
                     }
                     crate::find_best_task::LogicalJoinType::RightOuter => {
-                        self.children().get(1).and_then(|child| child.schema())
+                        self.children()[1].schema()
                     }
                     _ => None,
                 };
@@ -1070,7 +1073,8 @@ impl LogicalPlan {
                 if !op.col_groups_outer_side() {
                     return Vec::new();
                 }
-                let Some(schema) = self.children().first().and_then(|child| child.schema()) else {
+                // Go `LogicalApply.ExtractColGroups` indexes `la.Children()[0]`.
+                let Some(schema) = self.children()[0].schema() else {
                     return Vec::new();
                 };
                 let (_, offsets) = schema.extract_col_groups(col_groups);
@@ -1080,7 +1084,12 @@ impl LogicalPlan {
                     .collect()
             }
             Self::Window(_) => {
-                let Some(schema) = self.children().first().and_then(|child| child.schema()) else {
+                // Go checks `len(colGroups) == 0` BEFORE indexing
+                // `p.Children()[0].Schema()` (`logical_window.go:427`).
+                if col_groups.is_empty() {
+                    return Vec::new();
+                }
+                let Some(schema) = self.children()[0].schema() else {
                     return Vec::new();
                 };
                 let (_, offsets) = schema.extract_col_groups(col_groups);

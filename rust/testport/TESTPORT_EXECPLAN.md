@@ -97,6 +97,13 @@ For each bounded behavior cluster:
   the change; package inventory and validation details are in
   `receipts/util_codec_audit.md`.
 
+- 2026-09-02: aligned `LogicalPlan::extract_col_groups` child access with Go
+  master `a85e0fd5df`. Join and apply outer-side arms now direct-index the
+  required child schemas, and the window arm preserves Go's empty-group early
+  return before indexing its child. Four focused malformed-tree regressions
+  fail against the unfixed dispatcher and pass after; details are in
+  `receipts/planner_rule_child_access.md`.
+
 - 2026-09-02: aligned three bounded Rust `tidb-planner` logical-optimization
   rule entry boundaries with Go master `a85e0fd5df`. Union-all-dual,
   derive-TopN-from-window, and max/min elimination now direct-index the same

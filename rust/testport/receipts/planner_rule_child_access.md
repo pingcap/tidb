@@ -80,6 +80,36 @@ Profile: Ready for this bounded Rust package batch.
   `TESTPORT_EXECPLAN.md`; the crate keeps the five known baseline `--lib`
   failures that reproduce at clean HEAD.
 
+## Follow-up batch: `ExtractColGroups` child access
+
+Same comparison source (Go `origin/master` at `a85e0fd5df`, owning files
+byte-identical). `LogicalPlan::extract_col_groups` in `src/logical/mod.rs`
+previously refused with an empty result where the Go operator overrides index
+children directly:
+
+- `LogicalJoin.ExtractColGroups` (`logical_join.go:628`) reads
+  `p.Children()[0].Schema()` for the left-side outer join types and
+  `p.Children()[1].Schema()` for `RightOuterJoin` unconditionally, before any
+  `colGroups` emptiness check; the Rust join arms now index the same children,
+  keeping only the schema itself optional.
+- `LogicalApply.ExtractColGroups` (`logical_apply.go:250`) reads
+  `la.Children()[0].Schema()` for the left-side outer join types; the Rust
+  apply arm indexes it now.
+- `LogicalWindow.ExtractColGroups` (`logical_window.go:427`) checks
+  `len(colGroups) == 0` FIRST and returns nil without touching children; only
+  non-empty groups reach the unconditional `p.Children()[0].Schema()` index.
+  The Rust window arm now preserves that exact ordering — empty groups stay
+  panic-free, non-empty groups panic on a childless window.
+
+Four focused regressions were added to `src/logical/operator_tests.rs`, each
+proven to FAIL against the unfixed dispatcher (verified by stashing the
+production edit and rerunning):
+
+- `join_extract_col_groups_panics_on_a_childless_left_outer_join_like_go`
+- `join_extract_col_groups_panics_on_a_single_child_right_outer_join_like_go`
+- `apply_extract_col_groups_panics_on_a_childless_apply_like_go`
+- `window_extract_col_groups_only_indexes_the_child_for_non_empty_groups`
+
 ## Risks
 
 - Correctness: malformed subtrees now panic at the same index Go panics at;
