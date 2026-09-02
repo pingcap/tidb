@@ -156,7 +156,7 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 		}
 		return foldedExpr, isDeferredConst
 	}
-	return expr, isDeferredConst
+	return &Constant{Value: types.Datum{}, RetType: expr.RetType.Clone()}, isDeferredConst
 }
 
 func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
