@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed the bounded `pkg/planner/core` Go package storage
+  signal batch against Go master
+  `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete direct inventory
+  covers 116 artifacts and 76,570 lines (106 Go files, BUILD metadata, and
+  nine direct fixture books). Restored `READ_FROM_STORAGE` hint marking and
+  missing-TiFlash-path marking, including explicit-transaction FOR UPDATE
+  handling, with focused plan-builder regressions. Details are in
+  `receipts/planner_core_storage_signals.md`; Bazel preparation is
+  blocked by the missing local executable.
+
 - 2026-09-02: completed a follow-up `pkg/util/codec` Go-package batch against
   Go master `1c1a334d2be1dce64888b6e1f054462c566b0734`: restored the TypeNull
   pre-allocation `canSkip` call that marks null join keys before hashing, which
