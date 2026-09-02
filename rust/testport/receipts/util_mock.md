@@ -1,8 +1,7 @@
 # `pkg/util/mock` — Go-master package boundary receipt
 
 Go source: `origin/master` at
-`c6054025ed4c32ab3672a2a24ea46892714d21ec` (2026-09-02). The package is
-byte-for-byte unchanged at the current Go-master authority pin.
+`a74cc59699d4f02a3c87bd91d01dbf347d9ed10f` (2026-09-02).
 
 ## Complete inventory
 
@@ -12,7 +11,7 @@ All ten Go-master artifacts were read in full before deciding ownership:
 | --- | ---: | --- | --- | --- |
 | `BUILD.bazel` | 73 | `00c9a1dafb62d1ae23ac797b400dd2668be70efe` | `f72126b7c8e2131bf7f8454d43ad72264370ea367a2fcfde497e2d3686d07105` | library/test targets and the complete session/KV/chunk/mock dependency graph |
 | `client.go` | 33 | `f675e96c99b51bcf6c3cbe8ec0802c951dfa3f63` | `df7ac2711a0056b72a9f9087d7ff5bf401607c4c0ec6ed9aeede2ac29c04711d` | mock KV client returning a configured response |
-| `context.go` | 730 | `b06746678a542183cfe05a226e4e990c96d8b94a` | `af7a6b8774f6c95db582b0d1da91357e01bb13f498d5dc830607ee1757c5b91f` | test-only session/plan/expression/SQL context, fake transaction lifecycle, session variables, infoschema, locks, and no-op interface methods |
+| `context.go` | 735 | `57096b74531c221e59ef4a7f90213ab4ba15365c0` | `0b05baed19e1ce6964a527926e8207a2aab1be53037672fe8d63cf25192e398a` | test-only session/plan/expression/SQL context, fake transaction lifecycle, session variables, infoschema, locks, no-op interface methods, and query cop-store limiter propagation |
 | `fortest.go` | 28 | `87a301e2a6ad9bb823c902565034d0d68deeefe6` | `aa46c8f5c87c9927271a089e8530f1b1c096c3e04714e9fcf85d649087ebdaad` | `!codes` test-only constructor gate |
 | `iter.go` | 133 | `8807567b3ea4060c7a4224552670cdee62f7afd5` | `a294e0782410b0728569aa1930865fdfc7f595406128a15784cdeb34f91fcc98` | slice iterator and injectable-error/close-count mock iterator |
 | `iter_test.go` | 93 | `af76288ba6c6c1b3d93d52e4581e76fe70f951de` | `bc84be4e66e8c80b74252f31e3011901ef1b79a13afee624fa729cb3941af13d` | source iterator table test |
@@ -21,7 +20,7 @@ All ten Go-master artifacts were read in full before deciding ownership:
 | `mock_test.go` | 48 | `8c468a9d80721c916cbbe412db1c693cb3379a66` | `9ecd91d09daccef154cc080884c1e3fa7eb816cfdc5680aef5a8b32bcf45a896` | context value/clear test and constructor benchmark |
 | `store.go` | 105 | `c4ba414da694a8d378be7f7f1cfd127864fccf74` | `4b67565cd2e3be3cd1c84f87aa4584e85fc1e5d2ded7e5fb4fda808a37d21748` | mock KV storage, transaction/snapshot stubs, status/options, and cluster metadata |
 
-The package has 1,318 Go lines. There is no `doc.go`, generated/platform
+The package has 1,323 Go lines. There is no `doc.go`, generated/platform
 variant, fixture/testdata tree, or nested package; `fortest.go` is a build-tag
 variant and `main_test.go` is harness-only. The package is explicitly test
 infrastructure despite its broad interface assertions, and has no production
@@ -38,24 +37,30 @@ types implement dozens of interfaces whose definitions cross parser, planner,
 executor, session, table, statistics, and KV packages; moving only a mock
 would either duplicate those traits or create a Rust-only test framework.
 
-No Rust-only production behavior was found and no missing Go behavior can be
-implemented safely without porting the complete Go testkit/session stack.
-This package remains explicitly unclaimed as Go-only test infrastructure.
+No Rust-only production behavior was found. The 2026-09-02 Go package batch
+restores the missing `GetDistSQLCtx` propagation: positive
+`SessionVars.QueryCopStoreLimit` values now create a query-scoped limiter with
+the configured capacity, while zero disables it. The focused regression failed
+before the fix with a nil limiter and capacity zero, then passed after the
+five-line wiring change. This package remains explicitly test infrastructure;
+its broader mock/session surface is still Go-only.
 
 ## Validation
 
-Profile: **Ready** for the continuing repository audit; no source or build
-artifact changed.
+Profile: **Ready** for the continuing repository audit.
 
-- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/mock -count=1` — passed in the active worktree.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex go test ./pkg/util/mock -run '^TestGetDistSQLCtxQueryCopStoreLimiter$' -count=1` — passed in 0.524s; pre-fix assertion failed on nil/zero limiter.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex go test ./pkg/util/mock -count=1` — passed in 0.473s.
 - The same pinned command passed in the exact detached Go-master worktree `/tmp/tidb-go-latest-c605`.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go list -tags=codes -f '{{.GoFiles}}|{{.IgnoredGoFiles}}|{{.TestGoFiles}}' ./pkg/util/mock` — passed in both worktrees and confirmed the `!codes` `fortest.go` variant is excluded.
-- `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/mock` — empty; active package source is unchanged from Go master.
+- `git diff --exit-code a74cc59699d4f02a3c87bd91d01dbf347d9ed10f -- pkg/util/mock` — only the intended propagation and focused regression changes remain before commit.
 - Rust search across session, timer, TiKV, and SQL mock owners — confirmed local trait-specific mocks and no package-level replacement.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required. The
-full Go testkit/mockstore integration and every Rust local mock suite were not
-run for this explicitly unclaimed boundary.
+Go production and test sources changed and a new top-level test was added, so
+`make bazel_prepare` was required and attempted; it is blocked locally because
+`bazel` is not installed (`make: bazel: No such file or directory`). The full
+Go testkit/mockstore integration and every Rust local mock suite were not run
+for this explicitly unclaimed boundary.
 
 ## Risks and unverified scope
 

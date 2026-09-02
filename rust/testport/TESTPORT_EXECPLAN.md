@@ -97,6 +97,13 @@ For each bounded behavior cluster:
   passed; `make bazel_prepare` was attempted and blocked by the unavailable
   local Bazel executable. Remaining variable-system deltas stay separate.
 
+- 2026-09-02: completed the bounded `pkg/util/mock` Go-package batch in one
+  commit after restoring its `vardef` and distsql dependencies. Wired positive
+  `SessionVars.QueryCopStoreLimit` values into the mock `DistSQLContext`, kept
+  zero as disabled, and added a focused propagation regression. Focused and
+  full mock tests passed; the required Bazel-prepare gate was attempted and
+  blocked by the unavailable local executable.
+
 - 2026-09-02: completed the Go-master `pkg/parser` materialized-view DDL
   syntax delta in one parser-package batch. Before editing, the full root
   parser inventory (33 artifacts, 64,956 lines, generated grammar/keyword
