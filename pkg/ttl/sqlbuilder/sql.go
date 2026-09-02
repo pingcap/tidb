@@ -57,10 +57,6 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 // explicitly declared empty-string member have the same display value, so the
 // display string is neither a stable cursor nor an exact key predicate.
 func writePhysicalKeyDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
-	if d.IsNull() {
-		restoreCtx.WriteKeyWord("NULL")
-		return nil
-	}
 	switch ft.GetType() {
 	case mysql.TypeEnum:
 		if d.Kind() != types.KindMysqlEnum {
