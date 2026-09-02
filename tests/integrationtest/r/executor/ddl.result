@@ -544,7 +544,7 @@ SET SESSION tidb_enable_auto_increment_in_generated = 1;
 CREATE INDEX idx1 ON t1 ((t1_id + t1_id));
 SET SESSION tidb_enable_auto_increment_in_generated = default;
 set tidb_enable_clustered_index=on;
-drop table if exists t1, t2, t3, t4, t11, t12, t13, t21, t22, t23;
+drop table if exists t1, t2, t3, t4, t5, t11, t12, t13, t14, t15, t21, t22, t23, t24;
 create table t1(id float primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
 Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
 create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
@@ -557,10 +557,15 @@ create table t1(id1 int, id2 float, t timestamp, primary key(id1, id2)) TTL=`t`+
 Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
 create table t1(id1 int, id2 double, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY;
 Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
+create table t1(id set('a', 'b') primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
+create table t1(id1 int, id2 set('a', 'b'), t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
 create table t1(id float primary key, t timestamp);
 create table t2(id double primary key, t timestamp);
 create table t3(id1 int, id2 float, primary key(id1, id2), t timestamp);
 create table t4(id1 int, id2 double, primary key(id1, id2), t timestamp);
+create table t5(id set('a', 'b') primary key, t timestamp);
 alter table t1 TTL=`t`+INTERVAL 1 DAY;
 Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
 alter table t2 TTL=`t`+INTERVAL 1 DAY;
@@ -569,15 +574,21 @@ alter table t3 TTL=`t`+INTERVAL 1 DAY;
 Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
 alter table t4 TTL=`t`+INTERVAL 1 DAY;
 Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
+alter table t5 TTL=`t`+INTERVAL 1 DAY;
+Error 8153 (HY000): Unsupported clustered primary key type FLOAT/DOUBLE/SET for TTL
 create table t11(id float primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY;
 create table t12(id double primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY;
 create table t13(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered) TTL=`t`+INTERVAL 1 DAY;
+create table t14(id set('a', 'b') primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+create table t15(id bigint primary key clustered, s set('a', 'b'), t timestamp) TTL=`t`+INTERVAL 1 DAY;
 create table t21(id float primary key nonclustered, t timestamp);
 create table t22(id double primary key nonclustered, t timestamp);
 create table t23(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered);
+create table t24(id set('a', 'b') primary key nonclustered, t timestamp);
 alter table t21 TTL=`t`+INTERVAL 1 DAY;
 alter table t22 TTL=`t`+INTERVAL 1 DAY;
 alter table t23 TTL=`t`+INTERVAL 1 DAY;
+alter table t24 TTL=`t`+INTERVAL 1 DAY;
 set tidb_enable_clustered_index=default;
 drop table if exists t;
 create table t (c_int int, c_str varchar(40));

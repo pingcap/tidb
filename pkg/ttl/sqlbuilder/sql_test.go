@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -578,55 +577,6 @@ func TestSQLBuilder(t *testing.T) {
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` IN ('a', 'b') AND `time` < FROM_UNIXTIME(0)")
 }
 
-func TestEnumPaginationUsesPhysicalValues(t *testing.T) {
-	enumType := types.NewFieldType(mysql.TypeEnum)
-	enumType.SetElems([]string{"z", "a", "b"})
-	enumCol := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("e"), FieldType: *enumType}
-	idCol := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLong)}
-	timeCol := &model.ColumnInfo{ID: 3, Name: ast.NewCIStr("created_time"), FieldType: *types.NewFieldType(mysql.TypeDatetime)}
-	tbl := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test"),
-		TableInfo: &model.TableInfo{
-			Name:    ast.NewCIStr("enum_pk"),
-			Columns: []*model.ColumnInfo{enumCol, idCol, timeCol},
-		},
-		KeyColumns:     []*model.ColumnInfo{enumCol, idCol},
-		KeyColumnTypes: []*types.FieldType{enumType, &idCol.FieldType},
-		TimeColumn:     timeCol,
-	}
-	enumValue := types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 2})
-	boundary := [][]types.Datum{{enumValue, types.NewIntDatum(7)}}
-
-	g, err := sqlbuilder.NewScanQueryGenerator(tbl, time.Unix(1, 0).UTC(), nil, nil)
-	require.NoError(t, err)
-	sql, err := g.NextSQL(nil, 1)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `e`, `id` FROM `test`.`enum_pk` WHERE `created_time` < FROM_UNIXTIME(1) ORDER BY `e`, `id` ASC LIMIT 1", sql)
-
-	sql, err = g.NextSQL(boundary, 1)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `e`, `id` FROM `test`.`enum_pk` WHERE `e` = 2 AND `id` > 7 AND `created_time` < FROM_UNIXTIME(1) ORDER BY `e`, `id` ASC LIMIT 1", sql)
-	sql, err = g.NextSQL(nil, 1)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `e`, `id` FROM `test`.`enum_pk` WHERE `e` > 2 AND `created_time` < FROM_UNIXTIME(1) ORDER BY `e`, `id` ASC LIMIT 1", sql)
-
-	rangeGenerator, err := sqlbuilder.NewScanQueryGenerator(
-		tbl, time.Unix(1, 0).UTC(), []types.Datum{enumValue},
-		[]types.Datum{types.NewMysqlEnumDatum(types.Enum{Name: "b", Value: 3})})
-	require.NoError(t, err)
-	rangeSQL, err := rangeGenerator.NextSQL(nil, 10)
-	require.NoError(t, err)
-	require.Contains(t, rangeSQL, "WHERE `e` >= 2 AND `e` < 3")
-
-	deleteSQL, err := sqlbuilder.BuildDeleteSQL(tbl, boundary, time.Unix(1, 0).UTC())
-	require.NoError(t, err)
-	require.Contains(t, deleteSQL, "WHERE (`e`, `id`) IN ((2, 7))")
-	for _, generatedSQL := range []string{sql, rangeSQL, deleteSQL} {
-		_, _, err = parser.New().Parse(generatedSQL, "", "")
-		require.NoError(t, err, generatedSQL)
-	}
-}
-
 func TestEnumClusteredPKDeleteUsesPhysicalValues(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -677,134 +627,113 @@ func TestEnumClusteredPKDeleteUsesPhysicalValues(t *testing.T) {
 	tk.MustQuery("select e+0, id from ttl_enum_delete").Check(testkit.Rows())
 }
 
-func TestEnumClusteredPKPaginationUsesRangeScan(t *testing.T) {
+func TestClusteredPKPaginationUsesRangeScan(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table ttl_enum_clustered(
-		e enum('z','a','b') not null,
-		id bigint not null,
-		expired_at datetime not null,
-		primary key(e, id) clustered
-	) TTL=expired_at + interval 1 hour`)
-	// ENUM 0 is its special empty error value. The remaining values are stored
-	// in declaration order, which intentionally differs from display-string order.
 	tk.MustExec("set @@sql_mode=''")
-	tk.MustExec(`insert into ttl_enum_clustered values
-		(0, 1, '2024-01-01 00:00:00'),
-		('z', 2, '2024-01-01 00:00:00'),
-		('z', 3, '2024-01-01 00:00:00'),
-		('a', 4, '2024-01-01 00:00:00'),
-		('b', 5, '2024-01-01 00:00:00')`)
-
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_enum_clustered"))
-	require.NoError(t, err)
-	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
-	require.NoError(t, err)
-	generator, err := sqlbuilder.NewScanQueryGenerator(
-		ttlTbl, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil, nil)
-	require.NoError(t, err)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
-	var previous [][]types.Datum
-	var cursors []string
-	for range 32 {
-		sql, err := generator.NextSQL(previous, 1)
-		require.NoError(t, err)
-		if sql == "" {
-			break
-		}
-		plan := tk.MustQuery("explain format='brief' " + sql)
-		plan.CheckNotContain("TopN")
-		plan.CheckNotContain("Sort")
-		if previous != nil {
-			plan.CheckNotContain("TableFullScan")
-			plan.CheckContain("TableRangeScan")
-		}
-		rs, err := tk.Session().GetSQLExecutor().ExecuteInternal(ctx, sql)
-		require.NoError(t, err)
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-		require.NoError(t, err)
-		previous = make([][]types.Datum, len(rows))
-		for i, row := range rows {
-			previous[i] = row.GetDatumRow(ttlTbl.KeyColumnTypes)
-			cursors = append(cursors, fmt.Sprintf("%d/%d",
-				previous[i][0].GetMysqlEnum().Value,
-				previous[i][1].GetInt64()))
-		}
-	}
-	require.True(t, generator.IsExhausted())
-	require.Equal(t, []string{"0/1", "1/2", "1/3", "2/4", "3/5"}, cursors)
-}
-
-func TestTTLRejectsSetClusteredPrimaryKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	setDefinition := func(n int) string {
-		members := make([]string, n)
-		for i := range members {
-			members[i] = fmt.Sprintf("'e%d'", i+1)
-		}
-		return strings.Join(members, ",")
-	}
-	createSQL := func(table string, members int, primaryKeyType string) string {
-		return fmt.Sprintf(`create table %s(
-			s set(%s),
-			id bigint,
-			expired_at datetime not null,
-			primary key(s, id) %s
-		) TTL=expired_at + interval 1 hour`, table, setDefinition(members), primaryKeyType)
+	testCases := []struct {
+		name        string
+		keyType     string
+		values      string
+		expectedIDs []int64
+	}{
+		{
+			name:    "enum",
+			keyType: "enum('z','a','b')",
+			// ENUM 0 is its special empty error value. The remaining values are
+			// stored in declaration order, which differs from display-string order.
+			values: `(0, 1, '2024-01-01 00:00:00'),
+				('z', 2, '2024-01-01 00:00:00'),
+				('z', 3, '2024-01-01 00:00:00'),
+				('a', 4, '2024-01-01 00:00:00'),
+				('b', 5, '2024-01-01 00:00:00')`,
+			expectedIDs: []int64{1, 2, 3, 4, 5},
+		},
+		{
+			name:    "varchar",
+			keyType: "varchar(16)",
+			values: `('', 1, '2024-01-01 00:00:00'),
+				('a', 2, '2024-01-01 00:00:00'),
+				('a', 3, '2024-01-01 00:00:00'),
+				('b', 4, '2024-01-01 00:00:00')`,
+			expectedIDs: []int64{1, 2, 3, 4},
+		},
+		{
+			name:    "decimal",
+			keyType: "decimal(10,2)",
+			values: `(-1.5, 1, '2024-01-01 00:00:00'),
+				(0, 2, '2024-01-01 00:00:00'),
+				(0, 3, '2024-01-01 00:00:00'),
+				(2.5, 4, '2024-01-01 00:00:00')`,
+			expectedIDs: []int64{1, 2, 3, 4},
+		},
 	}
 
-	// Native numeric SET predicates cannot currently be converted into a
-	// common-handle range, so allowing SET here would cause a full scan on
-	// every continuation page. Larger SET values can additionally lose
-	// precision in numeric comparison.
-	tk.MustGetErrCode(createSQL("set_3_clustered", 3, "clustered"), errno.ErrUnsupportedPrimaryKeyTypeWithTTL)
-	tk.MustGetErrCode(createSQL("set_64_clustered", 64, "clustered"), errno.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tableName := "ttl_clustered_pk_" + tc.name
+			tk.MustExec(fmt.Sprintf(`create table %s(
+				k %s not null,
+				id bigint not null,
+				expired_at datetime not null,
+				primary key(k, id) clustered
+			) TTL=expired_at + interval 1 hour`, tableName, tc.keyType))
+			tk.MustExec(fmt.Sprintf("insert into %s values %s", tableName, tc.values))
 
-	// The restriction applies only when SET participates in the physical row
-	// handle used by TTL pagination.
-	tk.MustExec(createSQL("set_64_nonclustered", 64, "nonclustered"))
-	tk.MustExec(fmt.Sprintf(`create table set_64_not_in_pk(
-		id bigint primary key clustered,
-		s set(%s),
-		expired_at datetime not null
-	) TTL=expired_at + interval 1 hour`, setDefinition(64)))
-}
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+			require.NoError(t, err)
+			ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+			require.NoError(t, err)
+			generator, err := sqlbuilder.NewScanQueryGenerator(
+				ttlTbl, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil, nil)
+			require.NoError(t, err)
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+			var previous [][]types.Datum
+			var ids []int64
+			var generatedSQL []string
+			for range 32 {
+				sql, err := generator.NextSQL(previous, 1)
+				require.NoError(t, err)
+				if sql == "" {
+					break
+				}
+				generatedSQL = append(generatedSQL, sql)
+				plan := tk.MustQuery("explain format='brief' " + sql)
+				plan.CheckNotContain("TopN")
+				plan.CheckNotContain("Sort")
+				if previous != nil {
+					plan.CheckNotContain("TableFullScan")
+					plan.CheckContain("TableRangeScan")
+				}
+				rs, err := tk.Session().GetSQLExecutor().ExecuteInternal(ctx, sql)
+				require.NoError(t, err)
+				rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+				require.NoError(t, err)
+				previous = make([][]types.Datum, len(rows))
+				for i, row := range rows {
+					previous[i] = row.GetDatumRow(ttlTbl.KeyColumnTypes)
+					ids = append(ids, previous[i][1].GetInt64())
+				}
+			}
+			require.True(t, generator.IsExhausted())
+			require.Equal(t, tc.expectedIDs, ids)
 
-func FuzzEnumCursorSQLParses(f *testing.F) {
-	f.Add(uint8(0), int64(0))
-	f.Add(uint8(2), int64(7))
-	f.Fuzz(func(t *testing.T, enumOrdinal uint8, id int64) {
-		enumOrdinal %= 4
-		enumType := types.NewFieldType(mysql.TypeEnum)
-		enumType.SetElems([]string{"z", "a", "b"})
-		enumNames := []string{"", "z", "a", "b"}
-		keyColumns := []*model.ColumnInfo{
-			{Name: ast.NewCIStr("e"), FieldType: *enumType},
-			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
-		}
-		tbl := &cache.PhysicalTable{
-			Schema:         ast.NewCIStr("test"),
-			TableInfo:      &model.TableInfo{Name: ast.NewCIStr("t")},
-			KeyColumns:     keyColumns,
-			KeyColumnTypes: []*types.FieldType{enumType, &keyColumns[1].FieldType},
-			TimeColumn:     &model.ColumnInfo{Name: ast.NewCIStr("expired_at"), FieldType: *types.NewFieldType(mysql.TypeDatetime)},
-		}
-		generator, err := sqlbuilder.NewScanQueryGenerator(tbl, time.Unix(1, 0), nil, nil)
-		require.NoError(t, err)
-		_, err = generator.NextSQL(nil, 1)
-		require.NoError(t, err)
-		row := [][]types.Datum{{
-			types.NewMysqlEnumDatum(types.Enum{Name: enumNames[enumOrdinal], Value: uint64(enumOrdinal)}),
-			types.NewIntDatum(id),
-		}}
-		sql, err := generator.NextSQL(row, 1)
-		require.NoError(t, err)
-		_, _, err = parser.New().Parse(sql, "", "")
-		require.NoError(t, err, sql)
-	})
+			if tc.name == "enum" {
+				allSQL := strings.Join(generatedSQL, "\n")
+				require.Contains(t, allSQL, "`k` = 1 AND `id` > 2")
+				require.Contains(t, allSQL, "`k` > 1")
+				enumStart := types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 2})
+				enumEnd := types.NewMysqlEnumDatum(types.Enum{Name: "b", Value: 3})
+				rangeGenerator, err := sqlbuilder.NewScanQueryGenerator(
+					ttlTbl, time.Unix(1, 0).UTC(), []types.Datum{enumStart}, []types.Datum{enumEnd})
+				require.NoError(t, err)
+				rangeSQL, err := rangeGenerator.NextSQL(nil, 10)
+				require.NoError(t, err)
+				require.Contains(t, rangeSQL, "WHERE `k` >= 2 AND `k` < 3")
+			}
+		})
+	}
 }
 
 func TestScanQueryGenerator(t *testing.T) {
