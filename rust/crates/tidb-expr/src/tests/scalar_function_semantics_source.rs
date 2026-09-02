@@ -283,10 +283,29 @@ fn test_scalar_funcs_2_exprs() {}
 /// (`scalar_function_test.go:213`) drives `ScalarFunction.Hash64(h)` /
 /// `Equals(other)` (`scalar_function.go`, the cascades `base.HashEquals`
 /// contract): identical trees hash identically; changing the function name,
-/// any argument, or the return type changes both. Only the LEAF types carry
-/// `hash64`/`equals` here (`column.rs:132`, `constant.rs:162`); the
+/// any argument, or the return type changes both. The leaf types carry
+/// `hash64`/`equals` (`column.rs:132`, `constant.rs:162`), and the
 /// scalar-function level (`h.HashByte(scalarFunctionFlag)`, arg-count prefix,
-/// per-arg recursion) is not implemented.
+/// per-arg recursion) is implemented on the Rust owner as well.
 #[test]
-#[ignore = "go-parity-gap: ScalarFunction::Hash64/Equals (base.HashEquals contract incl. ret-type field) are carried only for leaves (column.rs/constant.rs)"]
-fn test_scalar_function_hash64_equals() {}
+fn test_scalar_function_hash64_equals() {
+    let source = lt_column_vs_real_const(0.0);
+    let same = source.clone();
+    assert_eq!(source.hash64(), same.hash64());
+    assert!(source.equals(&same));
+
+    let mut different_name = source.clone();
+    different_name.func_name = CiString::new("gt");
+    assert_ne!(source.hash64(), different_name.hash64());
+    assert!(!source.equals(&different_name));
+
+    let mut different_arg = source.clone();
+    different_arg.args[1] = real_const(1.0);
+    assert_ne!(source.hash64(), different_arg.hash64());
+    assert!(!source.equals(&different_arg));
+
+    let mut different_ret_type = source.clone();
+    different_ret_type.ret_type = Some(FieldType::new(FieldTypeCode::Long));
+    assert_ne!(source.hash64(), different_ret_type.hash64());
+    assert!(!source.equals(&different_ret_type));
+}

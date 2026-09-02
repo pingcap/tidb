@@ -146,6 +146,14 @@ For each bounded behavior cluster:
   names; the source-shaped parser table is live and passing. Details are
   appended to `receipts/parser_ast.md` and `receipts/b058.md`.
 
+- 2026-09-03: completed the adjacent Rust `tidb-expr` scalar-function
+  `Hash64`/`Equals` boundary against the same Go authority. The structural
+  function tag, name, nullable return type, argument count, and recursive
+  argument identity now participate in the Rust owner; the source-shaped
+  name/argument/return-type regression was activated after a pre-fix missing-
+  method compile failure. Ready evidence and the retained leaf-hash boundary
+  are recorded in `receipts/expression_collation_audit.md`.
+
 - 2026-09-02: aligned `LogicalPlan::extract_col_groups` child access with Go
   master `a85e0fd5df`. Join and apply outer-side arms now direct-index the
   required child schemas, and the window arm preserves Go's empty-group early

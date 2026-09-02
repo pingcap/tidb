@@ -22,12 +22,13 @@
 //! is a separate, larger unit built on `EvalContext`/`chunk.Row`.
 //!
 //! Ported: the struct and its argument-structural methods, const-level rules,
-//! the common `ReHashCode` path, and evaluation for operators plus the builtin
-//! families owned by the shared dispatch modules. Unknown builtin names fail
-//! explicitly. Remaining structural gaps are `Equal` (Go's
-//! compares through the function's `equal(ctx, ...)`); the `Grouping`
-//! branch of `ReHashCode` (needs `BuiltinGroupingImplSig`); per-signature
-//! collation; and `MemoryUsage`.
+//! the common `ReHashCode` path, structural `Hash64`/`Equals`, and evaluation
+//! for operators plus the builtin families owned by the shared dispatch
+//! modules. Unknown builtin names fail explicitly. Remaining structural gaps
+//! are the `Grouping` branch of `ReHashCode` (needs
+//! `BuiltinGroupingImplSig`), per-signature collation, and `MemoryUsage`.
+
+use std::hash::{Hash, Hasher};
 
 use crate::context::{Columns, EvalError};
 use crate::expr_collation::CollationInfo;
@@ -465,6 +466,44 @@ impl ScalarFunction {
             }
         }
         canonical
+    }
+
+    /// Go `ScalarFunction.Hash64`: hash the function tag, lower-case name,
+    /// nullable return type, argument count, and each argument recursively.
+    /// This is the structural plan-key hash and intentionally differs from
+    /// [`Self::canonical_hash_code`], which normalizes commutative operators.
+    #[must_use]
+    pub fn hash64(&self) -> u64 {
+        let mut hasher = crate::column::Fnv64::default();
+        SCALAR_FUNCTION_FLAG.hash(&mut hasher);
+        self.func_name.lowercase().hash(&mut hasher);
+        match &self.ret_type {
+            Some(ret_type) => {
+                1_u8.hash(&mut hasher);
+                ret_type.hash(&mut hasher);
+            }
+            None => 0_u8.hash(&mut hasher),
+        }
+        self.args.len().hash(&mut hasher);
+        for argument in &self.args {
+            crate::column::expression_hash64(argument).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Go `ScalarFunction.Equals`: structural equality over name, nullable
+    /// return type, and ordered argument trees. Hash caches and collation
+    /// metadata are not part of the source method's contract.
+    #[must_use]
+    pub fn equals(&self, other: &Self) -> bool {
+        self.func_name.lowercase() == other.func_name.lowercase()
+            && self.ret_type == other.ret_type
+            && self.args.len() == other.args.len()
+            && self
+                .args
+                .iter()
+                .zip(&other.args)
+                .all(|(left, right)| crate::column::expression_equals(left, right))
     }
 
     /// Go `ScalarFunction.CleanHashCode` (`scalar_function.go:604`): drops the

@@ -228,7 +228,7 @@ impl Column {
 const FNV_OFFSET_64: u64 = 14_695_981_039_346_656_037;
 const FNV_PRIME_64: u64 = 1_099_511_628_211;
 
-struct Fnv64(u64);
+pub(crate) struct Fnv64(u64);
 
 impl Default for Fnv64 {
     fn default() -> Self {
@@ -269,7 +269,7 @@ fn hash_column(column: &Column, hasher: &mut Fnv64) {
     column.correlated_col_unique_id.hash(hasher);
 }
 
-fn expression_hash64(expression: &Expression) -> u64 {
+pub(crate) fn expression_hash64(expression: &Expression) -> u64 {
     match expression {
         Expression::Constant(constant) => constant.hash64(),
         Expression::Column(column) => column.hash64(),
@@ -304,7 +304,7 @@ fn optional_expression_equals(
     }
 }
 
-fn expression_equals(left: &Expression, right: &Expression) -> bool {
+pub(crate) fn expression_equals(left: &Expression, right: &Expression) -> bool {
     match (left, right) {
         (Expression::Constant(left), Expression::Constant(right)) => left.equals(right),
         (Expression::Column(left), Expression::Column(right)) => left.equals(right),

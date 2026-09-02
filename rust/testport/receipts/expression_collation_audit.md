@@ -268,6 +268,48 @@ Rust-only absence of canonical bytes now receive owned allocations; the bytes
 are derived per call rather than cached, so performance-sensitive callers may
 need a later cache once the Rust expression tree is fully integrated.
 
+## Rust follow-up: scalar-function Hash64 and Equals
+
+The rolling Go authority remains `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. The complete root
+`pkg/expression` inventory remains 137 direct artifacts and 128,744 lines,
+with 208 artifacts and 146,247 lines across its nested package boundaries;
+there is no Go source delta from the prior authority. Before this edit, the
+Rust `tidb-expr` owner was rechecked at 175 tracked artifacts and 105,478
+lines, including production files, in-module and standalone tests,
+fixture/support and generated-test inputs, benchmarks, Cargo metadata, and
+the aggregate-test build input. No Go, Bazel, generated, fixture, platform,
+or build artifact changed.
+
+Go's `ScalarFunction.Hash64` writes the scalar-function tag, lower-case
+function name, nullable return type, argument count, and ordered recursive
+argument hashes into the cascades FNV-1a hasher. `Equals` compares the same
+function name, return type, and ordered argument trees while ignoring caches
+and collation metadata. Rust previously exposed these methods only for leaf
+nodes; the source-shaped `TestScalarFunctionHash64Equals` was an empty ignored
+test. The Rust scalar owner now implements both methods and reuses the
+existing expression-tree hash/equality recursion for nested arguments.
+
+The focused source-derived test covers identical trees plus changed function
+name, argument value, and return type. On the pre-fix `5af00badf9` tree, the
+activated test failed to compile with missing `ScalarFunction::hash64` and
+`ScalarFunction::equals` methods; the fixed test passes. The implementation
+uses the crate's existing FNV helper, so the established leaf hash/equality
+behavior and cache lifecycle remain unchanged.
+
+Validation for this follow-up used the Ready profile:
+
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib scalar_function_semantics_source -- --nocapture` — five live source tests passed and three documented gap tests remained ignored.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --all-targets` — owner all-target compile passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,090 tests passed, five pre-existing failures (comparison-control shapes, constant folding/const-level, and the shared unary-minus hex expectation), and 133 documented gap tests ignored; none exercises the scalar `Hash64`/`Equals` methods.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint`, and `git diff --check` — Ready formatting, lint, and whitespace gates passed.
+
+Correctness risk is limited to structural plan-key identity: the scalar
+function's ordered argument and return-type fields now participate in the
+same way as Go, while canonical semantic equality remains a separate path.
+Compatibility risk is limited to the existing Rust FNV helper's established
+encoding for leaf fields; no evaluator or execution path changes.
+
 ## Rust follow-up: cast target nullability
 
 The rolling Go authority remains `origin/master` at
