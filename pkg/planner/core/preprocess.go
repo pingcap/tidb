@@ -424,8 +424,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		with := p.preprocessWith
 		beforeOffset := len(with.cteCanUsed)
 		with.cteBeforeOffset = append(with.cteBeforeOffset, beforeOffset)
-		if cteNode, exist := node.(*ast.CommonTableExpression); exist && cteNode.IsRecursive {
-			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+		if cteNode, exist := node.(*ast.CommonTableExpression); exist {
+			// Preprocess can run repeatedly on a prepared statement's AST after schema changes.
+			// Recompute the consumer count instead of accumulating the result from an earlier run.
+			cteNode.ConsumerCount = 0
+			if cteNode.IsRecursive {
+				with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+			}
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
