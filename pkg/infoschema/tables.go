@@ -993,6 +993,9 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogSessionConnectAttrs, tp: mysql.TypeJSON, size: types.UnspecifiedLength},
+	{name: execdetails.PrewriteBackoffTypesStr, tp: mysql.TypeVarchar, size: 1024},
+	{name: execdetails.CommitBackoffTypesStr, tp: mysql.TypeVarchar, size: 1024},
+	{name: execdetails.CopBackoffTypesStr, tp: mysql.TypeVarchar, size: 1024},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
