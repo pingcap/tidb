@@ -320,6 +320,43 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 }
 
+func TestFindNextNonTouchedPartitionID(t *testing.T) {
+	defs := func(ids ...int64) []model.PartitionDefinition {
+		res := make([]model.PartitionDefinition, 0, len(ids))
+		for _, id := range ids {
+			res = append(res, model.PartitionDefinition{ID: id})
+		}
+		return res
+	}
+	// p2 and p3 are reorganized into new partitions, i.e. they are in
+	// DroppingDefinitions, while p1, p4 and p5 are non-touched.
+	pi := &model.PartitionInfo{
+		Definitions:         defs(1, 2, 3, 4, 5),
+		DroppingDefinitions: defs(2, 3),
+	}
+	for _, c := range []struct {
+		curr int64
+		next int64
+	}{
+		{1, 4},
+		{2, 4},
+		{3, 4},
+		{4, 5},
+		{5, 0},
+	} {
+		require.Equal(t, c.next, findNextNonTouchedPartitionID(c.curr, pi), "curr %d", c.curr)
+	}
+	// Not a partition of the table.
+	require.Equal(t, int64(0), findNextNonTouchedPartitionID(6, pi))
+
+	// No non-touched partitions left after p1.
+	pi = &model.PartitionInfo{
+		Definitions:         defs(1, 2, 3),
+		DroppingDefinitions: defs(2, 3),
+	}
+	require.Equal(t, int64(0), findNextNonTouchedPartitionID(1, pi))
+}
+
 func TestMergeContinuousKeyRanges(t *testing.T) {
 	cases := []struct {
 		input  []keyRangeMayExclude

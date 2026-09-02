@@ -69,6 +69,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/cdcutil",
         "//pkg/util/chunk",
+        "//pkg/util/collate",
         "//pkg/util/context",
         "//pkg/util/cpu",
         "//pkg/util/dbterror",
@@ -121,7 +122,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 44,
+    shard_count = 45,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",

@@ -101,8 +101,8 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 			}},
 		}
 		keyspaceMeta := &keyspacepb.KeyspaceMeta{
-			Id:   42,
-			Name: "ks1",
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+			Name:     "ks1",
 			Config: map[string]string{
 				"gc_management_type": "keyspace_level",
 				GroupIDKey:           "group1",
@@ -123,9 +123,9 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 			}},
 		}
 		keyspaceMeta := &keyspacepb.KeyspaceMeta{
-			Id:     43,
-			Name:   "ks2",
-			Config: map[string]string{"gc_management_type": "keyspace_level"},
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 43},
+			Name:     "ks2",
+			Config:   map[string]string{"gc_management_type": "keyspace_level"},
 		}
 
 		dialInfo, err := resolveEtcdDialInfo(
@@ -143,9 +143,9 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 			}},
 		}
 		keyspaceMeta := &keyspacepb.KeyspaceMeta{
-			Id:     44,
-			Name:   "ks3",
-			Config: map[string]string{"gc_management_type": "keyspace_level"},
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 44},
+			Name:     "ks3",
+			Config:   map[string]string{"gc_management_type": "keyspace_level"},
 		}
 
 		etcdCli, err := NewEtcdClientFromPDClient(
@@ -198,9 +198,9 @@ func TestDialEtcdClientMissingKeyspaceMetaIncludesKeyspaceName(t *testing.T) {
 
 		pdCli := &mockPDClient{
 			keyspaceMeta: &keyspacepb.KeyspaceMeta{
-				Id:     47,
-				Name:   "ks-default",
-				Config: map[string]string{"gc_management_type": "keyspace_level"},
+				Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 47},
+				Name:     "ks-default",
+				Config:   map[string]string{"gc_management_type": "keyspace_level"},
 			},
 		}
 		defaultPDClientFactory = func(

@@ -60,6 +60,10 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 	r, ctx := tracing.StartRegionEx(ctx, "distsql.Select")
 	defer r.End()
 
+	if dctx.QueryCopStoreLimiter != nil {
+		kvReq.QueryCopStoreLimiter = dctx.QueryCopStoreLimiter
+	}
+
 	// For testing purpose.
 	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
 		hook.(func(*kv.Request))(kvReq)
@@ -175,7 +179,7 @@ func SelectWithRuntimeStats(ctx context.Context, dctx *distsqlctx.DistSQLContext
 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
-	isRestrict bool, dctx *distsqlctx.DistSQLContext) (SelectResult, error) {
+	isRestrict bool, dctx *distsqlctx.DistSQLContext, planID int) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, dctx.KvExecCounter)
 	failpoint.Inject("mockAnalyzeRequestWaitForCancel", func(val failpoint.Value) {
 		if val.(bool) {
@@ -189,7 +193,10 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	})
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = kv.InternalTxnStats
-	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
+	collectExecutionInfo := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{
+		EnableCollectExecutionInfo: collectExecutionInfo,
+	})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -198,10 +205,14 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 		label = metrics.LblInternal
 	}
 	result := &selectResult{
-		label:     "analyze",
-		resp:      resp,
-		sqlType:   label,
-		storeType: kvReq.StoreType,
+		label:                    "analyze",
+		resp:                     resp,
+		ctx:                      dctx,
+		sqlType:                  label,
+		rootPlanID:               planID,
+		storeType:                kvReq.StoreType,
+		isAnalyze:                true,
+		collectExecDetailsForRaw: collectExecutionInfo,
 	}
 	return result, nil
 }

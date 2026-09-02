@@ -278,3 +278,47 @@ func TestCheckRequirements(t *testing.T) {
 	c.Plan.CloudStorageURI = fmt.Sprintf("s3://test-bucket/path?region=us-east-1&endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", ts.URL)
 	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
 }
+
+func TestCheckRequirementsTTL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
+
+	tk.MustExec("create table test.t(id int primary key, created_at datetime) TTL = `created_at` + INTERVAL 1 DAY")
+	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+	tableObj, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.True(t, tableObj.Meta().TTLInfo.Enable)
+
+	c := &importer.LoadDataController{
+		Plan: &importer.Plan{
+			DBName:          "test",
+			DataSourceType:  importer.DataSourceTypeQuery,
+			DisablePrecheck: true,
+			TableInfo:       tableObj.Meta(),
+		},
+		Table: tableObj,
+	}
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
+	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
+
+	tk.MustExec("alter table test.t ttl_enable = 'OFF'")
+	is = tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+	tableObj, err = is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	c = &importer.LoadDataController{
+		Plan: &importer.Plan{
+			DBName:          "test",
+			DataSourceType:  importer.DataSourceTypeQuery,
+			DisablePrecheck: true,
+			TableInfo:       tableObj.Meta(),
+		},
+		Table: tableObj,
+	}
+	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+}

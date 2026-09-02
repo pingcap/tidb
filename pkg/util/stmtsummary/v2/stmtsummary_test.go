@@ -431,10 +431,9 @@ func TestNewStmtSummaryLoggerInitError(t *testing.T) {
 // TestSetupDisablesPersistentOnLoggerInitError exercises the *startup call
 // chain* that produces the V2-11 nil-panic regression pointed out in review.
 //
-// When NewStmtSummary fails, Setup leaves GlobalStmtSummary == nil. The
-// cluster config still has `tidb_stmt_summary_enable_persistent = true`,
-// though, and every public proxy in this package (Add, Enabled, ...) reads
-// the persistent flag and then unconditionally dereferences GlobalStmtSummary.
+// When NewStmtSummary fails, publishing its nil result while the cluster
+// config still has `tidb_stmt_summary_enable_persistent = true` lets every
+// public proxy in this package (Add, Enabled, ...) dereference nil.
 // On the buggy code the very first SQL call would dereference a nil
 // pointer and the server would crash again; the logger init error had traded
 // silent data loss for a hard boot-loop. Now Setup must remedy the half-
@@ -446,10 +445,12 @@ func TestNewStmtSummaryLoggerInitError(t *testing.T) {
 //   - the post-Setup invariant that StmtSummaryEnablePersistent flipped off;
 //   - an actual Add() probe, which used to be the line that panicked.
 func TestSetupDisablesPersistentOnLoggerInitError(t *testing.T) {
-	// Preserve the global v2 instance; Setup will overwrite it and we want the
-	// previous value restored so neighbouring tests start from the same state.
+	// Preserve the global v2 instance and install a sentinel to verify that a
+	// failed setup does not publish a nil result over an existing instance.
 	prev := GlobalStmtSummary
 	t.Cleanup(func() { GlobalStmtSummary = prev })
+	existing := &StmtSummary{}
+	GlobalStmtSummary = existing
 
 	// Preserve the cluster config too; Setup mutates it on the fix branch.
 	restore := config.RestoreFunc()
@@ -472,10 +473,9 @@ func TestSetupDisablesPersistentOnLoggerInitError(t *testing.T) {
 	require.Error(t, err, "Setup must surface the logger init error")
 	require.ErrorContains(t, err, "stmtsummary v2 persistent mode disabled; falling back to v1 in-memory aggregation")
 
-	// NewStmtSummary returned (nil, error); GlobalStmtSummary must not be
-	// left overwriting a previously good instance, and must NOT be the
-	// half-constructed value that triggered the bug.
-	require.Nil(t, GlobalStmtSummary)
+	// NewStmtSummary returned (nil, error), so Setup must not publish that nil
+	// result over the previously installed instance.
+	require.Same(t, existing, GlobalStmtSummary)
 
 	// This is the invariant the reviewer asked for: persistent mode MUST be
 	// flipped off so the v2 proxy functions become no-ops and the v1 path

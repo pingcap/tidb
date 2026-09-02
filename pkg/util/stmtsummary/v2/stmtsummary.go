@@ -76,12 +76,11 @@ var (
 // always-available in-memory v1 aggregation (stmtsummary.StmtSummaryByDigestMap).
 // The error is returned with fallback context so the caller can emit one
 // actionable log entry rather than logging the same failure at every layer.
-func Setup(cfg *Config) (err error) {
-	GlobalStmtSummary, err = NewStmtSummary(cfg)
+func Setup(cfg *Config) error {
+	stmtSummary, err := NewStmtSummary(cfg)
 	if err != nil {
-		// Flip persistent mode off atomically with the config mutex so that
-		// concurring Add/Enabled/... cannot observe the half-state where
-		// GlobalStmtSummary is nil but the flag is still true.
+		// Keep the failed result private and disable persistent mode before
+		// returning so proxies continue through the v1 implementation.
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.Instance.StmtSummaryEnablePersistent = false
 		})
@@ -90,6 +89,7 @@ func Setup(cfg *Config) (err error) {
 			err,
 		)
 	}
+	GlobalStmtSummary = stmtSummary
 	return nil
 }
 

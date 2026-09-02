@@ -1035,6 +1035,10 @@ type SetTiFlashReplicaArgs struct {
 	TiflashReplica ast.TiFlashReplicaSpec `json:"tiflash_replica,omitempty"`
 	// Note that ResetAvailable is only used in v2 job.
 	ResetAvailable bool `json:"reset_available,omitempty"`
+	// SkipColumnarStorageGate skips the tidb_columnar_storage_enabled check.
+	// Used by TiDB-internal paths such as placement-rule repair that only
+	// reconstruct PD rules for existing replica metadata. v2 job only.
+	SkipColumnarStorageGate bool `json:"skip_columnar_storage_gate,omitempty"`
 }
 
 func (a *SetTiFlashReplicaArgs) getArgsV1(*Job) []any {
@@ -1410,7 +1414,13 @@ type IndexArg struct {
 	IsGlobal bool  `json:"is_global,omitempty"`
 
 	// Only used for job args v2.
-	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
+	// Old DDL owners may ignore AutoPreSplit during rolling upgrades;
+	// this best-effort optimization does not affect correctness.
+	// AutoPreSplit must be separate from SplitOpt. Otherwise, an old DDL owner
+	// ignores the unknown auto field, treats the non-nil empty SplitOpt as a
+	// manual split, and rejects the add-index job.
+	AutoPreSplit bool              `json:"auto_presplit,omitempty"`
+	SplitOpt     *IndexArgSplitOpt `json:"split_opt,omitempty"`
 
 	// ConditionString is used to store the partial index condition string for the index.
 	ConditionString string `json:"condition_string,omitempty"`

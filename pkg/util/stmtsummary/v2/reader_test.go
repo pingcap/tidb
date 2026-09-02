@@ -96,6 +96,37 @@ func TestStmtFileInvalidLine(t *testing.T) {
 	require.Equal(t, time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local).Unix(), f.end)
 }
 
+func TestStmtFileAbsoluteConfiguredFilename(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	dir := t.TempDir()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
+	})
+
+	end := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+	rotated := filepath.Join(dir, "tidb-statements-2022-12-27T16-21-20.245.log")
+	content := fmt.Sprintf("{\"begin\":%d,\"end\":%d}\n", end.Unix()-10, end.Unix())
+	require.NoError(t, os.WriteFile(rotated, []byte(content), 0o600))
+
+	f, err := openStmtFile(rotated)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, f.close()) })
+	require.Equal(t, end.Unix(), f.end)
+
+	checker := stmtChecker{timeRanges: []*StmtTimeRange{{Begin: end.Unix() + 1, End: end.Unix() + 2}}}
+	require.False(t, checker.isTimeValid(f.begin, f.end))
+}
+
+type stmtDirEntryInfoError struct {
+	os.DirEntry
+}
+
+func (stmtDirEntryInfoError) Info() (os.FileInfo, error) {
+	return nil, os.ErrPermission
+}
+
 func TestStmtFiles(t *testing.T) {
 	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
 	filename1 := "tidb-statements-2022-12-27T16-21-20.245.log"
@@ -123,65 +154,117 @@ func TestStmtFiles(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 
-	func() {
-		files, err := newStmtFiles(context.Background(), nil)
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 2)
-		require.Equal(t, filename1, files.files[0].file.Name())
-		require.Equal(t, filename2, files.files[1].file.Name())
-	}()
+	files, err := newStmtFiles(context.Background())
+	require.NoError(t, err)
+	defer files.close()
+	require.Len(t, files.files, 2)
+	require.Equal(t, filename1, files.files[0].path)
+	require.Equal(t, filename2, files.files[1].path)
+	require.Nil(t, files.files[0].file)
+	require.NotNil(t, files.files[1].file)
 
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: t1.Unix() - 10, End: t1.Unix() - 9},
-		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 2)
-		require.Equal(t, filename1, files.files[0].file.Name())
-		require.Equal(t, filename2, files.files[1].file.Name())
-	}()
+	for _, tc := range []struct {
+		name                     string
+		rotateAfterEnumeration   bool
+		failRotatedEntryMetadata bool
+	}{
+		{name: "rotation follows directory snapshot", rotateAfterEnumeration: true},
+		{name: "rotation precedes directory snapshot"},
+		{name: "rotated entry metadata lookup fails", failRotatedEntryMetadata: true},
+	} {
+		t.Run("preserves current file when "+tc.name, func(t *testing.T) {
+			restore := config.RestoreFunc()
+			defer restore()
 
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: 0, End: t1.Unix() - 10},
-		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 2)
-		require.Equal(t, filename1, files.files[0].file.Name())
-		require.Equal(t, filename2, files.files[1].file.Name())
-	}()
+			dir := t.TempDir()
+			currentPath := filepath.Join(dir, "tidb-statements.log")
+			rotatedPath := filepath.Join(dir, "tidb-statements-2022-12-27T16-21-20.245.log")
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.Instance.StmtSummaryFilename = currentPath
+			})
 
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: 0, End: t1.Unix() - 11},
-		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 1)
-		require.Equal(t, filename1, files.files[0].file.Name())
-	}()
+			const oldRecord = `{"begin":1,"end":2,"digest":"old"}`
+			const newRecord = `{"begin":3,"end":4,"digest":"new"}`
+			require.NoError(t, os.WriteFile(currentPath, []byte(oldRecord+"\n"), 0o600))
+			rotate := func() error {
+				if err := os.Rename(currentPath, rotatedPath); err != nil {
+					return err
+				}
+				return os.WriteFile(currentPath, []byte(newRecord+"\n"), 0o600)
+			}
 
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: 0, End: 1},
-		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Empty(t, files.files)
-	}()
+			files, err := newStmtFilesWithReadDir(context.Background(), func(dir string) ([]os.DirEntry, error) {
+				if !tc.rotateAfterEnumeration {
+					if err := rotate(); err != nil {
+						return nil, err
+					}
+					entries, err := os.ReadDir(dir)
+					if err != nil {
+						return nil, err
+					}
+					if tc.failRotatedEntryMetadata {
+						for i, entry := range entries {
+							if filepath.Join(dir, entry.Name()) == rotatedPath {
+								entries[i] = stmtDirEntryInfoError{DirEntry: entry}
+							}
+						}
+					}
+					return entries, nil
+				}
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					return nil, err
+				}
+				if err := rotate(); err != nil {
+					return nil, err
+				}
+				return entries, nil
+			})
+			require.NoError(t, err)
+			expectedFiles := 1
+			if tc.failRotatedEntryMetadata {
+				expectedFiles = 2
+			}
+			require.Len(t, files.files, expectedFiles)
+			var snapshot *stmtFile
+			for _, file := range files.files {
+				if file.file != nil {
+					snapshot = file
+					break
+				}
+			}
+			require.NotNil(t, snapshot)
+			require.NotNil(t, snapshot.file)
 
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: t1.Unix() + 1, End: 0},
+			columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}
+			ctx, cancel := context.WithCancel(context.Background())
+			rowsCh := make(chan [][]types.Datum, 2)
+			errCh := make(chan error, 2)
+			reader := &HistoryReader{
+				ctx:             ctx,
+				cancel:          cancel,
+				timeLocation:    time.Local,
+				columnFactories: makeColumnFactories(columns),
+				checker:         &stmtChecker{},
+				files:           files,
+				concurrent:      2,
+				rowsCh:          rowsCh,
+				errCh:           errCh,
+			}
+			reader.wg.Add(1)
+			go func() {
+				defer reader.wg.Done()
+				reader.scheduleTasks(rowsCh, errCh)
+			}()
+			defer func() {
+				require.NoError(t, reader.Close())
+			}()
+
+			rows := readAllRows(t, reader)
+			require.Len(t, rows, 1)
+			require.Equal(t, "old", rows[0][0].GetString())
 		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 1)
-		require.Equal(t, filename2, files.files[0].file.Name())
-	}()
+	}
 }
 
 func TestStmtChecker(t *testing.T) {
@@ -232,6 +315,7 @@ func TestMemReader(t *testing.T) {
 	columns := []*model.ColumnInfo{
 		{Name: ast.NewCIStr(DigestStr)},
 		{Name: ast.NewCIStr(ExecCountStr)},
+		{Name: ast.NewCIStr(IAExecCountStr)},
 	}
 
 	ss := NewStmtSummary4Test(3)
@@ -251,6 +335,9 @@ func TestMemReader(t *testing.T) {
 	rows := reader.Rows()
 	require.Len(t, rows, 4) // 3 rows + 1 other
 	require.Equal(t, len(reader.columnFactories), len(rows[0]))
+	for _, row := range rows {
+		require.Zero(t, row[2].GetInt64())
+	}
 	evicted := ss.Evicted()
 	require.Len(t, evicted, 3) // begin, end, count
 }
@@ -264,7 +351,7 @@ func TestHistoryReader(t *testing.T) {
 	defer func() {
 		require.NoError(t, os.Remove(filename1))
 	}()
-	_, err = file.WriteString("{\"begin\":1672128520,\"end\":1672128530,\"digest\":\"digest1\",\"exec_count\":10}\n")
+	_, err = file.WriteString("{\"begin\":1672128520,\"end\":1672128530,\"digest\":\"digest1\",\"exec_count\":10,\"ia_remote_exec_count\":3}\n")
 	require.NoError(t, err)
 	_, err = file.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"digest2\",\"exec_count\":20}\n")
 	require.NoError(t, err)
@@ -288,6 +375,7 @@ func TestHistoryReader(t *testing.T) {
 	columns := []*model.ColumnInfo{
 		{Name: ast.NewCIStr(DigestStr)},
 		{Name: ast.NewCIStr(ExecCountStr)},
+		{Name: ast.NewCIStr(IAExecCountStr)},
 	}
 
 	func() {
@@ -298,6 +386,11 @@ func TestHistoryReader(t *testing.T) {
 		require.Len(t, rows, 4)
 		for _, row := range rows {
 			require.Equal(t, len(columns), len(row))
+			if row[0].GetString() == "digest1" {
+				require.Equal(t, int64(3), row[2].GetInt64())
+			} else {
+				require.Zero(t, row[2].GetInt64())
+			}
 		}
 	}()
 
@@ -409,6 +502,58 @@ func TestHistoryReader(t *testing.T) {
 			require.Equal(t, len(columns), len(row))
 		}
 	}()
+
+	t.Run("bounds open file descriptors", func(t *testing.T) {
+		restore := config.RestoreFunc()
+		defer restore()
+
+		dir := t.TempDir()
+		filename := filepath.Join(dir, "tidb-statements.log")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Instance.StmtSummaryFilename = filename
+		})
+
+		const fileCount = 32
+		base := time.Date(2022, 12, 27, 0, 0, 0, 0, time.Local)
+		for i := range fileCount {
+			begin := base.Add(time.Duration(i) * 2 * time.Hour)
+			end := begin.Add(10 * time.Minute)
+			path := filepath.Join(dir, fmt.Sprintf("tidb-statements-%s.log", end.Format(logFileTimeFormat)))
+			content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"digest%d\",\"exec_count\":1}\n", begin.Unix(), end.Unix(), i)
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+		}
+		currentBegin := base.Add(fileCount * 2 * time.Hour)
+		currentEnd := currentBegin.Add(10 * time.Minute)
+		currentContent := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"current\",\"exec_count\":1}\n", currentBegin.Unix(), currentEnd.Unix())
+		require.NoError(t, os.WriteFile(filename, []byte(currentContent), 0o600))
+
+		t.Run("matching files", func(t *testing.T) {
+			before, canCount := countOpenFileDescriptors()
+			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
+				{Begin: base.Unix(), End: 0},
+			}, 2)
+			require.NoError(t, err)
+			if canCount {
+				after, _ := countOpenFileDescriptors()
+				require.LessOrEqual(t, after-before, 4)
+			}
+			require.NoError(t, reader.Close())
+		})
+
+		t.Run("rejected files", func(t *testing.T) {
+			before, canCount := countOpenFileDescriptors()
+			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
+				{Begin: 0, End: base.Add(-time.Minute).Unix()},
+			}, 2)
+			require.NoError(t, err)
+			require.Empty(t, readAllRows(t, reader))
+			require.NoError(t, reader.Close())
+			if canCount {
+				after, _ := countOpenFileDescriptors()
+				require.LessOrEqual(t, after-before, 4)
+			}
+		})
+	})
 }
 
 func TestHistoryReaderInvalidLine(t *testing.T) {
@@ -461,163 +606,10 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 	return results
 }
 
-// TestStmtFilesClosesExcludedFDs closes V2-17 of the statement-summary audit:
-// the directory walk opened every candidate file to read its begin/end metadata
-// and, when a file was excluded by the requested time range, returned without
-// closing the OS FD. Over a long-running TiDB process with on-disk history
-// pruning this leaks one FD per excluded file until the process runs out of
-// file descriptors.
-//
-// The test axiomatically observes file lifetimes by wrapping openStmtFileFn:
-// every opened *os.File is recorded. After newStmtFiles returns, the test
-// double-closes each recorded FD. On a *os.File, calling Close a second time
-// returns os.ErrClosed iff the first Close already ran. Therefore:
-//   - excluded file FDs MUST report os.ErrClosed (closed by the fix);
-//   - kept file FDs MUST NOT report os.ErrClosed (still owned by the reader,
-//     closed later via stmtFiles.close()).
-//
-// On the buggy code the excluded FDs were never closed, so the rechsurClose
-// attempt returns nil and the test fails.
-func TestStmtFilesClosesExcludedFDs(t *testing.T) {
-	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
-	rotated := "tidb-statements-2022-12-27T16-21-20.245.log"
-	active := "tidb-statements.log"
-
-	require.NoError(t, writeStmtFile(rotated, t1.Unix()-10, t1.Unix()))
-	t.Cleanup(func() { _ = os.Remove(rotated) })
-	require.NoError(t, writeStmtFile(active, t1.Unix()+100, t1.Unix()+110))
-	t.Cleanup(func() { _ = os.Remove(active) })
-
-	var opened []*os.File
-	orig := openStmtFileFn
-	openStmtFileFn = func(path string) (*stmtFile, error) {
-		f, err := orig(path)
-		if f != nil {
-			opened = append(opened, f.file)
-		}
-		return f, err
-	}
-	t.Cleanup(func() { openStmtFileFn = orig })
-
-	// Time range excludes BOTH files: any FD opened during enumeration must be
-	// released before newStmtFiles returns.
-	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-		{Begin: 0, End: 1},
-	})
-	require.NoError(t, err)
-	defer files.close()
-	require.Empty(t, files.files)
-
-	require.NotEmpty(t, opened, "test setup: openStmtFile was not invoked")
-	for _, f := range opened {
-		// Second close on an already-closed *os.File returns os.ErrClosed.
-		// Every FD we observed must already be closed, proving walkFn did not
-		// leak a descriptor for an excluded file.
-		err := f.Close()
-		require.ErrorIs(t, err, os.ErrClosed, "excluded statement file FD was not closed (V2-17 FD leak)")
-	}
-}
-
-// TestStmtFilesKeepsOpenFDsForSelectedFiles guards the inverse of V2-17: when a
-// file IS selected by the time range, its FD MUST remain open so the reader
-// can stream rows from it. A regression that over-eagerly closes selected FDs
-// along with excluded ones would surface here as a Stat failure.
-func TestStmtFilesKeepsOpenFDsForSelectedFiles(t *testing.T) {
-	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
-	rotated := "tidb-statements-2022-12-27T16-21-20.245.log"
-
-	require.NoError(t, writeStmtFile(rotated, t1.Unix()-10, t1.Unix()))
-	t.Cleanup(func() { _ = os.Remove(rotated) })
-
-	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-		{Begin: t1.Unix() - 10, End: t1.Unix()},
-	})
-	require.NoError(t, err)
-	defer files.close()
-	require.Len(t, files.files, 1)
-
-	// The retained FD must still be usable: Stat on an already-closed *os.File
-	// returns os.ErrClosed, so a passing Stat proves it is open.
-	_, err = files.files[0].file.Stat()
-	require.NoError(t, err, "selected statement file FD must remain open for the reader")
-}
-
-func writeStmtFile(name string, begin, end int64) error {
-	f, err := os.Create(name)
+func countOpenFileDescriptors() (int, bool) {
+	entries, err := os.ReadDir("/proc/self/fd")
 	if err != nil {
-		return err
+		return 0, false
 	}
-	defer f.Close()
-	if _, err := fmt.Fprintf(f, "{\"begin\":%d,\"end\":%d}\n", begin, end); err != nil {
-		return err
-	}
-	return nil
-}
-
-// TestStmtFileParseEndTsAbsoluteConfiguredFilename closes V2-19 of the
-// statement-summary audit: when tidb_stmt_summary_filename is configured as an
-// absolute path, parseEndTs built the rotated-name prefix from the *full*
-// configured path (e.g. "/tmp/x/tidb-statements") and then compared it against
-// the rotated file's basename (e.g. "tidb-statements-2022-12-27T16-21-20.245").
-// The HasPrefix check never matched, so parseEndTs silently returned 0, which
-// downstream treated as MaxInt64 in timeRangeOverlap - effectively disabling
-// time-range filtering for the absolute-path configuration.
-//
-// The regression test pinpoints the broken operation: with the configured
-// filename set to an absolute path, opening the rotated sibling file MUST yield
-// an `end` timestamp parsed from the filename suffix (not 0). The buggy code
-// leaves end == 0 and the test fails.
-func TestStmtFileParseEndTsAbsoluteConfiguredFilename(t *testing.T) {
-	dir := t.TempDir()
-	const shortName = "tidb-statements"
-	endTime := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
-
-	// Configure the *absolute* filename so the bug surface triggers.
-	restore := config.RestoreFunc()
-	t.Cleanup(restore)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Instance.StmtSummaryFilename = filepath.Join(dir, shortName+".log")
-	})
-
-	// Create a rotated sibling with the timestamp suffix; lumberjack format.
-	rotated := filepath.Join(dir, shortName+"-2022-12-27T16-21-20.245.log")
-	require.NoError(t, writeStmtFile(rotated, endTime.Unix()-10, endTime.Unix()))
-	t.Cleanup(func() { _ = os.Remove(rotated) })
-
-	f, err := openStmtFile(rotated)
-	require.NoError(t, err)
-	defer func() { _ = f.close() }()
-	require.Equal(t, endTime.Unix(), f.end, "V2-19: end timestamp from rotated filename must parse under absolute-path config")
-}
-
-// TestStmtFilesTimeRangeFiltersWithAbsoluteConfiguredFilename asserts that with
-// an absolute configured filename, newStmtFiles' time-range filtering actually
-// prunes rotated siblings outside the range. Under the V2-19 bug, every rotated
-// file's end was 0 (MaxInt64+) and the exclusion did not take effect.
-func TestStmtFilesTimeRangeFiltersWithAbsoluteConfiguredFilename(t *testing.T) {
-	dir := t.TempDir()
-	const shortName = "tidb-statements"
-	endTime := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
-
-	restore := config.RestoreFunc()
-	t.Cleanup(restore)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Instance.StmtSummaryFilename = filepath.Join(dir, shortName+".log")
-	})
-
-	rotated := filepath.Join(dir, shortName+"-2022-12-27T16-21-20.245.log")
-	require.NoError(t, writeStmtFile(rotated, endTime.Unix()-10, endTime.Unix()))
-	t.Cleanup(func() { _ = os.Remove(rotated) })
-
-	// Request a range that sits strictly AFTER the rotated file's real end.
-	// With the V2-19 bug the file's end parsed as 0, which timeRangeOverlap
-	// treats as MaxInt64, so the file's effective range becomes [begin, +inf)
-	// and it would be wrongly included by this query. After the fix, the file's
-	// real end is used and the file is excluded as expected.
-	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-		{Begin: endTime.Unix() + 100, End: endTime.Unix() + 200},
-	})
-	require.NoError(t, err)
-	defer files.close()
-	require.Empty(t, files.files, "V2-19: rotated file fully after the requested range must be filtered when config is absolute")
+	return len(entries), true
 }

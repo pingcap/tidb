@@ -34,6 +34,12 @@ var (
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
 	_ DDLNode = &CreateViewStmt{}
+	_ DDLNode = &CreateMaterializedViewStmt{}
+	_ DDLNode = &CreateMaterializedViewLogStmt{}
+	_ DDLNode = &AlterMaterializedViewStmt{}
+	_ DDLNode = &AlterMaterializedViewLogStmt{}
+	_ DDLNode = &DropMaterializedViewStmt{}
+	_ DDLNode = &DropMaterializedViewLogStmt{}
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
 	_ DDLNode = &CreateMaskingPolicyStmt{}
@@ -740,20 +746,25 @@ const (
 //	| WITH PARSER parser_name
 //	| COMMENT 'string'
 //	| GLOBAL
+//	| PRE_SPLIT_REGIONS = AUTO
 //
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 // with the addition of Global Index
 type IndexOption struct {
 	node
 
-	KeyBlockSize               uint64
-	Tp                         IndexType
-	Comment                    string
-	ParserName                 CIStr
-	Visibility                 IndexVisibility
-	PrimaryKeyTp               PrimaryKeyType
-	Global                     bool
-	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	KeyBlockSize uint64
+	Tp           IndexType
+	Comment      string
+	ParserName   CIStr
+	Visibility   IndexVisibility
+	PrimaryKeyTp PrimaryKeyType
+	Global       bool
+	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	// AutoPreSplit enables leading-column-only, best-effort automatic pre-splitting
+	// for add-index DDL. Parsed ASTs keep it mutually exclusive with SplitOpt; if a
+	// caller constructs both fields manually, SplitOpt takes precedence.
+	AutoPreSplit               bool `json:"-"`
 	SecondaryEngineAttr        string
 	AddColumnarReplicaOnDemand int
 	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
@@ -770,6 +781,7 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
 		n.SplitOpt != nil ||
+		n.AutoPreSplit ||
 		len(n.SecondaryEngineAttr) > 0 ||
 		n.Condition != nil {
 		return false
@@ -857,7 +869,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
-		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPresplit, func() error {
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPreSplit, func() error {
 			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
 			ctx.WritePlain(" = ")
 			if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
@@ -869,6 +881,20 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 				}
 				ctx.WritePlain(")")
 			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		hasPrevOption = true
+	} else if n.AutoPreSplit {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDAutoPreSplit, func() error {
+			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
+			ctx.WritePlain(" = ")
+			ctx.WriteKeyWord("AUTO")
 			return nil
 		})
 		if err != nil {
@@ -1733,6 +1759,577 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Select = selnode.(StmtNode)
+	return v.Leave(n)
+}
+
+// MViewRefreshMethod is the refresh method of a materialized view.
+type MViewRefreshMethod int
+
+const MViewRefreshMethodFast MViewRefreshMethod = iota
+
+func (m MViewRefreshMethod) String() string {
+	switch m {
+	case MViewRefreshMethodFast:
+		return "REFRESH FAST"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// MViewRefreshClause is the refresh clause in CREATE/ALTER MATERIALIZED VIEW.
+type MViewRefreshClause struct {
+	Method    MViewRefreshMethod
+	StartWith ExprNode
+	Next      ExprNode
+}
+
+// Restore implements Node interface.
+func (n *MViewRefreshClause) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(n.Method.String())
+	if n.StartWith != nil {
+		ctx.WriteKeyWord(" START WITH ")
+		if err := n.StartWith.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore MViewRefreshClause.StartWith")
+		}
+	}
+	if n.Next != nil {
+		ctx.WriteKeyWord(" NEXT ")
+		if err := n.Next.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore MViewRefreshClause.Next")
+		}
+	}
+	return nil
+}
+
+// CreateMaterializedViewStmt is a statement to create a materialized view.
+type CreateMaterializedViewStmt struct {
+	ddlNode
+
+	ViewName   *TableName
+	Cols       []CIStr
+	Comment    string
+	Refresh    *MViewRefreshClause
+	Attributes string
+	Options    []*TableOption
+	Select     ResultSetNode
+}
+
+// Restore implements Node interface.
+func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.ViewName")
+	}
+	ctx.WritePlain(" (")
+	for i, col := range n.Cols {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		ctx.WriteName(col.O)
+	}
+	ctx.WritePlain(")")
+	if n.Comment != "" {
+		ctx.WriteKeyWord(" COMMENT ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Comment)
+	}
+	for i, option := range n.Options {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateMaterializedViewStmt.TableOption[%d]", i)
+		}
+	}
+	if n.Refresh != nil {
+		ctx.WritePlain(" ")
+		if err := n.Refresh.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Refresh")
+		}
+	}
+	if n.Attributes != "" {
+		ctx.WriteKeyWord(" ATTRIBUTES ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Attributes)
+	}
+	ctx.WriteKeyWord(" AS ")
+	if err := n.Select.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Select")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	for i, option := range n.Options {
+		node, ok := option.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Options[i] = node.(*TableOption)
+	}
+	if n.Refresh != nil {
+		if n.Refresh.StartWith != nil {
+			node, ok := n.Refresh.StartWith.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Refresh.StartWith = node.(ExprNode)
+		}
+		if n.Refresh.Next != nil {
+			node, ok := n.Refresh.Next.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Refresh.Next = node.(ExprNode)
+		}
+	}
+	if n.Select != nil {
+		node, ok := n.Select.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Select = node.(ResultSetNode)
+	}
+	return v.Leave(n)
+}
+
+// MLogPurgeClause is the purge clause in CREATE/ALTER MATERIALIZED VIEW LOG.
+type MLogPurgeClause struct {
+	Immediate bool
+	StartWith ExprNode
+	Next      ExprNode
+}
+
+// Restore implements Node interface.
+func (n *MLogPurgeClause) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PURGE")
+	if n.Immediate {
+		ctx.WriteKeyWord(" IMMEDIATE")
+		return nil
+	}
+	if n.StartWith != nil {
+		ctx.WriteKeyWord(" START WITH ")
+		if err := n.StartWith.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore MLogPurgeClause.StartWith")
+		}
+	}
+	if n.Next != nil {
+		ctx.WriteKeyWord(" NEXT ")
+		if err := n.Next.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore MLogPurgeClause.Next")
+		}
+	}
+	return nil
+}
+
+// MLogAccumulationAlertClause is the accumulation alert clause in CREATE MATERIALIZED VIEW LOG.
+type MLogAccumulationAlertClause struct {
+	Rows int64
+}
+
+// Restore implements Node interface.
+func (n *MLogAccumulationAlertClause) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALERT ROWS ")
+	ctx.WritePlainf("%d", n.Rows)
+	return nil
+}
+
+// CreateMaterializedViewLogStmt is a statement to create a materialized view log on a base table.
+type CreateMaterializedViewLogStmt struct {
+	ddlNode
+
+	Table             *TableName
+	Cols              []CIStr
+	Options           []*TableOption
+	Purge             *MLogPurgeClause
+	AccumulationAlert *MLogAccumulationAlertClause
+}
+
+// Restore implements Node interface.
+func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW LOG ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Table")
+	}
+	ctx.WritePlain(" (")
+	for i, col := range n.Cols {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		ctx.WriteName(col.O)
+	}
+	ctx.WritePlain(")")
+	for i, option := range n.Options {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateMaterializedViewLogStmt.Options[%d]", i)
+		}
+	}
+	if n.Purge != nil {
+		ctx.WritePlain(" ")
+		if err := n.Purge.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Purge")
+		}
+	}
+	if n.AccumulationAlert != nil {
+		ctx.WritePlain(" ")
+		if err := n.AccumulationAlert.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.AccumulationAlert")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	for i, option := range n.Options {
+		node, ok := option.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Options[i] = node.(*TableOption)
+	}
+	if n.Purge != nil {
+		if n.Purge.StartWith != nil {
+			node, ok := n.Purge.StartWith.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Purge.StartWith = node.(ExprNode)
+		}
+		if n.Purge.Next != nil {
+			node, ok := n.Purge.Next.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Purge.Next = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
+}
+
+// AlterMaterializedViewActionType is the type of ALTER MATERIALIZED VIEW action.
+type AlterMaterializedViewActionType int
+
+const (
+	AlterMaterializedViewActionComment AlterMaterializedViewActionType = iota
+	AlterMaterializedViewActionRefresh
+	AlterMaterializedViewActionAttributes
+)
+
+// AlterMaterializedViewAction is one action in ALTER MATERIALIZED VIEW.
+type AlterMaterializedViewAction struct {
+	node
+	Tp         AlterMaterializedViewActionType
+	Comment    string
+	Refresh    *MViewRefreshClause
+	Attributes string
+}
+
+// Restore implements Node interface.
+func (n *AlterMaterializedViewAction) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case AlterMaterializedViewActionComment:
+		ctx.WriteKeyWord("COMMENT ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Comment)
+	case AlterMaterializedViewActionRefresh:
+		ctx.WriteKeyWord("REFRESH")
+		if n.Refresh != nil {
+			if n.Refresh.StartWith != nil {
+				ctx.WriteKeyWord(" START WITH ")
+				if err := n.Refresh.StartWith.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewAction.Refresh.StartWith")
+				}
+			}
+			if n.Refresh.Next != nil {
+				ctx.WriteKeyWord(" NEXT ")
+				if err := n.Refresh.Next.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewAction.Refresh.Next")
+				}
+			}
+		}
+	case AlterMaterializedViewActionAttributes:
+		ctx.WriteKeyWord("ATTRIBUTES ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Attributes)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterMaterializedViewAction) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterMaterializedViewAction)
+	if n.Refresh != nil {
+		if n.Refresh.StartWith != nil {
+			node, ok := n.Refresh.StartWith.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Refresh.StartWith = node.(ExprNode)
+		}
+		if n.Refresh.Next != nil {
+			node, ok := n.Refresh.Next.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Refresh.Next = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
+}
+
+// AlterMaterializedViewStmt is a statement to alter a materialized view.
+type AlterMaterializedViewStmt struct {
+	ddlNode
+	ViewName *TableName
+	Actions  []*AlterMaterializedViewAction
+}
+
+// Restore implements Node interface.
+func (n *AlterMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewStmt.ViewName")
+	}
+	ctx.WritePlain(" ")
+	for i, action := range n.Actions {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := action.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterMaterializedViewStmt.Actions[%d]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	for i, action := range n.Actions {
+		node, ok := action.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Actions[i] = node.(*AlterMaterializedViewAction)
+	}
+	return v.Leave(n)
+}
+
+// AlterMaterializedViewLogActionType is the type of ALTER MATERIALIZED VIEW LOG action.
+type AlterMaterializedViewLogActionType int
+
+const (
+	AlterMaterializedViewLogActionPurge AlterMaterializedViewLogActionType = iota
+	AlterMaterializedViewLogActionAddColumn
+)
+
+// AlterMaterializedViewLogAction is one action in ALTER MATERIALIZED VIEW LOG.
+type AlterMaterializedViewLogAction struct {
+	node
+	Tp    AlterMaterializedViewLogActionType
+	Purge *MLogPurgeClause
+	Cols  []CIStr
+}
+
+// Restore implements Node interface.
+func (n *AlterMaterializedViewLogAction) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case AlterMaterializedViewLogActionPurge:
+		if n.Purge != nil {
+			return n.Purge.Restore(ctx)
+		}
+	case AlterMaterializedViewLogActionAddColumn:
+		ctx.WriteKeyWord("ADD COLUMN (")
+		for i, col := range n.Cols {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(col.O)
+		}
+		ctx.WritePlain(")")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterMaterializedViewLogAction) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterMaterializedViewLogAction)
+	if n.Purge != nil {
+		if n.Purge.StartWith != nil {
+			node, ok := n.Purge.StartWith.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Purge.StartWith = node.(ExprNode)
+		}
+		if n.Purge.Next != nil {
+			node, ok := n.Purge.Next.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Purge.Next = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
+}
+
+// AlterMaterializedViewLogStmt is a statement to alter a materialized view log.
+type AlterMaterializedViewLogStmt struct {
+	ddlNode
+	Table   *TableName
+	Actions []*AlterMaterializedViewLogAction
+}
+
+// Restore implements Node interface.
+func (n *AlterMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER MATERIALIZED VIEW LOG ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewLogStmt.Table")
+	}
+	ctx.WritePlain(" ")
+	for i, action := range n.Actions {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := action.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterMaterializedViewLogStmt.Actions[%d]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	for i, action := range n.Actions {
+		node, ok := action.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Actions[i] = node.(*AlterMaterializedViewLogAction)
+	}
+	return v.Leave(n)
+}
+
+// DropMaterializedViewStmt is a statement to drop a materialized view.
+type DropMaterializedViewStmt struct {
+	ddlNode
+	IfExists bool
+	ViewName *TableName
+}
+
+// Restore implements Node interface.
+func (n *DropMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP MATERIALIZED VIEW ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	return n.ViewName.Restore(ctx)
+}
+
+// Accept implements Node Accept interface.
+func (n *DropMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// DropMaterializedViewLogStmt is a statement to drop a materialized view log.
+type DropMaterializedViewLogStmt struct {
+	ddlNode
+	IfExists bool
+	Table    *TableName
+}
+
+// Restore implements Node interface.
+func (n *DropMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP MATERIALIZED VIEW LOG ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteKeyWord("ON ")
+	return n.Table.Restore(ctx)
+}
+
+// Accept implements Node Accept interface.
+func (n *DropMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 
@@ -4298,7 +4895,7 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		n.Options[i] = node.(*TableOption)
 	}
 	for _, def := range n.PartDefinitions {
-		if !def.acceptInPlace(v) {
+		if !def.accept(v) {
 			return n, false
 		}
 	}
@@ -4455,7 +5052,8 @@ func (spd *SubPartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 
 type PartitionDefinitionClause interface {
 	restore(ctx *format.RestoreCtx) error
-	acceptInPlace(v Visitor) bool
+	accept(v Visitor) bool
+	acceptInPlace(v InPlaceVisitor) bool
 	// Validate checks if the clause is consistent with the given options.
 	// `pt` can be 0 and `columns` can be -1 to skip checking the clause against
 	// the partition type or number of columns in the expression list.
@@ -4468,7 +5066,11 @@ func (*PartitionDefinitionClauseNone) restore(_ *format.RestoreCtx) error {
 	return nil
 }
 
-func (*PartitionDefinitionClauseNone) acceptInPlace(_ Visitor) bool {
+func (*PartitionDefinitionClauseNone) accept(_ Visitor) bool {
+	return true
+}
+
+func (*PartitionDefinitionClauseNone) acceptInPlace(_ InPlaceVisitor) bool {
 	return true
 }
 
@@ -4504,13 +5106,22 @@ func (n *PartitionDefinitionClauseLessThan) restore(ctx *format.RestoreCtx) erro
 	return nil
 }
 
-func (n *PartitionDefinitionClauseLessThan) acceptInPlace(v Visitor) bool {
+func (n *PartitionDefinitionClauseLessThan) accept(v Visitor) bool {
 	for i, expr := range n.Exprs {
 		newExpr, ok := expr.Accept(v)
 		if !ok {
 			return false
 		}
 		n.Exprs[i] = newExpr.(ExprNode)
+	}
+	return true
+}
+
+func (n *PartitionDefinitionClauseLessThan) acceptInPlace(v InPlaceVisitor) bool {
+	for _, expr := range n.Exprs {
+		if !expr.AcceptInPlace(v) {
+			return false
+		}
 	}
 	return true
 }
@@ -4575,7 +5186,7 @@ func (n *PartitionDefinitionClauseIn) restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-func (n *PartitionDefinitionClauseIn) acceptInPlace(v Visitor) bool {
+func (n *PartitionDefinitionClauseIn) accept(v Visitor) bool {
 	for _, valList := range n.Values {
 		for j, val := range valList {
 			newVal, ok := val.Accept(v)
@@ -4583,6 +5194,17 @@ func (n *PartitionDefinitionClauseIn) acceptInPlace(v Visitor) bool {
 				return false
 			}
 			valList[j] = newVal.(ExprNode)
+		}
+	}
+	return true
+}
+
+func (n *PartitionDefinitionClauseIn) acceptInPlace(v InPlaceVisitor) bool {
+	for _, valList := range n.Values {
+		for _, val := range valList {
+			if !val.AcceptInPlace(v) {
+				return false
+			}
 		}
 	}
 	return true
@@ -4648,7 +5270,11 @@ func (n *PartitionDefinitionClauseHistory) restore(ctx *format.RestoreCtx) error
 	return nil
 }
 
-func (*PartitionDefinitionClauseHistory) acceptInPlace(_ Visitor) bool {
+func (*PartitionDefinitionClauseHistory) accept(_ Visitor) bool {
+	return true
+}
+
+func (*PartitionDefinitionClauseHistory) acceptInPlace(_ InPlaceVisitor) bool {
 	return true
 }
 
@@ -4681,7 +5307,11 @@ func (n *PartitionDefinition) Comment() (string, bool) {
 	return "", false
 }
 
-func (n *PartitionDefinition) acceptInPlace(v Visitor) bool {
+func (n *PartitionDefinition) accept(v Visitor) bool {
+	return n.Clause.accept(v)
+}
+
+func (n *PartitionDefinition) acceptInPlace(v InPlaceVisitor) bool {
 	return n.Clause.acceptInPlace(v)
 }
 
@@ -4846,8 +5476,8 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// acceptInPlace is like Node.Accept but does not allow replacing the node itself.
-func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
+// accept is like Node.Accept but does not allow replacing the node itself.
+func (n *PartitionMethod) accept(v Visitor) bool {
 	if n.Expr != nil {
 		expr, ok := n.Expr.Accept(v)
 		if !ok {
@@ -4861,6 +5491,18 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 			return false
 		}
 		n.ColumnNames[i] = newColName.(*ColumnName)
+	}
+	return true
+}
+
+func (n *PartitionMethod) acceptInPlace(v InPlaceVisitor) bool {
+	if n.Expr != nil && !n.Expr.AcceptInPlace(v) {
+		return false
+	}
+	for _, colName := range n.ColumnNames {
+		if !colName.AcceptInPlace(v) {
+			return false
+		}
 	}
 	return true
 }
@@ -4990,14 +5632,14 @@ func (n *PartitionOptions) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*PartitionOptions)
-	if !n.PartitionMethod.acceptInPlace(v) {
+	if !n.PartitionMethod.accept(v) {
 		return n, false
 	}
-	if n.Sub != nil && !n.Sub.acceptInPlace(v) {
+	if n.Sub != nil && !n.Sub.accept(v) {
 		return n, false
 	}
 	for _, def := range n.Definitions {
-		if !def.acceptInPlace(v) {
+		if !def.accept(v) {
 			return n, false
 		}
 	}
