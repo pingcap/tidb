@@ -42,6 +42,17 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: closed the two executable sequence-arithmetic gaps in the
+  `pkg/ddl` sequence-function carrier. Go master’s
+  `pkg/meta/autoid.CalcSequenceBatchSize` relies on wrapping signed `int64`
+  operations after the unsigned-domain seek; Rust had used checked operators,
+  so valid negative-start and near-`i64`-boundary ladders panicked in debug.
+  `tidb-executor/src/sequence.rs` now spells those operations explicitly as
+  wrapping subtraction, multiplication, addition, negation, and seed/cycle
+  boundary updates. The two source-derived tests are active and pass, with
+  pre-fix failures recorded at `sequence.rs:219`; details are in the b110
+  follow-up receipt. No Go source was edited.
+
 - 2026-09-03: aligned the Rust `tidb-expr` expression-tree
   `Decorrelate` and `PropagateType(ETReal)` surfaces with Go master
   `049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. Constants and plain columns now

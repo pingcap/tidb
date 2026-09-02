@@ -199,13 +199,22 @@ fn sequence_option_ladders_match_go() {
 /// `maxv - nr` overflows int64 there and Go PROCEEDS on the wrapped value
 /// (`CalcSequenceBatchSize`, `pkg/meta/autoid/autoid.go:802`; Go's signed
 /// overflow wraps silently).
-// go-parity-gap: the Rust carrier's same subtraction panics in debug builds
-// (`src/sequence.rs:219`, `attempt to subtract with overflow`) because the
-// port did not reproduce Go's wrap-around arithmetic at this boundary; the
-// value ladder therefore cannot execute.
 #[test]
-#[ignore]
 fn negative_minvalue_ladder_with_default_maxvalue_matches_go() {
+    let mut catalog = Catalog::default();
+    run_seq(
+        &mut catalog,
+        "create sequence seq minvalue -5 start = -2 increment = 5",
+    );
+    let ctx = session(&catalog, "test");
+    let got: Vec<_> = (0..3)
+        .map(|_| one_column(&catalog, &ctx, "select nextval(seq)"))
+        .collect();
+    assert_eq!(
+        got,
+        vec![vec![Some(-2)], vec![Some(3)], vec![Some(8)]],
+        "Go's CalcSequenceBatchSize wraps signed overflow and keeps the ladder alive"
+    );
 }
 
 /// Go rows `pkg/ddl/sequence_test.go:147-166`: `CYCLE` wraps to the
@@ -584,12 +593,43 @@ fn lastval_across_cache_invalidation_and_cycles() {
 /// -9223372036854775800 and then ...802. Go survives because its signed
 /// arithmetic WRAPS (`CalcSequenceBatchSize`, `pkg/meta/autoid/autoid.go:802`,
 /// and the uint64-domain seek it delegates to).
-// go-parity-gap: the Rust carrier panics on the same rows (debug overflow
-// at `src/sequence.rs:219`, `maxv - nr` with a boundary maxvalue and a
-// negative seed) instead of wrapping like Go.
 #[test]
-#[ignore]
 fn i64_boundary_seek_does_not_overflow() {
+    let mut catalog = Catalog::default();
+    run_seq(
+        &mut catalog,
+        "create sequence seq increment 2 start -9223372036854775807 maxvalue 9223372036854775806 minvalue -9223372036854775807 cache 2 cycle",
+    );
+    let ctx = session(&catalog, "test");
+    let ladder = [
+        ("select nextval(seq)", Some(-9223372036854775807)),
+        (
+            "select setval(seq, 9223372036854775800)",
+            Some(9223372036854775800),
+        ),
+        ("select nextval(seq)", Some(9223372036854775801)),
+    ];
+    for (sql, expect) in ladder {
+        assert_eq!(one_column(&catalog, &ctx, sql), vec![expect], "{sql}");
+    }
+
+    let mut catalog = Catalog::default();
+    run_seq(
+        &mut catalog,
+        "create sequence seq increment -2 start 9223372036854775806 maxvalue 9223372036854775806 minvalue -9223372036854775807 cache 2 cycle",
+    );
+    let ctx = session(&catalog, "test");
+    let ladder = [
+        ("select nextval(seq)", Some(9223372036854775806)),
+        (
+            "select setval(seq, -9223372036854775800)",
+            Some(-9223372036854775800),
+        ),
+        ("select nextval(seq)", Some(-9223372036854775802)),
+    ];
+    for (sql, expect) in ladder {
+        assert_eq!(one_column(&catalog, &ctx, sql), vec![expect], "{sql}");
+    }
 }
 
 /// Go rows `pkg/ddl/sequence_test.go:466-479`: the ticase regression -- after
