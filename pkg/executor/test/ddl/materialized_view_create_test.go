@@ -466,7 +466,7 @@ func TestMaterializedViewCommentLength(t *testing.T) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec(createMVSQL("mv_comment_truncated", commentTooLong))
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1628|"+errTooLongComment("mv_comment_truncated")))
-	tk.MustQuery(fmt.Sprintf("select length(table_comment) from information_schema.tables where table_schema = 'test' and table_name = 'mv_comment_truncated'")).Check(testkit.Rows(fmt.Sprintf("%d", maxTableCommentLength)))
+	tk.MustQuery("select length(table_comment) from information_schema.tables where table_schema = 'test' and table_name = 'mv_comment_truncated'").Check(testkit.Rows(fmt.Sprintf("%d", maxTableCommentLength)))
 }
 
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
@@ -776,9 +776,14 @@ func TestCreateMaterializedViewLogPrivilege(t *testing.T) {
 	tk := newMViewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_create_mlog_priv (a int)")
-	for _, user := range []string{"u_create_mlog_no_create", "u_create_mlog_no_select", "u_create_mlog_table_create", "u_create_mlog_ok"} {
+	users := []string{"u_create_mlog_no_create", "u_create_mlog_no_select", "u_create_mlog_table_create", "u_create_mlog_ok"}
+	t.Cleanup(func() {
+		for _, user := range users {
+			tk.MustExec("drop user '" + user + "'@'%'")
+		}
+	})
+	for _, user := range users {
 		tk.MustExec("create user '" + user + "'@'%'")
-		defer tk.MustExec("drop user '" + user + "'@'%'")
 	}
 
 	tk.MustExec("grant select on test.t_create_mlog_priv to 'u_create_mlog_no_create'@'%'")
