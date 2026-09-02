@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: completed the Analyze consumer follow-up in the root
+  `pkg/executor` boundary against Go master
+  `78cac443a4f46c13bfe27eb247b5c80657952547`. The five-file batch propagates
+  the Analyze plan ID, restores unsigned full-sampling range handling, wires
+  `AnalyzeStoreBatchSize` into request flags, closes partially opened index
+  results on error, and adds `TestAnalyzeBuildsRequest` for request shape and
+  boundary buckets. Focused failpoint-aware validation passes in the detached
+  Go-master worktree; details are in
+  `receipts/executor_analyze_store_batch.md`.
+
 - 2026-09-02: restored the Go-master analyze-store-batch contract in one
   dependency-closed source batch. `pkg/sessionctx/vardef` now exposes the
   `tidb_analyze_store_batch_size` name/default/bound, `pkg/sessionctx/variable`
@@ -4478,6 +4488,16 @@ For each bounded behavior cluster:
   the unavailable local executable. Materialized-view table constants and
   upgraded-cluster migration remain explicit `pkg/session` boundaries. See
   `receipts/meta_metadef_operate_view.md`.
+
+- 2026-09-02: completed the follow-up `pkg/meta/metadef` materialized-view
+  system-definition batch against Go master
+  `78cac443a4f46c13bfe27eb247b5c80657952547`. The complete seven-artifact,
+  1,375-line direct inventory was reread before editing. Go now restores the
+  five reserved materialized-view maintenance IDs and their exact CREATE TABLE
+  constants already present in Rust, with a focused ID/DDL contract regression
+  and the full package suite passing. No Rust-only duplicate behavior was
+  added; the required Bazel preparation gate remains blocked by the unavailable
+  local executable. Details are in `receipts/meta_metadef_operate_view.md`.
 
 ## Decision Log
 
