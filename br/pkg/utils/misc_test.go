@@ -77,7 +77,7 @@ func TestIsTypeCompatible(t *testing.T) {
 		src := types.NewFieldType(mysql.TypeVarchar)
 		src.SetFlen(100)
 		target := types.NewFieldType(mysql.TypeVarchar)
-		target.SetFlag(99)
+		target.SetFlen(99)
 		typeEq, collateEq := IsTypeCompatible(*src, *target)
 		require.False(t, typeEq)
 		require.True(t, collateEq)
