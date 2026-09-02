@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-02: restored the two self-contained Go-master runtime deltas in the
+  complete `pkg/types` inventory (61 artifacts, including the nested
+  `parser_driver` support package): checked `uint64` vector-size arithmetic
+  with an overflow regression, and the public `ExplainFormatRU` constant and
+  ordered validator entry with a value/position regression. The parser-driver
+  in-place visitor additions remain an explicit dependency boundary. Root and
+  support-package Go tests pass; `make bazel_prepare` was attempted and is
+  blocked only by the unavailable local `bazel` executable. Details are in
+  `receipts/types_explain_format_audit.md`.
+
 - 2026-09-02: refreshed the complete Go-master
   `pkg/statistics/handle/internal` boundary at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: two artifacts and 68 lines,

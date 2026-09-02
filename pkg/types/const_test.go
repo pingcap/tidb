@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,4 +94,10 @@ func TestServerStatus(t *testing.T) {
 	for _, test := range tests {
 		require.Equal(t, test.IsCursorExists, mysql.HasCursorExistsFlag(test.arg))
 	}
+}
+
+func TestExplainFormatRU(t *testing.T) {
+	require.Equal(t, "ru", types.ExplainFormatRU)
+	require.Equal(t, "ru", types.ExplainFormats[len(types.ExplainFormats)-1])
+	require.Contains(t, types.ExplainFormats, types.ExplainFormatRU)
 }

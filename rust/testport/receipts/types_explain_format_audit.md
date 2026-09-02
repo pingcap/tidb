@@ -29,21 +29,23 @@ BUILD.bazel accept_in_place_test.go main_test.go value_expr.go value_expr_test.g
 
 There are no generated, platform-specific, fixture, or external data files in
 this package tree. The existing b034–b037 receipts cover the complete source
-test inventory (206 `Test*` functions) and the earlier vector overflow fix.
-This audit rechecked the current `origin/master` delta in
-`explain_format.go`, `vector.go`, and the parser-driver files before editing.
+test inventory (206 `Test*` functions). This audit rechecked the current
+`origin/master` delta in `explain_format.go`, `vector.go`, and the
+parser-driver files before editing; the two self-contained root-package
+runtime deltas are restored below.
 
 ## Current-master behavior and owner decision
 
 Go master adds the public `ExplainFormatRU = "ru"` literal and appends it to
-the validator's `ExplainFormats` slice. Rust's `tidb-datatype::explain_format`
-is the dependency-closed owner, so it now exports the constant, grows the
-ordered validator array from 13 to 14 entries, and has a focused order/value
-regression.
+the validator's `ExplainFormats` slice. The Go package now exports the same
+constant and ordered entry, with `TestExplainFormatRU` pinning the value and
+position. Rust's `tidb-datatype::explain_format` is the dependency-closed
+owner and retains the matching 14-entry validator regression.
 
 Go master also changes `PeekBytesAsVectorFloat32` to use checked `uint64`
-size arithmetic. The Rust vector owner already has that checked arithmetic and
-the source-derived overflow regression; no duplicate change was made.
+size arithmetic. The Go package now performs the checked multiplication and
+`TestVectorDeserializeOverflow` covers both peek and zero-copy paths; the Rust
+vector owner retains its source-derived overflow regression.
 
 The new parser-driver `AcceptInPlace` methods are API-shaped visitor hooks on
 Go driver nodes. Rust represents these expressions as `tidb-ast::Expr` enum
@@ -55,21 +57,28 @@ a Rust-only carrier.
 
 Profile: Ready for this bounded production change.
 
+- Before editing, `TestVectorDeserializeOverflow` failed (`an error is expected but got nil`) with the wrapped `uint32` size calculation, and `TestExplainFormatRU` failed to compile because the exported symbol was absent; both focused probes pass after the fix.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex go test ./pkg/types -count=1` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex go test ./pkg/types/parser_driver -count=1` — passed (unchanged boundary support package).
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make bazel_prepare` — blocked because no `bazel` executable is installed.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --lib explain_format -- --test-threads=1` — passed (the focused owner test; existing workspace warnings only).
 - `rustfmt +nightly-2026-08-22 --edition 2021 --check crates/tidb-datatype/src/explain_format.rs crates/tidb-datatype/src/lib.rs` — passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
 - `git diff --check` — passed.
 
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+`make bazel_prepare` is required by the new top-level Go regression and was
+attempted; the local toolchain blocks it before metadata generation.
 
 ## Risks and not verified
 
-- Correctness: the RU literal and ordered-list position now match Go; no
-  behavior was invented for parser-driver traversal.
-- Compatibility: this adds one exported Rust constant and one validator entry;
-  consumers that enumerate the array will observe the new Go-compatible value.
+- Correctness: the RU literal/order and checked vector-size arithmetic now match
+  Go in both source implementations; the overflow regression prevents a
+  truncated length header from being accepted.
+- Compatibility: this adds one exported Go/Rust constant and one validator
+  entry; consumers that enumerate the array observe the new Go-compatible
+  value. The parser-driver API remains an explicit boundary.
 - Performance: the validator list remains a static array; no hot-path policy
   changed.
-- The full Go `pkg/types` test suite and parser-driver API tests were not run;
-  existing workspace host-toolchain blockers and the lack of a Rust driver
-  owner keep those surfaces outside this focused validation.
+- Full Go root and parser-driver suites pass locally. Bazel metadata generation
+  remains unverified because the executable is unavailable; the parser-driver
+  API additions in Go master remain outside the Rust owner boundary.
