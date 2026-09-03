@@ -222,7 +222,12 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 					ok = false
 				})
 				if !ok {
-					ch <- errorEvent(io.EOF)
+					if err := ctx.Err(); err != nil {
+						collectRemaining()
+						ch <- errorEvent(err)
+					} else {
+						ch <- errorEvent(io.EOF)
+					}
 					return
 				}
 				if !handleResponse(resp) {
@@ -234,7 +239,12 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 					ok = false
 				})
 				if !ok {
-					ch <- errorEvent(io.EOF)
+					if err := ctx.Err(); err != nil {
+						collectRemaining()
+						ch <- errorEvent(err)
+					} else {
+						ch <- errorEvent(io.EOF)
+					}
 					return
 				}
 				if !handleResponse(resp) {
