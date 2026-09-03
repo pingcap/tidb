@@ -38,9 +38,10 @@ use crate::partition::PartitionInfo;
 use crate::placement::PolicyRefInfo;
 use crate::schema_state::SchemaState;
 use crate::table::{
-    ConstraintInfo, ExchangePartitionInfo, FKInfo, SequenceInfo, SoftdeleteInfo, StatsOptions,
-    TTLInfo, TableAffinityInfo, TableCacheStatusType, TableLockInfo, TempTableType,
-    TiFlashReplicaInfo, ViewInfo,
+    ConstraintInfo, ExchangePartitionInfo, FKInfo, MaterializedViewBaseInfo, MaterializedViewInfo,
+    MaterializedViewLogInfo, SequenceInfo, SoftdeleteInfo, StatsOptions, TTLInfo,
+    TableAffinityInfo, TableCacheStatusType, TableLockInfo, TempTableType, TiFlashReplicaInfo,
+    ViewInfo,
 };
 use crate::table_mode::TableMode;
 
@@ -189,6 +190,28 @@ pub struct TableInfo {
     /// The view metadata, if this is a view.
     #[serde(rename = "view", default)]
     pub view: Option<GoShared<ViewInfo>>,
+    /// The materialized-view base-table metadata, if this base table has
+    /// materialized view(s) and/or a materialized view log.
+    #[serde(
+        rename = "materialized_view_base",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub materialized_view_base: Option<GoShared<MaterializedViewBaseInfo>>,
+    /// The materialized-view metadata, if this is a materialized view.
+    #[serde(
+        rename = "materialized_view",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub materialized_view: Option<GoShared<MaterializedViewInfo>>,
+    /// The materialized-view log metadata, if this is an MV log table.
+    #[serde(
+        rename = "materialized_view_log",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub materialized_view_log: Option<GoShared<MaterializedViewLogInfo>>,
     /// The sequence metadata, if this is a sequence.
     #[serde(rename = "sequence", default)]
     pub sequence: Option<GoShared<SequenceInfo>>,
@@ -339,6 +362,18 @@ impl TableInfo {
                 .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
             compression: self.compression.clone(),
             view: self.view.clone(),
+            materialized_view_base: self
+                .materialized_view_base
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
+            materialized_view: self
+                .materialized_view
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
+            materialized_view_log: self
+                .materialized_view_log
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
             sequence: self.sequence.clone(),
             lock: self.lock.clone(),
             version: self.version,

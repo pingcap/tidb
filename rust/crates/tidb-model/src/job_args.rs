@@ -404,6 +404,10 @@ pub enum JobArgsValue {
     ModifySchema(Option<GoShared<ModifySchemaArgs>>),
     /// `*model.CreateTableArgs`, including a typed nil pointer.
     CreateTable(Option<GoShared<CreateTableArgs>>),
+    /// `*model.CreateMaterializedViewLogArgs`, including a typed nil pointer.
+    CreateMaterializedViewLog(Option<GoShared<CreateMaterializedViewLogArgs>>),
+    /// `*model.CreateMaterializedViewArgs`, including a typed nil pointer.
+    CreateMaterializedView(Option<GoShared<CreateMaterializedViewArgs>>),
     /// `*model.BatchCreateTableArgs`, including a typed nil pointer.
     BatchCreateTable(Option<GoShared<BatchCreateTableArgs>>),
     /// `*model.TruncateTableArgs`, including a typed nil pointer.
@@ -456,6 +460,8 @@ impl JobArgsValue {
             Self::DropSchema(value) => job.fill_args(value.clone()),
             Self::ModifySchema(value) => job.fill_args(value.clone()),
             Self::CreateTable(value) => job.fill_args(value.clone()),
+            Self::CreateMaterializedViewLog(value) => job.fill_args(value.clone()),
+            Self::CreateMaterializedView(value) => job.fill_args(value.clone()),
             Self::BatchCreateTable(value) => job.fill_args(value.clone()),
             Self::TruncateTable(value) => job.fill_args(value.clone()),
             Self::TablePartition(value) => job.fill_args(value.clone()),
@@ -488,6 +494,8 @@ impl JobArgsValue {
             Self::DropSchema(_) => "DropSchemaArgs",
             Self::ModifySchema(_) => "ModifySchemaArgs",
             Self::CreateTable(_) => "CreateTableArgs",
+            Self::CreateMaterializedViewLog(_) => "CreateMaterializedViewLogArgs",
+            Self::CreateMaterializedView(_) => "CreateMaterializedViewArgs",
             Self::BatchCreateTable(_) => "BatchCreateTableArgs",
             Self::TruncateTable(_) => "TruncateTableArgs",
             Self::TablePartition(_) => "TablePartitionArgs",
@@ -521,6 +529,10 @@ impl JobArgsValue {
             Self::DropSchema(value) => value.as_ref().map(GoShared::identity_address),
             Self::ModifySchema(value) => value.as_ref().map(GoShared::identity_address),
             Self::CreateTable(value) => value.as_ref().map(GoShared::identity_address),
+            Self::CreateMaterializedViewLog(value) => {
+                value.as_ref().map(GoShared::identity_address)
+            }
+            Self::CreateMaterializedView(value) => value.as_ref().map(GoShared::identity_address),
             Self::BatchCreateTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::TruncateTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::TablePartition(value) => value.as_ref().map(GoShared::identity_address),
@@ -585,6 +597,16 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::CreateTable(value) => GoTypedPointer::new(
                 model_type("CreateTableArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::CreateMaterializedViewLog(value) => GoTypedPointer::new(
+                model_type("CreateMaterializedViewLogArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::CreateMaterializedView(value) => GoTypedPointer::new(
+                model_type("CreateMaterializedViewArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),
@@ -1420,6 +1442,114 @@ impl JobArgs for CreateTableArgs {
 pub fn get_create_table_args(
     job: &mut Job,
 ) -> Result<Option<GoShared<CreateTableArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `CreateMaterializedViewLogArgs`: the arguments for a create materialized
+/// view log job.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct CreateMaterializedViewLogArgs {
+    /// Table metadata pointer.
+    #[serde(
+        rename = "table_info",
+        default,
+        skip_serializing_if = "field_shared_pointer_is_none"
+    )]
+    pub table_info: GoField<Option<GoShared<TableInfo>>>,
+}
+
+impl JobArgs for CreateMaterializedViewLogArgs {
+    job_args_identity_methods!(CreateMaterializedViewLog);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value
+            .expect("nil *CreateMaterializedViewLogArgs receiver")
+            .read();
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            model_type("TableInfo", GoTypeKind::Struct),
+            value.table_info.get(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let table_info = GoShared::new(TableInfo::default());
+        let value = GoShared::new(Self {
+            table_info: GoField::new(Some(table_info.clone())),
+        });
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(&table_info, model_type("TableInfo", GoTypeKind::Struct))?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetCreateMaterializedViewLogArgs`.
+pub fn get_create_materialized_view_log_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<CreateMaterializedViewLogArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `CreateMaterializedViewArgs`: the arguments for a create materialized
+/// view job.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct CreateMaterializedViewArgs {
+    /// Table metadata pointer.
+    #[serde(
+        rename = "table_info",
+        default,
+        skip_serializing_if = "field_shared_pointer_is_none"
+    )]
+    pub table_info: GoField<Option<GoShared<TableInfo>>>,
+    /// The materialized view log table identifiers created alongside the view.
+    #[serde(
+        rename = "mlog_table_ids",
+        default,
+        skip_serializing_if = "field_shared_slice_is_empty"
+    )]
+    pub mlog_table_ids: GoField<GoSharedSlice<i64>>,
+}
+
+impl JobArgs for CreateMaterializedViewArgs {
+    job_args_identity_methods!(CreateMaterializedView);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value
+            .expect("nil *CreateMaterializedViewArgs receiver")
+            .read();
+        GoSharedSlice::from_vec(vec![
+            typed_pointer_any(
+                model_type("TableInfo", GoTypeKind::Struct),
+                value.table_info.get(),
+            ),
+            typed_value_any(
+                builtin_type("[]int64", GoTypeKind::Slice),
+                value.mlog_table_ids.get(),
+            ),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let table_info = GoShared::new(TableInfo::default());
+        let value = GoShared::new(Self {
+            table_info: GoField::new(Some(table_info.clone())),
+            ..Default::default()
+        });
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(&table_info, model_type("TableInfo", GoTypeKind::Struct))?;
+        decoder.decode(
+            &value.read().mlog_table_ids,
+            builtin_type("[]int64", GoTypeKind::Slice),
+        )?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetCreateMaterializedViewArgs`.
+pub fn get_create_materialized_view_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<CreateMaterializedViewArgs>>, serde_json::Error> {
     get_or_decode_args(job)
 }
 

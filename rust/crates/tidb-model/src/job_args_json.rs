@@ -22,8 +22,9 @@ use crate::serde_helpers::{
 use crate::serde_shared_slices::{SharedObjectSliceSeed, SharedScalarSliceSeed};
 use crate::{
     AddCheckConstraintArgs, AlterIndexVisibilityArgs, AlterTableModeArgs, AlterTablePartitionArgs,
-    BatchCreateTableArgs, CheckConstraintArgs, CreateSchemaArgs, CreateTableArgs,
-    DropForeignKeyArgs, DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs, ModifySchemaArgs,
+    BatchCreateTableArgs, CheckConstraintArgs, CreateMaterializedViewArgs,
+    CreateMaterializedViewLogArgs, CreateSchemaArgs, CreateTableArgs, DropForeignKeyArgs,
+    DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs, ModifySchemaArgs,
     ModifyTableAutoIDCacheArgs, ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs,
     ModifyTableEngineAttributeArgs, RebaseAutoIDArgs, RefreshMetaArgs, SetDefaultValueArgs,
     ShardRowIDArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
@@ -107,6 +108,26 @@ impl_go_json_merge_object!(CreateTableArgs, destination, map, key, {
     }
 });
 impl_go_json_deserialize!(CreateTableArgs);
+
+impl_go_json_merge_object!(CreateMaterializedViewLogArgs, destination, map, key, {
+    if go_json_field_matches(&key, "table_info") {
+        map.next_value_seed(OptionSharedMergeSeed(&mut *destination.table_info.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(CreateMaterializedViewLogArgs);
+
+impl_go_json_merge_object!(CreateMaterializedViewArgs, destination, map, key, {
+    if go_json_field_matches(&key, "table_info") {
+        map.next_value_seed(OptionSharedMergeSeed(&mut *destination.table_info.write()))?;
+    } else if go_json_field_matches(&key, "mlog_table_ids") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.mlog_table_ids.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(CreateMaterializedViewArgs);
 
 impl_go_json_merge_object!(BatchCreateTableArgs, destination, map, key, {
     if go_json_field_matches(&key, "tables") {

@@ -374,6 +374,10 @@ pub struct MultiSchemaInfo {
     /// Runtime set of columns being modified.
     #[serde(skip)]
     pub modify_columns: GoSharedSlice<tidb_ast::CiString>,
+    /// In-progress schema objects locked by the multi-schema change (Go's
+    /// non-serialized `MultiSchemaInfo.InvolvingSchemaInfo`).
+    #[serde(skip)]
+    pub involving_schema_info: GoSharedSlice<InvolvingSchemaInfo>,
     /// Runtime set of indexes being added.
     #[serde(skip)]
     pub add_indexes: GoSharedSlice<tidb_ast::CiString>,
@@ -404,6 +408,7 @@ impl Default for MultiSchemaInfo {
             add_columns: GoSharedSlice::default(),
             drop_columns: GoSharedSlice::default(),
             modify_columns: GoSharedSlice::default(),
+            involving_schema_info: GoSharedSlice::default(),
             add_indexes: GoSharedSlice::default(),
             drop_indexes: GoSharedSlice::default(),
             alter_indexes: GoSharedSlice::default(),
@@ -463,6 +468,13 @@ pub struct SubJob {
     /// Analyze phase state stored with modify-column work.
     #[serde(rename = "analyze_state", default)]
     pub analyze_state: i8,
+    /// Explicit scheduling-lock objects carried by the sub-job.
+    #[serde(
+        rename = "involving_schema_info",
+        default,
+        skip_serializing_if = "shared_slice_is_empty"
+    )]
+    pub involving_schema_info: GoSharedSlice<InvolvingSchemaInfo>,
     #[serde(skip)]
     pub(crate) args: GoSharedSlice<GoAny>,
 }
@@ -540,6 +552,7 @@ impl SubJob {
             trace_info: parent.trace_info.clone(),
             sql_mode: parent.sql_mode,
             session_vars: parent.session_vars.clone(),
+            involving_schema_info: self.involving_schema_info.clone(),
             ..Default::default()
         }
     }
@@ -560,6 +573,7 @@ impl SubJob {
         self.warning = proxy.warning.clone();
         self.row_count = proxy.row_count;
         self.schema_version = schema_version;
+        self.involving_schema_info = proxy.involving_schema_info.clone();
         if let Some(meta) = &proxy.reorg_meta {
             let meta = meta.read();
             self.reorg_type = meta.reorg_type;
@@ -1248,6 +1262,7 @@ impl Job {
         match self.type_ {
             ActionType::ACTION_ADD_INDEX
             | ActionType::ACTION_ADD_PRIMARY_KEY
+            | ActionType::ACTION_CREATE_MATERIALIZED_VIEW
             | ActionType::ACTION_REORGANIZE_PARTITION
             | ActionType::ACTION_REMOVE_PARTITIONING
             | ActionType::ACTION_ALTER_TABLE_PARTITIONING => true,
@@ -1283,6 +1298,10 @@ impl Job {
                     | SchemaState::WRITE_ONLY
             ),
             ActionType::ACTION_MODIFY_COLUMN => self.schema_state != SchemaState::PUBLIC,
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW => matches!(
+                self.schema_state,
+                SchemaState::NONE | SchemaState::WRITE_REORGANIZATION
+            ),
             ActionType::ACTION_ADD_TABLE_PARTITION => matches!(
                 self.schema_state,
                 SchemaState::NONE | SchemaState::REPLICA_ONLY

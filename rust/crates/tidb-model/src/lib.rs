@@ -54,6 +54,10 @@ pub mod table_mode;
 #[path = "tests_pkg_meta_model_part2.rs"]
 mod tests_pkg_meta_model_part2;
 
+#[cfg(test)]
+#[path = "tests_pkg_meta_model_materialized_view.rs"]
+mod tests_pkg_meta_model_materialized_view;
+
 pub use action_type::{ActionType, ACTION_MAP};
 pub use bdr::{
     ts_convert_2_time, ActionBDRMap, BDRActionMap, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP,
@@ -93,8 +97,9 @@ pub use job::{
 pub use job_args::{
     fill_rollback_args_for_add_partition, get_add_check_constraint_args,
     get_alter_index_visibility_args, get_alter_table_mode_args, get_alter_table_partition_args,
-    get_batch_create_table_args, get_check_constraint_args, get_create_schema_args,
-    get_create_table_args, get_drop_foreign_key_args, get_drop_index_args, get_drop_schema_args,
+    get_batch_create_table_args, get_check_constraint_args, get_create_materialized_view_args,
+    get_create_materialized_view_log_args, get_create_schema_args, get_create_table_args,
+    get_drop_foreign_key_args, get_drop_index_args, get_drop_schema_args,
     get_exchange_table_partition_args, get_finished_drop_schema_args,
     get_finished_modify_index_args, get_finished_table_partition_args,
     get_finished_truncate_table_args, get_modify_index_args, get_modify_schema_args,
@@ -104,13 +109,14 @@ pub use job_args::{
     get_set_default_value_args, get_shard_row_id_args, get_table_partition_args,
     get_truncate_table_args, index_arg_columnar_index_type, rename_tables_args_from_v1,
     AddCheckConstraintArgs, AlterIndexVisibilityArgs, AlterTableModeArgs, AlterTablePartitionArgs,
-    BatchCreateTableArgs, CheckConstraintArgs, CreateSchemaArgs, CreateTableArgs,
-    DropForeignKeyArgs, DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs, FinishedJobArgs,
-    GoByteSlice, GoField, IndexArg, IndexArgSplitOpt, IndexOp, JobArgs, JobArgsValue,
-    ModifyIndexArgs, ModifySchemaArgs, ModifyTableAutoIDCacheArgs,
-    ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs, ModifyTableEngineAttributeArgs,
-    RebaseAutoIDArgs, RefreshMetaArgs, RenameTableArgs, RenameTablesArgs, ResourceGroupArgs,
-    SetDefaultValueArgs, ShardRowIDArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
+    BatchCreateTableArgs, CheckConstraintArgs, CreateMaterializedViewArgs,
+    CreateMaterializedViewLogArgs, CreateSchemaArgs, CreateTableArgs, DropForeignKeyArgs,
+    DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs, FinishedJobArgs, GoByteSlice, GoField,
+    IndexArg, IndexArgSplitOpt, IndexOp, JobArgs, JobArgsValue, ModifyIndexArgs, ModifySchemaArgs,
+    ModifyTableAutoIDCacheArgs, ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs,
+    ModifyTableEngineAttributeArgs, RebaseAutoIDArgs, RefreshMetaArgs, RenameTableArgs,
+    RenameTablesArgs, ResourceGroupArgs, SetDefaultValueArgs, ShardRowIDArgs, TableIDIndexID,
+    TablePartitionArgs, TruncateTableArgs,
 };
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, str_to_job_state, JobState,
@@ -133,10 +139,14 @@ pub use resource_group::{
 pub use schema_diff::{AffectedOption, SchemaDiff};
 pub use schema_state::SchemaState;
 pub use table::{
-    find_fk_info_by_name, get_idx_changing_field_type, new_table_affinity_info_with_level,
-    time_unit_type_from_keyword, time_unit_type_keyword, SessionInfo, StatsLoadItem, TTLInfo,
-    TableAffinityInfo, TableCacheStatusType, TableItemID, TableLockState, TableNameInfo,
-    TempTableType, TiFlashReplicaInfo, DEFAULT_TTL_JOB_INTERVAL, OLD_DEFAULT_TTL_JOB_INTERVAL,
+    find_fk_info_by_name, get_idx_changing_field_type, materialized_view_log_table_name,
+    new_table_affinity_info_with_level, time_unit_type_from_keyword, time_unit_type_keyword,
+    MViewInitBuildState, MaterializedViewBaseInfo, MaterializedViewInfo, MaterializedViewLogInfo,
+    SessionInfo, StatsLoadItem, TTLInfo, TableAffinityInfo, TableCacheStatusType, TableItemID,
+    TableLockState, TableNameInfo, TempTableType, TiFlashReplicaInfo, ViewInfo,
+    DEFAULT_TTL_JOB_INTERVAL, MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME,
+    MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME, MATERIALIZED_VIEW_LOG_TABLE_NAME_PREFIX,
+    OLD_DEFAULT_TTL_JOB_INTERVAL,
 };
 pub use table_info::{TableInfo, TABLE_INFO_VERSION5};
 pub use table_mode::{AlterTableModeTarget, TableMode};

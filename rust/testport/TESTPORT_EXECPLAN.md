@@ -42,6 +42,43 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 1, `pkg/meta/model`): implemented Go master
+  `94a9cbedab`'s materialized-view metadata in `tidb-model`: action types
+  85/86 with names and BDR `SafeDDL` classification, `MayNeedReorg`/
+  `IsRollbackable` coverage, `SubJob.InvolvingSchemaInfo` with omitempty
+  persistence and `ToProxyJob`/`FromProxyJob` propagation plus the runtime
+  `MultiSchemaInfo` field, `TableInfo`'s three omitempty materialized-view
+  pointers with deep `Clone`, the `MaterializedViewBaseInfo`/
+  `MaterializedViewInfo`/`MaterializedViewLogInfo` model with
+  `MViewInitBuildState` display/access-error contracts, the `$mlog$`
+  constants and rune-budgeted log-table naming, and the
+  `CreateMaterializedViewLogArgs`/`CreateMaterializedViewArgs` v1+v2 job-arg
+  round trips. Nine source-derived regressions in
+  `tests_pkg_meta_model_materialized_view.rs` pass, with fail-before
+  evidence from reverting the two behavioral arms; full owner suite 321/321,
+  five dependent crates check clean. Recorded gap:
+  `SetTiFlashReplicaArgs` (and its `SkipColumnarStorageGate` field) has no
+  Rust owner yet. Receipt: `receipts/meta_model_materialized_view.md`.
+  This batch's ExecPlan edit also repaired the stacked conflict markers
+  (`<<<<<<< HEAD` ×8) that a prior parallel rebase committed into this
+  file; the duplicated journal entries were deduplicated, no content lost.
+
+- 2026-09-03 (parity sweep, worktree `~/Documents/GitHub/tidb-parity-sweep`,
+  branch `codex/hparser-parity-sweep-20260903`, push target
+  `origin/hparser-integration`, fetch refspec master-only so
+  `hparser-integration` must be fetched explicitly): resumed the rolling
+  master-drift walk. Synced to remote tip `5e20d9150b` (six zcode-parity
+  planner commits, including the pending `9693463ff2`). Standing queue: 206
+  drifted leaf Go packages in `e2788410d8..origin/master`, ordered by drift
+  size, each batch re-pinned and pruned at batch time (skip when no drift
+  since the package's freshest receipt pin). Fresh master tip `94a9cbedab`
+  (materialized-view DDL) is the newest drift. CURRENT POSITION: batch 1 =
+  `pkg/meta/model` → DONE above; next = `pkg/sessionctx/variable` +
+  `pkg/sessionctx/vardef` drift (`94a9cbedab`), then `pkg/executor` /
+  `pkg/planner/core` / `pkg/kv` / `pkg/infoschema` / `pkg/session` /
+  `pkg/util/mviewutil` / `pkg/expression` slices of the same commit, then
+  the standing wide-window queue.
+
 - 2026-09-03: closed divergence item 8 (`tidb-datatype` json path): a
   dangling `to` in `$[N to]` degrades to a plain index exactly as Go's
   `tryReadString` leaves the stream past `to` (`json_path_expr.go:462-480`),
@@ -112,14 +149,6 @@ For each bounded behavior cluster:
   regression proven to fail pre-fix; see
   `receipts/planner_rule_child_access.md`.
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 - 2026-09-03: aligned the Rust transaction and SQL error consumers for Go
   master `pkg/store/driver/txn`'s shared-lock-loss response. Both direct
   `KeyError.shared_lock_lost` responses and the vendored client error now
@@ -380,14 +409,6 @@ For each bounded behavior cluster:
   retaining all ordinary early-return guards. Four focused regressions fail
   before the fix and pass after it; details are in
   `receipts/planner_rule_child_access.md`.
-=======
-=======
-=======
-=======
-=======
-=======
-=======
-=======
 - 2026-09-02: aligned expression-rewriter boundaries with Go master
   `a85e0fd5df` (same worktree/branch). `push_last_schema_column` indexes
   `Columns[Len()-1]`/`OutputNames()[Len()-1]` like Go's four subquery
@@ -403,7 +424,6 @@ For each bounded behavior cluster:
   child. Two regressions proven to fail pre-fix; see
   `receipts/planner_rule_child_access.md`.
 
->>>>>>> 2cb4c6b4f1 (rust: align expression-rewriter child boundaries)
 - 2026-09-02: aligned physical schema assembly with Go master `a85e0fd5df`
   (same worktree/branch). `build_physical_join_schema` indexes both children
   and expects the left/own schemas exactly where Go nil-derefs or indexes;
@@ -414,7 +434,6 @@ For each bounded behavior cluster:
   fail pre-fix, one nil-merge pin); see
   `receipts/planner_rule_child_access.md`.
 
->>>>>>> 989396dc75 (rust: align physical join/projection schema boundaries)
 - 2026-09-02: aligned the aggregation `AggFuncs` index boundaries with Go
   master `a85e0fd5df` (same worktree/branch). `agg_funcs_cols_for_first_row`
   and `prune_columns_local` now index the aggregate-function list directly
@@ -424,7 +443,6 @@ For each bounded behavior cluster:
   proven to fail pre-fix plus one guard pin; see
   `receipts/planner_rule_child_access.md`.
 
->>>>>>> 2d7f1e2129 (rust: align aggregation AggFuncs index boundaries)
 - 2026-09-02: aligned the join-family rule bodies with Go master
   `a85e0fd5df` (same worktree/branch). Outer-join elimination indexes both
   children and gates its schema reads exactly where Go does; the
@@ -434,7 +452,6 @@ For each bounded behavior cluster:
   Four focused panic-contract regressions proven to fail pre-fix; see
   `receipts/planner_rule_child_access.md`.
 
->>>>>>> a6a6bdb111 (rust: align join-family rule boundaries with Go)
 - 2026-09-02: aligned the `GcSubstituter` schema selection with Go master
   `a85e0fd5df` (same worktree/branch). The selection, projection, and sort
   arms now substitute against the first CHILD's schema by direct index — Go
@@ -445,7 +462,6 @@ For each bounded behavior cluster:
   proven to fail against the unfixed arms; see
   `receipts/planner_rule_child_access.md`.
 
->>>>>>> f69f4e445a (rust: align gc-substitute schema selection with Go)
 - 2026-09-02: aligned `LogicalPlan::extract_fd` child access with Go master
   `a85e0fd5df` (same worktree/branch). The selection, join, and apply FD arms
   previously refused malformed subtrees with empty/partial sets where Go
@@ -455,17 +471,6 @@ For each bounded behavior cluster:
   fail pre-fix, one ordering pin) added; see
   `receipts/planner_rule_child_access.md`.
 
->>>>>>> 9309c25047 (rust: align extract-FD child access boundaries)
-- 2026-09-02: aligned `LogicalPlan::extract_col_groups` child access with Go
-  master `a85e0fd5df` (same worktree/branch as the rule-entry batch). The
-  join, apply, and window arms previously returned an empty result for
-  malformed subtrees where Go's operator overrides index `Children()[0]` /
-  `Children()[1]` directly; the window arm now also keeps Go's
-  empty-`colGroups` early return ahead of the child index. Four focused
-  panic-contract regressions fail against the unfixed dispatcher and pass
-  after; see `receipts/planner_rule_child_access.md`.
-
->>>>>>> 5d15205f2a (rust: align extract col-groups child access boundaries)
 - 2026-09-02: aligned the entry boundaries of three `tidb-planner`
   logical-optimization rule bodies with Go master `a85e0fd5df` (independent
   worktree/branch `codex/zcode-parity-sweep`). The union-all-dual rule,
@@ -476,7 +481,6 @@ For each bounded behavior cluster:
   contracts while keeping every Go early-return guard unchanged. Four focused
   panic-contract regressions fail before the fix and pass after; details and
   gates are in `receipts/planner_rule_child_access.md`.
->>>>>>> 41640f026f (rust: align planner rule child access boundaries)
 
 - 2026-09-02: extended the bounded Rust-only `tidb-planner` child-accessor
   batch against Go master `a85e0fd5df` after the first validation exposed the
