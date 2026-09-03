@@ -42,6 +42,20 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 5, `pkg/expression/helper.go`): implemented Go master
+  `94a9cbedab`'s three materialized-view schedule helpers in
+  `tidb-expr::expr_util::mview_schedule`:
+  `MaterializedScheduleTimeToUnixSeconds` (nil-time/nil-zone boundaries,
+  `CoreTime::to_datetime` under Local/Named/Fixed resolved zones),
+  `MaterializedScheduleTypeFlagsWithSQLMode` (STRICT_FLAGS plus Go's four
+  mode-driven flag overrides), and `MaterializedScheduleErrLevelsWithSQLMode`
+  (strict-base LevelMap with Go's four group resolutions, including the
+  ignore-over-warn DividedByZero rule). Four parse-shaped regressions pass;
+  the full `tidb-expr` suite is 1127/1127; fmt and whitespace gates clean.
+  `tidb-expr` gains an acyclic `tidb-model` dependency for the
+  `ResolvedTimeZone` parameter type. Receipt:
+  `receipts/expression_mview_schedule_helpers.md`.
+
 - 2026-09-03 (batch 4, `pkg/util/mviewutil`): transcreated the new package
   (created by Go master `94a9cbedab`) into `tidb-util::mviewutil`:
   `CheckMaterializedViewSelect` (the `QueryStmt::Select` assertion, WITH /

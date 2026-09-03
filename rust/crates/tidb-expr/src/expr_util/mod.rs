@@ -140,6 +140,7 @@ pub mod builder;
 pub mod explain_normalized;
 pub mod extract;
 pub mod fold;
+pub mod mview_schedule;
 pub mod normal_form;
 pub mod param;
 pub mod predicates;
