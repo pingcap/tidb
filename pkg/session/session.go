@@ -1706,10 +1706,11 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	if execUseArbitrator {
 		uid := s.sessionVars.ConnectionID
-
+		cleanSessionPlanCache := false
 		if globalMemArbitrator.AtMemRisk() {
 			if s.sessionPlanCache != nil {
 				s.sessionPlanCache.DeleteAll()
+				cleanSessionPlanCache = true
 			}
 			endTime := time.Now().Add(defOOMRiskMaxDur)
 			for globalMemArbitrator.AtMemRisk() {
@@ -1725,7 +1726,18 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 			}
 		}
 
-		globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota)
+		for {
+			if globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota) {
+				break
+			}
+			if !cleanSessionPlanCache && s.sessionPlanCache != nil {
+				s.sessionPlanCache.DeleteAll()
+				cleanSessionPlanCache = true
+			}
+			globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
+			time.Sleep(defOOMRiskCheckDur)
+		}
+
 		defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
 	}
 
@@ -2576,9 +2588,11 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 	}
 
 	if execUseArbitrator {
+		cleanSessionPlanCache := false
 		if globalMemArbitrator.AtMemRisk() {
 			if s.sessionPlanCache != nil {
 				s.sessionPlanCache.DeleteAll()
+				cleanSessionPlanCache = true
 			}
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
@@ -2588,20 +2602,25 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
-				globalMemArbitrator.TryRunOneRound()
 				time.Sleep(defOOMRiskCheckDur)
 			}
 		}
 
-		ok := globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
-		quotaReserved += compilePlanMemQuota
-		defer releaseCommonQuota()
-
-		if !ok { // for SQL which needs to be controlled by mem-arbitrator
-			if s.sessionPlanCache != nil && s.sessionPlanCache.Size() > 0 {
-				s.sessionPlanCache.DeleteAll()
+		for {
+			ok := globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
+			quotaReserved += compilePlanMemQuota
+			if ok {
+				break
 			}
+			if !cleanSessionPlanCache && s.sessionPlanCache != nil {
+				s.sessionPlanCache.DeleteAll()
+				cleanSessionPlanCache = true
+			}
+			releaseCommonQuota()
+			time.Sleep(defOOMRiskCheckDur)
 		}
+
+		defer releaseCommonQuota()
 	}
 
 	{
