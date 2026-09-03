@@ -1474,7 +1474,6 @@ func TestHistoryResizeKeepsLatestIntervals(t *testing.T) {
 	require.Len(t, elements, 5)
 	require.Equal(t, now+70, elements[0].beginTime)
 	require.Equal(t, now+110, elements[4].beginTime)
-
 }
 
 // Test summary when PrevSQL is not empty.
