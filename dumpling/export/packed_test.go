@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/dumpformat/csvfile"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -96,12 +97,7 @@ func TestPackedProtocolRows(t *testing.T) {
 	require.Equal(
 		t,
 		baseArgs,
-		cseDumperArgs("bucket/backup.meta", "/tmp/packed.sock", false, 7),
-	)
-	require.Equal(
-		t,
-		append(baseArgs, "--legacy-encryption"),
-		cseDumperArgs("bucket/backup.meta", "/tmp/packed.sock", true, 7),
+		cseDumperArgs("bucket/backup.meta", "/tmp/packed.sock", 7),
 	)
 
 	var requestBody cseDumperScanRequest
@@ -314,12 +310,11 @@ func readPackedTestRows(t *testing.T, store kv.Storage, table *model.TableInfo) 
 		require.NoError(t, txn.Rollback())
 	}()
 	meta := newPackedTableMeta("test", table, "")
-	option := &csvOption{
-		nullValue:      "\\N",
-		separator:      []byte(","),
-		delimiter:      []byte(`"`),
-		lineTerminator: []byte("\n"),
-		binaryFormat:   BinaryFormatHEX,
+	csvConfig := &csvfile.Config{
+		FieldsTerminatedBy: ",",
+		FieldsEnclosedBy:   `"`,
+		NullValue:          []byte("\\N"),
+		BinaryFormat:       csvfile.BinaryFormatHEX,
 	}
 	rows := make([]string, 0)
 	for _, tableID := range packedPhysicalTableIDs(table) {
@@ -328,6 +323,8 @@ func readPackedTestRows(t *testing.T, store kv.Storage, table *model.TableInfo) 
 		require.NoError(t, err)
 		for iterator.Valid() {
 			row := MakeRowReceiver(meta.ColumnTypes())
+			var output bytes.Buffer
+			writer := csvfile.NewWriter(&output, columnKinds(meta.ColumnTypes()), csvConfig)
 			packed := &packedRowIter{
 				table:  table,
 				key:    append([]byte(nil), iterator.Key()...),
@@ -336,8 +333,7 @@ func readPackedTestRows(t *testing.T, store kv.Storage, table *model.TableInfo) 
 				hasRow: true,
 			}
 			require.NoError(t, packed.Decode(row))
-			var output bytes.Buffer
-			row.WriteToBufferInCsv(&output, true, option)
+			require.NoError(t, writer.Write(row.GetRawBytes()))
 			rows = append(rows, output.String())
 			require.NoError(t, iterator.Next())
 		}

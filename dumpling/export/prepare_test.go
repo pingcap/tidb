@@ -321,23 +321,16 @@ func TestConfigValidation(t *testing.T) {
 			configure: func(conf *Config) {
 				conf.CSEExecutable = ""
 			},
-			err: "--cse-ctl-path must not be empty with --packed-backup",
+			err: "--cse.ctl-path must not be empty with --cse.packed-backup",
 		},
 		{
 			name: "rejects SQL row selection",
 			configure: func(conf *Config) {
 				conf.Where = "id > 1"
 			},
-			err: "--packed-backup cannot be combined with --sql, --where, --snapshot, or --rows",
+			err: "--cse.packed-backup cannot be combined with --sql, --where, --snapshot, or --rows",
 		},
 	}
-	conf = DefaultConfig()
-	conf.CSELegacyEncryption = true
-	require.EqualError(
-		t,
-		validatePackedBackup(conf),
-		"--cse-legacy-encryption requires --packed-backup",
-	)
 	for _, testCase := range packedCases {
 		conf := DefaultConfig()
 		conf.PackedBackup = "bucket/backup.meta"

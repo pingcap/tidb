@@ -21,7 +21,7 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
 - [x] (2026-07-16) Updated focused tests so real TiDB DDL/DML produces the metadata and row KVs consumed by the packed adapters.
 - [x] (2026-07-16) Passed CSE target tests, TiDB WIP target tests, and the real-fixture export with baseline hashes.
 - [x] (2026-07-16) Passed final CSE format/clippy gates, TiDB Ready validation, final fixture export, and the diff/test-quality audit.
-- [x] (2026-07-17) Added opt-in legacy encryption: Dumpling propagates `--cse-legacy-encryption`, and CSE resolves the existing `CSE_MASTER_KEY_*` KMS configuration for legacy shard properties.
+- [x] (2026-07-17) Added legacy encryption support: CSE resolves the existing `CSE_MASTER_KEY_*` KMS configuration for legacy shard properties.
 - [x] (2026-07-18) Added SST range-hint pruning and statistics so a range scan reports candidate, retained, and conservatively retained files.
 - [x] (2026-07-18) Removed the draft slow logging, periodic sampling, procfs collection, JSON telemetry, key/range logging, and generic output-storage wrapper.
 - [x] (2026-07-18) Added the first packed-only timing implementation for diagnosing slow exports.
@@ -36,6 +36,7 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
 - [x] (2026-09-01) Kept scan, shard, KV/byte, SST, and object-I/O metrics exclusively in CSE to avoid duplicating metric families already exported through the combined `/metrics` handler.
 - [x] (2026-09-01) Regenerated Bazel metadata and passed the focused failpoint-safe tests, protocol race test, Bazel build with nogo, Ready lint, and final static audit.
 - [x] (2026-09-02) Built current Dumpling and release `cse-ctl`, authenticated to the local-k8s MinIO fixture, exported `test.warehouse`, and reproduced the 301-line CSV plus stable schema and data hashes.
+- [x] (2026-09-03) Hid the packed CSE flags under `--cse.packed-backup` and `--cse.ctl-path`, removed the legacy-encryption CLI switch, and made CSE always resolve the legacy master key.
 
 ## Surprises & Discoveries
 
@@ -99,9 +100,9 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
   Rationale: These source-neutral interfaces already own headers, quoting, nulls, dialects, splitting, compression, naming, and metrics.
   Date/Author: 2026-07-16, Codex.
 
-- Decision: Make legacy decryption explicit and reuse the existing `CSE_MASTER_KEY_*` environment contract.
-  Rationale: Opt-in behavior preserves unencrypted and CMEK reads, while keeping plaintext master-key material out of process arguments.
-  Date/Author: 2026-07-17, Codex.
+- Decision: Resolve legacy decryption inside CSE and reuse the existing `CSE_MASTER_KEY_*` environment contract without a CLI switch.
+  Rationale: Legacy decryption is an internal requirement of the packed reader. Keeping the master-key configuration in the environment avoids exposing either a compatibility toggle or plaintext key material in process arguments.
+  Date/Author: 2026-09-03, Codex.
 
 - Decision: Keep Dumpling-owned packed timings in the existing Dumpling metrics registry.
   Rationale: A single `dumpling_packed_phase_duration_seconds{phase,result}` histogram covers CSE startup, TiDB row decoding, and the complete packed export without adding state to generic writer or object-storage code.
@@ -195,7 +196,9 @@ From `/DATA/disk3/juncen/developer/tidb_worktrees/exp-export-packed`, use the fa
 
 For a real export, configure the same `DFS_*` environment variables accepted by CSE, then use the relative metadata path rather than an object-store URL:
 
-    dumpling --packed-backup '<bucket-or-container>/<meta-object-key>' --cse-ctl-path '<path-to-cse-ctl>' --threads 8 --filetype csv --output '<output-dir>'
+    dumpling --cse.packed-backup '<bucket-or-container>/<meta-object-key>' --cse.ctl-path '<path-to-cse-ctl>' --threads 8 --filetype csv --output '<output-dir>'
+
+Both `--cse.packed-backup` and `--cse.ctl-path` are internal flags hidden from Dumpling help output.
 
 While that command is running, `http://<status-addr>/metrics` must include the CSE packed-reader Prometheus metric families alongside Dumpling metrics. Before startup and after shutdown it contains only Dumpling metrics.
 
@@ -203,7 +206,7 @@ While that command is running, `http://<status-addr>/metrics` must include the C
 
 Acceptance requires all of the following:
 
-One Dumpling packed export starts exactly one `cse-ctl dumper`. Its argv contains the relative metadata path, a private Unix socket, `--scan-concurrency` equal to Dumpling `--threads`, and optional `--legacy-encryption`. No range keys are process arguments and stdout is not a data channel.
+One Dumpling packed export starts exactly one `cse-ctl dumper`. Its argv contains the relative metadata path, a private Unix socket, and `--scan-concurrency` equal to Dumpling `--threads`. No legacy-encryption switch or range keys are process arguments, and stdout is not a data channel.
 
 Every metadata, table, and partition scan sends `POST /scan` over the shared HTTP/2 transport. The JSON fields are `start_key_hex` and `end_key_hex`. The body contains repeated `(u32_le key_len, u32_le value_len, key, value)` frames. Clean body EOF is accepted only with `x-cse-scan-status: complete`; `failed` decodes `x-cse-scan-error`, and a missing or unknown status fails the export.
 
@@ -234,11 +237,10 @@ The process command is:
     cse-ctl dumper \
       --metadata-url <bucket-or-container>/<meta-object-key> \
       --unix-socket <private-socket-path> \
-      --scan-concurrency <dumpling-threads> \
-      [--legacy-encryption]
+      --scan-concurrency <dumpling-threads>
 
-DFS backend, bucket/container, prefix, endpoint, credentials, and region come from CSE's `DFS_*` environment contract. Legacy mode continues to use `CSE_MASTER_KEY_*`. Dumpling inherits the parent environment rather than parsing or copying those settings.
+DFS backend, bucket/container, prefix, endpoint, credentials, and region come from CSE's `DFS_*` environment contract. CSE always resolves the legacy master key through `CSE_MASTER_KEY_*`. Dumpling inherits the parent environment rather than parsing or copying those settings.
 
 In TiDB, `cseDumper` owns the command, temporary directory, HTTP/2 transport, stderr diagnostics, wait state, and idempotent close. `cseDumper.scan` creates one `cseDumperScan` per HTTP response. `packedRangeScanner` adapts it to metadata loading, and `packedTableData` shares the same owner across all writers. These types remain behind the existing `TableMeta`, `TableDataIR`, and `SQLRowIter` interfaces.
 
-Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Updated on 2026-09-01 to replace the retired one-shot stdout protocol with the shared HTTP/2 Unix-socket service, expose CSE metrics through Dumpling, replace custom packed timing with Prometheus, and refresh validation instructions. Updated on 2026-09-02 with the local-k8s MinIO export evidence.
+Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Updated on 2026-09-01 to replace the retired one-shot stdout protocol with the shared HTTP/2 Unix-socket service, expose CSE metrics through Dumpling, replace custom packed timing with Prometheus, and refresh validation instructions. Updated on 2026-09-02 with the local-k8s MinIO export evidence. Updated on 2026-09-03 to hide the Dumpling CSE flags and make legacy master-key resolution unconditional inside CSE.

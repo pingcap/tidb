@@ -92,9 +92,8 @@ const (
 	flagParquetCompress          = "parquet-compress"
 	flagParquetPageSize          = "parquet-page-size"
 	flagParquetRowGroupSize      = "parquet-row-group-size"
-	flagPackedBackup             = "packed-backup"
-	flagCSEExecutable            = "cse-ctl-path"
-	flagCSELegacyEncryption      = "cse-legacy-encryption"
+	flagPackedBackup             = "cse.packed-backup"
+	flagCSEExecutable            = "cse.ctl-path"
 	flagGPGKeyFile               = "gpg-key-file"
 
 	// FlagHelp represents the help flag
@@ -221,8 +220,6 @@ type Config struct {
 	// <bucket-or-container>/<meta-object-key> form.
 	PackedBackup  string `json:"-"`
 	CSEExecutable string
-	// CSELegacyEncryption enables the legacy master key for packed-backup reads.
-	CSELegacyEncryption bool
 	// GPGKeyFile is an armored or binary OpenPGP public key file used to
 	// encrypt every output file.
 	GPGKeyFile string
@@ -436,8 +433,9 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
 	)
 	flags.String(flagPackedBackup, "", "CSE packed-backup metadata path in <bucket-or-container>/<meta-object-key> form")
+	_ = flags.MarkHidden(flagPackedBackup)
 	flags.String(flagCSEExecutable, "cse-ctl", "Path to the cse-ctl executable used for packed-backup export")
-	flags.Bool(flagCSELegacyEncryption, false, "Decrypt legacy-encrypted CSE packed-backup content using CSE_MASTER_KEY_* environment configuration")
+	_ = flags.MarkHidden(flagCSEExecutable)
 	flags.String(flagGPGKeyFile, "", "Path to an OpenPGP public key file used to encrypt every output file")
 }
 
@@ -759,10 +757,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.CSEExecutable, err = flags.GetString(flagCSEExecutable)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	conf.CSELegacyEncryption, err = flags.GetBool(flagCSELegacyEncryption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1099,16 +1093,13 @@ func validateSpecifiedSQL(conf *Config) error {
 
 func validatePackedBackup(conf *Config) error {
 	if conf.PackedBackup == "" {
-		if conf.CSELegacyEncryption {
-			return errors.New("--cse-legacy-encryption requires --packed-backup")
-		}
 		return nil
 	}
 	if conf.CSEExecutable == "" {
-		return errors.New("--cse-ctl-path must not be empty with --packed-backup")
+		return errors.New("--cse.ctl-path must not be empty with --cse.packed-backup")
 	}
 	if conf.SQL != "" || conf.Where != "" || conf.Snapshot != "" || conf.Rows != UnspecifiedSize {
-		return errors.New("--packed-backup cannot be combined with --sql, --where, --snapshot, or --rows")
+		return errors.New("--cse.packed-backup cannot be combined with --sql, --where, --snapshot, or --rows")
 	}
 	return nil
 }

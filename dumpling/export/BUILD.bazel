@@ -125,6 +125,7 @@ go_test(
         "//dumpling/context",
         "//dumpling/log",
         "//pkg/config",
+        "//pkg/dumpformat/csvfile",
         "//pkg/dumpformat/parquetfile",
         "//pkg/errno",
         "//pkg/kv",

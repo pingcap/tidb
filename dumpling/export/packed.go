@@ -90,6 +90,23 @@ func (*packedTableMeta) ShowCreateView() string      { return "" }
 func (*packedTableMeta) AvgRowLength() uint64        { return 0 }
 func (*packedTableMeta) HasImplicitRowID() bool      { return false }
 
+func (m *packedTableMeta) ColumnInfos() []*ColumnInfo {
+	infos := make([]*ColumnInfo, len(m.columns))
+	for i, column := range m.columns {
+		info := &ColumnInfo{
+			Name:             m.names[i],
+			DatabaseTypeName: m.types[i],
+			Nullable:         !mysql.HasNotNullFlag(column.GetFlag()),
+		}
+		if m.types[i] == "DECIMAL" {
+			info.Precision = int64(column.GetFlen())
+			info.Scale = int64(column.GetDecimal())
+		}
+		infos[i] = info
+	}
+	return infos
+}
+
 func packedColumnType(column *model.ColumnInfo) string {
 	if column.GetCharset() == charset.CharsetBin {
 		switch column.GetType() {
@@ -563,7 +580,6 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 		d.tctx,
 		d.conf.CSEExecutable,
 		d.conf.PackedBackup,
-		d.conf.CSELegacyEncryption,
 		d.conf.Threads,
 		d.metrics,
 	)

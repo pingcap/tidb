@@ -67,7 +67,6 @@ type cseDumper struct {
 func startCSEDumper(
 	ctx context.Context,
 	executable, metadataURL string,
-	legacyEncryption bool,
 	threads int,
 	metrics *metrics,
 ) (dumper *cseDumper, resultErr error) {
@@ -81,11 +80,10 @@ func startCSEDumper(
 	}
 	socketPath := filepath.Join(temporary, "dumper.sock")
 	childCtx, cancel := context.WithCancel(ctx)
-	// #nosec G204 -- executable is the explicit user-provided --cse-ctl-path.
+	// #nosec G204 -- executable is the explicit user-provided --cse.ctl-path.
 	cmd := exec.CommandContext(childCtx, executable, cseDumperArgs(
 		metadataURL,
 		socketPath,
-		legacyEncryption,
 		threads,
 	)...)
 	stderr, err := cmd.StderrPipe()
@@ -153,17 +151,13 @@ func newCSEDumperHTTPClient(socketPath string) (*http.Client, *http2.Transport) 
 	return &http.Client{Transport: transport}, transport
 }
 
-func cseDumperArgs(metadataURL, socketPath string, legacyEncryption bool, threads int) []string {
-	args := []string{
+func cseDumperArgs(metadataURL, socketPath string, threads int) []string {
+	return []string{
 		"dumper",
 		"--metadata-url", metadataURL,
 		"--unix-socket", socketPath,
 		"--scan-concurrency", strconv.Itoa(threads),
 	}
-	if legacyEncryption {
-		args = append(args, "--legacy-encryption")
-	}
-	return args
 }
 
 func (d *cseDumper) waitForSocket(ctx context.Context, socketPath string) error {
