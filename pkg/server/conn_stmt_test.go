@@ -32,11 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
->>>>>>> ed2376acc6e (server: limit accumulated COM_STMT_SEND_LONG_DATA size (#69694))
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/testkit"
