@@ -55,5 +55,6 @@ go_test(
         "//br/pkg/utils",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
     ],
 )
