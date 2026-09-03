@@ -21,11 +21,6 @@
 //! applies the same operation to the remaining tree.  This module keeps those
 //! semantics over a small source-shaped plan adapter; logical operator
 //! construction, schemas, and SQL execution remain external planner owners.
-//!
-//! Go's `planChanged` flag is intentionally narrower than the structural
-//! rewrite: dropping one or more branches from a still-nonempty union does
-//! not set it. Replacing an all-empty union with a table dual does, as does a
-//! recursive child rewrite that reports a change.
 
 /// The source node kinds needed by the union-all dual-elimination rule.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -106,8 +101,8 @@ impl UnionAllPlan {
 pub struct EliminateUnionAllDualItem;
 
 impl EliminateUnionAllDualItem {
-    /// Applies recursive union-all dual elimination and returns Go's narrow
-    /// `planChanged` result.
+    /// Applies recursive union-all dual elimination and reports whether any
+    /// branch was removed or an empty union was replaced.
     #[must_use]
     pub fn optimize(self, plan: UnionAllPlan) -> (UnionAllPlan, bool) {
         eliminate_union_all_dual_item(plan)
@@ -128,7 +123,9 @@ pub fn eliminate_union_all_dual_item(mut plan: UnionAllPlan) -> (UnionAllPlan, b
     if matches!(plan.kind, UnionAllNodeKind::UnionAll) {
         let mut retained = Vec::with_capacity(plan.children.len());
         for child in plan.children.drain(..) {
-            if !is_zero_row_dual(&child) && !is_projection_over_zero_row_dual(&child) {
+            if is_zero_row_dual(&child) || is_projection_over_zero_row_dual(&child) {
+                changed = true;
+            } else {
                 retained.push(child);
             }
         }
@@ -162,35 +159,6 @@ fn is_zero_row_dual(plan: &UnionAllPlan) -> bool {
 }
 
 fn is_projection_over_zero_row_dual(plan: &UnionAllPlan) -> bool {
-    matches!(plan.kind, UnionAllNodeKind::Projection) && is_zero_row_dual(&plan.children[0])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn dual(row_count: i32) -> UnionAllPlan {
-        UnionAllPlan::new(UnionAllNodeKind::TableDual { row_count })
-    }
-
-    #[test]
-    fn dropping_a_branch_from_a_nonempty_union_does_not_set_changed() {
-        let input = UnionAllPlan::with_children(UnionAllNodeKind::UnionAll, vec![dual(0), dual(1)]);
-
-        let (rewritten, changed) = eliminate_union_all_dual_item(input);
-
-        assert!(!changed);
-        assert_eq!(rewritten.children(), &[dual(1)]);
-    }
-
-    #[test]
-    #[should_panic]
-    fn a_childless_projection_panics_at_the_source_child_access() {
-        let input = UnionAllPlan::with_children(
-            UnionAllNodeKind::UnionAll,
-            vec![UnionAllPlan::new(UnionAllNodeKind::Projection)],
-        );
-
-        let _ = eliminate_union_all_dual_item(input);
-    }
+    matches!(plan.kind, UnionAllNodeKind::Projection)
+        && plan.children.first().is_some_and(is_zero_row_dual)
 }

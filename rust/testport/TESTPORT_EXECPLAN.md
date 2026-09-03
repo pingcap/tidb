@@ -42,6 +42,29 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: landed the remaining `tidb-planner` boundary deltas on
+  `hparser-integration` (extract-FD, semi-join rewrite, physical
+  join/projection schema assembly, and `LogicalProjection.DeriveStats`),
+  each verified against Go master `a85e0fd5df` with pre-fix failing
+  regressions; the join-reorder cluster was audited and needs no change.
+  Details in `receipts/planner_rule_child_access.md`.
+
+- 2026-09-03: aligned `LogicalProjection.DeriveStats` with Go master
+  `a85e0fd5df` (same worktree/branch): the per-expression NDV loop indexes
+  `selfSchema.Columns[i]` directly as Go does instead of breaking on a
+  short schema; the join-reorder cluster was audited and needs no change
+  (all four candidate sites are parity or unreachable dead tolerance). One
+  regression proven to fail pre-fix; see
+  `receipts/planner_rule_child_access.md`.
+
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
 - 2026-09-03: aligned the Rust transaction and SQL error consumers for Go
   master `pkg/store/driver/txn`'s shared-lock-loss response. Both direct
   `KeyError.shared_lock_lost` responses and the vendored client error now
@@ -302,6 +325,103 @@ For each bounded behavior cluster:
   retaining all ordinary early-return guards. Four focused regressions fail
   before the fix and pass after it; details are in
   `receipts/planner_rule_child_access.md`.
+=======
+=======
+=======
+=======
+=======
+=======
+=======
+=======
+- 2026-09-02: aligned expression-rewriter boundaries with Go master
+  `a85e0fd5df` (same worktree/branch). `push_last_schema_column` indexes
+  `Columns[Len()-1]`/`OutputNames()[Len()-1]` like Go's four subquery
+  handlers, the natural-join name-resolution walks index their unary
+  children, and `build_quantifier_plan` expects the aggregation schema. Two
+  regressions proven to fail pre-fix; see
+  `receipts/planner_rule_child_access.md`.
+
+- 2026-09-02: aligned column-pruning and TopN-pushdown walk boundaries with
+  Go master `a85e0fd5df` (same worktree/branch). The prune rebuild arms
+  expect the child schema, the TopN pushdown expects the projection's own
+  schema for `ColumnSubstitute`, and the ID-0 check indexes the projection's
+  child. Two regressions proven to fail pre-fix; see
+  `receipts/planner_rule_child_access.md`.
+
+>>>>>>> 2cb4c6b4f1 (rust: align expression-rewriter child boundaries)
+- 2026-09-02: aligned physical schema assembly with Go master `a85e0fd5df`
+  (same worktree/branch). `build_physical_join_schema` indexes both children
+  and expects the left/own schemas exactly where Go nil-derefs or indexes;
+  `eliminate_physical_projection` indexes the child inside the strict
+  identity check and expects both schemas; the logical apply's
+  `BuildLogicalJoinSchema` port `apply_schema` does the same while keeping
+  Go's Inner-arm nil merge. Five regressions (four panic contracts proven to
+  fail pre-fix, one nil-merge pin); see
+  `receipts/planner_rule_child_access.md`.
+
+>>>>>>> 989396dc75 (rust: align physical join/projection schema boundaries)
+- 2026-09-02: aligned the aggregation `AggFuncs` index boundaries with Go
+  master `a85e0fd5df` (same worktree/branch). `agg_funcs_cols_for_first_row`
+  and `prune_columns_local` now index the aggregate-function list directly
+  (and the firstrow argument as `Args[0]`) wherever Go does, while
+  `getAggFuncsColsForConstResult`'s explicit Go length guard is pinned by a
+  regression test instead of being "fixed away". Three panic contracts
+  proven to fail pre-fix plus one guard pin; see
+  `receipts/planner_rule_child_access.md`.
+
+>>>>>>> 2d7f1e2129 (rust: align aggregation AggFuncs index boundaries)
+- 2026-09-02: aligned the join-family rule bodies with Go master
+  `a85e0fd5df` (same worktree/branch). Outer-join elimination indexes both
+  children and gates its schema reads exactly where Go does; the
+  outer-join-to-semi conversion reads the selection's schema/names through
+  `children[0]` and indexes the join children directly; semi-join rewrite
+  expects the left child schema where Go's `Schema().Clone()` nil-derefs.
+  Four focused panic-contract regressions proven to fail pre-fix; see
+  `receipts/planner_rule_child_access.md`.
+
+>>>>>>> a6a6bdb111 (rust: align join-family rule boundaries with Go)
+- 2026-09-02: aligned the `GcSubstituter` schema selection with Go master
+  `a85e0fd5df` (same worktree/branch). The selection, projection, and sort
+  arms now substitute against the first CHILD's schema by direct index — Go
+  passes the child schema for all three, and the previous own-schema-first
+  fallback could mute projection substitution entirely; the aggregation arm
+  drops its child fallback and reads only the own producer schema as Go
+  does. Four in-module regressions added, the three child-index contracts
+  proven to fail against the unfixed arms; see
+  `receipts/planner_rule_child_access.md`.
+
+>>>>>>> f69f4e445a (rust: align gc-substitute schema selection with Go)
+- 2026-09-02: aligned `LogicalPlan::extract_fd` child access with Go master
+  `a85e0fd5df` (same worktree/branch). The selection, join, and apply FD arms
+  previously refused malformed subtrees with empty/partial sets where Go
+  indexes `Children()[0]`/`Children()[1]`; the join arm now also answers the
+  default join types with the empty set BEFORE any child access, exactly as
+  Go's switch does. Five focused regressions (four panic contracts proven to
+  fail pre-fix, one ordering pin) added; see
+  `receipts/planner_rule_child_access.md`.
+
+>>>>>>> 9309c25047 (rust: align extract-FD child access boundaries)
+- 2026-09-02: aligned `LogicalPlan::extract_col_groups` child access with Go
+  master `a85e0fd5df` (same worktree/branch as the rule-entry batch). The
+  join, apply, and window arms previously returned an empty result for
+  malformed subtrees where Go's operator overrides index `Children()[0]` /
+  `Children()[1]` directly; the window arm now also keeps Go's
+  empty-`colGroups` early return ahead of the child index. Four focused
+  panic-contract regressions fail against the unfixed dispatcher and pass
+  after; see `receipts/planner_rule_child_access.md`.
+
+>>>>>>> 5d15205f2a (rust: align extract col-groups child access boundaries)
+- 2026-09-02: aligned the entry boundaries of three `tidb-planner`
+  logical-optimization rule bodies with Go master `a85e0fd5df` (independent
+  worktree/branch `codex/zcode-parity-sweep`). The union-all-dual rule,
+  derive-TopN-from-window, and max/min elimination previously answered
+  malformed subtrees with Rust-only `None`/internal-error refusals where the
+  Go bodies index `Children()[0]`, `AggFuncs[0]`, `Args[0]`, or
+  `Schema().Columns[i]` and panic; the Rust rules now preserve those index
+  contracts while keeping every Go early-return guard unchanged. Four focused
+  panic-contract regressions fail before the fix and pass after; details and
+  gates are in `receipts/planner_rule_child_access.md`.
+>>>>>>> 41640f026f (rust: align planner rule child access boundaries)
 
 - 2026-09-02: extended the bounded Rust-only `tidb-planner` child-accessor
   batch against Go master `a85e0fd5df` after the first validation exposed the

@@ -1638,22 +1638,42 @@ pub fn build_physical_join_schema(
     join_type: LogicalJoinType,
     join: &PhysicalPlan,
 ) -> Option<Schema> {
-    let left_schema = join.children().first().and_then(PhysicalPlan::schema)?;
+    // Go indexes `join.Children()[0]` and `[1]` directly
+    // (`base_physical_join.go:191`/`:204`), nil-derefs `leftSchema` in
+    // `Clone()` and the outer-join `Len()` reads, and indexes its own
+    // trailing column unguarded.
+    let left_schema = join.children()[0].schema();
     match join_type {
-        LogicalJoinType::Semi | LogicalJoinType::AntiSemi => Some(left_schema.clone()),
+        LogicalJoinType::Semi | LogicalJoinType::AntiSemi => Some(
+            left_schema
+                .cloned()
+                .expect("physical join schema nil-derefs the left child schema"),
+        ),
         LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi => {
-            let mut new_schema = left_schema.clone();
-            let own = join.schema()?;
-            new_schema.columns.push(own.columns.last()?.clone());
+            let mut new_schema = left_schema
+                .cloned()
+                .expect("physical join schema nil-derefs the left child schema");
+            let own = join
+                .schema()
+                .expect("physical join schema needs the join's own schema");
+            new_schema.columns.push(
+                own.columns
+                    .last()
+                    .expect("physical join schema indexes its own trailing column")
+                    .clone(),
+            );
             Some(new_schema)
         }
         LogicalJoinType::Inner | LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
-            let left_len = left_schema.len();
-            let right_schema = join.children().get(1).and_then(PhysicalPlan::schema);
-            let mut new_schema = tidb_expr::schema::merge_schema(Some(left_schema), right_schema)?;
+            let mut new_schema =
+                tidb_expr::schema::merge_schema(left_schema, join.children()[1].schema())?;
             let total = new_schema.len();
             match join_type {
                 LogicalJoinType::LeftOuter => {
+                    let left_len = left_schema
+                        .as_ref()
+                        .expect("physical join schema nil-derefs the left schema for outer joins")
+                        .len();
                     crate::plan_builder::from::reset_not_null_flag(
                         &mut new_schema,
                         left_len,
@@ -1661,6 +1681,10 @@ pub fn build_physical_join_schema(
                     );
                 }
                 LogicalJoinType::RightOuter => {
+                    let left_len = left_schema
+                        .as_ref()
+                        .expect("physical join schema nil-derefs the left schema for outer joins")
+                        .len();
                     crate::plan_builder::from::reset_not_null_flag(&mut new_schema, 0, left_len);
                 }
                 _ => {}
@@ -3705,19 +3729,29 @@ pub fn eliminate_physical_projection(mut plan: PhysicalPlan) -> PhysicalPlan {
     if projection.calculate_no_delay {
         return plan;
     }
-    let Some(child) = projection.base.children().first() else {
-        return plan;
-    };
-    let projection_schema = projection.base.base.schema().cloned().unwrap_or_default();
-    let child_schema = child.schema().cloned().unwrap_or_default();
-    let strict_identity = projection_schema.is_empty()
-        || (projection_schema.len() == child_schema.len()
+    // Go indexes `p.Children()[0]` inside `canProjectionBeEliminatedStrict`
+    // (`rule_eliminate_projection.go:60`) and derefs both schemas
+    // (`:77`/`:80-81`).
+    let child = &projection.base.children()[0];
+    let projection_schema = projection
+        .base
+        .base
+        .schema()
+        .cloned()
+        .expect("physical projection elimination needs the projection schema");
+    let strict_identity = projection_schema.is_empty() || {
+        let child_schema = child
+            .schema()
+            .cloned()
+            .expect("physical projection elimination needs the child schema");
+        projection_schema.len() == child_schema.len()
             && projection.exprs.len() == projection_schema.len()
             && projection
                 .exprs
                 .iter()
                 .zip(&child_schema.columns)
-                .all(|(expression, column)| column.equal_column(expression)));
+                .all(|(expression, column)| column.equal_column(expression))
+    };
     if !strict_identity {
         return plan;
     }

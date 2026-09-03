@@ -190,17 +190,10 @@ fn substitute_condition(
 fn substitute_plan(plan: &mut LogicalPlan, candidates: &[Candidate], context: &RuleContext<'_>) {
     match plan {
         LogicalPlan::Selection(selection) => {
-            let schema = selection
-                .base
-                .base
+            // Go passes `x.Schema()`, whose base body indexes `children[0]`
+            // (`base_logical_plan.go:102`).
+            let schema = selection.base.children()[0]
                 .schema()
-                .or_else(|| {
-                    selection
-                        .base
-                        .children()
-                        .first()
-                        .and_then(LogicalPlan::schema)
-                })
                 .cloned()
                 .unwrap_or_default();
             for condition in &mut selection.conditions {
@@ -208,11 +201,11 @@ fn substitute_plan(plan: &mut LogicalPlan, candidates: &[Candidate], context: &R
             }
         }
         LogicalPlan::Projection(projection) => {
-            let schema = projection
-                .base
-                .children()
-                .first()
-                .and_then(LogicalPlan::schema)
+            // Go indexes the CHILD schema explicitly
+            // (`x.Children()[0].Schema()`, rule body line 188) — not the
+            // projection's own output schema.
+            let schema = projection.base.children()[0]
+                .schema()
                 .cloned()
                 .unwrap_or_default();
             for expression in &mut projection.exprs {
@@ -222,11 +215,9 @@ fn substitute_plan(plan: &mut LogicalPlan, candidates: &[Candidate], context: &R
             }
         }
         LogicalPlan::Sort(sort) => {
-            let schema = sort
-                .base
-                .base
+            // Go passes `x.Schema()`, whose base body indexes `children[0]`.
+            let schema = sort.base.children()[0]
                 .schema()
-                .or_else(|| sort.base.children().first().and_then(LogicalPlan::schema))
                 .cloned()
                 .unwrap_or_default();
             for item in &mut sort.by_items {
@@ -236,19 +227,9 @@ fn substitute_plan(plan: &mut LogicalPlan, candidates: &[Candidate], context: &R
             }
         }
         LogicalPlan::Aggregation(aggregation) => {
-            let schema = aggregation
-                .base
-                .base
-                .schema()
-                .or_else(|| {
-                    aggregation
-                        .base
-                        .children()
-                        .first()
-                        .and_then(LogicalPlan::schema)
-                })
-                .cloned()
-                .unwrap_or_default();
+            // Go passes `x.Schema()` — the aggregation's OWN producer schema;
+            // children are never touched here.
+            let schema = aggregation.base.base.schema().cloned().unwrap_or_default();
             for function in &mut aggregation.agg_funcs {
                 for argument in &mut function.base.args {
                     if let Some(eval_type) = argument.static_type().map(|ty| ty.eval_type()) {
@@ -286,5 +267,88 @@ impl LogicalOptRule for GcSubstituter {
 
     fn name(&self) -> &'static str {
         "generate_column_substitute"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+    use tidb_expr::schema::Schema;
+
+    use crate::logical::aggregation::LogicalAggregation;
+    use crate::logical::projection::LogicalProjection;
+    use crate::logical::rule_tests::test_context;
+    use crate::logical::selection::LogicalSelection;
+    use crate::logical::sort::LogicalSort;
+    use crate::logical::{BaseLogicalPlan, LogicalPlan};
+    use crate::plan_base::PlanIdAllocator;
+
+    use super::*;
+
+    fn schema_of(unique_id: i64) -> Schema {
+        Schema::new(vec![Column::new(
+            unique_id,
+            FieldType::new(FieldTypeCode::LongLong),
+        )])
+    }
+
+    #[test]
+    fn a_childless_selection_panics_when_substituting_like_go() {
+        let allocator = PlanIdAllocator::default();
+        let ctx = test_context(&allocator);
+        let mut plan = LogicalPlan::Selection(LogicalSelection::new(
+            BaseLogicalPlan::with_id(1, LogicalSelection::TYPE, 0),
+            Vec::new(),
+        ));
+        // Go passes `x.Schema()`, whose base body indexes `children[0]`.
+        assert!(catch_unwind(AssertUnwindSafe(|| {
+            substitute_plan(&mut plan, &[], &ctx)
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn a_childless_projection_panics_when_substituting_like_go() {
+        let allocator = PlanIdAllocator::default();
+        let ctx = test_context(&allocator);
+        let mut plan = LogicalPlan::Projection(LogicalProjection::new(
+            BaseLogicalPlan::with_id(1, LogicalProjection::TYPE, 0),
+            Vec::new(),
+        ));
+        // Go indexes `x.Children()[0].Schema()` explicitly.
+        assert!(catch_unwind(AssertUnwindSafe(|| {
+            substitute_plan(&mut plan, &[], &ctx)
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn a_childless_sort_panics_when_substituting_like_go() {
+        let allocator = PlanIdAllocator::default();
+        let ctx = test_context(&allocator);
+        let mut plan = LogicalPlan::Sort(LogicalSort::new(
+            BaseLogicalPlan::with_id(1, LogicalSort::TYPE, 0),
+            Vec::new(),
+        ));
+        assert!(catch_unwind(AssertUnwindSafe(|| {
+            substitute_plan(&mut plan, &[], &ctx)
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn an_aggregation_substitutes_against_its_own_schema_without_touching_children_like_go() {
+        let allocator = PlanIdAllocator::default();
+        let ctx = test_context(&allocator);
+        let mut base = BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0);
+        base.base.set_schema(Some(schema_of(9)));
+        let mut plan =
+            LogicalPlan::Aggregation(LogicalAggregation::new(base, Vec::new(), Vec::new()));
+        // Go reads the aggregation's OWN producer schema here; a childless
+        // aggregation substitutes without panicking.
+        substitute_plan(&mut plan, &[], &ctx);
     }
 }

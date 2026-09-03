@@ -83,7 +83,11 @@ fn rewrite_join(context: &RuleContext<'_>, mut join: super::LogicalJoin) -> Logi
     }
     let right = children.pop().expect("two join children");
     let left = children.pop().expect("two join children");
-    let left_schema = left.schema().cloned().unwrap_or_default();
+    // Go `p.Children()[0].Schema().Clone()` nil-derefs on a schema-less child.
+    let left_schema = left
+        .schema()
+        .cloned()
+        .expect("semi join rewrite requires the outer child schema");
     let right_offset = right.query_block_offset();
 
     let right = if join.right_conditions.is_empty() {

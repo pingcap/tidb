@@ -3974,7 +3974,7 @@ fn first_row_columns_panics_when_the_schema_outgrows_the_aggs_like_go() {
     );
     let schema = schema(&[9, 10]);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = aggregation.agg_funcs_cols_for_first_row(&schema);
+        aggregation.agg_funcs_cols_for_first_row(&schema);
     }))
     .is_err());
 }
@@ -3988,7 +3988,7 @@ fn first_row_columns_panics_on_an_argument_less_firstrow_like_go() {
     );
     let schema = schema(&[9]);
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = aggregation.agg_funcs_cols_for_first_row(&schema);
+        aggregation.agg_funcs_cols_for_first_row(&schema);
     }))
     .is_err());
 }
@@ -4022,4 +4022,20 @@ fn const_result_columns_keeps_gos_explicit_length_guard() {
     let schema = schema(&[9, 10]);
     let (cols, exprs) = aggregation.agg_funcs_cols_for_const_result(&schema);
     assert!(cols.is_empty() && exprs.is_empty());
+}
+
+/// Go `LogicalProjection.DeriveStats` (`logical_projection.go:296`) indexes
+/// `selfSchema.Columns[i]` directly while walking `p.Exprs`.
+#[test]
+fn projection_derive_stats_panics_when_the_schema_outgrows_the_exprs_like_go() {
+    let mut projection = LogicalProjection::new(
+        BaseLogicalPlan::with_id(1, LogicalProjection::TYPE, 0),
+        vec![col_expr(10), col_expr(11)],
+    );
+    projection.base.base.set_schema(Some(schema(&[100])));
+    let child = StatsInfo::new(50.0, [(10, 7.0)]);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        projection.derive_stats(&[child], &schema(&[100]), &[true])
+    }))
+    .is_err());
 }

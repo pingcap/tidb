@@ -299,8 +299,10 @@ impl LogicalPlan {
             }
             Self::Selection(selection) => {
                 let mut fds = base_dependencies(self, context);
-                let schema = match self.children().first() {
-                    Some(Self::Join(join)) => join.full_schema.as_ref().or_else(|| self.schema()),
+                // Go indexes `p.Children()[0]` before asserting the Join type
+                // (`logical_selection.go:284`).
+                let schema = match &self.children()[0] {
+                    Self::Join(join) => join.full_schema.as_ref().or_else(|| self.schema()),
                     _ => self.schema(),
                 };
                 add_condition_facts(context, &mut fds, &selection.conditions);
@@ -365,12 +367,18 @@ impl LogicalPlan {
                 fds
             }
             Self::Join(join) => {
-                let Some(left) = self.children().first() else {
-                    return FdSet::new();
-                };
-                let Some(right) = self.children().get(1) else {
-                    return left.extract_fd_with_context(context);
-                };
+                // Go's ExtractFD switch answers join types other than inner,
+                // left/right outer, and semi with an empty FDSet before any
+                // child access; the handled types index both children.
+                match join.join_type {
+                    LogicalJoinType::Inner
+                    | LogicalJoinType::LeftOuter
+                    | LogicalJoinType::RightOuter
+                    | LogicalJoinType::Semi => {}
+                    _ => return FdSet::new(),
+                }
+                let left = &self.children()[0];
+                let right = &self.children()[1];
                 let mut left_fd = left.extract_fd_with_context(context);
                 let right_fd = right.extract_fd_with_context(context);
                 let mut conditions = join
@@ -467,12 +475,11 @@ impl LogicalPlan {
                 }
             }
             Self::Apply(apply) => {
-                let Some(left) = self.children().first() else {
-                    return FdSet::new();
-                };
-                let Some(right) = self.children().get(1) else {
-                    return left.extract_fd_with_context(context);
-                };
+                // Go indexes `la.Children()[1]` (and reads its schema) before
+                // the join-type switch, so a malformed apply panics even for
+                // the default join types.
+                let left = &self.children()[0];
+                let right = &self.children()[1];
                 let mut left_fd = left.extract_fd_with_context(context);
                 let right_fd = right.extract_fd_with_context(context);
                 let mut conditions = apply

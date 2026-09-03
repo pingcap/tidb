@@ -254,30 +254,32 @@ fn try_eliminate(
     };
     let outer_index = 1 ^ inner_index;
     let children = join.base.children();
-    let Some(inner) = children.get(inner_index) else {
-        return (LogicalPlan::Join(join), false);
-    };
-    let Some(outer) = children.get(outer_index) else {
-        return (LogicalPlan::Join(join), false);
-    };
+    // Go indexes both children directly
+    // (`rule_join_elimination.go:99-100`).
+    let inner = &children[inner_index];
+    let outer = &children[outer_index];
     if matches!(inner, LogicalPlan::TableDual(dual) if dual.row_count == 0) {
         let mut children = join.base.take_children();
         let outer = children.swap_remove(outer_index);
         return (null_extended_projection(context, &join, outer), true);
     }
-    let Some(outer_schema) = outer.schema() else {
-        return (LogicalPlan::Join(join), false);
-    };
-    if parent_columns
-        .iter()
-        .any(|column| !outer_schema.contains(column))
-    {
-        return (LogicalPlan::Join(join), false);
+    // Go touches the outer schema only under `len(parentCols) > 0` and the
+    // inner schema under `len(aggCols) > 0`; a nil schema panics there.
+    if !parent_columns.is_empty() {
+        let outer_schema = outer
+            .schema()
+            .expect("outer join elimination requires the outer child schema");
+        if parent_columns
+            .iter()
+            .any(|column| !outer_schema.contains(column))
+        {
+            return (LogicalPlan::Join(join), false);
+        }
     }
     if !agg_columns.is_empty() {
-        let Some(inner_schema) = inner.schema() else {
-            return (LogicalPlan::Join(join), false);
-        };
+        let inner_schema = inner
+            .schema()
+            .expect("outer join elimination requires the inner child schema");
         if agg_columns
             .iter()
             .all(|column| !inner_schema.contains(column))
@@ -322,28 +324,27 @@ fn required_columns(
     match plan {
         LogicalPlan::Apply(apply) => {
             if context.enable_no_decorrelate_in_select {
-                let Some(left) = apply.join.base.children().first() else {
-                    return Vec::new();
-                };
-                let Some(left_schema) = left.schema() else {
-                    return Vec::new();
-                };
+                // Go indexes both children directly and derefs the left
+                // schema (`rule_join_elimination.go:329`, `:337`).
+                let left = &apply.join.base.children()[0];
+                let left_schema = left
+                    .schema()
+                    .expect("apply required columns need the left child schema");
                 let mut columns = incoming
                     .iter()
                     .filter(|column| left_schema.contains(column))
                     .cloned()
                     .collect();
-                if let Some(right) = apply.join.base.children().get(1) {
-                    append_unique(
-                        &mut columns,
-                        matching_cor_columns_by_schema(
-                            &extract_correlated_cols_4_logical_plan(right),
-                            left_schema,
-                        )
-                        .into_iter()
-                        .map(|column| column.column),
-                    );
-                }
+                let right = &apply.join.base.children()[1];
+                append_unique(
+                    &mut columns,
+                    matching_cor_columns_by_schema(
+                        &extract_correlated_cols_4_logical_plan(right),
+                        left_schema,
+                    )
+                    .into_iter()
+                    .map(|column| column.column),
+                );
                 columns
             } else {
                 plan.schema()

@@ -27,6 +27,8 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::NoColumns;
 
+use crate::logical::limit::LogicalLimit;
+
 use super::*;
 use crate::logical::data_source::DataSource;
 use crate::logical::selection::LogicalSelection;
@@ -986,4 +988,37 @@ fn the_ctx_stack_pops_names_with_expressions() {
     er.ctx_stack_pop(1);
     assert_eq!(er.ctx_stack_len(), 1);
     assert_eq!(er.ctx_name_stk.len(), 1);
+}
+
+#[test]
+fn a_childless_unary_chain_panics_when_resolving_a_natural_join_name_like_go() {
+    let fixture = Fixture::new();
+    let plan = LogicalPlan::Selection(LogicalSelection::new(
+        crate::logical::BaseLogicalPlan::with_id(1, LogicalSelection::TYPE, 0),
+        Vec::new(),
+    ));
+
+    // Go indexes `p.Children()[0]` for the unary wrappers
+    // (`expression_rewriter.go:3171`).
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        find_field_name_from_natural_using_join(&plan, &qualified("t", "a"))
+    }))
+    .is_err());
+}
+
+#[test]
+fn push_last_schema_column_panics_on_an_empty_schema_like_go() {
+    let fixture = Fixture::new();
+    let mut rewriter = fixture.rewriter(RewriterSessionFlags::default());
+    let mut plan = LogicalPlan::Limit(LogicalLimit::new(
+        crate::logical::BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 0),
+        0,
+        1,
+    ));
+
+    // Go computes `Schema().Len()-1` and panics indexing `Columns[-1]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rewriter.push_last_schema_column(&mut plan)
+    }))
+    .is_err());
 }

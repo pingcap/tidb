@@ -86,23 +86,10 @@ fn rewrite_selection(
     let LogicalPlan::Selection(mut selection) = plan else {
         unreachable!()
     };
-    let parent_schema = selection.base.base.schema().cloned().or_else(|| {
-        selection
-            .base
-            .children()
-            .first()
-            .and_then(LogicalPlan::schema)
-            .cloned()
-    });
-    let parent_names = if selection.base.base.output_names().is_empty() {
-        selection
-            .base
-            .children()
-            .first()
-            .map_or_else(Vec::new, |child| child.output_names().to_vec())
-    } else {
-        selection.base.base.output_names().to_vec()
-    };
+    // Go `sel.Schema()`/`sel.OutputNames()` propagate from `children[0]`
+    // (`base_logical_plan.go:102`/`:107`).
+    let parent_schema = selection.base.children()[0].schema().cloned();
+    let parent_names = selection.base.children()[0].output_names().to_vec();
     let Some(child) = selection.base.children_mut().pop() else {
         return Ok((LogicalPlan::Selection(selection), false));
     };
@@ -274,25 +261,17 @@ fn convert(
     if is_null.func_name.lowercase() != "isnull" {
         return Ok(None);
     }
-    let Some(outer_schema) = join
-        .base
-        .children()
-        .get(outer_index)
-        .and_then(LogicalPlan::schema)
+    // Go indexes `p.Children()[outerChildIdx]` and derefs its schema
+    // (`rule_outer_join_to_semi_join.go:258-259`).
+    let outer_schema = join.base.children()[outer_index]
+        .schema()
         .cloned()
-    else {
-        return Ok(None);
-    };
+        .expect("outer-join conversion requires the outer child schema");
     let inner_index = 1 ^ outer_index;
-    let Some(inner_schema) = join
-        .base
-        .children()
-        .get(inner_index)
-        .and_then(LogicalPlan::schema)
+    let inner_schema = join.base.children()[inner_index]
+        .schema()
         .cloned()
-    else {
-        return Ok(None);
-    };
+        .expect("outer-join conversion requires the inner child schema");
     let inner_ids = inner_schema
         .columns
         .iter()
@@ -330,11 +309,8 @@ fn convert(
     }
     join.join_type = LogicalJoinType::AntiSemi;
     join.base.base.set_schema(Some(outer_schema.clone()));
-    let outer_names = join
-        .base
-        .children()
-        .first()
-        .map_or_else(Vec::new, |child| child.output_names().to_vec());
+    // Go's base `OutputNames()` propagates from `children[0]`.
+    let outer_names = join.base.children()[0].output_names().to_vec();
     join.base.base.set_output_names(outer_names);
     let join = LogicalPlan::Join(join);
 

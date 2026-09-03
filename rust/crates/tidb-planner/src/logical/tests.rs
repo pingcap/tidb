@@ -25,6 +25,8 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
 
+use crate::find_best_task::LogicalJoinType;
+
 use super::*;
 
 fn column(unique_id: i64) -> Column {
@@ -415,4 +417,70 @@ fn clone_shallow_keeps_the_node_and_drops_the_children() {
     assert_eq!(shallow.base().child_len(), 0);
     assert_eq!(tree.base().child_len(), 1);
     tree.dismantle();
+}
+
+// ***************************************************************************
+// ExtractFD child-access boundaries — Go's operator overrides index children
+// (or answer empty for the default join types) before anything else.
+// ***************************************************************************
+
+#[test]
+fn a_childless_outer_join_panics_when_extracting_fd_like_go() {
+    let join = LogicalPlan::Join(LogicalJoin::new(
+        BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0),
+        LogicalJoinType::LeftOuter,
+    ));
+    // Go `ExtractFDForOuterJoin` reads `p.Children()[0]` and `[1]`.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { join.extract_fd() })).is_err()
+    );
+}
+
+#[test]
+fn a_single_child_inner_join_panics_when_extracting_fd_like_go() {
+    let mut base = BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0);
+    base.set_children(vec![source(1, &[11])]);
+    let join = LogicalPlan::Join(LogicalJoin::new(base, LogicalJoinType::Inner));
+    // Go `ExtractFDForInnerJoin` reads `child[1]` before `child[0]`.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { join.extract_fd() })).is_err()
+    );
+    join.dismantle();
+}
+
+#[test]
+fn a_default_join_type_answers_an_empty_fdset_without_touching_children_like_go() {
+    let join = LogicalPlan::Join(LogicalJoin::new(
+        BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0),
+        LogicalJoinType::LeftOuterSemi,
+    ));
+    // Go's switch default returns the empty set before any child access.
+    let fd = join.extract_fd();
+    assert!(fd.not_null_cols.is_empty());
+    assert!(fd.group_by_cols.is_empty());
+}
+
+#[test]
+fn a_childless_apply_panics_when_extracting_fd_like_go() {
+    let apply = LogicalPlan::Apply(LogicalApply::new(
+        BaseLogicalPlan::with_id(1, LogicalApply::TYPE, 0),
+        LogicalJoinType::LeftOuter,
+    ));
+    // Go indexes `la.Children()[1]` before its join-type switch.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { apply.extract_fd() })).is_err()
+    );
+}
+
+#[test]
+fn a_childless_selection_panics_when_extracting_fd_like_go() {
+    let selection = LogicalPlan::Selection(LogicalSelection::new(
+        BaseLogicalPlan::with_id(1, LogicalSelection::TYPE, 0),
+        Vec::new(),
+    ));
+    // Go indexes `p.Children()[0]` before the `*LogicalJoin` assertion.
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { selection.extract_fd() }))
+            .is_err()
+    );
 }

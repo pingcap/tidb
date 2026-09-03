@@ -1381,7 +1381,13 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         }
         {
             let base = plan4_agg.base_mut();
-            let mut schema = base.base.schema().cloned().unwrap_or_default();
+            // Go appends to `plan4Agg.Schema()` directly; a nil schema would
+            // deref there (`expression_rewriter.go:963`).
+            let mut schema = base
+                .base
+                .schema()
+                .cloned()
+                .expect("quantifier plan needs the aggregation schema");
             schema.append([col_sum.clone(), col_count.clone()]);
             base.base.set_schema(Some(schema));
         }
@@ -2003,13 +2009,15 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     /// plan.OutputNames()[len-1])`: the aux column a left-outer-semi apply or
     /// a quantifier projection appended.
     fn push_last_schema_column(&mut self, plan: &mut LogicalPlan) -> Result<(), RewriteError> {
-        let schema = plan.schema().ok_or(RewriteError::MissingSchema)?;
-        let last = schema
-            .len()
-            .checked_sub(1)
-            .ok_or(RewriteError::MissingSchema)?;
+        // Go indexes `Schema().Columns[len-1]` and `OutputNames()[len-1]`
+        // (`expression_rewriter.go:919`/`:1193`/`:1491`/`:1554`); an empty
+        // schema computes `-1` and panics on the index.
+        let schema = plan
+            .schema()
+            .expect("subquery rewrite appends the last schema column");
+        let last = schema.len() - 1;
         let column = schema.columns[last].clone();
-        let name = plan.output_names().get(last).cloned().unwrap_or_default();
+        let name = plan.output_names()[last].clone();
         self.ctx_stack_append(Expression::Column(column), name);
         Ok(())
     }
@@ -2207,21 +2215,18 @@ pub fn find_field_name_from_natural_using_join<'p>(
             | LogicalPlan::Selection(_)
             | LogicalPlan::TopN(_)
             | LogicalPlan::Sort(_)
-            | LogicalPlan::MaxOneRow(_) => match node.children().first() {
-                Some(child) => node = child,
-                None => return Ok(None),
-            },
+            // Go indexes `p.Children()[0]` for these unary wrappers
+            // (`expression_rewriter.go:3171`).
+            | LogicalPlan::MaxOneRow(_) => node = &node.children()[0],
             LogicalPlan::Join(join) => {
                 return lookup_full_names(join.full_schema.as_ref(), &join.full_names, column);
             }
             LogicalPlan::Apply(apply) => {
                 // Go: an apply with no FullSchema is a transparent wrapper, so
-                // resolution continues into the OUTER (left) child.
+                // resolution continues into the OUTER (left) child — indexed
+                // directly (`expression_rewriter.go:3189`).
                 if apply.join.full_schema.is_none() {
-                    match node.children().first() {
-                        Some(child) => node = child,
-                        None => return Ok(None),
-                    }
+                    node = &node.children()[0];
                 } else {
                     return lookup_full_names(
                         apply.join.full_schema.as_ref(),

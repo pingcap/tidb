@@ -367,9 +367,9 @@ impl LogicalProjection {
         let child = child_stats.first()?;
         let mut col_ndvs = Vec::new();
         for (i, expr) in self.exprs.iter().enumerate() {
-            let Some(output) = self_schema.columns.get(i) else {
-                break;
-            };
+            // Go indexes `selfSchema.Columns[i]` directly
+            // (`logical_projection.go:296`).
+            let output = &self_schema.columns[i];
             let read = extract_columns(expr);
             if read.len() == 1 {
                 if let Some(ndv) = child.col_ndvs().get(&read[0].unique_id) {

@@ -1406,3 +1406,48 @@ fn physical_correlated_rebind_reaches_readers_and_shares_one_outer_cell() {
         .iter()
         .all(|column| Arc::ptr_eq(shared, column.data.as_ref().expect("inner binding"))));
 }
+
+// ***************************************************************************
+// Child/schema access boundaries in physical schema assembly and post-opt.
+// ***************************************************************************
+
+#[test]
+fn a_childless_physical_join_panics_when_building_its_schema_like_go() {
+    let join = PhysicalPlan::HashJoin(PhysicalHashJoin {
+        base: BasePhysicalPlan::with_id(1, "HashJoin", 0),
+        ..PhysicalHashJoin::default()
+    });
+    // Go `BuildPhysicalJoinSchema` indexes `join.Children()[0]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        build_physical_join_schema(LogicalJoinType::Inner, &join)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_single_child_physical_join_panics_on_the_missing_right_child_like_go() {
+    let join = PhysicalPlan::HashJoin(PhysicalHashJoin {
+        base: BasePhysicalPlan::with_id(1, "HashJoin", 0),
+        ..PhysicalHashJoin::default()
+    });
+    let mut join = join;
+    join.base_mut().set_children(vec![scan(1, &[11])]);
+    // Go indexes `join.Children()[1]` in the merge arm.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        build_physical_join_schema(LogicalJoinType::Inner, &join)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_childless_projection_panics_when_post_eliminating_like_go() {
+    let projection = PhysicalPlan::Projection(PhysicalProjection {
+        base: BasePhysicalPlan::with_id(2, "Projection", 0),
+        ..PhysicalProjection::default()
+    });
+    // Go `canProjectionBeEliminatedStrict` indexes `p.Children()[0]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        eliminate_physical_projection(projection)
+    }))
+    .is_err());
+}

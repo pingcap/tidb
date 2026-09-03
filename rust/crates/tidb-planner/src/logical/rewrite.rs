@@ -1228,7 +1228,12 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 (node, ())
             }
             PendingColumns::RebuildFromChild(parent_used_cols) => {
-                let child_schema = schemas.first().cloned().unwrap_or_default();
+                // Go `LogicalLimit.PruneColumns` indexes `p.Children()[0]`
+                // (`logical_limit.go:87`); a childless node panics there.
+                let child_schema = schemas
+                    .first()
+                    .cloned()
+                    .expect("column pruning requires the child schema");
                 if let LogicalPlan::Limit(op) = &mut node {
                     op.prune_columns_local(&parent_used_cols, &child_schema);
                 } else {
@@ -1239,7 +1244,11 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 (node, ())
             }
             PendingColumns::RebuildWithOwnColumns(snapshot) => {
-                let child_schema = schemas.first().cloned().unwrap_or_default();
+                // Same Go `Children()[0]` boundary as `RebuildFromChild`.
+                let child_schema = schemas
+                    .first()
+                    .cloned()
+                    .expect("column pruning requires the child schema");
                 let rebuilt = match &mut node {
                     LogicalPlan::TopN(op) => {
                         Some(op.rebuild_schema_after_pruning(&snapshot, &child_schema))
@@ -1474,7 +1483,15 @@ impl OwnedRewrite for PushDownTopN<'_> {
                     self.stash.push(PendingTopN::Reattach(incoming));
                     return Descend::Children(vec![None; child_count]);
                 }
-                let own_schema = op.base.base.schema().cloned().unwrap_or_default();
+                // Go passes the projection's OWN `p.Schema()` to
+                // `ColumnSubstitute` (`logical_projection.go:196`); a nil
+                // schema would deref there.
+                let own_schema = op
+                    .base
+                    .base
+                    .schema()
+                    .cloned()
+                    .expect("TopN push-down needs the projection's own schema");
                 let opts = SubstituteOptions::new(self.builder);
                 let mut substituted_items = Vec::with_capacity(incoming.by_items.len());
                 for item in &incoming.by_items {
@@ -1498,11 +1515,9 @@ impl OwnedRewrite for PushDownTopN<'_> {
                 }
                 // A column with ID 0 that only THIS projection produces cannot
                 // enter the child; keep the TopN above.
-                let child_schema = op
-                    .base
-                    .children()
-                    .first()
-                    .and_then(super::LogicalPlan::schema);
+                // Go indexes `p.Children()[0].Schema()` before `Contains`
+                // (`logical_projection.go:207`).
+                let child_schema = op.base.children()[0].schema();
                 let blocked_by_projection = substituted_items.iter().any(|expr| {
                     extract_columns(expr).iter().any(|col| {
                         col.id == 0

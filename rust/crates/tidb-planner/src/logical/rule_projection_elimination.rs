@@ -210,23 +210,47 @@ fn replace_schema_columns(plan: &mut LogicalPlan, replace: &ColumnReplacements) 
 }
 
 fn apply_schema(plan: &LogicalPlan, join_type: LogicalJoinType) -> Option<Schema> {
-    let left = plan.children().first()?.schema()?;
+    // Go `BuildLogicalJoinSchema` (`logical_join.go:2243-2261`) indexes
+    // `join.Children()[0]`/`[1]` directly and nil-derefs the left schema
+    // everywhere except the Inner merge, whose `MergeSchema` absorbs nil.
+    let left_schema = plan.children()[0].schema();
     match join_type {
-        LogicalJoinType::Semi | LogicalJoinType::AntiSemi => Some(left.clone()),
+        LogicalJoinType::Semi | LogicalJoinType::AntiSemi => Some(
+            left_schema
+                .cloned()
+                .expect("apply join schema nil-derefs the left child schema"),
+        ),
         LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi => {
-            let mut schema = left.clone();
-            schema.columns.push(plan.schema()?.columns.last()?.clone());
+            let mut schema = left_schema
+                .cloned()
+                .expect("apply join schema nil-derefs the left child schema");
+            let own = plan
+                .schema()
+                .expect("apply join schema needs the apply's own schema");
+            schema.columns.push(
+                own.columns
+                    .last()
+                    .expect("apply join schema indexes its own trailing column")
+                    .clone(),
+            );
             Some(schema)
         }
         LogicalJoinType::Inner | LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
-            let mut schema = merge_schema(Some(left), plan.children().get(1)?.schema())?;
-            let left_len = left.len();
+            let mut schema = merge_schema(left_schema, plan.children()[1].schema())?;
             let total = schema.len();
             match join_type {
                 LogicalJoinType::LeftOuter => {
+                    let left_len = left_schema
+                        .as_ref()
+                        .expect("apply join schema nil-derefs the left schema for outer joins")
+                        .len();
                     crate::plan_builder::from::reset_not_null_flag(&mut schema, left_len, total);
                 }
                 LogicalJoinType::RightOuter => {
+                    let left_len = left_schema
+                        .as_ref()
+                        .expect("apply join schema nil-derefs the left schema for outer joins")
+                        .len();
                     crate::plan_builder::from::reset_not_null_flag(&mut schema, 0, left_len);
                 }
                 _ => {}
@@ -525,5 +549,52 @@ mod tests {
             panic!("the composed expression is the child's constant")
         };
         assert_eq!(constant.value, Datum::new_int(7));
+    }
+}
+
+#[cfg(test)]
+mod apply_schema_tests {
+    use tidb_expr::schema::Schema;
+
+    use crate::find_best_task::LogicalJoinType;
+    use crate::logical::join::LogicalJoin;
+    use crate::logical::table_dual::LogicalTableDual;
+    use crate::logical::{BaseLogicalPlan, LogicalPlan};
+
+    use super::apply_schema;
+
+    fn childless_join(join_type: LogicalJoinType) -> LogicalPlan {
+        LogicalPlan::Join(LogicalJoin::new(
+            BaseLogicalPlan::with_id(1, "Join", 0),
+            join_type,
+        ))
+    }
+
+    #[test]
+    fn a_childless_apply_join_panics_when_rebuilding_its_schema_like_go() {
+        let plan = childless_join(LogicalJoinType::LeftOuter);
+        // Go `BuildLogicalJoinSchema` indexes `join.Children()[0]`.
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            apply_schema(&plan, LogicalJoinType::LeftOuter)
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn two_schemaless_children_merge_to_no_schema_like_go() {
+        let mut base = BaseLogicalPlan::with_id(1, "Join", 0);
+        base.set_children(vec![
+            LogicalPlan::TableDual(LogicalTableDual {
+                base: BaseLogicalPlan::with_id(2, "TableDual", 0),
+                row_count: 0,
+            }),
+            LogicalPlan::TableDual(LogicalTableDual {
+                base: BaseLogicalPlan::with_id(3, "TableDual", 0),
+                row_count: 0,
+            }),
+        ]);
+        let plan = LogicalPlan::Join(LogicalJoin::new(base, LogicalJoinType::Inner));
+        // Go indexes both children, then `MergeSchema(nil, nil)` returns nil.
+        assert!(apply_schema(&plan, LogicalJoinType::Inner).is_none());
     }
 }
