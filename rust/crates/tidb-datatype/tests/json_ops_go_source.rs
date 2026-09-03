@@ -35,7 +35,7 @@ use std::path::PathBuf;
 
 use tidb_datatype::{
     contains_binary_json, merge_binary_json, merge_patch_binary_json, overlaps_binary_json,
-    parse_json_path_expr, BinaryJSON, JSONModifyType,
+    parse_json_path_expr, unquote_string, BinaryJSON, JSONModifyType,
 };
 
 /// One captured answer, rendered the way the fixture writes it.
@@ -142,4 +142,29 @@ fn json_path_array_index_with_dangling_to_is_a_plain_index_like_go() {
             "{bad} is rejected by both engines"
         );
     }
+}
+
+/// Go `json.Valid` accepts lone `\uXXXX` surrogate escapes and `encoding/json`
+/// decodes them to U+FFFD; `JSON_UNQUOTE`'s `utf16.DecodeRune` does the same
+/// for lone/invalid pairs (`json_binary_functions.go:166`).
+#[test]
+fn lone_surrogates_substitute_fffd_like_go() {
+    let parsed = BinaryJSON::parse(r#""\ud800""#).expect("Go accepts a lone surrogate escape");
+    assert_eq!(parsed.unquote().unwrap(), "\u{fffd}");
+
+    // Go `encoding/json` decodes EACH lone surrogate escape to its own
+    // U+FFFD at parse time, so the invalid pair stores two.
+    let unquoted = BinaryJSON::parse(r#""\ud800\ud800""#)
+        .expect("Go accepts the pair-shaped escapes")
+        .unquote()
+        .unwrap();
+    assert_eq!(unquoted, "\u{fffd}\u{fffd}");
+
+    // The escape-decoding surface (`decodeOneEscapedUnicode`,
+    // json_binary_functions.go:166) combines an adjacent pair — valid or
+    // not — into ONE rune: U+FFFD for the invalid pair.
+    let unquoted = unquote_string(r#""\ud800\ud800""#).unwrap();
+    assert_eq!(unquoted, "\u{fffd}");
+    // A lone HIGH surrogate with no adjacent escape fails Go's unquote.
+    assert!(unquote_string(r#""\ud800""#).is_err());
 }

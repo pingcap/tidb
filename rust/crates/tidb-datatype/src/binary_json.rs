@@ -259,13 +259,22 @@ impl BinaryJSON {
         if text.trim().is_empty() {
             return Err(BinaryJSONError::EmptyDocument);
         }
-        let value: Value = serde_json::from_str(text).map_err(|error| {
-            if error.to_string().contains("trailing characters") {
-                BinaryJSONError::TrailingValues
-            } else {
-                BinaryJSONError::InvalidText
+        let value: Value = match serde_json::from_str(text) {
+            Ok(value) => value,
+            Err(error) => {
+                if error.to_string().contains("trailing characters") {
+                    return Err(BinaryJSONError::TrailingValues);
+                }
+                // Go `json.Valid` accepts lone `\uXXXX` surrogate escapes and
+                // `encoding/json` decodes them to U+FFFD; serde_json refuses
+                // them. Rewrite those escapes the way Go's decoder would and
+                // retry once — the sanitizer copies everything else
+                // verbatim, so a text without surrogate escapes fails again
+                // identically.
+                let sanitized = replace_lone_surrogate_escapes(text);
+                serde_json::from_str(&sanitized).map_err(|_| BinaryJSONError::InvalidText)?
             }
-        })?;
+        };
         Self::from_value(&value)
     }
 
@@ -558,10 +567,20 @@ pub fn unquote_json_string(text: &str) -> Result<String, BinaryJSONError> {
                         .ok_or(BinaryJSONError::InvalidText)?;
                 }
                 let first = decode_hex_u16(&first)?;
-                let scalar = if (0xd800..=0xdbff).contains(&first) {
-                    if chars.next().map(|(_, ch)| ch) != Some('\\')
-                        || chars.next().map(|(_, ch)| ch) != Some('u')
-                    {
+                // Go `decodeOneEscapedUnicode`: a surrogate rune has no
+                // direct UTF-8 form, so the caller combines an ADJACENT `\u`
+                // escape via `utf16.DecodeRune`, which substitutes U+FFFD
+                // for an invalid pair
+                // (`json_binary_functions.go:136-160`). No adjacent escape
+                // means the decode error propagates.
+                let scalar = if (0xd800..=0xdbff).contains(&first)
+                    || (0xdc00..=0xdfff).contains(&first)
+                {
+                    // Go only consumes the ADJACENT `\u` escape for a
+                    // surrogate first rune (`json_binary_functions.go:140`).
+                    let adjacent_escape = chars.next().map(|(_, ch)| ch) == Some('\\')
+                        && chars.next().map(|(_, ch)| ch) == Some('u');
+                    if !adjacent_escape {
                         return Err(BinaryJSONError::InvalidText);
                     }
                     let mut second = [0_u8; 4];
@@ -572,12 +591,11 @@ pub fn unquote_json_string(text: &str) -> Result<String, BinaryJSONError> {
                             .ok_or(BinaryJSONError::InvalidText)?;
                     }
                     let second = decode_hex_u16(&second)?;
-                    if !(0xdc00..=0xdfff).contains(&second) {
-                        return Err(BinaryJSONError::InvalidText);
+                    if (0xd800..=0xdbff).contains(&first) && (0xdc00..=0xdfff).contains(&second) {
+                        0x10000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00)
+                    } else {
+                        0xFFFD
                     }
-                    0x10000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00)
-                } else if (0xdc00..=0xdfff).contains(&first) {
-                    return Err(BinaryJSONError::InvalidText);
                 } else {
                     u32::from(first)
                 };
@@ -589,20 +607,76 @@ pub fn unquote_json_string(text: &str) -> Result<String, BinaryJSONError> {
     Ok(output)
 }
 
+/// Rewrites the `\uXXXX` surrogate escapes that Go `encoding/json` decodes
+/// to U+FFFD (lone surrogates and invalid pairs) into the literal U+FFFD
+/// character, so the strict serde parser accepts what Go's lenient scanner
+/// accepts. Everything else is copied verbatim.
+fn replace_lone_surrogate_escapes(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let is_surrogate_escape = bytes[index] == b'\\'
+            && text.get(index..index + 2) == Some("\\u")
+            && text.get(index + 2..index + 6).is_some_and(|hex| {
+                u16::from_str_radix(hex, 16).is_ok_and(|value| (0xd800..=0xdfff).contains(&value))
+            });
+        if !is_surrogate_escape {
+            output.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let first = u16::from_str_radix(text.get(index + 2..index + 6).expect("checked above"), 16)
+            .expect("checked above");
+        // A high surrogate MAY pair with an adjacent `\uDC00..=\uDFFF`.
+        let paired = if (0xd800..=0xdbff).contains(&first) {
+            text.get(index + 6..index + 8)
+                .filter(|next| *next == "\\u")
+                .and_then(|_| text.get(index + 8..index + 12))
+                .and_then(|hex| u16::from_str_radix(hex, 16).ok())
+                .filter(|second| (0xdc00..=0xdfff).contains(second))
+                .map(|second| {
+                    let scalar = 0x10000
+                        + ((u32::from(first) - 0xd800) << 10)
+                        + (u32::from(second) - 0xdc00);
+                    (index + 12, scalar)
+                })
+        } else {
+            None
+        };
+        match paired {
+            Some((next, scalar)) => {
+                let ch = char::from_u32(scalar).unwrap_or('\u{fffd}');
+                let mut encoded = [0; 4];
+                output.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+                index = next;
+            }
+            None => {
+                output.extend_from_slice("\\ufffd".as_bytes());
+                index += 6;
+            }
+        }
+    }
+    String::from_utf8(output).unwrap_or_else(|_| text.to_owned())
+}
+
 /// Decodes one four- or eight-hex-digit escaped Unicode value.
 pub fn decode_escaped_unicode(hex: &[u8]) -> Result<([u8; 4], usize, bool), BinaryJSONError> {
     if hex.len() != 4 && hex.len() != 8 {
         return Err(BinaryJSONError::InvalidText);
     }
     let first = decode_hex_u16(hex.get(..4).ok_or(BinaryJSONError::InvalidText)?)?;
+    // Go `utf16.DecodeRune` (`json_binary_functions.go:166`) substitutes
+    // U+FFFD for a lone surrogate or an invalid pair instead of failing.
     let scalar = if hex.len() == 8 {
         let second = decode_hex_u16(hex.get(4..).ok_or(BinaryJSONError::InvalidText)?)?;
-        if !(0xd800..=0xdbff).contains(&first) || !(0xdc00..=0xdfff).contains(&second) {
-            return Err(BinaryJSONError::InvalidText);
+        if (0xd800..=0xdbff).contains(&first) && (0xdc00..=0xdfff).contains(&second) {
+            0x10000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00)
+        } else {
+            0xFFFD
         }
-        0x10000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00)
     } else if (0xd800..=0xdfff).contains(&first) {
-        return Err(BinaryJSONError::LoneSurrogate);
+        0xFFFD
     } else {
         u32::from(first)
     };
@@ -1571,7 +1645,10 @@ mod tests {
             ("597d", "好\0", 3, false, true),
             ("fffd", "�\0", 3, false, true),
             ("D83DDE0A", "😊", 4, false, true),
-            ("D83D", "", 0, true, false),
+            // Go utf16.DecodeRune substitutes U+FFFD for a lone surrogate or an
+            // invalid pair instead of failing.
+            ("D83D", "\u{fffd}\0", 3, false, true),
+            ("D83DD83D", "\u{fffd}\0", 3, false, true),
             ("D83D11", "", 0, false, false),
             ("ZZZZ", "", 0, false, false),
             ("D83DDE0A597d", "", 0, false, false),

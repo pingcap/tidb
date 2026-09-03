@@ -78,6 +78,14 @@ For each bounded behavior cluster:
   `pkg/planner/core` / `pkg/kv` / `pkg/infoschema` / `pkg/session` /
   `pkg/util/mviewutil` / `pkg/expression` slices of the same commit, then
   the standing wide-window queue.
+- 2026-09-03: closed divergence item 6 (`tidb-datatype` lone surrogates):
+  JSON_UNQUOTE's escape decoding combines an adjacent `\u` via
+  `utf16.DecodeRune` (U+FFFD for invalid pairs, Go's error when absent),
+  `decode_escaped_unicode` substitutes U+FFFD, and `BinaryJSON::parse`
+  sanitizes lone-surrogate escapes before the serde retry. Per-surface
+  regressions; item 7 (invalid UTF-8) stays a documented gap per the
+  audit's reachability note. See
+  `receipts/datatype_json_fieldtype_receipt.md`.
 
 - 2026-09-03: closed divergence item 8 (`tidb-datatype` json path): a
   dangling `to` in `$[N to]` degrades to a plain index exactly as Go's

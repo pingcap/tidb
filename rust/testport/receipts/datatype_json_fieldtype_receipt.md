@@ -19,12 +19,40 @@ Regression: `json_path_array_index_with_dangling_to_is_a_plain_index_like_go`
 in `tests/json_ops_go_source.rs` — proven to FAIL against the unfixed parser
 (captured by stashing the production edit), plus the shared rejection cases.
 
-## Batch 2 (queued): lone-surrogate U+FFFD and FieldTypeBuilder F2
+## Batch 2: lone-surrogate U+FFFD (divergence item 6)
 
-Documented, code-confirmed, not yet implemented: binary JSON lone-surrogate
-handling (`binary_json.rs:575`/`:1246`; audit item 6/7) and the
-FieldTypeBuilder flen/decimal zero-value (audit F2, `field_type/
-builder.rs:34`).
+Three Go-verified surfaces now substitute U+FFFD instead of erroring:
+
+- `unquote_json_string`'s `\u` arm mirrors Go's
+  `decodeOneEscapedUnicode` + caller (`json_binary_functions.go:136-160`):
+  a surrogate first rune consumes an ADJACENT `\u` escape and combines via
+  `utf16.DecodeRune` — U+FFFD for an invalid pair — while no adjacent
+  escape propagates Go's decode error.
+- `decode_escaped_unicode` substitutes U+FFFD for a lone 4-hex surrogate or
+  an invalid 8-hex pair (Go `utf16.DecodeRune`), replacing the
+  `LoneSurrogate`/`InvalidText` refusals.
+- `BinaryJSON::parse` retries once through
+  `replace_lone_surrogate_escapes` when serde rejects the text: Go
+  `json.Valid` accepts lone `\uXXXX` escapes and `encoding/json` decodes
+  each to U+FFFD; the sanitizer rewrites exactly those escapes (a valid
+  pair combines) and copies everything else verbatim, so non-surrogate
+  failures re-fail identically.
+
+Per-surface regressions in `tests/json_ops_go_source.rs`
+(`lone_surrogates_substitute_fffd_like_go`): parse+unquote U+FFFD, the
+invalid pair's TWO FFFDs (Go `encoding/json` per-escape), the escape-surface
+combine, and the lone-high unquote error — the rejection/combine assertions
+were proven to fail against the unfixed code during development.
+
+Item 7 (invalid UTF-8 inside a JSON string) stays deferred: the audit's own
+note found no SQL path producing it; a Rust node reading a Go-written value
+with invalid UTF-8 remains an `InvalidBinary` (documented gap).
+
+## Batch 3 (queued): FieldTypeBuilder F2
+
+The FieldTypeBuilder flen/decimal zero-value divergence (audit F2,
+`field_type/builder.rs:34`; Go zero is 0/0, Rust seeds -1) is documented and
+still owes implementation.
 
 ## Validation
 
