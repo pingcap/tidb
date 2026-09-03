@@ -1197,6 +1197,10 @@ func TestCreateMaterializedViewPauseAndResume(t *testing.T) {
 	tk.MustQuery("show tables like 'mv_pause'").Check(testkit.Rows("mv_pause"))
 	err := tk.ExecToErr("select * from mv_pause")
 	require.ErrorContains(t, err, "initial build is in progress")
+	err = tk.ExecToErr("select * from mv_pause where a = 1")
+	require.ErrorContains(t, err, "initial build is in progress")
+	err = tk.ExecToErr("select * from mv_pause where a in (1, 2)")
+	require.ErrorContains(t, err, "initial build is in progress")
 	for _, sql := range []string{
 		"insert into mv_pause values (9, 1, 1)",
 		"replace into mv_pause values (9, 1, 1)",
