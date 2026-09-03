@@ -207,8 +207,7 @@ SELECT 'a' LIKE 'b' LIKE 'c';
   finds `LIKE` unconsumed -> syntax error (MySQL also rejects it).
 - Rust: parses to `Like(Like('a','b'), 'c')` — accepted, and evaluated.
 
-Same shape for `SELECT 1 IN (1) IN (0)` and `SELECT 1 BETWEEN 0 AND 2
-BETWEEN 0 AND 2`, and:
+Same shape for `SELECT 1 IN (1) IN (0)`, and:
 
 ```sql
 SELECT 1 IS TRUE IS TRUE;
@@ -218,6 +217,13 @@ SELECT 1 IS TRUE IS TRUE;
 - Rust: `IsTruth(IsTruth(1))`.
 
 **Not fixed** — two new pieces of loop state plus seven guarded arms.
+
+CORRECTION (2026-09-03, now fixed): the BETWEEN half of the original claim
+was inaccurate — Go's `parseBetweenExpr:637` parses the HIGH side at
+`precPredicate` with a FRESH `noMorePredicate`, so a BETWEEN chain through
+the HIGH side (`1 BETWEEN 0 AND 2 BETWEEN 0 AND 2`) is Go-legal and both
+engines accept it. The LIKE/IN/NOT-LIKE chain rejections and the `noMoreIS`
+latch are implemented in `tidb-parser/src/expr.rs` as of this receipt.
 
 #### 4. Rust's expression-prefix identifier gate is `is_reserved` (232 keywords) where Go's is `isReservedClauseKeyword` (13)
 

@@ -1729,3 +1729,40 @@ fn test_dml_stmt() {
         }
     }
 }
+
+// ***************************************************************************
+// Go `parseInfixExpr`'s two latches (`expr_parser.go:39`/`:45`): a predicate
+// result can never be the left operand of another predicate, and `IS` never
+// chains after `IS [NOT] TRUE/FALSE/UNKNOWN`.
+// ***************************************************************************
+
+#[test]
+fn chained_predicates_are_rejected_like_go() {
+    for sql in [
+        "SELECT 'a' LIKE 'b' LIKE 'c'",
+        "SELECT 1 IN (1) IN (0)",
+        "SELECT 'a' NOT LIKE 'b' NOT LIKE 'c'",
+    ] {
+        // Go leaves the second operator unconsumed, so the statement parser
+        // reports it as a syntax error at/near that operator.
+        let error = parse(sql).expect_err(sql);
+        assert!(!error.message.is_empty(), "chained predicate: {sql}");
+    }
+}
+
+#[test]
+fn chained_is_truth_is_rejected_but_is_null_chains_like_go() {
+    let error = parse("SELECT 1 IS TRUE IS TRUE").expect_err("IS TRUE must not chain");
+    assert!(!error.message.is_empty());
+    let error = parse("SELECT 1 IS TRUE IS FALSE").expect_err("IS FALSE must not chain");
+    assert!(!error.message.is_empty());
+    // `IS [NOT] NULL` chains at boolean_primary level (`expr_parser.go:716`).
+    let statement = parse("SELECT 'a' IS NULL IS NOT NULL").expect("IS NULL chains");
+    std::mem::forget(statement);
+    // BETWEEN's HIGH side parses at `precPredicate` with a FRESH latch
+    // (`parseBetweenExpr:637`), so a BETWEEN chain through the HIGH side is
+    // Go-legal — only a chain through the finished predicate is refused.
+    let statement = parse("SELECT 1 BETWEEN 0 AND 2 BETWEEN 0 AND 2")
+        .expect("BETWEEN chains through its high side");
+    std::mem::forget(statement);
+}

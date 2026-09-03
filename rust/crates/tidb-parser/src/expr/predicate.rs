@@ -137,33 +137,41 @@ impl Parser {
         }
     }
 
-    pub(crate) fn parse_is(&mut self, left: Expr) -> PResult<Expr> {
+    /// Go `parseIsExpr` (`expr_parser.go:702`): the second result is Go's
+    /// `chainable` — `IS [NOT] NULL` chains at boolean_primary level
+    /// (`true`), while `IS [NOT] TRUE/FALSE/UNKNOWN` sit at expression level
+    /// and do NOT chain (`false`, including UNKNOWN despite its Null node).
+    pub(crate) fn parse_is(&mut self, left: Expr) -> PResult<(Expr, bool)> {
         self.expect_kw("IS")?;
         let not = self.is_kw("NOT");
         if not {
             self.bump();
         }
-        let target = if self.is_kw("NULL") {
+        let (target, chainable) = if self.is_kw("NULL") {
             self.bump();
-            IsTarget::Null
+            (IsTarget::Null, true)
         } else if self.is_kw("TRUE") {
             self.bump();
-            IsTarget::True
+            (IsTarget::True, false)
         } else if self.is_kw("FALSE") {
             self.bump();
-            IsTarget::False
+            (IsTarget::False, false)
         } else if self.is_kw("UNKNOWN") {
             // `IS [NOT] UNKNOWN` is the same node as `IS [NOT] NULL` in the Go
-            // AST (IsNullExpr), and restores as NULL.
+            // AST (IsNullExpr), and restores as NULL — but it still does not
+            // chain (Go `expr_parser.go:738`).
             self.bump();
-            IsTarget::Null
+            (IsTarget::Null, false)
         } else {
             return Err(self.err_here("expected NULL / TRUE / FALSE / UNKNOWN after IS"));
         };
-        Ok(Expr::Is {
-            expr: Box::new(left),
-            target,
-            not,
-        })
+        Ok((
+            Expr::Is {
+                expr: Box::new(left),
+                target,
+                not,
+            },
+            chainable,
+        ))
     }
 }

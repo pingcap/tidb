@@ -49,6 +49,13 @@ use window::{agg_canonical, window_func_canonical};
 impl Parser {
     pub(crate) fn parse_expr(&mut self, min_prec: u8) -> PResult<Expr> {
         let mut left = self.parse_prefix(min_prec)?;
+        // Go `parseInfixExpr`'s two latches (`expr_parser.go:39`/`:45`):
+        // `no_more_is` blocks IS after IS [NOT] TRUE/FALSE/UNKNOWN
+        // (expression level), and `no_more_predicate` blocks a predicate
+        // whose LEFT operand is another predicate's result (the yacc
+        // `predicate: bit_expr ...` production).
+        let mut no_more_is = false;
+        let mut no_more_predicate = false;
         loop {
             // Keyword predicates: IN / LIKE / BETWEEN / IS, and NOT-prefixed
             // predicates, all at the predicate/comparison precedence levels.
@@ -60,11 +67,12 @@ impl Parser {
                     || self.is_kw_at(1, "REGEXP")
                     || self.is_kw_at(1, "RLIKE"))
             {
-                if min_prec > prec::PREDICATE {
+                if no_more_predicate || min_prec > prec::PREDICATE {
                     break;
                 }
                 self.bump(); // NOT
                 left = self.parse_predicate(left, true)?;
+                no_more_predicate = true;
                 continue;
             }
             if self.is_kw("NOT") && min_prec <= prec::PREDICATE {
@@ -82,17 +90,22 @@ impl Parser {
                 || self.is_kw("REGEXP")
                 || self.is_kw("RLIKE")
             {
-                if min_prec > prec::PREDICATE {
+                if no_more_predicate || min_prec > prec::PREDICATE {
                     break;
                 }
                 left = self.parse_predicate(left, false)?;
+                no_more_predicate = true;
                 continue;
             }
             if self.is_kw("IS") {
-                if min_prec > prec::COMPARISON {
+                if no_more_is || min_prec > prec::COMPARISON {
                     break;
                 }
-                left = self.parse_is(left)?;
+                let (expr, chainable) = self.parse_is(left)?;
+                left = expr;
+                // `IS [NOT] TRUE/FALSE/UNKNOWN` doesn't chain with IS, but
+                // AND/OR/XOR should still bind.
+                no_more_is = !chainable;
                 continue;
             }
             // `expr COLLATE name` — chains left-to-right with itself (a
@@ -148,7 +161,7 @@ impl Parser {
             // not a full sub-expression — confirmed via `godump restore`:
             // `a->(1+1)` is a genuine `ParseError`).
             if (self.is_op("->") || self.is_op("->>")) && matches!(left, Expr::Column(_)) {
-                if min_prec > prec::COLLATE {
+                if no_more_predicate || min_prec > prec::COLLATE {
                     break;
                 }
                 let unquote = self.is_op("->>");
@@ -188,7 +201,7 @@ impl Parser {
             // has no type restriction at all, unlike `->`/`->>` just
             // above.
             if self.is_kw("MEMBER OF") {
-                if min_prec > prec::PREDICATE {
+                if no_more_predicate || min_prec > prec::PREDICATE {
                     break;
                 }
                 self.bump();
@@ -199,6 +212,7 @@ impl Parser {
                     expr: Box::new(left),
                     array: Box::new(array),
                 };
+                no_more_predicate = true;
                 continue;
             }
 

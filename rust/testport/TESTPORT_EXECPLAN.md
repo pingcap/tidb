@@ -42,6 +42,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: closed divergence item 3 (`tidb-parser` predicate/`IS`
+  chaining) with Go master `a85e0fd5df`: both `parseInfixExpr` latches
+  (`noMorePredicate`, `noMoreIS`) are implemented with Go's exact arm
+  coverage, `parseIsExpr`'s chainable split (NULL chains; TRUE/FALSE/UNKNOWN
+  do not, UNKNOWN included) is ported, and the doc's inaccurate BETWEEN
+  claim is corrected (the high side chains with a fresh latch in Go). Four
+  rejection regressions plus two chaining pins; the full tidb-parser suite
+  is green. See `receipts/parser_expr_latches.md`.
+
 - 2026-09-03: closed the last two deterministic baseline failures — both
   were test assertions exceeding Go (the recursive-CTE error is Go's
   refined `ErrCTERecursiveRequiresUnion`, and a Dual table plan is never
