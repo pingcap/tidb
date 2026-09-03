@@ -9,7 +9,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 9,
+=======
+    shard_count = 14,
+>>>>>>> 38d990578c4 (planner: keep min/max row estimates aligned after correlated column split (#70793))
     deps = [
         "//pkg/domain",
         "//pkg/domain/infosync",
