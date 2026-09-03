@@ -42,6 +42,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: verified divergence item 4 (`tidb-parser` identifier gate) is
+  already fixed on this tree — the fallback gate is Go's 13-word
+  `isReservedClauseKeyword` list — and pinned it with a regression
+  (`SELECT rows FROM t`). Items #10/#11 recorded as parity-by-API/open in
+  the divergence doc.
+
 - 2026-09-03 (batch 7 SEAM FINDING, `pkg/ddl/mview_schedule_expr.go`):
   sub-batch (a) is SEAM-BLOCKED, journal-verified. The file's behavior is
   woven into the live DDL session: `sess.Session.Execute("SELECT NOW(6)")`,

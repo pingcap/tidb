@@ -1766,3 +1766,13 @@ fn chained_is_truth_is_rejected_but_is_null_chains_like_go() {
         .expect("BETWEEN chains through its high side");
     std::mem::forget(statement);
 }
+
+/// Divergence item 4: Go's expression-prefix fallback admits ANY token above
+/// `identifier` that is not one of the 13 reserved clause-introducing
+/// keywords (`expr_prefix_parser.go:222-235`) — `rows` is a bare column
+/// reference, not a ParseError.
+#[test]
+fn reserved_keyword_as_bare_column_matches_go_clause_gate() {
+    let statement = parse("SELECT rows FROM t").expect("rows parses as a column reference");
+    std::mem::forget(statement);
+}

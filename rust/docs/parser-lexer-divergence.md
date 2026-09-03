@@ -225,7 +225,13 @@ the HIGH side (`1 BETWEEN 0 AND 2 BETWEEN 0 AND 2`) is Go-legal and both
 engines accept it. The LIKE/IN/NOT-LIKE chain rejections and the `noMoreIS`
 latch are implemented in `tidb-parser/src/expr.rs` as of this receipt.
 
-#### 4. Rust's expression-prefix identifier gate is `is_reserved` (232 keywords) where Go's is `isReservedClauseKeyword` (13)
+#### 4. FIXED — the expression-prefix identifier gate is now Go's `isReservedClauseKeyword` (13)
+
+The Rust fallback arm (`tidb-parser/src/expr.rs`) gates on
+`is_clause_keyword` — the exact 13-word list (`FROM WHERE GROUP ORDER LIMIT
+HAVING UNION INTO FOR LOCK SELECT SET ON`) — and a pinned regression
+(`reserved_keyword_as_bare_column_matches_go_clause_gate`) covers the doc's
+own distinguishing input. The text below is the original audit entry.
 
 - Go: `pkg/parser/expr_prefix_parser.go:222-235` — the final fallback of
   `parsePrefixKeywordExpr` admits **any** token with
@@ -420,6 +426,16 @@ byte cannot occur in Rust's input except as a UTF-8 continuation byte,
 where its leading byte (`0xC2` for U+00A0) is *not* Go-whitespace either
 and both sides agree. This is only observable on input Go accepts and the
 Rust API cannot represent — see #11, which is the same boundary.
+
+#### 9-11 STATUS (2026-09-03)
+
+- #9 (ANSI_QUOTES identifier escape decoding): still open — the fix belongs
+  in the lexer's token-literal retention (`tidb-lexer/src/lib.rs:352-369`).
+- #10 (whitespace class): accepted as parity-by-API — the audit's own
+  reachability caveat shows the divergence requires input the Rust `&str`
+  API cannot represent; closing it would mean widening the lexer to bytes.
+- #11 (client-charset-aware scanners): open, structural — needs charset
+  plumbing through the lexer API.
 
 #### 11. Rust's string and backtick scanners are not client-charset aware
 
