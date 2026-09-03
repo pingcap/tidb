@@ -4268,6 +4268,12 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // constraint that already exists.
             info.auto_inc_id = 0;
             info.foreign_keys = tidb_model::GoSharedPointerSlice::from_handles(Vec::new());
+            // Go `BuildTableInfoWithLike` (master `94a9cbedab`) clears the
+            // materialized-view metadata: a LIKE copy is never a view, log
+            // or base table of one.
+            info.materialized_view_base = None;
+            info.materialized_view = None;
+            info.materialized_view_log = None;
             // Go `renameCheckConstraint` clears every copied name, points the
             // metadata at the target table, then assigns target-local names
             // from `<table>_chk_1` in declaration order. IDs and the allocator

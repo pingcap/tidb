@@ -43,7 +43,8 @@ use tidb_exec::system_row_write::store_clustered_row;
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_meta::{key, value};
 use tidb_model::{
-    ActionType, DBInfo, GoAnyView, GoShared, Job, JobState, JobVersion, SchemaState,
+    ActionType, DBInfo, GoAnyView, GoShared, Job, JobState, JobVersion, MaterializedViewLogInfo,
+    SchemaState, TimeZoneLocation,
 };
 use tidb_txnkv::transaction::{OptimisticMutation, OptimisticMutationKind};
 
@@ -5023,4 +5024,86 @@ fn partition_ids(store: &mut MetaStore, table: &str) -> Vec<i64> {
     let partition = info.partition.as_ref().expect("a partitioned table");
     let definitions = partition.read().definitions.snapshot();
     definitions.iter().map(|definition| definition.id).collect()
+}
+
+/// Go `BuildTableInfoWithLike` (master `94a9cbedab`): a LIKE copy clears the
+/// materialized-view metadata — a copy is never a view, log or base table of
+/// one — while the source keeps its own.
+#[test]
+fn create_table_like_clears_materialized_view_metadata() {
+    let context = tidb_executor::StmtContext::for_query();
+    let lower = |sql: &str| {
+        let parsed = tidb_parser::parse(sql).expect("LIKE DDL parses");
+        lower_ddl_with_context(&parsed, "u6", &context)
+            .expect("LIKE DDL is admitted")
+            .expect("LIKE DDL owns a catalog route")
+    };
+    let mut store = bootstrapped();
+
+    let create = plan_ddl(
+        &mut store,
+        &lower("CREATE TABLE mv_base (id INT PRIMARY KEY AUTO_INCREMENT, k INT)"),
+        1_200,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+    let source_id = create.created_id.expect("CREATE allocated a table id");
+    let source_key = key::table_kv_key(112, source_id);
+    let mut source: tidb_model::TableInfo = serde_json::from_slice(
+        store
+            .pairs
+            .get(&source_key)
+            .expect("the committed source table exists"),
+    )
+    .expect("the source table decodes");
+    let mut purge_zone = tidb_model::TimeZoneLocation::default();
+    purge_zone.name = "UTC".into();
+    source.materialized_view_log = Some(GoShared::new(tidb_model::MaterializedViewLogInfo {
+        base_table_id: source_id,
+        columns: vec![tidb_ast::CiString::new("id")].into(),
+        definition_sql_mode: 0,
+        purge_schedule_time_zone: purge_zone,
+        ..Default::default()
+    }));
+    store.put(
+        source_key.clone(),
+        value::serialize_table_info(&source).expect("the augmented source encodes"),
+    );
+
+    let like = plan_ddl(
+        &mut store,
+        &lower("CREATE TABLE mv_copy LIKE mv_base"),
+        1_201,
+    )
+    .expect("LIKE plans");
+    let DdlPlan::Write(like) = like else {
+        panic!("LIKE writes metadata")
+    };
+    apply(&mut store, &like);
+    let copy_id = like.created_id.expect("LIKE allocated a table id");
+    let copy: tidb_model::TableInfo = serde_json::from_slice(
+        store
+            .pairs
+            .get(&key::table_kv_key(112, copy_id))
+            .expect("the copy exists"),
+    )
+    .expect("the copy decodes");
+    assert!(copy.materialized_view_log.is_none(), "Go clears the log metadata");
+    assert!(copy.materialized_view.is_none());
+    assert!(copy.materialized_view_base.is_none());
+
+    let reloaded_source: tidb_model::TableInfo = serde_json::from_slice(
+        store
+            .pairs
+            .get(&source_key)
+            .expect("the source still exists"),
+    )
+    .expect("the source decodes");
+    assert!(
+        reloaded_source.materialized_view_log.is_some(),
+        "the source keeps its own metadata"
+    );
 }

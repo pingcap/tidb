@@ -42,6 +42,20 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 9, `pkg/ddl` create-path): implemented Go master
+  `94a9cbedab`'s `BuildAndValidateMViewScheduleExpr` +
+  `restoreNodeToCanonicalSQL` (canonical restore through the
+  WITHOUT_CHARSET flags, empty-column-scope build, type inference with Go's
+  8200 refusal and `TypeStr` text) in
+  `tidb-executor::ddl::mview_schedule_expr`, and `BuildTableInfoWithLike`'s
+  clearing of the three materialized-view metadata fields in the
+  `CREATE TABLE LIKE` copy (`tidb-exec/src/cluster_ddl.rs`). One parse-
+  fixture build-and-validate regression plus one cluster-DDL LIKE regression
+  pass; fail-before by symbol absence and by the metadata assertion. Full
+  `tidb-executor` delta vs base: candidate-new failures reproduced at the
+  pre-batch commit (pre-existing environmental baseline); zero attributable
+  new failures. Receipt: `receipts/ddl_mview_create_path.md`.
+
 - 2026-09-03: verified divergence item 4 (`tidb-parser` identifier gate) is
   already fixed on this tree — the fallback gate is Go's 13-word
   `isReservedClauseKeyword` list — and pinned it with a regression

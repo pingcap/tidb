@@ -293,12 +293,67 @@ fn schedule_time_to_unix_seconds(
     unix.map_err(|error| Error::new(error.to_string()))
 }
 
+/// Go `restoreNodeToCanonicalSQL` (`format.DefaultRestoreFlags |
+/// format.RestoreStringWithoutCharset`).
+fn restore_node_to_canonical_sql(expr: &tidb_ast::Expr) -> String {
+    use tidb_ast::RestoreFlags;
+    expr.restore_with_flags(RestoreFlags::DEFAULT | RestoreFlags::STRING_WITHOUT_CHARSET)
+}
+
+/// Go's empty expression-column scope: a schedule expression references no
+/// table columns, and any column reference fails resolution exactly as it
+/// does in Go's session expression context at DDL time.
+struct NoColumns;
+
+impl tidb_expr::rewriter::ColumnResolver for NoColumns {
+    fn resolve(&self, _path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
+        None
+    }
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
+    }
+}
+
+/// Go `BuildAndValidateMViewScheduleExpr`: restores an AST expression into
+/// canonical SQL and validates that its expression type is
+/// DATETIME/TIMESTAMP. The eval-session swap and the evaluation itself are
+/// the session capabilities this module already carries; this function is
+/// the pure build-and-check half the CREATE path calls before persisting.
+pub fn build_and_validate_m_view_schedule_expr(
+    expr: &tidb_ast::Expr,
+    clause: &str,
+) -> Result<String, Error> {
+    let expr_sql = restore_node_to_canonical_sql(expr);
+    let built = tidb_expr::simple_expr::build_simple_expr(
+        &NoColumns,
+        expr,
+        &tidb_expr::simple_expr::BuildOptions::default(),
+    )
+    .map_err(|error| Error::new(error.to_string()))?;
+    let Some(field_type) = built.static_type() else {
+        return Err(Error::new(format!(
+            "failed to infer expression type for {clause}"
+        )));
+    };
+    if !matches!(
+        field_type.code(),
+        tidb_datatype::FieldTypeCode::Datetime | tidb_datatype::FieldTypeCode::Timestamp
+    ) {
+        return Err(Error::new(format!(
+            "Unsupported {clause} expression must return DATETIME/TIMESTAMP, but got {}",
+            tidb_datatype::type_str(field_type.code())
+        )));
+    }
+    Ok(expr_sql)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
+    use tidb_ast::{QueryStmt, SelectField};
     use tidb_datatype::{Datum, FieldType, FieldTypeCode, TimeType};
     use tidb_ddl_session::ScheduleEvalOriginals;
     use tidb_model::{ColumnInfo, GoShared};
@@ -600,6 +655,42 @@ mod tests {
         assert_eq!(derived, (None, true), "NULL START disables the schedule");
         assert_eq!(count.load(Ordering::SeqCst), 1);
         assert_eq!(clauses.lock().unwrap().as_slice(), ["START WITH"]);
+    }
+
+    /// Extracts the first projected expression of a `SELECT <expr>` fixture.
+    fn first_field_expr(sql: &str) -> tidb_ast::Expr {
+        match tidb_parser::parse(sql).expect("parse fixture") {
+            tidb_ast::Stmt::Query(query) => match &*query {
+                QueryStmt::Select(sel) => match sel.fields.fields().first() {
+                    Some(SelectField::Expr { expr, .. }) => expr.clone(),
+                    other => panic!("expected an expression field, got {other:?}"),
+                },
+                other => panic!("expected a select, got {other:?}"),
+            },
+            other => panic!("expected a query, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_and_validate_accepts_datetime_and_refuses_other_types() {
+        let expr = first_field_expr("SELECT NOW() + INTERVAL 1 DAY");
+        let restored =
+            build_and_validate_m_view_schedule_expr(&expr, "START WITH").expect("datetime passes");
+        assert!(!restored.is_empty());
+
+        let int_expr = first_field_expr("SELECT 1 + 1");
+        let error = build_and_validate_m_view_schedule_expr(&int_expr, "START WITH")
+            .expect_err("an integer expression is refused");
+        assert_eq!(
+            error.to_string(),
+            // Go  is .
+            "Unsupported START WITH expression must return DATETIME/TIMESTAMP, but got bigint"
+        );
+
+        // A column reference has no scope at DDL time and fails the build,
+        // exactly as Go's session expression context reports it.
+        let column_expr = first_field_expr("SELECT some_col FROM t");
+        assert!(build_and_validate_m_view_schedule_expr(&column_expr, "START WITH").is_err());
     }
 
     #[test]
