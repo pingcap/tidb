@@ -329,7 +329,7 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	require.True(t, ok)
 	require.Equal(t, third.Type, streamhelper.EventAdd)
 	require.Equal(t, third.Name, taskName2)
-	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
+	require.ElementsMatch(t, third.Ranges, simpleRanges(4))
 	forth, ok := receiveTaskEvent(t, ch)
 	require.True(t, ok)
 	require.Equal(t, forth.Type, streamhelper.EventDel)
