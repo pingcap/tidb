@@ -47,7 +47,7 @@ endif
 TIDB_RELEASE_VERSION := $(shell NEXT_GEN="$(NEXT_GEN)" ./build/compute-tidb-release-version.sh)
 
 GO              := GO111MODULE=on go
-GOBUILD_NO_TAGS := $(GOEXPERIMENT) $(GO) build
+GOBUILD_NO_TAGS := $(GOEXPERIMENT) GOAMD64=v3 GOARM64=v8.2,lse,crypto $(GO) build
 GOBUILD         := $(GOBUILD_NO_TAGS) -tags $(BUILD_TAGS)
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)
