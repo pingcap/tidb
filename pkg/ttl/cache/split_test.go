@@ -682,6 +682,20 @@ func TestSplitTTLScanRangesTemporalCommonHandle(t *testing.T) {
 			recordKey := func(encoded []byte) []byte {
 				return append(recordPrefix.Clone(), encoded...)
 			}
+			encodeTaskBoundary := func(d types.Datum) []byte {
+				require.Equal(t, types.KindBytes, d.Kind())
+				ft := tbl.TimeColumn.FieldType
+				tm, err := types.ParseTime(types.DefaultStmtNoWarningContext,
+					d.GetString(), ft.GetType(), ft.GetDecimal())
+				require.NoError(t, err)
+				encodeLoc := tc.loc
+				if ft.GetType() == mysql.TypeTimestamp {
+					encodeLoc = time.UTC
+				}
+				encoded, err := codec.EncodeKey(encodeLoc, nil, types.NewTimeDatum(tm))
+				require.NoError(t, err)
+				return encoded
+			}
 			boundaryTime := types.NewTime(types.FromGoTime(tc.boundary),
 				tbl.TimeColumn.GetType(), tbl.TimeColumn.GetDecimal())
 			if tbl.TimeColumn.GetType() == mysql.TypeTimestamp {
@@ -691,6 +705,7 @@ func TestSplitTTLScanRangesTemporalCommonHandle(t *testing.T) {
 			checkTwoRanges := func(ranges []cache.ScanRange) {
 				require.Len(t, ranges, 2)
 				require.Empty(t, ranges[0].Start)
+				require.Len(t, ranges[0].End, 1)
 				require.Equal(t, boundaryString, ranges[0].End[0].GetString())
 				require.Equal(t, ranges[0].End, ranges[1].Start)
 				require.Empty(t, ranges[1].End)
@@ -715,6 +730,7 @@ func TestSplitTTLScanRangesTemporalCommonHandle(t *testing.T) {
 				context.Background(), tikvStore, expireTime, tc.loc, 4)
 			require.NoError(t, err)
 			checkTwoRanges(ranges)
+			require.Equal(t, encodeTime(tc.boundary), encodeTaskBoundary(ranges[0].End[0]))
 
 			if tc.name != "datetime6-composite" {
 				return
@@ -735,11 +751,7 @@ func TestSplitTTLScanRangesTemporalCommonHandle(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, ranges, 2)
 				require.Equal(t, ranges[0].End, ranges[1].Start)
-				floorTime, err := types.ParseTime(types.DefaultStmtNoWarningContext,
-					ranges[0].End[0].GetString(), mysql.TypeDatetime, 6)
-				require.NoError(t, err)
-				floor, err := codec.EncodeKey(tc.loc, nil, types.NewTimeDatum(floorTime))
-				require.NoError(t, err)
+				floor := encodeTaskBoundary(ranges[0].End[0])
 				require.LessOrEqual(t, bytes.Compare(recordKey(floor), partial), 0)
 			}
 
@@ -758,6 +770,8 @@ func TestSplitTTLScanRangesTemporalCommonHandle(t *testing.T) {
 				context.Background(), tikvStore, expireTime, tc.loc, 3)
 			require.NoError(t, err)
 			require.Len(t, ranges, 2)
+			floor := encodeTaskBoundary(ranges[0].End[0])
+			require.LessOrEqual(t, bytes.Compare(recordKey(floor), illegal), 0)
 
 			// Boundaries differing only in later common-handle columns collapse
 			// safely to one TTL boundary without gaps or overlap.
