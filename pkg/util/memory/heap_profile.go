@@ -36,7 +36,7 @@ const (
 	heapProfileCutoffMilli        int64 = 900
 	heapProfileMinInterval              = time.Minute
 	heapProfileEmergencyInterval        = 10 * time.Second
-	heapProfileMaxGroups                = 4
+	heapProfileMaxGroups                = 10
 	heapProfileDirName                  = "heap_profiles"
 	heapProfileTimestampLayout          = "2006-01-02T15-04-05Z0700"
 	heapProfileMetadataSuffix           = ".meta.json"
@@ -73,11 +73,12 @@ type heapProfileArbitratorSnapshot struct {
 }
 
 type heapProfileMetadataState struct {
-	HeapAlloc  int64 `json:"heap_alloc_bytes"`
-	HeapInuse  int64 `json:"heap_inuse_bytes"`
-	MemInuse   int64 `json:"mem_inuse_bytes"`
-	QuotaAlloc int64 `json:"quota_alloc_bytes"`
-	Limit      int64 `json:"limit_bytes"`
+	HeapAlloc    int64 `json:"heap_alloc_bytes"`
+	HeapInuse    int64 `json:"heap_inuse_bytes"`
+	MemInuse     int64 `json:"mem_inuse_bytes"`
+	QuotaAlloc   int64 `json:"quota_alloc_bytes"`
+	OutOfControl int64 `json:"out_of_control_bytes"`
+	Limit        int64 `json:"limit_bytes"`
 }
 
 type heapProfileMetadata struct {
@@ -85,7 +86,7 @@ type heapProfileMetadata struct {
 	Version      int                      `json:"version"`
 	ThresholdPct int                      `json:"threshold_pct"`
 	DurationMs   int64                    `json:"duration_ms"`
-	StartState   heapProfileMetadataState `json:"start_state"`
+	State        heapProfileMetadataState `json:"state"`
 }
 
 type heapProfileFileGroup struct {
@@ -117,11 +118,12 @@ func (m *MemArbitrator) heapProfileSnapshot() heapProfileArbitratorSnapshot {
 	limit := m.limit()
 	return heapProfileArbitratorSnapshot{
 		heapProfileMetadataState: heapProfileMetadataState{
-			HeapAlloc:  m.heapController.heapAlloc.Load(),
-			HeapInuse:  m.heapController.heapInuse.Load(),
-			MemInuse:   m.heapController.memInuse.Load(),
-			QuotaAlloc: m.allocated(),
-			Limit:      limit,
+			HeapAlloc:    m.heapController.heapAlloc.Load(),
+			HeapInuse:    m.heapController.heapInuse.Load(),
+			MemInuse:     m.heapController.memInuse.Load(),
+			QuotaAlloc:   m.Allocated(),
+			OutOfControl: m.OutOfControl(),
+			Limit:        limit,
 		},
 		captureCutoff: multiRatio(limit, heapProfileCutoffMilli),
 	}
@@ -263,7 +265,7 @@ func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) bool {
 		Version:      1,
 		StartTime:    startTime.Format(time.RFC3339),
 		ThresholdPct: threshold,
-		StartState:   snapshot.heapProfileMetadataState,
+		State:        snapshot.heapProfileMetadataState,
 		DurationMs:   p.currentTime().Sub(startTime).Milliseconds(),
 	}
 	_ = p.writeMetadataAtomically(base+heapProfileMetadataSuffix, metadata)

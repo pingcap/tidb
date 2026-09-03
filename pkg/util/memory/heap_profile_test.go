@@ -226,12 +226,34 @@ func TestHeapProfileTriggerState(t *testing.T) {
 		require.Equal(t, 1, e.writes)
 		require.Equal(t, uint32(0b011), e.p.trigger.attempted)
 	})
+
+	t.Run("emergency capture periodically", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		start := e.now
+		setHeapProfileMemInuse(e.m, 950)
+		e.m.avoidance.size.Store(1)
+		e.m.heapController.memRisk.oomRisk = true
+
+		e.p.tryCapture(e.m)
+		require.Equal(t, 1, e.writes)
+		require.Contains(t, heapProfileNames(t, e.p.dir), "2026-08-14T10-00-00+0800.95pct.pprof")
+
+		e.now = start.Add(heapProfileEmergencyInterval - time.Nanosecond)
+		e.p.tryCapture(e.m)
+		require.Equal(t, 1, e.writes)
+
+		e.now = start.Add(heapProfileEmergencyInterval)
+		e.p.tryCapture(e.m)
+		require.Equal(t, 2, e.writes)
+		require.Contains(t, heapProfileNames(t, e.p.dir), "2026-08-14T10-00-10+0800.95pct.pprof")
+	})
 }
 
 func TestHeapProfileCaptureMetadata(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), heapProfileDirName)
 	e := newHeapProfileTestEnvAt(t, dir)
 	setHeapProfileMemInuse(e.m, 700)
+	e.m.avoidance.size.Store(123)
 
 	require.True(t, e.p.capture(e.m, 70))
 
@@ -252,10 +274,12 @@ func TestHeapProfileCaptureMetadata(t *testing.T) {
 	require.Equal(t, 1, metadata.Version)
 	require.Equal(t, e.now.Format(time.RFC3339), metadata.StartTime)
 	require.Equal(t, 70, metadata.ThresholdPct)
-	require.Equal(t, int64(700), metadata.StartState.MemInuse)
+	require.Equal(t, int64(700), metadata.State.MemInuse)
+	require.Equal(t, int64(123), metadata.State.OutOfControl)
 	require.Equal(t, int64(0), metadata.DurationMs)
 	require.Contains(t, string(metadataBytes), "\n  \"start_time\"")
 	require.Contains(t, string(metadataBytes), "\"mem_inuse_bytes\"")
+	require.Contains(t, string(metadataBytes), "\"out_of_control_bytes\"")
 	require.True(t, strings.HasSuffix(string(metadataBytes), "\n"))
 	require.NotContains(t, string(metadataBytes), "\"mem_inuse\"")
 	require.NotContains(t, string(metadataBytes), "profile_size_bytes")
@@ -306,6 +330,16 @@ func TestHeapProfileCaptureFailureAndSkip(t *testing.T) {
 		e := newHeapProfileTestEnv(t)
 		setHeapProfileMemInuse(e.m, 900)
 		require.False(t, e.p.capture(e.m, 70))
+		require.Zero(t, e.writes)
+	})
+
+	t.Run("emergency capture remains disabled", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		e.m.SetWorkMode(ArbitratorModeDisable)
+		setHeapProfileMemInuse(e.m, 950)
+		e.m.avoidance.size.Store(1)
+		e.m.heapController.memRisk.oomRisk = true
+		e.p.tryCapture(e.m)
 		require.Zero(t, e.writes)
 	})
 }
