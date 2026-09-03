@@ -35,6 +35,7 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
 - [x] (2026-09-01) Removed the custom packed timing state and CSE performance-log forwarding. Added Prometheus timing for the Dumpling-owned CSE startup, row decode, and whole-export phases, while reusing existing Dumpling row, writer, and error metrics.
 - [x] (2026-09-01) Kept scan, shard, KV/byte, SST, and object-I/O metrics exclusively in CSE to avoid duplicating metric families already exported through the combined `/metrics` handler.
 - [x] (2026-09-01) Regenerated Bazel metadata and passed the focused failpoint-safe tests, protocol race test, Bazel build with nogo, Ready lint, and final static audit.
+- [x] (2026-09-02) Built current Dumpling and release `cse-ctl`, authenticated to the local-k8s MinIO fixture, exported `test.warehouse`, and reproduced the 301-line CSV plus stable schema and data hashes.
 
 ## Surprises & Discoveries
 
@@ -64,6 +65,9 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
 
 - Observation: CSE already exposes packed-reader scan, shard, emitted KV/byte, SST, object-read, snapshot, and iteration measurements.
   Evidence: `components/native_br/src/metrics.rs` defines the `native_br_packed_reader_*` families. Dumpling therefore needs only timings for work it owns outside CSE.
+
+- Observation: The current CSE branch had one API-signature drift that prevented a fresh release `cse-ctl` build.
+  Evidence: `MasterKeyConfig::decrypt` requires an `is_legacy` argument, while the dumper's legacy-only master-key loader still called it without one. Passing `true` matches the documented process-level legacy configuration semantics.
 
 ## Decision Log
 
@@ -131,7 +135,7 @@ Each `POST /scan` carries hexadecimal inner range keys as JSON and returns the e
 
 Dumpling now matches CSE's shared service protocol while retaining its TiDB-owned schema, physical-range, row-decoding, and CSV-writing semantics. Exactly one process owns manifest initialization, encryption caches, scan concurrency, metrics, and its private socket. All scan responses require an explicit success trailer, and the process exporter is reachable through Dumpling during the export.
 
-The product-code diff stays small because the old per-range process lifecycle, custom timing state, and stderr performance parser were removed instead of retained as compatibility code. Dumpling and CSE expose one Prometheus response through the standard `promhttp` path, and the two sides measure disjoint ownership boundaries. Focused and race tests pass, the generated Bazel dependency graph compiles under nogo, and the Ready lint gate passes. A real object-store export remains the only local evidence gap because no built CSE binary or configured fixture was present.
+The product-code diff stays small because the old per-range process lifecycle, custom timing state, and stderr performance parser were removed instead of retained as compatibility code. Dumpling and CSE expose one Prometheus response through the standard `promhttp` path, and the two sides measure disjoint ownership boundaries. Focused and race tests pass, the generated Bazel dependency graph compiles under nogo, and the Ready lint gate passes. A real local-k8s MinIO export also reproduces the established row count and hashes.
 
 ## Context and Orientation
 
@@ -219,7 +223,9 @@ The failpoint test script always disables failpoints during cleanup. If a manual
 
 The pre-fix regression run failed to compile because the test required the new socket/concurrency argv and HTTP scan types while production still exposed the old per-range process API. After implementation, the focused test and its race variant pass. The protocol test uses a real `http2.Server` over a Unix listener and observes the completion trailer after consuming the body. The metrics test verifies an emitted packed phase histogram sample. The Bazel target also builds with strict dependencies and nogo after Gazelle adds `@org_golang_x_net//http2`, and `make lint` passes.
 
-No current CSE binary or configured object-store fixture was present in the CSE worktree, so a real packed-backup export is not part of the local evidence for this milestone.
+The 2026-09-02 local-k8s MinIO export produced `test.warehouse.000000000.csv` with 301 lines, including its header. Its SHA256 is `ba114d3290558252db863c0ee51177721da09a2296d96eaf2cd2e91abb5f7f79`; `test.warehouse-schema.sql` has SHA256 `04c67a09bed9d3b993cdf48605a023953b2d57d1fe22ab1f7461d32e9ff42e8c`. These match the prior baseline exactly.
+
+The CSE release build and formatting check pass after adapting the legacy decrypt call. The repository-wide CSE `make clippy` remains blocked in unrelated existing test code because `tests/cloud_engine/native_backup/dumper.rs` initializes the removed `PackEnv.offline` field. Stricter package-only clippy also reports pre-existing warnings elsewhere in `cse-ctl` and its dependencies, so no clean clippy claim is made for the CSE worktree.
 
 ## Interfaces and Dependencies
 
@@ -235,4 +241,4 @@ DFS backend, bucket/container, prefix, endpoint, credentials, and region come fr
 
 In TiDB, `cseDumper` owns the command, temporary directory, HTTP/2 transport, stderr diagnostics, wait state, and idempotent close. `cseDumper.scan` creates one `cseDumperScan` per HTTP response. `packedRangeScanner` adapts it to metadata loading, and `packedTableData` shares the same owner across all writers. These types remain behind the existing `TableMeta`, `TableDataIR`, and `SQLRowIter` interfaces.
 
-Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Updated on 2026-09-01 to replace the retired one-shot stdout protocol with the shared HTTP/2 Unix-socket service, expose CSE metrics through Dumpling, replace custom packed timing with Prometheus, and refresh validation instructions.
+Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Updated on 2026-09-01 to replace the retired one-shot stdout protocol with the shared HTTP/2 Unix-socket service, expose CSE metrics through Dumpling, replace custom packed timing with Prometheus, and refresh validation instructions. Updated on 2026-09-02 with the local-k8s MinIO export evidence.

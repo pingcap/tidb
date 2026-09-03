@@ -304,9 +304,17 @@ func TestConfigValidation(t *testing.T) {
 		name      string
 		configure func(*Config)
 		err       string
+		fileType  string
 	}{
 		{
-			name: "defaults to CSV",
+			name: "keeps default file type",
+		},
+		{
+			name: "allows SQL output",
+			configure: func(conf *Config) {
+				conf.FileType = FileFormatSQLTextString
+			},
+			fileType: FileFormatSQLTextString,
 		},
 		{
 			name: "requires cse-ctl",
@@ -321,13 +329,6 @@ func TestConfigValidation(t *testing.T) {
 				conf.Where = "id > 1"
 			},
 			err: "--packed-backup cannot be combined with --sql, --where, --snapshot, or --rows",
-		},
-		{
-			name: "rejects non-CSV output",
-			configure: func(conf *Config) {
-				conf.FileType = FileFormatSQLTextString
-			},
-			err: "--packed-backup only supports CSV output",
 		},
 	}
 	conf = DefaultConfig()
@@ -346,7 +347,7 @@ func TestConfigValidation(t *testing.T) {
 		err := validatePackedBackup(conf)
 		if testCase.err == "" {
 			require.NoError(t, err, testCase.name)
-			require.Equal(t, FileFormatCSVString, conf.FileType, testCase.name)
+			require.Equal(t, testCase.fileType, conf.FileType, testCase.name)
 		} else {
 			require.EqualError(t, err, testCase.err, testCase.name)
 		}

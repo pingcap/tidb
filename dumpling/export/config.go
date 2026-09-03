@@ -1110,12 +1110,6 @@ func validatePackedBackup(conf *Config) error {
 	if conf.SQL != "" || conf.Where != "" || conf.Snapshot != "" || conf.Rows != UnspecifiedSize {
 		return errors.New("--packed-backup cannot be combined with --sql, --where, --snapshot, or --rows")
 	}
-	if conf.FileType == "" {
-		conf.FileType = FileFormatCSVString
-	}
-	if !strings.EqualFold(conf.FileType, FileFormatCSVString) {
-		return errors.New("--packed-backup only supports CSV output")
-	}
 	return nil
 }
 
