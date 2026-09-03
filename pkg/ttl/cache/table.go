@@ -327,6 +327,30 @@ func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, s
 	return []ScanRange{newFullRange()}, nil
 }
 
+// SplitScanRangesBeforeExpire splits the existing PK scan path and, when the
+// clustered primary key starts with the temporal TTL column, restricts Region
+// lookup to the physical prefix that can contain expired rows.
+func (t *PhysicalTable) SplitScanRangesBeforeExpire(
+	ctx context.Context,
+	store kv.Storage,
+	expireTime time.Time,
+	loc *time.Location,
+	splitCnt int,
+) ([]ScanRange, error) {
+	if len(t.KeyColumns) == 0 || !t.IsCommonHandle || t.TimeColumn == nil ||
+		t.KeyColumns[0].ID != t.TimeColumn.ID {
+		return t.SplitScanRanges(ctx, store, splitCnt)
+	}
+
+	ft := &t.KeyColumns[0].FieldType
+	switch ft.GetType() {
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return t.splitTemporalCommonHandleRanges(ctx, store, expireTime, loc, splitCnt)
+	default:
+		return t.SplitScanRanges(ctx, store, splitCnt)
+	}
+}
+
 func unsignedEdge(d types.Datum) types.Datum {
 	if d.IsNull() {
 		return types.NewUintDatum(uint64(math.MaxInt64 + 1))
@@ -446,6 +470,177 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 		curScanStart = curScanEnd
 	}
 	return scanRanges, nil
+}
+
+func (t *PhysicalTable) splitTemporalCommonHandleRanges(
+	ctx context.Context,
+	store kv.Storage,
+	expireTime time.Time,
+	loc *time.Location,
+	splitCnt int,
+) ([]ScanRange, error) {
+	if splitCnt <= 1 {
+		return []ScanRange{newFullRange()}, nil
+	}
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return []ScanRange{newFullRange()}, nil
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
+	ft := &t.KeyColumns[0].FieldType
+	expireDatum := types.NewTimeDatum(types.NewTime(
+		types.FromGoTime(expireTime), ft.GetType(), ft.GetDecimal()))
+	encodedExpire, err := codec.EncodeKey(loc, nil, expireDatum)
+	if err != nil {
+		return nil, err
+	}
+	endKey := append(recordPrefix.Clone(), encodedExpire...)
+	if endKey.Cmp(recordPrefix) <= 0 {
+		return []ScanRange{newFullRange()}, nil
+	}
+
+	// Region lookup is limited to [recordPrefix, encodedExpire). A Region that
+	// crosses the cutoff is retained, while Regions wholly after it cannot add
+	// subtasks. The SQL expiration predicate remains the exact upper bound.
+	keyRanges, err := t.splitRawKeyRanges(ctx, tikvStore, recordPrefix, endKey, splitCnt)
+	if err != nil {
+		return nil, err
+	}
+	if len(keyRanges) <= 1 {
+		return []ScanRange{newFullRange()}, nil
+	}
+
+	scanRanges := make([]ScanRange, 0, len(keyRanges))
+	curStart := nullDatum()
+	for i, keyRange := range keyRanges {
+		curEnd := nullDatum()
+		if i != len(keyRanges)-1 {
+			curEnd, err = timeDatumAtOrBeforeRecordBoundary(keyRange.EndKey, recordPrefix, ft, loc)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if !curStart.IsNull() && !curEnd.IsNull() {
+			cmp, err := curStart.Compare(types.StrictContext, &curEnd, collate.GetBinaryCollator())
+			intest.AssertNoError(err)
+			if err != nil {
+				return nil, err
+			}
+			if cmp >= 0 {
+				continue
+			}
+		}
+
+		scanRanges = append(scanRanges, newDatumRange(curStart, curEnd))
+		if curEnd.IsNull() {
+			break
+		}
+		curStart = curEnd
+	}
+	if len(scanRanges) == 0 {
+		return []ScanRange{newFullRange()}, nil
+	}
+
+	// Keep the existing PK task encoding so older workers can still parse these
+	// textual bounds. TIMESTAMP bounds are written in UTC because current TTL data
+	// SQL runs in UTC; DATE and DATETIME keep their wall-clock components.
+	for i := range scanRanges {
+		scanRanges[i].Start = temporalRangeAsBytes(scanRanges[i].Start)
+		scanRanges[i].End = temporalRangeAsBytes(scanRanges[i].End)
+	}
+	return scanRanges, nil
+}
+
+func temporalRangeAsBytes(r []types.Datum) []types.Datum {
+	if len(r) != 1 || r[0].Kind() != types.KindMysqlTime {
+		return r
+	}
+	return []types.Datum{types.NewBytesDatum([]byte(r[0].GetMysqlTime().String()))}
+}
+
+// timeDatumAtOrBeforeRecordBoundary maps an arbitrary Region boundary to the
+// greatest valid temporal value whose complete encoded key does not exceed the
+// boundary. Region keys can truncate a datum or contain an invalid packed
+// calendar value, so decoding the boundary directly is not reliable.
+func timeDatumAtOrBeforeRecordBoundary(
+	boundary, recordPrefix kv.Key,
+	ft *types.FieldType,
+	loc *time.Location,
+) (types.Datum, error) {
+	tp := ft.GetType()
+	fsp := ft.GetDecimal()
+	if fsp == types.UnspecifiedFsp {
+		fsp = types.DefaultFsp
+	}
+	if fsp < types.MinFsp || fsp > types.MaxFsp {
+		return nullDatum(), errors.Errorf("invalid temporal FSP: %d", fsp)
+	}
+
+	stepMicros := int64(1)
+	for i := fsp; i < types.MaxFsp; i++ {
+		stepMicros *= 10
+	}
+	minTime := time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC)
+	maxTime := time.Date(9999, 12, 31, 23, 59, 59, int(1_000_000-stepMicros)*1000, time.UTC)
+	if tp == mysql.TypeDate {
+		stepMicros = int64(24 * time.Hour / time.Microsecond)
+		maxTime = time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
+	} else if tp == mysql.TypeTimestamp {
+		minTime = time.Date(1970, 1, 1, 0, 0, 1, 0, time.UTC)
+		maxTime = time.Date(2038, 1, 19, 3, 14, 7, int(1_000_000-stepMicros)*1000, time.UTC)
+	}
+	minMicros, maxMicros := minTime.UnixMicro(), maxTime.UnixMicro()
+
+	makeDatum := func(micros int64) types.Datum {
+		return types.NewTimeDatum(types.NewTime(types.FromGoTime(time.UnixMicro(micros).UTC()), tp, fsp))
+	}
+	encodeDatum := func(d types.Datum) (kv.Key, error) {
+		encodeLoc := loc
+		if tp == mysql.TypeTimestamp {
+			encodeLoc = time.UTC
+		}
+		encoded, err := codec.EncodeKey(encodeLoc, nil, d)
+		if err != nil {
+			return nil, err
+		}
+		key := make(kv.Key, 0, len(recordPrefix)+len(encoded))
+		key = append(key, recordPrefix...)
+		return append(key, encoded...), nil
+	}
+
+	zeroDatum := types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, tp, fsp))
+	zeroKey, err := encodeDatum(zeroDatum)
+	if err != nil {
+		return nullDatum(), err
+	}
+	if boundary.Cmp(zeroKey) < 0 {
+		return zeroDatum, nil
+	}
+
+	low, high := int64(0), (maxMicros-minMicros)/stepMicros
+	best := int64(-1)
+	for low <= high {
+		mid := low + (high-low)/2
+		candidate := makeDatum(minMicros + mid*stepMicros)
+		key, err := encodeDatum(candidate)
+		if err != nil {
+			return nullDatum(), err
+		}
+		if key.Cmp(boundary) <= 0 {
+			best = mid
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+	if best < 0 {
+		return zeroDatum, nil
+	}
+	return makeDatum(minMicros + best*stepMicros), nil
 }
 
 func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storage,
