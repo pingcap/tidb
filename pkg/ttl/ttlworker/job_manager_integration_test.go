@@ -716,7 +716,7 @@ func runTTLScanPlannerContract(
 
 		rs, err := tk.Session().GetSQLExecutor().ExecuteInternal(ctx, sql)
 		require.NoError(t, err)
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, rs, 1)
 		require.NoError(t, err)
 		previous = make([][]types.Datum, len(rows))
 		for i, row := range rows {

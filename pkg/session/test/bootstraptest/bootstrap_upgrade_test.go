@@ -1253,16 +1253,11 @@ func TestUpgradeVersion285MaterializedViewBootstrap(t *testing.T) {
 	checkMaterializedViewBootstrapSchema(t, tk)
 }
 
-func TestUpgradeVersions286And287(t *testing.T) {
+func TestUpgradeVersion286OperateViewPrivilege(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
-	t.Run("version 286 operate view privilege", testUpgradeVersion286OperateViewPrivilege)
-	t.Run("version 287 TTL task split_by", testUpgradeVersion287TTLTaskSplitBy)
-}
-
-func testUpgradeVersion286OperateViewPrivilege(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
@@ -1291,7 +1286,7 @@ func testUpgradeVersion286OperateViewPrivilege(t *testing.T) {
 	checkOperateViewPrivilegeBootstrapSchema(t, tk)
 }
 
-func testUpgradeVersion287TTLTaskSplitBy(t *testing.T) {
+func TestUpgradeVersion287TTLTaskSplitBy(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
