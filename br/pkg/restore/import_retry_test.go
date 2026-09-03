@@ -50,6 +50,18 @@ func assertRegions(t *testing.T, regions []*split.RegionInfo, keys ...string) {
 	}
 }
 
+type nilRegionByIDClient struct {
+	*TestClient
+	regionID uint64
+}
+
+func (c *nilRegionByIDClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
+	if regionID == c.regionID {
+		return nil, nil
+	}
+	return c.TestClient.GetRegionByID(ctx, regionID)
+}
+
 func TestScanSuccess(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
@@ -358,6 +370,79 @@ func TestRegionSplit(t *testing.T) {
 	assertRegions(t, firstRunRegions, "", "aay")
 	assertRegions(t, secondRunRegions, "", "aay", "aayy", "bba", "bbh", "cca", "")
 	require.NoError(t, err)
+
+	t.Run("missing region by ID falls back to range scan", func(t *testing.T) {
+		cli := initTestClient(false)
+		rs := utils.InitialRetryState(2, 0, 0)
+		ctx := context.Background()
+
+		regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("aazz"), 1)
+		require.NoError(t, err)
+		require.Len(t, regions, 1)
+		target := regions[0]
+
+		newRegions := []*split.RegionInfo{
+			{
+				Region: &metapb.Region{
+					Id:       42,
+					StartKey: target.Region.StartKey,
+					EndKey:   codec.EncodeBytes(nil, []byte("aayy")),
+				},
+				Leader: &metapb.Peer{
+					Id:      43,
+					StoreId: 1,
+				},
+			},
+			{
+				Region: &metapb.Region{
+					Id:       44,
+					StartKey: codec.EncodeBytes(nil, []byte("aayy")),
+					EndKey:   target.Region.EndKey,
+				},
+				Leader: &metapb.Peer{
+					Id:      45,
+					StoreId: 1,
+				},
+			},
+		}
+		splitRegion := func() {
+			for _, r := range newRegions {
+				cli.regionsInfo.SetRegion(pdtypes.NewRegionInfo(r.Region, r.Leader))
+				cli.regions[r.Region.Id] = r
+			}
+		}
+		notLeader := &import_sstpb.Error{
+			Message: "leader not found",
+			StoreError: &errorpb.Error{
+				NotLeader: &errorpb.NotLeader{
+					RegionId: target.Region.Id,
+				},
+			},
+		}
+
+		ctl := OverRegionsInRange(
+			[]byte(""), []byte(""), &nilRegionByIDClient{TestClient: cli, regionID: target.Region.Id}, &rs)
+		firstRunRegions := []*split.RegionInfo{}
+		secondRunRegions := []*split.RegionInfo{}
+		isSecondRun := false
+		err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
+			if !isSecondRun && r.Region.Id == target.Region.Id {
+				splitRegion()
+				isSecondRun = true
+				return RPCResultFromPBError(notLeader)
+			}
+			if isSecondRun {
+				secondRunRegions = append(secondRunRegions, r)
+			} else {
+				firstRunRegions = append(firstRunRegions, r)
+			}
+			return RPCResultOK()
+		})
+
+		assertRegions(t, firstRunRegions, "", "aay")
+		assertRegions(t, secondRunRegions, "", "aay", "aayy", "bba", "bbh", "cca", "")
+		require.NoError(t, err)
+	})
 }
 
 func TestRetryBackoff(t *testing.T) {
