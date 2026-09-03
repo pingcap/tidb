@@ -162,7 +162,7 @@ func (p *heapProfileCollector) tryCapture(m *MemArbitrator) {
 	if m.AtOOMRisk() && m.Allocated() == 0 && m.OutOfControl() > 0 &&
 		(state.emergencyLastCaptureAt.IsZero() || currentTime.Sub(state.emergencyLastCaptureAt) >= heapProfileEmergencyInterval) {
 		state.emergencyLastCaptureAt = currentTime
-		p.captureEmergency(m)
+		p.capture(m, heapProfileEmergencyThreshold)
 	}
 
 	if currentRatio >= heapProfileCutoffMilli {
@@ -192,7 +192,7 @@ func (p *heapProfileCollector) tryCapture(m *MemArbitrator) {
 	level := heapProfileLevels[highest]
 	if !state.lastCaptureAt.IsZero() &&
 		level.threshold <= state.lastCaptureThreshold &&
-		p.currentTime().Sub(state.lastCaptureAt) < heapProfileMinInterval {
+		currentTime.Sub(state.lastCaptureAt) < heapProfileMinInterval {
 		return
 	}
 
@@ -204,19 +204,12 @@ func (p *heapProfileCollector) tryCapture(m *MemArbitrator) {
 // capture returns true once writeProfile has been called, even if the profile
 // cannot be persisted afterward.
 func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) bool {
-	return p.captureWithOptions(m, threshold, false)
-}
-
-func (p *heapProfileCollector) captureEmergency(m *MemArbitrator) bool {
-	return p.captureWithOptions(m, heapProfileEmergencyThreshold, true)
-}
-
-func (p *heapProfileCollector) captureWithOptions(m *MemArbitrator, threshold int, emergency bool) bool {
 	snapshot := m.heapProfileSnapshot()
 	if m.WorkMode() == ArbitratorModeDisable || snapshot.Limit <= 0 || p.writeProfile == nil {
 		return false
 	}
-	if !emergency && (m.AtMemRisk() || snapshot.MemInuse >= snapshot.captureCutoff) {
+	if threshold != heapProfileEmergencyThreshold &&
+		(m.AtMemRisk() || snapshot.MemInuse >= snapshot.captureCutoff) {
 		return false
 	}
 
