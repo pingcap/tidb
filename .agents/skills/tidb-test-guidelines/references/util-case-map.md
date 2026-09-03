@@ -489,7 +489,7 @@
 
 ### Tests
 - `pkg/util/sem/v2/config_test.go` - util/sem/v2: Tests parse config with different format.
-- `pkg/util/sem/v2/sem_test.go` - util/sem/v2: Tests s e m methods.
+- `pkg/util/sem/v2/sem_test.go` - util/sem/v2: Tests SEM methods and built-in NextGen SQL restrictions.
 - `pkg/util/sem/v2/sql_rule_test.go` - util/sem/v2: Tests SQL rules.
 
 ## pkg/util/servermemorylimit

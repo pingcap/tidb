@@ -29,6 +29,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -43,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -57,6 +60,44 @@ type visit struct {
 	a1  unsafe.Pointer
 	a2  unsafe.Pointer
 	typ reflect.Type
+}
+
+type restrictedSQLPrivilegeManager struct {
+	privilege.Manager
+	allowed bool
+}
+
+func (m restrictedSQLPrivilegeManager) RequestDynamicVerification(_ []*auth.RoleIdentity, privName string, _ bool) bool {
+	return m.allowed && privName == "RESTRICTED_SQL_ADMIN"
+}
+
+func TestNextGenBuiltInResourceGroupSQLRestriction(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("built-in resource group SQL restrictions are only enabled in NextGen builds")
+	}
+
+	sctx := coretestsdk.MockContext()
+	p := parser.New()
+	for _, sql := range []string{
+		"CREATE RESOURCE GROUP rg RU_PER_SEC=1000",
+		"ALTER RESOURCE GROUP rg RU_PER_SEC=500",
+		"DROP RESOURCE GROUP rg",
+		"SET RESOURCE GROUP rg",
+		"SHOW CREATE RESOURCE GROUP rg",
+		"CALIBRATE RESOURCE",
+	} {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+
+		privilege.BindPrivilegeManager(sctx, restrictedSQLPrivilegeManager{})
+		builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+		err = builder.checkSEMStmt(stmt)
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem, sql)
+		require.ErrorContains(t, err, "is not supported in TiDB X", sql)
+
+		privilege.BindPrivilegeManager(sctx, restrictedSQLPrivilegeManager{allowed: true})
+		require.NoError(t, builder.checkSEMStmt(stmt), sql)
+	}
 }
 
 func TestShow(t *testing.T) {
