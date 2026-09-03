@@ -474,6 +474,41 @@ func TestResourceGroupRunawayExceedTiDBSide(t *testing.T) {
 		nil, maxWaitDuration, tryInterval)
 }
 
+// TestResourceGroupRunawayRecordedAtCompletion verifies the post-execution recording path
+// (`Checker.AfterExecutor`, invoked from `ExecStmt.FinishExecuteStmt`). The query overruns
+// EXEC_ELAPSED entirely on the TiDB side (`sleep`) after its only coprocessor request, and the
+// expensive-query handler is deliberately not started, so neither the in-flight cop paths nor the
+// background poll can record it. The record must therefore be produced solely at statement
+// completion.
+func TestResourceGroupRunawayRecordedAtCompletion(t *testing.T) {
+	// Use a longer expired duration to avoid the record being deleted too fast, 2500 means 2.5 seconds.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(2500)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
+	}()
+	// Intentionally do NOT start the expensive-query handler poll, so AfterExecutor is the only
+	// path that can record the query at completion.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+
+	tk.MustExec("set global tidb_enable_resource_control='on'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	// DRYRUN only records; the query completes normally so it never re-enters the cop path after
+	// the deadline.
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=DRYRUN)")
+
+	runawayQuery := "select /*+ resource_group(rg1) */ sleep(1) from t"
+	tk.MustQuery(runawayQuery).Check(testkit.Rows("0"))
+
+	tryInterval := time.Millisecond * 100
+	maxWaitDuration := time.Second * 5
+	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
+		testkit.Rows(fmt.Sprintf("rg1 %s identify", runawayQuery)), maxWaitDuration, tryInterval)
+}
+
 func TestRunawayRecordFlushLoopAddAndFlush(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(20000)`))
 	defer func() {

@@ -38,6 +38,8 @@ type RunawayChecker interface {
 	CheckAction() rmpb.RunawayAction
 	// CheckRuleKillAction checks whether the query should be killed according to the group settings.
 	CheckRuleKillAction() (string, bool)
+	// AfterExecutor checks whether the query exceeded its time-based threshold once execution has finished.
+	AfterExecutor()
 }
 
 // ConsumptionReporter is used to report raw resource consumptions.
