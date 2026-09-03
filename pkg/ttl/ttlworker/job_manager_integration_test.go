@@ -662,6 +662,7 @@ func TestRescheduleJobs(t *testing.T) {
 	tkTZ := tk.Session().GetSessionVars().Location()
 	tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("out of TTL job schedule window"))
 	tk.MustQuery("select last_job_finish_time from mysql.tidb_ttl_table_status").Check(testkit.Rows(rescheduleTime.In(tkTZ).Format(time.DateTime)))
+	tk.MustQuery("select status from mysql.tidb_ttl_job_history where job_id = ?", originalJobID).Check(testkit.Rows("cancelled"))
 }
 
 func TestRescheduleJobsAfterTableDropped(t *testing.T) {
@@ -710,6 +711,7 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 			require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
 			m.RescheduleJobs(se, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, now.Nanosecond(), now.Location()))
 			tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("TTL table has been removed or the TTL on this table has been stopped"))
+			tk.MustQuery("select status from mysql.tidb_ttl_job_history where job_id = ?", fmt.Sprintf("request%d", i)).Check(testkit.Rows("cancelled"))
 
 			// resume the table
 			tk.MustExec(rb.resume)
@@ -789,10 +791,20 @@ func TestJobTimeout(t *testing.T) {
 	// the `CurrentJobStatusUpdateTime` only has `s` precision, so use any format with only `s` precision and a TZ to compare.
 	require.Equal(t, now.Format(time.RFC3339), newTableStatus.CurrentJobStatusUpdateTime.Format(time.RFC3339))
 
+	timeoutFinishCounter := metrics2.TTLJobFinishCounter.With(prometheus.Labels{metrics2.LblResult: metrics.JobResultTimeout})
+	out := &dto.Metric{}
+	require.NoError(t, timeoutFinishCounter.Write(out))
+	timeoutFinishCount := out.GetCounter().GetValue()
+
 	// the timeout will be checked while updating heartbeat
 	require.NoError(t, m2.UpdateHeartBeatForJob(ctx, se, now.Add(7*time.Hour), m2.RunningJobs()[0]))
 	tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("job is timeout"))
+	tk.MustQuery("select status from mysql.tidb_ttl_job_history where job_id = ?", tableStatus.CurrentJobID).Check(testkit.Rows("timeout"))
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
+
+	out.Reset()
+	require.NoError(t, timeoutFinishCounter.Write(out))
+	require.Equal(t, timeoutFinishCount+1, out.GetCounter().GetValue())
 }
 
 func TestTriggerScanTask(t *testing.T) {
@@ -1827,7 +1839,7 @@ func TestTimerJobAfterDropTable(t *testing.T) {
 
 	// The job should have been removed
 	tk.MustQuery("select current_job_owner_id from mysql.tidb_ttl_table_status").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select status from mysql.tidb_ttl_job_history").Check(testkit.Rows("finished"))
+	tk.MustQuery("select status from mysql.tidb_ttl_job_history").Check(testkit.Rows("cancelled"))
 
 	// Then it'll be removed by GC
 	m2.DoGC(context.Background(), se, now)

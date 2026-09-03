@@ -92,14 +92,14 @@ func createJobHistorySQL(jobID string, tbl *cache.PhysicalTable, expire time.Tim
 	}
 }
 
-func finishJobHistorySQL(jobID string, finishTime time.Time, summary *TTLSummary) (string, []any) {
+func finishJobHistorySQL(jobID string, finishTime time.Time, summary *TTLSummary, status cache.JobStatus) (string, []any) {
 	return finishJobHistoryTemplate, []any{
 		finishTime.Format(timeFormat),
 		summary.SummaryText,
 		summary.TotalRows,
 		summary.SuccessRows,
 		summary.ErrorRows,
-		string(cache.JobStatusFinished),
+		string(status),
 		jobID,
 	}
 }
@@ -124,6 +124,10 @@ type ttlJob struct {
 
 // finish turns current job into last job, and update the error message and statistics summary
 func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary) error {
+	return job.finishWithStatus(se, now, summary, cache.JobStatusFinished)
+}
+
+func (job *ttlJob) finishWithStatus(se session.Session, now time.Time, summary *TTLSummary, status cache.JobStatus) error {
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 
 	// at this time, the job.ctx may have been canceled (to cancel this job)
@@ -141,7 +145,7 @@ func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		sql, args = finishJobHistorySQL(job.id, now, summary)
+		sql, args = finishJobHistorySQL(job.id, now, summary, status)
 		_, err = se.ExecuteSQL(context.TODO(), sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)
