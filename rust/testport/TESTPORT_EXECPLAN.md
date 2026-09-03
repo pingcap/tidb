@@ -42,6 +42,24 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 7 SEAM FINDING, `pkg/ddl/mview_schedule_expr.go`):
+  sub-batch (a) is SEAM-BLOCKED, journal-verified. The file's behavior is
+  woven into the live DDL session: `sess.Session.Execute("SELECT NOW(6)")`,
+  `expression.BuildSimpleExpr` + `Eval` against the session's expression
+  context (with the schedule sql-mode/type-flags/err-levels/time-zone
+  installed by `setCreateMaterializedViewScheduleEvalSession`),
+  `generatedexpr.ParseExpression`, datum `ConvertTo` to DATETIME, and the
+  two structured NULL-schedule loggers. The Rust DDL owner
+  (`tidb-executor/src/ddl/`) is a metadata-only carrier with no session
+  execute seam; inventing one now would be a speculative API (forbidden).
+  The READY PIECES are inventoried for the landing batch:
+  `tidb-expr::build_simple_expr` (simple_expr.rs), the generated-expression
+  parser (`tidb-model::generated_expr`), AST restore, the batch-4/5 helpers
+  (`materialized_schedule_*` in `tidb-expr::expr_util::mview_schedule`), and
+  the `TimeConversionError`/`ResolvedTimeZone` conversions. Sub-batches
+  (a)–(d) all require the DDL-session seam first; that seam batch owns the
+  `sess.Session` port and unblocks the whole chain.
+
 - 2026-09-03 (batch 7 boundary, `pkg/sqlexec` + `pkg/session`): the
   `ExecOption.SessionVarsSetup` / `SessionVarsSetup` / `ExecOptionWithSessionVarsSetup`
   drift and its `getInternalSession` consumer are RECORDED, NOT ported:
