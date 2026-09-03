@@ -17,6 +17,7 @@ package index
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
