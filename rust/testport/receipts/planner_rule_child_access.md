@@ -475,6 +475,24 @@ FAIL against the unfixed code (captured by stashing the production edits):
 - (the result-reorder walk contract is covered by the same unary-chain
   boundary through `extract_handle_col`)
 
+## Follow-up batch: cost-model and skew-rewrite argument boundaries
+
+Same comparison source (Go `origin/master` at `a85e0fd5df`):
+
+- `Ver2Coster`'s TopN arm now reads the child cardinality via
+  `Children()[0]` exactly as Go `getPlanCostVer24PhysicalTopN`
+  (`plan_cost_ver2.go:561`) does, instead of falling back to the TopN's own
+  row count when the child is missing. The fallback is unreachable through
+  valid plans (every TopN carries a child), so the regression surface is the
+  existing dispatch cost tests over valid trees; the malformed-tree panic
+  contract mirrors Go's index panic.
+- `rule_aggregation_skew_rewrite` indexes `new_function.args()[0]` and
+  type-checks afterwards, matching Go's
+  `newAggFunc.Args[0].(*expression.Column)` (`:154`) — the type check stays
+  an early-out, the missing-argument index panics as in Go. The empty-args
+  case is the same `Args[0]` contract already covered by the batch-6
+  first-row regressions.
+
 ## Risks
 
 - Correctness: malformed subtrees now panic at the same index Go panics at;

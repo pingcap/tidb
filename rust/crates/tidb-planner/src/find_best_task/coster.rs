@@ -412,10 +412,10 @@ impl Ver2Coster {
             // `getPlanCostVer24PhysicalTopN`: the heap's CPU and memory.
             PhysicalPlan::TopN(topn) => {
                 let child_cost = self.children_cost(plan, task_type, is_child_of_inl);
-                let child_rows = plan
-                    .children()
-                    .first()
-                    .map_or(rows, |child| Self::rows(child));
+                // Go `getPlanCostVer24PhysicalTopN` indexes
+                // `p.Children()[0]` for the child cardinality
+                // (`plan_cost_ver2.go:561`).
+                let child_rows = Self::rows(&plan.children()[0]);
                 let by_scalar: Vec<bool> = topn
                     .by_items
                     .iter()
@@ -445,10 +445,10 @@ impl Ver2Coster {
             // built by the dispatcher sits on a root task.
             PhysicalPlan::Sort(sort) => {
                 let child_cost = self.children_cost(plan, task_type, is_child_of_inl);
-                let child_rows = plan
-                    .children()
-                    .first()
-                    .map_or(rows, |child| Self::rows(child));
+                // Go `getPlanCostVer24PhysicalTopN` indexes
+                // `p.Children()[0]` for the child cardinality
+                // (`plan_cost_ver2.go:561`).
+                let child_rows = Self::rows(&plan.children()[0]);
                 let by_scalar = sort
                     .by_items
                     .iter()
@@ -478,10 +478,10 @@ impl Ver2Coster {
                         matches!(cond, tidb_expr::expression::Expression::ScalarFunction(_))
                     })
                     .collect();
-                let child_rows = plan
-                    .children()
-                    .first()
-                    .map_or(rows, |child| Self::rows(child));
+                // Go `getPlanCostVer24PhysicalTopN` indexes
+                // `p.Children()[0]` for the child cardinality
+                // (`plan_cost_ver2.go:561`).
+                let child_rows = Self::rows(&plan.children()[0]);
                 crate::cost_usage::sum_cost_ver2(&[
                     self.children_cost(plan, task_type, is_child_of_inl),
                     filter_cost(
@@ -514,10 +514,10 @@ impl Ver2Coster {
             // `getPlanCostVer24PhysicalStreamAgg`: per-row aggregate and
             // grouping CPU, no hash table.
             PhysicalPlan::StreamAgg(agg) => {
-                let child_rows = plan
-                    .children()
-                    .first()
-                    .map_or(rows, |child| Self::rows(child));
+                // Go `getPlanCostVer24PhysicalTopN` indexes
+                // `p.Children()[0]` for the child cardinality
+                // (`plan_cost_ver2.go:561`).
+                let child_rows = Self::rows(&plan.children()[0]);
                 let group_scalar: Vec<bool> = agg
                     .group_by_items
                     .iter()
@@ -539,10 +539,10 @@ impl Ver2Coster {
             // reads the built child exactly as Go's
             // `childCanProvideOrderForStreamAgg` asks it.
             PhysicalPlan::HashAgg(agg) => {
-                let child_rows = plan
-                    .children()
-                    .first()
-                    .map_or(rows, |child| Self::rows(child));
+                // Go `getPlanCostVer24PhysicalTopN` indexes
+                // `p.Children()[0]` for the child cardinality
+                // (`plan_cost_ver2.go:561`).
+                let child_rows = Self::rows(&plan.children()[0]);
                 let group_scalar: Vec<bool> = agg
                     .group_by_items
                     .iter()

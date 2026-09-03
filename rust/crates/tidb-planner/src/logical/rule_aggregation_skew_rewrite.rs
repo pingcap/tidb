@@ -129,7 +129,9 @@ fn prepare_rewrite(
             continue;
         }
 
-        let argument = new_function.args().first()?.clone();
+        // Go indexes `newAggFunc.Args[0]` and type-checks afterwards
+        // (`rule_aggregation_skew_rewrite.go:154`).
+        let argument = new_function.args()[0].clone();
         let argument_column = match argument {
             Expression::Column(column) => Some(column),
             _ => None,
