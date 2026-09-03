@@ -28,16 +28,18 @@ import (
 )
 
 const (
-	heapProfileLevel70Milli    int64 = 700
-	heapProfileLevel80Milli    int64 = 800
-	heapProfileLevel85Milli    int64 = 850
-	heapProfileResetMilli      int64 = 650
-	heapProfileCutoffMilli     int64 = 900
-	heapProfileMinInterval           = time.Minute
-	heapProfileMaxGroups             = 4
-	heapProfileDirName               = "heap_profiles"
-	heapProfileTimestampLayout       = "2006-01-02T15-04-05Z0700"
-	heapProfileMetadataSuffix        = ".meta.json"
+	heapProfileLevel70Milli       int64 = 700
+	heapProfileLevel80Milli       int64 = 800
+	heapProfileLevel85Milli       int64 = 850
+	heapProfileEmergencyThreshold       = 95
+	heapProfileResetMilli         int64 = 650
+	heapProfileCutoffMilli        int64 = 900
+	heapProfileMinInterval              = time.Minute
+	heapProfileEmergencyInterval        = 10 * time.Second
+	heapProfileMaxGroups                = 4
+	heapProfileDirName                  = "heap_profiles"
+	heapProfileTimestampLayout          = "2006-01-02T15-04-05Z0700"
+	heapProfileMetadataSuffix           = ".meta.json"
 )
 
 var heapProfileLevels = [...]struct {
@@ -50,11 +52,12 @@ var heapProfileLevels = [...]struct {
 }
 
 type heapProfileTriggerState struct {
-	lastCaptureAt        time.Time
-	lastLimit            int64
-	lastCaptureThreshold int
-	attempted            uint32
-	closed               bool
+	lastCaptureAt          time.Time
+	lastLimit              int64
+	lastCaptureThreshold   int
+	attempted              uint32
+	emergencyLastCaptureAt time.Time
+	closed                 bool
 }
 
 type heapProfileCollector struct {
@@ -140,13 +143,26 @@ func (p *heapProfileCollector) tryCapture(m *MemArbitrator) {
 	if state.lastLimit != snapshot.Limit {
 		state.lastLimit = snapshot.Limit
 		state.attempted = 0
+		state.emergencyLastCaptureAt = time.Time{}
 		state.closed = false
 	}
 
 	if currentRatio < heapProfileResetMilli {
 		state.attempted = 0
+		state.emergencyLastCaptureAt = time.Time{}
 		state.closed = false
 		return
+	}
+
+	// A zero quota allocation with non-zero out-of-control memory is the
+	// diagnostic blind spot of the memory arbitrator. Capture an emergency
+	// heap profile periodically in this state even though the normal
+	// threshold-based collector has already entered its safety cutoff.
+	currentTime := p.currentTime()
+	if m.AtOOMRisk() && m.Allocated() == 0 && m.OutOfControl() > 0 &&
+		(state.emergencyLastCaptureAt.IsZero() || currentTime.Sub(state.emergencyLastCaptureAt) >= heapProfileEmergencyInterval) {
+		state.emergencyLastCaptureAt = currentTime
+		p.captureEmergency(m)
 	}
 
 	if currentRatio >= heapProfileCutoffMilli {
@@ -188,12 +204,19 @@ func (p *heapProfileCollector) tryCapture(m *MemArbitrator) {
 // capture returns true once writeProfile has been called, even if the profile
 // cannot be persisted afterward.
 func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) bool {
+	return p.captureWithOptions(m, threshold, false)
+}
+
+func (p *heapProfileCollector) captureEmergency(m *MemArbitrator) bool {
+	return p.captureWithOptions(m, heapProfileEmergencyThreshold, true)
+}
+
+func (p *heapProfileCollector) captureWithOptions(m *MemArbitrator, threshold int, emergency bool) bool {
 	snapshot := m.heapProfileSnapshot()
-	if m.WorkMode() == ArbitratorModeDisable ||
-		m.AtMemRisk() ||
-		snapshot.Limit <= 0 ||
-		snapshot.MemInuse >= snapshot.captureCutoff ||
-		p.writeProfile == nil {
+	if m.WorkMode() == ArbitratorModeDisable || snapshot.Limit <= 0 || p.writeProfile == nil {
+		return false
+	}
+	if !emergency && (m.AtMemRisk() || snapshot.MemInuse >= snapshot.captureCutoff) {
 		return false
 	}
 
@@ -389,6 +412,9 @@ func parseHeapProfileFileName(name string) (base string, captureTime time.Time, 
 }
 
 func isHeapProfileThreshold(threshold int) bool {
+	if threshold == heapProfileEmergencyThreshold {
+		return true
+	}
 	for _, level := range heapProfileLevels {
 		if level.threshold == threshold {
 			return true
