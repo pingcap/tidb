@@ -309,23 +309,24 @@ these.
 
 1. *Arithmetic* — **done** for `+ - * / DIV %` across integer (all four
    signedness pairs), decimal and real, plus division-by-zero on each. Findings
-   A, B. **Not done:** the `setFlenDecimal4RealOrDecimal` /
-   `setType4DivDecimal` / `setType4ModRealOrDecimal` flen-and-decimal rules were
-   read on the Go side (`builtin_arithmetic.go:106`, `:143`, `:983`) but only
-   spot-checked against `builtin_arithmetic.rs:135`, `:206`, `:230`. That is the
-   single highest-value place to resume — it is pure type inference, so it can
-   be compared statically with no oracle at all.
+   A, B. RESOLVED (2026-09-03): the flen-and-decimal rules
+   (`setFlenDecimal4RealOrDecimal` / `setType4DivDecimal` /
+   `setType4ModRealOrDecimal`, `builtin_arithmetic.go:106`/`:143`/`:983`) were
+   compared line by line against `builtin_arithmetic.rs:135`/`:199`/`:225` —
+   identical, no divergence.
 2. *Comparison and coercion* — **mostly done**: every `getBaseCmpType` branch,
    the ENUM/SET and JSON cases, `<=>`. **Not done:** `GetAccurateCmpType`'s
    const-refinement arms (`builtin_compare.go:1454-1483`) beyond the
    already-known decimal-vs-const-string one; the temporal-column-vs-constant
    arm; `getCmpTp4MinMax` for `GREATEST`/`LEAST`.
-3. *Control flow* — **barely started.** `InferType4ControlFuncs`
-   (`builtin_control.go`) and `rewriter.rs:443` were read side by side but not
-   compared case by case. Go's `len(notNullFields) == 1` shortcut (copy that one
-   field type verbatim) versus Rust's unconditional `agg_field_type` +
-   `set_numeric_len_from_args` is an unexamined suspect. `CASE`/`IF` branch
-   laziness and `NULLIF`'s NULL rule were not looked at at all.
+3. *Control flow* — RESOLVED (2026-09-03) for the inference core:
+   `rewriter/control_type.rs::infer_type4_control_funcs` implements Go's
+   `InferType4ControlFuncs` case by case — the all-NULL result fixups, the
+   `len(notNullFields) == 1` whole-copy shortcut (the former "unexamined
+   suspect" is implemented verbatim, `IFNULL(NULL, decimal_col)` keeps the
+   column precision), the AggFieldType + zeroed-flags + AggregateEvalType
+   merge, the NULL-branch NOT_NULL drop, and the Int/String scale fixups.
+   Still open: `CASE`/`IF` branch laziness and `NULLIF`'s NULL rule review.
 4. *Strings* — **partly done:** `SUBSTRING`, `LEFT`/`RIGHT`, `LOCATE`/`INSTR`,
    `TRIM` (all three arities), `CONCAT`, `LIKE`. Findings D, F, G. **Not done:**
    `REPLACE`, `CHAR` vs `VARCHAR` padding on comparison and on read-back,
