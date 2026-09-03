@@ -58,7 +58,13 @@ For each bounded behavior cluster:
   `pkg/ddl` core (18 files: `materialized_view.go`, `mview_worker.go`,
   `mview_schedule_expr.go`, schematracker, delete-range, rolling-back, plus
   the `pkg/executor` and `pkg/planner/core` wiring) is the terminal large
-  batch of this feature.
+  batch of this feature. QUEUE PRUNING CONCLUSION: every other
+  wide-window package (`e2788410d8..origin/master`) was re-verified at
+  pins from 2026-09-01/02 (`049e0e2ba7` or later, e.g. the aggfuncs area
+  at `d663c50ff1`), so the only uncovered master drift is exactly the
+  `94a9cbedab` materialized-view feature — batches 1–3 covered its
+  `pkg/meta/model`, `pkg/sessionctx/*`, and `pkg/kv` slices; the queued
+  slices above are the complete remainder.
 
 - 2026-09-03 (batch 2, `pkg/sessionctx/variable` + `pkg/sessionctx/vardef`):
   aligned the sessionctx slice of Go master `94a9cbedab`'s materialized-view
