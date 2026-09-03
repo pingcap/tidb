@@ -949,35 +949,12 @@ func (c *uncompressFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 type builtinUncompressSig struct {
 	baseBuiltinFunc
-<<<<<<< HEAD
-=======
-	expropt.SessionVarsPropReader
-	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
-	// as this expression may be shared across sessions.
-	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
->>>>>>> c6e3cf83998 (*: fix uncompress mem dos (#70199))
 }
 
 func (b *builtinUncompressSig) Clone() builtinFunc {
 	newSig := &builtinUncompressSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
-}
-
-// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (b *builtinUncompressSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
-func (b *builtinUncompressSig) getMemTracker(ctx EvalContext) (*memory.Tracker, error) {
-	if !ctx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
-		return nil, nil
-	}
-	vars, err := b.GetSessionVars(ctx)
-	if err != nil || vars.StmtCtx == nil {
-		return nil, err
-	}
-	return vars.StmtCtx.MemTracker, nil
 }
 
 // evalString evals UNCOMPRESS(compressed_string).
@@ -997,21 +974,13 @@ func (b *builtinUncompressSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, nil
 	}
 	length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
-	tracker, err := b.getMemTracker(ctx)
-	if err != nil {
-<<<<<<< HEAD
-		sc.AppendWarning(errZlibZData)
-=======
-		return "", true, err
-	}
-	bytes, err := inflate([]byte(payload[4:]), length, tracker, nil)
+	bytes, err := inflate([]byte(payload[4:]), length, sc.MemTracker, nil)
 	if err != nil {
 		if errZlibZBuf.Equal(err) {
-			tc.AppendWarning(errZlibZBuf)
+			sc.AppendWarning(errZlibZBuf)
 		} else {
-			tc.AppendWarning(errZlibZData)
+			sc.AppendWarning(errZlibZData)
 		}
->>>>>>> c6e3cf83998 (*: fix uncompress mem dos (#70199))
 		return "", true, nil
 	}
 	if length < uint32(len(bytes)) {

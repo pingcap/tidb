@@ -100,11 +100,8 @@ go_library(
         "//pkg/util/intset",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
-<<<<<<< HEAD
-        "//pkg/util/mock",
-=======
         "//pkg/util/memory",
->>>>>>> c6e3cf83998 (*: fix uncompress mem dos (#70199))
+        "//pkg/util/mock",
         "//pkg/util/parser",
         "//pkg/util/password-validation",
         "//pkg/util/plancodec",

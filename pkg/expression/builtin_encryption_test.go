@@ -18,11 +18,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
-<<<<<<< HEAD
-=======
-	"crypto/md5"
 	"encoding/binary"
->>>>>>> c6e3cf83998 (*: fix uncompress mem dos (#70199))
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -39,11 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
->>>>>>> c6e3cf83998 (*: fix uncompress mem dos (#70199))
 	"github.com/stretchr/testify/require"
 )
 
@@ -780,7 +773,7 @@ func TestUncompressRejectsInflatedDataLargerThanDeclaredLength(t *testing.T) {
 	fc := funcs[ast.Uncompress]
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
 	require.NoError(t, err)
-	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	out, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, out.IsNull())
 	require.Equal(t, int64(0), tracker.BytesConsumed())
@@ -804,7 +797,7 @@ func TestUncompressRejectsHandcraftedPayloadLargerThanDeclaredLength(t *testing.
 	fc := funcs[ast.Uncompress]
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
 	require.NoError(t, err)
-	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	out, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, out.IsNull())
 	require.Equal(t, int64(0), tracker.BytesConsumed())
@@ -828,7 +821,7 @@ func TestUncompressTracksInflateMemory(t *testing.T) {
 	fc := funcs[ast.Uncompress]
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
 	require.NoError(t, err)
-	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	out, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.NewCollationStringDatum(string(data), charset.CollationBin), out)
 	require.Equal(t, int64(0), tracker.BytesConsumed())
@@ -852,7 +845,7 @@ func TestUncompressRejectsInflatedDataLargerThanDeclaredLengthVectorized(t *test
 	input.AppendBytes(0, payload)
 	result := chunk.NewColumn(f.getRetTp(), 1)
 
-	err = f.vecEvalString(ctx, input, result)
+	err = f.vecEvalString(input, result)
 	require.NoError(t, err)
 	require.True(t, result.IsNull(0))
 	require.Equal(t, int64(0), tracker.BytesConsumed())
