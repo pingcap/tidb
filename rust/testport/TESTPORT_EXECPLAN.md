@@ -42,6 +42,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 4, `pkg/util/mviewutil`): transcreated the new package
+  (created by Go master `94a9cbedab`) into `tidb-util::mviewutil`:
+  `CheckMaterializedViewSelect` (the `QueryStmt::Select` assertion, WITH /
+  locking / SELECT INTO / AS OF / TABLESAMPLE refusals carrying Go's
+  `ErrGeneralUnsupportedDDL` 8200 identity and exact detail text, and the
+  multi-table/derived/set-opr fall-throughs) plus the four
+  prefix-covering-index helpers (PRIMARY-handle branch order, the excluded
+  `PRIMARY` guard, visible/public filtering, prefix-length and
+  duplicate-column rejection). Five parse-fixture regressions pass; the full
+  `tidb-util` suite is 560/560; fmt and whitespace gates clean. The package
+  is new on master with no test file, so fixtures are parsed SQL and the
+  fail-before is module absence. Receipt: `receipts/util_mviewutil.md`.
+
 - 2026-09-03 (batch 3, `pkg/kv`): aligned `option.go`'s internal transaction
   types with Go master `94a9cbedab`: `InternalTxnMViewMaintenance =
   "mview_maintain"` now exists in `tidb-txnkv` `option.rs`. Focused check and

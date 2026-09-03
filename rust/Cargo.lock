@@ -4358,6 +4358,7 @@ dependencies = [
  "snap",
  "tempfile",
  "tidb-allocator-stats",
+ "tidb-ast",
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
