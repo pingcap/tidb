@@ -42,6 +42,26 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 7 boundary, `pkg/sqlexec` + `pkg/session`): the
+  `ExecOption.SessionVarsSetup` / `SessionVarsSetup` / `ExecOptionWithSessionVarsSetup`
+  drift and its `getInternalSession` consumer are RECORDED, NOT ported:
+  Go's callback type is `fn(*variable.SessionVars) -> fn()`, but the Rust
+  `SessionVars` owner lives in `tidb-session`, ABOVE `tidb-sqlexec` — a
+  verbatim field would invert the crate layering. Both halves belong to the
+  future session-executor seam batch (which owns `ExecRestrictedSQL`'s
+  option plumbing); the mview DDL core that CALLS this option is the same
+  terminal batch. Also the terminal batch: the `pkg/ddl` materialized-view
+  core (`materialized_view.go` 1181, `mview_worker.go` 921,
+  `mview_schedule_expr.go` 302, plus `delete_range`, `rollingback`,
+  `job_worker`, `executor.go`, `create_table.go`, `backfilling_txn_executor`,
+  `sanity_check`, `schema_version`, `reorg`, `jobsubmit`, schematracker, and
+  the `pkg/executor`/`pkg/planner/core` wiring), planned as ordered
+  dependency-closed sub-batches: (a) `mview_schedule_expr.go` + create-time
+  checks in `materialized_view.go` over the batch-4 helpers; (b) the
+  create/reload path in `create_table.go`/`executor.go`/`materialized_view.go`
+  writing batch-1 metadata; (c) delete-range + rolling-back + sanity
+  arms; (d) the refresh/maintenance worker and service wiring.
+
 - 2026-09-03 (batch 6, `pkg/infoschema`): aligned `builder.go`'s diff
   classification with Go master `94a9cbedab`: the incremental reload's
   create arm accepts `ACTION_CREATE_MATERIALIZED_VIEW` and
