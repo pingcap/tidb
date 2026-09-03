@@ -174,6 +174,7 @@ func (s *Syncer) cleanupFailedRegistration(session *concurrency.Session) {
 
 // StoreServerInfo stores self server static information to etcd.
 func (s *Syncer) StoreServerInfo(ctx context.Context) error {
+	return nil // test diagnostic mode: don't register itself to PD/etcd
 	if s.etcdCli == nil {
 		return nil
 	}
