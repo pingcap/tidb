@@ -525,6 +525,27 @@ path) is not wired in Rust yet; and `task.rs:1422` expects
 `index_lookup_push_down` to be set — both owe implementation before their
 tests can pass.
 
+## Follow-up batch: deterministic baseline-failure triage (2 of 2)
+
+The last two baseline failures were both TEST assertions exceeding Go, not
+implementation gaps:
+
+- `test_a_recursive_cte_without_a_union_is_refused` asserted Go's
+  `ErrCTERecursiveForbidsAggregation`, but Go's `buildRecursiveCTE` default
+  arm (`logical_plan_builder.go:7931-7937`) refines the seed self-reference
+  into `ErrCTERecursiveRequiresUnion`; the Rust build already produces
+  exactly that refined message. The assertion now checks
+  `should contain a UNION`.
+- `lookup_pushdown_is_applied_only_without_keep_order` asserted the
+  push-down flag SET for a Dual-table-plan reader, but Go's
+  `detachRootTableScanPlan` asserts the leaf IS a `PhysicalTableScan`
+  (`physical_indexlookup.go:155`) — a Dual table plan is never pushed down.
+  The unordered case now asserts the flag stays off with the ordinary
+  two-phase lookup, matching the existing reset-to-false error path.
+
+With these, the `tidb-planner --lib` suite is fully green: 903 passed,
+zero baseline failures (previously five).
+
 ## Risks
 
 - Correctness: malformed subtrees now panic at the same index Go panics at;

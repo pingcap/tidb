@@ -637,9 +637,12 @@ fn test_a_recursive_cte_without_a_union_is_refused() {
     // `buildRecursiveCTE`'s `default` arm refines
     // `ErrCTERecursiveRequiresNonRecursiveFirst` into
     // `ErrCTERecursiveRequiresUnion`.
+    // Go's `buildRecursiveCTE` default arm refines the seed self-reference's
+    // `ErrCTERecursiveRequiresNonRecursiveFirst` into
+    // `ErrCTERecursiveRequiresUnion` (`logical_plan_builder.go:7931-7937`).
     assert!(
         build_err("WITH RECURSIVE c (n) AS (SELECT n FROM c) SELECT n FROM c")
-            .contains("neither aggregation nor window functions")
+            .contains("should contain a UNION")
     );
 }
 

@@ -1419,7 +1419,11 @@ mod tests {
         let Some(PhysicalPlan::IndexLookUpReader(reader)) = unordered.plan() else {
             panic!("an IndexLookUpReader");
         };
-        assert!(reader.index_lookup_push_down);
+        // Go's `detachRootTableScanPlan` asserts the leaf IS a TableScan
+        // (`physical_indexlookup.go:155`): a Dual table plan can never be
+        // pushed down, so the reader keeps the ordinary two-phase lookup and
+        // the flag stays off.
+        assert!(!reader.index_lookup_push_down);
 
         let ordered = build(true);
         let Task::Root(root) = &ordered else {

@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: closed the last two deterministic baseline failures — both
+  were test assertions exceeding Go (the recursive-CTE error is Go's
+  refined `ErrCTERecursiveRequiresUnion`, and a Dual table plan is never
+  index-lookup-push-downable per `detachRootTableScanPlan`'s TableScan
+  assertion). The `tidb-planner --lib` suite is now fully green: 903
+  passed, zero failures.
+
 - 2026-09-03: triaged the five deterministic baseline `--lib` failures
   (single-threaded reproduction: no isolation flake). Fixed three —
   `check_index_can_be_key` pruned-schema rejection, the union-all child-TopN
