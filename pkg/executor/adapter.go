@@ -769,8 +769,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 		pi.SetProcessInfo(sql, execStartTime, cmd, maxExecutionTime)
 	}
+	// SetProcessInfo preserves the start time recorded before plan compilation.
+	// Reject an expired statement before Open or Next can start work with side effects.
 	if err = checkMaxExecutionTimeExceeded(sctx); err != nil {
-		terror.Log(exec.Close(e))
 		return nil, err
 	}
 
