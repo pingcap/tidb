@@ -1,6 +1,6 @@
 # tidb-parity 滚动进度（本地 summary，不入库）
 
-> 当前焦点 / 下一步：①lexer #9 已修待提交 ②分区裁剪 Rust 验证（等用户对照查询）③expr-builtin Resume-here ④chunk A-1 ⑤parser #11。
+> 当前焦点 / 下一步：①分区裁剪 Rust 验证（等用户对照查询）②expr-builtin：CASE/IF laziness + NULLIF NULL rule 审阅 ③expr-builtin 字符串族扫尾 ④chunk A-1（需 datum 决策）⑤parser #11 charset-aware scanner（结构性深改）。
 
 ## 已推送（origin/hparser-integration，截至 8e0f80e381 之后还有 f8ddb7c72a/06bccf90e2/6fba82d378/50a0a29c13/5465936985/3369859aa2）
 
@@ -22,3 +22,6 @@
 - 不碰主 worktree / tidb-expr collation / 其他会话活跃文件。
 
 - lexer #9（进行中→完成）：ANSI_QUOTES 标识符文本改用 scanString 解码缓冲（decode_quoted_string + NO_BACKSLASH_ESCAPES 分支）+ 6 断言回归；关键词计数测试更新为生成目录真值 690（generate_keyword --check 对 go-master parser.y 字节级通过；手工钉的 689 过期）。lexer 全绿 86+3+6/0。
+- 已推送 dc6330cbbc：lexer #9 ANSI_QUOTES 解码 + 关键词计数 690（generate_keyword --check 对 go-master parser.y 通过；手工钉 689 过期）。lexer 全绿。
+- 已推送 4f3651cb9a：审计文档更新——算术 flen/decimal 三规则与 Go 逐行一致（item 1 闭环）；控制流推断核心已逐 case 实现（item 3 核心闭环，CASE/IF laziness + NULLIF 规则仍开放）；types F3 验证已修复。
+- 发现：expr-builtin 审计的多个"Not done"条目在当前树上已被吸收实现（控制流推断、F3）——审计文档条目逐个过期中，每批先验证再动手。
