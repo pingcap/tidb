@@ -42,7 +42,23 @@ For each bounded behavior cluster:
 
 ## Progress
 
-- 2026-09-03 (batch 10, `pkg/ddl/jobsubmit`): aligned `job2TableIDs`'s two
+- 2026-09-03 (batch 11, `pkg/ddl` MV lowering — ExecPlan entry restored: the
+  rebase that published this batch's commit dropped it): implemented Go
+  master `94a9cbedab`'s `CreateMaterializedView` /
+  `CreateMaterializedViewLog` lowering and admission in
+  `tidb-exec::cluster_ddl`: the `DdlStatement` variants, the
+  `checkMaterializedViewEnabled` gate (`StmtContext::with_enable_mview`,
+  default OFF), `ErrNoDB`, the 1024-byte comment cap (8020), SELECT-only,
+  single-base-table, same-schema, `TableNotExists`, `ErrWrongObject` (1347)
+  for view/sequence/temporary bases, the partitioned-base refusals (8200),
+  the derived `$mlog$` existence and identity checks (1105),
+  `mviewutil::check_materialized_view_select` (batch 4), GROUP BY required
+  and WITH-ROLLUP refusals, and the documented job seam for valid
+  statements. Six parse-fixture regressions pass; the full `tidb-exec`
+  failure set is identical to the pre-batch base. Receipt:
+  `receipts/ddl_mview_lowering.md`.
+
+- 2026-09-03: verified divergence item 4 (`tidb-parser` identifier gate) is- 2026-09-03 (batch 10, `pkg/ddl/jobsubmit`): aligned `job2TableIDs`'s two
   new materialized-view arms in `tidb-exec::ddl_job_submit::job_table_ids`:
   a view create reports its id plus every created log id, a log create
   reports its id plus the recorded base table id, both through Go's
