@@ -327,6 +327,12 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 		return nil
 	}
 	if !time.Now().Before(deadline) {
+		sessVars := sctx.GetSessionVars()
+		if sessVars != nil && sessVars.SQLKiller.GetKillSignal() != 0 {
+			if err := sessVars.SQLKiller.HandleSignal(); err != nil {
+				return err
+			}
+		}
 		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
 	}
 

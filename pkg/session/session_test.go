@@ -124,6 +124,30 @@ func TestSetProcessInfoPreservesTimeoutDuringTxnRetry(t *testing.T) {
 	require.Equal(t, uint64(0), pi.MaxExecutionTime)
 }
 
+func TestSetProcessInfoDistinguishesSameSQLStatements(t *testing.T) {
+	se := &session{sessionVars: variable.NewSessionVars(nil)}
+	const sql = "insert into t values (1)"
+
+	firstStmtCtx := stmtctx.NewStmtCtx()
+	se.sessionVars.StmtCtx = firstStmtCtx
+	firstStart := time.Unix(1, 0)
+	se.SetProcessInfo(sql, firstStart, mysql.ComQuery, 0)
+	se.SetProcessInfo(sql, time.Unix(2, 0), mysql.ComQuery, 200)
+
+	pi := se.ShowProcess()
+	require.Equal(t, firstStart, pi.Time)
+	require.Equal(t, uint64(200), pi.MaxExecutionTime)
+
+	secondStmtCtx := stmtctx.NewStmtCtx()
+	se.sessionVars.StmtCtx = secondStmtCtx
+	secondStart := time.Unix(3, 0)
+	se.SetProcessInfo(sql, secondStart, mysql.ComQuery, 0)
+
+	pi = se.ShowProcess()
+	require.Equal(t, secondStart, pi.Time)
+	require.Equal(t, uint64(0), pi.MaxExecutionTime)
+}
+
 func TestMustGetStoreBootstrapVersionRetriesTransaction(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)

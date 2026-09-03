@@ -1823,7 +1823,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	}
 	// We set process info before building plan, so we extended execution time. Transaction
 	// retries also keep the outer statement's deadline while replaying its statement history.
-	if oldPi != nil && (oldPi.Info == pi.Info && oldPi.Command == pi.Command || s.sessionVars.RetryInfo.Retrying) {
+	if oldPi != nil && (oldPi.StmtCtx == pi.StmtCtx && oldPi.Info == pi.Info && oldPi.Command == pi.Command ||
+		s.sessionVars.RetryInfo.Retrying) {
 		pi.Time = oldPi.Time
 		if s.sessionVars.RetryInfo.Retrying {
 			pi.MaxExecutionTime = oldPi.MaxExecutionTime
