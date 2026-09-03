@@ -58,27 +58,21 @@ func (o *OverRegionsInRangeController) onError(_ context.Context, result RPCResu
 	// TODO: Maybe handle some of region errors like `epoch not match`?
 }
 
-<<<<<<< HEAD
 func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region *split.RegionInfo) (*metapb.Peer, error) {
 	var leader *metapb.Peer
-	failed := false
+	var epochNotMatchErr error
 	leaderRs := utils.InitialRetryState(4, 5*time.Second, 10*time.Second)
 	err := utils.WithRetry(ctx, func() error {
-=======
-func (o *RangeController) tryFindLeader(ctx context.Context, region *split.RegionInfo) (*metapb.Peer, error) {
-	backoffStrategy := utils.NewBackoffRetryAllExceptStrategy(
-		4, 2*time.Second, 10*time.Second, isNonRetryErrForFindLeader)
-	return utils.WithRetryV2(ctx, backoffStrategy, func(ctx context.Context) (*metapb.Peer, error) {
->>>>>>> 0bc44483e3e (br: fix region not found (#70772))
 		r, err := o.metaClient.GetRegionByID(ctx, region.Region.Id)
 		if err != nil {
 			return err
 		}
 		if r == nil || r.Region == nil {
-			return nil, errors.Annotatef(berrors.ErrKVEpochNotMatch, "region %d is not found", region.Region.Id)
+			epochNotMatchErr = errors.Annotatef(berrors.ErrKVEpochNotMatch, "region %d is not found", region.Region.Id)
+			return nil
 		}
 		if !split.CheckRegionEpoch(r, region) {
-			failed = true
+			epochNotMatchErr = errors.Annotatef(berrors.ErrKVEpochNotMatch, "the current epoch of %s is changed", region)
 			return nil
 		}
 		if r.Leader != nil {
@@ -87,8 +81,8 @@ func (o *RangeController) tryFindLeader(ctx context.Context, region *split.Regio
 		}
 		return errors.Annotatef(berrors.ErrPDLeaderNotFound, "there is no leader for region %d", region.Region.Id)
 	}, &leaderRs)
-	if failed {
-		return nil, errors.Annotatef(berrors.ErrKVEpochNotMatch, "the current epoch of %s is changed", region)
+	if epochNotMatchErr != nil {
+		return nil, epochNotMatchErr
 	}
 	if err != nil {
 		return nil, err
@@ -96,17 +90,8 @@ func (o *RangeController) tryFindLeader(ctx context.Context, region *split.Regio
 	return leader, nil
 }
 
-<<<<<<< HEAD
 // handleInRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
 func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
-=======
-func isNonRetryErrForFindLeader(err error) bool {
-	return berrors.ErrKVEpochNotMatch.Equal(err)
-}
-
-// handleRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
-func (o *RangeController) handleRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
->>>>>>> 0bc44483e3e (br: fix region not found (#70772))
 	if result.StoreError.GetServerIsBusy() != nil {
 		if strings.Contains(result.StoreError.GetMessage(), "memory is limited") {
 			sleepDuration := 15 * time.Second

@@ -456,12 +456,12 @@ func TestRegionSplit(t *testing.T) {
 			},
 		}
 
-		ctl := logclient.CreateRangeController(
+		ctl := logclient.OverRegionsInRange(
 			[]byte(""), []byte(""), &nilRegionByIDClient{TestClient: cli, regionID: target.Region.Id}, &rs)
 		firstRunRegions := []*split.RegionInfo{}
 		secondRunRegions := []*split.RegionInfo{}
 		isSecondRun := false
-		err = ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+		err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 			if !isSecondRun && r.Region.Id == target.Region.Id {
 				splitRegion()
 				isSecondRun = true
