@@ -52,11 +52,15 @@ func TestExplainAnalyzeMemory(t *testing.T) {
 	checkMemoryInfo(t, tk, "explain analyze select k from t use index(k)")
 	checkMemoryInfo(t, tk, "explain analyze select * from t use index(k)")
 	checkMemoryInfo(t, tk, "explain analyze select v+k from t")
+	for _, pipelined := range []string{"0", "1"} {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=" + pipelined)
+		checkMemoryInfo(t, tk, "explain analyze select sum(v) over () from t")
+	}
 }
 
 func checkMemoryInfo(t *testing.T, tk *testkit.TestKit, sql string) {
-	memCol := 6
-	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection", "Agg"}
+	memCol := 7
+	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection", "Agg", "Window"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
 		strs := make([]string, len(row))
@@ -77,6 +81,9 @@ func checkMemoryInfo(t *testing.T, tk *testkit.TestKit, sql string) {
 
 		if shouldHasMem {
 			require.NotEqual(t, "N/A", strs[memCol])
+			if strings.Contains(strs[0], "Window") {
+				require.NotEqual(t, "0 Bytes", strs[memCol])
+			}
 		} else {
 			require.Equal(t, "N/A", strs[memCol])
 		}
@@ -114,6 +121,13 @@ func TestMemoryAndDiskUsageAfterClose(t *testing.T) {
 	}
 	for _, sql := range SQLs {
 		tk.MustQuery(sql)
+		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
+		require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
+		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
+	}
+	for _, pipelined := range []string{"0", "1"} {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=" + pipelined)
+		tk.MustQuery("select rank() over (order by v) from t")
 		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
 		require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
 		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
