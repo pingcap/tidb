@@ -143,20 +143,51 @@ fn chunk_codec_source_rejects_ambiguous_or_truncated_boundaries() {
         })
     ));
 
+    // Go `decodeColumn` (`codec.go:130-133`) validates neither first-zero
+    // nor monotonicity: a decreasing table decodes with the LAST offset as
+    // the data length, and a non-zero first offset is the exact shape
+    // `Decoder.ReuseIntermChk` exists to rebase.
     let mut decreasing_offsets = Vec::new();
     decreasing_offsets.extend_from_slice(&2_u32.to_le_bytes());
     decreasing_offsets.extend_from_slice(&0_u32.to_le_bytes());
     for offset in [0_i64, 2, 1] {
         decreasing_offsets.extend_from_slice(&offset.to_le_bytes());
     }
-    assert!(matches!(
-        decode_columns(&decreasing_offsets, &[ColumnLayout::variable()]),
-        Err(ColumnCodecError::InvalidOffset {
-            column: 0,
-            offset_index: 2,
-            value: 1,
-        })
-    ));
+    decreasing_offsets.push(b'x');
+    let (rest, columns) = decode_columns(&decreasing_offsets, &[ColumnLayout::variable()])
+        .expect("a decreasing offset table decodes like Go");
+    assert!(rest.is_empty());
+    assert_eq!(
+        columns[0].offsets.as_deref(),
+        Some(&[0_i64, 2, 1][..]),
+        "the table is preserved verbatim for the rebase path"
+    );
+    assert_eq!(columns[0].data, b"x");
+
+    let mut rebased_offsets = Vec::new();
+    rebased_offsets.extend_from_slice(&2_u32.to_le_bytes());
+    rebased_offsets.extend_from_slice(&0_u32.to_le_bytes());
+    for offset in [40_i64, 45, 51] {
+        rebased_offsets.extend_from_slice(&(offset - 40).to_le_bytes());
+    }
+    // A non-zero FIRST offset is the exact shape `Decoder.ReuseIntermChk`
+    // rebases; Go decode accepts it, so the Rust decoder must too.
+    let mut rebased_offsets = Vec::new();
+    rebased_offsets.extend_from_slice(&2_u32.to_le_bytes());
+    rebased_offsets.extend_from_slice(&0_u32.to_le_bytes());
+    for offset in [1_i64, 2, 3] {
+        rebased_offsets.extend_from_slice(&offset.to_le_bytes());
+    }
+    rebased_offsets.extend_from_slice(b"abc");
+    let (rest, columns) = decode_columns(&rebased_offsets, &[ColumnLayout::variable()])
+        .expect("a non-zero-based offset table decodes like Go");
+    assert!(rest.is_empty());
+    assert_eq!(
+        columns[0].offsets.as_deref(),
+        Some(&[1_i64, 2, 3][..]),
+        "the table is preserved verbatim for the rebase path"
+    );
+    assert_eq!(columns[0].data, b"abc");
 
     let mut data_overrun = Vec::new();
     data_overrun.extend_from_slice(&1_u32.to_le_bytes());

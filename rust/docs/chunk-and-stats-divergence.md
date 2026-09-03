@@ -95,7 +95,16 @@ Distinguishing case: a producer that re-encodes a partially consumed
 intermediate chunk emits `offsets = [40, 45, 51]`; Go decodes it and rebases,
 Rust returns `InvalidOffset`. TiKV's coprocessor and Go's own `Codec.Encode`
 always start at 0, so this is a latent difference, not an observed one.
-Rust is the stricter side. Not fixed — `tidb-codec` belongs to another unit.
+Rust is the stricter side.
+
+FIXED (2026-09-03): the Rust `decode_columns` offset-table loop no longer
+validates first-zero or monotonicity — matching Go `decodeColumn`
+(`codec.go:130-133`) verbatim, including preserving a non-zero-based table
+verbatim for the `Decoder.ReuseIntermChk` rebase path. Regressions in
+`column_source.rs` pin the decreasing-table decode and the non-zero-first
+decode (both proven to fail against the stricter checks). A negative LAST
+offset still maps to the crate's `InvalidOffset` error where Go's slice
+bounds would panic — the established error-for-panic representation.
 
 **A-3 (rank 3 — panic where Go returns NULL).**
 Go's `Row.DatumWithBuffer` (`row.go:152-197`) is a `switch` with **no default

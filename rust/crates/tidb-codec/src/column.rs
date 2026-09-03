@@ -787,23 +787,15 @@ pub fn decode_columns<'a>(
                 let (raw_offsets, remainder) = take(input, offset_bytes, column, "offset table")?;
                 input = remainder;
                 let mut offsets = Vec::with_capacity(offset_count);
-                for (index, bytes) in raw_offsets.chunks_exact(OFFSET_BYTES).enumerate() {
-                    let value = i64::from_le_bytes(bytes.try_into().unwrap());
-                    if value < 0 || (index > 0 && value < offsets[index - 1]) {
-                        return Err(ColumnCodecError::InvalidOffset {
-                            column,
-                            offset_index: index,
-                            value,
-                        });
-                    }
-                    offsets.push(value);
-                }
-                if offsets.first().copied() != Some(0) {
-                    return Err(ColumnCodecError::InvalidOffset {
-                        column,
-                        offset_index: 0,
-                        value: offsets[0],
-                    });
+                for bytes in raw_offsets.chunks_exact(OFFSET_BYTES) {
+                    // Go `decodeColumn` (`codec.go:130-133`) reads the offset
+                    // table with NO first-zero or monotonicity validation —
+                    // `Decoder.ReuseIntermChk` even rebases a table whose
+                    // first offset is non-zero. Only the trailing data
+                    // length derived from the LAST offset bounds the slice
+                    // here (a negative one maps to the crate's error where
+                    // Go's slice bounds would panic).
+                    offsets.push(i64::from_le_bytes(bytes.try_into().unwrap()));
                 }
                 let data_len = usize::try_from(*offsets.last().unwrap()).map_err(|_| {
                     ColumnCodecError::InvalidOffset {

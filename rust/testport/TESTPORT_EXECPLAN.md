@@ -91,6 +91,11 @@ For each bounded behavior cluster:
   pre-existing baseline failures, zero new). Recorded gap: Go's placement
   bundle-cache arms have no Rust owner (the reload tier refuses to a full
   reload). Receipt: `receipts/infoschema_mview_diff.md`.
+- 2026-09-03: closed divergence item A-2 (`tidb-codec` chunk wire decode):
+  the offset-table loop drops the Go-absent first-zero and monotonicity
+  validations, preserving non-zero-based tables verbatim for the
+  `ReuseIntermChk` rebase path; two regressions proven to fail against the
+  stricter checks. See `receipts/codec_chunk_decode_receipt.md`.
 
 - 2026-09-03 (batch 5, `pkg/expression/helper.go`): implemented Go master
   `94a9cbedab`'s three materialized-view schedule helpers in
