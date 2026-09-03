@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: audited the doc-admitted narrowings of `tidb-planner` into
+  `receipts/planner_doc_admitted_narrowings.md` (audit-only, no code
+  change): sixteen self-declared refusals/narrowings across cost, enforce,
+  task conversion, window/CTE build, DML, ranger, and scan surfaces, each
+  still owing an individual Go comparison; they are feature-surface gaps,
+  not the child-access refusals the boundary sweeps fixed.
+
 - 2026-09-03: aligned the unary-walk and sequence-collapse boundaries with
   Go master `a85e0fd5df` (same worktree/branch): empty-selection elimination
   replaces a tested selection with `Children()[0]` directly, the
