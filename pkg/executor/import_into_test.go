@@ -449,12 +449,12 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 
 	sessionVars := tk.Session().GetSessionVars()
 	origRestricted := sessionVars.InRestrictedSQL
-	origMaintenance := sessionVars.InMaterializedViewMaintenance
+	origMaintenance := sessionVars.InMViewMaintenance
 	sessionVars.InRestrictedSQL = true
-	sessionVars.InMaterializedViewMaintenance = true
+	sessionVars.InMViewMaintenance = true
 	defer func() {
 		sessionVars.InRestrictedSQL = origRestricted
-		sessionVars.InMaterializedViewMaintenance = origMaintenance
+		sessionVars.InMViewMaintenance = origMaintenance
 	}()
 
 	var invoked, childMaintenance bool

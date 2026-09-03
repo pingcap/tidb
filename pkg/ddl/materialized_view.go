@@ -267,8 +267,8 @@ func AddMViewExecutionSessionVarsToJob(job *model.Job, sessVars *variable.Sessio
 		job.SessionVars = make(map[string]string)
 	}
 	target := variable.CaptureMViewExecutionSessionVars(sessVars)
-	job.AddSystemVars(vardef.TiDBMVMaintainMemQuota, strconv.FormatInt(target.MaintainMemQuota, 10))
-	job.AddSystemVars(vardef.TiDBMVMaintainIsolationReadEngines, target.IsolationReadEngines)
+	job.AddSystemVars(vardef.TiDBMViewMaintainMemQuota, strconv.FormatInt(target.MaintainMemQuota, 10))
+	job.AddSystemVars(vardef.TiDBMViewMaintainIsolationReadEngines, target.IsolationReadEngines)
 	job.AddSystemVars(vardef.TiDBMaxTiFlashThreads, strconv.FormatInt(target.TiFlashMaxThreads, 10))
 	job.AddSystemVars(vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtJoin, 10))
 	job.AddSystemVars(vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtAgg, 10))
@@ -288,10 +288,10 @@ func MViewExecutionSessionVarsFromJob(job *model.Job, defaultSessVars *variable.
 		return target, nil
 	}
 
-	if val, ok := job.GetSystemVars(vardef.TiDBMVMaintainMemQuota); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMViewMaintainMemQuota); ok {
 		target.MaintainMemQuota = variable.TidbOptInt64(val, target.MaintainMemQuota)
 	}
-	if val, ok := job.GetSystemVars(vardef.TiDBMVMaintainIsolationReadEngines); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBMViewMaintainIsolationReadEngines); ok {
 		target.IsolationReadEngines = val
 	}
 	if val, ok := job.GetSystemVars(vardef.TiDBMaxTiFlashThreads); ok {
@@ -345,9 +345,9 @@ func BuildMViewImportIntoOptions(importThreads int, importDiskQuota string) []st
 
 func checkMaterializedViewEnabled(ctx sessionctx.Context) error {
 	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
-	if !sessionVars.EnableMaterializedView {
+	if !sessionVars.EnableMView {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
-			"Materialized View is disabled, please set `tidb_materialized_view_enable` to `ON` to enable it",
+			"Materialized View is disabled, please set `tidb_mview_enable` to `ON` to enable it",
 		)
 	}
 	return nil

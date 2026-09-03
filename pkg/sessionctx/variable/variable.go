@@ -71,8 +71,8 @@ func CaptureMViewExecutionSessionVars(sessVars *SessionVars) MViewExecutionSessi
 		return MViewExecutionSessionVars{}
 	}
 	return MViewExecutionSessionVars{
-		MaintainMemQuota:             sessVars.MVMaintainMemQuota,
-		IsolationReadEngines:         sessVars.MVMaintainIsolationReadEngines,
+		MaintainMemQuota:             sessVars.MViewMaintainMemQuota,
+		IsolationReadEngines:         sessVars.MViewMaintainIsolationReadEngines,
 		TiFlashMaxThreads:            sessVars.TiFlashMaxThreads,
 		TiFlashMaxBytesBeforeExtJoin: sessVars.TiFlashMaxBytesBeforeExternalJoin,
 		TiFlashMaxBytesBeforeExtAgg:  sessVars.TiFlashMaxBytesBeforeExternalGroupBy,
@@ -141,11 +141,11 @@ func ApplyMViewExecutionSessionVarsWithConfig(
 	}
 	maintainMemQuotaVarName := cfg.MaintainMemQuotaVarName
 	if maintainMemQuotaVarName == "" {
-		maintainMemQuotaVarName = vardef.TiDBMVMaintainMemQuota
+		maintainMemQuotaVarName = vardef.TiDBMViewMaintainMemQuota
 	}
 	maintainIsolationReadEnginesVarName := cfg.MaintainIsolationReadEnginesVarName
 	if maintainIsolationReadEnginesVarName == "" {
-		maintainIsolationReadEnginesVarName = vardef.TiDBMVMaintainIsolationReadEngines
+		maintainIsolationReadEnginesVarName = vardef.TiDBMViewMaintainIsolationReadEngines
 	}
 
 	origin := captureApplied(sessVars)

@@ -143,10 +143,10 @@ const (
 
 	// TiDBMemQuotaQuery controls the memory quota of a query.
 	TiDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
-	// TiDBMVMaintainMemQuota controls the memory quota used by MV maintenance sessions.
-	TiDBMVMaintainMemQuota = "tidb_mv_maintain_mem_quota"
-	// TiDBMVMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance sessions.
-	TiDBMVMaintainIsolationReadEngines = "tidb_mv_maintain_isolation_read_engines"
+	// TiDBMViewMaintainMemQuota controls the memory quota used by MV maintenance sessions.
+	TiDBMViewMaintainMemQuota = "tidb_mview_maintain_mem_quota"
+	// TiDBMViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance sessions.
+	TiDBMViewMaintainIsolationReadEngines = "tidb_mview_maintain_isolation_read_engines"
 	// TiDBMViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
 	TiDBMViewMaintainImportThreads = "tidb_mview_maintain_import_threads"
 	// TiDBMViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
@@ -1138,8 +1138,8 @@ const (
 	// TiDBEnableFullOuterJoin indicates whether to enable FULL OUTER JOIN.
 	TiDBEnableFullOuterJoin = "tidb_enable_full_outer_join"
 
-	// TiDBMaterializedViewEnable indicates whether to enable materialized view DDL.
-	TiDBMaterializedViewEnable = "tidb_materialized_view_enable"
+	// TiDBMViewEnable indicates whether to enable materialized view DDL.
+	TiDBMViewEnable = "tidb_mview_enable"
 
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
@@ -1740,7 +1740,7 @@ const (
 	DefMaxAllowedPacket                        uint64 = config.DefMaxAllowedPacket
 	DefTiDBEnableBatchDML                             = false
 	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
-	DefTiDBMVMaintainMemQuota                         = int64(2 * size.GB)
+	DefTiDBMViewMaintainMemQuota                      = int64(2 * size.GB)
 	DefTiDBMViewMaintainImportThreads                 = 0
 	DefTiDBMViewMaintainImportDiskQuota               = ""
 	DefTiDBStatsCacheMemQuota                         = 0
@@ -1883,7 +1883,7 @@ const (
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBEnableFullOuterJoin                        = false
-	DefTiDBMaterializedViewEnable                     = false
+	DefTiDBMViewEnable                                = false
 	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
 	DefTiDBOptIndexJoinBuild                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate

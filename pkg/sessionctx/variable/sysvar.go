@@ -2988,8 +2988,8 @@ var defaultSysVars = []*SysVar{
 		s.EnableFullOuterJoin = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMaterializedViewEnable, Value: BoolToOnOff(vardef.DefTiDBMaterializedViewEnable), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableMaterializedView = TiDBOptOn(val)
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMViewEnable, Value: BoolToOnOff(vardef.DefTiDBMViewEnable), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableMView = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableIndexMergeJoin, Value: BoolToOnOff(vardef.DefTiDBEnableIndexMergeJoin), Hidden: true, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -3139,21 +3139,21 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMVMaintainMemQuota, Value: strconv.FormatInt(vardef.DefTiDBMVMaintainMemQuota, 10), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.MVMaintainMemQuota = TidbOptInt64(val, vardef.DefTiDBMVMaintainMemQuota)
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMViewMaintainMemQuota, Value: strconv.FormatInt(vardef.DefTiDBMViewMaintainMemQuota, 10), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.MViewMaintainMemQuota = TidbOptInt64(val, vardef.DefTiDBMViewMaintainMemQuota)
 		return nil
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		intVal := TidbOptInt64(normalizedValue, vardef.DefTiDBMVMaintainMemQuota)
+		intVal := TidbOptInt64(normalizedValue, vardef.DefTiDBMViewMaintainMemQuota)
 		if intVal > 0 && intVal < 128 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(vardef.TiDBMVMaintainMemQuota, originalValue))
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(vardef.TiDBMViewMaintainMemQuota, originalValue))
 			normalizedValue = "128"
 		}
 		return normalizedValue, nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMVMaintainIsolationReadEngines, Value: defaultIsolationReadEnginesValue(), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-		return normalizeIsolationReadEnginesValue(vardef.TiDBMVMaintainIsolationReadEngines, normalizedValue)
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMViewMaintainIsolationReadEngines, Value: defaultIsolationReadEnginesValue(), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+		return normalizeIsolationReadEnginesValue(vardef.TiDBMViewMaintainIsolationReadEngines, normalizedValue)
 	}, SetSession: func(s *SessionVars, val string) error {
-		s.MVMaintainIsolationReadEngines = val
+		s.MViewMaintainIsolationReadEngines = val
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMViewMaintainImportThreads, Value: strconv.Itoa(vardef.DefTiDBMViewMaintainImportThreads), Type: vardef.TypeInt, MinValue: 0, MaxValue: vardef.MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {

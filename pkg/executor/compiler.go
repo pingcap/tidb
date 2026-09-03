@@ -105,10 +105,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	}
 	// CREATE MATERIALIZED VIEW plans its SELECT during DDL build; avoid strict-mode TiFlash removal for that step.
 	if _, ok := stmtNode.(*ast.CreateMaterializedViewStmt); ok {
-		origMVMaintenance := sessVars.InMaterializedViewMaintenance
-		sessVars.InMaterializedViewMaintenance = true
+		origMVMaintenance := sessVars.InMViewMaintenance
+		sessVars.InMViewMaintenance = true
 		defer func() {
-			sessVars.InMaterializedViewMaintenance = origMVMaintenance
+			sessVars.InMViewMaintenance = origMVMaintenance
 		}()
 	}
 	// Build the final physical plan.

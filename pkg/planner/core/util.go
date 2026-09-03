@@ -57,7 +57,7 @@ func CheckMViewUpdatable(
 }
 
 func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
-	if !sv.InMaterializedViewMaintenance {
+	if !sv.InMViewMaintenance {
 		return false, nil
 	}
 	// All MV maintenance work should use internal sessions (restricted SQL).

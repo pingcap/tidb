@@ -502,9 +502,9 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 		ctx = w.workCtx
 	}
 	vars := w.sess.GetSessionVars()
-	original := vars.InMaterializedViewMaintenance
-	vars.InMaterializedViewMaintenance = true
-	defer func() { vars.InMaterializedViewMaintenance = original }()
+	original := vars.InMViewMaintenance
+	vars.InMViewMaintenance = true
+	defer func() { vars.InMViewMaintenance = original }()
 	rows, err := w.sess.Execute(ctx, sqlescape.MustEscapeSQL("SELECT 1 FROM %n.%n LIMIT 1", schemaName, mvTableName), "create-materialized-view-check-build-rows")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -518,7 +518,7 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	}
 	sessVars := sessCtx.GetSessionVars() //nolint:forbidigo
 	restore := restoreSessCtx(sessCtx)
-	originalMaintenance := sessVars.InMaterializedViewMaintenance
+	originalMaintenance := sessVars.InMViewMaintenance
 	originalDB := sessVars.CurrentDB
 	if err := initSessCtx(sessCtx, job.ReorgMeta); err != nil {
 		restore(sessCtx)
@@ -538,7 +538,7 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		sessVars.DivPrecisionIncrement = mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
 	}
 	sessVars.CurrentDB = currentDB
-	sessVars.InMaterializedViewMaintenance = true
+	sessVars.InMViewMaintenance = true
 	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessVars.MemQuotaQuery)
 	failpoint.InjectCall(
 		"createMaterializedViewBuildTiFlashSessionVarsApplied",
@@ -562,7 +562,7 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	return func() {
 		restoreExecution()
 		restore(sessCtx)
-		sessVars.InMaterializedViewMaintenance = originalMaintenance
+		sessVars.InMViewMaintenance = originalMaintenance
 		sessVars.CurrentDB = originalDB
 	}, nil
 }

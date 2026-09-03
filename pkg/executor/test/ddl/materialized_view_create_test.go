@@ -40,7 +40,7 @@ import (
 
 func newMViewTestKit(t testing.TB, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_materialized_view_enable = on")
+	tk.MustExec("set tidb_mview_enable = on")
 	return tk
 }
 
@@ -52,15 +52,15 @@ func TestCreateMaterializedViewAndLog(t *testing.T) {
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
 
-	tk.MustExec("set tidb_materialized_view_enable = off")
+	tk.MustExec("set tidb_mview_enable = off")
 	err := tk.ExecToErr("create materialized view log on t (a, b)")
-	require.ErrorContains(t, err, "tidb_materialized_view_enable")
-	tk.MustExec("set tidb_materialized_view_enable = on")
+	require.ErrorContains(t, err, "tidb_mview_enable")
+	tk.MustExec("set tidb_mview_enable = on")
 	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("set tidb_materialized_view_enable = off")
+	tk.MustExec("set tidb_mview_enable = off")
 	err = tk.ExecToErr("create materialized view mv_disabled (a, s, cnt) as select a, sum(b), count(1) from t group by a")
-	require.ErrorContains(t, err, "tidb_materialized_view_enable")
-	tk.MustExec("set tidb_materialized_view_enable = on")
+	require.ErrorContains(t, err, "tidb_mview_enable")
+	tk.MustExec("set tidb_mview_enable = on")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 

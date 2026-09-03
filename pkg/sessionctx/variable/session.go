@@ -817,8 +817,8 @@ type SessionVars struct {
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize int
-	// MVMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
-	MVMaintainIsolationReadEngines string
+	// MViewMaintainIsolationReadEngines controls the isolation read engines used by MV maintenance internal sessions.
+	MViewMaintainIsolationReadEngines string
 	// MViewMaintainImportThreads controls the thread count for MV initial build IMPORT INTO.
 	MViewMaintainImportThreads int
 	// MViewMaintainImportDiskQuota controls the disk quota for MV initial build IMPORT INTO.
@@ -1511,8 +1511,8 @@ type SessionVars struct {
 	// EnableFullOuterJoin indicates whether to enable full outer join.
 	EnableFullOuterJoin bool
 
-	// EnableMaterializedView indicates whether to enable materialized view DDL.
-	EnableMaterializedView bool
+	// EnableMView indicates whether to enable materialized view DDL.
+	EnableMView bool
 
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
@@ -1696,8 +1696,8 @@ type SessionVars struct {
 
 	// EnableTiFlashReadForWriteStmt indicates whether to enable TiFlash to read for write statements.
 	EnableTiFlashReadForWriteStmt bool
-	// InMaterializedViewMaintenance indicates the session is executing internal MV build/refresh statements.
-	InMaterializedViewMaintenance bool
+	// InMViewMaintenance indicates the session is executing internal MV build/refresh statements.
+	InMViewMaintenance bool
 
 	// EnableUnsafeSubstitute indicates whether to enable generate column takes unsafe substitute.
 	EnableUnsafeSubstitute bool
@@ -2487,7 +2487,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
 		AnalyzeStoreBatchSize:            vardef.DefTiDBAnalyzeStoreBatchSize,
 		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
-		EnableMaterializedView:           vardef.DefTiDBMaterializedViewEnable,
+		EnableMView:                      vardef.DefTiDBMViewEnable,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
@@ -2548,11 +2548,11 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ExecutorConcurrency:               vardef.DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:      vardef.DefTiDBMemQuotaQuery,
-		MVMaintainMemQuota: vardef.DefTiDBMVMaintainMemQuota,
-		MemQuotaApplyCache: vardef.DefTiDBMemQuotaApplyCache,
+		MemQuotaQuery:         vardef.DefTiDBMemQuotaQuery,
+		MViewMaintainMemQuota: vardef.DefTiDBMViewMaintainMemQuota,
+		MemQuotaApplyCache:    vardef.DefTiDBMemQuotaApplyCache,
 	}
-	vars.MVMaintainIsolationReadEngines = defaultIsolationReadEnginesValue()
+	vars.MViewMaintainIsolationReadEngines = defaultIsolationReadEnginesValue()
 	vars.MViewMaintainImportThreads = vardef.DefTiDBMViewMaintainImportThreads
 	vars.MViewMaintainImportDiskQuota = vardef.DefTiDBMViewMaintainImportDiskQuota
 	vars.BatchSize = BatchSize{
@@ -3532,8 +3532,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-	// MVMaintainMemQuota defines the memory quota used by MV maintenance internal sessions.
-	MVMaintainMemQuota int64
+	// MViewMaintainMemQuota defines the memory quota used by MV maintenance internal sessions.
+	MViewMaintainMemQuota int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
 }
