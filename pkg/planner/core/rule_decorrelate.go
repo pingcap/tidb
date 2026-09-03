@@ -133,6 +133,88 @@ func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) 
 	return defaultValueMap
 }
 
+<<<<<<< HEAD
+=======
+// pruneRedundantApply: Removes the Apply operator if the parent SELECT clause does not filter any rows from the source.
+// Example: SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1))
+// In this case, the subquery can be removed entirely since the WHERE clause always evaluates to True.
+// This results in a SELECT node with a True condition and an Apply operator as its child.
+// If this pattern is detected, we remove both the SELECT and Apply nodes, returning the left child of the Apply operator as the result.
+// For the example above, the result would be a table scan on t1.
+func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Column]struct{}) (base.LogicalPlan, bool) {
+	// Check if the current plan is a LogicalSelection
+	logicalSelection, ok := p.(*logicalop.LogicalSelection)
+	if !ok {
+		return nil, false
+	}
+
+	// Retrieve the child of LogicalSelection
+	selectSource := logicalSelection.Children()[0]
+
+	// Check if the child is a LogicalApply
+	apply, ok := selectSource.(*logicalop.LogicalApply)
+	if !ok {
+		return nil, false
+	}
+
+	// Ensure the Apply operator is of a suitable join type to match the required pattern.
+	// Only LeftOuterJoin or LeftOuterSemiJoin are considered valid here.
+	if apply.JoinType != base.LeftOuterJoin && apply.JoinType != base.LeftOuterSemiJoin {
+		return nil, false
+	}
+	// LATERAL joins may return multiple rows per outer row; see LogicalApply.IsLateral.
+	if apply.IsLateral {
+		return nil, false
+	}
+	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
+	// But this problem has affected tiflash CI.
+	// Simplify predicates from the LogicalSelection
+	simplifiedPredicates := ruleutil.ApplyPredicateSimplification(p.SCtx(), logicalSelection.Conditions,
+		true, nil)
+
+	// Determine if this is a "true selection"
+	trueSelection := false
+	if len(simplifiedPredicates) == 0 {
+		trueSelection = true
+	} else if len(simplifiedPredicates) == 1 {
+		_, simplifiedPredicatesType := rule.FindPredicateType(p.SCtx(), simplifiedPredicates[0])
+		if simplifiedPredicatesType == rule.TruePredicate {
+			trueSelection = true
+		}
+	}
+
+	if trueSelection {
+		finalResult := apply
+
+		// Traverse through LogicalApply nodes to find the last one
+		for {
+			child := finalResult.Children()[0]
+			nextApply, ok := child.(*logicalop.LogicalApply)
+			if ok && nextApply.IsLateral {
+				// The IsLateral guard above only covers the topmost Apply, but this loop drops
+				// every Apply it walks through. A LATERAL Apply nested below a prunable one may
+				// still return several rows per outer row, so pruning the chain would lose them.
+				return nil, false
+			}
+			if !ok {
+				if len(groupByColumn) == 0 {
+					return child, true
+				}
+				for col := range groupByColumn {
+					if apply.Schema().Contains(col) && !child.Schema().Contains(col) {
+						return nil, false
+					}
+				}
+				return child, true // Return the child of the last LogicalApply
+			}
+			finalResult = nextApply
+		}
+	}
+
+	return nil, false
+}
+
+>>>>>>> d152e4b78d3 (planner: support LEFT JOIN LATERAL (#70276))
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
@@ -332,6 +414,45 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 						var appendedAggFuncs []*aggregation.AggFuncDesc
 
 						join := &apply.LogicalJoin
+<<<<<<< HEAD
+=======
+						// The default values only describe a *scalar* aggregation, which yields one row
+						// over an empty input. An aggregation carrying an explicit GROUP BY yields no row
+						// at all for an outer row with no matching group, and the outer join's NULL
+						// extension is then the correct answer. This is reachable from LEFT JOIN LATERAL,
+						// where the inner subquery is not wrapped in a MaxOneRow.
+						var defaultValueMap map[int]*expression.Constant
+						if len(agg.GroupByItems) == 0 {
+							defaultValueMap = s.aggDefaultValueMap(agg)
+						}
+						// `defaultValueMap` means this scalar aggregation subquery should return a non-NULL
+						// default value (e.g. COUNT -> 0) when the subquery's input is empty.
+						//
+						// If there are conditions pulled up from above the aggregation (typically HAVING),
+						// attaching them to the join will make the "no matching group" cases ambiguous:
+						//   1) empty input group (should apply default values), and
+						//   2) existing group filtered out by HAVING (should return NULL).
+						// Preserve correctness by removing those join conditions and applying them in a
+						// projection that NULL-ifies the inner columns when the condition is false.
+						var havingConds []expression.Expression
+						if len(defaultValueMap) > 0 && (len(join.EqualConditions)+len(join.LeftConditions)+len(join.RightConditions)+len(join.OtherConditions)+len(join.NAEQConditions) > 0) {
+							havingConds = make([]expression.Expression, 0, len(join.EqualConditions)+len(join.LeftConditions)+len(join.RightConditions)+len(join.OtherConditions)+len(join.NAEQConditions))
+							for _, cond := range join.EqualConditions {
+								havingConds = append(havingConds, cond)
+							}
+							for _, cond := range join.NAEQConditions {
+								havingConds = append(havingConds, cond)
+							}
+							havingConds = append(havingConds, join.LeftConditions...)
+							havingConds = append(havingConds, join.RightConditions...)
+							havingConds = append(havingConds, join.OtherConditions...)
+							join.EqualConditions = nil
+							join.NAEQConditions = nil
+							join.LeftConditions = nil
+							join.RightConditions = nil
+							join.OtherConditions = nil
+						}
+>>>>>>> d152e4b78d3 (planner: support LEFT JOIN LATERAL (#70276))
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 						for _, eqCond := range eqCondWithCorCol {
 							clonedCol := eqCond.GetArgs()[1].(*expression.Column)
@@ -569,11 +690,31 @@ func skipDecorrelateProjectionForLeftOuterApply(apply *logicalop.LogicalApply, p
 	// If proj.Exprs are all from outerPlan, we cannot make sure the output row of projection is always null,
 	// which may break the semantics of LeftOuterJoin.
 	// Because the right side of output row of LeftOuterJoin is always null when join conditions are not met.
-	// TODO: should also disable decorrelate when proj.Exprs use columns from innerPlan and its expression is not null-rejective.
 	outerPlan := apply.Children()[0]
 	for _, expr := range proj.Exprs {
 		cols := expression.ExtractColumns(expr)
 		if outerPlan.Schema().ColumnsIndices(cols) != nil {
+			return true
+		}
+	}
+
+	// Pulling the projection above the join means it is evaluated on the null-extended rows too,
+	// so an expression over inner columns must still produce NULL once those columns are NULL.
+	// A non-null-preserving expression such as ifnull(b, 'z') or `b IS NULL` would otherwise turn
+	// a non-match into a real value. Reachable from LEFT JOIN LATERAL, whose inner side is not
+	// wrapped in a LogicalMaxOneRow.
+	// proj.Exprs are written against the projection's input, not its own output schema.
+	innerSchema := proj.Children()[0].Schema()
+	for _, expr := range proj.Exprs {
+		if expression.ExtractColumnSet(expr).IsEmpty() {
+			continue
+		}
+		nullResult, err := expression.EvaluateExprWithNull(apply.SCtx().GetExprCtx(), innerSchema, expr, true)
+		if err != nil {
+			return true
+		}
+		con, ok := nullResult.(*expression.Constant)
+		if !ok || con.DeferredExpr != nil || con.ParamMarker != nil || !con.Value.IsNull() {
 			return true
 		}
 	}
