@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -814,20 +815,46 @@ func deflate(data []byte) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// inflate uncompresses a string using the DEFLATE format.
-func inflate(compressStr []byte) ([]byte, error) {
+type limitedBuffer struct {
+	// Keep bytes.Buffer as a named field so io.Copy must go through Write.
+	buf   *bytes.Buffer
+	limit int64
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if int64(len(p)) > b.limit-int64(b.buf.Len()) {
+		return 0, errZlibZBuf
+	}
+	return b.buf.Write(p)
+}
+
+// inflate uncompresses a string using the DEFLATE format with a hard output limit.
+func inflate(compressStr []byte, declaredLength uint32, tracker *memory.Tracker, out *bytes.Buffer) ([]byte, error) {
 	reader := bytes.NewReader(compressStr)
-	var out bytes.Buffer
 	r, err := zlib.NewReader(reader)
 	if err != nil {
 		return nil, err
 	}
+	defer r.Close()
+	if out == nil {
+		out = &bytes.Buffer{}
+	} else {
+		out.Reset()
+	}
+	limit := int64(declaredLength)
+	if tracker != nil && limit > 0 {
+		tracker.Consume(limit)
+		defer tracker.Consume(-limit)
+	}
+	limitedOut := limitedBuffer{
+		buf:   out,
+		limit: limit,
+	}
 	/* #nosec G110 */
-	if _, err = io.Copy(&out, r); err != nil {
+	if _, err = io.Copy(&limitedOut, r); err != nil {
 		return nil, err
 	}
-	err = r.Close()
-	return out.Bytes(), err
+	return out.Bytes(), nil
 }
 
 type compressFunctionClass struct {
@@ -915,7 +942,7 @@ func (c *uncompressFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinUncompressSig{bf}
+	sig := &builtinUncompressSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Uncompress)
 	return sig, nil
 }
@@ -947,9 +974,13 @@ func (b *builtinUncompressSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, nil
 	}
 	length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
-	bytes, err := inflate([]byte(payload[4:]))
+	bytes, err := inflate([]byte(payload[4:]), length, sc.MemTracker, nil)
 	if err != nil {
-		sc.AppendWarning(errZlibZData)
+		if errZlibZBuf.Equal(err) {
+			sc.AppendWarning(errZlibZBuf)
+		} else {
+			sc.AppendWarning(errZlibZData)
+		}
 		return "", true, nil
 	}
 	if length < uint32(len(bytes)) {
