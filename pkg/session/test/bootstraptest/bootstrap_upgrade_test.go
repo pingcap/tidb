@@ -1253,11 +1253,16 @@ func TestUpgradeVersion285MaterializedViewBootstrap(t *testing.T) {
 	checkMaterializedViewBootstrapSchema(t, tk)
 }
 
-func TestUpgradeVersion286OperateViewPrivilege(t *testing.T) {
+func TestUpgradeVersions286And287(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
+	t.Run("version 286 operate view privilege", testUpgradeVersion286OperateViewPrivilege)
+	t.Run("version 287 TTL task split_by", testUpgradeVersion287TTLTaskSplitBy)
+}
+
+func testUpgradeVersion286OperateViewPrivilege(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
@@ -1284,6 +1289,33 @@ func TestUpgradeVersion286OperateViewPrivilege(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 	checkOperateViewPrivilegeBootstrapSchema(t, tk)
+}
+
+func testUpgradeVersion287TTLTaskSplitBy(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("ALTER TABLE mysql.tidb_ttl_task DROP COLUMN split_by")
+
+	se := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(287-1))
+	require.NoError(t, txn.Commit(context.Background()))
+	revertVersionAndVariables(t, se, 287-1)
+	store.SetOption(session.StoreBootstrappedKey, nil)
+
+	dom.Close()
+	newDom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer newDom.Close()
+
+	tk = testkit.NewTestKit(t, store)
+	ver, err := session.GetBootstrapVersion(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	tk.MustQuery("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'mysql' AND table_name = 'tidb_ttl_task' AND column_name = 'split_by'").Check(testkit.Rows("1"))
 }
 
 func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {

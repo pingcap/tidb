@@ -25,7 +25,7 @@ go_test(
         "sql_test.go",
     ],
     flaky = True,
-    shard_count = 7,
+    shard_count = 6,
     deps = [
         ":sqlbuilder",
         "//pkg/kv",
