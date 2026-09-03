@@ -203,6 +203,7 @@ func newTTLTaskRows(t *testing.T, tasks ...*cache.TTLTask) []chunk.Row {
 		types.NewFieldType(mysql.TypeDatetime), // status_update_time
 		types.NewFieldType(mysql.TypeString),   // state
 		types.NewFieldType(mysql.TypeDatetime), // created_time
+		types.NewFieldType(mysql.TypeLonglong), // split_by
 	}, len(tasks))
 	var rows []chunk.Row
 
@@ -263,6 +264,12 @@ func newTTLTaskRows(t *testing.T, tasks ...*cache.TTLTask) []chunk.Row {
 
 		createdTime := types.NewDatum(types.NewTime(types.FromGoTime(task.CreatedTime), mysql.TypeDatetime, types.MaxFsp))
 		c.AppendDatum(12, &createdTime)
+		if task.SplitBy == nil {
+			c.AppendNull(13)
+		} else {
+			splitBy := types.NewDatum(*task.SplitBy)
+			c.AppendDatum(13, &splitBy)
+		}
 	}
 
 	iter := chunk.NewIterator4Chunk(c)
@@ -287,7 +294,7 @@ func (m *JobManager) LockJob(ctx context.Context, se session.Session, table *cac
 	if createJobID == "" {
 		return m.lockHBTimeoutJob(ctx, se, table.ID, table.TableInfo.ID, now)
 	}
-	return m.lockNewJob(ctx, se, table, now, createJobID, checkInterval)
+	return m.lockNewJob(ctx, se, table, now, createJobID, checkInterval, true)
 }
 
 // RunningJobs returns the running jobs inside ttl job manager
@@ -893,7 +900,7 @@ func TestLockTable(t *testing.T) {
 			m.ctx = cache.SetMockExpireTime(context.Background(), newJobExpireTime)
 			var job *ttlJob
 			if c.isCreate {
-				job, err = m.lockNewJob(context.Background(), se, c.table, now, "new-job-id", c.checkInterval)
+				job, err = m.lockNewJob(context.Background(), se, c.table, now, "new-job-id", c.checkInterval, true)
 			} else {
 				job, err = m.lockHBTimeoutJob(context.Background(), se, c.table.ID, c.table.TableInfo.ID, now)
 			}
@@ -929,45 +936,17 @@ func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
 	vardef.TTLEnableIndexScan.Store(true)
 	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
 
-	idCol := &model.ColumnInfo{
-		ID:        1,
-		Name:      ast.NewCIStr("id"),
-		Offset:    0,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		State:     model.StatePublic,
-	}
-	idCol.AddFlag(mysql.PriKeyFlag)
-	timeCol := &model.ColumnInfo{
-		ID:        2,
-		Name:      ast.NewCIStr("t"),
-		Offset:    1,
-		FieldType: *types.NewFieldType(mysql.TypeDatetime),
-		State:     model.StatePublic,
-	}
-	tblInfo := &model.TableInfo{
-		ID:         1,
-		Name:       ast.NewCIStr("t1"),
-		Columns:    []*model.ColumnInfo{idCol, timeCol},
-		PKIsHandle: true,
-		Indices: []*model.IndexInfo{
-			{
-				ID:      10,
-				Name:    ast.NewCIStr("idx_t"),
-				Columns: []*model.IndexColumn{{Name: timeCol.Name, Offset: timeCol.Offset}},
-				State:   model.StatePublic,
-			},
+	ttlTbl := newMockTTLTbl(t, "t1")
+	ttlTbl.ID = 1
+	ttlTbl.TableInfo.ID = 1
+	ttlTbl.Indices = []*model.IndexInfo{
+		{
+			ID:      10,
+			Name:    ast.NewCIStr("idx_time"),
+			Columns: []*model.IndexColumn{{Name: ttlTbl.TimeColumn.Name, Offset: ttlTbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
+			State:   model.StatePublic,
 		},
-		TTLInfo: &model.TTLInfo{
-			ColumnName:       timeCol.Name,
-			IntervalExprStr:  "1",
-			IntervalTimeUnit: int(ast.TimeUnitDay),
-			Enable:           true,
-			JobInterval:      "1h",
-		},
-		State: model.StatePublic,
 	}
-	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
-	require.NoError(t, err)
 
 	now := time.Date(2022, 12, 6, 1, 13, 5, 0, time.UTC)
 	expireTime := time.Date(2022, 12, 5, 16, 13, 5, 0, time.UTC)
@@ -996,13 +975,19 @@ func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
 		return nil, nil
 	}
 
-	job, err := m.lockNewJob(context.Background(), se, ttlTbl, now, "new-job-id", false)
-	require.NoError(t, err)
-	require.NotNil(t, job)
-	require.Len(t, taskArgs, 1)
-	require.Empty(t, taskArgs[0][3])
-	require.Empty(t, taskArgs[0][4])
-	require.Equal(t, int64(10), taskArgs[0][7])
+	lockJob := func(allowIndexScan bool) []any {
+		taskArgs = nil
+		job, err := m.lockNewJob(context.Background(), se, ttlTbl, now, "new-job-id", false, allowIndexScan)
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		require.Len(t, taskArgs, 1)
+		require.Empty(t, taskArgs[0][3])
+		require.Empty(t, taskArgs[0][4])
+		return taskArgs[0]
+	}
+
+	require.Equal(t, int64(10), lockJob(true)[7])
+	require.Nil(t, lockJob(false)[7])
 }
 
 func TestLocalJobs(t *testing.T) {

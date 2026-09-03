@@ -135,6 +135,9 @@ type JobManager struct {
 	leaderFunc                 func() bool
 	ownerManager               owner.Manager
 	extWorkload                extworkload.Manager
+
+	// jobVersionChecker is only accessed by the job loop goroutine.
+	jobVersionChecker ttlJobVersionChecker
 }
 
 // JobManagerOption configures a JobManager.
@@ -156,7 +159,6 @@ func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCl
 	manager.id = id
 	manager.store = store
 	manager.sessPool = sessPool
-
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "job-manager")
 	if intest.InTest {
@@ -387,7 +389,14 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
-	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false)
+	versionCheckResult := m.jobVersionChecker.check(m.ctx)
+	if versionCheckResult == ttlJobVersionBlockJob {
+		jobReq.RespCh <- errors.New("cannot create TTL job while TiDB server versions are inconsistent")
+		return
+	}
+
+	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false,
+		versionCheckResult == ttlJobVersionAllowIndexScan)
 	jobReq.RespCh <- err
 }
 
@@ -877,7 +886,8 @@ func (m *JobManager) lockHBTimeoutJob(ctx context.Context, se session.Session, t
 }
 
 // lockNewJob locks a new job
-func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, jobID string, checkScheduleInterval bool) (*ttlJob, error) {
+func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time,
+	jobID string, checkScheduleInterval, allowIndexScan bool) (*ttlJob, error) {
 	var expireTime time.Time
 	err := se.RunInTxn(ctx, func() error {
 		tableStatus, err := m.getTableStatusForUpdateNotWait(ctx, se, table.ID, table.TableInfo.ID, true)
@@ -911,7 +921,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 
 		var ranges []cache.ScanRange
 		var splitBy *int64
-		if vardef.TTLEnableIndexScan.Load() {
+		if allowIndexScan && vardef.TTLEnableIndexScan.Load() {
 			if idx := table.FindTTLIndex(); idx != nil {
 				ranges, err = table.SplitIndexScanRanges(ctx, m.store, idx, expireTime, se.GetSessionVars().Location(), getScanSplitCnt(se.GetStore()))
 				if err != nil {
