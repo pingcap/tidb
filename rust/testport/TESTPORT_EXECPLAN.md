@@ -42,6 +42,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: aligned aggregation-elimination boundaries with Go master
+  `a85e0fd5df` (same worktree/branch): distinct elimination reads the child
+  schema inside Go's per-function all-column-args branch, the PKOrUK
+  coverage check indexes `Children()[0]`, and `rewrite_aggregate` reads
+  `Args[0]` unguarded — while Go's explicit `len(Children()) != 1` guard
+  stays pinned. Two regressions proven to fail pre-fix; see
+  `receipts/planner_rule_child_access.md`.
+
 - 2026-09-03: landed the remaining `tidb-planner` boundary deltas on
   `hparser-integration` (extract-FD, semi-join rewrite, physical
   join/projection schema assembly, and `LogicalProjection.DeriveStats`),

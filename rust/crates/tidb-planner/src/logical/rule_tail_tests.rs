@@ -50,6 +50,7 @@ use super::projection::LogicalProjection;
 use super::rewrite::{prune_columns, push_down_topn};
 use super::rule::LogicalOptRule;
 use super::rule::RuleContext;
+use super::rule_aggregation_elimination::AggregationEliminator;
 use super::rule_derive_topn_from_window::derive_topn;
 use super::rule_eliminate_empty_selection::eliminate_empty_selection;
 use super::rule_eliminate_unionall_dual_item::union_all_eliminate_dual_item;
@@ -1078,6 +1079,70 @@ fn a_topn_over_a_schemaless_projection_panics_when_pushing_down_like_go() {
     // Go passes the projection's own `p.Schema()` to `ColumnSubstitute`.
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         push_down_topn(projection, Some(topn))
+    }))
+    .is_err());
+}
+
+// ***************************************************************************
+// Aggregation-elimination child/argument boundaries.
+// ***************************************************************************
+
+fn distinct_count_column(id: i64) -> tidb_expr::aggregation::AggFuncDesc {
+    tidb_expr::aggregation::AggFuncDesc {
+        base: tidb_expr::aggregation::BaseFuncDesc {
+            name: "count".to_owned(),
+            args: vec![Expression::Column(column(id))],
+            ret_type: int_type(),
+        },
+        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        has_distinct: true,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    }
+}
+
+#[test]
+fn a_childless_distinct_aggregation_panics_when_eliminating_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![distinct_count_column(1)],
+        Vec::new(),
+    ));
+
+    // Go `tryToEliminateDistinct` indexes `agg.Children()[0].Schema()` inside
+    // the all-column-args branch (`rule_aggregation_elimination.go:111`).
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        AggregationEliminator.optimize(&ctx, plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_childless_grouped_aggregation_panics_at_the_covered_check_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Aggregation(LogicalAggregation::new(
+        base(&allocator, "Aggregation", Some(schema_of(&[9]))),
+        vec![tidb_expr::aggregation::AggFuncDesc {
+            base: tidb_expr::aggregation::BaseFuncDesc {
+                name: "count".to_owned(),
+                args: vec![Expression::Column(column(1))],
+                ret_type: int_type(),
+            },
+            mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+            has_distinct: false,
+            order_by_items: Vec::new(),
+            grouping_id: 0,
+        }],
+        vec![Expression::Column(column(2))],
+    ));
+
+    // Go `tryToEliminateAggregation` indexes `agg.Children()[0].Schema()`
+    // for the PKOrUK coverage check (`rule_aggregation_elimination.go:69`).
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        AggregationEliminator.optimize(&ctx, plan)
     }))
     .is_err());
 }

@@ -46,14 +46,6 @@ fn covers_key(columns: &[tidb_expr::column::Column], key: &[tidb_expr::column::C
 }
 
 fn eliminate_distinct(aggregation: &mut LogicalAggregation) {
-    let Some(child_schema) = aggregation
-        .base
-        .children()
-        .first()
-        .and_then(LogicalPlan::schema)
-    else {
-        return;
-    };
     for function in &mut aggregation.agg_funcs {
         if !function.has_distinct {
             continue;
@@ -66,6 +58,15 @@ fn eliminate_distinct(aggregation: &mut LogicalAggregation) {
         else {
             continue;
         };
+        // Go indexes `agg.Children()[0].Schema()` inside this per-function
+        // branch and derefs `PKOrUK`/`NullableUK`
+        // (`rule_aggregation_elimination.go:111`/`:117`).
+        let child_schema = aggregation
+            .base
+            .children()
+            .first()
+            .and_then(LogicalPlan::schema)
+            .expect("distinct elimination nil-derefs the child schema");
         if child_schema
             .pk_or_uk
             .iter()
@@ -155,9 +156,9 @@ fn rewrite_aggregate(
     ctx: &RuleContext<'_>,
     function: &AggFuncDesc,
 ) -> Result<Option<Expression>, PlanError> {
-    let Some(first_argument) = function.args().first().cloned() else {
-        return Ok(None);
-    };
+    // Go `rewriteExpr` reads `aggFunc.Args[0]` unguarded
+    // (`rule_aggregation_elimination.go:196`).
+    let first_argument = function.args()[0].clone();
     let expression = match function.name() {
         names::COUNT => {
             if function.mode == AggFunctionMode::Final
@@ -203,17 +204,15 @@ fn aggregation_projection(
         return Ok(None);
     }
     let group_by_columns = aggregation.get_group_by_cols();
-    let covered = aggregation
-        .base
-        .children()
-        .first()
-        .and_then(LogicalPlan::schema)
-        .is_some_and(|schema| {
-            schema
-                .pk_or_uk
-                .iter()
-                .any(|key| covers_key(&group_by_columns, key))
-        });
+    // Go indexes `agg.Children()[0].Schema()` and derefs `PKOrUK`
+    // (`rule_aggregation_elimination.go:69`).
+    let child_schema = aggregation.base.children()[0]
+        .schema()
+        .expect("aggregation elimination nil-derefs the child schema");
+    let covered = child_schema
+        .pk_or_uk
+        .iter()
+        .any(|key| covers_key(&group_by_columns, key));
     if !covered {
         return Ok(None);
     }

@@ -230,37 +230,38 @@ non-empty-condition precondition Go requires before indexing):
 =======
 ## Follow-up batch: aggregation `AggFuncs` index boundaries
 
-Same comparison source (Go `origin/master` at `a85e0fd5df`, owning file
-`logicalop/logical_aggregation.go` byte-identical). Two Rust loops tolerated
-a schema longer than the aggregate-function list where Go indexes directly:
+Comparison source: Go `origin/master` at
+`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. The owning
+`pkg/planner/core/operator/logicalop` tree has 43 tracked artifacts and 16,086
+lines: 35 production files (including the two generated Go outputs), five
+logical-operator test/support files, three checked-in cascades fixture files,
+and two BUILD manifests. There are no platform-specific variants, fuzz
+corpora, or additional generated inputs. All artifacts were inventoried; the
+relevant `logical_aggregation.go` and logical-operator test/build inputs were
+read in full before editing. The Rust owner remains the 344-artifact
+`tidb-planner` crate inventory recorded above.
 
-- `agg_funcs_cols_for_first_row`: Go `getAggFuncsColsForFirstRow`
-  (`logical_aggregation.go:724-725`) reads `la.AggFuncs[idx]` and
-  `aggFunc.Args[0]` unguarded while walking the schema columns; the Rust arm
-  now indexes both instead of `get(idx) else break` and
-  `args().first().is_some_and(...)`.
-- `prune_columns_local`: Go `PruneColumns` (`logical_aggregation.go:123`)
-  reads `la.AggFuncs[i]` directly over the schema-derived `used` list; the
-  Rust loop indexes it now instead of `get(i) else continue`.
+Go's `PruneColumns` and `getAggFuncsColsForFirstRow` directly index the
+schema-derived `AggFuncs` slot, and the latter directly indexes `Args[0]`.
+Rust previously returned a Rust-only empty/partial answer for a schema longer
+than the aggregate list or an argument-less `firstrow`; it now uses the same
+direct indexes. `getAggFuncsColsForConstResult` retains Go's explicit
+`idx >= len(AggFuncs)` break, pinned by a non-panicking regression.
 
-Sites verified as GUARDED parity and deliberately left alone:
-`getAggFuncsColsForConstResult` breaks on `idx >= len(la.AggFuncs)`
-(`logical_aggregation.go:688-690`) — pinned by a regression test — and the
-`IsPartialModeAgg`/`IsCompleteModeAgg` empty-agg mapping is doc-admitted
-(every Go caller guards `len != 0` first).
+The four focused regressions in `src/logical/operator_tests.rs` cover the two
+`firstrow` boundaries, pruning, and the guarded constant-result loop. Before
+the production edit, the three panic-contract tests failed; after the edit
+they pass. No Go source, Bazel metadata, generated output, or fixture was
+changed.
 
-Four regressions were added to `src/logical/operator_tests.rs`; the three
-panic contracts are proven to FAIL against the unfixed loops (captured by
-stashing the production edit), the guard pin passes both ways:
-
-- `first_row_columns_panics_when_the_schema_outgrows_the_aggs_like_go`
-- `first_row_columns_panics_on_an_argument_less_firstrow_like_go`
-- `prune_columns_panics_when_the_schema_outgrows_the_aggs_like_go`
-- `const_result_columns_keeps_gos_explicit_length_guard`
-
-<<<<<<< HEAD
->>>>>>> 2d7f1e2129 (rust: align aggregation AggFuncs index boundaries)
+Validation for this package batch uses the Ready Rust scope: focused owner
+tests, the full `tidb-planner --lib` and aggregate targets, all-targets check,
+pinned formatting, repository lint, and diff checks. Existing unrelated
+planner baseline failures remain documented in the ExecPlan and are not caused
+by this batch.
 =======
+>>>>>>> 41640f026f (rust: align planner rule child access boundaries)
+
 ## Follow-up batch: physical join/projection schema boundaries
 
 Same comparison source (Go `origin/master` at `a85e0fd5df`; owning files
@@ -355,17 +356,6 @@ Not covered here: `resolve_redundant_column_from_natural_using_join_plan`'s
 confirmed (`ResolveRedundantColumn` is join-local), so it is left as is.
 
 >>>>>>> 2cb4c6b4f1 (rust: align expression-rewriter child boundaries)
-## Risks
-
-- Correctness: malformed subtrees now panic at the same index Go panics at;
-  valid planning trees never hit these boundaries, and all non-index guard
-  paths keep their early-return behavior.
-- Compatibility: the public rule entry signatures are unchanged; the only
-  behavior change on valid input is none — indexes stay in range.
-- Performance: direct indexing replaces `Option`-producing `first()` probes
-  on the hot rule-entry paths, removing a branch per access.
-<<<<<<< HEAD
-
 ## Follow-up batch: source-shaped adapter parity
 
 The same Go owner also has a small public adapter in
@@ -403,40 +393,6 @@ direct index) and the returned change flag for valid non-empty unions; no
 planner tree or SQL execution path is altered. There is no new allocation or
 hot-path traversal cost.
 
-## Follow-up batch: aggregation `AggFuncs` index boundaries
-
-Comparison source: Go `origin/master` at
-`049e0e2ba79d79a3a8b1e9ff93ee22fb1cea7dd5`. The owning
-`pkg/planner/core/operator/logicalop` tree has 43 tracked artifacts and 16,086
-lines: 35 production files (including the two generated Go outputs), five
-logical-operator test/support files, three checked-in cascades fixture files,
-and two BUILD manifests. There are no platform-specific variants, fuzz
-corpora, or additional generated inputs. All artifacts were inventoried; the
-relevant `logical_aggregation.go` and logical-operator test/build inputs were
-read in full before editing. The Rust owner remains the 344-artifact
-`tidb-planner` crate inventory recorded above.
-
-Go's `PruneColumns` and `getAggFuncsColsForFirstRow` directly index the
-schema-derived `AggFuncs` slot, and the latter directly indexes `Args[0]`.
-Rust previously returned a Rust-only empty/partial answer for a schema longer
-than the aggregate list or an argument-less `firstrow`; it now uses the same
-direct indexes. `getAggFuncsColsForConstResult` retains Go's explicit
-`idx >= len(AggFuncs)` break, pinned by a non-panicking regression.
-
-The four focused regressions in `src/logical/operator_tests.rs` cover the two
-`firstrow` boundaries, pruning, and the guarded constant-result loop. Before
-the production edit, the three panic-contract tests failed; after the edit
-they pass. No Go source, Bazel metadata, generated output, or fixture was
-changed.
-
-Validation for this package batch uses the Ready Rust scope: focused owner
-tests, the full `tidb-planner --lib` and aggregate targets, all-targets check,
-pinned formatting, repository lint, and diff checks. Existing unrelated
-planner baseline failures remain documented in the ExecPlan and are not caused
-by this batch.
-=======
->>>>>>> 41640f026f (rust: align planner rule child access boundaries)
-
 ## Audit (no code change): join-reorder cluster
 
 Same comparison source (Go `origin/master` at `a85e0fd5df`; owning files
@@ -458,18 +414,46 @@ list. It now indexes directly. One regression proven to FAIL pre-fix
 
 - `projection_derive_stats_panics_when_the_schema_outgrows_the_exprs_like_go`
 
-## Follow-up batch: projection `DeriveStats` index boundary
-
-Go `LogicalProjection.DeriveStats` (`logical_projection.go:296`) indexes
-`selfSchema.Columns[i]` directly while walking `p.Exprs`; the Rust loop's
-`columns.get(i) else break` tolerated a schema shorter than the expression
-list. It now indexes directly. One regression proven to FAIL pre-fix
-(captured by stashing the production edit):
-
-- `projection_derive_stats_panics_when_the_schema_outgrows_the_exprs_like_go`
-
 Consolidation note: this receipt's earlier sections were authored as nine
 per-batch commits on `codex/zcode-parity-sweep`; when landing them on
 `hparser-integration` (which had already absorbed an intermediate snapshot
 of the same work), the still-missing deltas plus this batch are landed as
 one consolidated commit with the full gate set re-run on the merged tree.
+
+## Follow-up batch: aggregation-elimination boundaries
+
+Same comparison source (Go `origin/master` at `a85e0fd5df`, owning file
+`rule_aggregation_elimination.go` byte-identical). Three sites in
+`src/logical/rule_aggregation_elimination.rs` refused where Go indexes:
+
+- `eliminate_distinct` now mirrors `tryToEliminateDistinct`'s exact shape:
+  the child schema is read INSIDE the per-function all-column-args branch
+  (`:111`/`:117`), via `expect` (Go's `PKOrUK`/`NullableUK` deref), instead
+  of an up-front `first()` refusal that also skipped Go's per-function
+  gating.
+- The PKOrUK coverage check indexes `agg.Children()[0].Schema()` and derefs
+  `PKOrUK` (`:69`); the Rust `first().and_then(...).is_some_and(...)` is now
+  a direct index plus `expect`.
+- `rewrite_aggregate` reads `Args[0]` unguarded like Go `rewriteExpr`
+  (`:196`) instead of returning `Ok(None)` on empty args.
+
+Go's own explicit guard at `:135` (`len(agg.Children()) != 1` before
+`hasLimit(agg.Children()[0])`) is preserved — the Rust `is_some_and` there
+is parity and stays.
+
+Two regressions added to `src/logical/rule_tail_tests.rs`, both proven to
+FAIL against the unfixed rule (captured by stashing the production edit):
+
+- `a_childless_distinct_aggregation_panics_when_eliminating_like_go`
+- `a_childless_grouped_aggregation_panics_at_the_covered_check_like_go`
+
+## Risks
+
+- Correctness: malformed subtrees now panic at the same index Go panics at;
+  valid planning trees never hit these boundaries, and all non-index guard
+  paths keep their early-return behavior.
+- Compatibility: the public rule entry signatures are unchanged; the only
+  behavior change on valid input is none — indexes stay in range.
+- Performance: direct indexing replaces `Option`-producing `first()` probes
+  on the hot rule-entry paths, removing a branch per access.
+<<<<<<< HEAD
