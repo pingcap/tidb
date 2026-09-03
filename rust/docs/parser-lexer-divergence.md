@@ -429,8 +429,10 @@ Rust API cannot represent — see #11, which is the same boundary.
 
 #### 9-11 STATUS (2026-09-03)
 
-- #9 (ANSI_QUOTES identifier escape decoding): still open — the fix belongs
-  in the lexer's token-literal retention (`tidb-lexer/src/lib.rs:352-369`).
+- #9 (ANSI_QUOTES identifier escape decoding): FIXED (2026-09-03) — the
+  identifier text now reuses the scanString-decoded buffer
+  (`decode_quoted_string` with the NO_BACKSLASH_ESCAPES split), with
+  regressions in `lexer_source.rs`.
 - #10 (whitespace class): accepted as parity-by-API — the audit's own
   reachability caveat shows the divergence requires input the Rust `&str`
   API cannot represent; closing it would mean widening the lexer to bytes.

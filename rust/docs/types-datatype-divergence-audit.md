@@ -782,6 +782,8 @@ Second distinguishing input:
 `"varchar(0)"`; the Rust equivalent → `"varchar(5)"` (the `-1` gets substituted
 with the default flen).
 
+## F3 — FIXED (verified 2026-09-03): `is_binary_string()` now compares the collation NAME
+
 ## F3 (rank 1, reachability uncertain) — `is_binary_string()` answers "binary" for an EMPTY collation name
 
 - Go: `pkg/types/etc.go:125-127` — `IsBinaryStr` compares the collation
@@ -1283,3 +1285,5 @@ settle:
    (`Time::round_frac` needs a timezone) are all instances. A single decision
    about how `tidb-datatype` threads conversion context would close a cluster,
    not one bug.
+
+F3 verification: `field_type/mod.rs:1020-1022` compares `collation_name == "binary"` (the string, matching Go `IsBinaryStr`'s `GetCollate() == charset.CollationBin` string compare), with an existing assertion (`mod.rs:1517`) covering the empty-collation case. The audit's `:898-900` enum-based predicate is gone.

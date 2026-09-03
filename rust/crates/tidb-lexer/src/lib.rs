@@ -378,7 +378,16 @@ impl<'a> Lexer<'a> {
             Some(canon) => canon.to_string(),
             None => match kind {
                 TokenKind::Ident if raw.starts_with('`') => unquote(raw, '`'),
-                TokenKind::Ident if raw.starts_with('"') => unquote(raw, '"'),
+                // ANSI_QUOTES flipped a double-quoted string into an
+                // identifier: Go flips only `tok` and keeps `v.Lit` as the
+                // scanString-DECODED buffer (`lexer.go:244-248`), so the
+                // text resolves backslash escapes AND doubled quotes — not
+                // just the raw-span doubled-delimiter collapse
+                // (divergence item 9).
+                TokenKind::Ident if raw.starts_with('"') => String::from_utf8_lossy(
+                    &decode_quoted_string(raw.as_bytes(), self.sql_mode.no_backslash_escapes),
+                )
+                .into_owned(),
                 _ => raw.to_string(),
             },
         };

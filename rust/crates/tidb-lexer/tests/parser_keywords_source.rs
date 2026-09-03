@@ -25,7 +25,11 @@ fn test_keywords() {
 
 #[test]
 fn test_keywords_length() {
-    assert_eq!(KEYWORDS.len(), 689);
+    // The catalog is generated/validated against go-master parser.y via
+    // `cargo run -p tidb-lexer --bin generate_keyword -- <parser.y> --check`
+    // (passes byte-for-byte); the hand-pinned 689 predated a keyword added
+    // to parser.y.
+    assert_eq!(KEYWORDS.len(), 690);
     assert_eq!(
         KEYWORDS.iter().filter(|keyword| keyword.reserved).count(),
         233

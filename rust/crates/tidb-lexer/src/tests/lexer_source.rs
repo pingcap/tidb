@@ -650,3 +650,34 @@ fn charset_lookup_folds_non_ascii_with_gos_simple_case_mapping() {
     assert_eq!(crate::canonical_charset("nosuchcharset"), None);
     assert_eq!(crate::canonical_charset("LAT\u{130}N1"), Some("latin1"));
 }
+
+/// Divergence item 9: under ANSI_QUOTES, Go flips only the token kind and
+/// keeps `v.Lit` as the scanString-DECODED buffer (`lexer.go:244-248`), so
+/// the identifier text resolves backslash escapes AND doubled quotes.
+#[test]
+fn ansi_quotes_identifier_text_is_the_decoded_buffer_like_go() {
+    let mode = SqlMode {
+        ansi_quotes: true,
+        ..SqlMode::default()
+    };
+    for (input, text) in [
+        (r#""a\tb""#, "a\tb"),
+        (r#""a\nb""#, "a\nb"),
+        (r#""a""b""#, "a\"b"),
+        (r#""a\qb""#, "aqb"),
+    ] {
+        let mut lexer = Lexer::new(input).with_sql_mode(mode);
+        let token = lexer.next_token();
+        assert_eq!(token.kind, TokenKind::Ident, "{input}");
+        assert_eq!(token.text, text, "{input}");
+    }
+    // NO_BACKSLASH_ESCAPES keeps the backslash, like Go's scanString.
+    let mode = SqlMode {
+        ansi_quotes: true,
+        no_backslash_escapes: true,
+        ..SqlMode::default()
+    };
+    let mut lexer = Lexer::new(r#""a\tb""#).with_sql_mode(mode);
+    let token = lexer.next_token();
+    assert_eq!(token.text, r#"a\tb"#);
+}
