@@ -18,8 +18,17 @@
 # - pd: 2379, 2380, 2381, 2383, 2384
 # - tikv: 20160, 20161, 20162, 20180, 20181, 20182
 # - tikv-worker: 19000
+tiflash_compute_pid=""
+schema_manager_dir="/tmp/tidb-realtikvtest-schemas"
+
 function main() {
-    local data_base_dir=$(mktemp -d)
+    local data_base_dir
+    if ! data_base_dir="$(mktemp -d)"; then
+        echo "Failed to create a temporary data directory." >&2
+        return 1
+    fi
+    rm -rf "${schema_manager_dir}"
+    mkdir -pv "${schema_manager_dir}"
     mkdir -pv ${data_base_dir}/pd-{0,1,2}/data
     mkdir -pv ${data_base_dir}/tikv-{0,1,2}/data
     mkdir -pv ${data_base_dir}/tikv-worker/data
@@ -43,8 +52,104 @@ function main() {
     bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-2/data --addr=127.0.0.1:20162 --advertise-addr=127.0.0.1:20162 --status-addr=127.0.0.1:20182 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv2.log &
     bin/tikv-worker --config=${config_dir}/tikv-worker.toml --data-dir=${data_base_dir}/tikv-worker/data --addr=127.0.0.1:19000 --pd-endpoints=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv-worker.log &
 
+    if is_true "${STARTER_COLUMNAR_AP:-}"; then
+        start_tiflash_compute "${data_base_dir}"
+    fi
+
     sleep 10
     NEXT_GEN=1 "$@"
+}
+
+function is_true() {
+    local value
+    value="$(printf "%s" "$1" | tr '[:upper:]' '[:lower:]')"
+    case "${value}" in
+        1|true|yes|on)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+function start_tiflash_compute() {
+    local data_base_dir="$1"
+    local tiflash_bin="${TIFLASH_BIN_PATH:-bin/tiflash}"
+    local tiflash_dir="${data_base_dir}/tiflash-compute"
+    local tiflash_config="${tiflash_dir}/tiflash.toml"
+    local tiflash_proxy_config="${tiflash_dir}/tiflash-proxy.toml"
+
+    if [[ ! -x "${tiflash_bin}" ]]; then
+        echo "TiFlash compute requires executable '${tiflash_bin}'." >&2
+        exit 1
+    fi
+
+    mkdir -pv "${tiflash_dir}/data" "${tiflash_dir}/cache" "${tiflash_dir}/proxy"
+    cat > "${tiflash_proxy_config}" <<EOF
+[storage]
+reserve-space = "0"
+api-version = 2
+enable-ttl = true
+
+[raftstore]
+capacity = "100GB"
+
+[dfs]
+prefix = "tikv"
+s3-endpoint = "http://127.0.0.1:9000"
+s3-key-id = "minioadmin"
+s3-secret-key = "minioadmin"
+s3-bucket = "next-gen-test"
+s3-region = "local"
+remote-compactor-addr = "http://127.0.0.1:19000/compact"
+EOF
+    cat > "${tiflash_config}" <<EOF
+tcp_port = 9001
+
+[flash]
+disaggregated_mode = "tiflash_compute"
+service_addr = "127.0.0.1:3930"
+use_columnar = true
+
+[flash.proxy]
+addr = "127.0.0.1:20170"
+advertise-addr = "127.0.0.1:20170"
+engine-addr = "127.0.0.1:3930"
+status-addr = "127.0.0.1:20292"
+advertise-status-addr = "127.0.0.1:20292"
+data-dir = "${tiflash_dir}/proxy"
+config = "${tiflash_proxy_config}"
+
+[storage]
+api_version = 2
+
+[storage.main]
+dir = ["${tiflash_dir}/data"]
+capacity = [5368709120]
+
+[storage.remote.cache]
+dir = "${tiflash_dir}/cache"
+capacity = 5368709120
+
+[storage.s3]
+endpoint = "http://127.0.0.1:9000"
+access_key_id = "minioadmin"
+secret_access_key = "minioadmin"
+bucket = "next-gen-test"
+root = "/tiflash"
+
+[raft]
+pd_addr = "127.0.0.1:2379"
+
+[logger]
+level = "debug"
+log = "tiflash-compute.log"
+errorlog = "tiflash-compute-error.log"
+EOF
+
+    TIFLASH_COLUMNAR=true "${tiflash_bin}" server --config-file="${tiflash_config}" > tiflash-compute-stdout.log 2>&1 &
+    tiflash_compute_pid="$!"
 }
 
 function start_minio() {
@@ -90,6 +195,12 @@ function start_minio() {
 }
 
 function cleanup() {
+    if [[ -n "${tiflash_compute_pid}" ]] && kill -0 "${tiflash_compute_pid}" >/dev/null 2>&1; then
+        kill -9 "${tiflash_compute_pid}" || true
+        wait "${tiflash_compute_pid}" >/dev/null 2>&1 || true
+    fi
+    rm -rf "${schema_manager_dir}"
+
     if [[ "$OSTYPE" == "darwin"* ]]; then
         # macOS: no -r option
         killall -9 -q tikv-worker || true

@@ -113,6 +113,8 @@ type Executor interface {
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	CreateMaterializedView(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewStmt) error
+	CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
@@ -1256,14 +1258,26 @@ func (e *executor) CreateTableWithInfo(
 			scatterScope = val
 		}
 
-		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
-		if e.startMode == BR {
-			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
-				return errors.Trace(err)
-			}
+		if err := e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return errors.Trace(err)
+}
+
+func (e *executor) createTableWithInfoPost(
+	ctx sessionctx.Context,
+	tbInfo *model.TableInfo,
+	schemaID int64,
+	scatterScope string,
+) error {
+	preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+	if e.startMode == BR {
+		if err := handleAutoIncID(e.getAutoIDRequirement(), schemaID, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
@@ -1357,11 +1371,8 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
-		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
-		if e.startMode == BR {
-			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
-				return errors.Trace(err)
-			}
+		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
@@ -4955,7 +4966,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
-	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4985,6 +4996,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			SQLMode:                 sqlMode,
 			Global:                  false,
 			IsPK:                    true,
+			AutoPreSplit:            autoPreSplit,
 			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
@@ -5275,7 +5287,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5314,6 +5326,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
+			AutoPreSplit:            autoPreSplit,
 			SplitOpt:                splitOpt,
 			ConditionString:         conditionString,
 		}},
@@ -5333,13 +5346,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
-func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {
+func buildIndexPreSplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, bool, error) {
 	if indexOpt == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	opt := indexOpt.SplitOpt
 	if opt == nil {
-		return nil, nil
+		return nil, indexOpt.AutoPreSplit, nil
 	}
 	if len(opt.ValueLists) > 0 {
 		valLists := make([][]string, 0, len(opt.ValueLists))
@@ -5350,7 +5363,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 				rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 				err := exp.Restore(rCtx)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, false, errors.Trace(err)
 				}
 				values = append(values, sb.String())
 			}
@@ -5359,7 +5372,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		return &model.IndexArgSplitOpt{
 			Num:        opt.Num,
 			ValueLists: valLists,
-		}, nil
+		}, false, nil
 	}
 
 	lowers := make([]string, 0, len(opt.Lower))
@@ -5368,7 +5381,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 		err := expL.Restore(rCtx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		lowers = append(lowers, sb.String())
 	}
@@ -5378,21 +5391,21 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 		err := expU.Restore(rCtx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		uppers = append(uppers, sb.String())
 	}
 	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if opt.Num > maxSplitRegionNum {
-		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+		return nil, false, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
 	} else if opt.Num < 1 {
-		return nil, errors.Errorf("Split index region num should be greater than 0")
+		return nil, false, errors.Errorf("Split index region num should be greater than 0")
 	}
 	return &model.IndexArgSplitOpt{
 		Lower: lowers,
 		Upper: uppers,
 		Num:   opt.Num,
-	}, nil
+	}, false, nil
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
@@ -7691,6 +7704,8 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
+	case model.ActionCreateMaterializedView:
+		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	default:
 		return getIntervalFromPolicy(normalDDLIntervalPolicy, i)
 	}

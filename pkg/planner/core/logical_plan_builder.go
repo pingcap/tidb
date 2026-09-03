@@ -635,6 +635,9 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
 		}
 	}
+	if ds.PreferStoreType != 0 {
+		ds.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanHasStoreTypeHint()
+	}
 }
 
 // findJoinFullSchema walks through single-child wrapper operators (e.g., LogicalSelection
@@ -5001,6 +5004,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
+	if err := CheckMViewReadable(sessionVars, tableInfo, tblName.O); err != nil {
+		return nil, err
+	}
 
 	if tableInfo.GetPartitionInfo() != nil {
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
@@ -5108,13 +5114,28 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// remain tikv access path to generate point get acceess path if existed
 	// see detail in issue: https://github.com/pingcap/tidb/issues/39543
-	if !(b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit) {
+	isForUpdateReadInExplicitTxn := b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit
+	if !isForUpdateReadInExplicitTxn {
 		// Skip storage engine check for CreateView.
 		if b.capFlag&canExpandAST == 0 {
 			possiblePaths, err = util.FilterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
 			if err != nil {
 				return nil, err
 			}
+		}
+	}
+	if b.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+		// FOR UPDATE reads in explicit transactions drop their TiFlash paths
+		// later during physical optimization, so treat them as missing one too.
+		hasTiFlashPath := false
+		for _, path := range possiblePaths {
+			if path.StoreType == kv.TiFlash {
+				hasTiFlashPath = true
+				break
+			}
+		}
+		if !hasTiFlashPath || isForUpdateReadInExplicitTxn {
+			b.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanMissingTiFlashPath()
 		}
 	}
 
@@ -6331,6 +6352,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		cacheColumnsIdx = true
 		columnsIdx = make(map[*ast.ColumnName]int, len(list))
 	}
+	sessionVars := b.ctx.GetSessionVars()
 	for _, assign := range list {
 		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
 		if err != nil {
@@ -6349,6 +6371,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if (tl.Schema.L == "" || tl.Schema.L == name.DBName.L) && (tl.Name.L == name.TblName.L) {
 				if isCTE(tlW) || tlW.TableInfo.IsView() || tlW.TableInfo.IsSequence() {
 					return nil, nil, false, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
+				}
+				if err := CheckMViewUpdatable(sessionVars, tlW.TableInfo, name.TblName.O, "UPDATE"); err != nil {
+					return nil, nil, false, err
 				}
 				foundListItem = true
 			}
@@ -6623,6 +6648,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				DBInfo:    tnW.DBInfo,
 			})
 			tableInfo := tnW.TableInfo
+			if err := CheckMViewUpdatable(sessionVars, tableInfo, tn.Name.O, "DELETE"); err != nil {
+				return nil, err
+			}
 			if tableInfo.IsView() {
 				return nil, errors.Errorf("delete view %s is not supported now", tn.Name.O)
 			}
@@ -6648,6 +6676,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			}
 			if tblW.TableInfo.IsSequence() {
 				return nil, errors.Errorf("delete sequence %s is not supported now", v.Name.O)
+			}
+			if err := CheckMViewUpdatable(sessionVars, tblW.TableInfo, v.Name.O, "DELETE"); err != nil {
+				return nil, err
 			}
 			dbName := v.Schema.L
 			if dbName == "" {

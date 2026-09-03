@@ -1096,7 +1096,15 @@ func (*worker) checkColumnarIndexProcessFromTiKV(jobCtx *jobContext, tbl table.T
 		}
 		tikvStores[store.Store.ID] = store
 	}
-	progress, err := infosync.CalculateColumnarIndexProgress(tbl.Meta().ID, indexID, tikvStores)
+	indexInfo := tbl.Meta().FindIndexByID(indexID)
+	if indexInfo == nil {
+		return false, 0, errors.Errorf("could not find indexInfo by %d", indexID)
+	}
+	columnarIndexType := indexInfo.GetColumnarIndexType()
+	if columnarIndexType == model.ColumnarIndexTypeNA {
+		return false, 0, errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.GenWithStackByArgs("Columnar does not support index types."))
+	}
+	progress, err := infosync.CalculateColumnarIndexProgress(tbl.Meta().ID, indexID, columnarIndexType, tikvStores)
 	if err != nil {
 		return false, 0, err
 	}
@@ -1222,8 +1230,20 @@ SwitchIndexState:
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
+		var statsProvider autoPreSplitStatsProvider
+		for _, idxArg := range args.IndexArgs {
+			if idxArg.AutoPreSplit {
+				statsProvider = w.ddlCtx.statsHandle
+				break
+			}
+		}
+		err = preSplitIndexRegions(
+			jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos,
+			job.ReorgMeta, args, statsProvider)
 		if err != nil {
+			if dbterror.ErrPausedDDLJob.Equal(err) {
+				return ver, nil
+			}
 			if !isRetryableJobError(err, job.ErrorCount) {
 				job.State = model.JobStateCancelled
 			}

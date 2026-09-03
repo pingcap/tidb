@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
@@ -4136,6 +4137,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return nil, err
 	}
+	op := "INSERT"
+	if insert.IsReplace {
+		op = "REPLACE"
+	}
+	if err := CheckMViewUpdatable(b.ctx.GetSessionVars(), tableInfo, tn.Name.O, op); err != nil {
+		return nil, err
+	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), tn.Schema, tableInfo)
 	if err != nil {
@@ -4547,6 +4555,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		options = append(options, &loadDataOpt)
 	}
 	tnW := b.resolveCtx.GetTableName(ld.Table)
+	if err := CheckMViewUpdatable(b.ctx.GetSessionVars(), tnW.TableInfo, tnW.TableInfo.Name.O, "LOAD"); err != nil {
+		return nil, err
+	}
 	p := LoadData{
 		FileLocRef:         ld.FileLocRef,
 		OnDuplicate:        ld.OnDuplicate,
@@ -4792,6 +4803,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	}
 
 	tnW := b.resolveCtx.GetTableName(ld.Table)
+	if err := CheckMViewUpdatable(b.ctx.GetSessionVars(), tnW.TableInfo, tnW.TableInfo.Name.O, "IMPORT"); err != nil {
+		return nil, err
+	}
 	if tnW.TableInfo.TempTableType != model.TempTableNone {
 		return nil, errors.Errorf("IMPORT INTO does not support temporary table")
 	} else if tnW.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
@@ -5634,11 +5648,65 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
+	case *ast.CreateMaterializedViewStmt:
+		err := checkForUserVariables(v.Select)
+		if err != nil {
+			return nil, err
+		}
+		if err := mviewutil.CheckMaterializedViewSelect(v.Select); err != nil {
+			return nil, err
+		}
+		nodeW := resolve.NewNodeWWithCtx(v.Select, b.resolveCtx)
+		plan, err := b.Build(ctx, nodeW)
+		if err != nil {
+			return nil, err
+		}
+		if len(v.Cols) != plan.Schema().Len() {
+			return nil, dbterror.ErrViewWrongList
+		}
+		dbName := v.ViewName.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if dbName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, v.ViewName.Name.L, "", authErr)
+	case *ast.CreateMaterializedViewLogStmt:
+		dbName := v.Table.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if dbName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
+		var createAuthErr, selectAuthErr error
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			createAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE MATERIALIZED VIEW LOG", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
+			selectAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, mlogName.L, "", createAuthErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, v.Table.Name.L, "", selectAuthErr)
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
 	}
 	p := &DDL{Statement: node}
 	return p, nil
+}
+
+func (b *PlanBuilder) materializedViewLogNameForBaseTable(ctx context.Context, dbName string, baseName ast.CIStr) ast.CIStr {
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if baseTable, err := b.is.TableByName(ctx, ast.NewCIStr(dbName), baseName); err == nil {
+		return model.MaterializedViewLogTableName(baseTable.Meta().Name)
+	}
+	return model.MaterializedViewLogTableName(baseName)
 }
 
 const (

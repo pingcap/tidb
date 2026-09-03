@@ -394,6 +394,7 @@ go_test(
         "resource_tag_test.go",
         "revoke_test.go",
         "sample_test.go",
+        "select_internal_test.go",
         "select_into_test.go",
         "select_test.go",
         "set_internal_test.go",
