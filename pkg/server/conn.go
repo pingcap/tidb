@@ -2442,12 +2442,8 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 }
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
-<<<<<<< HEAD
-=======
-	oldResourceGroup := cc.currentResourceGroupName()
 	oldUser, oldDBName, oldAuthPlugin := cc.user, cc.dbname, cc.authPlugin
 	oldCtx := cc.getCtx()
->>>>>>> f1be26c3f1c (server: restore session on change user auth failure (#69692))
 	user, data := util2.ParseNullTermString(data)
 	newUser := string(hack.String(user))
 	if len(data) < 1 {
@@ -2477,8 +2473,6 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	cc.user = newUser
 	cc.dbname = newDBName
 	err := cc.openSession()
-<<<<<<< HEAD
-=======
 	restoreOldSession := func() {
 		if newCtx := cc.getCtx(); newCtx != nil && newCtx != oldCtx {
 			if err := newCtx.Close(); err != nil {
@@ -2490,7 +2484,6 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		cc.dbname = oldDBName
 		cc.authPlugin = oldAuthPlugin
 	}
->>>>>>> f1be26c3f1c (server: restore session on change user auth failure (#69692))
 	if err != nil {
 		restoreOldSession()
 		return err
@@ -2514,12 +2507,8 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			fakeResp.Auth = newpass
 		}
 	}
-<<<<<<< HEAD
 	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin); err != nil {
-=======
-	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
 		restoreOldSession()
->>>>>>> f1be26c3f1c (server: restore session on change user auth failure (#69692))
 		return err
 	}
 	if oldCtx != nil {
@@ -2527,7 +2516,6 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 			logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 		}
 	}
-	cc.moveResourceGroupCounter(oldResourceGroup)
 	return cc.handleCommonConnectionReset(ctx)
 }
 
