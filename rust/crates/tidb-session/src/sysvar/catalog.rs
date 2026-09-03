@@ -37,6 +37,7 @@ mod gc;
 mod innodb;
 mod logging;
 mod memory_limits;
+mod mview;
 mod mysql_compat_inert;
 mod observability;
 mod optimizer;
@@ -61,6 +62,7 @@ const SLICES: &[&[SysVarDef]] = &[
     &innodb::ENTRIES,
     &logging::ENTRIES,
     &memory_limits::ENTRIES,
+    &mview::ENTRIES,
     &mysql_compat_inert::ENTRIES,
     &observability::ENTRIES,
     &optimizer::ENTRIES,
@@ -85,6 +87,7 @@ const TOTAL: usize = concurrency::ENTRIES.len()
     + innodb::ENTRIES.len()
     + logging::ENTRIES.len()
     + memory_limits::ENTRIES.len()
+    + mview::ENTRIES.len()
     + mysql_compat_inert::ENTRIES.len()
     + observability::ENTRIES.len()
     + optimizer::ENTRIES.len()

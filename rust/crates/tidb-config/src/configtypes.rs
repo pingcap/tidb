@@ -59,7 +59,7 @@ fn format_g4(v: f64) -> String {
 
 /// go-units `RAMInBytes`: parses a human size with binary units (both `KB`
 /// and `KiB` mean 1024).
-fn ram_in_bytes(size: &str) -> Result<i64, String> {
+pub fn ram_in_bytes(size: &str) -> Result<i64, String> {
     // docker/go-units v0.5.0 `parseSize`: the numeric prefix is everything
     // through the last digit, period, or separating space. In particular,
     // this deliberately accepts the exponent and leading-plus forms accepted

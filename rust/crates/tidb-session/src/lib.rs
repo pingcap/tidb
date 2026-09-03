@@ -2089,6 +2089,8 @@ mod tests_mixed_sign_index_join;
 mod tests_modify_column_null;
 mod tests_multi_table_dml;
 #[cfg(test)]
+mod tests_mview_session_vars;
+#[cfg(test)]
 mod tests_non_prepared_plan_cache;
 #[cfg(test)]
 mod tests_outer_join_elimination;

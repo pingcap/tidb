@@ -42,6 +42,25 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 2, `pkg/sessionctx/variable` + `pkg/sessionctx/vardef`):
+  aligned the sessionctx slice of Go master `94a9cbedab`'s materialized-view
+  commit: the five `tidb_mview_*` variable names and defaults plus
+  `MaxConfigurableConcurrency` in `tidb-vardef`; five registry entries, the
+  shared `normalizeIsolationReadEnginesValue` helper (now also wired for the
+  pre-existing `tidb_isolation_read_engines`, closing that SET's case/
+  empty/unknown validation gap), the `<128 → 128` mem-quota truncated-value
+  clamp, the go-units disk-quota check, the `MViewExecutionSessionVars`
+  capture/apply/restore machinery with Go's twelve ordered assignments and
+  best-effort/strict failure semantics (Go's restore closure becomes a
+  restore handle taking the session), and the programmatic
+  `InMViewMaintenance` flag. Eleven source-derived regressions pass with
+  fail-before evidence from reverting the validation cases; vardef+config
+  suites 143/143; the full `tidb-session` failure set is identical to the
+  pre-batch base commit (690 documented pre-existing baseline failures,
+  zero new). Go's `SetSession` hook halves follow the crate's documented
+  hooks-not-modelled policy. Receipt:
+  `receipts/sessionctx_variable_mview.md`.
+
 - 2026-09-03 (batch 1, `pkg/meta/model`): implemented Go master
   `94a9cbedab`'s materialized-view metadata in `tidb-model`: action types
   85/86 with names and BDR `SafeDDL` classification, `MayNeedReorg`/

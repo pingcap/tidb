@@ -99,6 +99,22 @@ const SYSVAR_NAME_CONSTANTS: &[(&str, &str)] = &[
     ("TIDB_BATCH_COMMIT", "tidb_batch_commit"),
     ("TIDB_DML_BATCH_SIZE", "tidb_dml_batch_size"),
     ("TIDB_MEM_QUOTA_QUERY", "tidb_mem_quota_query"),
+    (
+        "TIDB_MVIEW_MAINTAIN_MEM_QUOTA",
+        "tidb_mview_maintain_mem_quota",
+    ),
+    (
+        "TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES",
+        "tidb_mview_maintain_isolation_read_engines",
+    ),
+    (
+        "TIDB_MVIEW_MAINTAIN_IMPORT_THREADS",
+        "tidb_mview_maintain_import_threads",
+    ),
+    (
+        "TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA",
+        "tidb_mview_maintain_import_disk_quota",
+    ),
     ("TIDB_MEM_QUOTA_APPLY_CACHE", "tidb_mem_quota_apply_cache"),
     ("TIDB_GENERAL_LOG", "tidb_general_log"),
     ("TIDB_TRACE_EVENT", "tidb_trace_event"),
@@ -875,6 +891,7 @@ const SYSVAR_NAME_CONSTANTS: &[(&str, &str)] = &[
     ),
     ("TIDB_OPT_ENABLE_HASH_JOIN", "tidb_opt_enable_hash_join"),
     ("TIDB_ENABLE_FULL_OUTER_JOIN", "tidb_enable_full_outer_join"),
+    ("TIDB_MVIEW_ENABLE", "tidb_mview_enable"),
     ("TIDB_HASH_JOIN_VERSION", "tidb_hash_join_version"),
     ("TIDB_OPT_INDEX_JOIN_BUILD", "tidb_opt_index_join_build_v2"),
     ("TIDB_OPT_OBJECTIVE", "tidb_opt_objective"),
