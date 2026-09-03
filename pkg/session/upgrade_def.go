@@ -2293,6 +2293,61 @@ func upgradeToVer283(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumTopN, vardef.DefTiDBAnalyzeDefaultNumTopN)
 }
 
+func upgradeToVer284(s sessionapi.Session, _ int64) {
+	if kerneltype.IsClassic() {
+		return
+	}
+
+	const legacyVariable = "tidb_disable_txn_file"
+	// TODO: Delete the legacy variable after rolling upgrade and downgrade compatibility is no longer required.
+
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			failpoint.InjectCall("afterUpgradeToVer284Rollback", s)
+			logutil.BgLogger().Fatal("upgradeToVer284 error", zap.Error(err))
+			return
+		}
+		mustExecute(s, "COMMIT")
+		failpoint.InjectCall("afterUpgradeToVer284Commit", s)
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%? FOR UPDATE;", mysql.SystemDB, mysql.GlobalVariablesTable, legacyVariable)
+	if err != nil {
+		return
+	}
+	failpoint.InjectCall("afterUpgradeToVer284Read", s)
+	if len(rows) == 0 {
+		return
+	}
+
+	_, err = sqlexec.ExecSQL(ctx, s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable,
+		vardef.TiDBEnableTxnFile, variable.BoolToOnOff(!variable.TiDBOptOn(rows[0].GetString(0))))
+	if err != nil {
+		return
+	}
+	failpoint.InjectCall("afterUpgradeToVer284Replace", s)
+	failpoint.Inject("mockUpgradeToVer284Error", func() {
+		err = context.Canceled
+	})
+}
+
+func upgradeToVer285(s sessionapi.Session, _ int64) {
+	for _, tbl := range systemTablesOfMaterializedViewNextGenVersion {
+		doReentrantDDL(s, tbl.SQL)
+	}
+}
+
+func upgradeToVer286(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
+}
+
 func upgradeToVer287(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER filter_hash", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER source_filter_strings", infoschema.ErrColumnExists)
