@@ -55,10 +55,14 @@ fn resolve_index_hints_for_partition(
         has_affinity: source.has_affinity,
         ..Default::default()
     };
+    // Go re-runs getPossibleAccessPaths ONCE with the per-partition-filtered
+    // hint list. The resolved `index_hints` carry the partition scoping (the
+    // raw ast form does not), so pass only that list — feeding both makes the
+    // matcher apply every hint twice.
     let resolution = crate::access_path::apply_table_index_hints(
         &table,
         &source.public_enumerated_paths,
-        &source.ast_index_hints,
+        &[],
         &source.index_hints,
         true,
         source.force_no_index_lookup_push_down,
@@ -337,6 +341,11 @@ mod tests {
 
     #[test]
     fn ordinary_index_hints_are_resolved_per_static_partition() {
+        let ast_hint = |kind: tidb_ast::IndexHintKind, name: &str| tidb_ast::IndexHint {
+            kind,
+            scope: tidb_ast::IndexHintScope::All,
+            indexes: vec![name.to_owned()],
+        };
         let hinted = |name: &str, partitions: &[&str]| DataSourceIndexHint {
             kind: tidb_ast::IndexHintKind::Use,
             index_names: vec![name.to_owned()],
@@ -379,6 +388,16 @@ mod tests {
                 hinted("idx_p0", &["p0"]),
                 hinted("idx_p1", &["P1"]),
             ],
+            // Mirror the production flow: `apply_table_index_hints` matches
+            // from the raw AST hint list, so it must travel with the
+            // resolved list.
+            ast_index_hints: vec![
+                ast_hint(tidb_ast::IndexHintKind::Use, "idx_all"),
+                ast_hint(tidb_ast::IndexHintKind::Use, "idx_p0"),
+                ast_hint(tidb_ast::IndexHintKind::Use, "idx_p1"),
+            ],
+            isolation_read_engines_value: "tikv".to_owned(),
+            tikv_in_isolation_read: true,
             ..DataSource::default()
         };
 

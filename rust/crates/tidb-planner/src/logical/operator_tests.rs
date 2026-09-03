@@ -1705,8 +1705,10 @@ fn union_all_repairs_only_a_child_wider_than_itself() {
 #[test]
 fn union_all_child_topn_folds_the_offset_into_the_count() {
     let allocator = PlanIdAllocator::new();
+    // The child allocates its plan id from the same allocator; hardcode a
+    // non-allocating id for the original so the identity assert is exact.
     let mut topn = LogicalTopN::new(
-        BaseLogicalPlan::with_id(1, LogicalTopN::TYPE, 2),
+        BaseLogicalPlan::with_id(1000, LogicalTopN::TYPE, 2),
         vec![by(col_expr(7), true)],
         10,
         5,

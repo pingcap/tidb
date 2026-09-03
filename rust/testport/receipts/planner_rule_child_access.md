@@ -493,6 +493,38 @@ Same comparison source (Go `origin/master` at `a85e0fd5df`):
   case is the same `Args[0]` contract already covered by the batch-6
   first-row regressions.
 
+## Follow-up batch: deterministic baseline-failure triage (1 of 2)
+
+The five known baseline `--lib` failures are NOT test-isolation flake: all
+five reproduce single-threaded. Three were fixed here, each after a Go
+comparison:
+
+- `check_index_can_be_key` (Go `CheckIndexCanBeKey`, `rule/util/misc.go:166`):
+  the source column list and the live schema can diverge under upper-layer
+  pruning while FD extraction re-reads the schema; a key column pruned from
+  the schema now disqualifies the index (returning empty keys), matching
+  Go's pruned `PKOrUK`/`NullableUK` outcome instead of an out-of-range panic
+  Go's full-schema-only caller never reaches.
+- `union_all_child_topn_folds_the_offset_into_the_count`: the test hardcoded
+  plan id 1 while `push_down_topn_for_child` allocates a fresh id from the
+  same allocator; the production code is correct and the fixture now uses a
+  non-allocating id.
+- `ordinary_index_hints_are_resolved_per_static_partition`: the per-partition
+  re-resolution fed BOTH the ast hint list and the resolved list into
+  `apply_table_index_hints`, double-applying every hint
+  (`[0,1,2,0,2]`). Go re-runs `getPossibleAccessPaths` ONCE with the
+  per-partition-filtered list; the partition resolution now passes only the
+  resolved (partition-scoped) list.
+
+Still open (diagnosed): the recursive-CTE-without-union test asserts Go's
+`ErrCTERecursiveForbidsAggregation`, but Go's `buildCTE` default arm
+(`logical_plan_builder.go:7931-7937`) refines
+`ErrCTERecursiveRequiresNonRecursiveFirst` into
+`ErrCTERecursiveRequiresUnion` — the refinement (and the tested seed-build
+path) is not wired in Rust yet; and `task.rs:1422` expects
+`index_lookup_push_down` to be set — both owe implementation before their
+tests can pass.
+
 ## Risks
 
 - Correctness: malformed subtrees now panic at the same index Go panics at;

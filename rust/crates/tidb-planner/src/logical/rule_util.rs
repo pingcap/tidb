@@ -173,7 +173,15 @@ pub fn check_index_can_be_key(
             if tidb_ast::CiString::new(&source_column.name) != index_column_name {
                 continue;
             }
-            let column = schema.columns[position].clone();
+            // The schema may be pruned relative to the source column list
+            // (upper-layer pruning keeps `source.columns` whole while FD
+            // extraction re-reads the live schema); a key column pruned from
+            // the schema disqualifies the index, matching Go's pruned
+            // `PKOrUK`/`NullableUK` outcome.
+            let Some(column) = schema.columns.get(position) else {
+                return (None, None);
+            };
+            let column = column.clone();
             unique_key.push(column.clone());
             found = true;
             if strong {

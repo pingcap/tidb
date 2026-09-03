@@ -42,6 +42,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: triaged the five deterministic baseline `--lib` failures
+  (single-threaded reproduction: no isolation flake). Fixed three —
+  `check_index_can_be_key` pruned-schema rejection, the union-all child-TopN
+  fixture id collision, and the per-partition index-hint double-application —
+  and diagnosed the remaining two (recursive-CTE error refinement and
+  `index_lookup_push_down`) to specific unwired Go paths. See
+  `receipts/planner_rule_child_access.md`.
+
 - 2026-09-03: audited the doc-admitted narrowings of `tidb-planner` into
   `receipts/planner_doc_admitted_narrowings.md` (audit-only, no code
   change): sixteen self-declared refusals/narrowings across cost, enforce,
