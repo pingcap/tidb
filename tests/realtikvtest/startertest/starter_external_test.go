@@ -442,6 +442,42 @@ func TestExternalStarterSysVarContracts(t *testing.T) {
 			assert.NoError(collect, err)
 			assert.Equal(collect, 1, matches)
 		}, 2*time.Minute, time.Second, "fulltext query did not execute through the columnar AP topology")
+
+		const alterTableName = "starter_external.fts_columnar_ap_alter"
+		require.NoError(t, execSQL(columnarCtx, db, "drop table if exists "+alterTableName))
+		t.Cleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cleanupCancel()
+			require.NoError(t, execSQL(cleanupCtx, db, "drop table if exists "+alterTableName))
+		})
+		require.NoError(t, execSQL(columnarCtx, db, "create table "+alterTableName+" (id int primary key, title text)"))
+		require.NoError(t, execSQL(columnarCtx, db, "insert into "+alterTableName+" values (1, 'columnar AP baseline'), (2, 'starter columnar search')"))
+		require.NoError(t, execSQL(columnarCtx, db, "alter table "+alterTableName+" set tiflash replica 1"))
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			var replicaCount int
+			var available int
+			var progress float64
+			err := db.QueryRowContext(columnarCtx, "select REPLICA_COUNT, AVAILABLE, PROGRESS from information_schema.tiflash_replica where table_schema = 'starter_external' and table_name = 'fts_columnar_ap_alter'").Scan(&replicaCount, &available, &progress)
+			assert.NoError(collect, err)
+			assert.Equal(collect, 1, replicaCount)
+			assert.Equal(collect, 1, available)
+			assert.Equal(collect, float64(1), progress)
+		}, 2*time.Minute, time.Second, "columnar replica did not finish building before adding fulltext index")
+		require.NoError(t, execSQL(columnarCtx, db, "alter table "+alterTableName+" add fulltext key ft_title(title)"))
+
+		alterFTSQuery := "select count(*) from " + alterTableName + " where fts_match_word('starter', title)"
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			plan, err := queryPlanText(columnarCtx, db, alterFTSQuery)
+			assert.NoError(collect, err)
+			assert.Contains(collect, plan, "mpp[tiflash]")
+			assert.Contains(collect, plan, "ftsIndex:")
+		}, 2*time.Minute, time.Second, "fulltext index added after table creation was not planned through the columnar execution path")
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			var matches int
+			err := db.QueryRowContext(columnarCtx, alterFTSQuery).Scan(&matches)
+			assert.NoError(collect, err)
+			assert.Equal(collect, 1, matches)
+		}, 2*time.Minute, time.Second, "fulltext index added after table creation did not execute through the columnar AP topology")
 	})
 }
 
