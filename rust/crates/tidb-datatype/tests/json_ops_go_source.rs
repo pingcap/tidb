@@ -115,3 +115,31 @@ fn binary_json_operations_answer_exactly_what_go_answers() {
         failures.join("\n")
     );
 }
+
+/// Go `parseArray`'s `tryReadString(toStr)` (`json_path_expr.go:462-480`)
+/// consumes `to` and only rewinds on failure, so `$[N to]` degrades to
+/// `$[N]` when the character after `to` is not whitespace.
+#[test]
+fn json_path_array_index_with_dangling_to_is_a_plain_index_like_go() {
+    let parsed = parse_json_path_expr("$[0 to]").expect("Go parses `$[0 to]` as `$[0]`");
+    assert!(!parsed.contains_any_asterisk());
+    let legs = parsed.legs();
+    assert_eq!(legs.len(), 1);
+    assert!(
+        matches!(
+            legs[0],
+            tidb_datatype::JSONPathLeg::Array(
+                tidb_datatype::JSONPathArraySelection::Index(0)
+            )
+        ),
+        "legs: {:?}",
+        legs
+    );
+
+    for bad in ["$[0 tox]", "$[0 to3]", "$[0 to ]"] {
+        assert!(
+            parse_json_path_expr(bad).is_err(),
+            "{bad} is rejected by both engines"
+        );
+    }
+}

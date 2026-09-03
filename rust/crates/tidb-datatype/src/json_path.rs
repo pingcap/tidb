@@ -307,16 +307,23 @@ impl Parser {
             let after_start = self.position;
             let had_space = self.skip_whitespace();
             if had_space && self.consume_word("to") {
-                if !self.peek().is_some_and(char::is_whitespace) {
-                    return self.invalid();
+                // Go `tryReadString(toStr)` (`json_path_expr.go:462-480`)
+                // consumes `to` and only rewinds on failure, so when the
+                // following character is NOT whitespace the stream stays
+                // PAST `to` and the selection degrades to a plain index —
+                // `$[0 to]` parses as `$[0]`. Only whitespace after `to`
+                // opens a range.
+                if self.peek().is_some_and(char::is_whitespace) {
+                    self.skip_whitespace();
+                    let end = self.parse_index()?;
+                    if ((start >= 0 && end >= 0) || (start < 0 && end < 0)) && start > end {
+                        return self.invalid();
+                    }
+                    expression.flags |= CONTAINS_RANGE;
+                    JSONPathArraySelection::Range { start, end }
+                } else {
+                    JSONPathArraySelection::Index(start)
                 }
-                self.skip_whitespace();
-                let end = self.parse_index()?;
-                if ((start >= 0 && end >= 0) || (start < 0 && end < 0)) && start > end {
-                    return self.invalid();
-                }
-                expression.flags |= CONTAINS_RANGE;
-                JSONPathArraySelection::Range { start, end }
             } else {
                 self.position = after_start;
                 JSONPathArraySelection::Index(start)

@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: closed divergence item 8 (`tidb-datatype` json path): a
+  dangling `to` in `$[N to]` degrades to a plain index exactly as Go's
+  `tryReadString` leaves the stream past `to` (`json_path_expr.go:462-480`),
+  instead of erroring 3143; `$[0 tox]`/`$[0 to3]`/`$[0 to ]` stay rejected.
+  One Go-derived regression proven to fail pre-fix. See
+  `receipts/datatype_json_fieldtype_receipt.md`.
+
 - 2026-09-03: closed divergence item 3 (`tidb-parser` predicate/`IS`
   chaining) with Go master `a85e0fd5df`: both `parseInfixExpr` latches
   (`noMorePredicate`, `noMoreIS`) are implemented with Go's exact arm
