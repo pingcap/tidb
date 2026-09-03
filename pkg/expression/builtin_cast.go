@@ -1476,8 +1476,12 @@ func (b *builtinCastRealAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (typ
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
 	}
-	// MySQL compatibility: 0 should not be converted to null, see #11203
 	fv := strconv.FormatFloat(val, 'f', -1, 64)
+	if b.tp.GetType() == mysql.TypeDate && val > -1 && val < 1 {
+		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), fv)
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
+	}
+	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if fv == "0" {
 		return types.ZeroTime, false, nil
 	}
