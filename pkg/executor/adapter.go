@@ -1793,6 +1793,28 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 const readBillingDemoGeneralLogMessage = "GENERAL_LOG_RU_UNITS"
 
+type readBillingDemoGeneralLogStatus stmtsummary.ReadBillingDemoStatusSample
+
+func (s readBillingDemoGeneralLogStatus) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("site", s.Site)
+	enc.AddString("op_class", s.OpClass)
+	enc.AddString("operator_kind", s.OperatorKind)
+	enc.AddString("status", s.Status)
+	enc.AddString("reason", s.Reason)
+	return nil
+}
+
+type readBillingDemoGeneralLogStatuses []stmtsummary.ReadBillingDemoStatusSample
+
+func (statuses readBillingDemoGeneralLogStatuses) MarshalLogArray(enc zapcore.ArrayEncoder) error {
+	for _, status := range statuses {
+		if err := enc.AppendObject(readBillingDemoGeneralLogStatus(status)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type readBillingDemoGeneralLogUnit struct {
 	site         string
 	opClass      string
@@ -1909,6 +1931,7 @@ func emitReadBillingDemoGeneralLog(sctx sessionctx.Context, stats stmtsummary.Re
 		zap.String("weight_version", stats.WeightVersion),
 		zap.String("normalized_sql", normalizedSQL),
 		zap.String("sql_digest", digestString),
+		zap.Array("statuses", readBillingDemoGeneralLogStatuses(stats.Statuses)),
 		zap.Array("units", buildReadBillingDemoGeneralLogUnits(stats)),
 	)
 }

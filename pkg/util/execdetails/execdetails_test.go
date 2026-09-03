@@ -1077,6 +1077,39 @@ func TestBasicRuntimeStatsBytes(t *testing.T) {
 	require.Equal(t, int64(22), stats.GetOutputBytes())
 }
 
+func TestLogicalLookupKeys(t *testing.T) {
+	var absent *BasicRuntimeStats
+	absent.RecordLogicalLookupKeys(1)
+	_, present := absent.GetLogicalLookupKeys()
+	require.False(t, present)
+	stats := &BasicRuntimeStats{}
+	_, present = stats.GetLogicalLookupKeys()
+	require.False(t, present)
+	stats.RecordLogicalLookupKeys(0)
+	keys, present := stats.GetLogicalLookupKeys()
+	require.True(t, present)
+	require.Zero(t, keys)
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for range 100 {
+				stats.RecordLogicalLookupKeys(3)
+			}
+		})
+	}
+	wg.Wait()
+	merged := &BasicRuntimeStats{}
+	merged.Merge(stats)
+	keys, present = merged.GetLogicalLookupKeys()
+	require.True(t, present)
+	require.Equal(t, int64(1200), keys)
+	collection := NewRuntimeStatsColl(nil)
+	collection.GetBasicRuntimeStats(1, true).RecordLogicalLookupKeys(3)
+	collection = NewRuntimeStatsColl(collection)
+	_, present = collection.GetBasicRuntimeStats(1, false).GetLogicalLookupKeys()
+	require.False(t, present)
+}
+
 func TestFormatDurationForExplain(t *testing.T) {
 	cases := []struct {
 		t string

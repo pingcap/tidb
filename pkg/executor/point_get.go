@@ -305,6 +305,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
+	e.RecordLogicalLookupKeys(0)
 
 	var err error
 	tblID := GetPhysID(e.tblInfo, e.partitionDefIdx)
@@ -328,6 +329,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			e.idxKey, err = physicalop.EncodeUniqueIndexKey(e.Ctx(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
 			if err != nil && !kv.ErrNotExist.Equal(err) {
 				return err
+			}
+			if len(e.idxKey) > 0 {
+				e.RecordLogicalLookupKeys(1)
 			}
 
 			// lockNonExistIdxKey indicates the key will be locked regardless of its existence.
@@ -403,6 +407,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
+	e.RecordLogicalLookupKeys(1)
 	val, err := e.getAndLock(ctx, key)
 	if err != nil {
 		return err

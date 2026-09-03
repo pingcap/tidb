@@ -245,6 +245,7 @@ func (e *IndexNestedLoopHashJoin) wait4JoinWorkers() {
 // Next implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !e.prepared {
+		e.RecordLogicalLookupKeys(0)
 		e.startWorkers(ctx, req.RequiredRows())
 		e.prepared = true
 	}

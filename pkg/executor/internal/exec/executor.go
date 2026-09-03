@@ -441,6 +441,14 @@ func (e *executorStats) RuntimeStats() *execdetails.BasicRuntimeStats {
 	return e.runtimeStats
 }
 
+// RecordLogicalLookupKeys records experimental lookup inputs only when RU
+// runtime collection is enabled. A zero marks an executed, empty lookup stage.
+func (e *executorStats) RecordLogicalLookupKeys(keys int64) {
+	if e.collectRuntimeBytes {
+		e.runtimeStats.RecordLogicalLookupKeys(keys)
+	}
+}
+
 // RegisterSQLAndPlanInExecForTopProfiling registers the current SQL and Plan on top profiling.
 func (e *executorStats) RegisterSQLAndPlanInExecForTopProfiling() {
 	if topsqlstate.TopProfilingEnabled() && e.isSQLAndPlanRegistered.CompareAndSwap(false, true) {

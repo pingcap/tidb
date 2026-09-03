@@ -433,6 +433,61 @@ func (*readBillingDemoNilEmbeddedPointStatsForTest) Tp() int {
 	return execdetails.TpRuntimeStatsWithSnapshot
 }
 
+func TestReadBillingDemoLogicalLookupKeys(t *testing.T) {
+	ctx := mock.NewContext()
+	pointPlan := physicalop.PointGetPlan{TblInfo: &model.TableInfo{}}
+	pointPlan.SetSchema(expression.NewSchema())
+	point := pointPlan.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+	runtime := execdetails.NewRuntimeStatsColl(nil)
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtime
+	stmt := &ast.SelectStmt{}
+	baseline := buildReadBillingDemoResult(ctx, point, stmt, nil, nil)
+	require.Empty(t, baseline.lookupKeys)
+	baselineStatuses := buildReadBillingDemoStatementStats(baseline).Statuses
+	for _, count := range []int64{0, 3} {
+		runtime.GetBasicRuntimeStats(point.ID(), true).RecordLogicalLookupKeys(count)
+		result := buildReadBillingDemoResult(ctx, point, stmt, nil, nil)
+		require.Equal(t, baseline.operators, result.operators)
+		require.Equal(t, baseline.status, result.status)
+		require.Len(t, result.lookupKeys, 1)
+		stats := buildReadBillingDemoStatementStats(result)
+		require.Equal(t, baselineStatuses, stats.Statuses)
+		require.Len(t, stats.BaseUnits, 1)
+		require.Equal(t, readBillingDemoUnitLogicalLookupKeys, stats.BaseUnits[0].Unit)
+		require.Equal(t, float64(count), stats.BaseUnits[0].Value)
+	}
+
+	previous := readBillingDemoV6Weights
+	t.Cleanup(func() { readBillingDemoV6Weights = previous })
+	readBillingDemoV6Weights = readBillingDemoWeights{
+		ModelVersion: readBillingDemoModelVersion, Version: "test-lookup-calibrated", Calibrated: true,
+		CPUWeight: 2, ScanWeight: 3, NetWeight: 5, HashTableWeight: 7, JoinWeight: 11,
+		WriteKeyWeight: 13, WriteBytesWeight: 17, FrontendCompileWeight: 19, MutationBytesPerCPUUnit: 10,
+	}
+	result := readBillingDemoResult{
+		status: readBillingDemoStatusSuccess,
+		operators: []readBillingDemoOperatorResult{{
+			id: "Projection_1", site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassProjection,
+			operatorKind: "projection", status: readBillingDemoStatusOperatorOK,
+			units: []readBillingDemoUnit{{unit: readBillingDemoUnitCPUWork, value: 4}},
+		}},
+	}
+	before := explainRUBuildReadBillingRows(result, explainRUComponentSnapshotOK)
+	appendReadBillingDemoLookupKeys(&result, ctx, point, stmt)
+	after := explainRUBuildReadBillingRows(result, explainRUComponentSnapshotOK)
+	require.Equal(t, before[0], after[0])
+	require.Equal(t, 8.0, after[0].previewRU)
+	require.Len(t, after, len(before)+1)
+	row := after[len(after)-1]
+	require.Equal(t, int64(3), row.count)
+	require.True(t, row.hasCount)
+	require.False(t, row.hasWeight)
+	require.False(t, row.hasPreviewRU)
+	require.Contains(t, row.note, "diagnostic_only=true")
+	_, priced := readBillingDemoUnitWeight(readBillingDemoV6Weights, readBillingDemoUnitLogicalLookupKeys)
+	require.False(t, priced)
+}
+
 func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 	t.Run("subquery execution classes", func(t *testing.T) {
 		ctx := mock.NewContext()

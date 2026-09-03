@@ -696,7 +696,8 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 		require.Len(t, afterClose, 1)
 		require.Equal(t, "GENERAL_LOG_RU_UNITS", afterClose[0].Message)
 		completionFields := afterClose[0].ContextMap()
-		require.Len(t, completionFields, 6)
+		require.Len(t, completionFields, 7)
+		require.Contains(t, completionFields, "statuses")
 		require.Contains(t, completionFields, "conn")
 		require.Contains(t, completionFields, "model_version")
 		require.Contains(t, completionFields, "weight_version")
@@ -754,7 +755,11 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 				requireReadBillingDemoGeneralLogIdentity(t, completionEntries[0], tc.querySQL)
 				rawUnits, ok := completionEntries[0].ContextMap()["units"].([]any)
 				require.True(t, ok)
-				require.Empty(t, rawUnits)
+				// Incomplete physical scan detail still blocks priced primitives,
+				// but independently observed logical inputs remain available.
+				require.Len(t, rawUnits, 1)
+				require.Equal(t, "logical_lookup_keys", rawUnits[0].(map[string]any)["unit"])
+				require.NotEmpty(t, completionEntries[0].ContextMap()["statuses"])
 			})
 		}
 	})

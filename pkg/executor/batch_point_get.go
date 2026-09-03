@@ -250,6 +250,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
+	e.RecordLogicalLookupKeys(0)
 	var handleVals map[string]kv.ValueEntry
 	var indexKeys []kv.Key
 	var err error
@@ -315,6 +316,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
+		e.RecordLogicalLookupKeys(int64(len(toFetchIndexKeys)))
 		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
 		if err != nil {
 			return err
@@ -441,6 +443,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 	}
 	// Fetch all values.
+	e.RecordLogicalLookupKeys(int64(len(keys)))
 	values, err = batchGetter.BatchGet(ctx, keys)
 	if err != nil {
 		return err

@@ -120,6 +120,10 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 	stats := stmtsummary.ReadBillingDemoStatementStats{
 		ModelVersion:  "v6",
 		WeightVersion: "test-v6-calibrated",
+		Statuses: []stmtsummary.ReadBillingDemoStatusSample{{
+			Site: "statement", OpClass: "statement", OperatorKind: "statement",
+			Status: "unknown_input", Reason: "incomplete_point_scan_detail",
+		}},
 		BaseUnits: []stmtsummary.ReadBillingDemoBaseUnitSample{
 			{
 				Site: "tikv", OpClass: "join_hash", OperatorKind: "hashjoin", Unit: "input_rows", Value: 2,
@@ -178,7 +182,11 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.Equal(t, readBillingDemoGeneralLogMessage, entries[0].Message)
 	fields := entries[0].ContextMap()
-	require.Len(t, fields, 6)
+	require.Len(t, fields, 7)
+	require.Equal(t, []any{map[string]any{
+		"site": "statement", "op_class": "statement", "operator_kind": "statement",
+		"status": "unknown_input", "reason": "incomplete_point_scan_detail",
+	}}, fields["statuses"])
 	require.Equal(t, uint64(42), fields["conn"])
 	require.Equal(t, "v6", fields["model_version"])
 	require.Equal(t, "test-v6-calibrated", fields["weight_version"])
@@ -260,7 +268,8 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 	entries = recorded.TakeAll()
 	require.Len(t, entries, 1)
 	fields = entries[0].ContextMap()
-	require.Len(t, fields, 6)
+	require.Len(t, fields, 7)
+	require.Empty(t, fields["statuses"])
 	require.NotContains(t, fields, "status")
 	require.NotContains(t, fields, "reason")
 	rawUnits, ok = fields["units"].([]any)

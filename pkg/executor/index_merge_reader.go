@@ -852,6 +852,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 }
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (_ exec.Executor, err error) {
+	e.RecordLogicalLookupKeys(int64(len(handles)))
 	tableReaderExec := &TableReaderExecutor{
 		BaseExecutorV2:             exec.NewBaseExecutorV2(e.Ctx().GetSessionVars(), e.Schema(), e.getTablePlanRootID()),
 		tableReaderExecutorContext: newTableReaderExecutorContext(e.Ctx()),
@@ -879,6 +880,7 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 // Next implements Executor Next interface.
 func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !e.workerStarted {
+		e.RecordLogicalLookupKeys(0)
 		if err := e.startWorkers(ctx); err != nil {
 			return err
 		}

@@ -282,6 +282,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 // Next implements the Executor interface.
 func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !e.prepared {
+		e.RecordLogicalLookupKeys(0)
 		e.startWorkers(ctx, req.RequiredRows())
 		e.prepared = true
 	}
@@ -637,6 +638,11 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 
 	for i := range task.encodedLookUpKeys {
 		task.memTracker.Consume(task.encodedLookUpKeys[i].MemoryUsage())
+	}
+	// Equal keys from different outer rows remain separate logical inputs,
+	// independent of the executor's batch size and deduplication.
+	if iw.lookup != nil {
+		iw.lookup.RecordLogicalLookupKeys(int64(len(lookUpContents)))
 	}
 	lookUpContents = iw.sortAndDedupLookUpContents(lookUpContents)
 	return lookUpContents, nil

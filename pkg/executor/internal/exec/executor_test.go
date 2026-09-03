@@ -143,6 +143,26 @@ func TestNextRecordsRuntimeBytesForReadBilling(t *testing.T) {
 	require.Equal(t, int64(28), parentStats.GetOutputBytes())
 }
 
+func TestLogicalLookupKeysCollectionGate(t *testing.T) {
+	for _, mode := range []string{"off", "demo", "explain"} {
+		t.Run(mode, func(t *testing.T) {
+			vars := mock.NewContext().GetSessionVars()
+			vars.EnableReadBillingDemo = mode == "demo"
+			vars.StmtCtx.InExplainStmt = mode == "explain"
+			vars.StmtCtx.InExplainAnalyzeStmt = mode == "explain"
+			vars.StmtCtx.ExplainFormat = types.ExplainFormatRU
+			vars.StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+			e := NewBaseExecutorV2(vars, expression.NewSchema(), 1)
+			e.RecordLogicalLookupKeys(3)
+			keys, present := e.RuntimeStats().GetLogicalLookupKeys()
+			require.Equal(t, mode != "off", present)
+			if present {
+				require.Equal(t, int64(3), keys)
+			}
+		})
+	}
+}
+
 func TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes(t *testing.T) {
 	cases := map[string]ruv2ExecutorMetric{
 		"*aggregate.HashAggExec":        {level: 2, label: "HashAggExec", useCells: false},

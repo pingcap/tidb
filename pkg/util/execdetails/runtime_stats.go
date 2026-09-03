@@ -347,6 +347,27 @@ type BasicRuntimeStats struct {
 	// runtime byte accounting records, used to distinguish zero bytes from
 	// missing byte evidence.
 	byteRecords atomic.Int64
+	// Logical lookup inputs are independent of RPC batching and result rows.
+	logicalLookupKeys atomic.Int64
+	lookupKeysSeen    atomic.Bool
+}
+
+// RecordLogicalLookupKeys records logical keys, including an observed empty input.
+func (e *BasicRuntimeStats) RecordLogicalLookupKeys(keys int64) {
+	if e == nil || keys < 0 {
+		return
+	}
+	e.logicalLookupKeys.Add(keys)
+	e.lookupKeysSeen.Store(true)
+}
+
+// GetLogicalLookupKeys distinguishes an observed zero from unavailable evidence.
+func (e *BasicRuntimeStats) GetLogicalLookupKeys() (int64, bool) {
+	if e == nil || !e.lookupKeysSeen.Load() {
+		return 0, false
+	}
+	keys := e.logicalLookupKeys.Load()
+	return keys, keys >= 0
 }
 
 // GetActRows return total rows of BasicRuntimeStats.
@@ -396,6 +417,9 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	e.inputBytes.Add(tmp.inputBytes.Load())
 	e.outputBytes.Add(tmp.outputBytes.Load())
 	e.byteRecords.Add(tmp.byteRecords.Load())
+	if keys, ok := tmp.GetLogicalLookupKeys(); ok {
+		e.RecordLogicalLookupKeys(keys)
+	}
 }
 
 // Tp implements the RuntimeStats interface.

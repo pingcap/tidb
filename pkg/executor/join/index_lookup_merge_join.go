@@ -138,6 +138,7 @@ type outerMergeWorker struct {
 
 type innerMergeWorker struct {
 	InnerMergeCtx
+	lookup *IndexLookUpMergeJoin
 
 	taskCh            <-chan *lookUpMergeJoinTask
 	joinChkResourceCh chan *chunk.Chunk
@@ -225,6 +226,7 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
 	imw := &innerMergeWorker{
+		lookup:            e,
 		InnerMergeCtx:     e.InnerMergeCtx,
 		outerMergeCtx:     e.OuterMergeCtx,
 		taskCh:            taskCh,
@@ -253,6 +255,7 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 // Next implements the Executor interface
 func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !e.prepared {
+		e.RecordLogicalLookupKeys(0)
 		e.startWorkers(ctx)
 		e.prepared = true
 	}
@@ -651,7 +654,9 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 		}
 		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 	}
-
+	if imw.lookup != nil {
+		imw.lookup.RecordLogicalLookupKeys(int64(len(dLookUpKeys)))
+	}
 	return dLookUpKeys, nil
 }
 

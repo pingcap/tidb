@@ -1151,6 +1151,11 @@ func CalculateBatchSize(estRows, initBatchSize, maxBatchSize int) int {
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookupTableTask) (*TableReaderExecutor, error) {
+	// Pushed-down lookup also fetches rows inside TiKV; residual handles alone
+	// cannot describe that stage. Leave its count unavailable, not zero.
+	if !e.indexLookUpPushDown {
+		e.RecordLogicalLookupKeys(int64(len(task.handles)))
+	}
 	table := e.table
 	if e.partitionTableMode && task.partitionTable != nil {
 		table = task.partitionTable
@@ -1242,6 +1247,9 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	}
 
 	if !e.workerStarted {
+		if !e.indexLookUpPushDown {
+			e.RecordLogicalLookupKeys(0)
+		}
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return err
 		}
