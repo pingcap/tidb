@@ -84,6 +84,23 @@ fn go_table(id: i64, original: &str, lower: &str) -> String {
     )
 }
 
+/// A Go `TableInfo` JSON for a materialized view log of base table 77, per
+/// Go master `94a9cbedab`'s `pkg/meta/model` shape.
+fn go_mlog_table(id: i64, original: &str, lower: &str) -> String {
+    go_table(id, original, lower).replace(
+        r#","index_info":null"#,
+        r#","materialized_view_log":{"base_table_id":77,"columns":[{"O":"id","L":"id"}],"definition_sql_mode":0,"purge_schedule_time_zone":{"name":"UTC","offset":0}},"index_info":null"#,
+    )
+}
+
+/// A Go `TableInfo` JSON for a materialized view over base table 77.
+fn go_mview_table(id: i64, original: &str, lower: &str) -> String {
+    go_table(id, original, lower).replace(
+        r#","index_info":null"#,
+        r#","materialized_view":{"base_table_ids":[77],"sql_content":"select id from rows","definition_sql_mode":0,"definition_div_precision_increment":4,"definition_time_zone":{"name":"UTC","offset":0},"refresh_schedule_time_zone":{"name":"UTC","offset":0}},"index_info":null"#,
+    )
+}
+
 fn diff_json(version: i64, action: ActionType, schema_id: i64, table_id: i64) -> String {
     format!(
         r#"{{"version":{version},"type":{},"schema_id":{schema_id},"table_id":{table_id},"old_table_id":0,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":null}}"#,
@@ -112,6 +129,55 @@ fn an_unchanged_schema_version_reloads_nothing() {
     let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
     assert!(matches!(reloaded, ReloadedCatalog::Unchanged { version: 100 }));
     assert!(reloaded.catalog().is_none());
+}
+
+#[test]
+fn a_create_materialized_view_log_diff_adds_exactly_that_table() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.put(key::table_kv_key(3, 78), go_mlog_table(78, "Mlog77", "mlog77"));
+    snapshot.commit_diff(
+        101,
+        &diff_json(101, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG, 3, 78),
+    );
+
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+        panic!("expected a diff reload, got {reloaded:?}");
+    };
+    assert_eq!(applied, 1);
+    assert_eq!(next.schema_version, 101);
+    assert_eq!(next.databases[0].tables.len(), 2);
+    let (_, table) = next.find_table("campaign", "mlog77").expect("mlog table loads");
+    let log = table
+        .materialized_view_log
+        .as_ref()
+        .expect("the log metadata survives the reload");
+    assert_eq!(log.read().base_table_id, 77);
+    // The catalog the node was already serving is untouched.
+    assert_eq!(catalog.databases[0].tables.len(), 1);
+}
+
+#[test]
+fn a_create_materialized_view_diff_adds_exactly_that_table() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.put(key::table_kv_key(3, 79), go_mview_table(79, "Mview", "mview"));
+    snapshot.commit_diff(
+        101,
+        &diff_json(101, ActionType::ACTION_CREATE_MATERIALIZED_VIEW, 3, 79),
+    );
+
+    let reloaded = reload_cluster_catalog(&mut snapshot, &catalog).expect("reload runs");
+    let ReloadedCatalog::Diffs { catalog: next, applied } = reloaded else {
+        panic!("expected a diff reload, got {reloaded:?}");
+    };
+    assert_eq!(applied, 1);
+    let (_, table) = next.find_table("campaign", "mview").expect("mview table loads");
+    let view = table
+        .materialized_view
+        .as_ref()
+        .expect("the view metadata survives the reload");
+    assert_eq!(view.read().sql_content, "select id from rows");
+    assert_eq!(view.read().base_table_ids.iter().copied().collect::<Vec<i64>>(), vec![77]);
 }
 
 #[test]

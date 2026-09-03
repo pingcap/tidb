@@ -42,6 +42,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 6, `pkg/infoschema`): aligned `builder.go`'s diff
+  classification with Go master `94a9cbedab`: the incremental reload's
+  create arm accepts `ACTION_CREATE_MATERIALIZED_VIEW` and
+  `ACTION_CREATE_MATERIALIZED_VIEW_LOG` exactly where Go's `getTableIDs`
+  treats them as `ActionCreateTable`. Two parsed-fixture regressions prove
+  an MV log and an MV diff reload incrementally with their batch-1 metadata
+  intact, with fail-before evidence from reverting the arms; the full
+  `tidb-exec` failure set is identical to the pre-batch base (8 documented
+  pre-existing baseline failures, zero new). Recorded gap: Go's placement
+  bundle-cache arms have no Rust owner (the reload tier refuses to a full
+  reload). Receipt: `receipts/infoschema_mview_diff.md`.
+
 - 2026-09-03 (batch 5, `pkg/expression/helper.go`): implemented Go master
   `94a9cbedab`'s three materialized-view schedule helpers in
   `tidb-expr::expr_util::mview_schedule`:
