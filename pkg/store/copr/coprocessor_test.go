@@ -22,14 +22,34 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	tikvutil "github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
+	pdgc "github.com/tikv/pd/client/clients/gc"
+	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/pkg/caller"
 )
+
+type recordingRunawayChecker struct {
+	resourcegroup.RunawayChecker
+	processedKeys atomic.Int64
+}
+
+func (c *recordingRunawayChecker) CheckThresholds(_ *tikvutil.RUDetails, processedKeys int64, _ error) error {
+	c.processedKeys.Add(processedKeys)
+	return nil
+}
 
 func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
 	return buildCopTasks(bo, ranges, &buildCopTaskOpt{
@@ -60,7 +80,102 @@ func TestEnsureMonotonicKeyRanges(t *testing.T) {
 	require.False(t, reordered)
 }
 
-func TestBuildTasksWithoutBuckets(t *testing.T) {
+func TestCoprRequestLimiter(t *testing.T) {
+	t.Run("SetAttemptLimiter", testSetRequestAttemptLimiter)
+	t.Run("Finished", testRequestAttemptLimiterFinished)
+	t.Run("WaitStats", testLimiterWaitStats)
+}
+
+func testSetRequestAttemptLimiter(t *testing.T) {
+	newAttemptLimiter := func(req *kv.Request, finishCh chan struct{}, storeType kv.StoreType) tikvrpc.RequestAttemptLimiterFunc {
+		worker := &copIteratorWorker{
+			req:      req,
+			finishCh: finishCh,
+			stats:    &copIteratorRuntimeStats{},
+		}
+		rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+		worker.setRequestAttemptLimiter(rpcReq, &copTask{storeType: storeType})
+		return rpcReq.RequestAttemptLimiter
+	}
+
+	t.Run("NoLimiter", func(t *testing.T) {
+		require.Nil(t, newAttemptLimiter(&kv.Request{}, make(chan struct{}), kv.TiKV))
+	})
+
+	t.Run("TiFlash", func(t *testing.T) {
+		req := &kv.Request{CoprRequestLimiter: kv.NewCoprRequestLimiter(1)}
+		require.Nil(t, newAttemptLimiter(req, make(chan struct{}), kv.TiFlash))
+	})
+
+	t.Run("RequestLimiterFallback", func(t *testing.T) {
+		requestLimiter := kv.NewCoprRequestLimiter(1)
+		attemptLimiter := newAttemptLimiter(
+			&kv.Request{CoprRequestLimiter: requestLimiter}, make(chan struct{}), kv.TiKV)
+		require.NotNil(t, attemptLimiter)
+
+		release, err := attemptLimiter(context.Background(), 42)
+		require.NoError(t, err)
+		require.NotNil(t, release)
+		require.False(t, requestLimiter.TryAcquire())
+		release()
+	})
+
+	t.Run("QueryLimiterPrecedence", func(t *testing.T) {
+		requestLimiter := kv.NewCoprRequestLimiter(1)
+		queryLimiter := kv.NewQueryCopStoreLimiter(1)
+		attemptLimiter := newAttemptLimiter(&kv.Request{
+			CoprRequestLimiter:   requestLimiter,
+			QueryCopStoreLimiter: queryLimiter,
+		}, make(chan struct{}), kv.TiKV)
+		require.NotNil(t, attemptLimiter)
+
+		release, err := attemptLimiter(context.Background(), 42)
+		require.NoError(t, err)
+		require.NotNil(t, release)
+		require.False(t, queryLimiter.GetStoreLimiter(42).TryAcquire())
+		require.True(t, requestLimiter.TryAcquire())
+		requestLimiter.Release()
+		release()
+	})
+}
+
+func testRequestAttemptLimiterFinished(t *testing.T) {
+	finishCh := make(chan struct{})
+	close(finishCh)
+	limiter := kv.NewCoprRequestLimiter(1)
+	worker := &copIteratorWorker{
+		req:      &kv.Request{CoprRequestLimiter: limiter},
+		finishCh: finishCh,
+		stats:    &copIteratorRuntimeStats{},
+	}
+	rpcReq := tikvrpc.NewRequest(tikvrpc.CmdCop, &coprocessor.Request{})
+	worker.setRequestAttemptLimiter(rpcReq, &copTask{storeType: kv.TiKV})
+
+	release, err := rpcReq.RequestAttemptLimiter(context.Background(), 42)
+	require.ErrorIs(t, err, errCoprRequestLimiterFinished)
+	require.Nil(t, release)
+	require.True(t, limiter.TryAcquire())
+	limiter.Release()
+}
+
+func testLimiterWaitStats(t *testing.T) {
+	stats := LimiterWaitStats{}
+	require.True(t, stats.IsZero())
+	stats.Record(time.Millisecond)
+	stats.Merge(LimiterWaitStats{TotalTime: 3 * time.Millisecond, MaxTime: 2 * time.Millisecond})
+	require.Equal(t, LimiterWaitStats{
+		TotalTime: 4 * time.Millisecond,
+		MaxTime:   2 * time.Millisecond,
+	}, stats)
+	require.False(t, stats.IsZero())
+}
+
+func TestBuildTasks(t *testing.T) {
+	t.Run("WithoutBuckets", testBuildTasksWithoutBuckets)
+	t.Run("ByBuckets", testBuildTasksByBuckets)
+}
+
+func testBuildTasksWithoutBuckets(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -186,7 +301,7 @@ func TestBuildTasksWithoutBuckets(t *testing.T) {
 	taskEqual(t, tasks[1], regionIDs[2], 0, "n", "p")
 }
 
-func TestBuildTasksByBuckets(t *testing.T) {
+func testBuildTasksByBuckets(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	defer func() {
@@ -1093,9 +1208,281 @@ func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
 	}, versionByRegion)
 }
 
+func testHandleBatchCopResponseMergedAndUnansweredTasks(t *testing.T) {
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	var batched, fallback atomic.Uint64
+	executionStats := &copIteratorRuntimeStats{}
+	runawayChecker := &recordingRunawayChecker{}
+	worker := &copIteratorWorker{
+		req:                     &kv.Request{RunawayChecker: runawayChecker},
+		kvclient:                &txnsnapshot.ClientHelper{},
+		storeBatchedNum:         &batched,
+		storeBatchedFallbackNum: &fallback,
+		stats:                   executionStats,
+	}
+
+	mergedTask := &copTask{taskID: 1}
+	inlineTask := &copTask{taskID: 2}
+	inlineData := []byte("inline-task-data")
+	responses, remains, err := worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{
+		BatchResponses: []*coprocessor.StoreBatchTaskResponse{
+			{
+				TaskId:                 mergedTask.taskID,
+				DataMergedIntoResponse: true,
+				ExecDetailsV2: &kvrpcpb.ExecDetailsV2{
+					ScanDetailV2: &kvrpcpb.ScanDetailV2{ProcessedVersions: 7},
+				},
+			},
+			{TaskId: inlineTask.taskID, Data: inlineData},
+		},
+	}, map[uint64]*batchedCopTask{
+		mergedTask.taskID: {task: mergedTask},
+		inlineTask.taskID: {task: inlineTask},
+	})
+	require.NoError(t, err)
+	require.Empty(t, remains)
+	require.Len(t, responses, 1)
+	require.Equal(t, inlineData, []byte(responses[0].pbResp.Data))
+	require.Equal(t, uint64(2), batched.Load())
+	require.Zero(t, fallback.Load())
+	collectedStats := (&copIterator{stats: executionStats}).CollectUnconsumedCopRuntimeStats()
+	require.Len(t, collectedStats, 1)
+	require.Equal(t, int64(7), collectedStats[0].ScanDetail.ProcessedKeys)
+	require.Equal(t, int64(7), runawayChecker.processedKeys.Load())
+
+	unansweredTask := &copTask{taskID: 3}
+	responses, remains, err = worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{}, map[uint64]*batchedCopTask{
+		unansweredTask.taskID: {task: unansweredTask},
+	})
+	require.NoError(t, err)
+	require.Empty(t, responses)
+	require.Len(t, remains, 1)
+	require.Same(t, unansweredTask, remains[0])
+	require.Equal(t, uint64(2), batched.Load())
+	require.Equal(t, uint64(1), fallback.Load())
+}
+
+type apiV2StoreBatchLockClient struct {
+	tikv.Client
+	copResponse              *tikvrpc.Response
+	checkTxnStatusPrimaryKey []byte
+}
+
+func (c *apiV2StoreBatchLockClient) SendRequest(
+	ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration,
+) (*tikvrpc.Response, error) {
+	switch req.Type {
+	case tikvrpc.CmdCop:
+		return c.copResponse, nil
+	case tikvrpc.CmdCheckTxnStatus:
+		c.checkTxnStatusPrimaryKey = append([]byte(nil), req.CheckTxnStatus().GetPrimaryKey()...)
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+type apiV2KeyspacePDClient struct {
+	pd.Client
+	meta *keyspacepb.KeyspaceMeta
+}
+
+func (c *apiV2KeyspacePDClient) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return c.meta, nil
+}
+
+func (c *apiV2KeyspacePDClient) WithCallerComponent(caller.Component) pd.Client {
+	// Keep this wrapper when client-go tags the PD client with its caller.
+	return c
+}
+
+func (c *apiV2KeyspacePDClient) GetGCStatesClient(uint32) pdgc.GCStatesClient {
+	// The mock PD implements GC state only for the legacy null keyspace. The
+	// safe point value, not its keyspace ID, is relevant to this test.
+	return c.Client.GetGCStatesClient(constants.NullKeyspaceID)
+}
+
+func testHandleBatchCopResponseResolvesAPIV2ChildLock(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithSingleStore(cluster)
+
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+		Name:     "test-keyspace",
+		State:    keyspacepb.KeyspaceState_ENABLED,
+	}
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+	require.NoError(t, err)
+	child := &copTask{taskID: 1}
+	primaryKey := []byte("primary")
+	rawClient := &apiV2StoreBatchLockClient{
+		Client: mockClient,
+		copResponse: &tikvrpc.Response{Resp: &coprocessor.Response{
+			BatchResponses: []*coprocessor.StoreBatchTaskResponse{
+				{
+					TaskId: child.taskID,
+					Locked: &kvrpcpb.LockInfo{
+						Key:         codec.EncodeKey([]byte("key")),
+						PrimaryLock: codec.EncodeKey(primaryKey),
+						LockVersion: 1,
+						// Keep lock cleanup synchronous with the test.
+						LockType: kvrpcpb.Op_PessimisticLock,
+					},
+				},
+			},
+		}},
+	}
+	tikvStore, err := tikv.NewTestKeyspaceTiKVStore(
+		rawClient,
+		&apiV2KeyspacePDClient{Client: pdClient, meta: keyspaceMeta},
+		nil, nil, 0, *keyspaceMeta,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+
+	decodedResp, err := tikvStore.GetTiKVClient().SendRequest(
+		context.Background(), "store1",
+		&tikvrpc.Request{
+			Type: tikvrpc.CmdCop,
+			Req: &coprocessor.Request{Tasks: []*coprocessor.StoreBatchTask{
+				{TaskId: child.taskID},
+			}},
+		},
+		time.Second,
+	)
+	require.NoError(t, err)
+
+	var resolvedLocks, committedLocks tikvutil.TSSet
+	worker := &copIteratorWorker{
+		req: &kv.Request{StartTs: 10},
+		kvclient: txnsnapshot.NewClientHelper(
+			tikvStore, &resolvedLocks, &committedLocks, false,
+		),
+		storeBatchedNum:         &atomic.Uint64{},
+		storeBatchedFallbackNum: &atomic.Uint64{},
+	}
+	_, _, err = worker.handleBatchCopResponse(
+		backoff.NewBackofferWithVars(context.Background(), 3000, nil),
+		nil,
+		decodedResp.Resp.(*coprocessor.Response),
+		map[uint64]*batchedCopTask{child.taskID: {task: child}},
+	)
+	require.NoError(t, err)
+	// Lock resolution must encode the decoded primary exactly once.
+	require.Equal(t, codec.EncodeKey(primaryKey), rawClient.checkTxnStatusPrimaryKey)
+}
+
 func TestHandleBatchCopResponse(t *testing.T) {
+	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
+	t.Run("resolves an API V2 child lock", testHandleBatchCopResponseResolvesAPIV2ChildLock)
+	t.Run("handles merged and unanswered tasks", testHandleBatchCopResponseMergedAndUnansweredTasks)
 	t.Run("updates child buckets on version mismatch", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
 	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
+	t.Run("rebuilds a store batch after a Region cache miss", testHandleStoreBatchRegionCacheMiss)
+}
+
+func testHandleStoreBatchRegionCacheMiss(t *testing.T) {
+	// A false positive would replay ranges whose child result may already be in
+	// the response, so every uncertain response shape must use flat reconciliation.
+	worker := &copIteratorWorker{req: &kv.Request{}}
+	task := &copTask{batchTaskList: map[uint64]*batchedCopTask{1: {}}}
+	resp := &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}}
+	require.False(t, worker.canRebuildWholeStoreBatch(nil, resp, task))
+	worker.req.AllowBatchTaskDataMerge = true
+	require.False(t, worker.canRebuildWholeStoreBatch(&tikv.RPCContext{}, resp, task))
+	resp.BatchResponses = []*coprocessor.StoreBatchTaskResponse{{TaskId: 1}}
+	require.False(t, worker.canRebuildWholeStoreBatch(nil, resp, task))
+	resp.BatchResponses = nil
+	resp.Data = []byte{1}
+	require.False(t, worker.canRebuildWholeStoreBatch(nil, resp, task))
+	resp.Data = nil
+	resp.RegionError = &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}
+	require.False(t, worker.canRebuildWholeStoreBatch(nil, resp, task))
+
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	t.Cleanup(copStore.Close)
+
+	ctx := context.Background()
+	killed := uint32(0)
+	req := &kv.Request{
+		Tp:                      kv.ReqTypeAnalyze,
+		StoreType:               kv.TiKV,
+		KeyRanges:               kv.NewNonPartitionedKeyRanges(BuildKeyRanges("a", "z")),
+		Concurrency:             1,
+		StoreBatchSize:          3,
+		AllowBatchTaskDataMerge: true,
+	}
+	req.RequestSource.RequestSourceInternal = true
+	it, errRes := (&CopClient{store: copStore}).BuildCopIterator(ctx, req, kv.NewVariables(&killed), &kv.ClientSendOption{})
+	require.Nil(t, errRes)
+	require.Len(t, it.tasks, 1)
+	require.Zero(t, req.StoreBatchSize)
+	failedTask := it.tasks[0]
+	require.Len(t, failedTask.batchTaskList, 3)
+
+	newRegionID, newPeerID := cluster.AllocID(), cluster.AllocID()
+	cluster.Split(regionIDs[0], newRegionID, []byte("d"), []uint64{newPeerID}, newPeerID)
+
+	cache := copStore.GetRegionCache()
+	cache.InvalidateCachedRegion(failedTask.region)
+	for _, child := range failedTask.batchTaskList {
+		cache.InvalidateCachedRegion(child.task.region)
+	}
+
+	result, err := newCopIteratorWorker(it, nil).handleCopResponse(
+		backoff.NewBackofferWithVars(ctx, 3000, nil), nil,
+		&copResponse{pbResp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}}},
+		nil, nil, failedTask, 0,
+	)
+	require.NoError(t, err)
+	require.Zero(t, req.StoreBatchSize)
+	require.Len(t, result.remains, 2)
+	require.Len(t, result.remains[0].batchTaskList, 3)
+	require.Empty(t, result.remains[1].batchTaskList)
+}
+
+func testHandleBatchCopResponseResolvesChildLock(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithSingleStore(cluster)
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+
+	var resolvedLocks, committedLocks tikvutil.TSSet
+	kvClient := txnsnapshot.NewClientHelper(tikvStore, &resolvedLocks, &committedLocks, false)
+	kvClient.Stats = tikv.NewRegionRequestRuntimeStats()
+	child := &copTask{taskID: 1}
+	worker := &copIteratorWorker{
+		req:                     &kv.Request{StartTs: 10},
+		kvclient:                kvClient,
+		storeBatchedNum:         &atomic.Uint64{},
+		storeBatchedFallbackNum: &atomic.Uint64{},
+	}
+
+	_, _, err = worker.handleBatchCopResponse(
+		backoff.NewBackofferWithVars(context.Background(), 3000, nil),
+		nil,
+		&coprocessor.Response{BatchResponses: []*coprocessor.StoreBatchTaskResponse{{
+			TaskId: child.taskID,
+			Locked: &kvrpcpb.LockInfo{
+				Key:         []byte("key"),
+				PrimaryLock: []byte("primary"),
+				LockVersion: 1,
+				// Keep lock cleanup synchronous with the test.
+				LockType: kvrpcpb.Op_PessimisticLock,
+			},
+		}}},
+		map[uint64]*batchedCopTask{child.taskID: {task: child}},
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, kvClient.Stats.GetRPCStatsCount())
 }
 
 func testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {

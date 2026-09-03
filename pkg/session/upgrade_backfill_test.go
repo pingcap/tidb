@@ -94,7 +94,7 @@ func TestUpgradeToVer279BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	require.NoError(t, res.Close())
 }
 
-func TestUpgradeToVer284AddsRestoreRouteIdentity(t *testing.T) {
+func TestUpgradeToVer287AddsRestoreRouteIdentity(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -103,22 +103,22 @@ func TestUpgradeToVer284AddsRestoreRouteIdentity(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	seV283 := CreateSessionAndSetID(t, store)
-	MustExec(t, seV283, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params_v2")
-	MustExec(t, seV283, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_hash")
-	MustExec(t, seV283, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_strings")
-	MustExec(t, seV283, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN source_filter_strings")
-	MustExec(t, seV283, `ALTER TABLE mysql.tidb_restore_registry ADD UNIQUE INDEX unique_registration_params (
+	seV286 := CreateSessionAndSetID(t, store)
+	MustExec(t, seV286, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params_v2")
+	MustExec(t, seV286, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_hash")
+	MustExec(t, seV286, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_strings")
+	MustExec(t, seV286, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN source_filter_strings")
+	MustExec(t, seV286, `ALTER TABLE mysql.tidb_restore_registry ADD UNIQUE INDEX unique_registration_params (
 		filter_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	require.NoError(t, m.FinishBootstrap(version283))
-	RevertVersionAndVariables(t, seV283, version283)
+	require.NoError(t, m.FinishBootstrap(version286))
+	RevertVersionAndVariables(t, seV286, version286)
 	require.NoError(t, txn.Commit(ctx))
 	store.SetOption(StoreBootstrappedKey, nil)
-	seV283.Close()
+	seV286.Close()
 	dom.Close()
 
 	domCurrent, err := BootstrapSession(store)

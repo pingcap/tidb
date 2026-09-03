@@ -25,6 +25,8 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/configtypes"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -57,6 +59,48 @@ func switchTaskStep(
 	task, err := manager.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, step, nil))
+}
+
+func TestShouldUseAsyncPrepare(t *testing.T) {
+	localSortPlan := &importer.Plan{}
+	globalSortPlan := &importer.Plan{CloudStorageURI: "s3://bucket/path"}
+
+	require.False(t, importinto.ShouldUseAsyncPrepare(nil))
+	require.False(t, importinto.ShouldUseAsyncPrepare(localSortPlan))
+
+	if kerneltype.IsClassic() {
+		require.False(t, importinto.ShouldUseAsyncPrepare(globalSortPlan))
+		return
+	}
+
+	originalMode := deploymode.Get()
+	originalConfig := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+		config.StoreGlobalConfig(originalConfig)
+	})
+
+	tests := []struct {
+		name              string
+		mode              deploymode.Mode
+		maxImportDataSize configtypes.ByteSize
+		want              bool
+	}{
+		{name: "premium", mode: deploymode.Premium, want: true},
+		{name: "premium reserved", mode: deploymode.PremiumReserved, want: true},
+		{name: "starter without import size limit", mode: deploymode.Starter, want: false},
+		{name: "starter with import size limit", mode: deploymode.Starter, maxImportDataSize: 1, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, deploymode.Set(tt.mode))
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.DeployMode = tt.mode
+				conf.StarterParams.MaxImportDataSize = tt.maxImportDataSize
+			})
+			require.Equal(t, tt.want, importinto.ShouldUseAsyncPrepare(globalSortPlan))
+		})
+	}
 }
 
 func TestSubmitTaskNextgen(t *testing.T) {
@@ -277,6 +321,11 @@ func TestSubmitTaskNextgen(t *testing.T) {
 	})
 
 	t.Run("submit global-sort task uses async prepare mode", func(t *testing.T) {
+		originalMode := deploymode.Get()
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(originalMode))
+		})
+		require.NoError(t, deploymode.Set(deploymode.Premium))
 		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
 		sysKSTK.MustExec("delete from mysql.tidb_global_task")
 		config.UpdateGlobal(func(conf *config.Config) {
@@ -298,6 +347,35 @@ func TestSubmitTaskNextgen(t *testing.T) {
 				"from mysql.tidb_global_task where id = ?",
 			task.ID,
 		).Check(testkit.Rows("1 1 1"))
+	})
+
+	t.Run("submit global-sort task in Starter uses synchronous prepare", func(t *testing.T) {
+		originalMode := deploymode.Get()
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(originalMode))
+		})
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		sysKSTK.MustExec("delete from mysql.tidb_global_task")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = keyspace.System
+		})
+		manuallyInitFn(t, sysKSStore, sysKSStore)
+
+		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
+			TableInfo:       &model.TableInfo{},
+			Parameters:      &importer.ImportParameters{},
+			ThreadCnt:       4,
+			MaxNodeCnt:      2,
+			CloudStorageURI: "local:///tmp/prepare-mode-sort-starter",
+		}, "import into t from 's3://bucket/test.csv'")
+		require.NoError(t, err)
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
+		sysKSTK.MustQuery(
+			"select concurrency, max_node_count, json_extract(extra_params, '$.prepare_mode') is null "+
+				"from mysql.tidb_global_task where id = ?",
+			task.ID,
+		).Check(testkit.Rows("4 2 1"))
 	})
 }
 

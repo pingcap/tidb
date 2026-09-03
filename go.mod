@@ -13,7 +13,6 @@ require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
 	github.com/alibabacloud-go/tea v1.3.11
-	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.2.3
 	github.com/aliyun/credentials-go v1.4.7
 	github.com/apache/arrow-go/v18 v18.6.1-0.20260713210906-efc145c067b6
@@ -99,9 +98,9 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260724054804-059694ae4472
+	github.com/pingcap/kvproto v0.0.0-20260820070758-623e58e60fa9
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
-	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
+	github.com/pingcap/metering_sdk v0.0.0-20260814062708-9e3b68cd9adf
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20260623093813-5f9928e91afe
@@ -120,8 +119,9 @@ require (
 	github.com/spkg/bom v1.0.0
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.142
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260807103401-b75f6efa8ddd
+	github.com/tikv/client-go/v2 v2.0.8-0.20260831103552-e4905600583b
 	github.com/tikv/pd/client v0.0.0-20260805103528-afa43111d149
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
@@ -190,6 +190,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.28.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.33.2 // indirect
+	github.com/clbanning/mxj v1.8.4 // indirect
 	github.com/clbanning/mxj/v2 v2.7.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cockroachdb/fifo v0.0.0-20240606204812-0bbfbd93a7ce // indirect
@@ -197,14 +198,18 @@ require (
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/ldez/grignotin v0.10.1 // indirect
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/mozillazg/go-httpheader v0.2.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
 	github.com/segmentio/fasthash v1.0.3 // indirect
+	github.com/tencentyun/cos-go-sdk-v5 v0.7.74 // indirect
 	github.com/tidwall/gjson v1.14.4 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
@@ -279,7 +284,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/influxdata/tdigest v0.0.1
 	github.com/jfcg/sixb v1.3.8 // indirect
-	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jonboulle/clockwork v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12
 	github.com/klauspost/cpuid v1.3.1 // indirect

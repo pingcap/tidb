@@ -21,8 +21,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -520,8 +522,17 @@ const (
 	// version283 backfills analyze default bucket and TopN global variables.
 	version283 = 283
 
-	// version284 adds restore name routing identity to mysql.tidb_restore_registry.
+	// version284 migrate tidb_disable_txn_file (from TiDB-CSE) to tidb_enable_txn_file and inverts its value.
 	version284 = 284
+
+	// version285 creates materialized view maintenance system tables.
+	version285 = 285
+
+	// version286 adds the OPERATE VIEW static privilege.
+	version286 = 286
+
+	// version287 adds restore name routing identity to mysql.tidb_restore_registry.
+	version287 = 287
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -535,7 +546,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version284
+var currentBootstrapVersion int64 = version287
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -724,6 +735,9 @@ var (
 		{version: version282, fn: upgradeToVer282},
 		{version: version283, fn: upgradeToVer283},
 		{version: version284, fn: upgradeToVer284},
+		{version: version285, fn: upgradeToVer285},
+		{version: version286, fn: upgradeToVer286},
+		{version: version287, fn: upgradeToVer287},
 	}
 )
 
@@ -2279,7 +2293,7 @@ func upgradeToVer283(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumTopN, vardef.DefTiDBAnalyzeDefaultNumTopN)
 }
 
-func upgradeToVer284(s sessionapi.Session, _ int64) {
+func upgradeToVer287(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER filter_hash", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER source_filter_strings", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_hash VARCHAR(64) NOT NULL DEFAULT '' AFTER route_strings", infoschema.ErrColumnExists)

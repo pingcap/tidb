@@ -518,8 +518,9 @@ engines = ["tikv", "tiflash", "tidb"]
 # }
 # bootstrap-file = "/etc/tidb/starter-bootstrap.json"
 bootstrap-file = ""
-# The maximum total real source data size allowed for IMPORT INTO. 0B means unlimited.
-max-import-data-size = "0B"
+# The maximum total real source data size allowed for IMPORT INTO.
+# Defaults to 25GiB in Starter deployments. Set to 0B for unlimited imports.
+# max-import-data-size = "25GiB"
 
 # instance scope variables
 # These options are also available as a system variable for online configuration

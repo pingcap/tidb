@@ -317,7 +317,7 @@ func TestBuildRestoreNamePlanUsesPrecheckedTiFlashMetadata(t *testing.T) {
 		Name:           ast.NewCIStr("t"),
 		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1, Available: true},
 	}}
-	require.NoError(t, PreCheckTableTiFlashReplica(t.Context(), nil, []*metautil.Table{table}, nil, true))
+	require.NoError(t, PreCheckTableTiFlashReplica(t.Context(), nil, []*metautil.Table{table}, nil, true, "ON"))
 
 	plan, err := buildRestoreNamePlan(router, []*metautil.Database{db}, []*metautil.Table{table}, nil)
 	require.NoError(t, err)
