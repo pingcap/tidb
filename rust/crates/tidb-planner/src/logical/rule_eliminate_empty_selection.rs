@@ -108,12 +108,10 @@ impl OwnedRewrite for EmptySelection {
         if !tested || !is_empty_selection(&node) {
             return (node, ());
         }
-        // Go's `p.SetChild(idx, sel.Children()[0])`. A childless selection
-        // would make Go panic on that index; it is left in place instead.
-        match node.base_mut().take_children().pop() {
-            Some(child) => (child, ()),
-            None => (node, ()),
-        }
+        // Go's `p.SetChild(idx, sel.Children()[0])` indexes directly, so a
+        // tested childless empty selection panics there.
+        let mut children = node.base_mut().take_children();
+        (children.remove(0), ())
     }
 }
 

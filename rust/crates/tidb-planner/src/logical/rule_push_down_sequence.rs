@@ -137,16 +137,11 @@ impl OwnedRewrite for PushDownSequence<'_, '_> {
             // this node's own identity is discarded.
             LogicalPlan::Sequence(_) => {
                 let mut children = node.base_mut().take_children();
-                let Some(main_query) = children.pop() else {
-                    // Go indexes `Children()[ChildLen()-1]` and would panic on
-                    // a childless sequence. Nothing can be pushed into a node
-                    // with no main query, so the carried sequence lands here.
-                    self.stash.push(match pushed {
-                        Some(pushed) => Pending::Emit(Box::new(pushed)),
-                        None => Pending::Keep,
-                    });
-                    return Descend::Children(Vec::new());
-                };
+                // Go indexes `Children()[ChildLen()-1]` immediately, so a
+                // childless sequence panics before anything is carried.
+                let main_query = children
+                    .pop()
+                    .expect("sequence push-down requires the main query child");
                 let merged = PushedSequence::init(self.ctx, query_block_offset, pushed, children);
                 node.set_children(vec![main_query]);
                 self.stash.push(Pending::Collapse);
@@ -217,7 +212,13 @@ impl OwnedRewrite for PushDownSequence<'_, '_> {
         {
             Pending::Keep => (node, ()),
             Pending::Collapse => {
-                let main_query = node.base_mut().take_children().pop().unwrap_or(node);
+                // Go reads the sequence's LAST child (the main query) —
+                // `Children()[ChildLen()-1]`.
+                let main_query = node
+                    .base_mut()
+                    .take_children()
+                    .pop()
+                    .expect("sequence collapse requires the main query child");
                 (main_query, ())
             }
             Pending::Emit(pushed) => (pushed.emit(node), ()),

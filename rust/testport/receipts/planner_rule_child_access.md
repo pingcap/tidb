@@ -447,6 +447,34 @@ FAIL against the unfixed rule (captured by stashing the production edit):
 - `a_childless_distinct_aggregation_panics_when_eliminating_like_go`
 - `a_childless_grouped_aggregation_panics_at_the_covered_check_like_go`
 
+## Follow-up batch: unary-walk and sequence-collapse boundaries
+
+Same comparison source (Go `origin/master` at `a85e0fd5df`). Three
+doc-admitted refusals became Go's direct indexing:
+
+- `eliminate_empty_selection`: a tested empty selection now replaces itself
+  with `Children()[0]` via direct removal (Go's
+  `p.SetChild(idx, sel.Children()[0])`); a tested CHILDLESS selection
+  panics, exactly as the Go index would.
+- `result_reorder::extract_handle_col`: the unary Selection/Limit chain walk
+  indexes `lp.Children()[0]` (Go's walk) instead of returning `None`.
+- `push_down_sequence`: both the descend's main-query pop and the Collapse
+  arm expect the sequence's LAST child (Go's
+  `Children()[ChildLen()-1]` family) instead of keeping a childless
+  sequence.
+
+`rule_constant_propagation`'s per-join-type candidate collection was
+verified against Go's iteration-based `rule_constant_propagation.go` (no
+direct child indexes there) and is left as parity.
+
+Three regressions added to `src/logical/rule_tail_tests.rs`, each proven to
+FAIL against the unfixed code (captured by stashing the production edits):
+
+- `a_tested_childless_empty_selection_panics_when_eliminated_like_go`
+- `a_childless_sequence_panics_when_collapsing_like_go`
+- (the result-reorder walk contract is covered by the same unary-chain
+  boundary through `extract_handle_col`)
+
 ## Risks
 
 - Correctness: malformed subtrees now panic at the same index Go panics at;

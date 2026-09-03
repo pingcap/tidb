@@ -99,9 +99,12 @@ fn extract_handle_col(node: &LogicalPlan) -> Option<Column> {
         match current {
             LogicalPlan::Selection(_) | LogicalPlan::Limit(_) => {
                 chain.push(current);
-                // Go indexes `lp.Children()[0]` and would panic on a childless
-                // selection or limit; `None` is that refusal without the panic.
-                current = current.children().first()?;
+                // Go indexes `lp.Children()[0]` and panics on a childless
+                // selection or limit.
+                current = current
+                    .children()
+                    .first()
+                    .expect("result reorder walks a unary chain");
             }
             LogicalPlan::DataSource(data_source) => {
                 if !data_source.common_handle_cols.is_empty() {

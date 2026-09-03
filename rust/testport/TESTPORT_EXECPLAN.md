@@ -42,6 +42,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03: aligned the unary-walk and sequence-collapse boundaries with
+  Go master `a85e0fd5df` (same worktree/branch): empty-selection elimination
+  replaces a tested selection with `Children()[0]` directly, the
+  result-reorder handle walk indexes its unary chain, and sequence push-down
+  expects the main-query child in both the descend and the collapse. Two
+  regressions proven to fail pre-fix; constant-propagation verified as
+  iteration parity and left alone. See
+  `receipts/planner_rule_child_access.md`.
+
 - 2026-09-03: aligned aggregation-elimination boundaries with Go master
   `a85e0fd5df` (same worktree/branch): distinct elimination reads the child
   schema inside Go's per-function all-column-args branch, the PKOrUK

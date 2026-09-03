@@ -992,7 +992,7 @@ fn the_ctx_stack_pops_names_with_expressions() {
 
 #[test]
 fn a_childless_unary_chain_panics_when_resolving_a_natural_join_name_like_go() {
-    let fixture = Fixture::new();
+    let _fixture = Fixture::new();
     let plan = LogicalPlan::Selection(LogicalSelection::new(
         crate::logical::BaseLogicalPlan::with_id(1, LogicalSelection::TYPE, 0),
         Vec::new(),

@@ -1146,3 +1146,42 @@ fn a_childless_grouped_aggregation_panics_at_the_covered_check_like_go() {
     }))
     .is_err());
 }
+
+#[test]
+fn a_tested_childless_empty_selection_panics_when_eliminated_like_go() {
+    let allocator = PlanIdAllocator::default();
+    // Go only tests selections reached as CHILDREN; plant this one under a
+    // projection so the walk marks it tested.
+    let selection = LogicalPlan::Selection(LogicalSelection::new(
+        base(&allocator, "Selection", None),
+        Vec::new(),
+    ));
+    let projection = LogicalPlan::Projection(LogicalProjection::new(
+        base(&allocator, "Projection", None),
+        Vec::new(),
+    ));
+    let plan = with_children(projection, vec![selection]);
+
+    // Go `p.SetChild(idx, sel.Children()[0])` indexes directly.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        eliminate_empty_selection(plan)
+    }))
+    .is_err());
+}
+
+#[test]
+fn a_childless_sequence_panics_when_collapsing_like_go() {
+    let allocator = PlanIdAllocator::default();
+    let ctx = test_context(&allocator);
+    let plan = LogicalPlan::Sequence(LogicalSequence::new(base(
+        &allocator,
+        LogicalSequence::TYPE,
+        None,
+    )));
+
+    // Go reads the sequence's LAST child — `Children()[ChildLen()-1]`.
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        push_down_sequence(&ctx, plan)
+    }))
+    .is_err());
+}
