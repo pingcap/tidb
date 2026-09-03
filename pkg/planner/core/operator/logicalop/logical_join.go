@@ -262,7 +262,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		if _, isPlainJoin := p.Self().(*LogicalJoin); isPlainJoin && p.JoinType == base.InnerJoin && !innerJoinRegionCovered {
 			evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 			for _, child := range p.Children() {
-				borrowed = appendRegionConditions(evalCtx, borrowed, child)
+				borrowed, _ = appendRegionConditions(evalCtx, borrowed, child, false)
 			}
 			tempCond = append(tempCond, borrowed...)
 		}
@@ -338,25 +338,33 @@ func appendRegionConditions(
 	evalCtx expression.EvalContext,
 	conditions []expression.Expression,
 	plan base.LogicalPlan,
-) []expression.Expression {
+	insideInnerJoinRegion bool,
+) ([]expression.Expression, bool) {
 	if selection, ok := plan.(*LogicalSelection); ok {
+		start := len(conditions)
 		conditions = appendSafeConditions(evalCtx, conditions, selection.Conditions, selection.Schema())
-		return appendRegionConditions(evalCtx, conditions, selection.Children()[0])
+		conditions, foundInnerJoin := appendRegionConditions(
+			evalCtx, conditions, selection.Children()[0], insideInnerJoinRegion,
+		)
+		if !insideInnerJoinRegion && !foundInnerJoin {
+			conditions = conditions[:start]
+		}
+		return conditions, foundInnerJoin
 	}
 	join, ok := plan.(*LogicalJoin)
 	if !ok || join.JoinType != base.InnerJoin {
-		return conditions
+		return conditions, false
 	}
 	if _, isPlainJoin := join.Self().(*LogicalJoin); !isPlainJoin {
-		return conditions
+		return conditions, false
 	}
 	join.innerJoinRegionCovered = true
 	conditions = appendSafeConditions(evalCtx, conditions, expression.ScalarFuncs2Exprs(join.EqualConditions), join.Schema())
 	conditions = appendSafeConditions(evalCtx, conditions, join.OtherConditions, join.Schema())
 	for _, child := range join.Children() {
-		conditions = appendRegionConditions(evalCtx, conditions, child)
+		conditions, _ = appendRegionConditions(evalCtx, conditions, child, true)
 	}
-	return conditions
+	return conditions, true
 }
 
 // appendSafeConditions keeps the comparisons the constant solver can use: a

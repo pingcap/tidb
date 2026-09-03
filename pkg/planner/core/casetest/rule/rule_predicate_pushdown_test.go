@@ -115,6 +115,12 @@ func testNestedInnerJoinPredicatePropagation(t *testing.T) {
 		tk.MustExec("insert into t2 values (1), (2)")
 		tk.MustExec("insert into t3 values (1), (2)")
 		tk.MustExec("insert into t4 values (1), (2)")
+		tk.MustExec("create view v1 as select a, count(*) as c from t1 group by a")
+		tk.MustExec("create view v2 as select a from t2 where a < 2")
+		plan := strings.Join(testdata.ConvertRowsToStrings(
+			tk.MustQuery("explain format = 'plan_tree' select * from v1 join v2 on v1.a = v2.a").Rows(),
+		), "\n")
+		require.NotContains(t, plan, "lt(test.t1.a, 2)")
 		runPredicatePushdownTestDataWithResult(t, tk, cascades, "TestNestedInnerJoinPredicatePropagation")
 	})
 }
