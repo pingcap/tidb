@@ -42,6 +42,24 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 3, `pkg/kv`): aligned `option.go`'s internal transaction
+  types with Go master `94a9cbedab`: `InternalTxnMViewMaintenance =
+  "mview_maintain"` now exists in `tidb-txnkv` `option.rs`. Focused check and
+  the Ready fmt/whitespace gates pass. The remaining materialized-view drift
+  from `94a9cbedab` is QUEUED, not dropped, because each remaining slice's
+  Rust owner needs its own package-atomic batch: `pkg/util/mviewutil` (new
+  154-line package) needs `tidb-ast` to model `SelectStmt.LockInfo`,
+  `SelectIntoOpt`, `TableName.AsOf` and `TableSample` first;
+  `pkg/expression/helper.go`'s three `MaterializedSchedule*` helpers need the
+  Rust owners of `types.Flags`/`errctx.LevelMap` and a `types.Time` Go-time
+  conversion; `pkg/infoschema/builder.go`'s action-type switches have no Rust
+  bundle-update owner yet; `pkg/sqlexec`'s `ExecOption.SessionVarsSetup` and
+  the `pkg/session` internal-session consumer are an own pair; and the
+  `pkg/ddl` core (18 files: `materialized_view.go`, `mview_worker.go`,
+  `mview_schedule_expr.go`, schematracker, delete-range, rolling-back, plus
+  the `pkg/executor` and `pkg/planner/core` wiring) is the terminal large
+  batch of this feature.
+
 - 2026-09-03 (batch 2, `pkg/sessionctx/variable` + `pkg/sessionctx/vardef`):
   aligned the sessionctx slice of Go master `94a9cbedab`'s materialized-view
   commit: the five `tidb_mview_*` variable names and defaults plus
