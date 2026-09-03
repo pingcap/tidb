@@ -49,6 +49,14 @@ import (
 //
 // In both cases, the original `LogicalSelection` is eliminated, and the plan is rewritten to
 // `LogicalProjection -> LogicalJoin(AntiSemiJoin)`.
+//
+// A second, unrelated pattern handled by this rule (see canConvertOuterSemiJoinToSemiJoin) collapses
+// `LogicalSelection[flagCol] -> LeftOuterSemiJoin/AntiLeftOuterSemiJoin` into a plain
+// `SemiJoin`/`AntiSemiJoin`. This arises when `x IN (subquery)` is used as a scalar
+// boolean operand of AND/OR in a WHERE clause (e.g. `WHERE (x IN (subquery)) OR FALSE`):
+// the planner must build a LeftOuterSemiJoin with a trailing boolean flag column to
+// represent the three-valued result, but once that flag column is filtered directly by
+// the enclosing Selection, the outer join degenerates back to a plain semi join.
 type OuterJoinToSemiJoin struct{}
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
@@ -106,6 +114,15 @@ func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int
 }
 
 func (o *OuterJoinToSemiJoin) startConvertOuterJoinToSemiJoin(p base.LogicalPlan, childIdx int, sel *logicalop.LogicalSelection, join *logicalop.LogicalJoin) (base.LogicalPlan, bool) {
+	if canConvertOuterSemiJoinToSemiJoin(join, sel.Conditions, p) {
+		if p != nil {
+			p.SetChild(childIdx, join)
+		} else {
+			p = join
+		}
+		o.recursivePlan(join)
+		return p, true
+	}
 	proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema())
 	if ok {
 		var pChild base.LogicalPlan
@@ -125,6 +142,53 @@ func (o *OuterJoinToSemiJoin) startConvertOuterJoinToSemiJoin(p base.LogicalPlan
 	}
 	_, changed := o.recursivePlan(join)
 	return p, ok || changed
+}
+
+// canConvertOuterSemiJoinToSemiJoin detects the pattern:
+//
+//	Selection[flagCol] <- LeftOuterSemiJoin/AntiLeftOuterSemiJoin
+//
+// where flagCol is exactly the trailing boolean flag column the join appends
+// (e.g. the result of `x IN (subquery)` used as a scalar operand of AND/OR,
+// such as `WHERE (x IN (subquery)) OR FALSE`). A LeftOuterSemiJoin never
+// removes or duplicates outer rows; it only decides the flag's value, so
+// filtering WHERE flagCol (which keeps only the definitely-TRUE rows, per
+// three-valued WHERE semantics) is equivalent to requiring the semi-join
+// match to exist, i.e. a plain SemiJoin. Symmetrically for
+// AntiLeftOuterSemiJoin and AntiSemiJoin.
+//
+// This only fires when the flag column is not needed above the Selection,
+// since SemiJoin/AntiSemiJoin drop it from the schema entirely.
+func canConvertOuterSemiJoinToSemiJoin(join *logicalop.LogicalJoin, selectCond []expression.Expression, parent base.LogicalPlan) bool {
+	if join.JoinType != base.LeftOuterSemiJoin && join.JoinType != base.AntiLeftOuterSemiJoin {
+		return false
+	}
+	if len(selectCond) != 1 {
+		return false
+	}
+	flagCol, ok := selectCond[0].(*expression.Column)
+	if !ok {
+		return false
+	}
+	joinSchema := join.Schema()
+	flagColUniqueID := joinSchema.Columns[joinSchema.Len()-1].UniqueID
+	if flagCol.UniqueID != flagColUniqueID {
+		return false
+	}
+	// The flag column must not be required by anything above the Selection:
+	// SemiJoin/AntiSemiJoin do not produce it. Column identity is tracked by
+	// UniqueID and preserved across Schema.Clone(), so this check is valid
+	// even through intervening schema-preserving operators.
+	if parent != nil && parent.Schema().Contains(flagCol) {
+		return false
+	}
+	if join.JoinType == base.LeftOuterSemiJoin {
+		join.JoinType = base.SemiJoin
+	} else {
+		join.JoinType = base.AntiSemiJoin
+	}
+	join.MergeSchema()
+	return true
 }
 
 func ensureSelectionRoot(p base.LogicalPlan, sel *logicalop.LogicalSelection) base.LogicalPlan {
