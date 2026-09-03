@@ -526,7 +526,7 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 		seg.rowStartOffset = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
 		seg.validJoinKeyPos = make([]int, 0, b.helpers[partIdx].validRowNum)
 		if sqlKiller.Signal != 0 {
-			if err = checkSQLKiller(sqlKiller, ""); err != nil {
+			if err = sqlKiller.HandleSignal(); err != nil {
 				break
 			}
 		}
@@ -538,6 +538,7 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 			seg.rowStartOffset = nil
 			seg.validJoinKeyPos = nil
 		}
+		hashJoinCtx.hashTableContext.memoryTracker.Consume(-totalMemUsage)
 	}
 	return
 }
