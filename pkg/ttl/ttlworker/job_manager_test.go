@@ -709,7 +709,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -731,7 +731,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -767,7 +767,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -797,7 +797,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -977,7 +977,7 @@ func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
 
 	se := newMockSession(t)
 	statusSQL, _ := cache.SelectFromTTLTableStatusWithID(1)
-	insertTaskSQL, _, err := cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, expireTime, now, nil)
+	insertTaskSQL, _, err := cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, expireTime, now)
 	require.NoError(t, err)
 	var taskArgs [][]any
 	se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {

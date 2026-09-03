@@ -46,6 +46,9 @@ import (
 
 func getTableKeyColumns(tbl *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType, error) {
 	if tbl.PKIsHandle {
+		// An integer clustered primary key is encoded directly in the record key.
+		// It normally has no independent primary IndexInfo, so TTL's existing PK
+		// scan path splits and paginates the table by this handle column.
 		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				return []*model.ColumnInfo{tbl.Columns[i]}, []*types.FieldType{&tbl.Columns[i].FieldType}, nil
@@ -110,10 +113,6 @@ type PhysicalTable struct {
 	KeyColumns []*model.ColumnInfo
 	// KeyColumnTypes is the types of the key columns
 	KeyColumnTypes []*types.FieldType
-	// IndexScanColumnTypes is the types of the columns returned by an index scan:
-	// time column followed by the key columns. It is nil when the table has no
-	// TTL time column (e.g. runaway record tables).
-	IndexScanColumnTypes []*types.FieldType
 	// TimeColum is the time column used for TTL
 	TimeColumn *model.ColumnInfo
 }
@@ -159,7 +158,7 @@ func NewBasePhysicalTable(schema ast.CIStr,
 		physicalID = partitionDef.ID
 	}
 
-	pt := &PhysicalTable{
+	return &PhysicalTable{
 		ID:             physicalID,
 		Schema:         schema,
 		TableInfo:      tbl,
@@ -168,13 +167,7 @@ func NewBasePhysicalTable(schema ast.CIStr,
 		KeyColumns:     keyColumns,
 		KeyColumnTypes: keyColumTypes,
 		TimeColumn:     timeColumn,
-	}
-	if timeColumn != nil {
-		pt.IndexScanColumnTypes = make([]*types.FieldType, 0, 1+len(keyColumTypes))
-		pt.IndexScanColumnTypes = append(pt.IndexScanColumnTypes, &timeColumn.FieldType)
-		pt.IndexScanColumnTypes = append(pt.IndexScanColumnTypes, keyColumTypes...)
-	}
-	return pt, nil
+	}, nil
 }
 
 // NewPhysicalTable create a new PhysicalTable
@@ -674,31 +667,259 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	return d
 }
 
-// FindTTLIndex finds a secondary index that contains the TTL column as its prefix.
+// TTLIndexScanPlan describes the SQL result and pagination order for a TTL index scan.
+type TTLIndexScanPlan struct {
+	Index            *model.IndexInfo
+	ScanColumns      []*model.ColumnInfo
+	ScanColumnTypes  []*types.FieldType
+	OrderColumns     []*model.ColumnInfo
+	KeyColumnOffsets []int
+}
+
+// OrderKey extracts the pagination values from a scan result row.
+func (p *TTLIndexScanPlan) OrderKey(row []types.Datum) []types.Datum {
+	return row[:len(p.OrderColumns)]
+}
+
+// TableKey extracts the table key from a scan result row.
+func (p *TTLIndexScanPlan) TableKey(row []types.Datum) []types.Datum {
+	key := make([]types.Datum, len(p.KeyColumnOffsets))
+	for i, offset := range p.KeyColumnOffsets {
+		key[i] = row[offset]
+	}
+	return key
+}
+
+func (p *TTLIndexScanPlan) containsFullTableKey() bool {
+	for _, offset := range p.KeyColumnOffsets {
+		if offset >= len(p.Index.Columns) {
+			return false
+		}
+	}
+	return true
+}
+
+// FindTTLIndex finds an index that can scan in its physical index order.
 // Returns nil if no suitable index exists.
 func (t *PhysicalTable) FindTTLIndex() *model.IndexInfo {
 	if t.TimeColumn == nil {
 		return nil
 	}
+	var best *TTLIndexScanPlan
 	for _, idx := range t.Indices {
-		if idx.Primary {
-			continue
-		}
-		if idx.State != model.StatePublic {
-			continue
-		}
-		if idx.Invisible {
-			continue
-		}
-		if len(idx.Columns) == 0 {
-			continue
-		}
-		// Check if the TTL column is the first column of the index
-		if idx.Columns[0].Name.L == t.TimeColumn.Name.L {
-			return idx
+		plan, err := t.BuildTTLIndexScanPlan(idx)
+		if err == nil && (best == nil || ttlIndexScanPlanLess(plan, best)) {
+			best = plan
 		}
 	}
-	return nil
+	if best == nil {
+		return nil
+	}
+	return best.Index
+}
+
+func ttlIndexScanPlanLess(lhs, rhs *TTLIndexScanPlan) bool {
+	priority := func(plan *TTLIndexScanPlan) int {
+		if len(plan.Index.Columns) == 1 {
+			return 0
+		}
+		if plan.containsFullTableKey() {
+			return 1
+		}
+		return 2
+	}
+	if lhsPriority, rhsPriority := priority(lhs), priority(rhs); lhsPriority != rhsPriority {
+		return lhsPriority < rhsPriority
+	}
+	if len(lhs.OrderColumns) != len(rhs.OrderColumns) {
+		return len(lhs.OrderColumns) < len(rhs.OrderColumns)
+	}
+	return len(lhs.ScanColumns) < len(rhs.ScanColumns)
+}
+
+// BuildTTLIndexScanPlan validates an index and derives its scan and pagination columns.
+//
+// TTL index scan must be able to page by a strict cursor in the same order as the
+// physical index scan. The generated ORDER BY has to be fully satisfied by the
+// index order; otherwise every page may need an extra TopN/Sort and repeatedly
+// re-scan rows that were already seen by previous pages.
+func (t *PhysicalTable) BuildTTLIndexScanPlan(idx *model.IndexInfo) (*TTLIndexScanPlan, error) {
+	if t.TimeColumn == nil || idx == nil {
+		return nil, errors.New("TTL time column and index are required")
+	}
+	if idx.Primary && t.HasClusteredIndex() {
+		// A clustered primary key is the table path itself, not a separate index
+		// keyspace that SplitIndexScanRanges can split. Keep it on the existing PK
+		// scan path, which already splits and paginates by the clustered key order.
+		//
+		// For PKIsHandle tables the integer primary key normally does not appear in
+		// TableInfo.Indices at all. A common-handle primary key does appear there,
+		// so this check explicitly rejects it. A nonclustered primary key has its
+		// own index KV and HasClusteredIndex returns false, allowing it to use the
+		// same index-scan path as an ordinary unique secondary index.
+		return nil, errors.Errorf("clustered primary index %s uses the table scan path", idx.Name)
+	}
+	if idx.State != model.StatePublic || idx.Invisible || idx.Global || idx.MVIndex ||
+		idx.IsColumnarIndex() || idx.ConditionExprString != "" || len(idx.Columns) == 0 {
+		// TTL needs one local public physical-index order that can be scanned
+		// directly. Global/MV/columnar/conditional indexes either use a different
+		// access path, add extra predicate semantics, or do not provide that single
+		// local physical order.
+		return nil, errors.Errorf("index %s is not a supported TTL scan index", idx.Name)
+	}
+	if idx.Columns[0].Name.L != t.TimeColumn.Name.L {
+		return nil, errors.Errorf("TTL column %s is not the first index column", t.TimeColumn.Name)
+	}
+
+	indexColumns := make([]*model.ColumnInfo, len(idx.Columns))
+	for i, idxCol := range idx.Columns {
+		if idxCol.Offset < 0 || idxCol.Offset >= len(t.Columns) || idxCol.Length != types.UnspecifiedLength {
+			// Prefix indexes are ordered by the stored prefix, while TTL cursor
+			// predicates compare full column values. Using such an index could
+			// skip or revisit rows whose full values share the same prefix.
+			return nil, errors.Errorf("index column %s cannot be used as a full TTL pagination column", idxCol.Name)
+		}
+		col := t.Columns[idxCol.Offset]
+		if col == nil || col.Hidden {
+			// Hidden columns cannot be referenced by the generated pagination SQL.
+			return nil, errors.Errorf("index column %s is not a visible table column", idxCol.Name)
+		}
+		indexColumns[i] = col
+	}
+	if idx.Unique {
+		for _, col := range indexColumns[1:] {
+			if !mysql.HasNotNullFlag(col.GetFlag()) {
+				// A unique index with nullable non-TTL columns is not unique for
+				// pagination: SQL allows multiple rows where those columns are
+				// NULL. The TTL column itself is safe because the expiration
+				// predicate excludes NULL TTL values.
+				return nil, errors.Errorf("unique index %s has nullable non-TTL column %s", idx.Name, col.Name)
+			}
+		}
+	}
+
+	keyColumnOffsets := make([]int, len(t.KeyColumns))
+	keyColumnsInIndex := 0
+	for i, keyCol := range t.KeyColumns {
+		keyColumnOffsets[i] = -1
+		for j, idxCol := range indexColumns {
+			if idxCol.ID == keyCol.ID {
+				keyColumnOffsets[i] = j
+				keyColumnsInIndex++
+				break
+			}
+		}
+	}
+	containsFullKey := keyColumnsInIndex == len(t.KeyColumns)
+	containsPartialKey := keyColumnsInIndex > 0 && !containsFullKey
+
+	orderColumns := append([]*model.ColumnInfo(nil), indexColumns...)
+	if !idx.Unique && !containsFullKey {
+		if containsPartialKey || !t.canUseHandleInTTLIndexOrder() {
+			// Non-unique secondary-index rows are ordered by declared index
+			// columns plus an implicit table-key suffix. TTL can page by that
+			// suffix only when it can append the full table key to ORDER BY and
+			// the planner can match it to the physical suffix. If the index has
+			// only part of the table key, the current cursor layout cannot
+			// express the remaining hidden suffix without changing the order.
+			return nil, errors.Errorf("index %s cannot seek by its physical table-key suffix", idx.Name)
+		}
+		orderColumns = append(orderColumns, t.KeyColumns...)
+	}
+	for _, col := range orderColumns {
+		switch col.GetType() {
+		case mysql.TypeSet:
+			// SET is physically ordered by its bitmask, but the planner cannot
+			// currently turn SET cursor comparisons into index ranges. Selecting
+			// such an index would repeatedly scan the preceding index prefix.
+			return nil, errors.Errorf("index %s requires unsupported SET pagination column %s", idx.Name, col.Name)
+		case mysql.TypeFloat, mysql.TypeDouble:
+			// Floating-point SQL literals cannot always reproduce the exact
+			// physical value returned by a scan. They are therefore unsafe as a
+			// strict pagination frontier.
+			return nil, errors.Errorf("index %s requires unsupported floating-point pagination column %s", idx.Name, col.Name)
+		}
+	}
+
+	// Keep both the declared index key and the pagination key as prefixes of
+	// every result row. Append only table-key columns missing from the index.
+	scanColumns := append([]*model.ColumnInfo(nil), indexColumns...)
+	for i, col := range t.KeyColumns {
+		if keyColumnOffsets[i] < 0 {
+			keyColumnOffsets[i] = len(scanColumns)
+			scanColumns = append(scanColumns, col)
+		}
+	}
+
+	scanColumnTypes := make([]*types.FieldType, len(scanColumns))
+	for i, col := range scanColumns {
+		scanColumnTypes[i] = &col.FieldType
+	}
+	return &TTLIndexScanPlan{
+		Index:            idx,
+		ScanColumns:      scanColumns,
+		ScanColumnTypes:  scanColumnTypes,
+		OrderColumns:     orderColumns,
+		KeyColumnOffsets: keyColumnOffsets,
+	}, nil
+}
+
+func (t *PhysicalTable) canUseHandleInTTLIndexOrder() bool {
+	if t.PKIsHandle {
+		// For int-handle tables, the hidden suffix follows signed handle order.
+		// Unsigned integer primary-key values can have a different SQL order, so
+		// do not rely on the hidden suffix for pagination.
+		return len(t.KeyColumns) == 1 && !mysql.HasUnsignedFlag(t.KeyColumns[0].GetFlag())
+	}
+	if !t.IsCommonHandle {
+		// The hidden _tidb_rowid suffix is an internal signed integer, and the
+		// planner can use it to satisfy ORDER BY _tidb_rowid.
+		return true
+	}
+	if t.commonHandleHasPrefixColumn() {
+		// A prefix common-handle column stores only the indexed prefix in the key,
+		// but TTL would need the full handle value for a stable cursor.
+		return false
+	}
+	if t.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
+		return true
+	}
+	for _, col := range t.KeyColumns {
+		if col.FieldType.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.GetFlag()) {
+			// This matches the planner restriction for v0 common handles with new
+			// collations: non-binary string handle values are stored as sort-key
+			// bytes in the index, not original values, so SQL collation order
+			// cannot be safely matched to the hidden suffix.
+			return false
+		}
+	}
+	return true
+}
+
+func (t *PhysicalTable) commonHandleHasPrefixColumn() bool {
+	if !t.IsCommonHandle {
+		return false
+	}
+	primaryIdx := tables.FindPrimaryIndex(t.TableInfo)
+	if primaryIdx == nil {
+		return true
+	}
+	for _, idxCol := range primaryIdx.Columns {
+		if idxCol.Length == types.UnspecifiedLength {
+			continue
+		}
+		if idxCol.Offset < 0 || idxCol.Offset >= len(t.Columns) {
+			return true
+		}
+		col := t.Columns[idxCol.Offset]
+		if col == nil {
+			return true
+		}
+		if flen := col.GetFlen(); flen == types.UnspecifiedLength || idxCol.Length < flen {
+			return true
+		}
+	}
+	return false
 }
 
 // SplitIndexScanRanges splits index-scan ranges by the selected index's region distribution.
@@ -740,19 +961,8 @@ func (t *PhysicalTable) SplitIndexScanRanges(ctx context.Context, store kv.Stora
 	}
 
 	scanRanges, err := scanRangesFromRawKeyRanges(keyRanges, func(endKey kv.Key) (types.Datum, bool, error) {
-		if endKey.Cmp(indexPrefix) <= 0 || !endKey.HasPrefix(indexPrefix) {
-			return nullDatum(), false, nil
-		}
-
-		data, _, err := codec.CutOne(endKey[len(indexPrefix):])
-		if err != nil {
-			return nullDatum(), false, nil
-		}
-		_, d, err := codec.DecodeAsDateTime(data, t.TimeColumn.FieldType.GetType(), loc)
-		if err != nil {
-			return nullDatum(), false, nil
-		}
-		return d, false, nil
+		d, err := timeDatumAtOrBeforeIndexBoundary(endKey, indexPrefix, &t.TimeColumn.FieldType, loc)
+		return d, false, err
 	})
 	if err != nil {
 		return nil, err
@@ -761,6 +971,120 @@ func (t *PhysicalTable) SplitIndexScanRanges(ctx context.Context, store kv.Stora
 		return []ScanRange{newFullRange()}, nil
 	}
 	return scanRanges, nil
+}
+
+// timeDatumAtOrBeforeIndexBoundary maps an arbitrary Region boundary to a
+// temporal datum that can be used as a SQL scan boundary.
+//
+// A Region boundary is an arbitrary byte string. It may end in the middle of
+// the leading temporal datum and therefore cannot be decoded with codec.CutOne.
+// Like the primary-key split helpers above, this function maps such bytes to a
+// nearby representable SQL value instead of dropping the split. It uses the
+// greatest temporal value whose complete encoding is no greater than the Region
+// boundary. For example, if a DATETIME(0) boundary is a truncated prefix of the
+// encoding of 2025-01-01 00:00:00, the result is the last valid second whose
+// complete encoding sorts before that prefix. If the boundary precedes every
+// temporal encoding, zero is used as the smallest SQL boundary instead.
+//
+// Using an approximate datum is safe because it is only used to divide the
+// complete SQL scan into adjacent [start, end) ranges. It does not need to be an
+// existing row value or exactly match the physical Region boundary.
+func timeDatumAtOrBeforeIndexBoundary(
+	boundary, indexPrefix kv.Key,
+	ft *types.FieldType,
+	loc *time.Location,
+) (types.Datum, error) {
+	tp := ft.GetType()
+	fsp := ft.GetDecimal()
+	if fsp == types.UnspecifiedFsp {
+		fsp = types.DefaultFsp
+	}
+	if fsp < types.MinFsp || fsp > types.MaxFsp {
+		return nullDatum(), errors.Errorf("invalid temporal FSP: %d", fsp)
+	}
+	if tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
+		return nullDatum(), errors.Errorf("unsupported temporal type: %d", tp)
+	}
+
+	stepMicros := int64(1)
+	for i := fsp; i < types.MaxFsp; i++ {
+		stepMicros *= 10
+	}
+	minTime := time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC)
+	maxTime := time.Date(9999, 12, 31, 23, 59, 59, int(1_000_000-stepMicros)*1000, time.UTC)
+	if tp == mysql.TypeDate {
+		stepMicros = int64(24 * time.Hour / time.Microsecond)
+		maxTime = time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
+	} else if tp == mysql.TypeTimestamp {
+		minTime = time.Date(1970, 1, 1, 0, 0, 1, 0, time.UTC)
+		maxTime = time.Date(2038, 1, 19, 3, 14, 7, int(1_000_000-stepMicros)*1000, time.UTC)
+	}
+	minMicros, maxMicros := minTime.UnixMicro(), maxTime.UnixMicro()
+
+	makeDatum := func(micros int64) types.Datum {
+		goTime := time.UnixMicro(micros).UTC()
+		return types.NewTimeDatum(types.NewTime(types.FromGoTime(goTime), tp, fsp))
+	}
+	encodeDatum := func(d types.Datum) (kv.Key, error) {
+		// makeDatum constructs TIMESTAMP candidates in UTC. Encode them in UTC
+		// as well so the binary search follows the physical index order and is
+		// independent of daylight-saving transitions in loc.
+		encodeLoc := loc
+		if tp == mysql.TypeTimestamp {
+			encodeLoc = time.UTC
+		}
+		encoded, err := codec.EncodeKey(encodeLoc, nil, d)
+		if err != nil {
+			return nil, err
+		}
+		key := make(kv.Key, 0, len(indexPrefix)+len(encoded))
+		key = append(key, indexPrefix...)
+		return append(key, encoded...), nil
+	}
+
+	zeroDatum := types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, tp, fsp))
+	zeroKey, err := encodeDatum(zeroDatum)
+	if err != nil {
+		return nullDatum(), err
+	}
+	if boundary.Cmp(zeroKey) < 0 {
+		// There is no temporal value at or before this key. Zero is still a safe
+		// SQL split point because it is the smallest representable value.
+		return zeroDatum, nil
+	}
+
+	// Binary-search all valid values at the column's FSP. Even DATETIME(6)
+	// needs fewer than 60 iterations, and this runs only while creating TTL
+	// subtasks after the Region lookup.
+	low, high := int64(0), (maxMicros-minMicros)/stepMicros
+	best := int64(-1)
+	for low <= high {
+		mid := low + (high-low)/2
+		candidate := makeDatum(minMicros + mid*stepMicros)
+		key, err := encodeDatum(candidate)
+		if err != nil {
+			return nullDatum(), err
+		}
+		if key.Cmp(boundary) <= 0 {
+			best = mid
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+	if best < 0 {
+		return zeroDatum, nil
+	}
+
+	result := makeDatum(minMicros + best*stepMicros)
+	if tp == mysql.TypeTimestamp && loc != nil && loc != time.UTC {
+		tm := result.GetMysqlTime()
+		if err := tm.ConvertTimeZone(time.UTC, loc); err != nil {
+			return nullDatum(), err
+		}
+		result.SetMysqlTime(tm)
+	}
+	return result, nil
 }
 
 func scanRangesFromRawKeyRanges(

@@ -600,7 +600,7 @@ func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*ca
 
 	allTasks := make([]*cache.TTLTask, 0, len(rows))
 	for _, r := range rows {
-		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r, m.infoSchemaCache)
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
 		if err != nil {
 			logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", jobID))
 			return nil, err
@@ -928,7 +928,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			}
 		}
 		for scanID, r := range ranges {
-			sql, args, err = cache.InsertIntoTTLTask(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now, splitBy)
+			sql, args, err = cache.InsertIntoTTLTaskWithSplitBy(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now, splitBy)
 			if err != nil {
 				return errors.Wrap(err, "encode scan task")
 			}

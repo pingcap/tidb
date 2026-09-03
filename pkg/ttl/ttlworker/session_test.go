@@ -168,7 +168,6 @@ type mockSession struct {
 	rows               []chunk.Row
 	execErr            error
 	resetTimeZoneCalls int
-	globalTimeZone     *time.Location
 	inPool             bool
 	closed             bool
 	commitErr          error
@@ -253,10 +252,7 @@ func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
 
 // GlobalTimeZone returns the global timezone
 func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) {
-	if s.globalTimeZone != nil {
-		return s.globalTimeZone, nil
-	}
-	return time.Local, nil
+	return s.sessionVars.Location(), nil
 }
 
 // KillStmt kills the current statement execution

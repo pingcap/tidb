@@ -862,7 +862,7 @@ func TestSubmitJobWithIndexScanForAnonymizedLargeTableShape(t *testing.T) {
 
 	tasks := make([]*cache.TTLTask, 0, len(rows))
 	for _, row := range rows {
-		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), row, m.InfoSchemaCache())
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), row)
 		require.NoError(t, err)
 		require.NotNil(t, task.SplitBy)
 		require.Equal(t, idx.ID, *task.SplitBy)
@@ -881,7 +881,7 @@ func TestSubmitJobWithIndexScanForAnonymizedLargeTableShape(t *testing.T) {
 	require.Equal(t, "2024-01-01 00:00:00", tasks[3].ScanRangeStart[0].GetMysqlTime().String())
 	require.Empty(t, tasks[3].ScanRangeEnd)
 
-	generator, err := sqlbuilder.NewScanQueryGenerator(ttlTbl, tasks[1].ExpireTime, tasks[1].ScanRangeStart, tasks[1].ScanRangeEnd, idx.Name.O)
+	generator, err := sqlbuilder.NewIndexScanQueryGenerator(ttlTbl, tasks[1].ExpireTime, tasks[1].ScanRangeStart, tasks[1].ScanRangeEnd, idx)
 	require.NoError(t, err)
 	scanSQL, err := generator.NextSQL(nil, 32)
 	require.NoError(t, err)

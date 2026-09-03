@@ -38,6 +38,10 @@ func writeHex(in io.Writer, d types.Datum) error {
 }
 
 func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
+	if d.IsNull() {
+		restoreCtx.WriteKeyWord("NULL")
+		return nil
+	}
 	switch ft.GetType() {
 	case mysql.TypeBit, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeTinyBlob:
 		return writeHex(restoreCtx.In, d)
@@ -109,8 +113,12 @@ func (b *SQLBuilder) Build() (string, error) {
 	return b.sb.String(), nil
 }
 
-// WriteSelect writes a select statement to select the given columns without any condition.
-func (b *SQLBuilder) WriteSelect(cols []*model.ColumnInfo) error {
+// WriteSelect writes a select statement to select the table key columns without any condition.
+func (b *SQLBuilder) WriteSelect() error {
+	return b.writeSelectColumns(b.tbl.KeyColumns)
+}
+
+func (b *SQLBuilder) writeSelectColumns(cols []*model.ColumnInfo) error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
@@ -133,14 +141,21 @@ func (b *SQLBuilder) WriteSelect(cols []*model.ColumnInfo) error {
 	return nil
 }
 
-// WriteForceIndex writes a FORCE INDEX hint
-func (b *SQLBuilder) WriteForceIndex(indexName string) error {
+func (b *SQLBuilder) writeForceIndex(indexName string) error {
 	if b.state != writeSelOrDel || !b.isReadOnly {
 		return errors.Errorf("invalid state for FORCE INDEX: %v", b.state)
 	}
 	b.restoreCtx.WritePlain(" FORCE INDEX(")
 	b.restoreCtx.WriteName(indexName)
 	b.restoreCtx.WritePlain(")")
+	return nil
+}
+
+func (b *SQLBuilder) writeUseNoIndex() error {
+	if b.state != writeSelOrDel || !b.isReadOnly {
+		return errors.Errorf("invalid state for USE INDEX: %v", b.state)
+	}
+	b.restoreCtx.WritePlain(" USE INDEX ()")
 	return nil
 }
 
@@ -329,14 +344,26 @@ type ScanQueryGenerator struct {
 	exhausted     bool
 
 	// Index scan mode
-	indexName string
-	lastKey   []types.Datum
+	indexPlan *cache.TTLIndexScanPlan
 }
 
-// NewScanQueryGenerator creates a new ScanQueryGenerator.
-// If indexName is non-empty, it generates index-scan SQLs with FORCE INDEX.
+// NewScanQueryGenerator creates a primary-key scan query generator.
 func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
-	rangeStart, rangeEnd []types.Datum, indexName string) (*ScanQueryGenerator, error) {
+	rangeStart, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
+	return newScanQueryGenerator(tbl, expire, rangeStart, rangeEnd, nil)
+}
+
+// NewIndexScanQueryGenerator creates an index scan query generator.
+func NewIndexScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
+	rangeStart, rangeEnd []types.Datum, index *model.IndexInfo) (*ScanQueryGenerator, error) {
+	if index == nil {
+		return nil, errors.New("TTL index is required")
+	}
+	return newScanQueryGenerator(tbl, expire, rangeStart, rangeEnd, index)
+}
+
+func newScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
+	rangeStart, rangeEnd []types.Datum, index *model.IndexInfo) (*ScanQueryGenerator, error) {
 	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
 		return nil, err
 	}
@@ -345,12 +372,18 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 		return nil, err
 	}
 
-	if indexName != "" {
+	var indexPlan *cache.TTLIndexScanPlan
+	if index != nil {
 		if len(rangeStart) > 1 {
 			return nil, errors.Errorf("invalid index scan range start length: %d, expected 1", len(rangeStart))
 		}
 		if len(rangeEnd) > 1 {
 			return nil, errors.Errorf("invalid index scan range end length: %d, expected 1", len(rangeEnd))
+		}
+		var err error
+		indexPlan, err = tbl.BuildTTLIndexScanPlan(index)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -360,7 +393,7 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 		keyRangeStart: rangeStart,
 		keyRangeEnd:   rangeEnd,
 		firstBuild:    true,
-		indexName:     indexName,
+		indexPlan:     indexPlan,
 	}, nil
 }
 
@@ -378,21 +411,14 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 		g.firstBuild = false
 	}()
 
-	if g.indexName != "" {
-		return g.nextSQLForIndex(continueFromResult, nextLimit)
-	}
-	return g.nextSQLForPK(continueFromResult, nextLimit)
-}
-
-func (g *ScanQueryGenerator) nextSQLForPK(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
 	if g.stack == nil {
-		g.stack = make([][]types.Datum, 0, len(g.tbl.KeyColumns))
+		g.stack = make([][]types.Datum, 0, len(g.orderColumns()))
 	}
 
 	if len(continueFromResult) >= g.limit {
 		var continueFromKey []types.Datum
 		if cnt := len(continueFromResult); cnt > 0 {
-			continueFromKey = continueFromResult[cnt-1]
+			continueFromKey = g.orderKey(continueFromResult[cnt-1])
 		}
 		if err := g.setStack(continueFromKey); err != nil {
 			return "", err
@@ -409,16 +435,18 @@ func (g *ScanQueryGenerator) nextSQLForPK(continueFromResult [][]types.Datum, ne
 	return g.buildSQL()
 }
 
-func (g *ScanQueryGenerator) nextSQLForIndex(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
-	if len(continueFromResult) >= g.limit {
-		if cnt := len(continueFromResult); cnt > 0 {
-			g.lastKey = continueFromResult[cnt-1]
-		}
-	} else if !g.firstBuild {
-		g.exhausted = true
+func (g *ScanQueryGenerator) orderColumns() []*model.ColumnInfo {
+	if g.indexPlan != nil {
+		return g.indexPlan.OrderColumns
 	}
-	g.limit = nextLimit
-	return g.buildSQL()
+	return g.tbl.KeyColumns
+}
+
+func (g *ScanQueryGenerator) orderKey(row []types.Datum) []types.Datum {
+	if g.indexPlan != nil {
+		return g.indexPlan.OrderKey(row)
+	}
+	return row
 }
 
 // IsExhausted returns whether the generator is exhausted
@@ -436,8 +464,8 @@ func (g *ScanQueryGenerator) setStack(key []types.Datum) error {
 		return nil
 	}
 
-	if err := g.tbl.ValidateKeyPrefix(key); err != nil {
-		return err
+	if maxLen := len(g.orderColumns()); len(key) > maxLen {
+		return errors.Errorf("invalid pagination key length: %d, expected at most %d", len(key), maxLen)
 	}
 
 	g.stack = g.stack[:len(key)]
@@ -457,36 +485,73 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	b := NewSQLBuilder(g.tbl)
-	if g.indexName != "" {
+	if g.indexPlan != nil {
 		return g.buildSQLForIndex(b)
 	}
 	return g.buildSQLForPK(b)
 }
 
+// writeStackConditions writes one ordered index range for the top cursor prefix.
+// For cursor (a, b, c), successive stack levels produce:
+//
+//	a = ? AND b = ? AND c > ?
+//	a = ? AND b > ?
+//	a > ?
+//
+// NULL is first in TiDB's ascending index order. A NULL in the fixed prefix uses
+// IS NULL, while advancing past a NULL frontier uses IS NOT NULL.
+func (g *ScanQueryGenerator) writeStackConditions(b *SQLBuilder, cols []*model.ColumnInfo) error {
+	if len(g.stack) == 0 {
+		return nil
+	}
+
+	key := g.stack[len(g.stack)-1]
+	for i, d := range key {
+		col := cols[i : i+1]
+		val := []types.Datum{d}
+		if i < len(key)-1 {
+			op := "="
+			if d.IsNull() {
+				op = "IS"
+			}
+			if err := b.WriteCommonCondition(col, op, val); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if d.IsNull() {
+			// An inclusive lower bound at NULL includes every value at this
+			// prefix, so it needs no condition on the frontier column.
+			if g.firstBuild {
+				continue
+			}
+			if err := b.WriteCommonCondition(col, "IS NOT", val); err != nil {
+				return err
+			}
+			continue
+		}
+
+		op := ">"
+		if g.firstBuild {
+			op = ">="
+		}
+		if err := b.WriteCommonCondition(col, op, val); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (g *ScanQueryGenerator) buildSQLForPK(b *SQLBuilder) (string, error) {
-	if err := b.WriteSelect(b.tbl.KeyColumns); err != nil {
+	if err := b.WriteSelect(); err != nil {
 		return "", err
 	}
-	if len(g.stack) > 0 {
-		for i, d := range g.stack[len(g.stack)-1] {
-			col := []*model.ColumnInfo{g.tbl.KeyColumns[i]}
-			val := []types.Datum{d}
-			var err error
-			if i < len(g.stack)-1 {
-				err = b.WriteCommonCondition(col, "=", val)
-			} else if g.firstBuild {
-				// When `g.firstBuild == true`, that means we are querying rows after range start, because range is defined
-				// as [start, end), we should use ">=" to find the rows including start key.
-				err = b.WriteCommonCondition(col, ">=", val)
-			} else {
-				// Otherwise when `g.firstBuild != true`, that means we are continuing with the previous result, we should use
-				// ">" to exclude the previous row.
-				err = b.WriteCommonCondition(col, ">", val)
-			}
-			if err != nil {
-				return "", err
-			}
-		}
+	if err := b.writeUseNoIndex(); err != nil {
+		return "", err
+	}
+	if err := g.writeStackConditions(b, g.tbl.KeyColumns); err != nil {
+		return "", err
 	}
 
 	if len(g.keyRangeEnd) > 0 {
@@ -511,24 +576,15 @@ func (g *ScanQueryGenerator) buildSQLForPK(b *SQLBuilder) (string, error) {
 }
 
 func (g *ScanQueryGenerator) buildSQLForIndex(b *SQLBuilder) (string, error) {
-	orderColumns := append([]*model.ColumnInfo{g.tbl.TimeColumn}, g.tbl.KeyColumns...)
-	if err := b.WriteSelect(orderColumns); err != nil {
+	if err := b.writeSelectColumns(g.indexPlan.ScanColumns); err != nil {
 		return "", err
 	}
-	if err := b.WriteForceIndex(g.indexName); err != nil {
+	if err := b.writeForceIndex(g.indexPlan.Index.Name.O); err != nil {
 		return "", err
 	}
 
-	if g.lastKey != nil {
-		// Continue from last result: (time_col, key_cols) > (last_time, last_keys)
-		if err := b.WriteCommonCondition(orderColumns, ">", g.lastKey); err != nil {
-			return "", err
-		}
-	} else if g.firstBuild && len(g.keyRangeStart) > 0 {
-		// First build: time_col >= range_start
-		if err := b.WriteCommonCondition([]*model.ColumnInfo{g.tbl.TimeColumn}, ">=", g.keyRangeStart); err != nil {
-			return "", err
-		}
+	if err := g.writeStackConditions(b, g.indexPlan.OrderColumns); err != nil {
+		return "", err
 	}
 
 	if len(g.keyRangeEnd) > 0 {
@@ -541,7 +597,7 @@ func (g *ScanQueryGenerator) buildSQLForIndex(b *SQLBuilder) (string, error) {
 		return "", err
 	}
 
-	if err := b.WriteOrderBy(orderColumns, false); err != nil {
+	if err := b.WriteOrderBy(g.indexPlan.OrderColumns, false); err != nil {
 		return "", err
 	}
 
@@ -550,6 +606,22 @@ func (g *ScanQueryGenerator) buildSQLForIndex(b *SQLBuilder) (string, error) {
 	}
 
 	return b.Build()
+}
+
+// ScanColumnTypes returns the SQL result types for this generator.
+func (g *ScanQueryGenerator) ScanColumnTypes() []*types.FieldType {
+	if g.indexPlan != nil {
+		return g.indexPlan.ScanColumnTypes
+	}
+	return g.tbl.KeyColumnTypes
+}
+
+// TableKey extracts the table key from a scan result row.
+func (g *ScanQueryGenerator) TableKey(row []types.Datum) []types.Datum {
+	if g.indexPlan != nil {
+		return g.indexPlan.TableKey(row)
+	}
+	return row[:len(g.tbl.KeyColumns)]
 }
 
 // BuildDeleteSQL builds a delete SQL

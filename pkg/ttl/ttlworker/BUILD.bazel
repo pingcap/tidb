@@ -31,6 +31,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/statistics/handle",
         "//pkg/store/driver/error",
+        "//pkg/tablecodec",
         "//pkg/timer/api",
         "//pkg/timer/runtime",
         "//pkg/timer/tablestore",
