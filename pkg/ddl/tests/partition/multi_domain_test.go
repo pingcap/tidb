@@ -2163,8 +2163,10 @@ func TestIssue58692(t *testing.T) {
 	})
 	tk.MustExec("alter table t remove partitioning")
 	<-done
+	tk.MustExec("begin")
 	rsIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
 	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
+	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t where b = 20").Check(testkit.Rows("9 20"))
 	tk.MustQuery("select * from t use index(idx) where a = 9").Check(testkit.Rows("9 20"))

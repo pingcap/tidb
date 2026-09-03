@@ -111,6 +111,7 @@ type jobContext struct {
 	jobArgs model.JobArgs
 
 	// TODO reorg part of code couple this struct so much, remove it later.
+	// oldDDLCtx is injected by jobScheduler.getJobRunCtx for worker-run DDL jobs.
 	oldDDLCtx     *ddlCtx
 	lockStartTime time.Time
 }
@@ -1092,6 +1093,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onDropCheckConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
+	case model.ActionModifyEngineAttribute:
+		ver, err = onModifyTableEngineAttribute(jobCtx, job)
 	case model.ActionRefreshMeta:
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:

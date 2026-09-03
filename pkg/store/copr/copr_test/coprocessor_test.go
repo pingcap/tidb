@@ -242,9 +242,10 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 		Concurrency:    15,
 		StoreBatchSize: 3,
 		Paging: struct {
-			Enable        bool
-			MinPagingSize uint64
-			MaxPagingSize uint64
+			Enable          bool
+			MinPagingSize   uint64
+			MaxPagingSize   uint64
+			PagingSizeBytes uint64
 		}{
 			Enable:        true,
 			MinPagingSize: 1,
@@ -255,6 +256,96 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 4)
+
+	// byte-budget paging disables store batch without changing row-count paging.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeDAG,
+		StoreType:      kv.TiKV,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 4)
+	require.False(t, req.Paging.Enable)
+	require.Zero(t, req.Paging.MinPagingSize)
+	require.Zero(t, req.Paging.MaxPagingSize)
+	// The byte budget is kept for TiKV DAG requests.
+	require.Equal(t, uint64(4*1024*1024), req.Paging.PagingSizeBytes)
+
+	// byte-budget paging only applies to TiKV DAG requests; a non-DAG request
+	// drops the budget so req.Paging.PagingSizeBytes is the single source of truth.
+	req = &kv.Request{
+		Tp:          kv.ReqTypeAnalyze,
+		StoreType:   kv.TiKV,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(copr.BuildKeyRanges("a", "c"), nil),
+		Concurrency: 15,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	_, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	require.Zero(t, req.Paging.PagingSizeBytes)
+
+	// StoreBatchSize alone must not change legacy eligibility for internal,
+	// unhinted Analyze requests; the merged-response contract is explicit opt-in.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeAnalyze,
+		StoreType:      kv.TiKV,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, nil),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+	}
+	req.RequestSource.RequestSourceInternal = true
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	require.Len(t, it.GetTasks(), 4)
+
+	// BuildCopIterator clears StoreBatchSize in place; restore it so the second
+	// build changes only the capability.
+	req.StoreBatchSize = 3
+	req.AllowBatchTaskDataMerge = true
+	req.ExecuteBatchTasksSerially = true
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Len(t, tasks, 1)
+	require.Len(t, tasks[0].ToPBBatchTasks(), 3)
+	require.Equal(t, -1, tasks[0].RowCountHint)
+
+	// Cancel at the pre-send hook so this checks request encoding without depending
+	// on a TiKV response.
+	req.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(copr.BuildKeyRanges("a", "c"), nil)
+	req.StoreBatchSize = 3
+	type batchRequestFlags struct {
+		allowMerge      bool
+		executeSerially bool
+	}
+	wireFlags := make(chan batchRequestFlags, 1)
+	sendCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(rpcReq *tikvrpc.Request) {
+		copReq, ok := rpcReq.Req.(*coprocessor.Request)
+		if !ok || copReq.Tp != kv.ReqTypeAnalyze {
+			return
+		}
+		wireFlags <- batchRequestFlags{
+			allowMerge:      copReq.AllowBatchTaskDataMerge,
+			executeSerially: copReq.ExecuteBatchTasksSerially,
+		}
+		cancel()
+	})
+	resp := copClient.Send(sendCtx, req, vars, opt)
+	_, err = resp.Next(sendCtx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, resp.Close())
+	flags := <-wireFlags
+	require.True(t, flags.allowMerge)
+	require.True(t, flags.executeSerially)
 
 	// only small tasks will be batched.
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")

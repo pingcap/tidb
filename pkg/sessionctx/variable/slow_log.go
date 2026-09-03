@@ -430,6 +430,16 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
 	}
+	iaStats := execdetails.GetIARemoteReadSegmentStats(logItems.ExecDetail.ScanDetail)
+	if iaStats.Count > 0 {
+		writeSlowLogItem(&buf, execdetails.IARemoteReadSegmentCountStr, strconv.FormatUint(iaStats.Count, 10))
+	}
+	if iaStats.Bytes > 0 {
+		writeSlowLogItem(&buf, execdetails.IARemoteReadSegmentSizeStr, strconv.FormatUint(iaStats.Bytes, 10))
+	}
+	if iaStats.WaitTime > 0 {
+		writeSlowLogItem(&buf, execdetails.IARemoteReadSegmentWaitTimeStr, strconv.FormatFloat(iaStats.WaitTime.Seconds(), 'f', -1, 64))
+	}
 
 	if len(s.CurrentDB) > 0 {
 		writeSlowLogItem(&buf, SlowLogDBStr, strings.ToLower(s.CurrentDB))

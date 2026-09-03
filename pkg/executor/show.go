@@ -308,26 +308,26 @@ type visibleChecker struct {
 	ok        bool
 }
 
-func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (v *visibleChecker) Enter(in ast.Node) (skipChildren bool) {
 	if x, ok := in.(*ast.TableName); ok {
 		schema := x.Schema.L
 		if schema == "" {
 			schema = v.defaultDB
 		}
 		if !v.is.TableExists(ast.NewCIStr(schema), x.Name) {
-			return in, true
+			return true
 		}
 		activeRoles := v.ctx.GetSessionVars().ActiveRoles
 		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
 			v.ok = false
 		}
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+func (*visibleChecker) Leave(ast.Node) (proceed bool) {
+	return true
 }
 
 func (e *ShowExec) fetchShowBind() error {
@@ -364,7 +364,7 @@ func (e *ShowExec) fetchShowBind() error {
 			manager:   privilege.GetPrivilegeManager(e.Ctx()),
 			ok:        true,
 		}
-		stmt.Accept(&checker)
+		ast.Walk(stmt, &checker)
 		if !checker.ok {
 			continue
 		}
@@ -645,7 +645,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	}
 
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 
 	var snapshot uint64
 	txn, err := e.Ctx().Txn(false)
@@ -1344,6 +1344,19 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
+
+	if len(tableInfo.EngineAttribute) > 0 {
+		tier, ok, err := ddl.GetSimpleTableStorageClassForShowCreate(tableInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
+			fmt.Fprintf(buf, " STORAGE_CLASS='%s'", tier)
+		} else {
+			fmt.Fprintf(buf, " ENGINE_ATTRIBUTE='%s'", format.OutputFormat(tableInfo.EngineAttribute))
+		}
+	}
+
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -2043,6 +2056,7 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]any{"Lock tables", "Databases", "To use LOCK TABLES (together with SELECT privilege)"})
 	e.appendRow([]any{"Process", "Server Admin", "To view the plain text of currently executing queries"})
 	e.appendRow([]any{"Proxy", "Server Admin", "To make proxy user possible"})
+	e.appendRow([]any{"Operate view", "Tables", "To execute materialized view and materialized view log maintenance operations"})
 	e.appendRow([]any{"References", "Databases,Tables", "To have references on tables"})
 	e.appendRow([]any{"Reload", "Server Admin", "To reload or refresh tables, logs and privileges"})
 	e.appendRow([]any{"Replication client", "Server Admin", "To ask where the slave or master servers are"})

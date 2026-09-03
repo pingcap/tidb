@@ -13,9 +13,7 @@ import (
 	reflect "reflect"
 
 	sqlsvrapi "github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
-	kv "github.com/pingcap/tidb/pkg/kv"
 	owner "github.com/pingcap/tidb/pkg/owner"
-	util "github.com/pingcap/tidb/pkg/util"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -74,36 +72,6 @@ func (m *MockServer) GetDDLOwnerMgr() owner.Manager {
 func (mr *MockServerMockRecorder) GetDDLOwnerMgr() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDDLOwnerMgr", reflect.TypeOf((*MockServer)(nil).GetDDLOwnerMgr))
-}
-
-// GetKSSessPool mocks base method.
-func (m *MockServer) GetKSSessPool(arg0 string) (util.DestroyableSessionPool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetKSSessPool", arg0)
-	ret0, _ := ret[0].(util.DestroyableSessionPool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetKSSessPool indicates an expected call of GetKSSessPool.
-func (mr *MockServerMockRecorder) GetKSSessPool(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetKSSessPool", reflect.TypeOf((*MockServer)(nil).GetKSSessPool), arg0)
-}
-
-// GetKSStore mocks base method.
-func (m *MockServer) GetKSStore(arg0 string) (kv.Storage, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetKSStore", arg0)
-	ret0, _ := ret[0].(kv.Storage)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetKSStore indicates an expected call of GetKSStore.
-func (mr *MockServerMockRecorder) GetKSStore(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetKSStore", reflect.TypeOf((*MockServer)(nil).GetKSStore), arg0)
 }
 
 // GetRuntime mocks base method.

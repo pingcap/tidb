@@ -48,11 +48,12 @@ type mockStoreWithMultiPD struct {
 
 var hotRegionsResponses = make(map[string]*executor.HistoryHotRegions, 3)
 
-func (s *mockStoreWithMultiPD) EtcdAddrs() ([]string, error) { return s.hosts, nil }
-func (s *mockStoreWithMultiPD) TLSConfig() *tls.Config       { panic("not implemented") }
-func (s *mockStoreWithMultiPD) StartGCWorker() error         { panic("not implemented") }
-func (s *mockStoreWithMultiPD) Name() string                 { return "mockStore" }
-func (s *mockStoreWithMultiPD) Describe() string             { return "" }
+func (s *mockStoreWithMultiPD) EtcdAddrs() ([]string, error)  { return s.hosts, nil }
+func (s *mockStoreWithMultiPD) GetPDAddrs() ([]string, error) { return s.hosts, nil }
+func (s *mockStoreWithMultiPD) TLSConfig() *tls.Config        { panic("not implemented") }
+func (s *mockStoreWithMultiPD) StartGCWorker() error          { panic("not implemented") }
+func (s *mockStoreWithMultiPD) Name() string                  { return "mockStore" }
+func (s *mockStoreWithMultiPD) Describe() string              { return "" }
 
 type hotRegionsHistoryTableSuite struct {
 	store       kv.Storage

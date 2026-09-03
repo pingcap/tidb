@@ -42,17 +42,17 @@ func TestRestrictedSQL(t *testing.T) {
 	tk.MustExec("GRANT ALL PRIVILEGES ON *.* TO semuser")
 	tk.MustExec("GRANT RESTRICTED_SQL_ADMIN ON *.* TO semuser")
 
-	t.Run("IMPORT INTO with external-id is not allowed", func(t *testing.T) {
+	t.Run("IMPORT INTO with external-id is not restricted by SQL rule", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 
 		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "nobodyuser", Hostname: "localhost"}, nil, nil, nil))
 		t.Cleanup(func() {
 			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 		})
-		tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=abc'", "is not supported when security enhanced mode is enabled")
-
-		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser", Hostname: "localhost"}, nil, nil, nil))
 		if kerneltype.IsNextGen() {
+			tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'", "IMPORT INTO with explicit external ID")
+
+			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser", Hostname: "localhost"}, nil, nil, nil))
 			tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'", "IMPORT INTO with explicit external ID")
 			tk.MustQuery("select * from test.t").Check(testkit.Rows())
 			return
@@ -65,6 +65,8 @@ func TestRestrictedSQL(t *testing.T) {
 			require.Equal(t, "allowed", u.Query().Get(s3like.S3ExternalID))
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
+		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser", Hostname: "localhost"}, nil, nil, nil))
 		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
 		tk.MustQuery("select * from test.t").Check(testkit.Rows())
 	})

@@ -33,6 +33,62 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMaxParenthesesDepth(t *testing.T) {
+	p := parser.New()
+	nestedExpr := func(depth int) string {
+		return "select " + strings.Repeat("(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedFuncExpr := func(depth int) string {
+		return "select " + strings.Repeat("f(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedLeadingHint := func(depth int) string {
+		return "select /*+ LEADING(" + strings.Repeat("(", depth) + "t" + strings.Repeat(")", depth) + ") */ * from t"
+	}
+
+	_, err := p.ParseOneStmt(nestedExpr(10000), "", "")
+	require.NoError(t, err)
+
+	_, err = p.ParseOneStmt(nestedExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedFuncExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedLeadingHint(10000), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+}
+
+func TestMaxASTDepth(t *testing.T) {
+	p := parser.New()
+	nestedCaseExpr := func(depth int) string {
+		return "select " + strings.Repeat("case when true then ", depth) + "1" + strings.Repeat(" else 0 end", depth)
+	}
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "binary operation chain",
+			sql:  "select " + strings.Repeat("1+", 11000) + "1",
+		},
+		{
+			name: "unary operation chain",
+			sql:  "select " + strings.Repeat("!", 11000) + "1",
+		},
+		{
+			name: "case expression chain",
+			sql:  nestedCaseExpr(11000),
+		},
+	} {
+		_, err := p.ParseOneStmt(tc.sql, "", "")
+		require.Error(t, err, tc.name)
+		require.Contains(t, err.Error(), "AST nesting depth exceeds maximum", tc.name)
+	}
+}
+
 func TestSimple(t *testing.T) {
 	p := parser.New()
 
@@ -84,7 +140,7 @@ func TestSimple(t *testing.T) {
 		"add_columnar_replica_on_demand", "auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
-		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"start", "global", "operate", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers", "language",
@@ -832,6 +888,8 @@ func TestDMLStmt(t *testing.T) {
 		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` ON `t2`.`id`=`t3`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` ON `t1`.`id`=`t2`.`id`) LEFT JOIN `t3` ON `t3`.`id`=`t2`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false, ""},
+		{"select * from t1 full join t2 on t1.a = t2.a", true, "SELECT * FROM `t1` AS `full` JOIN `t2` ON `t1`.`a`=`t2`.`a`"},
+		{"select * from t1 full outer join t2 on t1.a <=> t2.a", true, "SELECT * FROM `t1` FULL OUTER JOIN `t2` ON `t1`.`a`<=>`t2`.`a`"},
 		{"select * from t1 join t2 left join t3 using (id)", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3 using (id)", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` USING (`id`)) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3", false, ""},
@@ -1722,6 +1780,18 @@ func TestBuiltin(t *testing.T) {
 
 		{"SELECT LEAST(), LEAST(1, 2, 3);", true, "SELECT LEAST(),LEAST(1, 2, 3)"},
 
+		{"SELECT INTERVAL()", false, ""},
+		{"SELECT INTERVAL(1)", false, ""},
+		{"SELECT INTERVAL(1, 0)", true, "SELECT INTERVAL(1, 0)"},
+		{"SELECT NOW() + INTERVAL(1+2) DAY `add`", true, "SELECT DATE_ADD(NOW(), INTERVAL (1+2) DAY) AS `add`"},
+		{"SELECT d + INTERVAL (q - 1) QUARTER", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT d - INTERVAL (q - 1) QUARTER", true, "SELECT DATE_SUB(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT INTERVAL (q - 1) QUARTER + d", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ADDDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT ADDDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT SUBDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT SUBDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ROW(ROW(1,2),3), ROW(1,ROW(2,3))", true, "SELECT ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT (1,2), ((1,2),3), (1,(2,3))", true, "SELECT ROW(1,2),ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT MAKEDATE(YEAR(d), 1) + INTERVAL (QUARTER(d) - 1) QUARTER", true, "SELECT DATE_ADD(MAKEDATE(YEAR(`d`), 1), INTERVAL (QUARTER(`d`)-1) QUARTER)"},
 		{"SELECT INTERVAL(1, 0, 1, 2)", true, "SELECT INTERVAL(1, 0, 1, 2)"},
 		{"SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2", true, "SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2"},
 		{"SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)", true, "SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)"},
@@ -2262,12 +2332,20 @@ func TestBuiltin(t *testing.T) {
 		{`select max(distinct all c1) from t;`, true, "SELECT MAX(DISTINCT `c1`) FROM `t`"},
 		{`select max(distinctrow all c1) from t;`, true, "SELECT MAX(DISTINCT `c1`) FROM `t`"},
 		{`select max(c2) from t;`, true, "SELECT MAX(`c2`) FROM `t`"},
+		{`select max_count(c1,c2) from t;`, false, ""},
+		{`select max_count(distinct c1) from t;`, false, ""},
+		{`select max_count(c2) from t;`, true, "SELECT MAX_COUNT(`c2`) FROM `t`"},
+		{`select max_count(all c1) from t;`, true, "SELECT MAX_COUNT(`c1`) FROM `t`"},
 		{`select min(c1,c2) from t;`, false, ""},
 		{`select min(distinct c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinctrow c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinct all c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinctrow all c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(c2) from t;`, true, "SELECT MIN(`c2`) FROM `t`"},
+		{`select min_count(c1,c2) from t;`, false, ""},
+		{`select min_count(distinct c1) from t;`, false, ""},
+		{`select min_count(c2) from t;`, true, "SELECT MIN_COUNT(`c2`) FROM `t`"},
+		{`select min_count(all c1) from t;`, true, "SELECT MIN_COUNT(`c1`) FROM `t`"},
 		{`select sum(c1,c2) from t;`, false, ""},
 		{`select sum(distinct c1) from t;`, true, "SELECT SUM(DISTINCT `c1`) FROM `t`"},
 		{`select sum(distinctrow c1) from t;`, true, "SELECT SUM(DISTINCT `c1`) FROM `t`"},
@@ -5381,6 +5459,7 @@ func TestPrivilege(t *testing.T) {
 		{"GRANT ALL ON TABLE db1.* TO 'jeffrey'@'localhost';", true, "GRANT ALL ON TABLE `db1`.* TO `jeffrey`@`localhost`"},
 		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost' WITH GRANT OPTION;", true, "GRANT ALL ON `db1`.* TO `jeffrey`@`localhost` WITH GRANT OPTION"},
 		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true, "GRANT SELECT ON `db2`.`invoice` TO `jeffrey`@`localhost`"},
+		{"GRANT OPERATE VIEW ON db2.invoice TO 'jeffrey'@'localhost';", true, "GRANT OPERATE VIEW ON `db2`.`invoice` TO `jeffrey`@`localhost`"},
 		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true, "GRANT ALL ON *.* TO `someuser`@`somehost`"},
 		{"GRANT ALL ON *.* TO 'SOMEuser'@'SOMEhost';", true, "GRANT ALL ON *.* TO `SOMEuser`@`somehost`"},
 		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true, "GRANT SELECT, INSERT ON *.* TO `someuser`@`somehost`"},
@@ -5413,6 +5492,7 @@ func TestPrivilege(t *testing.T) {
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'LOCalhost';", true, "REVOKE ALL ON `db1`.* FROM `jeffrey`@`localhost`"},
 		{"REVOKE SELECT ON db2.invoice FROM 'jeffrey'@'localhost';", true, "REVOKE SELECT ON `db2`.`invoice` FROM `jeffrey`@`localhost`"},
+		{"REVOKE OPERATE VIEW ON db2.invoice FROM 'jeffrey'@'localhost';", true, "REVOKE OPERATE VIEW ON `db2`.`invoice` FROM `jeffrey`@`localhost`"},
 		{"REVOKE ALL ON *.* FROM 'someuser'@'somehost';", true, "REVOKE ALL ON *.* FROM `someuser`@`somehost`"},
 		{"REVOKE SELECT, INSERT ON *.* FROM 'someuser'@'somehost';", true, "REVOKE SELECT, INSERT ON *.* FROM `someuser`@`somehost`"},
 		{"REVOKE ALL ON mydb.* FROM 'someuser'@'somehost';", true, "REVOKE ALL ON `mydb`.* FROM `someuser`@`somehost`"},
@@ -5445,6 +5525,40 @@ func TestPrivilegeMariaDBDisabled(t *testing.T) {
 	// Test with additional MariaDB syntax DISABLED (arg three for RunTest==false)
 	table := []testCase{
 		{"GRANT BINLOG MONITOR ON *.* TO 'user1'@'localhost'", false, "GRANT REPLICATION CLIENT ON *.* TO `user1`@`localhost`"},
+	}
+	RunTest(t, table, false, false)
+}
+
+func TestSystemVersionedColumnMariaDBEnabled(t *testing.T) {
+	// MariaDB system-versioned table period columns. Accepted only when the
+	// parser is in MariaDB mode. Restore emits the canonical form
+	// `GENERATED ALWAYS AS ROW {START|END}` even when the input omitted the
+	// `GENERATED ALWAYS` prefix (normalisation, not byte-for-byte lossless).
+	table := []testCase{
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)"},
+		// Bare `AS ROW START/END` (no `GENERATED ALWAYS`) parses and gets
+		// canonicalised on restore.
+		{"CREATE TABLE t (a TIMESTAMP(6) AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) AS ROW END)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END)"},
+		// ALTER TABLE ... MODIFY/CHANGE must accept the same column option
+		// so the CREATE/ADD and MODIFY/CHANGE code paths stay consistent.
+		{"ALTER TABLE t MODIFY COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", true, "ALTER TABLE `t` MODIFY COLUMN `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START"},
+		{"ALTER TABLE t CHANGE COLUMN a a TIMESTAMP(6) GENERATED ALWAYS AS ROW END", true, "ALTER TABLE `t` CHANGE COLUMN `a` `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END"},
+		{"ALTER TABLE t ADD COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", true, "ALTER TABLE `t` ADD COLUMN `a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START"},
+	}
+	RunTest(t, table, false, true)
+}
+
+func TestSystemVersionedColumnMariaDBDisabled(t *testing.T) {
+	// MariaDB system-versioned period columns must be rejected when MariaDB
+	// mode is off so MySQL-strict parsing is unaffected, on every DDL path.
+	table := []testCase{
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)", false, ""},
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)", false, ""},
+		{"ALTER TABLE t MODIFY COLUMN a TIMESTAMP(6) GENERATED ALWAYS AS ROW START", false, ""},
+		{"ALTER TABLE t CHANGE COLUMN a a TIMESTAMP(6) GENERATED ALWAYS AS ROW END", false, ""},
 	}
 	RunTest(t, table, false, false)
 }
@@ -8165,12 +8279,45 @@ func TestExplainExplore(t *testing.T) {
 // TestCompatMariaDB is to test for MariaDB specific table options
 func TestCompatMariaDB(t *testing.T) {
 	cases := []testCase{
+		{`CREATE TABLE uuid (uuid int)`, true, "CREATE TABLE `uuid` (`uuid` INT)"},
+		{`CREATE TABLE t1 (a TEXT DEFAULT UUID())`, true, "CREATE TABLE `t1` (`a` TEXT DEFAULT (UUID()))"},
+		{`CREATE TABLE t1 (pk varchar(36) DEFAULT uuid())`, true, "CREATE TABLE `t1` (`pk` VARCHAR(36) DEFAULT (UUID()))"},
+		{`CREATE TABLE t1 AS SELECT uuid(), length(uuid())`, true, "CREATE TABLE `t1` AS SELECT UUID(),LENGTH(UUID())"},
+		{`CREATE TABLE t4 (a INT(11) DEFAULT NULL, b BIGINT(20) DEFAULT uuid_short()) SELECT * FROM t3`, true, "CREATE TABLE `t4` (`a` INT(11) DEFAULT NULL,`b` BIGINT(20) DEFAULT (UUID_SHORT())) AS SELECT * FROM `t3`"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_CHECKSUM=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_CHECKSUM = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSED=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSED = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSION_LEVEL = 1"},
 		{`CREATE TABLE t (id int PRIMARY KEY) TRANSACTIONAL=0`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) TRANSACTIONAL = 0"},
 		{`CREATE TABLE t (id int PRIMARY KEY) IETF_QUOTES=YES`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) IETF_QUOTES = YES"},
 		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
+	}
+	RunTest(t, cases, false, false)
+}
+
+func TestUUIDTypeMariaDBEnabled(t *testing.T) {
+	cases := []testCase{
+		{`CREATE TABLE t (id UUID)`, true, "CREATE TABLE `t` (`id` CHAR(36))"},
+		{`CREATE TABLE t1 (a UUID, b VARCHAR(32) NOT NULL)`, true, "CREATE TABLE `t1` (`a` CHAR(36),`b` VARCHAR(32) NOT NULL)"},
+		{`CREATE TABLE uuid (uuid UUID NOT NULL DEFAULT UUID())`, true, "CREATE TABLE `uuid` (`uuid` CHAR(36) NOT NULL DEFAULT (UUID()))"},
+	}
+	RunTest(t, cases, false, true)
+}
+
+func TestUUIDKeywordCompatibility(t *testing.T) {
+	cases := []testCase{
+		{`SELECT uuid FROM t`, true, "SELECT `uuid` FROM `t`"},
+		{`SELECT uuid.uuid FROM uuid`, true, "SELECT `uuid`.`uuid` FROM `uuid`"},
+		{`SELECT 1 AS uuid`, true, "SELECT 1 AS `uuid`"},
+		{`SELECT * FROM t AS uuid`, true, "SELECT * FROM `t` AS `uuid`"},
+		{`ALTER TABLE t ADD COLUMN uuid INT`, true, "ALTER TABLE `t` ADD COLUMN `uuid` INT"},
+		{`CREATE TABLE t (uuid INT, KEY uuid (uuid))`, true, "CREATE TABLE `t` (`uuid` INT,INDEX `uuid`(`uuid`))"},
+	}
+	RunTest(t, cases, false, false)
+}
+
+func TestUUIDTypeMariaDBDisabled(t *testing.T) {
+	cases := []testCase{
+		{`CREATE TABLE t (id UUID)`, false, ""},
 	}
 	RunTest(t, cases, false, false)
 }

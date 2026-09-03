@@ -80,6 +80,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
+	fullJoinType         "FULL OUTER JOIN"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -561,6 +562,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	only                       "ONLY"
 	onDuplicate                "ON_DUPLICATE"
 	open                       "OPEN"
+	operate                    "OPERATE"
 	optional                   "OPTIONAL"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
@@ -679,6 +681,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	statsSampleRate            "STATS_SAMPLE_RATE"
 	status                     "STATUS"
 	storage                    "STORAGE"
+	storageClass               "STORAGE_CLASS"
 	strictFormat               "STRICT_FORMAT"
 	subject                    "SUBJECT"
 	subpartition               "SUBPARTITION"
@@ -720,6 +723,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	unknown                    "UNKNOWN"
 	unset                      "UNSET"
 	user                       "USER"
+	uuid                       "UUID"
 	validation                 "VALIDATION"
 	value                      "VALUE"
 	variables                  "VARIABLES"
@@ -887,7 +891,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	builtinExtract
 	builtinGroupConcat
 	builtinMax
+	builtinMaxCount
 	builtinMin
+	builtinMinCount
 	builtinNow
 	builtinPosition
 	builtins                   "BUILTINS"
@@ -895,6 +901,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	builtinStddevSamp
 	builtinSubstring
 	builtinSum
+	builtinSumInt
 	builtinSysDate
 	builtinTranslate
 	builtinTrim
@@ -1752,7 +1759,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 %right '('
 %left ')'
 %precedence higherThanParenthese
-%left join straightJoin inner cross left right full natural
+%left join straightJoin inner cross left right full fullJoinType natural
 %precedence lowerThanOn
 %precedence on using
 %right assignmentEq
@@ -4094,6 +4101,26 @@ ColumnOption:
 			StrValue: $3,
 		}
 	}
+|	GeneratedAlways "AS" "ROW" "START"
+	{
+		// MariaDB period marker only; no engine semantics.
+		// Bare AS ROW START restores to the canonical GENERATED ALWAYS form.
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionMariaDBRowStart}
+	}
+|	GeneratedAlways "AS" "ROW" "END"
+	{
+		// MariaDB period marker only; no engine semantics.
+		// Bare AS ROW END restores to the canonical GENERATED ALWAYS form.
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionMariaDBRowEnd}
+	}
 
 AutoRandomOpt:
 	{
@@ -4418,6 +4445,13 @@ BuiltinFunction:
 		$$ = &ast.FuncCallExpr{
 			FnName: ast.NewCIStr($1),
 			Args:   $3.([]ast.ExprNode),
+		}
+	}
+|	"UUID" '(' ')'
+	{
+		// UUID is a keyword token now; keep DEFAULT UUID() accepted.
+		$$ = &ast.FuncCallExpr{
+			FnName: ast.NewCIStr($1),
 		}
 	}
 |	"REPLACE" '(' ExpressionList ')'
@@ -6037,6 +6071,7 @@ ExplainFormatType:
 |	"VERBOSE"
 |	"TRUE_CARD_COST"
 |	"TIDB_JSON"
+|	"RU"
 
 SavepointStmt:
 	"SAVEPOINT" Identifier
@@ -6634,8 +6669,14 @@ logAnd:
 	"&&"
 |	"AND"
 
+// At "INTERVAL" '(' Expression ',', goyacc can shift ',' to continue the
+// scalar INTERVAL(Expression, Expression) production or reduce Expression to
+// ExpressionList for the anonymous row expression (Expression, Expression).
+// %prec lowerThanComma makes that reduction lose to the lookahead comma and
+// resolves the conflict explicitly. Other expression lists still reduce
+// normally when no shift action competes.
 ExpressionList:
-	Expression
+	Expression %prec lowerThanComma
 	{
 		$$ = []ast.ExprNode{$1}
 	}
@@ -7325,6 +7366,7 @@ UnReservedKeyword:
 |	"ENGINES"
 |	"ENGINE_ATTRIBUTE"
 |	"SECONDARY_ENGINE_ATTRIBUTE"
+|	"STORAGE_CLASS"
 |	"ENUM"
 |	"ERROR"
 |	"ERRORS"
@@ -7353,6 +7395,7 @@ UnReservedKeyword:
 |	"NAMES"
 |	"NVARCHAR"
 |	"OFFSET"
+|	"OPERATE"
 |	"PACK_KEYS"
 |	"PARSER"
 |	"PASSWORD" %prec lowerThanEq
@@ -7405,6 +7448,7 @@ UnReservedKeyword:
 |	"ANY"
 |	"SOME"
 |	"USER"
+|	"UUID"
 |	"IDENTIFIED"
 |	"COLLATION"
 |	"COMMENT"
@@ -8713,7 +8757,6 @@ FunctionNameConflict:
 |	"DAY"
 |	"HOUR"
 |	"IF"
-|	"INTERVAL"
 |	"LOG"
 |	"FORMAT"
 |	"LEFT"
@@ -8733,6 +8776,7 @@ FunctionNameConflict:
 |	"TIMESTAMP"
 |	"TRUNCATE"
 |	"USER"
+|	"UUID"
 |	"WEEK"
 |	"YEAR"
 
@@ -8760,6 +8804,14 @@ FunctionCallKeyword:
 	FunctionNameConflict '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Interval), Args: []ast.ExprNode{$3, $5}}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ',' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Interval), Args: append([]ast.ExprNode{$3, $5}, $7.([]ast.ExprNode)...)}
 	}
 |	builtinUser '(' ExpressionListOpt ')'
 	{
@@ -9178,6 +9230,22 @@ SumExpr:
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
 	}
+|	builtinMaxCount '(' Expression ')' OptWindowingClause
+	{
+		if $5 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
+		}
+	}
+|	builtinMaxCount '(' "ALL" Expression ')' OptWindowingClause
+	{
+		if $6 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
+		}
+	}
 |	builtinMin '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
@@ -9186,7 +9254,31 @@ SumExpr:
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
 	}
+|	builtinMinCount '(' Expression ')' OptWindowingClause
+	{
+		if $5 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
+		}
+	}
+|	builtinMinCount '(' "ALL" Expression ')' OptWindowingClause
+	{
+		if $6 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
+		}
+	}
 |	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
+	{
+		if $6 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+		}
+	}
+|	builtinSumInt '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
 			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
@@ -10710,6 +10802,10 @@ JoinType:
 |	"RIGHT"
 	{
 		$$ = ast.RightJoin
+	}
+|	fullJoinType
+	{
+		$$ = ast.FullJoin
 	}
 
 OuterOpt:
@@ -13287,6 +13383,10 @@ TableElementListOpt:
 
 TableOption:
 	PartDefOption
+|	"STORAGE_CLASS" EqOpt StringName
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStorageClass, StrValue: strings.ToUpper($3)}
+	}
 |	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4,
@@ -14010,6 +14110,17 @@ StringType:
 		tp.SetDecimal(0)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+|	"UUID"
+	{
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		// MariaDB UUID has no native TiDB type; restore emits CHAR(36).
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetFlen(36)
 		$$ = tp
 	}
 |	"LONG" Varchar OptCharsetWithOptBinary
@@ -15600,6 +15711,10 @@ PrivType:
 |	"SHOW" "VIEW"
 	{
 		$$ = mysql.ShowViewPriv
+	}
+|	"OPERATE" "VIEW"
+	{
+		$$ = mysql.OperateViewPriv
 	}
 |	"CREATE" "ROLE"
 	{

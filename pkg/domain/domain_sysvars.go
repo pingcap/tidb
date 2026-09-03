@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/tikv/client-go/v2/tikv"
@@ -48,6 +49,7 @@ func (do *Domain) initDomainSysVars() {
 	variable.ChangeSchemaCacheSize = do.isSyncer.ChangeSchemaCacheSize
 
 	variable.ChangePDMetadataCircuitBreakerErrorRateThresholdRatio = changePDMetadataCircuitBreakerErrorRateThresholdRatio
+	variable.UpdateExternalWorkloadTTLJobEnable = do.updateExternalWorkloadTTLJobEnable
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -122,6 +124,13 @@ func (*Domain) setGlobalResourceControl(enable bool) {
 	} else {
 		variable.DisableGlobalResourceControlFunc()
 	}
+}
+
+func (do *Domain) updateExternalWorkloadTTLJobEnable(ctx context.Context, enable bool) error {
+	if !extworkload.IsMaster(do.extWorkloadMgr) {
+		return nil
+	}
+	return do.extWorkloadMgr.UpdateTTLJobEnable(ctx, enable)
 }
 
 func (do *Domain) setLowResolutionTSOUpdateInterval(interval time.Duration) error {

@@ -373,3 +373,40 @@ JOIN
 			where 5 >= issue66859_t0.c0`).Check(testkit.Rows("-1 <nil>"))
 	})
 }
+
+func TestIndexJoinInnerRowCountUsesUsableJoinKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (k1 int not null, k2 int not null)")
+	tk.MustExec(`create table t2 (
+		k1 int not null,
+		id int not null,
+		k2 int not null,
+		pad varchar(100),
+		primary key (k1, id) clustered,
+		key idx_k1_k2 (k1, k2))`)
+	tk.MustExec("insert into t1 values (1, 1), (2, 1)")
+	// For each k1 value, 1000 rows share the same primary-key prefix; only one row matches each k2.
+	for _, k1 := range []int{1, 2} {
+		var sb strings.Builder
+		sb.WriteString("insert into t2 values ")
+		for n := 1; n <= 1000; n++ {
+			if n > 1 {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, "(%d, %d, %d, repeat('x', 50))", k1, n, n)
+		}
+		tk.MustExec(sb.String())
+	}
+	tk.MustExec("analyze table t1, t2")
+	// Issue 69974: the clustered PK can only use the k1 join key, so each probe scans ~1000 rows,
+	// while idx_k1_k2 covers both join keys and reads a single row per probe. The PK path used to
+	// be costed with the post-join cardinality (~1 row per probe) and win.
+	query := `select /*+ inl_hash_join(i) */ o.k1, i.pad from t1 o join t2 i on i.k1 = o.k1 and i.k2 = o.k2`
+	tk.MustQuery("explain format='plan_tree' " + query).CheckContain("idx_k1_k2")
+	// Disabling the fix restores the old estimation and the PK range-scan probe.
+	tk.MustExec("set tidb_opt_fix_control = '44855:OFF'")
+	tk.MustQuery("explain format='plan_tree' " + query).CheckNotContain("idx_k1_k2")
+	tk.MustExec("set tidb_opt_fix_control = ''")
+}

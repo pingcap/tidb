@@ -1,0 +1,234 @@
+drop table if exists t;
+create table t (a int);
+select table_name, if(TIDB_STORAGE_CLASS = '', '<empty>', TIDB_STORAGE_CLASS) as TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	<empty>
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": "IA"}';
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	IA
+drop table if exists t;
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": "AI"}';
+Error 8271 (HY000): Invalid storage class: invalid storage class tier: AI
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": "IA"}';
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	IA
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": "NOT_STANDARD"}';
+Error 8271 (HY000): Invalid storage class: invalid storage class tier: NOT_STANDARD
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}';
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	STANDARD
+drop table if exists t;
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "transitions":[{"tier":"IA", "after_days":30}]}}';
+Error 8271 (HY000): Invalid storage class: only transition from 'STANDARD' to 'IA' is allowed
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "transitions":[{"tier":"STANDARD", "after_days":30}]}}';
+Error 8271 (HY000): Invalid storage class: only transition from 'STANDARD' to 'IA' is allowed
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA","after_days":10}, {"tier":"STANDARD","after_days":30}]}}';
+Error 8271 (HY000): Invalid storage class: only transition from 'STANDARD' to 'IA' is allowed
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA","after_days":30}]}}';
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":60}]}}';
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60}]}
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"STANDARD", "after_days":90}, {"tier":"IA", "after_days":60}]}}';
+Error 8271 (HY000): Invalid storage class: only transition from 'STANDARD' to 'IA' is allowed
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60}]}
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}';
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	STANDARD
+drop table if exists t;
+create table t (a int) STORAGE_CLASS='IA';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB STORAGE_CLASS='IA' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	IA
+alter table t STORAGE_CLASS='STANDARD';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB STORAGE_CLASS='STANDARD' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	STANDARD
+drop table if exists t;
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB ENGINE_ATTRIBUTE='{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":60}]}}';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB ENGINE_ATTRIBUTE='{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":60}]}}' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60}]}
+alter table t STORAGE_CLASS='IA';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL
+) ENGINE=InnoDB STORAGE_CLASS='IA' DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	IA
+drop table if exists t;
+create table t (a int) ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}' STORAGE_CLASS='IA';
+Error 8271 (HY000): Invalid storage class: can not specify 'ENGINE_ATTRIBUTE' and 'STORAGE_CLASS' together
+create table t (a int) STORAGE_CLASS='IA' ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}';
+Error 8271 (HY000): Invalid storage class: can not specify 'ENGINE_ATTRIBUTE' and 'STORAGE_CLASS' together
+create table t (a int) ENGINE_ATTRIBUTE = '{' ENGINE_ATTRIBUTE = '{"storage_class": "IA"}';
+Error 8270 (HY000): Invalid engine attribute format: 'unexpected end of JSON input'
+create table t (a int) STORAGE_CLASS='IA';
+alter table t ENGINE_ATTRIBUTE = '{', ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}';
+Error 8270 (HY000): Invalid engine attribute format: 'unexpected end of JSON input'
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": "STANDARD"}', STORAGE_CLASS='IA';
+Error 8271 (HY000): Invalid storage class: can not specify 'ENGINE_ATTRIBUTE' and 'STORAGE_CLASS' together
+alter table t STORAGE_CLASS='STANDARD', ENGINE_ATTRIBUTE = '{"storage_class": "IA"}';
+Error 8271 (HY000): Invalid storage class: can not specify 'ENGINE_ATTRIBUTE' and 'STORAGE_CLASS' together
+select table_name,TIDB_STORAGE_CLASS from information_schema.tables where table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	TIDB_STORAGE_CLASS
+t	IA
+drop table if exists t;
+create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["p0", "p1"]}}' partition by range (id) (partition p0 values less than (100));
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	IA
+alter table t add partition (partition p1 values less than (200));
+alter table t add partition (partition p2 values less than (300));
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["p2"]}}';
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	STANDARD
+t	p1	STANDARD
+t	p2	IA
+drop table if exists t;
+create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "names_in":["p0", "p1"], "transitions":[{"tier":"IA", "after_days":30}]}}' partition by range (id) (partition p0 values less than (100));
+alter table t add partition (partition p1 values less than (200));
+alter table t add partition (partition p2 values less than (300));
+alter table t add partition (partition pmax values less than maxvalue);
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD","names_in":["p2"],"transitions":[{"tier":"IA", "after_days":60}]}}';
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	STANDARD
+t	p1	STANDARD
+t	p2	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":60}]}
+t	pmax	STANDARD
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["p2"]}}';
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	STANDARD
+t	p1	STANDARD
+t	p2	IA
+t	pmax	STANDARD
+drop table if exists t_precedence_scope_first;
+drop table if exists t_precedence_default_first;
+create table t_precedence_scope_first (id int, purchased date, primary key (id, purchased)) ENGINE_ATTRIBUTE = '{"storage_class": [{"tier":"IA", "names_in":["p2023"]}, {"tier":"STANDARD"}]}' partition by range columns (purchased) (partition p2023 values less than ('2024-01-01'), partition p2024 values less than ('2025-01-01'), partition pmax values less than (maxvalue));
+create table t_precedence_default_first (id int, purchased date, primary key (id, purchased)) ENGINE_ATTRIBUTE = '{"storage_class": [{"tier":"STANDARD"}, {"tier":"IA", "names_in":["p2023"]}]}' partition by range columns (purchased) (partition p2023 values less than ('2024-01-01'), partition p2024 values less than ('2025-01-01'), partition pmax values less than (maxvalue));
+select table_name,TIDB_STORAGE_CLASS FROM information_schema.tables WHERE table_schema = 'ddl__storage_class' and table_name in ('t_precedence_scope_first', 't_precedence_default_first') ORDER BY table_name;
+table_name	TIDB_STORAGE_CLASS
+t_precedence_default_first	STANDARD
+t_precedence_scope_first	STANDARD
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_schema = 'ddl__storage_class' and table_name in ('t_precedence_scope_first', 't_precedence_default_first') ORDER BY table_name,partition_name;
+table_name	partition_name	TIDB_STORAGE_CLASS
+t_precedence_default_first	p2023	IA
+t_precedence_default_first	p2024	STANDARD
+t_precedence_default_first	pmax	STANDARD
+t_precedence_scope_first	p2023	IA
+t_precedence_scope_first	p2024	STANDARD
+t_precedence_scope_first	pmax	STANDARD
+drop table if exists t;
+create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"200"}}' partition by range (id) (partition p0 values less than (100), partition p1 values less than (200), partition pmax values less than maxvalue);
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	IA
+t	p1	IA
+t	pmax	STANDARD
+drop table if exists t;
+create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["2","4"]}}' partition by list (id) (partition p0 values in (1,2), partition p1 values in (3,4), partition p2 values in (5));
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	IA
+t	p1	IA
+t	p2	STANDARD
+drop table if exists t;
+create table t (a int, b int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"(2,2)"}}' partition by range columns (a, b) (partition p0 values less than (1,1), partition p1 values less than (2,2));
+Error 8271 (HY000): Invalid storage class: 'less_than' only supports single-column RANGE partitions
+drop table if exists t;
+create table t (a int, b int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["1"]}}' partition by list columns (a, b) (partition p0 values in ((1,1)), partition p1 values in ((2,2)));
+Error 8271 (HY000): Invalid storage class: 'values_in' only supports single-column LIST partitions
+drop table if exists t;
+create table t (id int, created_at date not null) ENGINE_ATTRIBUTE = '{"storage_class": "IA"}' partition by range columns (created_at) interval (1 month) first partition less than ('2025-01-01') last partition less than ('2026-01-01');
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}';
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	P_LT_2025-01-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-02-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-03-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-04-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-05-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-06-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-07-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-08-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-09-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-10-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-11-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2025-12-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	P_LT_2026-01-01	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+drop table if exists t;
+create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": "IA"}' partition by list (id) (partition p0 values in (1,2,3), partition p1 values in (4,5,6));
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "names_in":["p0"], "transitions":[{"tier":"IA", "after_days":30}]}}';
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p1	STANDARD
+drop table if exists t;
+create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": "IA"}' partition by hash(id) partitions 4;
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}';
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p1	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p2	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p3	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["p0"]}}';
+Error 8271 (HY000): Invalid storage class: partition-scoped storage_class does not support HASH or KEY partitions
+drop table if exists t;
+create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": "IA"}';
+alter table t partition by hash(id) partitions 4;
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	IA
+t	p1	IA
+t	p2	IA
+t	p3	IA
+drop table if exists t;
+create table t (id int, name varchar(30)) ENGINE_ATTRIBUTE = '{"storage_class": "IA"}' partition by key(name) partitions 4;
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "transitions":[{"tier":"IA", "after_days":30}]}}';
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p0	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p1	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p2	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+t	p3	{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "names_in":["p0"]}}';
+Error 8271 (HY000): Invalid storage class: partition-scoped storage_class does not support HASH or KEY partitions

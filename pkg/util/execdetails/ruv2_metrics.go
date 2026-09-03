@@ -45,6 +45,7 @@ type RUV2Weights struct {
 	PlanDeriveStatsPaths    float64
 	ResourceManagerReadCnt  float64
 	ResourceManagerWriteCnt float64
+	WriteKeys               float64
 	SessionParserTotal      float64
 	TxnCnt                  float64
 }
@@ -148,6 +149,19 @@ func SyncRUV2MetricsFromRUDetails(metrics *RUV2Metrics, ruDetails *tikvutil.RUDe
 	UpdateRUV2MetricsFromRUV2(metrics, ruDetails.DrainRUV2())
 }
 
+// UpdateRUV2MetricsFromCommitDetails adds commit write counters into RUv2 metrics.
+func UpdateRUV2MetricsFromCommitDetails(metrics *RUV2Metrics, commitDetails *tikvutil.CommitDetails) {
+	if metrics == nil || commitDetails == nil || metrics.Bypass() {
+		return
+	}
+	if commitDetails.WriteKeys != 0 {
+		metrics.AddWriteKeys(int64(commitDetails.WriteKeys))
+	}
+	if commitDetails.WriteSize != 0 {
+		metrics.AddWriteSize(int64(commitDetails.WriteSize))
+	}
+}
+
 // RUV2Metrics stores statement-level RUv2 metrics.
 type RUV2Metrics struct {
 	bypass atomic.Bool
@@ -177,6 +191,8 @@ type ruv2MetricsExtra struct {
 	planDeriveStatsPaths int64
 
 	resourceManagerWriteCnt int64
+	writeKeys               int64
+	writeSize               int64
 
 	tikvCoprocessorExecutorIterations int64
 	tikvCoprocessorResponseBytes      int64
@@ -303,7 +319,7 @@ func execL1KindForLabel(label string) execL1Kind {
 	}
 }
 
-// AddExecutorL5InsertRows records affected insert rows for RUv2 accounting.
+// AddExecutorL5InsertRows records insert rows multiplied by inserted column count for RUv2 accounting.
 func (m *RUV2Metrics) AddExecutorL5InsertRows(delta int64) {
 	if m.Bypass() {
 		return
@@ -364,6 +380,24 @@ func (m *RUV2Metrics) AddResourceManagerWriteCnt(delta int64) {
 	}
 	metrics.RUV2ResourceManagerWriteCnt.Add(float64(delta))
 	atomic.AddInt64(&m.ensureExtra().resourceManagerWriteCnt, delta)
+}
+
+// AddWriteKeys records commit write keys for RUv2 accounting.
+func (m *RUV2Metrics) AddWriteKeys(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2WriteKeys.Add(float64(delta))
+	atomic.AddInt64(&m.ensureExtra().writeKeys, delta)
+}
+
+// AddWriteSize records commit write size for RUv2 shadow accounting.
+func (m *RUV2Metrics) AddWriteSize(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2WriteSize.Add(float64(delta))
+	atomic.AddInt64(&m.ensureExtra().writeSize, delta)
 }
 
 // AddTiKVKVEngineCacheMiss records TiKV kv_engine_cache_miss counters from ExecDetailsV2.
@@ -644,6 +678,8 @@ func cloneRUV2MetricsExtra(dst, src *ruv2MetricsExtra) {
 	addRUV2FixedCounter(&dst.executorL5InsertRows, atomic.LoadInt64(&src.executorL5InsertRows))
 	addRUV2FixedCounter(&dst.planDeriveStatsPaths, atomic.LoadInt64(&src.planDeriveStatsPaths))
 	addRUV2FixedCounter(&dst.resourceManagerWriteCnt, atomic.LoadInt64(&src.resourceManagerWriteCnt))
+	addRUV2FixedCounter(&dst.writeKeys, atomic.LoadInt64(&src.writeKeys))
+	addRUV2FixedCounter(&dst.writeSize, atomic.LoadInt64(&src.writeSize))
 	addRUV2FixedCounter(&dst.tikvCoprocessorExecutorIterations, atomic.LoadInt64(&src.tikvCoprocessorExecutorIterations))
 	addRUV2FixedCounter(&dst.tikvCoprocessorResponseBytes, atomic.LoadInt64(&src.tikvCoprocessorResponseBytes))
 	addRUV2FixedCounter(&dst.tikvRaftstoreStoreWriteTriggerWB, atomic.LoadInt64(&src.tikvRaftstoreStoreWriteTriggerWB))
@@ -680,7 +716,7 @@ func (m *RUV2Metrics) ResultChunkCells() int64 {
 	return atomic.LoadInt64(&m.resultChunkCells)
 }
 
-// ExecutorL5InsertRows returns affected insert rows for RUv2 accounting.
+// ExecutorL5InsertRows returns insert rows multiplied by inserted column count for RUv2 accounting.
 func (m *RUV2Metrics) ExecutorL5InsertRows() int64 {
 	extra := m.loadExtra()
 	if extra == nil {
@@ -737,6 +773,24 @@ func (m *RUV2Metrics) ResourceManagerWriteCnt() int64 {
 		return 0
 	}
 	return atomic.LoadInt64(&extra.resourceManagerWriteCnt)
+}
+
+// WriteKeys returns commit write keys for RUv2 accounting.
+func (m *RUV2Metrics) WriteKeys() int64 {
+	extra := m.loadExtra()
+	if extra == nil {
+		return 0
+	}
+	return atomic.LoadInt64(&extra.writeKeys)
+}
+
+// WriteSize returns commit write size for RUv2 shadow accounting.
+func (m *RUV2Metrics) WriteSize() int64 {
+	extra := m.loadExtra()
+	if extra == nil {
+		return 0
+	}
+	return atomic.LoadInt64(&extra.writeSize)
 }
 
 // TiKVKVEngineCacheMiss returns TiKV kv_engine_cache_miss counters from ExecDetailsV2.
@@ -813,6 +867,8 @@ func (m *RUV2Metrics) IsZero() bool {
 			m.ExecutorL5InsertRows() == 0 &&
 			m.PlanDeriveStatsPaths() == 0 &&
 			m.ResourceManagerWriteCnt() == 0 &&
+			m.WriteKeys() == 0 &&
+			m.WriteSize() == 0 &&
 			m.TiKVCoprocessorExecutorIterations() == 0 &&
 			m.TiKVCoprocessorResponseBytes() == 0 &&
 			m.TiKVRaftstoreStoreWriteTriggerWB() == 0 &&
@@ -847,6 +903,7 @@ func (m *RUV2Metrics) calculateRUValuesWithWeights(weights RUV2Weights) (tidbRU 
 		executorL5InsertRows    int64
 		planDeriveStatsPaths    int64
 		resourceManagerWriteCnt int64
+		writeKeys               int64
 	)
 	if extra := m.loadExtra(); extra != nil {
 		executorL2 = sumRUV2ExtraLabelCounter(&extra.executorL2)
@@ -854,6 +911,7 @@ func (m *RUV2Metrics) calculateRUValuesWithWeights(weights RUV2Weights) (tidbRU 
 		executorL5InsertRows = atomic.LoadInt64(&extra.executorL5InsertRows)
 		planDeriveStatsPaths = atomic.LoadInt64(&extra.planDeriveStatsPaths)
 		resourceManagerWriteCnt = atomic.LoadInt64(&extra.resourceManagerWriteCnt)
+		writeKeys = atomic.LoadInt64(&extra.writeKeys)
 	}
 	tidbRUFloat :=
 		float64(m.ResultChunkCells())*weights.ResultChunkCells +
@@ -865,6 +923,7 @@ func (m *RUV2Metrics) calculateRUValuesWithWeights(weights RUV2Weights) (tidbRU 
 			float64(planDeriveStatsPaths)*weights.PlanDeriveStatsPaths +
 			float64(m.ResourceManagerReadCnt())*weights.ResourceManagerReadCnt +
 			float64(resourceManagerWriteCnt)*weights.ResourceManagerWriteCnt +
+			float64(writeKeys)*weights.WriteKeys +
 			float64(m.SessionParserTotal())*weights.SessionParserTotal +
 			float64(m.TxnCnt())*weights.TxnCnt
 
@@ -888,6 +947,8 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		txnCnt                            int64
 		resourceManagerReadCnt            int64
 		resourceManagerWriteCnt           int64
+		writeKeys                         int64
+		writeSize                         int64
 		tiKVKVEngineCacheMiss             int64
 		tiKVCoprocessorExecutorIterations int64
 		tiKVCoprocessorResponseBytes      int64
@@ -906,6 +967,8 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 			executorL5InsertRows = atomic.LoadInt64(&extra.executorL5InsertRows)
 			planDeriveStatsPaths = atomic.LoadInt64(&extra.planDeriveStatsPaths)
 			resourceManagerWriteCnt = atomic.LoadInt64(&extra.resourceManagerWriteCnt)
+			writeKeys = atomic.LoadInt64(&extra.writeKeys)
+			writeSize = atomic.LoadInt64(&extra.writeSize)
 			tiKVCoprocessorExecutorIterations = atomic.LoadInt64(&extra.tikvCoprocessorExecutorIterations)
 			tiKVCoprocessorResponseBytes = atomic.LoadInt64(&extra.tikvCoprocessorResponseBytes)
 			tiKVRaftstoreStoreWriteTriggerWB = atomic.LoadInt64(&extra.tikvRaftstoreStoreWriteTriggerWB)
@@ -931,6 +994,8 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		txnCnt == 0 &&
 		resourceManagerReadCnt == 0 &&
 		resourceManagerWriteCnt == 0 &&
+		writeKeys == 0 &&
+		writeSize == 0 &&
 		tiKVKVEngineCacheMiss == 0 &&
 		tiKVCoprocessorExecutorIterations == 0 &&
 		tiKVCoprocessorResponseBytes == 0 &&
@@ -979,6 +1044,8 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 	appendInt("txn_cnt", txnCnt)
 	appendInt("resource_manager_read_cnt", resourceManagerReadCnt)
 	appendInt("resource_manager_write_cnt", resourceManagerWriteCnt)
+	appendInt("write_keys", writeKeys)
+	appendInt("write_size", writeSize)
 	appendInt("tikv_kv_engine_cache_miss", tiKVKVEngineCacheMiss)
 	appendInt("tikv_coprocessor_executor_iterations", tiKVCoprocessorExecutorIterations)
 	appendInt("tikv_coprocessor_response_bytes", tiKVCoprocessorResponseBytes)

@@ -1988,17 +1988,23 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 	e.HashJoinCtxV1.JoinType = v.JoinType
 	e.HashJoinCtxV1.Concurrency = v.Concurrency
 	e.HashJoinCtxV1.ChunkAllocPool = e.AllocPool
+	if v.JoinType == base.FullOuterJoin && v.UseOuterToBuild {
+		b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "full outer join only supports UseOuterToBuild=false")
+		return nil
+	}
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
-	if v.InnerChildIdx == 1 {
-		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
-			return nil
-		}
-	} else {
-		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
-			return nil
+	if v.JoinType != base.FullOuterJoin {
+		if v.InnerChildIdx == 1 {
+			if len(v.RightConditions) > 0 {
+				b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+				return nil
+			}
+		} else {
+			if len(v.LeftConditions) > 0 {
+				b.err = errors.Annotate(exeerrors.ErrBuildExecutor, "join's inner condition should be empty")
+				return nil
+			}
 		}
 	}
 
@@ -2037,6 +2043,18 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 			defaultValues = make([]types.Datum, buildSideExec.Schema().Len())
 		}
 	}
+	if v.JoinType == base.FullOuterJoin {
+		// full outer join keeps side filters inside hash join:
+		// build filter decides whether a build row enters hash table;
+		// probe filter decides whether a probe row enters probe matching.
+		if leftIsBuildSide {
+			e.FullOuterJoinBuildFilter = v.LeftConditions
+			e.FullOuterJoinProbeFilter = v.RightConditions
+		} else {
+			e.FullOuterJoinBuildFilter = v.RightConditions
+			e.FullOuterJoinProbeFilter = v.LeftConditions
+		}
+	}
 	probeKeyColIdx := make([]int, len(probeKeys))
 	probeNAKeColIdx := make([]int, len(probeNAKeys))
 	buildKeyColIdx := make([]int, len(buildKeys))
@@ -2059,14 +2077,55 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
+	var fullJoinBuildJoinerJoinType, fullJoinProbeJoinerJoinType base.JoinType
+	var fullJoinBuildJoinerOuterIsRight, fullJoinProbeJoinerOuterIsRight bool
+	var fullJoinBuildJoinerDefaultValues, fullJoinProbeJoinerDefaultValues []types.Datum
+	if v.JoinType == base.FullOuterJoin {
+		// Full outer join uses two outer-joiners:
+		// 1) build joiner: handles matched rows + tail unmatched build rows.
+		// 2) probe joiner: handles unmatched probe rows.
+		// `outerIsRight` here is joiner row-layout metadata (whether joiner's
+		// outer row is from original right child), not UseOuterToBuild.
+		if leftIsBuildSide {
+			// build=left, probe=right
+			// build unmatched output: (left, NULL-right)
+			fullJoinBuildJoinerJoinType = base.LeftOuterJoin
+			fullJoinBuildJoinerOuterIsRight = false
+			fullJoinBuildJoinerDefaultValues = make([]types.Datum, len(rhsTypes))
+
+			// probe unmatched output: (NULL-left, right)
+			fullJoinProbeJoinerJoinType = base.RightOuterJoin
+			fullJoinProbeJoinerOuterIsRight = true
+			fullJoinProbeJoinerDefaultValues = make([]types.Datum, len(lhsTypes))
+		} else {
+			// build=right, probe=left
+			// build unmatched output: (NULL-left, right)
+			fullJoinBuildJoinerJoinType = base.RightOuterJoin
+			fullJoinBuildJoinerOuterIsRight = true
+			fullJoinBuildJoinerDefaultValues = make([]types.Datum, len(lhsTypes))
+
+			// probe unmatched output: (left, NULL-right)
+			fullJoinProbeJoinerJoinType = base.LeftOuterJoin
+			fullJoinProbeJoinerOuterIsRight = false
+			fullJoinProbeJoinerDefaultValues = make([]types.Datum, len(rhsTypes))
+		}
+	}
 	for i := range e.Concurrency {
-		e.ProbeWorkers[i] = &join.ProbeWorkerV1{
+		worker := &join.ProbeWorkerV1{
 			HashJoinCtx:      e.HashJoinCtxV1,
-			Joiner:           join.NewJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin),
 			ProbeKeyColIdx:   probeKeyColIdx,
 			ProbeNAKeyColIdx: probeNAKeColIdx,
 		}
-		e.ProbeWorkers[i].WorkerID = i
+		if v.JoinType == base.FullOuterJoin {
+			worker.FullJoinBuildJoiner = join.NewJoiner(b.sctx, fullJoinBuildJoinerJoinType, fullJoinBuildJoinerOuterIsRight, fullJoinBuildJoinerDefaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, false)
+			worker.FullJoinProbeJoiner = join.NewJoiner(b.sctx, fullJoinProbeJoinerJoinType, fullJoinProbeJoinerOuterIsRight, fullJoinProbeJoinerDefaultValues, nil, lhsTypes, rhsTypes, childrenUsedSchema, false)
+			// Keep Joiner as probe-mismatch joiner for shared non-full code paths.
+			worker.Joiner = worker.FullJoinProbeJoiner
+		} else {
+			worker.Joiner = join.NewJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema, isNAJoin)
+		}
+		worker.WorkerID = i
+		e.ProbeWorkers[i] = worker
 	}
 	e.BuildWorker.BuildKeyColIdx, e.BuildWorker.BuildNAKeyColIdx, e.BuildWorker.BuildSideExec, e.BuildWorker.HashJoinCtx = buildKeyColIdx, buildNAKeyColIdx, buildSideExec, e.HashJoinCtxV1
 	e.HashJoinCtxV1.IsNullAware = isNAJoin
@@ -2163,8 +2222,12 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 		e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)
 	}
 	for _, aggDesc := range v.AggFuncs {
-		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
+		if len(aggDesc.OrderByItems) > 0 {
 			e.IsUnparallelExec = true
+		}
+
+		if aggDesc.HasDistinct {
+			e.HasDistinct = true
 		}
 	}
 	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
@@ -3071,7 +3134,7 @@ func (b *executorBuilder) updateForUpdateTS() error {
 	return err
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, planID int) *analyzeTask {
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	_, offset := timeutil.Zone(b.sctx.GetSessionVars().Location())
 	sc := b.sctx.GetSessionVars().StmtCtx
@@ -3086,6 +3149,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3127,6 +3191,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	task plannercore.AnalyzeColumnsTask,
 	opts map[ast.AnalyzeOptionType]uint64,
 	schemaForVirtualColEval *expression.Schema,
+	planID int,
 ) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
@@ -3203,6 +3268,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3319,8 +3385,10 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	// buildAnalyzeSamplingPushdown reads base count / modify_count from mysql.stats_meta
 	// while constructing column analyze tasks. Flush pending deltas first so the base
 	// values include pre-analyze changes and later delta dumps cannot double count them.
+	// The flush is deliberately not the analyze source: it is lightweight metadata
+	// work, not the heavy scan that background throttling targets.
 	intest.Assert(b.ctx != nil, "missing statement context for analyze")
-	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStats), b.sctx, v); err != nil {
+	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStatsForegroundPriority), b.sctx, v); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3348,14 +3416,14 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			return nil
 		}
 		schema := expression.NewSchema(columns...)
-		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema))
+		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema, v.ID()))
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
 		}
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
+		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze, v.ID()))
 		if b.err != nil {
 			return nil
 		}
@@ -5304,6 +5372,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		err = e.open(ctx, kvRanges)
 		return e, err
 	}
+	e.rangeMemTracker = memoryTracker
 
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {
@@ -5364,6 +5433,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		err = e.open(ctx)
 		return e, err
 	}
+	e.rangeMemTracker = memTracker
 
 	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {

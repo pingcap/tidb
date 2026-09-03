@@ -204,3 +204,11 @@ create table cachetbl (id int);
 alter table cachetbl cache;
 -- error 1105
 import into cachetbl from '/file.csv';
+
+# TestImportIntoTTLPrecheck
+drop table if exists import_into_ttl_precheck_source, import_into_ttl_precheck_target;
+create table import_into_ttl_precheck_source (id int primary key, created_at datetime);
+create table import_into_ttl_precheck_target (id int primary key, created_at datetime) TTL = `created_at` + INTERVAL 1 DAY;
+-- error 8173
+IMPORT INTO import_into_ttl_precheck_target FROM SELECT * FROM import_into_ttl_precheck_source WITH DISABLE_PRECHECK;
+drop table if exists import_into_ttl_precheck_source, import_into_ttl_precheck_target;

@@ -56,8 +56,8 @@ var (
 	// UseCurrentSessionOpt to make sure the sql is executed in current session.
 	UseCurrentSessionOpt = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 
-	// StatsCtx is used to mark the request is from stats module.
-	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	// StatsCtx is used to mark the request as internal stats foreground priority.
+	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 )
 
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
@@ -130,6 +130,16 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	}
 	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
+	// Analyze store batch size. Auto Analyze uses the latest global value instead
+	// of the potentially stale value held by its pooled internal session.
+	analyzeStoreBatchSize, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeStoreBatchSize)
+	if err != nil {
+		return err
+	}
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBAnalyzeStoreBatchSize, analyzeStoreBatchSize); err != nil {
+		return err
+	}
+
 	// enable historical stats
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
 	if err != nil {
@@ -164,15 +174,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
-	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBMergePartitionStatsConcurrency)
-	if err != nil {
-		return err
-	}
-	ver, err = strconv.ParseInt(verInString, 10, 64)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
 	// sync innodb_lock_wait_timeout
 	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.InnodbLockWaitTimeout)
 	if err != nil {

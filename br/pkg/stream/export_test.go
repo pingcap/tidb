@@ -16,8 +16,10 @@ package stream
 
 import (
 	"context"
+	"math"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 func (s *StreamBackupSearch) SearchFromDataFileForTest(
@@ -32,4 +34,10 @@ func (s *StreamBackupSearch) MergeCFEntriesForTest(
 	defaultCFEntries, writeCFEntries map[string]*StreamKVInfo,
 ) []*StreamKVInfo {
 	return s.mergeCFEntries(defaultCFEntries, writeCFEntries)
+}
+
+// LoadFrom loads data from an external storage into the stream metadata set. (Now only for test)
+func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storeapi.Storage) error {
+	_, err := ms.LoadUntilAndCalculateShiftTS(ctx, s, math.MaxUint64)
+	return err
 }

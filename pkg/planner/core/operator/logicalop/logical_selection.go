@@ -313,16 +313,6 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
-func (p *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	s := p.Self().(*LogicalSelection)
-	combinedCond := append(predicates, s.Conditions...)
-	child := s.Children()[0]
-	child = child.ConvertOuterToInnerJoin(combinedCond)
-	s.SetChildren(child)
-	return s
-}
-
 // *************************** end implementation of logicalPlan interface ***************************
 
 func splitSetGetVarFunc(filters []expression.Expression) (canBePushDown, canNotBePushDown []expression.Expression) {

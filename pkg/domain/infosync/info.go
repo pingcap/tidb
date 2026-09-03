@@ -56,6 +56,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/errs"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -157,6 +158,7 @@ func GlobalInfoSyncerInit(
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 	infoCache infoschemaMinTS,
+	serverInfoOptions ...serverinfo.SyncerOption,
 ) (*InfoSyncer, error) {
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
@@ -172,7 +174,7 @@ func GlobalInfoSyncerInit(
 		infoCache:      infoCache,
 		tikvCodec:      codec,
 	}
-	is.svrInfoSyncer = serverinfo.NewSyncer(uuid, serverIDGetter, etcdCli, is)
+	is.svrInfoSyncer = serverinfo.NewSyncer(uuid, serverIDGetter, etcdCli, is, serverInfoOptions...)
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
@@ -335,6 +337,20 @@ func GetServerInfoByID(ctx context.Context, id string) (*serverinfo.ServerInfo, 
 		return nil, err
 	}
 	return is.svrInfoSyncer.GetServerInfoByID(ctx, id)
+}
+
+// SetKeyspaceConfig patches the keyspace config in merge style.
+func SetKeyspaceConfig(ctx context.Context, keyspaceName string, config pdhttp.UpdateKeyspaceConfigParams) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if is.pdHTTPCli == nil {
+		return errs.ErrClientGetLeader.FastGenByArgs("pd http cli is nil")
+	}
+
+	_, err = is.pdHTTPCli.UpdateKeyspaceConfig(ctx, keyspaceName, &config)
+	return errors.Trace(err)
 }
 
 // GetAllServerInfo gets all servers static information from etcd.

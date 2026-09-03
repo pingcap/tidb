@@ -219,75 +219,151 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		frag.Sink.SetTargetTasks([]*kv.MPPTask{tidbTask})
 		frag.IsRoot = true
 	}
-	// CteSinkNum/CteSourceNum are required fields in tipb.CTESink/CTESource. After we "untwist" UNION ALL
-	// and split the plan into fragments, the same CTE sink/source can appear multiple times in the final
-	// MPP DAG. Count them here and fill the numbers into each node.
-	e.fixDuplicatedTimesForCTE(e.frags)
+	// CteSinkNum/CteSourceNum tell TiFlash CTEManager how many local CTESink/CTESource executors
+	// for the same storage id should participate. After UNION ALL is untwisted and the plan is split
+	// into fragments, one CTE id can appear in multiple plan nodes, so global counts are unsafe.
+	if err := e.fillLocalCTECounts(e.frags); err != nil {
+		return nil, errors.Trace(err)
+	}
 	return e.frags, nil
 }
 
-type cteInMPPTasks struct {
-	sinks   []*PhysicalCTESink
-	sources []*PhysicalCTESource
+// cteSinkInMPPTasks records one CTESink plan node and the self tasks of the fragment containing it.
+// The plan node is where CteSinkNum/CteSourceNum must be written, and the tasks provide the TiFlash
+// addresses where this node's sink executors are instantiated.
+type cteSinkInMPPTasks struct {
+	sink  *PhysicalCTESink
+	tasks []*kv.MPPTask
 }
 
-func (e *mppTaskGenerator) traverseFragForCTE(p base.PhysicalPlan, cteMap map[int]*cteInMPPTasks) {
+// cteSourceInMPPTasks records one CTESource plan node and the self tasks of the fragment containing it.
+// The plan node is where CteSinkNum/CteSourceNum must be written, and the tasks provide the TiFlash
+// addresses where this node's source executors are instantiated.
+type cteSourceInMPPTasks struct {
+	source *PhysicalCTESource
+	tasks  []*kv.MPPTask
+}
+
+// cteInMPPTasks groups all split CTESink/CTESource plan nodes for one CTE id.
+// The group is global, but each entry still needs its own task set: a UNION ALL producer can have
+// two CTESink fragments for the same CTE id, one on tiflash0 and one on tiflash1. A CTESource
+// running on both addresses must see one local sink per address, not two global sinks.
+type cteInMPPTasks struct {
+	sinks   []cteSinkInMPPTasks
+	sources []cteSourceInMPPTasks
+}
+
+func getCTEInMPPTasks(cteMap map[int]*cteInMPPTasks, cteID int) *cteInMPPTasks {
+	group := cteMap[cteID]
+	if group == nil {
+		group = &cteInMPPTasks{
+			sinks:   make([]cteSinkInMPPTasks, 0, 1),
+			sources: make([]cteSourceInMPPTasks, 0, 1),
+		}
+		cteMap[cteID] = group
+	}
+	return group
+}
+
+func (e *mppTaskGenerator) traverseFragForCTE(p base.PhysicalPlan, tasks []*kv.MPPTask, cteMap map[int]*cteInMPPTasks) {
 	switch x := p.(type) {
 	case *PhysicalCTESink:
-		group := cteMap[x.IDForStorage]
-		if group == nil {
-			group = &cteInMPPTasks{
-				sinks:   make([]*PhysicalCTESink, 0, 1),
-				sources: make([]*PhysicalCTESource, 0, 1),
-			}
-			cteMap[x.IDForStorage] = group
-		}
-		group.sinks = append(group.sinks, x)
+		group := getCTEInMPPTasks(cteMap, x.IDForStorage)
+		group.sinks = append(group.sinks, cteSinkInMPPTasks{sink: x, tasks: tasks})
 	case *PhysicalCTESource:
-		group := cteMap[x.IDForStorage]
-		if group == nil {
-			group = &cteInMPPTasks{
-				sinks:   make([]*PhysicalCTESink, 0, 1),
-				sources: make([]*PhysicalCTESource, 0, 1),
-			}
-			cteMap[x.IDForStorage] = group
-		}
-		group.sources = append(group.sources, x)
+		group := getCTEInMPPTasks(cteMap, x.IDForStorage)
+		group.sources = append(group.sources, cteSourceInMPPTasks{source: x, tasks: tasks})
 		return
 	case *PhysicalExchangeReceiver, *PhysicalTableScan:
 		// Don't recurse into lower fragments (ExchangeReceiver) or physical storage leaves (TableScan).
 		return
 	}
 	for _, child := range p.Children() {
-		e.traverseFragForCTE(child, cteMap)
+		e.traverseFragForCTE(child, tasks, cteMap)
 	}
 }
 
-func (e *mppTaskGenerator) fixDuplicatedTimesForCTE(frags []*Fragment) {
-	// Count sinks/sources by cte_id in the split MPP DAG forest and assign the numbers to each node.
+func addCTELocalCount(tasks []*kv.MPPTask, counts map[string]uint32) {
+	for _, task := range tasks {
+		if task == nil || task.Meta == nil {
+			continue
+		}
+		counts[task.Meta.GetAddress()]++
+	}
+}
+
+func getUniformCTELocalCount(cteID int, tasks []*kv.MPPTask, counts map[string]uint32, countName string) (uint32, error) {
+	var count uint32
+	initialized := false
+	for _, task := range tasks {
+		if task == nil || task.Meta == nil {
+			continue
+		}
+		addr := task.Meta.GetAddress()
+		localCount := counts[addr]
+		if !initialized {
+			count = localCount
+			initialized = true
+			continue
+		}
+		// One plan node carries one CteSinkNum/CteSourceNum value. If its tasks would need different
+		// per-address values, the split fragment layout cannot be represented by the current TiPB fields.
+		if count != localCount {
+			return 0, errors.Errorf("MPP shared CTE %d has different local %s counts in one fragment", cteID, countName)
+		}
+	}
+	return count, nil
+}
+
+func (e *mppTaskGenerator) fillLocalCTECounts(frags []*Fragment) error {
+	// Build a global index of split CTE plan nodes, then write each node's task-local counts.
 	//
 	// Why this is needed:
 	// - A shared CTE can be referenced from multiple fragments.
 	// - UNION ALL is handled by "untwist" which copies plans above UNION ALL. That can duplicate
 	//   CTESink/CTESource nodes in the final fragment forest.
-	// - TiFlash needs the total sink/source numbers to coordinate the shared CTE pipeline.
+	// - TiFlash CTEManager is local to one TiFlash address, so the expected sink/source numbers must
+	//   match the executor instances on that address, not the global plan-node count.
 	cteMap := make(map[int]*cteInMPPTasks)
 	for _, f := range frags {
-		e.traverseFragForCTE(f.Sink, cteMap)
+		e.traverseFragForCTE(f.Sink, f.Sink.GetSelfTasks(), cteMap)
 	}
 
-	for _, group := range cteMap {
-		sinkNum := uint32(len(group.sinks))
-		sourceNum := uint32(len(group.sources))
+	for cteID, group := range cteMap {
+		sinkCounts := make(map[string]uint32)
+		sourceCounts := make(map[string]uint32)
 		for _, sink := range group.sinks {
-			sink.CteSinkNum = sinkNum
-			sink.CteSourceNum = sourceNum
+			addCTELocalCount(sink.tasks, sinkCounts)
 		}
 		for _, source := range group.sources {
-			source.CteSinkNum = sinkNum
-			source.CteSourceNum = sourceNum
+			addCTELocalCount(source.tasks, sourceCounts)
+		}
+		for _, sink := range group.sinks {
+			sinkNum, err := getUniformCTELocalCount(cteID, sink.tasks, sinkCounts, "sink")
+			if err != nil {
+				return err
+			}
+			sourceNum, err := getUniformCTELocalCount(cteID, sink.tasks, sourceCounts, "source")
+			if err != nil {
+				return err
+			}
+			sink.sink.CteSinkNum = sinkNum
+			sink.sink.CteSourceNum = sourceNum
+		}
+		for _, source := range group.sources {
+			sinkNum, err := getUniformCTELocalCount(cteID, source.tasks, sinkCounts, "sink")
+			if err != nil {
+				return err
+			}
+			sourceNum, err := getUniformCTELocalCount(cteID, source.tasks, sourceCounts, "source")
+			if err != nil {
+				return err
+			}
+			source.source.CteSinkNum = sinkNum
+			source.source.CteSourceNum = sourceNum
 		}
 	}
+	return nil
 }
 
 // For fragments without a TableScan, construct tasks based on the children's tasks.

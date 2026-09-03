@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/bdr"
+	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
@@ -458,7 +460,7 @@ func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount
 
 func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	done := false
-	killed := sctx.GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted
+	killed := exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal())
 	if killed {
 		return true, 1
 	}
@@ -468,7 +470,17 @@ func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	return done, 0
 }
 
-func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
+// convertKillFlag maps killed!=0 to ErrQueryInterrupted for batch
+// ALTER DATABASE SET TIFLASH REPLICA. killed==0 is the failpoint-only abort
+// and still returns nil.
+func convertKillFlag(killed uint32) error {
+	if killed != 0 {
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+	}
+	return nil
+}
+
+func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool, uint32) {
 	configRetry := tiflashCheckPendingTablesRetry
 	configWaitTime := tiflashCheckPendingTablesWaitTime
 	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
@@ -480,13 +492,13 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
-			return true, originVersion, pendingCount, false
+			return true, originVersion, pendingCount, false, killed
 		}
 		originVersion, pendingCount = e.getPendingTiFlashTableCount(originVersion, pendingCount)
 		delay := time.Duration(0)
 		if pendingCount < threshold {
 			// If there are not many unavailable tables, we don't need a force check.
-			return false, originVersion, pendingCount, false
+			return false, originVersion, pendingCount, false, 0
 		}
 		logutil.DDLLogger().Info("too many unavailable tables, wait",
 			zap.Uint32("threshold", threshold),
@@ -500,7 +512,7 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 	logutil.DDLLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
 	// If timeout here, we will trigger a ddl job, to force sync schema. However, it doesn't mean we remove limiter,
 	// so there is a force check immediately after that.
-	return false, originVersion, pendingCount, true
+	return false, originVersion, pendingCount, true, 0
 }
 
 func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
@@ -545,7 +557,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
-			return nil
+			return convertKillFlag(killed)
 		}
 
 		tbReplicaInfo := tbl.TiFlashReplica
@@ -577,10 +589,11 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			// We can execute one probing ddl to the latest schema, if we timeout in `pendingFunc`.
 			// However, we shall mark `forceCheck` to true, because we may still reach `threshold`.
 			finished := false
-			finished, originVersion, pendingCount, forceCheck = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
+			var killed uint32
+			finished, originVersion, pendingCount, forceCheck, killed = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
 			if finished {
-				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
-				return nil
+				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
+				return convertKillFlag(killed)
 			}
 		}
 
@@ -601,14 +614,18 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		args := &model.SetTiFlashReplicaArgs{TiflashReplica: *tiflashReplica}
 		err := e.doDDLJob2(sctx, job, args)
 		if err != nil {
-			oneFail = tbl.ID
-			fail++
 			logutil.DDLLogger().Info("processing schema table error",
 				zap.Int64("tableID", tbl.ID),
 				zap.Int64("schemaID", dbInfo.ID),
 				zap.Stringer("tableName", tbl.Name),
 				zap.Stringer("schemaName", dbInfo.Name),
 				zap.Error(err))
+			// KILL cancelled this job; return the error and do not process remaining tables.
+			if dbterror.ErrCancelledDDLJob.Equal(err) || exeerrors.ErrQueryInterrupted.Equal(err) {
+				return err
+			}
+			oneFail = tbl.ID
+			fail++
 		} else {
 			succ++
 		}
@@ -1725,6 +1742,9 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
 		}
 	}
+	if err := CheckStorageClassConflictInAlterTableSpecs(validSpecs); err != nil {
+		return err
+	}
 	if isMultiSchemaChanges(validSpecs) && (sctx.GetSessionVars().EnableRowLevelChecksum || vardef.EnableRowLevelChecksum.Load()) {
 		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change when row level checksum is enabled")
 	}
@@ -1881,6 +1901,18 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTablePartition:
 			err = e.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
+			engineAttribute, hasEngineAttribute, engineAttributeErr := GetEngineAttributeFromStorageClassTableOptions(spec.Options)
+			if engineAttributeErr != nil {
+				return engineAttributeErr
+			}
+			// Only allow COMPRESSION='NONE', reject others like 'ZLIB', 'LZ4'.
+			// Validate it before handling any other option, so that no option
+			// takes effect for a statement with an invalid COMPRESSION value.
+			for _, opt := range spec.Options {
+				if opt.Tp == ast.TableOptionCompression && strings.ToUpper(opt.StrValue) != ast.TableOptionCompressionNone {
+					return dbterror.ErrUnsupportedAlterTableOption.GenWithStackByArgs()
+				}
+			}
 			var placementPolicyRef *model.PolicyRefInfo
 			for i, opt := range spec.Options {
 				switch opt.Tp {
@@ -1921,9 +1953,11 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 						Name: ast.NewCIStr(opt.StrValue),
 					}
 				case ast.TableOptionEngine:
-				case ast.TableOptionEngineAttribute:
-					err = dbterror.ErrUnsupportedEngineAttribute
+				case ast.TableOptionEngineAttribute, ast.TableOptionStorageClass:
 				case ast.TableOptionRowFormat:
+				case ast.TableOptionCompression:
+					// COMPRESSION='NONE' is supported but currently no-op.
+					// Other values are rejected before this loop.
 				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
 					var ttlEnable *bool
@@ -1945,6 +1979,13 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
 
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+
+			if hasEngineAttribute {
+				err = e.AlterTableEngineAttribute(sctx, ident, engineAttribute)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -2230,7 +2271,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
+	if bdr.IsAddColumnDenied(ast.BDRRole(bdrRole), specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
 		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
@@ -2302,13 +2343,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		}
 	}
 
-	// partInfo contains only the new added partition, we have to combine it with the
-	// old partitions to check all partitions is strictly increasing.
-	clonedMeta := meta.Clone()
-	tmp := *partInfo
-	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	clonedMeta.Partition = &tmp
-	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
+	if err := CheckAndUpdateAddedPartitionDefinitions(ctx.GetExprCtx(), meta, partInfo, len(pi.Definitions)); err != nil {
 		if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
@@ -2680,6 +2715,13 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
 	}
 	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
+		return errors.Trace(err)
+	}
+	definitionsOffset := 0
+	if action == model.ActionReorganizePartition {
+		definitionsOffset = firstPartIdx
+	}
+	if err := updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset); err != nil {
 		return errors.Trace(err)
 	}
 	if action == model.ActionReorganizePartition {
@@ -4924,9 +4966,6 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
-		return errors.Trace(err)
-	}
 
 	var columnarIndexType model.ColumnarIndexType
 	switch indexOption.Tp {
@@ -4938,6 +4977,15 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		columnarIndexType = model.ColumnarIndexTypeFulltext
 	default:
 		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
+	}
+	if columnarIndexType == model.ColumnarIndexTypeFulltext {
+		if err := checkFullTextSupportedInStarter(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
+		return errors.Trace(err)
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
@@ -5869,32 +5917,23 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 			schema.Name, fmt.Sprintf("TableID: %d", args.TableID))
 	}
 
-	ok = validateTableMode(table.Meta().Mode, args.TableMode)
-	if !ok {
-		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
+	job, jobArgs, noop, err := jobsubmit.BuildAlterTableModeJob(sctx, model.AlterTableModeTarget{
+		SchemaID:    args.SchemaID,
+		SchemaName:  schema.Name,
+		TableID:     args.TableID,
+		TableName:   table.Meta().Name,
+		CurrentMode: table.Meta().Mode,
+		TargetMode:  args.TableMode,
+	})
+	if err != nil {
+		return errors.Trace(err)
 	}
-	if table.Meta().Mode == args.TableMode {
+	if noop {
 		return nil
 	}
 
-	job := &model.Job{
-		Version:        model.JobVersion2,
-		SchemaID:       args.SchemaID,
-		TableID:        args.TableID,
-		SchemaName:     schema.Name.O,
-		Type:           model.ActionAlterTableMode,
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        sctx.GetSessionVars().SQLMode,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				Database: schema.Name.L,
-				Table:    table.Meta().Name.L,
-			},
-		},
-	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
-	err := e.doDDLJob2(sctx, job, args)
+	err = e.doDDLJob2(sctx, job, jobArgs)
 	return errors.Trace(err)
 }
 
@@ -7188,6 +7227,15 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 	return e.DoDDLJobWrapper(ctx, NewJobWrapperWithArgs(job, args, false))
 }
 
+// isRetryableDDLCancelErr reports whether DoDDLJobWrapper should call
+// CancelJobsBySystem again. Finished, cannot-cancel, and not-found results are
+// terminal for the cancel command.
+func isRetryableDDLCancelErr(err error) bool {
+	return !dbterror.ErrCancelFinishedDDLJob.Equal(err) &&
+		!dbterror.ErrCannotCancelDDLJob.Equal(err) &&
+		!dbterror.ErrDDLJobNotFound.Equal(err)
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
@@ -7315,7 +7363,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.
-		if sessVars.SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
+		if exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal()) {
 			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
 				logutil.DDLLogger().Info("DoDDLJob will quit because context done")
 				return context.Canceled
@@ -7326,16 +7374,23 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 					logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
 					continue
 				}
-				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
 				errs, err := CancelJobsBySystem(se, []int64{jobID})
 				e.sessPool.Put(se)
-				if len(errs) > 0 {
-					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
-				}
 				if err != nil {
 					logutil.DDLLogger().Warn("Kill command could not cancel DDL job", zap.Error(err))
 					continue
 				}
+				// CancelJobsBySystem returns one result per requested job; only
+				// non-nil entries need error handling.
+				if len(errs) > 0 && errs[0] != nil {
+					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
+					if isRetryableDDLCancelErr(errs[0]) {
+						continue
+					}
+				}
+				// Clear DDLJobID so CancelJobsBySystem is not issued again. The wait
+				// loop continues until the job is in history.
+				sessVars.StmtCtx.DDLJobID = 0
 			}
 		}
 
@@ -7351,6 +7406,24 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			continue
 		}
 		if historyJob == nil {
+			currentJob, getCurrentJobErr := e.getCurrentDDLJobByID(jobID)
+			if getCurrentJobErr != nil {
+				logutil.DDLLogger().Warn("get current DDL job failed, check again", zap.Error(getCurrentJobErr))
+				continue
+			}
+			if currentJob != nil && currentJob.IsPausedBySystemForKVDiskFull() {
+				logutil.DDLLogger().Info("DDL job is auto-paused because a storage node disk is full", zap.Int64("jobID", jobID))
+				if currentJob.Error != nil {
+					err = errors.Trace(currentJob.Error)
+					return err
+				}
+				message := ""
+				if currentJob.PauseReason != nil {
+					message = currentJob.PauseReason.Message
+				}
+				err = dbterror.ErrDDLAutoPausedByKVDiskFull.GenWithStackByArgs(jobID, message)
+				return err
+			}
 			logutil.DDLLogger().Debug("DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}
@@ -7388,6 +7461,22 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
+}
+
+func (e *executor) getCurrentDDLJobByID(jobID int64) (*model.Job, error) {
+	se, err := e.sessPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer e.sessPool.Put(se)
+	jobs, err := getJobsBySQL(context.Background(), sess.NewSession(se), fmt.Sprintf("job_id = %d", jobID))
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	return jobs[0], nil
 }
 
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
@@ -7502,6 +7591,7 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 // NewDDLReorgMeta create a DDL ReorgMeta.
 func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	useNewCollate := collate.NewCollationEnabled()
 	return &model.DDLReorgMeta{
 		SQLMode:           ctx.GetSessionVars().SQLMode,
 		Warnings:          make(map[errors.ErrorID]*terror.Error),
@@ -7509,6 +7599,7 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
+		UseNewCollate:     &useNewCollate,
 	}
 }
 

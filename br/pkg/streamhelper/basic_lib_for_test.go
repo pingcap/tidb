@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	streamconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utiltest/fakecluster"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -97,6 +98,9 @@ type testEnv struct {
 	task           streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
+	scanLocks    func(key []byte, endKey []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error)
+
+	getLogBackupFlushInterval func(context.Context) (time.Duration, error)
 
 	mu sync.Mutex
 	pd.Client
@@ -128,6 +132,13 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 	ch <- t.task
 	t.taskCh = ch
 	return nil
+}
+
+func (t *testEnv) GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error) {
+	if t.getLogBackupFlushInterval != nil {
+		return t.getLogBackupFlushInterval(ctx)
+	}
+	return streamconfig.DefaultCommandConfig().GetResolveLockInterval(), nil
 }
 
 func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string, checkpoint uint64) error {
@@ -246,7 +257,10 @@ func (t *testEnv) ScanLocksInOneRegion(
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.MaxTS != maxVersion {
+	if t.scanLocks != nil {
+		return t.scanLocks(key, endKey, maxVersion)
+	}
+	if t.MaxTS != 0 && t.MaxTS != maxVersion {
 		return nil, nil, errors.Errorf("unexpect max version in scan lock, expected %d, actual %d", t.MaxTS, maxVersion)
 	}
 	for _, r := range t.RegionList() {

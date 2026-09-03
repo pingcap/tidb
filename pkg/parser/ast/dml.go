@@ -70,6 +70,8 @@ const (
 	LeftJoin
 	// RightJoin is right Join type.
 	RightJoin
+	// FullJoin is full join type.
+	FullJoin
 )
 
 // Join represents table join.
@@ -192,6 +194,8 @@ func (n *Join) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" LEFT")
 	case RightJoin:
 		ctx.WriteKeyWord(" RIGHT")
+	case FullJoin:
+		ctx.WriteKeyWord(" FULL OUTER")
 	}
 	if n.StraightJoin {
 		ctx.WriteKeyWord(" STRAIGHT_JOIN ")
@@ -447,9 +451,9 @@ func (n *TableName) Accept(v Visitor) (Node, bool) {
 		n.TableSample = newTs.(*TableSample)
 	}
 	if n.AsOf != nil {
-		newNode, skipChildren := n.AsOf.Accept(v)
-		if skipChildren {
-			return v.Leave(n)
+		newNode, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
 		}
 		n.AsOf = newNode.(*AsOfClause)
 	}

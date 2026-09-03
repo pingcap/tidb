@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
@@ -322,6 +323,8 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 		s.NoError(err)
 		return task.State == proto.TaskStateSucceed
 	}, 30*time.Second, 300*time.Millisecond)
+	var taskMeta importinto.TaskMeta
+	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 
@@ -340,13 +343,18 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 	s.EqualValues(12, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.EqualValues(sum.RowCnt.Load(), 10000)
+	logicalIngestSummary := taskMeta.Summary.IngestSummary
+	s.EqualValues(10000, logicalIngestSummary.RowCnt)
 	if kerneltype.IsClassic() {
-		s.EqualValues(sum.Processed.Load(), 2622604)
+		s.EqualValues(2622604, logicalIngestSummary.Bytes)
 	} else {
 		// There are total 10000 * 4 kv pairs, each with 4 bytes keyspace prefix.
-		s.EqualValues(sum.Processed.Load(), 2782604)
+		s.EqualValues(2782604, logicalIngestSummary.Bytes)
 	}
+	// Runtime write progress is retry-inclusive. An ingest retry can move a region
+	// job back to regionScanned and rewrite its KVs; the data KV group also recounts rows.
+	s.GreaterOrEqual(sum.RowCnt.Load(), logicalIngestSummary.RowCnt)
+	s.GreaterOrEqual(sum.Processed.Load(), logicalIngestSummary.Bytes)
 	s.EqualValues(20, sum.GetReqCnt.Load())
 	// No conflicts in this case, no need to rewrite the external subtask meta.
 	s.EqualValues(0, sum.PutReqCnt.Load())
@@ -430,6 +438,12 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	require.NoError(s.T(), err)
 	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
 	require.NoError(s.T(), err)
+	eligibleStoreCnt := 0
+	for _, store := range stores {
+		if store.StatusAddress != "" && !engine.IsTiFlash(store) {
+			eligibleStoreCnt++
+		}
+	}
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s' with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
@@ -444,14 +458,14 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	importSQL = fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'`, gcsEndpoint)
 	result = s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	require.Equal(s.T(), addCnt.Load(), int32(2*len(stores)))
+	require.Equal(s.T(), addCnt.Load(), int32(2*eligibleStoreCnt))
 	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 
 	addCnt.Store(0)
 	removeCnt.Store(0)
 	s.tk.MustExec("create table dst like t")
 	s.tk.MustExec(`import into dst FROM select * from t`)
-	require.Equal(s.T(), addCnt.Load(), int32(2*len(stores)))
+	require.Equal(s.T(), addCnt.Load(), int32(2*eligibleStoreCnt))
 	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 }
 

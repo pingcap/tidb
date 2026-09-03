@@ -182,6 +182,17 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
 		}
+	case base.FullOuterJoin:
+		// For full outer join in the root phase, always use the regular
+		// hash join probe path. Build side is still chosen by cost / hints.
+		if forceLeftToBuild {
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
+		} else if forceRightToBuild {
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+		} else {
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
+		}
 	}
 
 	forced = (p.PreferJoinType&h.PreferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
@@ -699,11 +710,12 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		return base.InvalidTask
 	}
 	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
+	accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
 	var innerTask base.Task
 	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 	} else {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
 	if innerTask == nil {
@@ -748,12 +760,13 @@ func buildDataSource2TableScanByIndexJoinProp(
 		}
 		// prepare the range info with outer join keys, it shows like: [xxx] decided by:
 		rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
+		accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, accessRowsFloor, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -772,9 +785,11 @@ func buildDataSource2TableScanByIndexJoinProp(
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
 		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			// The int handle is a single-column unique key, so the join key fully decides the range
+			// and no rows-after-access floor applies.
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
@@ -820,6 +835,44 @@ func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResul
 	innerTask.IndexJoinInfo = info
 }
 
+// indexJoinProbeAccessRowsFloor returns a lower bound on the rows-after-access of an index join
+// probe-side scan, or 0 when no adjustment applies. The row count passed to the inner scan tasks
+// is derived from the join output cardinality, which accounts for ALL equality join conditions.
+// When the chosen path builds ranges from only a subset of the join keys, the remaining equality
+// conditions are evaluated at the join rather than at the scan, so each probe still reads every
+// row matching the used key prefix: approximately (total row count / NDV of the used EQ columns).
+// See #69974.
+func indexJoinProbeAccessRowsFloor(ds *logicalop.DataSource, indexJoinProp *property.IndexJoinRuntimeProp, indexJoinResult *indexJoinPathResult) float64 {
+	if indexJoinResult == nil || ds.TableStats == nil || indexJoinResult.eqUsedColsNDV <= 0 {
+		return 0
+	}
+	// A range on the last used column narrows the scan beyond the EQ prefix, so the EQ-prefix NDV
+	// would overestimate the scanned rows. Skip the adjustment in that case.
+	if indexJoinResult.lastColIsRange || indexJoinResult.lastColManager != nil {
+		return 0
+	}
+	usedKeys := make(map[int]struct{}, len(indexJoinProp.InnerJoinKeys))
+	for idxOff, keyOff := range indexJoinResult.idxOff2KeyOff {
+		if idxOff >= indexJoinResult.usedColsLen {
+			break
+		}
+		if keyOff >= 0 {
+			usedKeys[keyOff] = struct{}{}
+		}
+	}
+	if len(usedKeys) >= len(indexJoinProp.InnerJoinKeys) {
+		return 0
+	}
+	// This adjustment shares the Fix44855 switch with the NDV-based upper bound in
+	// constructDS2IndexScanTask, but defaults to ON: setting 44855:OFF disables both.
+	enabled := fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44855, true)
+	ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix44855)
+	if !enabled {
+		return 0
+	}
+	return ds.TableStats.RowCount / indexJoinResult.eqUsedColsNDV
+}
+
 // constructDS2TableScanTask constructs the inner table scan task for index join.
 func constructDS2TableScanTask(
 	ds *logicalop.DataSource,
@@ -830,6 +883,7 @@ func constructDS2TableScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	accessRowsFloor float64,
 	maxOneRow bool,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -870,6 +924,9 @@ func constructDS2TableScanTask(
 		// i.e, rowCount equals to `countAfterAccess * selectivity`.
 		countAfterAccess = rowCount / selectivity
 	}
+	// The ranges only encode the join keys this path can use; equality conditions on the remaining
+	// join keys are evaluated at the join, so the scan reads at least the rows matching the used prefix.
+	countAfterAccess = math.Max(countAfterAccess, accessRowsFloor)
 	// Only apply the 1-row limit when we can guarantee at most one row per outer row.
 	// For CommonHandle, this requires matching ALL primary key columns with equality conditions.
 	// For prefix scans (e.g., only matching first column of a composite PK), we trust the statistical estimation.
@@ -1027,6 +1084,7 @@ func constructDS2IndexScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	accessRowsFloor float64,
 	maxOneRow bool,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -1191,6 +1249,16 @@ func constructDS2IndexScanTask(
 			cnt = math.Min(cnt, 1.0)
 		}
 		tmpPath.CountAfterAccess = cnt
+	}
+	// The ranges only encode the join keys this path can use; equality conditions on the remaining
+	// join keys are evaluated at the join, so the scan reads at least the rows matching the used prefix.
+	if !maxOneRow && accessRowsFloor > tmpPath.CountAfterAccess {
+		scale := 1.0
+		if tmpPath.CountAfterAccess > 0 {
+			scale = tmpPath.CountAfterIndex / tmpPath.CountAfterAccess
+		}
+		tmpPath.CountAfterAccess = accessRowsFloor
+		tmpPath.CountAfterIndex = accessRowsFloor * scale
 	}
 	is.SetStats(ds.TableStats.ScaleByExpectCnt(is.SCtx().GetSessionVars(), tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
@@ -1817,6 +1885,9 @@ func getJoinChildStatsAndSchema(ge base.GroupExpression, p base.LogicalPlan) (st
 // If we can use mpp broadcast join, that's our first choice.
 func preferMppBCJ(super base.LogicalPlan) bool {
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
+	if p.JoinType == base.FullOuterJoin {
+		return false
+	}
 	if len(p.EqualConditions) == 0 && p.SCtx().GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
@@ -1893,8 +1964,12 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		return nil
 	}
 
-	if p.JoinType != base.InnerJoin && p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.SemiJoin && p.JoinType != base.AntiSemiJoin && p.JoinType != base.LeftOuterSemiJoin && p.JoinType != base.AntiLeftOuterSemiJoin {
+	if p.JoinType != base.InnerJoin && p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.FullOuterJoin && p.JoinType != base.SemiJoin && p.JoinType != base.AntiSemiJoin && p.JoinType != base.LeftOuterSemiJoin && p.JoinType != base.AntiLeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because join type `" + p.JoinType.String() + "` is not supported now.")
+		return nil
+	}
+	if p.JoinType == base.FullOuterJoin && useBCJ {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because `full outer join` is only supported by shuffle join now.")
 		return nil
 	}
 
@@ -1908,12 +1983,12 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 			return nil
 		}
 	}
-	if len(p.LeftConditions) != 0 && p.JoinType != base.LeftOuterJoin {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.")
+	if len(p.LeftConditions) != 0 && p.JoinType != base.LeftOuterJoin && p.JoinType != base.FullOuterJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because left conditions are only supported for `left outer join` and `full outer join` now.")
 		return nil
 	}
-	if len(p.RightConditions) != 0 && p.JoinType != base.RightOuterJoin {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `right join` but has right conditions, which is not supported by mpp now.")
+	if len(p.RightConditions) != 0 && p.JoinType != base.RightOuterJoin && p.JoinType != base.FullOuterJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because right conditions are only supported for `right outer join` and `full outer join` now.")
 		return nil
 	}
 
@@ -1967,7 +2042,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 			fixedBuildSide = true
 		}
 	}
-	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
+	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin || p.JoinType == base.FullOuterJoin {
 		// TiFlash does not require that the build side must be the inner table for outer join.
 		// so we can choose the build side based on the row count, except that:
 		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
@@ -2039,6 +2114,9 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 	} else {
 		lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
 		if prop.MPPPartitionTp == property.HashType {
+			if p.JoinType == base.FullOuterJoin {
+				return nil
+			}
 			var matches []int
 			switch p.JoinType {
 			case base.InnerJoin:
@@ -2181,6 +2259,30 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		}
 	}
 
+	if p.JoinType == base.FullOuterJoin {
+		// Non-MPP full outer join keeps the phase-1 restriction: root HashJoin v1 only.
+		hashJoins, forced := getHashJoins(super, prop)
+		joins = append(joins, hashJoins...)
+		if forced && len(hashJoins) > 0 {
+			return joins, true, nil
+		}
+		if p.PreferJoinType > 0 {
+			// recordWarnings only reports index-join-family hint failures for LogicalJoin.
+			// Since full outer join does not support merge join, report the merge-join
+			// hint here while leaving index-join-family hints to that path.
+			if p.PreferJoinType&h.PreferMergeJoin > 0 {
+				var mergeJoinTables []h.HintedTable
+				if p.HintInfo != nil {
+					mergeJoinTables = p.HintInfo.SortMergeJoin
+				}
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
+					h.Restore2JoinHint(h.HintSMJ, mergeJoinTables), h.Restore2JoinHint(h.TiDBMergeJoin, mergeJoinTables)))
+			}
+			return joins, false, nil
+		}
+		return joins, forced || len(joins) > 0, nil
+	}
+
 	hashJoins, forced := getHashJoins(super, prop)
 	if forced && len(hashJoins) > 0 {
 		return hashJoins, true, nil
@@ -2276,11 +2378,16 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		columns = append(columns, &tmp.Column)
 	}
 	cacheHitRatio := 0.0
-	if la.StatsInfo().RowCount != 0 {
-		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(la.SCtx(), columns, la.Schema(), la.StatsInfo())
-		// for example, if there are 100 rows and the number of distinct values of these correlated columns
-		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
-		cacheHitRatio = 1 - (ndv / la.StatsInfo().RowCount)
+	// The inner plan runs once per outer row and the cache is looked up once per run, so the
+	// distinct correlated values have to be compared against the number of outer rows. The rows
+	// the Apply itself emits are not that number: a LATERAL join can return several rows per
+	// outer row, which would overstate the ratio and enable a cache that cannot hit.
+	if stats0 != nil && stats0.RowCount != 0 {
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(la.SCtx(), columns, schema0, stats0)
+		// for example, if there are 100 outer rows and the number of distinct values of these
+		// correlated columns are 70, then we can assume 30 rows can hit the cache so the cache
+		// hit ratio is 1 - (70/100) = 0.3
+		cacheHitRatio = 1 - (ndv / stats0.RowCount)
 	}
 
 	var canUseCache bool

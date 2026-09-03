@@ -16,18 +16,35 @@ package session
 
 import (
 	"context"
+	"encoding/base64"
+	"runtime"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestDomapHandleNil(t *testing.T) {
@@ -36,6 +53,105 @@ func TestDomapHandleNil(t *testing.T) {
 	require.NotPanics(t, func() {
 		_, _ = domap.Get(nil)
 	})
+}
+
+func TestGlobalVariableInitDomainSkipsStatusEndpointClaim(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create a file containing a colon, which is not allowed on Windows")
+	}
+	if kerneltype.IsNextGen() {
+		t.Skip("this classic-kernel startup path uses a store without a system keyspace")
+	}
+	integration.BeforeTestExternal(t)
+
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Bootstrap without etcd first so the second startup exercises only the
+	// global-variable initialization Domain and the final serving Domain.
+	initialDomain, err := BootstrapSession(store)
+	require.NoError(t, err)
+	initialDomain.Close()
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	mockStore := &mockEtcdBackend{
+		Storage: store,
+		pdAddrs: []string{cluster.Members[0].GRPCURL()},
+	}
+	previousConfig := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(previousConfig)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeTiKV
+		conf.AdvertiseAddress = "127.0.0.1"
+		conf.Status.ReportStatus = true
+		conf.Status.StatusPort = 10080
+	})
+
+	ctx := context.Background()
+	require.NoError(t, ddl.StartOwnerManager(ctx, mockStore))
+	defer ddl.CloseOwnerManager(mockStore)
+
+	endpoint := "127.0.0.1:10080"
+	claimKey := "/tidb/server/status_addr/" + base64.RawURLEncoding.EncodeToString([]byte(endpoint))
+	etcdClient := cluster.RandClient()
+	claimLease, err := etcdClient.Grant(ctx, ddlutil.SessionTTL)
+	require.NoError(t, err)
+	defer func() {
+		_, revokeErr := etcdClient.Revoke(ctx, claimLease.ID)
+		require.NoError(t, revokeErr)
+	}()
+	_, err = etcdClient.Put(ctx, claimKey, "existing-server", clientv3.WithLease(claimLease.ID))
+	require.NoError(t, err)
+
+	core, recorded := observer.New(zap.WarnLevel)
+	restoreLogger := log.ReplaceGlobals(
+		zap.New(core),
+		&log.ZapProperties{
+			Core:  core,
+			Level: zap.NewAtomicLevelAt(zap.WarnLevel),
+		},
+	)
+	defer restoreLogger()
+
+	dom, err := BootstrapSession(mockStore)
+	require.NoError(t, err)
+	defer func() {
+		if dom != nil {
+			dom.Close()
+		}
+	}()
+
+	warnings := recorded.FilterMessage("advertised status endpoint already has an active claim").All()
+	require.Len(t, warnings, 1)
+	servingID := dom.DDL().GetID()
+	warningFields := warnings[0].ContextMap()
+	require.Equal(t, endpoint, warningFields["advertised-status-endpoint"])
+	require.Equal(t, claimKey, warningFields["claim-key"])
+	require.Equal(t, servingID, warningFields["local-server-info-id"])
+	require.Equal(t, "existing-server", warningFields["existing-server-info-id"])
+	require.Equal(t, util.FormatLeaseID(claimLease.ID), warningFields["existing-lease-id"])
+	require.NotEmpty(t, warningFields["action"])
+
+	// Start again without the external claim. The initialization Domain closes before
+	// BootstrapSession returns, so only the serving Domain can leave this claim behind.
+	dom.Close()
+	dom = nil
+	_, err = etcdClient.Delete(ctx, claimKey)
+	require.NoError(t, err)
+	dom, err = BootstrapSession(mockStore)
+	require.NoError(t, err)
+	servingID = dom.DDL().GetID()
+	claimResp, err := etcdClient.Get(ctx, claimKey)
+	require.NoError(t, err)
+	require.Len(t, claimResp.Kvs, 1)
+	require.Equal(t, servingID, string(claimResp.Kvs[0].Value))
+	serverInfoResp, err := etcdClient.Get(ctx, "/tidb/server/info/"+servingID)
+	require.NoError(t, err)
+	require.Len(t, serverInfoResp.Kvs, 1)
+	require.NotZero(t, claimResp.Kvs[0].Lease)
+	require.Equal(t, serverInfoResp.Kvs[0].Lease, claimResp.Kvs[0].Lease)
 }
 
 func TestSysSessionPoolGoroutineLeak(t *testing.T) {
@@ -164,6 +280,38 @@ func TestCrossKSSessionDistSQLCtxDoesNotExposeTypedNilRUReporter(t *testing.T) {
 	require.True(t, dctx.RUConsumptionReporter == nil)
 }
 
+func TestDistSQLCtxPagingSizeBytesRequiresHardCappedResourceGroup(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	oldRCEnabled := vardef.EnableResourceControl.Load()
+	vardef.EnableResourceControl.Store(true)
+	defer vardef.EnableResourceControl.Store(oldRCEnabled)
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+	MustExec(t, se, "create resource group rg_paging_capped ru_per_sec=1000")
+	MustExec(t, se, "create resource group rg_paging_unlimited ru_per_sec=1000 burstable=unlimited")
+
+	const pagingSizeBytes = 4 * 1024 * 1024
+	se.sessionVars.PagingSizeBytes = pagingSizeBytes
+
+	check := func(resourceGroupName string, rcEnabled bool, expected int) {
+		vardef.EnableResourceControl.Store(rcEnabled)
+		se.sessionVars.StmtCtx.ResetForRetry()
+		se.sessionVars.StmtCtx.ResourceGroupName = resourceGroupName
+		require.Equal(t, expected, se.GetDistSQLCtx().PagingSizeBytes)
+	}
+
+	check("default", true, 0)
+	MustExec(t, se, "alter resource group `default` ru_per_sec=1000 burstable=off")
+	check("default", true, pagingSizeBytes)
+	check("rg_paging_capped", true, pagingSizeBytes)
+	check("rg_paging_unlimited", true, 0)
+	check("rg_paging_capped", false, 0)
+}
+
 func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -260,6 +408,63 @@ func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 
 		MustExec(t, se, "insert into pre_exec_retry_count values (2, 2)")
 	})
+}
+
+func TestScalarSubqueryRegistryTxnReplay(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se, err := createSession(store)
+	require.NoError(t, err)
+	defer se.Close()
+	MustExec(t, se, "use test")
+	MustExec(t, se, "set tidb_disable_txn_auto_retry = off")
+	MustExec(t, se, "set tidb_retry_limit = 3")
+	MustExec(t, se, "set tidb_enable_non_prepared_plan_cache_for_dml = off")
+	MustExec(t, se, "create table scalar_registry_retry (id int primary key, v int)")
+	MustExec(t, se, "insert into scalar_registry_retry values (1, 1), (2, 2)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
+	MustExec(t, se, "begin optimistic")
+	MustExec(t, se, "update scalar_registry_retry set v = (select max(v) from scalar_registry_retry) where id = 1")
+	require.Len(t, se.GetSessionVars().MapScalarSubQ, 1)
+	MustExec(t, se, "update scalar_registry_retry set v = v + 1 where id = 2")
+
+	// Observe each rebuilt UPDATE before execution, using the existing
+	// session-scoped breakpoint rather than only inspecting COMMIT's context.
+	var registrySizes, scalarTreeCounts []int
+	var replayPlans []base.Plan
+	se.SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
+		vars := se.GetSessionVars()
+		if !vars.RetryInfo.Retrying {
+			return
+		}
+		plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+		require.True(t, ok)
+		if _, ok := plan.(*physicalop.Update); !ok {
+			return
+		}
+		replayPlans = append(replayPlans, plan)
+		registrySizes = append(registrySizes, len(vars.MapScalarSubQ))
+		scalarTreeCounts = append(scalarTreeCounts, len(plannercore.FlattenPhysicalPlan(plan, true).ScalarSubQueries))
+	})
+	defer se.ClearValue(breakpoint.NotifyBreakPointFuncKey)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/breakpoint/"+sessiontxn.BreakPointBeforeExecutorFirstRun, "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942", "1*return(true)->return(false)")
+	MustExec(t, se, "commit")
+	require.Equal(t, uint64(1), se.GetSessionVars().StmtCtx.ExecRetryCount)
+	t.Logf("replay registry sizes=%v flattened scalar trees=%v", registrySizes, scalarTreeCounts)
+
+	rs := MustExecToRecodeSet(t, se, "select id, v from scalar_registry_retry order by id")
+	rows, err := ResultSetToStringSlice(context.Background(), se, rs)
+	require.NoError(t, err)
+	require.NoError(t, rs.Close())
+	require.Equal(t, [][]string{{"1", "2"}, {"2", "3"}}, rows)
+	require.Len(t, replayPlans, 2)
+	update, ok := replayPlans[1].(*physicalop.Update)
+	require.True(t, ok)
+	require.IsType(t, &physicalop.PointGetPlan{}, update.SelectPlan)
+	require.Equal(t, []int{1, 0}, scalarTreeCounts)
+	require.Equal(t, []int{1, 0}, registrySizes)
 }
 
 func TestSchemaCacheSizeVar(t *testing.T) {

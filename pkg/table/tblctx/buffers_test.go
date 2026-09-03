@@ -78,7 +78,6 @@ func TestEncodeRow(t *testing.T) {
 	buffer.AddColVal(3, d3)
 	require.Equal(t, []int64{1, 2, 3}, buffer.colIDs)
 	require.Equal(t, []types.Datum{d1, d2, d3}, buffer.row)
-
 	for _, c := range []struct {
 		loc              *time.Location
 		rowLevelChecksum bool

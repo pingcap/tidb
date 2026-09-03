@@ -29,6 +29,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const dropSchemaTTLRestoreRegistrationsLogKey = "drop_schema_ttl_restore_registrations_failed"
+
 func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetCreateSchemaArgs(job)
@@ -175,13 +177,18 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 	switch dbInfo.State {
 	case model.StatePublic:
 		// public -> write only
-		dbInfo.State = model.StateWriteOnly
-		err = metaMut.UpdateDatabase(dbInfo)
+		var tables []*model.TableInfo
+		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		var tables []*model.TableInfo
-		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
+		if jobCtx.oldDDLCtx != nil {
+			if err := w.dropSchemaTTLTablesFromExternalWorkload(jobCtx.ctx, job, job.SchemaName, tables); err != nil {
+				return ver, err
+			}
+		}
+		dbInfo.State = model.StateWriteOnly
+		err = metaMut.UpdateDatabase(dbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -368,6 +375,39 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 		return ver, errors.Errorf("invalid db state %v", schemaInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) dropSchemaTTLTablesFromExternalWorkload(
+	ctx context.Context,
+	job *model.Job,
+	schemaName string,
+	tables []*model.TableInfo,
+) error {
+	tablesNeedingCompensation := make([]*model.TableInfo, 0, len(tables))
+	for _, tblInfo := range tables {
+		if tblInfo.TTLInfo == nil {
+			continue
+		}
+		if err := w.deleteTTLTableFromExternalWorkload(ctx, tblInfo.ID); err != nil {
+			for i := len(tablesNeedingCompensation) - 1; i >= 0; i-- {
+				restoreTblInfo := tablesNeedingCompensation[i]
+				if compensateErr := w.registerTTLTableToExternalWorkload(ctx, restoreTblInfo); compensateErr != nil {
+					logutil.DDLLogger().Warn("drop schema TTL external workload compensation failed",
+						zap.String("keyword", dropSchemaTTLRestoreRegistrationsLogKey),
+						zap.String("dbName", schemaName),
+						zap.Int64("tableID", restoreTblInfo.ID),
+						zap.String("tableName", restoreTblInfo.Name.O),
+						zap.Error(compensateErr),
+						zap.NamedError("deleteTTLTableErr", err))
+				}
+			}
+			return cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+		if tblInfo.TTLInfo.Enable {
+			tablesNeedingCompensation = append(tablesNeedingCompensation, tblInfo)
+		}
+	}
+	return nil
 }
 
 func checkSchemaExistAndCancelNotExistJob(t *meta.Mutator, job *model.Job) (*model.DBInfo, error) {

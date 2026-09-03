@@ -17,6 +17,7 @@ package infosync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	keyspacepb "github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -250,4 +252,89 @@ func TestInfoSyncerMarshal(t *testing.T) {
 	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
 	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
 	require.Equal(t, info.Labels, decodeInfo.Labels)
+}
+
+type mockKeyspaceConfigPDHTTPClient struct {
+	pdhttp.Client
+	t              *testing.T
+	expectedName   string
+	expectedParams *pdhttp.UpdateKeyspaceConfigParams
+	retErr         error
+}
+
+func (m *mockKeyspaceConfigPDHTTPClient) UpdateKeyspaceConfig(
+	ctx context.Context,
+	keyspaceName string,
+	params *pdhttp.UpdateKeyspaceConfigParams,
+) (*keyspacepb.KeyspaceMeta, error) {
+	require.NotNil(m.t, ctx)
+	require.Equal(m.t, m.expectedName, keyspaceName)
+	require.Equal(m.t, m.expectedParams, params)
+	if m.retErr != nil {
+		return nil, m.retErr
+	}
+	return &keyspacepb.KeyspaceMeta{}, nil
+}
+
+func TestSetKeyspaceConfig(t *testing.T) {
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+
+	value := "True"
+	precondition := "False"
+	expected := &pdhttp.UpdateKeyspaceConfigParams{
+		Config: map[string]*string{
+			"serverless_is_bootstrapped_for_restore": &value,
+		},
+		Preconditions: map[string]*string{
+			"serverless_is_bootstrapped_for_restore": &precondition,
+		},
+	}
+	restore := SetPDHttpCliForTest(&mockKeyspaceConfigPDHTTPClient{
+		t:              t,
+		expectedName:   "test-keyspace",
+		expectedParams: expected,
+	})
+	defer restore()
+
+	input := pdhttp.UpdateKeyspaceConfigParams{
+		Config: map[string]*string{
+			"serverless_is_bootstrapped_for_restore": &value,
+		},
+		Preconditions: map[string]*string{
+			"serverless_is_bootstrapped_for_restore": &precondition,
+		},
+	}
+
+	require.NoError(t, SetKeyspaceConfig(context.Background(), "test-keyspace", input))
+}
+
+func TestSetKeyspaceConfigWithoutPDHTTPClient(t *testing.T) {
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+
+	err = SetKeyspaceConfig(context.Background(), "test-keyspace", pdhttp.UpdateKeyspaceConfigParams{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "pd http cli is nil")
+}
+
+func TestSetKeyspaceConfigPropagatesPDHTTPError(t *testing.T) {
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+
+	expectedErr := errors.New("update keyspace config failed")
+	restore := SetPDHttpCliForTest(&mockKeyspaceConfigPDHTTPClient{
+		t:            t,
+		expectedName: "test-keyspace",
+		expectedParams: &pdhttp.UpdateKeyspaceConfigParams{
+			Config: map[string]*string{"k": nil},
+		},
+		retErr: expectedErr,
+	})
+	defer restore()
+
+	err = SetKeyspaceConfig(context.Background(), "test-keyspace", pdhttp.UpdateKeyspaceConfigParams{
+		Config: map[string]*string{"k": nil},
+	})
+	require.ErrorIs(t, err, expectedErr)
 }

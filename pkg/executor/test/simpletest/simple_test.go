@@ -107,7 +107,7 @@ func TestStarterUsernamePolicyInSimpleExec(t *testing.T) {
 }
 
 func TestUserWithSetNames(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set names gbk;")
@@ -412,10 +412,19 @@ func TestUser(t *testing.T) {
 	require.NoError(t, err)
 	tk.SetSession(sess)
 	ctx := tk.Session().(sessionctx.Context)
-	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost", AuthHostname: "localhost"}
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost", AuthUsername: "test1", AuthHostname: "localhost"}
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("1")))
+
+	tk.MustExec(`CREATE USER 'dpauth'@'localhost' IDENTIFIED BY 'authpw', 'dplogin'@'localhost' IDENTIFIED BY 'loginpw';`)
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "dplogin", Hostname: "localhost", AuthUsername: "dpauth", AuthHostname: "localhost"}
+	tk.MustExec(`ALTER USER USER() IDENTIFIED BY 'newauthpw';`)
+	tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="dpauth" and Host="localhost"`).
+		Check(testkit.Rows(auth.EncodePassword("newauthpw")))
+	tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="dplogin" and Host="localhost"`).
+		Check(testkit.Rows(auth.EncodePassword("loginpw")))
+
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(dropUserSQL)
 
@@ -518,6 +527,46 @@ func TestUser(t *testing.T) {
 
 	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'india'").Check(testkit.Rows())
 	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'us'").Check(testkit.Rows())
+}
+
+func TestAlterUserPreservesRequire(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`CREATE USER 'require_user'@'%' REQUIRE SUBJECT '/C=US/O=Example/CN=TiDB' SAN 'DNS:foo'`)
+	priv := `{"ssl_type":3,"x509_subject":"/C=US/O=Example/CN=TiDB","san":"DNS:foo"}`
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+
+	// ALTER USER without a REQUIRE clause must not wipe the TLS requirements.
+	tk.MustExec(`ALTER USER 'require_user'@'%' ACCOUNT LOCK`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+	tk.MustQuery(`SELECT Account_locked FROM mysql.user WHERE User='require_user' AND Host='%'`).Check(testkit.Rows("Y"))
+	tk.MustQuery(`SHOW CREATE USER 'require_user'@'%'`).Check(testkit.Rows(
+		`CREATE USER 'require_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE SUBJECT '/C=US/O=Example/CN=TiDB' SAN 'DNS:foo' PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+
+	// A few more attribute-only ALTERs must also preserve the requirements.
+	tk.MustExec(`ALTER USER 'require_user'@'%' ACCOUNT UNLOCK`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+	tk.MustExec(`ALTER USER 'require_user'@'%' PASSWORD EXPIRE`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+	tk.MustExec(`ALTER USER 'require_user'@'%' COMMENT ''`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+
+	// An explicit REQUIRE clause is still honored.
+	tk.MustExec(`ALTER USER 'require_user'@'%' REQUIRE SSL`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(`{"ssl_type":1}`))
+	// REQUIRE NONE explicitly clears the requirements.
+	tk.MustExec(`ALTER USER 'require_user'@'%' REQUIRE NONE`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(`{}`))
+
+	// A token-issuer-only REQUIRE is stored in mysql.user, not global_priv, so it
+	// must not write an (empty) global_priv row.
+	tk.MustExec(`CREATE USER 'token_only'@'%' IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc'`)
+	tk.MustQuery(`SELECT count(*) FROM mysql.global_priv WHERE User='token_only' AND Host='%'`).Check(testkit.Rows("0"))
+	tk.MustExec(`ALTER USER 'token_only'@'%' ACCOUNT LOCK`)
+	tk.MustQuery(`SELECT count(*) FROM mysql.global_priv WHERE User='token_only' AND Host='%'`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SHOW CREATE USER 'token_only'@'%'`).Check(testkit.Rows(
+		`CREATE USER 'token_only'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-abc PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
 }
 
 func TestSetPwd(t *testing.T) {

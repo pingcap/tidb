@@ -435,7 +435,7 @@ func TestExternalStarterUsernamePrefixContracts(t *testing.T) {
 	prefixError := fmt.Sprintf("User name must start with `%s.`", keyspaceName)
 	userName := keyspaceName + ".ext_starter_user"
 	dotUserName := keyspaceName + ".ext.starter_user"
-	renamedUserName := keyspaceName + ".ext_starter_renamed"
+	invalidRenamedUserName := "ext_starter_renamed"
 	roleName := keyspaceName + ".ext_starter_role"
 	wrongKeyspaceUserName := otherStarterKeyspaceName(keyspaceName) + ".ext_starter_user"
 
@@ -461,7 +461,7 @@ func TestExternalStarterUsernamePrefixContracts(t *testing.T) {
 
 	requireErrorContains(t,
 		execSQL(ctx, db, fmt.Sprintf("rename user %s@%s to %s@%s",
-			quoteSQLIdentifier(userName), quoteSQLIdentifier("%"), quoteSQLIdentifier(renamedUserName), quoteSQLIdentifier("%"))),
+			quoteSQLIdentifier(userName), quoteSQLIdentifier("%"), quoteSQLIdentifier(invalidRenamedUserName), quoteSQLIdentifier("%"))),
 		prefixError)
 
 	require.NoError(t, execSQL(ctx, db, "grant ext_starter_role to ext_starter_user"))

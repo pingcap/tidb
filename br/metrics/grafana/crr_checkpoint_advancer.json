@@ -466,7 +466,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Log backup current upstream/downstream global checkpoint.",
+               "description": "Log backup current upstream/downstream global checkpoint and the checkpoint persisted to external storage.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -515,6 +515,20 @@
                      "intervalFactor": 2,
                      "legendFormat": "downstream-{{task}}",
                      "refId": "B"
+                  },
+                  {
+                     "expr": "tidb_log_backup_last_checkpoint{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / 262144",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "last-checkpoint-{{task}}",
+                     "refId": "C"
+                  },
+                  {
+                     "expr": "tidb_log_backup_external_storage_checkpoint{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / 262144",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "external-storage-{{task}}",
+                     "refId": "D"
                   }
                ],
                "thresholds": [ ],

@@ -363,6 +363,7 @@ func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContex
 		builder.SetPaging(dctx.EnablePaging)
 		builder.Request.Paging.MinPagingSize = uint64(dctx.MinPagingSize)
 		builder.Request.Paging.MaxPagingSize = uint64(dctx.MaxPagingSize)
+		builder.Request.Paging.PagingSizeBytes = uint64(dctx.PagingSizeBytes)
 	}
 	builder.RequestSource.RequestSourceInternal = dctx.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = dctx.RequestSourceType
@@ -503,6 +504,28 @@ func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprReques
 func (builder *RequestBuilder) SetConnIDAndConnAlias(connID uint64, connAlias string) *RequestBuilder {
 	builder.ConnID = connID
 	builder.ConnAlias = connAlias
+	return builder
+}
+
+// SetStoreBatchSize sets the per-store batching limit. A non-positive value
+// disables store batching.
+func (builder *RequestBuilder) SetStoreBatchSize(storeBatchSize int) *RequestBuilder {
+	builder.StoreBatchSize = storeBatchSize
+	return builder
+}
+
+// SetAllowBatchTaskDataMerge opts into batching without row-count hints and lets
+// TiKV merge child data into the main response. The caller must bound response
+// size and handle both merged and per-task response shapes.
+func (builder *RequestBuilder) SetAllowBatchTaskDataMerge(allow bool) *RequestBuilder {
+	builder.AllowBatchTaskDataMerge = allow
+	return builder
+}
+
+// SetExecuteBatchTasksSerially asks the store to run the primary task and all
+// batched child tasks one at a time.
+func (builder *RequestBuilder) SetExecuteBatchTasksSerially(executeSerially bool) *RequestBuilder {
+	builder.ExecuteBatchTasksSerially = executeSerially
 	return builder
 }
 

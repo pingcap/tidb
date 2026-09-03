@@ -633,6 +633,24 @@ func (e *firstRow4VectorFloat32) AppendFinalResult2Chunk(_ AggFuncUpdateContext,
 	return nil
 }
 
+func (e *firstRow4VectorFloat32) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4FirstRowVectorFloat32)(partialResult)
+	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4FirstRowVectorFloat32(*pr))
+}
+
+func (e *firstRow4VectorFloat32) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *firstRow4VectorFloat32) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	success, dataMemDelta := helper.deserializePartialResult4FirstRowVectorFloat32((*partialResult4FirstRowVectorFloat32)(pr))
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 type firstRow4Decimal struct {
 	baseAggFunc
 }

@@ -2866,7 +2866,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		tblColChoice, tblColList = pickColumnList(astColChoice, astColList, tblSavedColChoice, tblSavedColList)
 	}
 
-	tblFilledOpts := fillAnalyzeOptionsV2(tblOpts)
+	tblFilledOpts := fillAnalyzeOptions(tblOpts)
 
 	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 	if err != nil {
@@ -2911,7 +2911,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			savedColChoice, savedColList := pickColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
 			// then merge statement level options
 			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
-			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
+			filledMergedOpts := fillAnalyzeOptions(mergedOpts)
 			finalColChoice, mergedColList := pickColumnList(astColChoice, astColList, savedColChoice, savedColList)
 			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
@@ -2936,7 +2936,9 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, ast.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
 	exec := b.ctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	// Deliberately not the analyze source: reading saved options is lightweight
+	// metadata work, not the heavy scan that background throttling targets.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
 		return nil, ast.DefaultChoice, nil, err
@@ -3024,7 +3026,7 @@ func (b *PlanBuilder) appendAnalyzeVersionOverwriteWarning() {
 
 // buildAnalyzeTable constructs analyze tasks for each table.
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
-	p := &Analyze{Opts: opts}
+	p := Analyze{Opts: opts}.Init(b.ctx, b.getSelectOffset())
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
 	usePersistedOptions := vardef.PersistAnalyzeOptions.Load()
 
@@ -3112,34 +3114,34 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    100000,
-	ast.AnalyzeOptNumTopN:       100000,
+	ast.AnalyzeOptNumBuckets: vardef.MaxTiDBAnalyzeDefaultNumBuckets,
+	ast.AnalyzeOptNumTopN:    vardef.MaxTiDBAnalyzeDefaultNumTopN,
+	// CMSketch width/depth are legacy ANALYZE knobs kept only to validate
+	// explicit options for compatibility.
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
+// AnalyzeOptionDefault returns the default analyze options.
 // TopN reduced from 500 to 100 due to concerns over large number of TopN values collected for customers with many tables.
 // 100 is more inline with other databases. 100-256 is also common for NumBuckets with other databases.
-var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    statistics.DefaultHistogramBuckets,
-	ast.AnalyzeOptNumTopN:       statistics.DefaultTopNValue,
-	ast.AnalyzeOptCMSketchWidth: 2048,
-	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    0,
-	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
-}
-
-// GetAnalyzeOptionDefaultV2ForTest returns the default analyze options for test.
-func GetAnalyzeOptionDefaultV2ForTest() map[ast.AnalyzeOptionType]uint64 {
-	return analyzeOptionDefaultV2
+func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
+	return map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumBuckets:    vardef.AnalyzeDefaultNumBuckets.Load(),
+		ast.AnalyzeOptNumTopN:       vardef.AnalyzeDefaultNumTopN.Load(),
+		ast.AnalyzeOptCMSketchWidth: 2048,
+		ast.AnalyzeOptCMSketchDepth: 5,
+		ast.AnalyzeOptNumSamples:    0,
+		ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+	}
 }
 
 // handleAnalyzeOptions validates analyze options and returns only the options
 // explicitly specified in the statement.
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefaultV2))
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionLimit))
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
@@ -3180,9 +3182,10 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 	return optMap, nil
 }
 
-func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
-	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefaultV2))
-	for key, defaultVal := range analyzeOptionDefaultV2 {
+func fillAnalyzeOptions(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
+	defaults := AnalyzeOptionDefault()
+	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(defaults))
+	for key, defaultVal := range defaults {
 		if val, ok := optMap[key]; ok {
 			filledMap[key] = val
 		} else {
@@ -3207,7 +3210,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	if err != nil {
 		return nil, err
 	}
-	filledOpts := fillAnalyzeOptionsV2(opts)
+	filledOpts := fillAnalyzeOptions(opts)
 
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
@@ -3340,7 +3343,7 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	timestampSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTimestamp)
 	durationSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDuration)
 
-	schema := newColumnsWithNames(11)
+	schema := newColumnsWithNames(17)
 	schema.Append(buildColumnWithName("", "SQL", mysql.TypeVarchar, 4096))
 	schema.Append(buildColumnWithName("", "START", mysql.TypeTimestamp, timestampSize))
 	schema.Append(buildColumnWithName("", "DURATION", mysql.TypeDuration, durationSize))
@@ -3355,6 +3358,9 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "INTERNAL", mysql.TypeTiny, tinySize))
 	schema.Append(buildColumnWithName("", "DIGEST", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "SESSION_ALIAS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "IA_REMOTE_READ_SEGMENT_COUNT", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumnWithName("", "IA_REMOTE_READ_SEGMENT_SIZE", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumnWithName("", "IA_REMOTE_READ_SEGMENT_WAIT_TIME", mysql.TypeDouble, mysql.MaxRealWidth))
 	return schema.col2Schema(), schema.names
 }
 
@@ -4380,7 +4386,7 @@ type colNameInOnDupExtractor struct {
 	colNameMap map[types.FieldName]*ast.ColumnNameExpr
 }
 
-func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
+func (c *colNameInOnDupExtractor) Enter(node ast.Node) bool {
 	switch x := node.(type) {
 	case *ast.ColumnNameExpr:
 		fieldName := types.FieldName{
@@ -4389,17 +4395,17 @@ func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
 			ColName: x.Name.Name,
 		}
 		c.colNameMap[fieldName] = x
-		return node, true
+		return true
 	// We don't extract the column names from the sub select.
 	case *ast.SelectStmt, *ast.SetOprStmt:
-		return node, true
+		return true
 	default:
-		return node, false
+		return false
 	}
 }
 
-func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
-	return node, true
+func (*colNameInOnDupExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *physicalop.Insert) error {
@@ -4429,7 +4435,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			if !hasWildCard {
 				colExtractor := &colNameInOnDupExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
 				for _, assign := range insert.OnDuplicate {
-					assign.Expr.Accept(colExtractor)
+					ast.Walk(assign.Expr, colExtractor)
 				}
 				actualColLen = len(sel.Fields.Fields)
 				for _, colName := range colExtractor.colNameMap {
@@ -4630,7 +4636,7 @@ var (
 		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp}
 )
 
-// importIntoCollAssignmentChecker implements ast.Visitor interface.
+// importIntoCollAssignmentChecker implements ast.InPlaceVisitor interface.
 // It is used to check the column assignment expressions in IMPORT INTO statement.
 // Currently, the import into column assignment only supports some simple expressions.
 type importIntoCollAssignmentChecker struct {
@@ -4648,7 +4654,7 @@ func checkImportIntoColAssignments(assignments []*ast.Assignment) (map[string]in
 	checker := newImportIntoCollAssignmentChecker()
 	for i, assign := range assignments {
 		checker.idx = i
-		assign.Expr.Accept(checker)
+		ast.Walk(assign.Expr, checker)
 		if checker.err != nil {
 			break
 		}
@@ -4656,65 +4662,65 @@ func checkImportIntoColAssignments(assignments []*ast.Assignment) (map[string]in
 	return checker.neededVars, checker.err
 }
 
-// Enter implements ast.Visitor interface.
-func (*importIntoCollAssignmentChecker) Enter(node ast.Node) (ast.Node, bool) {
-	return node, false
+// Enter implements ast.InPlaceVisitor interface.
+func (*importIntoCollAssignmentChecker) Enter(ast.Node) bool {
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (v *importIntoCollAssignmentChecker) Leave(node ast.Node) (ast.Node, bool) {
+// Leave implements ast.InPlaceVisitor interface.
+func (v *importIntoCollAssignmentChecker) Leave(node ast.Node) bool {
 	switch n := node.(type) {
 	case *ast.ColumnNameExpr:
 		v.err = errors.Errorf("COLUMN reference is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	case *ast.SubqueryExpr:
 		v.err = errors.Errorf("subquery is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	case *ast.VariableExpr:
 		if n.IsSystem {
 			v.err = errors.Errorf("system variable is not supported in IMPORT INTO column assignment, index %d", v.idx)
-			return n, false
+			return false
 		}
 		if n.Value != nil {
 			v.err = errors.Errorf("setting a variable in IMPORT INTO column assignment is not supported, index %d", v.idx)
-			return n, false
+			return false
 		}
 		v.neededVars[strings.ToLower(n.Name)] = v.idx
 	case *ast.DefaultExpr:
 		v.err = errors.Errorf("FUNCTION default is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	case *ast.WindowFuncExpr:
 		v.err = errors.Errorf("window FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.Name, v.idx)
-		return n, false
+		return false
 	case *ast.AggregateFuncExpr:
 		v.err = errors.Errorf("aggregate FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.F, v.idx)
-		return n, false
+		return false
 	case *ast.FuncCallExpr:
 		fnName := n.FnName.L
 		switch fnName {
 		case ast.Grouping:
 			v.err = errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.FnName.O, v.idx)
-			return n, false
+			return false
 		case ast.GetVar:
 			if len(n.Args) > 0 {
 				val, ok := n.Args[0].(*driver.ValueExpr)
 				if !ok || val.Kind() != types.KindString {
 					v.err = errors.Errorf("the argument of getvar should be a constant string in IMPORT INTO column assignment, index %d", v.idx)
-					return n, false
+					return false
 				}
 				v.neededVars[strings.ToLower(val.GetString())] = v.idx
 			}
 		default:
 			if !expression.IsFunctionSupported(fnName) {
 				v.err = errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.FnName.O, v.idx)
-				return n, false
+				return false
 			}
 		}
 	case *ast.ValuesExpr:
 		v.err = errors.Errorf("VALUES is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	}
-	return node, v.err == nil
+	return v.err == nil
 }
 
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (base.Plan, error) {
@@ -5272,23 +5278,23 @@ type userVariableChecker struct {
 	hasUserVariables bool
 }
 
-func (e *userVariableChecker) Enter(in ast.Node) (ast.Node, bool) {
+func (e *userVariableChecker) Enter(in ast.Node) bool {
 	if _, ok := in.(*ast.VariableExpr); ok {
 		e.hasUserVariables = true
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (*userVariableChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (*userVariableChecker) Leave(ast.Node) bool {
+	return true
 }
 
 // Check for UserVariables
 func checkForUserVariables(in ast.Node) error {
 	v := &userVariableChecker{hasUserVariables: false}
-	_, ok := in.Accept(v)
-	if !ok || v.hasUserVariables {
+	proceed := ast.Walk(in, v)
+	if !proceed || v.hasUserVariables {
 		return dbterror.ErrViewSelectVariable
 	}
 	return nil
@@ -5713,6 +5719,9 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainBriefBinary string, analyze, explore bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl, sqlDigest, replayerFile string) (base.Plan, error) {
 	format = strings.ToLower(format)
 	if format == types.ExplainFormatTrueCardCost && !analyze {
+		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
+	}
+	if format == types.ExplainFormatRU && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
 	}
 
@@ -6143,8 +6152,9 @@ func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
 		p.HistoricalStatsTS = calcTSForPlanReplayer(b.ctx, pc.HistoricalStatsInfo.TsExpr)
 	}
 
-	schema := newColumnsWithNames(1)
-	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
+	schema := newColumnsWithNames(2)
+	schema.Append(buildColumnWithName("", "Item", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "Value", mysql.TypeVarchar, mysql.MaxBlobWidth))
 	p.SetSchema(schema.col2Schema())
 	p.SetOutputNames(schema.names)
 	return p
@@ -6467,6 +6477,11 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 
 	activeRoles := b.ctx.GetSessionVars().ActiveRoles
 	checker := privilege.GetPrivilegeManager(b.ctx)
+	if checker == nil {
+		// During bootstrap, the privilege manager is unavailable until the system
+		// privilege tables are initialized, so restricted bootstrap SQL cannot be checked yet.
+		return nil
+	}
 	hasPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_SQL_ADMIN", false)
 
 	if hasPriv {

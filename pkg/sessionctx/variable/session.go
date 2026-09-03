@@ -283,6 +283,7 @@ func ruv2WeightsFromConfig(cfg config.RUV2Config) execdetails.RUV2Weights {
 		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
 		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
 		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		WriteKeys:               cfg.WriteKeys,
 		SessionParserTotal:      cfg.SessionParserTotal,
 		TxnCnt:                  cfg.TxnCnt,
 	}
@@ -1498,6 +1499,9 @@ type SessionVars struct {
 	// UseHashJoinV2 indicates whether to use hash join v2.
 	UseHashJoinV2 bool
 
+	// EnableFullOuterJoin indicates whether to enable full outer join.
+	EnableFullOuterJoin bool
+
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
 
@@ -1704,8 +1708,6 @@ type SessionVars struct {
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
-	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
-	AnalyzePartitionMergeConcurrency int
 
 	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	EnableAsyncMergeGlobalStats bool
@@ -1750,6 +1752,9 @@ type SessionVars struct {
 	// duplicate task in plan replayer continues capture
 	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
 
+	// AnalyzeStoreBatchSize is the child-task limit for Analyze store batches. 0 disables Analyze store batching.
+	AnalyzeStoreBatchSize int
+
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
 
@@ -1760,6 +1765,10 @@ type SessionVars struct {
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
+
+	// PagingSizeBytes is the byte budget per page.
+	// 0 means disabled.
+	PagingSizeBytes int
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
@@ -2458,6 +2467,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		AnalyzeStoreBatchSize:            vardef.DefTiDBAnalyzeStoreBatchSize,
+		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
@@ -2481,6 +2492,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
+		PagingSizeBytes:                  vardef.DefPagingSizeBytes,
 		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
 		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:                  vardef.DefTiDBRedactLog,
@@ -2499,6 +2511,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,

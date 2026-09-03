@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -126,13 +127,44 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) (err erro
 	if err != nil {
 		return err
 	}
-	req.AppendString(0, e.Ctx().GetSessionVars().LastPlanReplayerToken)
+	appendPlanReplayerDumpResult(req, e.Ctx().GetSessionVars().LastPlanReplayerToken)
 	e.endFlag = true
 	return nil
 }
 
+// appendPlanReplayerDumpResult renders the `PLAN REPLAYER DUMP` result as Item/Value rows.
+// When the token is a presigned download URL (remote object storage on TiDB Cloud), the result
+// carries usage guidance plus the URL's validity window; otherwise it is the raw file token used
+// to fetch the dump from local storage.
+func appendPlanReplayerDumpResult(req *chunk.Chunk, token string) {
+	if isPlanReplayerDownloadURL(token) {
+		rows := [][2]string{
+			{"Download URL", token},
+			{"Expires in", domain.PlanReplayerPresignExpire.String()},
+			{"Browser", "Open the Download URL directly before it expires"},
+			{"curl", fmt.Sprintf("curl -L '%s' -o plan_replayer.zip", token)},
+			{"Note", "If the URL expires, rerun PLAN REPLAYER DUMP to get a new one"},
+		}
+		for _, row := range rows {
+			req.AppendString(0, row[0])
+			req.AppendString(1, row[1])
+		}
+		return
+	}
+	req.AppendString(0, "File token")
+	req.AppendString(1, token)
+}
+
+// isPlanReplayerDownloadURL reports whether token is a presigned download URL rather than a local
+// file token. Local/in-memory storage backends return a bare file name from PresignFile, so an
+// http(s) scheme with a host is what distinguishes a real download URL.
+func isPlanReplayerDownloadURL(token string) bool {
+	u, err := url.Parse(token)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
 func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
@@ -151,7 +183,7 @@ func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 }
 
 func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	exists, err := domain.CheckPlanReplayerTaskExists(ctx1, e.Ctx(), e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
 	if err != nil {
 		return err
@@ -271,6 +303,47 @@ const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
 // PlanReplayerDumpVarKey is a variable key for plan replayer dump.
 const PlanReplayerDumpVarKey planReplayerDumpKeyType = 1
 
+// FileTransInConnHandler handles a session value that needs server-side local
+// file transfer before statement completion.
+type FileTransInConnHandler func(context.Context, any, func(context.Context, string) ([]byte, error)) error
+
+// FileTransInConnHandlers contains the no-result statements whose payloads
+// require the server connection layer to finish local file transfer.
+var FileTransInConnHandlers = map[fmt.Stringer]FileTransInConnHandler{
+	LoadStatsVarKey:        handleLoadStats,
+	PlanReplayerLoadVarKey: handlePlanReplayerLoad,
+}
+
+func handleLoadStats(ctx context.Context, value any, readFile func(context.Context, string) ([]byte, error)) error {
+	loadStatsInfo, ok := value.(*LoadStatsInfo)
+	if !ok || loadStatsInfo == nil {
+		return errors.New("load stats: info is empty")
+	}
+	data, err := readFile(ctx, loadStatsInfo.Path)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return loadStatsInfo.Update(data)
+}
+
+func handlePlanReplayerLoad(ctx context.Context, value any, readFile func(context.Context, string) ([]byte, error)) error {
+	planReplayerLoadInfo, ok := value.(*PlanReplayerLoadInfo)
+	if !ok || planReplayerLoadInfo == nil {
+		return errors.New("plan replayer load: info is empty")
+	}
+	data, err := readFile(ctx, planReplayerLoadInfo.Path)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return planReplayerLoadInfo.Update(data)
+}
+
 // Next implements the Executor Next interface.
 func (e *PlanReplayerLoadExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
@@ -369,15 +442,25 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 				}
 				dbName := r[0]
 				tableName := r[1]
+				replicaCount := strings.TrimSpace(r[2])
 				c := context.Background()
-				// Though we record tiflash replica in txt, we only set 1 tiflash replica as it's enough for reproduce the plan
-				sql := fmt.Sprintf("alter table %s.%s set tiflash replica 1", dbName, tableName)
+				sql := fmt.Sprintf("alter table %s.%s set tiflash replica %s", dbName, tableName, replicaCount)
 				_, err = ctx.GetSQLExecutor().Execute(c, sql)
+				if err != nil && isNoTiFlashStoreErr(err) {
+					// Without TiFlash stores, use one hypothetical replica so the
+					// optimizer can still reproduce TiFlash access paths.
+					sql = fmt.Sprintf("alter table %s.%s set hypo tiflash replica 1", dbName, tableName)
+					_, err = ctx.GetSQLExecutor().Execute(c, sql)
+				}
 				logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 			}
 		}
 	}
 	return nil
+}
+
+func isNoTiFlashStoreErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "total tiflash server count: 0")
 }
 
 func loadAllBindings(ctx sessionctx.Context, z *zip.Reader, databaseSets map[string]struct{}) error {
@@ -549,6 +632,11 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	}
 	if err := json.Unmarshal(buf.Bytes(), jsonTbl); err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Join(fmt.Errorf("fail to unmarshal stats JSON for file %s", f.Name), err))
+		return nil
+	}
+	// Keep plan replayer consistent with LOAD STATS: a dumped stats file can be
+	// null when the source table has no stats, and loading it should be a no-op.
+	if jsonTbl.TableName == "" && jsonTbl.Version == 0 {
 		return nil
 	}
 	do := domain.GetDomain(ctx)

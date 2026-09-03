@@ -1535,6 +1535,51 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
 }
 
+func TestInfoSchemaUserAttributes(t *testing.T) {
+	// USER_ATTRIBUTES visibility follows MySQL 8.0.22+ rules and requires SELECT or UPDATE
+	// on mysql.user to see all rows. SUPER alone is not sufficient.
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER uanobody, uaroot, uaselectonmysqluser, uaselectonmysql, uacreateonly, uasystemholder")
+	tk.MustExec(`CREATE USER uavictim@'%' ATTRIBUTE '{"secret": "victim-data"}'`)
+	tk.MustExec(`ALTER USER root@'%' ATTRIBUTE '{"secret": "root-data"}'`)
+	tk.MustExec("GRANT SUPER ON *.* TO uaroot")
+	tk.MustExec("GRANT SELECT ON mysql.user TO uaselectonmysqluser")
+	tk.MustExec("GRANT SELECT ON mysql.* TO uaselectonmysql")
+	tk.MustExec("GRANT CREATE USER ON *.* TO uacreateonly")
+	tk.MustExec("GRANT SYSTEM_USER ON *.* TO uasystemholder")
+
+	authLocalhost := func(user string) {
+		tk.Session().Auth(&auth.UserIdentity{
+			Username: user,
+			Hostname: "localhost",
+		}, nil, nil, nil)
+	}
+
+	authLocalhost("uanobody")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows("uanobody"))
+
+	authLocalhost("uaroot")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows("uaroot"))
+
+	authLocalhost("uaselectonmysqluser")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows(
+		"root", "uacreateonly", "uanobody", "uaroot", "uaselectonmysql", "uaselectonmysqluser", "uasystemholder", "uavictim",
+	))
+
+	authLocalhost("uaselectonmysql")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows(
+		"root", "uacreateonly", "uanobody", "uaroot", "uaselectonmysql", "uaselectonmysqluser", "uasystemholder", "uavictim",
+	))
+
+	// CREATE USER without SYSTEM_USER: visible for self and all non-SYSTEM_USER accounts.
+	authLocalhost("uacreateonly")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows(
+		"uacreateonly", "uanobody", "uaselectonmysql", "uaselectonmysqluser", "uavictim",
+	))
+}
+
 // Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451
 func TestGrantOptionAndRevoke(t *testing.T) {
 	store := createStoreAndPrepareDB(t)

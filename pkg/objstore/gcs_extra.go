@@ -32,6 +32,8 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/go-resty/resty/v2"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/atomic"
 )
 
@@ -56,6 +58,8 @@ type GCSWriter struct {
 	uploadID    string
 	chunkCh     chan chunk
 	curPart     int
+	// restCli issues the signed-URL requests; overridable in tests.
+	restCli *resty.Client
 }
 
 // NewGCSWriter returns a GCSWriter which uses GCS multipart upload API behind the scene.
@@ -85,6 +89,7 @@ func NewGCSWriter(
 		},
 		chunkSize: partSize,
 		workers:   parallelCnt,
+		restCli:   resty.New(),
 	}
 	if err := w.init(); err != nil {
 		return nil, fmt.Errorf("failed to initiate GCSWriter: %w", err)
@@ -105,7 +110,7 @@ func (w *GCSWriter) init() error {
 		return fmt.Errorf("Bucket(%q).SignedURL: %s", w.bucket, err)
 	}
 
-	client := resty.New()
+	client := w.restCli
 	resp, err := client.R().Post(u)
 	if err != nil {
 		return fmt.Errorf("POST request failed: %s", err)
@@ -172,8 +177,8 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 // Write uploads given bytes as a part to Google Cloud Storage. Write is not
 // concurrent safe.
 func (w *GCSWriter) Write(p []byte) (n int, err error) {
-	if w.curPart > gcsMaximumParts {
-		err = fmt.Errorf("exceed maximum parts %d", gcsMaximumParts)
+	if w.curPart > storeapi.MaxUploadParts {
+		err = storeapi.ErrExceedMaxUploadParts
 		if w.err.Load() == nil {
 			w.err.Store(err)
 		}
@@ -191,26 +196,29 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 }
 
 // Close finishes the upload.
-func (w *GCSWriter) Close() error {
+func (w *GCSWriter) Close() (err error) {
 	close(w.chunkCh)
 	w.wg.Wait()
 
-	if err := w.err.Load(); err != nil {
+	// GCS bills staged parts until the upload is aborted, so abort on any error.
+	defer func() {
+		if err != nil {
+			if errC := w.cancel(); errC != nil {
+				err = errors.Annotatef(err, "failed to cancel multipart upload: %s", errC)
+			}
+		}
+	}()
+
+	if err = w.err.Load(); err != nil {
 		return err
 	}
-
 	if len(w.xmlMPUParts) == 0 {
 		return nil
 	}
-	err := w.finalizeXMLMPU()
-	if err == nil {
-		return nil
+	if err = w.finalizeXMLMPU(); err != nil {
+		return errors.Annotate(err, "failed to finalize multipart upload")
 	}
-	errC := w.cancel()
-	if errC != nil {
-		return fmt.Errorf("failed to finalize multipart upload: %s, Failed to cancel multipart upload: %s", err, errC)
-	}
-	return fmt.Errorf("failed to finalize multipart upload: %s", err)
+	return nil
 }
 
 const (
@@ -234,7 +242,6 @@ const (
 
 	gcsMinimumChunkSize = 5 * 1024 * 1024        // 5 MB
 	gcsMaximumChunkSize = 5 * 1024 * 1024 * 1024 // 5 GB
-	gcsMaximumParts     = 10000
 )
 
 // InitiateMultipartUploadResult initiate multipart upload result structure.
@@ -292,7 +299,7 @@ func (w *GCSWriter) finalizeXMLMPU() error {
 		return fmt.Errorf("Bucket(%q).SignedURL: %s", w.bucket, err)
 	}
 
-	client := resty.New()
+	client := w.restCli
 	resp, err := client.R().SetBody(xmlBytes).Post(u)
 	if err != nil {
 		return fmt.Errorf("POST request failed: %s", err)
@@ -317,6 +324,11 @@ func (w *GCSWriter) appendMPUPart(part *xmlMPUPart) {
 	w.xmlMPUParts = append(w.xmlMPUParts, part)
 }
 
+// cancel aborts the multipart upload with an XML API DELETE ?uploadId= request,
+// which stops the parts from being billed and deletes them. GCS otherwise keeps
+// and bills staged parts until the upload is aborted.
+// https://cloud.google.com/storage/docs/xml-api/delete-multipart
+// https://cloud.google.com/storage/docs/multipart-uploads
 func (w *GCSWriter) cancel() error {
 	opts := &storage.SignedURLOptions{
 		Scheme:          storage.SigningSchemeV4,
@@ -329,7 +341,7 @@ func (w *GCSWriter) cancel() error {
 		return fmt.Errorf("Bucket(%q).SignedURL: %s", w.bucket, err)
 	}
 
-	client := resty.New()
+	client := w.restCli
 	resp, err := client.R().Delete(u)
 	if err != nil {
 		return fmt.Errorf("DELETE request failed: %s", err)

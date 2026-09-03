@@ -34,6 +34,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -88,6 +91,93 @@ func TestFormatSQL(t *testing.T) {
 	vardef.QueryLogMaxLen.Store(5)
 	val = executor.FormatSQL("aaaaaaaaaaaaaaaaaaaa")
 	require.Equal(t, "aaaaa(len:20)", val.String())
+}
+
+func TestScalarSubqueryRegistryLifecycle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table scalar_registry (id int primary key, v int)")
+	tk.MustExec("insert into scalar_registry values (1, 10), (2, 20), (3, 30)")
+	const scalarSQL = "select (select sum(v) from scalar_registry)"
+	const pointSQL = "select v from scalar_registry where id = 1"
+	const batchSQL = "select v from scalar_registry where id in (1, 2)"
+
+	checkScalarPlans := func(t *testing.T, tk *testkit.TestKit, expected int) base.Plan {
+		t.Helper()
+		vars := tk.Session().GetSessionVars()
+		plan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+		require.True(t, ok)
+		flat := plannercore.FlattenPhysicalPlan(plan, true)
+		t.Logf("plan=%T registry=%d flattened scalar trees=%d", plan, len(vars.MapScalarSubQ), len(flat.ScalarSubQueries))
+		require.Len(t, flat.ScalarSubQueries, expected)
+		require.Len(t, vars.MapScalarSubQ, expected)
+		return plan
+	}
+	newSession := func(t *testing.T) *testkit.TestKit {
+		t.Helper()
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		return tk
+	}
+	runScalar := func(t *testing.T, tk *testkit.TestKit) {
+		t.Helper()
+		tk.MustQuery(scalarSQL).Check(testkit.Rows("60"))
+		checkScalarPlans(t, tk, 1)
+	}
+
+	t.Run("current scalar survives planning context restoration", func(t *testing.T) {
+		tk := newSession(t)
+		for _, alternative := range []string{"off", "on"} {
+			tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + alternative)
+			runScalar(t, tk)
+		}
+	})
+	t.Run("following PointGet", func(t *testing.T) {
+		tk := newSession(t)
+		runScalar(t, tk)
+		tk.MustQuery(pointSQL).Check(testkit.Rows("10"))
+		require.IsType(t, &physicalop.PointGetPlan{}, checkScalarPlans(t, tk, 0))
+	})
+	t.Run("following non-prepared BatchPointGet cache hit", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache = on")
+		tk.MustQuery(batchSQL).Sort().Check(testkit.Rows("10", "20"))
+		runScalar(t, tk)
+		tk.MustQuery(batchSQL).Sort().Check(testkit.Rows("10", "20"))
+		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		require.IsType(t, &physicalop.BatchPointGetPlan{}, checkScalarPlans(t, tk, 0))
+	})
+	t.Run("following prepared PointGet cache hit", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_prepared_plan_cache = on")
+		tk.MustExec("prepare stmt from 'select v from scalar_registry where id = ?'")
+		tk.MustExec("set @id = 1")
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("10"))
+		runScalar(t, tk)
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("10"))
+		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		checkScalarPlans(t, tk, 0)
+	})
+	t.Run("prepared scalar is rebuilt for each execution", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustExec("set tidb_enable_prepared_plan_cache = on")
+		tk.MustExec("prepare stmt from 'select (select sum(v) from scalar_registry where id > ?)'")
+		tk.MustExec("set @id = 0")
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("60"))
+		checkScalarPlans(t, tk, 1)
+		tk.MustExec("set @id = 1")
+		tk.MustQuery("execute stmt using @id").Check(testkit.Rows("50"))
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		checkScalarPlans(t, tk, 1)
+	})
+	t.Run("PointGet after scalar evaluation error", func(t *testing.T) {
+		tk := newSession(t)
+		tk.MustGetErrCode("select (select v from scalar_registry)", 1242)
+		require.NotEmpty(t, tk.Session().GetSessionVars().MapScalarSubQ)
+		tk.MustQuery(pointSQL).Check(testkit.Rows("10"))
+		require.IsType(t, &physicalop.PointGetPlan{}, checkScalarPlans(t, tk, 0))
+	})
 }
 
 func TestContextCancelWhenReadFromCopIterator(t *testing.T) {
@@ -499,10 +589,16 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 	}
 	ruDetails.AddRUV2(rawRUV2)
 	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 345, WRU: 67})
+	commitDetails := &util.CommitDetails{
+		WriteKeys: 3,
+		WriteSize: 66,
+	}
+	sessVars.StmtCtx.SyncExecDetails.MergeExecDetails(commitDetails)
 	// Build expected metrics by cloning the current state and manually adding
-	// the RUV2 counters (without draining ruDetails, since FinishExecuteStmt will drain).
+	// the pending counters (without draining ruDetails, since FinishExecuteStmt will drain).
 	expected := sessVars.RUV2Metrics.Clone()
 	execdetails.UpdateRUV2MetricsFromRUV2(expected, rawRUV2)
+	execdetails.UpdateRUV2MetricsFromCommitDetails(expected, commitDetails)
 
 	execStmt := &executor.ExecStmt{
 		Ctx:      ctx,
@@ -515,6 +611,8 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 	require.Equal(t, int64(5), sessVars.RUV2Metrics.ResourceManagerReadCnt())
 	require.Equal(t, int64(7), sessVars.RUV2Metrics.ResourceManagerWriteCnt())
 	require.Equal(t, int64(11), sessVars.RUV2Metrics.TiKVStorageProcessedKeysBatchGet())
+	require.Equal(t, int64(3), sessVars.RUV2Metrics.WriteKeys())
+	require.Equal(t, int64(66), sessVars.RUV2Metrics.WriteSize())
 	require.Equal(t, "rg1", reporter.group)
 	require.Equal(t, float64(23456), reporter.tikvRUV2)
 	require.Equal(t, expected.CalculateRUValues(sessVars.RUV2Weights()), reporter.tidbRUV2)
@@ -879,4 +977,83 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInsertRowsColMultiplyRUV2SQLPath(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("create table src(a int primary key, b int, c int)")
+	tk.MustExec("insert into src values (10, 11, 12), (20, 21, 22)")
+
+	runInsert := func(sql string) int64 {
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		tk.MustExecWithContext(ctx, sql)
+		metrics := execdetails.RUV2MetricsFromContext(ctx)
+		require.NotNil(t, metrics)
+		return metrics.ExecutorL5InsertRows()
+	}
+
+	require.Equal(t, int64(6), runInsert("insert into t values (1, 2, 3), (2, 3, 4)"))
+	require.Equal(t, int64(4), runInsert("insert into t(a, c) values (3, 5), (4, 6)"))
+	require.Equal(t, int64(4), runInsert("insert into t(a, b) select a, b from src"))
+
+	oldEnableBatchDML := vardef.EnableBatchDML.Load()
+	vardef.EnableBatchDML.Store(true)
+	defer vardef.EnableBatchDML.Store(oldEnableBatchDML)
+
+	tk.MustExec("set @@session.tidb_batch_insert=1")
+	tk.MustExec("set @@session.tidb_dml_batch_size=2")
+	tk.MustExec("create table batch_t(a int primary key, b int, c int)")
+	tk.MustExec("insert into batch_t values (100, 100, 100)")
+
+	ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+	_, err := tk.ExecWithContext(ctx, "insert into batch_t values (1, 2, 3), (2, 3, 4), (100, 5, 6), (3, 4, 5)")
+	require.Error(t, err)
+	metrics := execdetails.RUV2MetricsFromContext(ctx)
+	require.NotNil(t, metrics)
+	require.Equal(t, int64(12), metrics.ExecutorL5InsertRows())
+	tk.MustQuery("select a, b, c from batch_t order by a").Check(testkit.Rows(
+		"1 2 3",
+		"2 3 4",
+		"100 100 100",
+	))
+}
+
+func TestDMLRowsColMultiplyRUV2SQLPath(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+
+	runDML := func(sql string) int64 {
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		tk.MustExecWithContext(ctx, sql)
+		metrics := execdetails.RUV2MetricsFromContext(ctx)
+		require.NotNil(t, metrics)
+		return metrics.ExecutorL5InsertRows()
+	}
+
+	require.Equal(t, int64(6), runDML("replace into t values (1, 2, 3), (2, 3, 4)"))
+	require.Equal(t, int64(6), runDML("update t set b = b + 10 where a in (1, 2)"))
+	require.Equal(t, int64(3), runDML("delete from t where a = 1"))
+
+	tk.MustExec("create table multi_del_l(a int primary key)")
+	tk.MustExec("create table multi_del_r(a int primary key)")
+	tk.MustExec("insert into multi_del_l values (1), (2)")
+	tk.MustExec("insert into multi_del_r values (1), (2)")
+	require.Equal(t, int64(4), runDML("delete multi_del_l, multi_del_r from multi_del_l join multi_del_r on multi_del_l.a = multi_del_r.a"))
+
+	tk.MustExec("create table outer_l(a int primary key, b int)")
+	tk.MustExec("create table outer_r(a int primary key, b int)")
+	tk.MustExec("insert into outer_l values (1, 10), (2, 20)")
+	tk.MustExec("insert into outer_r values (1, 100)")
+	require.Equal(t, int64(2), runDML("update outer_l left join outer_r on outer_l.a = outer_r.a set outer_r.b = outer_r.b + 1"))
+
+	tk.MustExec("create table dup_t(a int primary key, b int)")
+	tk.MustExec("create table dup_s(a int, b int)")
+	tk.MustExec("insert into dup_t values (1, 10)")
+	tk.MustExec("insert into dup_s values (1, 100), (1, 200)")
+	require.Equal(t, int64(2), runDML("update dup_t join dup_s on dup_t.a = dup_s.a set dup_t.b = dup_t.b + 1"))
 }

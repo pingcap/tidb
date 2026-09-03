@@ -637,11 +637,22 @@ type Request struct {
 		// when enabled, this field is adjusted to be max(MaxPagingSize, paging.MinAllowedMaxPagingSize),
 		// see paging.GrowPagingSize
 		MaxPagingSize uint64
+		// PagingSizeBytes is the byte budget per page.
+		// 0 means disabled (no byte-budget paging).
+		PagingSizeBytes uint64
 	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
 	// StoreBatchSize indicates the batch size of coprocessor in the same store.
 	StoreBatchSize int
+	// AllowBatchTaskDataMerge lets requests without row-count hints (e.g.
+	// full-sampling ANALYZE) use store batching and allows stores to merge
+	// child task data into the main response.
+	AllowBatchTaskDataMerge bool
+	// ExecuteBatchTasksSerially asks the store to run the primary and batched
+	// child tasks one at a time, in no guaranteed order, so that batching does
+	// not multiply per-store concurrency (e.g. for batched ANALYZE).
+	ExecuteBatchTasksSerially bool
 	// ResourceGroupName is the name of the bind resource group.
 	ResourceGroupName string
 	// LimitSize indicates whether the request is scan and limit
@@ -806,6 +817,7 @@ type Storage interface {
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
 	EtcdAddrs() ([]string, error)
+	GetPDAddrs() ([]string, error)
 	TLSConfig() *tls.Config
 	StartGCWorker() error
 }

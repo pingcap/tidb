@@ -735,6 +735,9 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case format == types.ExplainFormatRU:
+		// TODO: Populate RU-specific columns after per-operator RU attribution is available.
+		fieldNames = []string{"id", "task", "actRows", "selfRU", "cumRU", "cumRU%", "detail"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
@@ -932,6 +935,9 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatRU:
+		flat := FlattenPhysicalPlan(e.TargetPlan, true)
+		e.Rows = ExplainFlatPlanInRUFormat(flat, e.RuntimeStatsColl)
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1104,6 +1110,76 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 		row = append(row, taskType, accessObject, operatorInfo)
 	}
 	return append(rows, row)
+}
+
+// ExplainFlatPlanInRUFormat returns the explain analyze result with RU columns.
+func ExplainFlatPlanInRUFormat(flat *FlatPhysicalPlan, runtimeStatsColl *execdetails.RuntimeStatsColl) (rows [][]string) {
+	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
+		return
+	}
+	totalRU := getExplainRUTotal(flat.Main, runtimeStatsColl)
+	for _, flatOp := range flat.Main {
+		rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, totalRU, rows)
+	}
+	for _, cte := range flat.CTEs {
+		for _, flatOp := range cte {
+			rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, totalRU, rows)
+		}
+	}
+	for _, subQ := range flat.ScalarSubQueries {
+		for _, flatOp := range subQ {
+			rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, totalRU, rows)
+		}
+	}
+	return
+}
+
+func prepareRUOperatorInfo(flatOp *FlatOperator, runtimeStatsColl *execdetails.RuntimeStatsColl, totalRU float64, rows [][]string) [][]string {
+	p := flatOp.Origin
+	if p.ExplainID().String() == "_0" {
+		return rows
+	}
+	taskType, id := getExplainIDAndTaskTp(flatOp)
+	actRows, _, _, _ := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
+	selfRU, cumRU, cumRUPct := "", "", ""
+	if ruStats := getExplainRURuntimeStats(runtimeStatsColl, p); ruStats != nil {
+		selfRU = strconv.FormatFloat(ruStats.SelfRU, 'f', 2, 64)
+		cumRU = strconv.FormatFloat(ruStats.CumRU, 'f', 2, 64)
+		if totalRU > 0 {
+			cumRUPct = fmt.Sprintf("%.2f%%", ruStats.CumRU/totalRU*100)
+		} else {
+			cumRUPct = "0.00%"
+		}
+	}
+	return append(rows, []string{id, taskType, actRows, selfRU, cumRU, cumRUPct, ""})
+}
+
+func getExplainRUTotal(tree FlatPlanTree, runtimeStatsColl *execdetails.RuntimeStatsColl) float64 {
+	if len(tree) == 0 || tree[0] == nil || tree[0].Origin == nil {
+		return 0
+	}
+	if ruStats := getExplainRURuntimeStats(runtimeStatsColl, tree[0].Origin); ruStats != nil {
+		return ruStats.CumRU
+	}
+	return 0
+}
+
+func getExplainRURuntimeStats(runtimeStatsColl *execdetails.RuntimeStatsColl, p base.Plan) *execdetails.ExplainRURuntimeStats {
+	if runtimeStatsColl == nil && p != nil && p.SCtx() != nil &&
+		p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
+		runtimeStatsColl = p.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl
+	}
+	if runtimeStatsColl == nil || p == nil || !runtimeStatsColl.ExistsRootStats(p.ID()) {
+		return nil
+	}
+	rootStats := runtimeStatsColl.GetRootStats(p.ID())
+	_, groups := rootStats.MergeStats()
+	for _, group := range groups {
+		if ruStats, ok := group.(*execdetails.ExplainRURuntimeStats); ok {
+			return ruStats
+		}
+	}
+	return nil
 }
 
 func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explainID string) *ExplainInfoForEncode {
