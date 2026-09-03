@@ -1209,7 +1209,9 @@ type PartitionDefinition struct {
 	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 }
 
-// Clone clones PartitionDefinition.
+// Clone clones PartitionDefinition. InValues remains shared to avoid copying
+// potentially large LIST partition metadata in general TableInfo clone paths.
+// Callers that may modify InValues must deep-clone it separately.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = slices.Clone(ci.LessThan)
