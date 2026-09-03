@@ -300,6 +300,14 @@ func TestConfigValidation(t *testing.T) {
 	conf.FileType = "rand_str"
 	require.EqualError(t, adjustFileFormat(conf), "unknown config.FileType 'rand_str'")
 
+	legacyWithoutPacked := DefaultConfig()
+	legacyWithoutPacked.CSELegacyEncryption = true
+	require.EqualError(
+		t,
+		validatePackedBackup(legacyWithoutPacked),
+		"--cse.legacy-encryption requires --cse.packed-backup",
+	)
+
 	packedCases := []struct {
 		name      string
 		configure func(*Config)

@@ -53,8 +53,11 @@ const (
 )
 
 type cseDumper struct {
-	client      *http.Client
-	transport   *http2.Transport
+	process *cseDumperProcess
+	client  *cseDumperClient
+}
+
+type cseDumperProcess struct {
 	cancel      context.CancelFunc
 	temporary   string
 	done        chan struct{}
@@ -64,9 +67,15 @@ type cseDumper struct {
 	closeErr    error
 }
 
+type cseDumperClient struct {
+	httpClient *http.Client
+	transport  *http2.Transport
+}
+
 func startCSEDumper(
 	ctx context.Context,
 	executable, metadataURL string,
+	legacyEncryption bool,
 	threads int,
 	metrics *metrics,
 ) (dumper *cseDumper, resultErr error) {
@@ -84,6 +93,7 @@ func startCSEDumper(
 	cmd := exec.CommandContext(childCtx, executable, cseDumperArgs(
 		metadataURL,
 		socketPath,
+		legacyEncryption,
 		threads,
 	)...)
 	stderr, err := cmd.StderrPipe()
@@ -98,7 +108,7 @@ func startCSEDumper(
 		return nil, errors.Annotatef(err, "start %q dumper", executable)
 	}
 
-	dumper = &cseDumper{
+	process := &cseDumperProcess{
 		cancel:    cancel,
 		temporary: temporary,
 		done:      make(chan struct{}),
@@ -108,17 +118,19 @@ func startCSEDumper(
 		stderrResult <- readCSEDumperDiagnostics(stderr)
 	}()
 	go func() {
-		dumper.diagnostics = <-stderrResult
-		dumper.waitErr = cmd.Wait()
-		close(dumper.done)
+		process.diagnostics = <-stderrResult
+		process.waitErr = cmd.Wait()
+		close(process.done)
 	}()
 
-	if err := dumper.waitForSocket(ctx, socketPath); err != nil {
-		_ = dumper.close()
+	if err := process.waitForSocket(ctx, socketPath); err != nil {
+		_ = process.close()
 		return nil, err
 	}
-	dumper.client, dumper.transport = newCSEDumperHTTPClient(socketPath)
-	return dumper, nil
+	return &cseDumper{
+		process: process,
+		client:  newCSEDumperClient(socketPath),
+	}, nil
 }
 
 func readCSEDumperDiagnostics(input io.Reader) string {
@@ -140,7 +152,7 @@ func readCSEDumperDiagnostics(input io.Reader) string {
 	return strings.TrimSpace(diagnostics)
 }
 
-func newCSEDumperHTTPClient(socketPath string) (*http.Client, *http2.Transport) {
+func newCSEDumperClient(socketPath string) *cseDumperClient {
 	dialer := &net.Dialer{}
 	transport := &http2.Transport{
 		AllowHTTP: true,
@@ -148,19 +160,26 @@ func newCSEDumperHTTPClient(socketPath string) (*http.Client, *http2.Transport) 
 			return dialer.DialContext(ctx, "unix", socketPath)
 		},
 	}
-	return &http.Client{Transport: transport}, transport
+	return &cseDumperClient{
+		httpClient: &http.Client{Transport: transport},
+		transport:  transport,
+	}
 }
 
-func cseDumperArgs(metadataURL, socketPath string, threads int) []string {
-	return []string{
+func cseDumperArgs(metadataURL, socketPath string, legacyEncryption bool, threads int) []string {
+	args := []string{
 		"dumper",
 		"--metadata-url", metadataURL,
 		"--unix-socket", socketPath,
 		"--scan-concurrency", strconv.Itoa(threads),
 	}
+	if legacyEncryption {
+		args = append(args, "--legacy-encryption")
+	}
+	return args
 }
 
-func (d *cseDumper) waitForSocket(ctx context.Context, socketPath string) error {
+func (p *cseDumperProcess) waitForSocket(ctx context.Context, socketPath string) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -177,8 +196,8 @@ func (d *cseDumper) waitForSocket(ctx context.Context, socketPath string) error 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-d.done:
-			return d.exitError("start")
+		case <-p.done:
+			return p.exitError("start")
 		case <-ticker.C:
 		}
 	}
@@ -190,6 +209,22 @@ type cseDumperScanRequest struct {
 }
 
 func (d *cseDumper) scan(
+	ctx context.Context,
+	startKey, endKey []byte,
+) (*cseDumperScan, error) {
+	scan, err := d.client.scan(ctx, startKey, endKey)
+	if err == nil {
+		return scan, nil
+	}
+	select {
+	case <-d.process.done:
+		return nil, d.process.exitError("serve scan")
+	default:
+		return nil, err
+	}
+}
+
+func (c *cseDumperClient) scan(
 	ctx context.Context,
 	startKey, endKey []byte,
 ) (*cseDumperScan, error) {
@@ -205,13 +240,8 @@ func (d *cseDumper) scan(
 		return nil, errors.Annotate(err, "create cse-ctl dumper scan request")
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := d.client.Do(request)
+	response, err := c.httpClient.Do(request)
 	if err != nil {
-		select {
-		case <-d.done:
-			return nil, d.exitError("serve scan")
-		default:
-		}
 		return nil, errors.Annotate(err, "request cse-ctl dumper scan")
 	}
 	if response.StatusCode != http.StatusOK {
@@ -230,11 +260,11 @@ type cseMetricsGatherer struct {
 }
 
 func (g cseMetricsGatherer) Gather() ([]*dto.MetricFamily, error) {
-	dumper := g.owner.packedService.Load()
-	if dumper == nil {
+	client := g.owner.packedService.Load()
+	if client == nil {
 		return nil, nil
 	}
-	response, err := dumper.client.Get(cseMetricsURL)
+	response, err := client.httpClient.Get(cseMetricsURL)
 	if err != nil {
 		return nil, errors.Annotate(err, "request cse-ctl dumper metrics")
 	}
@@ -251,23 +281,29 @@ func (g cseMetricsGatherer) Gather() ([]*dto.MetricFamily, error) {
 	return slices.Collect(maps.Values(families)), nil
 }
 
-func (d *cseDumper) exitError(action string) error {
-	if d.diagnostics != "" {
-		return errors.Errorf("cse-ctl dumper exited while trying to %s: %v; stderr: %s", action, d.waitErr, d.diagnostics)
+func (p *cseDumperProcess) exitError(action string) error {
+	if p.diagnostics != "" {
+		return errors.Errorf("cse-ctl dumper exited while trying to %s: %v; stderr: %s", action, p.waitErr, p.diagnostics)
 	}
-	return errors.Errorf("cse-ctl dumper exited while trying to %s: %v", action, d.waitErr)
+	return errors.Errorf("cse-ctl dumper exited while trying to %s: %v", action, p.waitErr)
+}
+
+func (p *cseDumperProcess) close() error {
+	p.closeOnce.Do(func() {
+		p.cancel()
+		<-p.done
+		p.closeErr = os.RemoveAll(p.temporary)
+	})
+	return p.closeErr
+}
+
+func (c *cseDumperClient) close() {
+	c.transport.CloseIdleConnections()
 }
 
 func (d *cseDumper) close() error {
-	d.closeOnce.Do(func() {
-		if d.transport != nil {
-			d.transport.CloseIdleConnections()
-		}
-		d.cancel()
-		<-d.done
-		d.closeErr = os.RemoveAll(d.temporary)
-	})
-	return d.closeErr
+	d.client.close()
+	return d.process.close()
 }
 
 type cseDumperScan struct {
@@ -326,13 +362,13 @@ func (s *cseDumperScan) close() error {
 	return s.response.Body.Close()
 }
 
-func scanCSEDumperRange(
+func scanPackedRange(
 	ctx context.Context,
-	dumper *cseDumper,
+	scanner packedScanner,
 	startKey, endKey []byte,
 	emit func(key, value []byte) error,
 ) error {
-	scan, err := dumper.scan(ctx, startKey, endKey)
+	scan, err := scanner.scan(ctx, startKey, endKey)
 	if err != nil {
 		return err
 	}

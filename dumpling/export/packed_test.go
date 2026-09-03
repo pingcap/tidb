@@ -17,21 +17,23 @@ package export
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/dumpformat/csvfile"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	tf "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
 )
@@ -97,7 +99,14 @@ func TestPackedProtocolRows(t *testing.T) {
 	require.Equal(
 		t,
 		baseArgs,
-		cseDumperArgs("bucket/backup.meta", "/tmp/packed.sock", 7),
+		cseDumperArgs("bucket/backup.meta", "/tmp/packed.sock", false, 7),
+	)
+	legacyArgs := append([]string{}, baseArgs...)
+	legacyArgs = append(legacyArgs, "--legacy-encryption")
+	require.Equal(
+		t,
+		legacyArgs,
+		cseDumperArgs("bucket/backup.meta", "/tmp/packed.sock", true, 7),
 	)
 
 	var requestBody cseDumperScanRequest
@@ -126,9 +135,8 @@ func TestPackedProtocolRows(t *testing.T) {
 		}
 		close(serverDone)
 	}()
-	client, transport := newCSEDumperHTTPClient(socketPath)
-	dumper := &cseDumper{client: client, transport: transport}
-	scan, err := dumper.scan(context.Background(), []byte{0, 0xff}, []byte{0x10})
+	client := newCSEDumperClient(socketPath)
+	scan, err := client.scan(context.Background(), []byte{0, 0xff}, []byte{0x10})
 	require.NoError(t, err)
 	require.Equal(t, http.MethodPost, requestMethod)
 	require.Equal(t, "/scan", requestURL)
@@ -143,7 +151,7 @@ func TestPackedProtocolRows(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, end)
 	require.NoError(t, scan.close())
-	transport.CloseIdleConnections()
+	client.close()
 	require.NoError(t, listener.Close())
 	select {
 	case <-serverDone:
@@ -151,7 +159,7 @@ func TestPackedProtocolRows(t *testing.T) {
 		require.Fail(t, "HTTP/2 test server did not stop")
 	}
 
-	dumper.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+	client.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader("")),
@@ -161,26 +169,38 @@ func TestPackedProtocolRows(t *testing.T) {
 			},
 		}, nil
 	})
-	scan, err = dumper.scan(context.Background(), []byte{1}, []byte{2})
+	scan, err = client.scan(context.Background(), []byte{1}, []byte{2})
 	require.NoError(t, err)
 	_, _, _, err = scan.readRow(nil, nil)
 	require.EqualError(t, err, "cse-ctl dumper scan failed: missing packed file")
 
-	dumper.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+	client.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader("")),
 			Trailer:    make(http.Header),
 		}, nil
 	})
-	scan, err = dumper.scan(context.Background(), []byte{1}, []byte{2})
+	scan, err = client.scan(context.Background(), []byte{1}, []byte{2})
 	require.NoError(t, err)
 	_, _, _, err = scan.readRow(nil, nil)
 	require.EqualError(t, err, "cse-ctl dumper scan ended without a completion trailer")
 	diagnostics := readCSEDumperDiagnostics(strings.NewReader(strings.Repeat("x", maxCSEDiagnosticBytes+1)))
 	require.Equal(t, strings.Repeat("x", maxCSEDiagnosticBytes)+"\ncse-ctl stderr truncated", diagnostics)
 
-	dumper.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	exited := make(chan struct{})
+	close(exited)
+	client.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, context.Canceled
+	})
+	dumper := &cseDumper{
+		process: &cseDumperProcess{done: exited, waitErr: context.Canceled, diagnostics: "test exit"},
+		client:  client,
+	}
+	_, err = dumper.scan(context.Background(), []byte{1}, []byte{2})
+	require.EqualError(t, err, "cse-ctl dumper exited while trying to serve scan: context canceled; stderr: test exit")
+
+	client.httpClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		require.Equal(t, http.MethodGet, request.Method)
 		require.Equal(t, cseMetricsURL, request.URL.String())
 		return &http.Response{
@@ -191,7 +211,7 @@ func TestPackedProtocolRows(t *testing.T) {
 	})
 	recorder := httptest.NewRecorder()
 	owner := &Dumper{}
-	owner.packedService.Store(dumper)
+	owner.packedService.Store(client)
 	newMetricsHandler(owner).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "native_br_packed_reader_scanned_shards_total 3\n")
@@ -208,7 +228,7 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 	return f(request)
 }
 
-func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
+func TestDumpPackedFromTiDBStorage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -234,110 +254,155 @@ func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
 	tk.MustExec("create table packed_partition (id int primary key, value varchar(16)) partition by range (id) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 	tk.MustExec("insert into packed_partition values (1, 'first'), (11, 'second')")
 
-	txn, err := store.Begin()
+	scanner := newPackedTestCSEClient(t, store)
+	outputDir := t.TempDir()
+	config := DefaultConfig()
+	config.OutputDirPath = outputDir
+	config.StatusAddr = ""
+	config.PackedBackup = "packed-test"
+	config.FileType = FileFormatCSVString
+	config.NoHeader = true
+	config.CsvOutputDialect = CSVDialectSnowflake
+	config.TableFilter = tf.NewSchemasFilter("test")
+	dumper, err := NewDumper(context.Background(), config)
 	require.NoError(t, err)
-	databases, err := loadPackedDatabases(context.Background(), func(
-		_ context.Context,
-		startKey, endKey []byte,
-		emit func(key, value []byte) error,
-	) error {
-		iterator, err := txn.Iter(kv.Key(startKey), kv.Key(endKey))
+	t.Cleanup(func() {
+		require.NoError(t, dumper.Close())
+	})
+	require.NoError(t, dumper.dumpPackedFrom(scanner))
+
+	expectedFiles := map[string]string{
+		"test.packed_int.000000000.csv": "" +
+			`1,"alpha",\N,"00ff",-12.30,"2026-07-16 01:02:03.456","0a","done","a,b",7,\N` + "\r\n" +
+			`2,"beta","","",0.00,"2020-01-02 03:04:05.000","01","new","",7,\N` + "\r\n",
+		"test.packed_common.000000000.csv":    `"acme",9,"common"` + "\r\n",
+		"test.packed_partition.000000000.csv": `1,"first"` + "\r\n" + `11,"second"` + "\r\n",
+	}
+	for name, expected := range expectedFiles {
+		content, err := os.ReadFile(filepath.Join(outputDir, name))
+		require.NoError(t, err, name)
+		require.Equal(t, expected, string(content), name)
+	}
+	schemaFiles := []string{
+		"test-schema-create.sql",
+		"test.packed_int-schema.sql",
+		"test.packed_common-schema.sql",
+		"test.packed_partition-schema.sql",
+	}
+	for _, name := range schemaFiles {
+		_, err := os.Stat(filepath.Join(outputDir, name))
+		require.NoError(t, err, name)
+	}
+	entries, err := os.ReadDir(outputDir)
+	require.NoError(t, err)
+	actualFiles := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		actualFiles = append(actualFiles, entry.Name())
+	}
+	expectedNames := append(schemaFiles, "test.packed_int.000000000.csv")
+	expectedNames = append(expectedNames, "test.packed_common.000000000.csv", "test.packed_partition.000000000.csv")
+	require.ElementsMatch(t, expectedNames, actualFiles)
+}
+
+func newPackedTestCSEClient(t *testing.T, store kv.Storage) *cseDumperClient {
+	t.Helper()
+	socketPath := filepath.Join(t.TempDir(), "packed-store.sock")
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		connection, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		server := &http2.Server{}
+		server.ServeConn(connection, &http2.ServeConnOpts{
+			Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				servePackedTestScan(store, writer, request)
+			}),
+		})
+	}()
+
+	client := newCSEDumperClient(socketPath)
+	t.Cleanup(func() {
+		client.close()
+		require.NoError(t, listener.Close())
+		select {
+		case <-serverDone:
+		case <-time.After(time.Second):
+			require.Fail(t, "packed test CSE server did not stop")
+		}
+	})
+	return client
+}
+
+func servePackedTestScan(store kv.Storage, writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost || request.URL.Path != "/scan" {
+		http.Error(writer, "unsupported packed test request", http.StatusNotFound)
+		return
+	}
+	var scanRequest cseDumperScanRequest
+	if err := json.NewDecoder(request.Body).Decode(&scanRequest); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	startKey, err := hex.DecodeString(scanRequest.StartKeyHex)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+	endKey, err := hex.DecodeString(scanRequest.EndKeyHex)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writer.Header().Add("Trailer", cseScanStatusTrailer)
+	writer.Header().Add("Trailer", cseScanErrorTrailer)
+	if err := writePackedTestRange(store, writer, startKey, endKey); err != nil {
+		writer.Header().Set(cseScanStatusTrailer, cseScanStatusFailed)
+		writer.Header().Set(cseScanErrorTrailer, url.QueryEscape(err.Error()))
+		return
+	}
+	writer.Header().Set(cseScanStatusTrailer, cseScanStatusComplete)
+}
+
+func writePackedTestRange(store kv.Storage, output io.Writer, startKey, endKey []byte) error {
+	txn, err := store.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = txn.Rollback() }()
+	iterator, err := txn.Iter(kv.Key(startKey), kv.Key(endKey))
+	if err != nil {
+		return err
+	}
+	defer iterator.Close()
+	for iterator.Valid() {
+		if err := writePackedTestRow(output, iterator.Key(), iterator.Value()); err != nil {
+			return err
+		}
+		if err := iterator.Next(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writePackedTestRow(output io.Writer, key, value []byte) error {
+	var header [8]byte
+	binary.LittleEndian.PutUint32(header[:4], uint32(len(key)))
+	binary.LittleEndian.PutUint32(header[4:], uint32(len(value)))
+	for _, data := range [][]byte{header[:], key, value} {
+		written, err := output.Write(data)
 		if err != nil {
 			return err
 		}
-		defer iterator.Close()
-		for iterator.Valid() {
-			if err := emit(iterator.Key(), iterator.Value()); err != nil {
-				return err
-			}
-			if err := iterator.Next(); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	require.NoError(t, err)
-	require.NoError(t, txn.Rollback())
-	var database *model.DBInfo
-	for _, candidate := range databases {
-		if candidate.Name.L == "test" {
-			database = candidate
-			break
+		if written != len(data) {
+			return io.ErrShortWrite
 		}
 	}
-	require.NotNil(t, database)
-
-	initColumnTypeSets()
-	testCases := []struct {
-		table string
-		rows  []string
-	}{
-		{
-			table: "packed_int",
-			rows: []string{
-				`1,"alpha",\N,"00ff",-12.30,"2026-07-16 01:02:03.456","0a","done","a,b",7,\N`,
-				`2,"beta","","",0.00,"2020-01-02 03:04:05.000","01","new","",7,\N`,
-			},
-		},
-		{
-			table: "packed_common",
-			rows:  []string{`"acme",9,"common"`},
-		},
-		{
-			table: "packed_partition",
-			rows:  []string{`1,"first"`, `11,"second"`},
-		},
-	}
-	for _, testCase := range testCases {
-		var table *model.TableInfo
-		for _, candidate := range database.Deprecated.Tables {
-			if candidate.Name.L == testCase.table {
-				table = candidate
-				break
-			}
-		}
-		require.NotNil(t, table, testCase.table)
-		rows := readPackedTestRows(t, store, table)
-		require.Equal(t, testCase.rows, rows, testCase.table)
-	}
-}
-
-func readPackedTestRows(t *testing.T, store kv.Storage, table *model.TableInfo) []string {
-	t.Helper()
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, txn.Rollback())
-	}()
-	meta := newPackedTableMeta("test", table, "")
-	csvConfig := &csvfile.Config{
-		FieldsTerminatedBy: ",",
-		FieldsEnclosedBy:   `"`,
-		NullValue:          []byte("\\N"),
-		BinaryFormat:       csvfile.BinaryFormatHEX,
-	}
-	rows := make([]string, 0)
-	for _, tableID := range packedPhysicalTableIDs(table) {
-		prefix := tablecodec.GenTableRecordPrefix(tableID)
-		iterator, err := txn.Iter(prefix, prefix.PrefixNext())
-		require.NoError(t, err)
-		for iterator.Valid() {
-			row := MakeRowReceiver(meta.ColumnTypes())
-			var output bytes.Buffer
-			writer := csvfile.NewWriter(&output, columnKinds(meta.ColumnTypes()), csvConfig)
-			packed := &packedRowIter{
-				table:  table,
-				key:    append([]byte(nil), iterator.Key()...),
-				value:  append([]byte(nil), iterator.Value()...),
-				args:   make([]any, meta.ColumnCount()),
-				hasRow: true,
-			}
-			require.NoError(t, packed.Decode(row))
-			require.NoError(t, writer.Write(row.GetRawBytes()))
-			rows = append(rows, output.String())
-			require.NoError(t, iterator.Next())
-		}
-		iterator.Close()
-	}
-	return rows
+	return nil
 }

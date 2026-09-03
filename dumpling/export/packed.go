@@ -150,11 +150,15 @@ func packedColumnType(column *model.ColumnInfo) string {
 }
 
 type packedTableData struct {
-	dumper  *cseDumper
+	scanner packedScanner
 	table   *model.TableInfo
 	ranges  []packedRange
 	metrics *metrics
 	iter    *packedRowIter
+}
+
+type packedScanner interface {
+	scan(ctx context.Context, startKey, endKey []byte) (*cseDumperScan, error)
 }
 
 type packedRange struct {
@@ -163,12 +167,12 @@ type packedRange struct {
 }
 
 func newPackedTableData(
-	dumper *cseDumper,
+	scanner packedScanner,
 	table *model.TableInfo,
 	metrics *metrics,
 ) *packedTableData {
 	return &packedTableData{
-		dumper:  dumper,
+		scanner: scanner,
 		table:   table,
 		ranges:  packedPhysicalTableRanges(table),
 		metrics: metrics,
@@ -182,7 +186,7 @@ func (d *packedTableData) Start(tctx *tcontext.Context, _ *sql.Conn) error {
 	}
 	iter := &packedRowIter{
 		ctx:     tctx,
-		dumper:  d.dumper,
+		scanner: d.scanner,
 		ranges:  d.ranges,
 		metrics: d.metrics,
 		table:   d.table,
@@ -207,7 +211,7 @@ func (*packedTableData) RawRows() *sql.Rows { return nil }
 
 type packedRowIter struct {
 	ctx       context.Context
-	dumper    *cseDumper
+	scanner   packedScanner
 	ranges    []packedRange
 	nextRange int
 	scan      *cseDumperScan
@@ -300,7 +304,7 @@ func (i *packedRowIter) readNext() {
 			}
 			rangeToScan := i.ranges[i.nextRange]
 			i.nextRange++
-			scan, err := i.dumper.scan(
+			scan, err := i.scanner.scan(
 				i.ctx,
 				rangeToScan.start,
 				rangeToScan.end,
@@ -463,28 +467,6 @@ func packedCommonHandleColumnOffsets(table *model.TableInfo) (map[int64]int, err
 	return offsets, nil
 }
 
-type packedRangeScanner func(
-	ctx context.Context,
-	startKey, endKey []byte,
-	emit func(key, value []byte) error,
-) error
-
-func newCSEDumperRangeScanner(dumper *cseDumper) packedRangeScanner {
-	return func(
-		ctx context.Context,
-		startKey, endKey []byte,
-		emit func(key, value []byte) error,
-	) error {
-		return scanCSEDumperRange(
-			ctx,
-			dumper,
-			startKey,
-			endKey,
-			emit,
-		)
-	}
-}
-
 func packedHashDataPrefix(hashKey []byte) kv.Key {
 	prefix := []byte{'m'}
 	prefix = codec.EncodeBytes(prefix, hashKey)
@@ -493,12 +475,12 @@ func packedHashDataPrefix(hashKey []byte) kv.Key {
 
 func scanPackedHash(
 	ctx context.Context,
-	scan packedRangeScanner,
+	scanner packedScanner,
 	hashKey []byte,
 	emit func(field, value []byte) error,
 ) error {
 	prefix := packedHashDataPrefix(hashKey)
-	return scan(ctx, prefix, prefix.PrefixNext(), func(key, value []byte) error {
+	return scanPackedRange(ctx, scanner, prefix, prefix.PrefixNext(), func(key, value []byte) error {
 		if !bytes.HasPrefix(key, prefix) {
 			return errors.Errorf("packed metadata key %x is outside hash prefix %x", key, prefix)
 		}
@@ -513,9 +495,9 @@ func scanPackedHash(
 	})
 }
 
-func loadPackedDatabases(ctx context.Context, scan packedRangeScanner) ([]*model.DBInfo, error) {
+func loadPackedDatabases(ctx context.Context, scanner packedScanner) ([]*model.DBInfo, error) {
 	var databases []*model.DBInfo
-	if err := scanPackedHash(ctx, scan, []byte("DBs"), func(field, value []byte) error {
+	if err := scanPackedHash(ctx, scanner, []byte("DBs"), func(field, value []byte) error {
 		if !tidbmeta.IsDBkey(field) {
 			return nil
 		}
@@ -532,7 +514,7 @@ func loadPackedDatabases(ctx context.Context, scan packedRangeScanner) ([]*model
 	}
 
 	for _, database := range databases {
-		if err := scanPackedHash(ctx, scan, tidbmeta.DBkey(database.ID), func(field, value []byte) error {
+		if err := scanPackedHash(ctx, scanner, tidbmeta.DBkey(database.ID), func(field, value []byte) error {
 			if !tidbmeta.IsTableKey(field) {
 				return nil
 			}
@@ -580,23 +562,25 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 		d.tctx,
 		d.conf.CSEExecutable,
 		d.conf.PackedBackup,
+		d.conf.CSELegacyEncryption,
 		d.conf.Threads,
 		d.metrics,
 	)
 	if err != nil {
 		return err
 	}
-	d.packedService.Store(dumper)
+	d.packedService.Store(dumper.client)
 	defer func() {
 		d.packedService.Store(nil)
 		if err := dumper.close(); resultErr == nil {
 			resultErr = err
 		}
 	}()
-	databases, err := loadPackedDatabases(
-		d.tctx,
-		newCSEDumperRangeScanner(dumper),
-	)
+	return d.dumpPackedFrom(dumper)
+}
+
+func (d *Dumper) dumpPackedFrom(scanner packedScanner) error {
+	databases, err := loadPackedDatabases(d.tctx, scanner)
 	if err != nil {
 		return err
 	}
@@ -659,7 +643,7 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 			meta := newPackedTableMeta(database.Name.O, table, createSQL)
 			if !d.conf.NoData {
 				data := newPackedTableData(
-					dumper,
+					scanner,
 					table,
 					d.metrics,
 				)

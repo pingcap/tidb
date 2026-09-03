@@ -74,7 +74,7 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
-	packedService atomic.Pointer[cseDumper]
+	packedService atomic.Pointer[cseDumperClient]
 }
 
 // NewDumper returns a new Dumper
