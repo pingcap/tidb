@@ -28,11 +28,14 @@ impl Default for FieldTypeBuilder {
 }
 
 impl FieldTypeBuilder {
-    /// Creates a builder around the source zero-value field type.
+    /// Creates a builder around the ZERO-VALUE field type: Go
+    /// `&FieldTypeBuilder{}` (`pkg/types/field_type_builder.go:23-25`) holds
+    /// `flen = 0, decimal = 0` — it is `parser.NewFieldType` that seeds -1.
     pub fn new() -> Self {
-        Self {
-            field_type: FieldType::parser(FieldTypeCode::Unspecified),
-        }
+        let mut field_type = FieldType::parser(FieldTypeCode::Unspecified);
+        field_type.set_flen(0);
+        field_type.set_decimal(0);
+        Self { field_type }
     }
 
     /// Returns the effective MySQL type code.
@@ -138,7 +141,7 @@ impl FieldTypeBuilder {
 }
 
 #[cfg(test)]
-mod tests {
+mod builder_zero_tests {
     use super::*;
     use crate::FieldTypeFlags;
 
@@ -164,5 +167,17 @@ mod tests {
         assert_eq!(builder.collation(), "utf8mb4_bin");
         let field_type = builder.build();
         assert_eq!(field_type.elems_snapshot(), ["a", "b"]);
+    }
+
+    /// Go `&FieldTypeBuilder{}` holds the zero value: `flen = 0, decimal = 0`
+    /// (`pkg/types/field_type_builder.go:23-25`) — `CompactStr` then renders
+    /// `varchar(0)`, NOT a default-flen substitution of -1.
+    #[test]
+    fn builder_new_starts_at_the_go_zero_value() {
+        let built = FieldTypeBuilder::new()
+            .with_code(FieldTypeCode::Varchar)
+            .build();
+        assert_eq!(built.flen(), 0);
+        assert_eq!(built.decimal(), 0);
     }
 }

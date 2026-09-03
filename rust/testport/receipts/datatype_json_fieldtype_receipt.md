@@ -48,11 +48,22 @@ Item 7 (invalid UTF-8 inside a JSON string) stays deferred: the audit's own
 note found no SQL path producing it; a Rust node reading a Go-written value
 with invalid UTF-8 remains an `InvalidBinary` (documented gap).
 
-## Batch 3 (queued): FieldTypeBuilder F2
+## Batch 3: FieldTypeBuilder zero value (divergence item F2)
 
-The FieldTypeBuilder flen/decimal zero-value divergence (audit F2,
-`field_type/builder.rs:34`; Go zero is 0/0, Rust seeds -1) is documented and
-still owes implementation.
+`FieldTypeBuilder::new()` seeded from `FieldType::parser(...)` (flen/decimal
+-1); Go `&FieldTypeBuilder{}` (`pkg/types/field_type_builder.go:23-25`) holds
+the ZERO value — it is `parser.NewFieldType` that seeds -1. The builder now
+starts at flen/decimal 0, and a regression pins the zero (`varchar(0)`
+rendering, no default-flen substitution of -1) — proven to FAIL against the
+seeded builder (captured by hand-reverting `new()`).
+
+Fallout sweep: the five crates using `FieldTypeBuilder::new()` were fully
+re-run — tidb-datatype (371+63, green), tidb-expr (1105+18, green),
+tidb-schemacmp/tidb-ttl (green). `tidb-executor` shows 136 SQL-source
+failures at baseline that reproduce IDENTICALLY with and without this
+change (verified by stashing the edit) — a pre-existing condition of that
+crate's absorbed state, queued for its own sweep; this batch neither adds
+nor removes any of them.
 
 ## Validation
 

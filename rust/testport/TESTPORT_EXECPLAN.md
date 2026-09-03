@@ -111,6 +111,12 @@ For each bounded behavior cluster:
   zero new). Go's `SetSession` hook halves follow the crate's documented
   hooks-not-modelled policy. Receipt:
   `receipts/sessionctx_variable_mview.md`.
+- 2026-09-03: closed divergence item F2 (`tidb-datatype`
+  FieldTypeBuilder): `new()` now starts at Go's zero value (flen/decimal 0,
+  `field_type_builder.go:23-25`) instead of seeding -1. All five consumer
+  crates re-run; the executor's 136 SQL-source failures are a pre-existing
+  baseline (identical with/without the change). One regression proven to
+  fail pre-fix. See `receipts/datatype_json_fieldtype_receipt.md`.
 
 - 2026-09-03 (batch 1, `pkg/meta/model`): implemented Go master
   `94a9cbedab`'s materialized-view metadata in `tidb-model`: action types
