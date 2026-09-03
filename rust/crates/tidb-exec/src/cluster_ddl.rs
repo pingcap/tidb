@@ -7382,8 +7382,33 @@ fn plan_create_materialized_view(
         )));
     }
 
-    // Job-execution seam: the materialized-view worker sub-batch wires the
-    // job submission this tier cannot serve yet.
+    // Go: HAVING, ORDER BY, LIMIT and DISTINCT refusals, in source order.
+    if sel.having.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support HAVING clause",
+        )));
+    }
+    if !sel.order_by.is_empty() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support ORDER BY clause",
+        )));
+    }
+    if sel.limit.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support LIMIT clause",
+        )));
+    }
+    if sel.distinct {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support SELECT DISTINCT",
+        )));
+    }
+
+    // SEAM + 11c REMAINING: Go continues with the GROUP BY item analysis,
+    // WHERE determinism and the per-field aggregation/column-coverage
+    // checks (`resolveMViewColumnName`, `CheckNonDeterministic`,
+    // `buildMViewSingleTableExpr`), which need the expression-analysis
+    // owner. The job-execution seam follows them.
     Err(DdlPlanError::Admission(DdlAdmissionError::new(
         "materialized view job execution is not wired in this tier",
     )))

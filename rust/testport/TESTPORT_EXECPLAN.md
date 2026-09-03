@@ -42,7 +42,18 @@ For each bounded behavior cluster:
 
 ## Progress
 
-- 2026-09-03 (batch 11, `pkg/ddl` MV lowering — ExecPlan entry restored: the
+- 2026-09-03 (batch 12, `pkg/ddl` MV query-clause refusals): implemented Go
+  master `94a9cbedab`'s `validateCreateMaterializedViewQuery` clause
+  refusals in `plan_create_materialized_view`: HAVING, ORDER BY, LIMIT and
+  DISTINCT each refuse with Go's exact 8200 message, after the GROUP BY
+  requirement. One parse-fixture regression pins all four; the full
+  `tidb-exec` failure set is identical to the batch-9-era baseline (8
+  pre-existing). Recorded remainder: the GROUP BY item analysis, WHERE
+  determinism and the per-field aggregation / mlog column-coverage checks
+  need the expression-analysis owner. Receipt:
+  `receipts/ddl_mview_query_clauses.md`.
+
+- 2026-09-03 (batch 11, `pkg/ddl` MV lowering — ExecPlan entry restored: the- 2026-09-03 (batch 11, `pkg/ddl` MV lowering — ExecPlan entry restored: the
   rebase that published this batch's commit dropped it): implemented Go
   master `94a9cbedab`'s `CreateMaterializedView` /
   `CreateMaterializedViewLog` lowering and admission in

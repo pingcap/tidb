@@ -5489,3 +5489,66 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
         "materialized view job execution is not wired in this tier"
     );
 }
+
+/// Go `validateCreateMaterializedViewQuery`'s clause refusals (master
+/// `94a9cbedab`): HAVING, ORDER BY, LIMIT and DISTINCT each refuse with
+/// Go's exact message, after the GROUP BY requirement.
+#[test]
+fn materialized_view_query_clause_refusals_follow_go() {
+    let context = tidb_executor::StmtContext::for_query().with_enable_mview(true);
+    let lower = |sql: &str| {
+        let parsed = tidb_parser::parse(sql).expect("MV DDL parses");
+        lower_ddl_with_context(&parsed, "u6", &context)
+            .expect("MV DDL admission outcome")
+            .expect("MV DDL lowers to a statement")
+    };
+    let mut store = bootstrapped();
+    let create = plan_ddl(
+        &mut store,
+        &lower("CREATE TABLE mv_base (id INT PRIMARY KEY AUTO_INCREMENT, k INT)"),
+        1_500,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+    let mut mlog = tidb_model::TableInfo::default();
+    mlog.id = 9_100;
+    mlog.name = tidb_ast::CiString::new("$mlog$mv_base");
+    let mut mlog_meta = tidb_model::MaterializedViewLogInfo::default();
+    mlog_meta.base_table_id = create.created_id.expect("base id");
+    mlog.materialized_view_log = Some(GoShared::new(mlog_meta));
+    store.put(
+        key::table_kv_key(112, 9_100),
+        value::serialize_table_info(&mlog).expect("the mlog encodes"),
+    );
+
+    let cases = [
+        (
+            "CREATE MATERIALIZED VIEW mv (c) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id HAVING COUNT(k) > 1)",
+            "Unsupported CREATE MATERIALIZED VIEW does not support HAVING clause",
+        ),
+        (
+            "CREATE MATERIALIZED VIEW mv (c) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id ORDER BY id)",
+            "Unsupported CREATE MATERIALIZED VIEW does not support ORDER BY clause",
+        ),
+        (
+            "CREATE MATERIALIZED VIEW mv (c) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id LIMIT 10)",
+            "Unsupported CREATE MATERIALIZED VIEW does not support LIMIT clause",
+        ),
+        (
+            "CREATE MATERIALIZED VIEW mv (c) AS (SELECT DISTINCT id FROM mv_base GROUP BY id)",
+            "Unsupported CREATE MATERIALIZED VIEW does not support SELECT DISTINCT",
+        ),
+    ];
+    for (sql, want) in cases {
+        let error = plan_ddl(&mut store, &lower(sql), 1_501)
+            .expect_err("the clause refuses");
+        let DdlPlanError::Admission(admission) = error else {
+            panic!("expected a coded refusal for {sql}")
+        };
+        assert_eq!(admission.code, 8200);
+        assert_eq!(admission.reason, want);
+    }
+}
