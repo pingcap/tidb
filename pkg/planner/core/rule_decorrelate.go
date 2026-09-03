@@ -590,11 +590,23 @@ func skipDecorrelateProjectionForLeftOuterApply(apply *logicalop.LogicalApply, p
 	// If proj.Exprs are all from outerPlan, we cannot make sure the output row of projection is always null,
 	// which may break the semantics of LeftOuterJoin.
 	// Because the right side of output row of LeftOuterJoin is always null when join conditions are not met.
-	// TODO: should also disable decorrelate when proj.Exprs use columns from innerPlan and its expression is not null-rejective.
 	outerPlan := apply.Children()[0]
 	for _, expr := range proj.Exprs {
 		cols := expression.ExtractColumns(expr)
 		if outerPlan.Schema().ColumnsIndices(cols) != nil {
+			return true
+		}
+	}
+
+	// Pulling the projection above the apply makes it evaluate on the inner side's null-complemented row
+	// when the outer join has no match. It is safe only when every projected expression still returns NULL.
+	innerSchema := proj.Children()[0].Schema()
+	for _, expr := range proj.Exprs {
+		nullEvaluatedExpr, err := expression.EvaluateExprWithNull(proj.SCtx().GetExprCtx(), innerSchema, expr, true)
+		if err != nil {
+			return true
+		}
+		if con, ok := nullEvaluatedExpr.(*expression.Constant); !ok || !con.Value.IsNull() {
 			return true
 		}
 	}
