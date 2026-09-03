@@ -42,6 +42,19 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 10, `pkg/ddl/jobsubmit`): aligned `job2TableIDs`'s two
+  new materialized-view arms in `tidb-exec::ddl_job_submit::job_table_ids`:
+  a view create reports its id plus every created log id, a log create
+  reports its id plus the recorded base table id, both through Go's
+  `makeStringForIDs` set-dedupe + lexicographic string sort. One regression
+  pins all four shapes (including the nil-metadata fall-throughs); fail-by
+  pre-batch default fall-through. Recorded gaps: the GID-allocation MV arms
+  and `SetSchemaDiffForCreateTable`'s rollback/reorg arms have no Rust owner
+  (job-submission ID allocation and the DDL-job commit diff writer are
+  unported infrastructure); `delete_range`/`rollingback`/`sanity`/`reorg` MV
+  arms belong to the DDL worker batch. Receipt:
+  `receipts/ddl_jobsubmit_mview_ids.md`.
+
 - 2026-09-03 (batch 9, `pkg/ddl` create-path): implemented Go master
   `94a9cbedab`'s `BuildAndValidateMViewScheduleExpr` +
   `restoreNodeToCanonicalSQL` (canonical restore through the

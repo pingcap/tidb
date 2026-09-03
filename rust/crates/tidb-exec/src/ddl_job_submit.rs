@@ -583,6 +583,42 @@ pub fn job_table_ids(spec: &JobSpec) -> String {
         (ActionType::ACTION_TRUNCATE_TABLE, JobArgsValue::TruncateTable(Some(args))) => {
             format!("{},{}", spec.job.table_id, args.read().new_table_id.get())
         }
+        // Go `job2TableIDs` (master `94a9cbedab`): a materialized view
+        // reports the view id plus every created log id; a log reports its
+        // id plus the base table id when one is recorded.
+        (
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW,
+            JobArgsValue::CreateMaterializedView(Some(args)),
+        ) => {
+            let args = args.read();
+            let mlog_ids: Vec<i64> = args.mlog_table_ids.get().snapshot();
+            if !mlog_ids.is_empty() {
+                let mut ids = Vec::with_capacity(mlog_ids.len() + 1);
+                ids.push(spec.job.table_id);
+                ids.extend(mlog_ids);
+                string_for_ids(ids)
+            } else {
+                spec.job.table_id.to_string()
+            }
+        }
+        (
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG,
+            JobArgsValue::CreateMaterializedViewLog(Some(args)),
+        ) => {
+            let args = args.read();
+            if let Some(table_info) = args.table_info.get() {
+                let base_table_id = table_info
+                    .read()
+                    .materialized_view_log
+                    .as_ref()
+                    .map(|log| log.read().base_table_id)
+                    .unwrap_or(0);
+                if base_table_id > 0 {
+                    return string_for_ids([spec.job.table_id, base_table_id]);
+                }
+            }
+            spec.job.table_id.to_string()
+        }
         _ => spec.job.table_id.to_string(),
     }
 }
@@ -1269,5 +1305,84 @@ mod tests {
         truncate.job.table_id = 7;
         truncate_table_args(&truncate).read().new_table_id.set(9);
         assert_eq!(job_table_ids(&truncate), "7,9");
+    }
+
+    /// Go `job2TableIDs` (master `94a9cbedab`) for the materialized-view
+    /// creates: the view reports the view id plus every log id; the log
+    /// reports its id plus the recorded base table id.
+    #[test]
+    fn job_table_ids_cover_materialized_view_creates() {
+        let mut view_job = job(ActionType::ACTION_CREATE_MATERIALIZED_VIEW);
+        view_job.table_id = 50;
+        let mut view_table = tidb_model::TableInfo::default();
+        view_table.id = 50;
+        let view = JobSpec {
+            job: view_job,
+            args: tidb_model::CreateMaterializedViewArgs::into_job_args_value(Some(GoShared::new(
+                tidb_model::CreateMaterializedViewArgs {
+                    table_info: GoField::new(Some(GoShared::new(view_table))),
+                    mlog_table_ids: GoField::new(GoSharedSlice::from_vec(vec![99, 100])),
+                },
+            ))),
+            id_allocated: true,
+        };
+        // Go `makeStringForIDs` dedupes into a set and sorts the decimal
+        // strings lexicographically: "100" < "50" < "99".
+        assert_eq!(job_table_ids(&view), "100,50,99");
+
+        // No log ids: only the view's own id.
+        let mut bare_view_table = tidb_model::TableInfo::default();
+        bare_view_table.id = 50;
+        let bare_view = JobSpec {
+            job: {
+                let mut job = job(ActionType::ACTION_CREATE_MATERIALIZED_VIEW);
+                job.table_id = 50;
+                job
+            },
+            args: tidb_model::CreateMaterializedViewArgs::into_job_args_value(Some(GoShared::new(
+                tidb_model::CreateMaterializedViewArgs {
+                    table_info: GoField::new(Some(GoShared::new(bare_view_table))),
+                    mlog_table_ids: GoField::new(GoSharedSlice::default()),
+                },
+            ))),
+            id_allocated: true,
+        };
+        assert_eq!(job_table_ids(&bare_view), "50");
+
+        let mut log_job = job(ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG);
+        log_job.table_id = 51;
+        let mut log_table = tidb_model::TableInfo::default();
+        log_table.id = 51;
+        let mut log_meta = tidb_model::MaterializedViewLogInfo::default();
+        log_meta.base_table_id = 88;
+        log_table.materialized_view_log = Some(GoShared::new(log_meta));
+        let log = JobSpec {
+            job: log_job,
+            args: tidb_model::CreateMaterializedViewLogArgs::into_job_args_value(Some(
+                GoShared::new(tidb_model::CreateMaterializedViewLogArgs {
+                    table_info: GoField::new(Some(GoShared::new(log_table))),
+                }),
+            )),
+            id_allocated: true,
+        };
+        assert_eq!(job_table_ids(&log), "51,88");
+
+        // A log without recorded base metadata reports only its own id.
+        let mut bare_log_table = tidb_model::TableInfo::default();
+        bare_log_table.id = 51;
+        let bare_log = JobSpec {
+            job: {
+                let mut job = job(ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG);
+                job.table_id = 51;
+                job
+            },
+            args: tidb_model::CreateMaterializedViewLogArgs::into_job_args_value(Some(
+                GoShared::new(tidb_model::CreateMaterializedViewLogArgs {
+                    table_info: GoField::new(Some(GoShared::new(bare_log_table))),
+                }),
+            )),
+            id_allocated: true,
+        };
+        assert_eq!(job_table_ids(&bare_log), "51");
     }
 }
