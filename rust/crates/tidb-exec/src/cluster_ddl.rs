@@ -628,6 +628,21 @@ pub enum DdlStatement {
         /// `IF NOT EXISTS`.
         if_not_exists: bool,
     },
+    /// Go `ast.CreateMaterializedViewStmt` lowered with its resolved target
+    /// names (master `94a9cbedab`). Planning runs Go's admission checks in
+    /// source order; valid statements stop at the job-execution seam, which
+    /// the materialized-view worker sub-batch wires.
+    CreateMaterializedView {
+        stmt: Box<tidb_ast::CreateMaterializedViewStmt>,
+        schema: String,
+        table: String,
+    },
+    /// Go `ast.CreateMaterializedViewLogStmt` lowered likewise.
+    CreateMaterializedViewLog {
+        stmt: Box<tidb_ast::CreateMaterializedViewLogStmt>,
+        schema: String,
+        table: String,
+    },
     /// `ALTER TABLE ... CONVERT TO CHARACTER SET x [COLLATE y]` and
     /// `ALTER TABLE ... CHARACTER SET = x`, Go's
     /// `ActionModifyTableCharsetAndCollate`.
@@ -873,6 +888,12 @@ pub fn lower_ddl_with_context(
         })),
         DdlStmt::CreateTable(create) => {
             lower_create_table(create, default_schema, context).map(Some)
+        }
+        DdlStmt::CreateMaterializedView(create) => {
+            lower_create_materialized_view(create, default_schema, context).map(Some)
+        }
+        DdlStmt::CreateMaterializedViewLog(create) => {
+            lower_create_materialized_view_log(create, default_schema, context).map(Some)
         }
         DdlStmt::DropTable(drop) => lower_drop_table(drop, default_schema).map(Some),
         DdlStmt::DropView { if_exists, names } => {
@@ -4157,6 +4178,22 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
+        DdlStatement::CreateMaterializedView {
+            stmt,
+            schema,
+            table,
+        } => {
+            plan_create_materialized_view(&catalog, stmt, schema, table)?;
+            unreachable!("plan_create_materialized_view ends at the job seam")
+        }
+        DdlStatement::CreateMaterializedViewLog {
+            stmt,
+            schema,
+            table,
+        } => {
+            plan_create_materialized_view_log(&catalog, stmt, schema, table)?;
+            unreachable!("plan_create_materialized_view_log ends at the job seam")
+        }
         DdlStatement::CreateTableLike {
             schema,
             table,
@@ -7167,4 +7204,237 @@ fn find_table<'database>(
         .tables
         .iter()
         .find(|table| table.name.lowercase() == name)
+}
+
+/// Go `checkMaterializedViewEnabled` + the catalog-free head of
+/// `CreateMaterializedView` (materialized_view.go master `94a9cbedab`):
+/// the enable flag, the no-database refusal and the name resolution. The
+/// catalog checks run at planning, where Go interleaves them after the
+/// database lookup.
+fn lower_create_materialized_view(
+    create: &tidb_ast::CreateMaterializedViewStmt,
+    default_schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<DdlStatement, DdlAdmissionError> {
+    if !context.enable_mview() {
+        return Err(DdlAdmissionError::unsupported(
+            "Materialized View is disabled, please set `tidb_mview_enable` to `ON` to enable it",
+        ));
+    }
+    let (schema, table) = split_name(&create.view_name, default_schema, "materialized view")?;
+    Ok(DdlStatement::CreateMaterializedView {
+        stmt: Box::new(create.clone()),
+        schema,
+        table,
+    })
+}
+
+/// Go `checkMaterializedViewEnabled` + the catalog-free head of
+/// `CreateMaterializedViewLog`.
+fn lower_create_materialized_view_log(
+    create: &tidb_ast::CreateMaterializedViewLogStmt,
+    default_schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<DdlStatement, DdlAdmissionError> {
+    if !context.enable_mview() {
+        return Err(DdlAdmissionError::unsupported(
+            "Materialized View is disabled, please set `tidb_mview_enable` to `ON` to enable it",
+        ));
+    }
+    let (schema, table) = split_name(&create.table, default_schema, "materialized view log")?;
+    Ok(DdlStatement::CreateMaterializedViewLog {
+        stmt: Box::new(create.clone()),
+        schema,
+        table,
+    })
+}
+
+/// Go `CreateMaterializedView`'s catalog checks, in source order
+/// (`materialized_view.go` master `94a9cbedab`), followed by the documented
+/// job-execution seam refusal: this tier has no DDL worker yet, and a valid
+/// materialized-view create must not be pretended into success.
+fn plan_create_materialized_view(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    create: &tidb_ast::CreateMaterializedViewStmt,
+    schema: &str,
+    table: &str,
+) -> Result<(), DdlPlanError> {
+    use tidb_ast::QueryStmt;
+    let Some(database) = find_database(catalog, schema) else {
+        return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
+    };
+
+    // Go `validateCommentLength(..., ErrTooLongTableComment)`: the byte
+    // length cap is 1024.
+    if let Some(comment) = &create.comment {
+        if comment.len() > 1024 {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                8020,
+                format!("Comment for table '{table}' is too long (max = 1024)"),
+            )));
+        }
+    }
+
+    // Go: `sel, ok := s.Select.(*ast.SelectStmt)`.
+    let sel = match &*create.query {
+        QueryStmt::Select(sel) => sel,
+        QueryStmt::SetOpr(_) => {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "CREATE MATERIALIZED VIEW only supports SELECT statement",
+            )));
+        }
+    };
+
+    // Go `extractSingleTableNameFromSelect`: exactly one table source.
+    let Some(join) = &sel.from else {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW only supports a single base table",
+        )));
+    };
+    if join.right.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW only supports a single base table",
+        )));
+    }
+    let base_ref = match &join.left {
+        tidb_ast::JoinNode::Table(table_ref) => table_ref,
+        _ => {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "CREATE MATERIALIZED VIEW only supports a single base table",
+            )));
+        }
+    };
+    // Go fills the base schema from the view schema, then refuses a base in
+    // another schema.
+    let (base_schema, base_name) = match base_ref.name.as_slice() {
+        [table] => (schema.to_owned(), table.clone()),
+        [schema_part, table] => (schema_part.clone(), table.clone()),
+        _ => {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "CREATE MATERIALIZED VIEW only supports a single base table",
+            )));
+        }
+    };
+    if base_schema != schema {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW only supports base table in the same schema",
+        )));
+    }
+
+    let Some(base) = find_table(database, &base_name) else {
+        return Err(DdlPlanError::TableNotExists {
+            schema: base_schema.clone(),
+            table: base_name.clone(),
+        });
+    };
+    if base.is_view()
+        || base.is_sequence()
+        || base.temp_table_type != tidb_model::TempTableType::NONE
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrWrongObject,
+            format!("'{schema}.{base_name}' is not BASE TABLE"),
+        )));
+    }
+    if base.partition.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW on partition table",
+        )));
+    }
+
+    // Go derives the `$mlog$` physical name and requires an existing log for
+    // the base table, whose metadata points back at the base.
+    let mlog_name = tidb_model::materialized_view_log_table_name(&base.name);
+    let Some(mlog) = find_table(database, mlog_name.original()) else {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+            "materialized view log does not exist for base table {}.{}",
+            base_schema, base_name
+        ))));
+    };
+    let mlog_ok = mlog
+        .materialized_view_log
+        .as_ref()
+        .map(|log| log.read().base_table_id == base.id)
+        .unwrap_or(false);
+    if !mlog_ok {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+            "table {}.{} is not a materialized view log for base table {}.{}",
+            schema,
+            mlog_name.original(),
+            base_schema,
+            base_name
+        ))));
+    }
+
+    // Go `validateCreateMaterializedViewQuery`: the single-table contract,
+    // the SELECT-clause refusals and the GROUP BY requirements.
+    tidb_util::mviewutil::check_materialized_view_select(&create.query).map_err(|error| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(8200, error.message()))
+    })?;
+    if sel.group_by.is_empty() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW requires GROUP BY clause",
+        )));
+    }
+    if sel.rollup {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW does not support GROUP BY WITH ROLLUP",
+        )));
+    }
+
+    // Job-execution seam: the materialized-view worker sub-batch wires the
+    // job submission this tier cannot serve yet.
+    Err(DdlPlanError::Admission(DdlAdmissionError::new(
+        "materialized view job execution is not wired in this tier",
+    )))
+}
+
+/// Go `CreateMaterializedViewLog`'s catalog checks, in source order, and the
+/// same documented job seam.
+fn plan_create_materialized_view_log(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    create: &tidb_ast::CreateMaterializedViewLogStmt,
+    schema: &str,
+    table: &str,
+) -> Result<(), DdlPlanError> {
+    let Some(database) = find_database(catalog, schema) else {
+        return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
+    };
+    let Some(base) = find_table(database, table) else {
+        return Err(DdlPlanError::TableNotExists {
+            schema: schema.to_owned(),
+            table: table.to_owned(),
+        });
+    };
+    // Go `isValidMaterializedViewLogBaseTable`: not a mem/sys schema, not a
+    // view, sequence, temporary table, or already an MV/log of one. The
+    // catalog this tier serves has no mem/sys schemas.
+    if base.is_view()
+        || base.is_sequence()
+        || base.temp_table_type != tidb_model::TempTableType::NONE
+        || base.materialized_view.is_some()
+        || base.materialized_view_log.is_some()
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrWrongObject,
+            format!("'{schema}.{table}' is not BASE TABLE"),
+        )));
+    }
+    if base.partition.is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW LOG on partition table",
+        )));
+    }
+
+    let mlog_name = tidb_model::materialized_view_log_table_name(&base.name);
+    if find_table(database, mlog_name.original()).is_some() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrTableExists,
+            format!("Table '{}.{}' already exists", schema, mlog_name.original()),
+        )));
+    }
+
+    Err(DdlPlanError::Admission(DdlAdmissionError::new(
+        "materialized view job execution is not wired in this tier",
+    )))
 }

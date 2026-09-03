@@ -11,6 +11,10 @@ autobenches = false
 build = "../../scripts/aggregate-tests.rs"
 
 [[test]]
+name = "scratch_run"
+path = "tests/scratch_run.rs"
+
+[[test]]
 name = "all"
 path = "tests/all.rs"
 

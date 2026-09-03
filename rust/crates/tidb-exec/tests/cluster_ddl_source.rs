@@ -5107,3 +5107,385 @@ fn create_table_like_clears_materialized_view_metadata() {
         "the source keeps its own metadata"
     );
 }
+
+/// Go `CreateMaterializedView`/`CreateMaterializedViewLog` (master
+/// `94a9cbedab`): the admission checks run in source order and carry Go's
+/// exact refusals; a valid statement stops at the documented job seam.
+#[test]
+fn materialized_view_lowering_follows_go_admission_order() {
+    use tidb_executor::StmtContext;
+    let disabled = StmtContext::for_query();
+    let enabled = StmtContext::for_query().with_enable_mview(true);
+    let try_lower = |context: &StmtContext, sql: &str, schema: &str| {
+        let parsed = tidb_parser::parse(sql)
+            .unwrap_or_else(|error| panic!("MV DDL does not parse ({sql}): {error:?}"));
+        lower_ddl_with_context(&parsed, schema, context)
+    };
+    let lower_with = |context: &StmtContext, sql: &str, schema: &str| {
+        try_lower(context, sql, schema)
+            .expect("MV DDL admission outcome")
+            .expect("MV DDL lowers to a statement")
+    };
+    let mut store = bootstrapped();
+
+    // Go `checkMaterializedViewEnabled` fires before everything else.
+    let error = try_lower(
+        &disabled,
+        "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)",
+        "u6",
+    )
+    .expect_err("the disabled flag refuses");
+    assert_eq!(error.code, 8200);
+    assert_eq!(
+        error.reason,
+        "Unsupported Materialized View is disabled, please set `tidb_mview_enable` to `ON` to enable it"
+    );
+
+    // Go `plannererrors.ErrNoDB` when no default schema exists.
+    let error = try_lower(
+        &enabled,
+        "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)",
+        "",
+    )
+    .expect_err("no database refuses");
+    assert_eq!(error.code, tidb_error::mysql::errcode::ErrNoDB);
+
+    // A real base table (no schedule, plain columns) for the plan phase.
+    let create = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE TABLE mv_base (id INT PRIMARY KEY AUTO_INCREMENT, k INT)",
+            "u6",
+        ),
+        1_300,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+    let base_id = create.created_id.expect("base table id");
+
+    // Go: the schema must exist at planning.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW nowhere.mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)",
+            "u6",
+        ),
+        1_301,
+    )
+    .expect_err("unknown schema refuses");
+    assert!(matches!(error, DdlPlanError::UnknownDatabase(ref db) if db == "nowhere"));
+
+    // Go `validateCommentLength`: the 1024-byte comment cap.
+    let long_comment = format!(
+        "CREATE MATERIALIZED VIEW mv (id, k) COMMENT '{}' AS SELECT id, k FROM mv_base GROUP BY id, k",
+        "x".repeat(1025)
+    );
+    let error = plan_ddl(&mut store, &lower_with(&enabled, &long_comment, "u6"), 1_302)
+        .expect_err("over-long comment refuses");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected a coded refusal")
+    };
+    assert_eq!(admission.code, 8020);
+    assert_eq!(
+        admission.reason,
+        "Comment for table 'mv' is too long (max = 1024)"
+    );
+
+    // Go: only a plain SELECT is accepted.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW mv (c) AS (SELECT 1 UNION SELECT 2)",
+            "u6",
+        ),
+        1_303,
+    )
+    .expect_err("set operations refuse");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected a coded refusal")
+    };
+    assert_eq!(admission.code, 8200);
+    assert_eq!(
+        admission.reason,
+        "Unsupported CREATE MATERIALIZED VIEW only supports SELECT statement"
+    );
+
+    // Go `extractSingleTableNameFromSelect`: comma joins refuse.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW mv (a) AS (SELECT * FROM a, b GROUP BY a)",
+            "u6",
+        ),
+        1_304,
+    )
+    .expect_err("multi-table refuses");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected a coded refusal")
+    };
+    assert_eq!(admission.code, 8200);
+    assert_eq!(
+        admission.reason,
+        "Unsupported CREATE MATERIALIZED VIEW only supports a single base table"
+    );
+
+    // Go: the base table must live in the same schema.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM other.mv_base GROUP BY id)",
+            "u6",
+        ),
+        1_305,
+    )
+    .expect_err("cross-schema base refuses");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected a coded refusal")
+    };
+    assert_eq!(admission.code, 8200);
+    assert_eq!(
+        admission.reason,
+        "Unsupported CREATE MATERIALIZED VIEW only supports base table in the same schema"
+    );
+
+    // Go: the base table must exist.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM no_base GROUP BY id)",
+            "u6",
+        ),
+        1_306,
+    )
+    .expect_err("missing base refuses");
+    assert!(matches!(
+        error,
+        DdlPlanError::TableNotExists { ref table, .. } if table == "no_base"
+    ));
+
+    // Go: the `$mlog$` physical table must exist for the base.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)",
+            "u6",
+        ),
+        1_307,
+    )
+    .expect_err("missing mlog refuses");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected a coded refusal")
+    };
+    assert_eq!(
+        admission.reason,
+        "materialized view log does not exist for base table u6.mv_base"
+    );
+
+    // The mlog exists: inject its TableInfo pointing at the base.
+    let mut mlog = tidb_model::TableInfo::default();
+    mlog.id = 9_001;
+    mlog.name = tidb_ast::CiString::new("$mlog$mv_base");
+    let mut mlog_meta = tidb_model::MaterializedViewLogInfo::default();
+    mlog_meta.base_table_id = base_id;
+    mlog.materialized_view_log = Some(GoShared::new(mlog_meta));
+    store.put(
+        key::table_kv_key(112, 9_001),
+        value::serialize_table_info(&mlog).expect("the mlog encodes"),
+    );
+
+    // Go `validateCreateMaterializedViewQuery`: GROUP BY is required.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base)",
+            "u6",
+        ),
+        1_308,
+    )
+    .expect_err("GROUP BY is required");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected a coded refusal")
+    };
+    assert_eq!(admission.code, 8200);
+    assert_eq!(
+        admission.reason,
+        "Unsupported CREATE MATERIALIZED VIEW requires GROUP BY clause"
+    );
+
+    // Go: WITH ROLLUP refuses.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW mv (id, cnt) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id WITH ROLLUP)",
+            "u6",
+        ),
+        1_309,
+    )
+    .expect_err("ROLLUP refuses");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected a coded refusal")
+    };
+    assert_eq!(admission.code, 8200);
+    assert_eq!(
+        admission.reason,
+        "Unsupported CREATE MATERIALIZED VIEW does not support GROUP BY WITH ROLLUP"
+    );
+
+    // Go's `mviewutil.CheckMaterializedViewSelect` clauses flow through with
+    // their own messages: a locking clause is refused.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id FOR UPDATE)",
+            "u6",
+        ),
+        1_310,
+    )
+    .expect_err("locking clauses refuse");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected a coded refusal")
+    };
+    assert_eq!(
+        admission.reason,
+        "Unsupported CREATE MATERIALIZED VIEW does not support locking clauses"
+    );
+
+    // A valid statement reaches the documented job seam.
+    let error = plan_ddl(
+        &mut store,
+        &lower_with(
+            &enabled,
+            "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id)",
+            "u6",
+        ),
+        1_311,
+    )
+    .expect_err("valid statements stop at the job seam");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected the seam refusal")
+    };
+    assert_eq!(
+        admission.reason,
+        "materialized view job execution is not wired in this tier"
+    );
+}
+
+/// Go `CreateMaterializedViewLog` (master `94a9cbedab`): the base-shape
+/// refusals, the derived `$mlog$` name collision, and the job seam.
+#[test]
+fn materialized_view_log_lowering_follows_go_admission_order() {
+    use tidb_executor::StmtContext;
+    let enabled = StmtContext::for_query().with_enable_mview(true);
+    let lower = |sql: &str, schema: &str| {
+        let parsed = tidb_parser::parse(sql).expect("MV LOG DDL parses");
+        lower_ddl_with_context(&parsed, schema, &enabled)
+            .expect("MV LOG DDL admission outcome")
+            .expect("MV LOG DDL lowers to a statement")
+    };
+    let mut store = bootstrapped();
+
+    let create = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE mv_base (id INT PRIMARY KEY AUTO_INCREMENT, k INT)",
+            "u6",
+        ),
+        1_400,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+    let _base_id = create.created_id.expect("base table id");
+
+    // A valid log create reaches the documented job seam (no `$mlog$`
+    // collision in a fresh catalog).
+    let error = plan_ddl(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON mv_base (id)", "u6"),
+        1_401,
+    )
+    .expect_err("valid statements stop at the job seam");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected the seam refusal")
+    };
+    assert_eq!(
+        admission.reason,
+        "materialized view job execution is not wired in this tier"
+    );
+
+    // Go: the derived `$mlog$` name collision reports `ErrTableExists`.
+    // Inject a physical table occupying the derived name.
+    let mut occupier = tidb_model::TableInfo::default();
+    occupier.id = 9_002;
+    occupier.name = tidb_ast::CiString::new("$mlog$mv_base");
+    store.put(
+        key::table_kv_key(112, 9_002),
+        value::serialize_table_info(&occupier).expect("the occupier encodes"),
+    );
+    let error = plan_ddl(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON mv_base (id)", "u6"),
+        1_402,
+    )
+    .expect_err("the derived mlog name already exists");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected a coded refusal")
+    };
+    assert_eq!(admission.code, tidb_error::tidb::errcode::ErrTableExists);
+    assert_eq!(admission.reason, "Table 'u6.$mlog$mv_base' already exists");
+
+    // Go: the base table must exist.
+    let error = plan_ddl(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON no_base (id)", "u6"),
+        1_403,
+    )
+    .expect_err("missing base refuses");
+    assert!(matches!(
+        error,
+        DdlPlanError::TableNotExists { ref table, .. } if table == "no_base"
+    ));
+
+    // A valid log create on another base reaches the job seam too.
+    let fresh_create = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE other_base (id INT PRIMARY KEY AUTO_INCREMENT)",
+            "u6",
+        ),
+        1_404,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(fresh_create) = fresh_create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &fresh_create);
+    let error = plan_ddl(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON other_base (id)", "u6"),
+        1_405,
+    )
+    .expect_err("valid statements stop at the job seam");
+    let DdlPlanError::Admission(admission) = error else {
+        panic!("expected the seam refusal")
+    };
+    assert_eq!(
+        admission.reason,
+        "materialized view job execution is not wired in this tier"
+    );
+}

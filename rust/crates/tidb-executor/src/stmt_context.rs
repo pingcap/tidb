@@ -441,6 +441,9 @@ pub struct StmtContext {
     /// read this value when deciding whether CHECK declarations are discarded
     /// with a warning or persisted and enforced.
     enable_check_constraint: bool,
+    /// Go's session `EnableMView` (the `tidb_mview_enable` sysvar): gates the
+    /// materialized-view DDL admission checks.
+    enable_mview: bool,
     /// Go `txn.IsPessimistic()` half of `optimizeDupKeyCheckForNormalInsert`
     /// (`pkg/executor/insert.go:331-337`), resolved for the current or
     /// implicit statement transaction. On a user connection this transaction
@@ -830,6 +833,7 @@ impl StmtContext {
             default_week_format: 0,
             foreign_key_checks: true,
             enable_check_constraint: false,
+            enable_mview: false,
             pessimistic_lazy_dup_check: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
@@ -2083,6 +2087,20 @@ impl StmtContext {
     #[must_use]
     pub fn foreign_key_checks(&self) -> bool {
         self.foreign_key_checks
+    }
+
+    /// Sets Go's session `EnableMView` switch for this statement
+    /// (`tidb_mview_enable`, default `OFF`).
+    #[must_use]
+    pub fn with_enable_mview(mut self, enabled: bool) -> Self {
+        self.enable_mview = enabled;
+        self
+    }
+
+    /// Whether materialized-view DDL is enabled for this statement.
+    #[must_use]
+    pub fn enable_mview(&self) -> bool {
+        self.enable_mview
     }
 
     /// Sets Go's process-wide CHECK-constraint DDL switch for this statement.
