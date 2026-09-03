@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -94,7 +93,6 @@ const (
 	flagParquetRowGroupSize      = "parquet-row-group-size"
 	flagPackedBackup             = "cse.packed-backup"
 	flagCSEExecutable            = "cse.ctl-path"
-	flagGPGKeyFile               = "gpg-key-file"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -220,9 +218,6 @@ type Config struct {
 	// <bucket-or-container>/<meta-object-key> form.
 	PackedBackup  string `json:"-"`
 	CSEExecutable string
-	// GPGKeyFile is an armored or binary OpenPGP public key file used to
-	// encrypt every output file.
-	GPGKeyFile string
 	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
 	// to PD endpoints for GC control.
 	ClusterSSLCA   string
@@ -436,7 +431,6 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagPackedBackup)
 	flags.String(flagCSEExecutable, "cse-ctl", "Path to the cse-ctl executable used for packed-backup export")
 	_ = flags.MarkHidden(flagCSEExecutable)
-	flags.String(flagGPGKeyFile, "", "Path to an OpenPGP public key file used to encrypt every output file")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -760,10 +754,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.GPGKeyFile, err = flags.GetString(flagGPGKeyFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	for k, v := range params {
 		conf.SessionParams[k] = v
@@ -990,41 +980,16 @@ func parseParquetCompressType(compressType string) (compressedio.CompressType, e
 }
 
 func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {
-	var publicKey []byte
-	if conf.GPGKeyFile != "" {
-		var err error
-		publicKey, err = os.ReadFile(conf.GPGKeyFile)
-		if err != nil {
-			return nil, errors.Annotatef(err, "read GPG public key file %q", conf.GPGKeyFile)
-		}
-	}
-
-	var storage storeapi.Storage
 	if conf.ExtStorage != nil {
-		storage = conf.ExtStorage
-	} else {
-		b, err := objstore.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		// TODO: support setting httpClient with certification later
-		storage, err = objstore.New(ctx, b, &storeapi.Options{})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		return conf.ExtStorage, nil
 	}
-	if publicKey == nil {
-		return storage, nil
-	}
-	encrypted, err := objstore.WithGPGEncryption(storage, publicKey)
+	b, err := objstore.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	if err != nil {
-		if conf.ExtStorage == nil {
-			storage.Close()
-		}
-		return nil, errors.Annotatef(err, "initialize GPG encryption from %q", conf.GPGKeyFile)
+		return nil, errors.Trace(err)
 	}
-	return encrypted, nil
+
+	// TODO: support setting httpClient with certification later
+	return objstore.New(ctx, b, &storeapi.Options{})
 }
 
 const (
