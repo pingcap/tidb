@@ -123,7 +123,18 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			return err2
 		}
 		if kerneltype.IsClassic() {
-			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+			// plan.TableInfo was captured before this transaction, during an
+			// unguarded prepare phase (file discovery, prechecks, size
+			// estimation). A concurrent DDL (e.g. ADD INDEX) may have changed
+			// the table's schema since then; TableModeImport only blocks
+			// *future* DDL, so we pass the captured Revision through and let
+			// AlterTableMode's own DDL job reject a stale plan atomically
+			// (the job reads the table fresh from its metadata mutator,
+			// which is serialized against other concurrent DDL on the same
+			// table), rather than let import silently finish against an
+			// outdated schema.
+			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID,
+				plan.TableInfo.Revision)
 			if err2 != nil {
 				return err2
 			}
