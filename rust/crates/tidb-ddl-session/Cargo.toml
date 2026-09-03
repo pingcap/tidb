@@ -18,6 +18,9 @@ failpoints = ["dep:fail", "fail/failpoints"]
 fail = { version = "0.4", optional = true }
 prometheus = { version = "0.14", default-features = false }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-util = { path = "../tidb-util" }
 tracing = "0.1"
@@ -25,4 +28,5 @@ tracing = "0.1"
 [dev-dependencies]
 tidb-ast = { path = "../tidb-ast" }
 tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-resolve = { path = "../tidb-resolve" }

@@ -48,6 +48,24 @@ For each bounded behavior cluster:
   (`SELECT rows FROM t`). Items #10/#11 recorded as parity-by-API/open in
   the divergence doc.
 
+- 2026-09-03 (batch 8, `pkg/ddl/session` seam + `mview_schedule_expr.go`):
+  verified `pkg/ddl/session` is already fully transcreated in
+  `tidb-ddl-session`, then landed the schedule-eval capabilities the MV
+  chain needs: `SessionContext::install_schedule_eval_session` /
+  `restore_schedule_eval_session` (Go's sql-mode/type-flags/err-levels/
+  time-zone swap and its restore closure) and `eval_schedule_expression`
+  (Go's parse + BuildSimpleExpr + Eval + DATETIME@MaxFsp convert), plus
+  `ScheduleEvalOriginals`. Ported the session-driven half of
+  `mview_schedule_expr.go` into `tidb-executor/src/ddl/mview_schedule_expr.rs`:
+  the NOW(6) load, START-precedence with the 10-second near-now threshold,
+  NEXT fallback, NULL-branch logging (error/warn split) and the
+  `(next_unix_seconds, should_update)` contract, generic over the session
+  context. Nine mock-driven regressions pass; `tidb-ddl-session` 5/5; the
+  full `tidb-executor` failure set is identical to the pre-batch base (29
+  documented pre-existing baseline failures, zero new).
+  `BuildAndValidateMViewScheduleExpr` lands with create-path sub-batch (b).
+  Receipt: `receipts/ddl_session_mview_schedule.md`.
+
 - 2026-09-03 (batch 7 SEAM FINDING, `pkg/ddl/mview_schedule_expr.go`):
   sub-batch (a) is SEAM-BLOCKED, journal-verified. The file's behavior is
   woven into the live DDL session: `sess.Session.Execute("SELECT NOW(6)")`,

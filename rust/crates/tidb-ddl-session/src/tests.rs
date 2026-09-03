@@ -18,8 +18,12 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use crate::ScheduleEvalOriginals;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_error::errctx;
+use tidb_model::job::ResolvedTimeZone;
 use tidb_model::{ColumnInfo, GoShared};
+use tidb_mysql::SqlMode;
 use tidb_resolve::ResultField;
 use tidb_sqlexec::{ExecutionContext, RecordSet, SimpleRecordSet};
 use tidb_util::sqlescape::SqlArg;
@@ -60,6 +64,11 @@ struct MockContext {
     autocommit: AtomicBool,
     restricted: AtomicBool,
     timezone_set: AtomicBool,
+    schedule_sql_mode: Mutex<Option<SqlMode>>,
+    schedule_zone: Mutex<Option<String>>,
+    schedule_originals: Mutex<Option<ScheduleEvalOriginals>>,
+    schedule_eval_result: Mutex<Option<std::result::Result<Option<tidb_datatype::Time>, String>>>,
+    schedule_eval_calls: Mutex<Vec<String>>,
 }
 
 impl MockContext {
@@ -82,6 +91,11 @@ impl MockContext {
             autocommit: AtomicBool::new(false),
             restricted: AtomicBool::new(false),
             timezone_set: AtomicBool::new(false),
+            schedule_sql_mode: Mutex::new(None),
+            schedule_zone: Mutex::new(None),
+            schedule_originals: Mutex::new(None),
+            schedule_eval_result: Mutex::new(None),
+            schedule_eval_calls: Mutex::new(Vec::new()),
         }
     }
 
@@ -226,6 +240,41 @@ impl SessionContext for MockContext {
 
     fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
+    }
+    fn install_schedule_eval_session(
+        &self,
+        sql_mode: SqlMode,
+        zone: &ResolvedTimeZone,
+    ) -> ScheduleEvalOriginals {
+        *self.schedule_sql_mode.lock().unwrap() = Some(sql_mode);
+        *self.schedule_zone.lock().unwrap() = Some(zone.name());
+        let originals = ScheduleEvalOriginals {
+            sql_mode: SqlMode::default(),
+            stmt_type_flags: tidb_datatype::ConversionFlags::default(),
+            stmt_err_levels: tidb_error::errctx::LevelMap::strict(),
+            session_time_zone: None,
+            stmt_time_zone: None,
+        };
+        *self.schedule_originals.lock().unwrap() = Some(originals.clone());
+        originals
+    }
+
+    fn restore_schedule_eval_session(&self, originals: &ScheduleEvalOriginals) {
+        *self.schedule_originals.lock().unwrap() = Some(originals.clone());
+        *self.schedule_sql_mode.lock().unwrap() = Some(originals.sql_mode);
+    }
+
+    fn eval_schedule_expression(&self, expr_sql: &str) -> Result<Option<tidb_datatype::Time>> {
+        self.schedule_eval_calls
+            .lock()
+            .unwrap()
+            .push(expr_sql.to_owned());
+        let slot = self.schedule_eval_result.lock().unwrap().take();
+        match slot {
+            Some(Ok(value)) => Ok(value),
+            Some(Err(message)) => Err(Error::new(message)),
+            None => Err(Error::new("no schedule eval result configured")),
+        }
     }
 }
 

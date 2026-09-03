@@ -21,7 +21,10 @@ use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::Instant;
 
 use prometheus::{exponential_buckets, HistogramOpts, HistogramVec};
-use tidb_datatype::Datum;
+use tidb_datatype::{ConversionFlags, CoreTime, Datum};
+use tidb_error::errctx::LevelMap;
+use tidb_model::job::ResolvedTimeZone;
+use tidb_mysql::SqlMode;
 use tidb_sqlexec::{ExecutionContext, RecordSet};
 use tidb_util::sqlescape::SqlArg;
 
@@ -144,7 +147,49 @@ pub trait SessionContext: Send + Sync + 'static {
     fn unregister_internal_session(&self);
     /// Go `pools.Resource.Close`.
     fn close(&self);
+    /// Go's `setCreateMaterializedViewScheduleEvalSession`: installs the
+    /// schedule sql mode, the statement type flags and error levels
+    /// (`expression.MaterializedScheduleTypeFlagsWithSQLMode` /
+    /// `MaterializedScheduleErrLevelsWithSQLMode`), and the schedule time
+    /// zone on both the session variables and the statement context,
+    /// returning the captured originals.
+    fn install_schedule_eval_session(
+        &self,
+        sql_mode: SqlMode,
+        zone: &ResolvedTimeZone,
+    ) -> ScheduleEvalOriginals;
+    /// Restores the originals captured by
+    /// [`SessionContext::install_schedule_eval_session`] (Go's returned
+    /// closure).
+    fn restore_schedule_eval_session(&self, originals: &ScheduleEvalOriginals);
+    /// Go's `evalCreateMaterializedViewScheduleExprToDatetime`: parses
+    /// `expr_sql` as a generated expression, builds and evaluates it in the
+    /// session's expression context, and converts a non-NULL result to
+    /// `TypeDatetime` at `MaxFsp`. SQL NULL yields `None`.
+    fn eval_schedule_expression(&self, expr_sql: &str) -> Result<Option<ScheduleTime>>;
 }
+
+/// Go's originals captured by
+/// `setCreateMaterializedViewScheduleEvalSession`.
+#[derive(Clone, Debug)]
+pub struct ScheduleEvalOriginals {
+    /// Go `originalSQLMode`.
+    pub sql_mode: SqlMode,
+    /// Go `originalTypeFlags` (`StmtCtx.TypeFlags()`).
+    pub stmt_type_flags: ConversionFlags,
+    /// Go `originalErrLevels` (`StmtCtx.ErrLevels()`).
+    pub stmt_err_levels: LevelMap,
+    /// Go `originalTZ` (`sessVars.TimeZone`); `None` is Go's nil.
+    pub session_time_zone: Option<ResolvedTimeZone>,
+    /// Go `originalStmtTZ` (`StmtCtx.TimeZone()`); `None` is Go's nil.
+    pub stmt_time_zone: Option<ResolvedTimeZone>,
+}
+
+/// The materialized-view schedule time type (`types.Time`).
+pub type ScheduleTime = tidb_datatype::Time;
+
+/// Go's `CoreTime` re-export for schedule conversions.
+pub type ScheduleCoreTime = CoreTime;
 
 /// Go `Session`.
 pub struct Session<C: SessionContext> {
