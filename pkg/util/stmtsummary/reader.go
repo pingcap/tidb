@@ -567,16 +567,16 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssElement.maxDisk
 	},
 	AvgKvTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumKVTotal), ssElement.commitCount)
+		return avgInt(int64(ssElement.sumKVTotal), ssElement.execCount)
 	},
 	AvgPdTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumPDTotal), ssElement.commitCount)
+		return avgInt(int64(ssElement.sumPDTotal), ssElement.execCount)
 	},
 	AvgBackoffTotalTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumBackoffTotal), ssElement.commitCount)
+		return avgInt(int64(ssElement.sumBackoffTotal), ssElement.execCount)
 	},
 	AvgWriteSQLRespTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
-		return avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount)
+		return avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.execCount)
 	},
 	AvgTidbCPUTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return avgInt(int64(ssElement.sumTidbCPU), ssElement.execCount)

@@ -563,20 +563,19 @@ func GetBindableStmtFromCluster(rows []chunk.Row) *BindableStmt {
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int) {
 	// Use "," to separate table names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range sei.StmtCtx.Tables {
+	var tableNames strings.Builder
+	for _, value := range sei.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		buffer.WriteString(strings.ToLower(value.DB))
-		buffer.WriteString(".")
-		buffer.WriteString(strings.ToLower(value.Table))
-		if i < len(sei.StmtCtx.Tables)-1 {
-			buffer.WriteString(",")
+		if tableNames.Len() > 0 {
+			tableNames.WriteByte(',')
 		}
+		tableNames.WriteString(strings.ToLower(value.DB))
+		tableNames.WriteByte('.')
+		tableNames.WriteString(strings.ToLower(value.Table))
 	}
-	tableNames := buffer.String()
 
 	planDigest := sei.PlanDigest
 	if len(planDigest) == 0 {
@@ -588,7 +587,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.planDigest = planDigest
 	ssbd.stmtType = sei.StmtCtx.StmtType
 	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
-	ssbd.tableNames = tableNames
+	ssbd.tableNames = tableNames.String()
 	ssbd.history = list.New()
 	ssbd.initialized = true
 }
@@ -651,11 +650,12 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChe
 		return nil
 	}
 
-	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
-	for listElement := ssbd.history.Front(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Next() {
+	ssElements := make([]*stmtSummaryByDigestElement, 0, min(ssbd.history.Len(), historySize))
+	for listElement := ssbd.history.Back(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Prev() {
 		ssElement := listElement.Value.(*stmtSummaryByDigestElement)
 		ssElements = append(ssElements, ssElement)
 	}
+	slices.Reverse(ssElements)
 	return ssElements
 }
 
