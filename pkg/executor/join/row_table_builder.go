@@ -520,15 +520,30 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 	hashJoinCtx.hashTableContext.memoryTracker.Consume(totalMemUsage)
 
 	sqlKiller := &hashJoinCtx.SessCtx.GetSessionVars().SQLKiller
-	for partIdx, seg := range segs {
-		seg.rawData = make([]byte, 0, b.helpers[partIdx].rawDataLen)
-		seg.hashValues = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
-		seg.rowStartOffset = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
-		seg.validJoinKeyPos = make([]int, 0, b.helpers[partIdx].validRowNum)
+	check := func() bool {
 		if sqlKiller.Signal != 0 {
 			if err = sqlKiller.HandleSignal(); err != nil {
-				break
+				return false
 			}
+		}
+		return true
+	}
+	for partIdx, seg := range segs {
+		seg.rawData = make([]byte, 0, b.helpers[partIdx].rawDataLen)
+		if !check() {
+			break
+		}
+		seg.hashValues = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
+		if !check() {
+			break
+		}
+		seg.rowStartOffset = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
+		if !check() {
+			break
+		}
+		seg.validJoinKeyPos = make([]int, 0, b.helpers[partIdx].validRowNum)
+		if !check() {
+			break
 		}
 	}
 	if err != nil {

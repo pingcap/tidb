@@ -1721,7 +1721,6 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 				if err := ctx.Err(); err != nil {
 					return nil, nil, err
 				}
-				globalMemArbitrator.TryRunOneRound()
 				time.Sleep(defOOMRiskCheckDur)
 			}
 		}

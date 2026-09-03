@@ -2796,11 +2796,7 @@ func (m *MemArbitrator) calcMemRisk() (lastRisk LastRisk, magnif int64, ok bool)
 // return `true` is memory state is safe
 func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 	if m.atMemRisk() {
-		gcExecuted := m.tryRuntimeGC()
-		if !gcExecuted {
-			m.refreshRuntimeMemStats()
-		}
-
+		m.refreshRuntimeMemStats()
 		if m.isMemNoRisk() {
 			m.updateTrackedHeapStats()
 			m.updateAvoidSize() // no need to refresh runtime mem stats
@@ -2814,7 +2810,7 @@ func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 		}
 
 		m.doReclaimNonBlockingTasks()
-		m.handleMemRisk(gcExecuted)
+		m.handleMemRisk()
 		return false
 	} else if !m.isMemSafe() {
 		m.doReclaimNonBlockingTasks()
@@ -2823,7 +2819,7 @@ func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 		// GC in intoMemRisk has already refreshed the runtime memory statistics,
 		// so start reclaiming SQL in the same arbitration round if it did not help.
 		if m.hardOOMRisk() {
-			m.handleMemRisk(true)
+			m.handleMemRisk()
 		}
 		return false
 	}
@@ -2839,7 +2835,7 @@ func (*MemArbitrator) innerTime() time.Time {
 	return now()
 }
 
-func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
+func (m *MemArbitrator) handleMemRisk() {
 	now := m.innerTime()
 	hardOOMRisk := m.hardOOMRisk()
 	// intoMemRisk already forces a GC and refreshes runtime memory statistics.
@@ -2863,10 +2859,6 @@ func (m *MemArbitrator) handleMemRisk(gcExecuted bool) {
 	if newKillNum != 0 {
 		m.heapController.memRisk.startTime.t = m.innerTime() // restart oom check
 		m.heapController.memRisk.startTime.unixMilli.Store(m.heapController.memRisk.startTime.t.UnixMilli())
-	}
-
-	if !gcExecuted {
-		m.gc()
 	}
 }
 
