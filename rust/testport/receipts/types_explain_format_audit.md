@@ -1063,6 +1063,69 @@ git diff --check
 # both passed
 ```
 
+## Rust-only parity follow-up: cast-wrapper metadata tables
+
+Go's `TestCastConstAsDecimalFieldType` and `TestCastAsCharFieldType`
+(`pkg/expression/builtin_cast_test.go:1573-1832`) exercise the strict-constant
+metadata tails of `WrapWithCastAsDecimal` and `BuildCastFunctionWithCheck`.
+They cover signed/unsigned integer widths, decimal shapes, float and
+scientific-notation limits, strings and blob families, temporal FSP widths,
+JSON widening, and the value-derived decimal precision/fraction. These rows
+were previously ignored in Rust because the wrapper refinement and
+unspecified-width string adjustment were documented as missing.
+
+The Rust source-derived test now activates the complete 51-row decimal table
+and 40-row CHAR-width table. It uses the normal wrapper/builder paths and
+asserts every `(flen, decimal)` result, including the 65-digit/30-scale caps
+and JSON `LongBlob` width. No production behavior changed in this batch; the
+tests close stale parity receipts for the behavior implemented in the prior
+cast-wrapper batch. The vectorized cast differential remains a separate
+unmodeled tier.
+
+Focused validation:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib test_cast_const_as_decimal_field_type -- --nocapture
+# passed: 1 test (51 Go rows)
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib test_cast_as_char_field_type -- --nocapture
+# passed: 1 test (40 Go rows)
+```
+
+Ready validation for this batch:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,159 passed, 1 known loopback HTTP JSON-schema fixture failed, 117 ignored
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,058 passed, 121 existing planner/storage/fixture failures, 0 ignored
+
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

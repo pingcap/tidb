@@ -196,10 +196,11 @@
 //!   there without a cycle. `tidb-planner::by_item::ByItem` is a
 //!   display-string shell, not an `Expression` holder, so it is not the same
 //!   type either.
-//! - **`WrapWithCastAsDecimal`'s constant-refinement tail is dropped**
-//!   (`builtin_cast.go:2836`-`:2845`): it calls `EvalDecimal` on the built
-//!   cast node and narrows flen/decimal to the result's actual precision.
-//!   See [`wrap_cast`] for why.
+//! - **`WrapWithCastAsDecimal`'s constant-refinement tail uses a value-only
+//!   context** (`builtin_cast.go:2836`-`:2845`): the Rust wrapper evaluates a
+//!   strict constant through `NoColumns` and narrows flen/decimal to the
+//!   result's actual precision. Statement-dependent warning publication is
+//!   still owned by the eventual caller.
 //! - **`WrapWithCastAsString`'s `CoercibilityExplicit` branch reads the
 //!   expression's FIELD TYPE charset**, not a separate `collationInfo`; see
 //!   [`wrap_cast`].

@@ -1966,17 +1966,284 @@ fn test_cast_binary_string_as_json_sig() {
 // ---------------------------------------------------------------------
 
 #[test]
-#[ignore = "go-parity-gap: WrapWithCastAsDecimal drops Go's constant-refinement tail (builtin_cast.go:2836-2845), so the narrowed flen/decimal of a wrapped CONSTANT is not observable; see wrap_cast.rs' documented narrowing"]
 fn test_cast_const_as_decimal_field_type() {
-    // Go wraps constants of every source type with cast-as-decimal and
-    // asserts each derived (resultFlen, resultDecimal).
+    let mut cases: Vec<(Expression, i64, i64)> = Vec::new();
+
+    for (value, flen) in [
+        (0, 1),
+        (1, 1),
+        (-1, 1),
+        (11_111, 5),
+        (-11_111, 5),
+        (1_111_111_111, 10),
+        (-1_111_111_111, 10),
+        (111_111_111_111_111, 15),
+        (-111_111_111_111_111, 15),
+        (i64::MAX, 19),
+        (i64::MIN, 19),
+    ] {
+        cases.push((const_typed(Datum::Int(value), int_ft()), flen, 0));
+    }
+
+    for (value, flen) in [
+        (0, 1),
+        (1, 1),
+        (11_111, 5),
+        (1_111_111_111, 10),
+        (111_111_111_111_111, 15),
+        (i64::MAX as u64, 19),
+        (u64::MAX, 20),
+    ] {
+        cases.push((const_typed(Datum::UInt(value), uint_ft()), flen, 0));
+    }
+
+    for (value, flen, decimal) in [("12345", 10, 5), ("1", 2, 1), ("12345", 30, 0)] {
+        let mut source = dec_ft();
+        source.set_flen(flen);
+        source.set_decimal(decimal);
+        cases.push((
+            const_typed(Datum::Decimal(Decimal::from_literal(value)), source),
+            flen,
+            decimal,
+        ));
+    }
+
+    for (value, flen, decimal) in [
+        (1.234, 4, 3),
+        (1.23456789, 9, 8),
+        (-1234567890.123456789, 17, 7),
+        (-1234567890.1234567890123456789, 17, 7),
+        (1e10, 11, 0),
+        (1e20, 21, 0),
+        (1e40, 41, 0),
+        (1e60, 61, 0),
+        (1e80, 65, 0),
+        (1e-10, 10, 10),
+        (1e-20, 20, 20),
+        (1e-40, 40, 30),
+    ] {
+        cases.push((const_typed(Datum::Real(value), real_ft()), flen, decimal));
+    }
+
+    for (value, flen, decimal) in [
+        ("123.456", 6, 3),
+        ("123.4560", 7, 4),
+        ("123.456000000", 12, 9),
+        ("123abcde", 3, 0),
+        ("1e80", 65, 0),
+        ("1e-40", 40, 30),
+        ("-1234567890.123456789", 19, 9),
+        ("-1234567890.1234567890123456789", 29, 19),
+    ] {
+        cases.push((
+            const_typed(Datum::new_string(value), FieldType::new(C::String)),
+            flen,
+            decimal,
+        ));
+    }
+
+    for (fsp, flen, decimal) in [(3, 9, 3), (6, 12, 6), (0, 6, 0)] {
+        let mut source = FieldType::new(C::Duration);
+        source.set_decimal(fsp);
+        cases.push((
+            const_typed(
+                Datum::Duration(MySqlDuration::new(10, 10, 10, 110, fsp).unwrap()),
+                source,
+            ),
+            flen,
+            decimal,
+        ));
+    }
+
+    for kind in [TimeType::Timestamp, TimeType::DateTime] {
+        for (fsp, flen, decimal) in [(0, 14, 0), (3, 17, 3), (6, 20, 6)] {
+            let mut source = FieldType::new(match kind {
+                TimeType::Timestamp => C::Timestamp,
+                TimeType::DateTime => C::Datetime,
+                TimeType::Date => unreachable!(),
+            });
+            source.set_decimal(fsp);
+            let time = Time::from_date_checked(2020, 10, 10, 10, 10, 10, 110, kind, 0)
+                .expect("Go source temporal fixture");
+            cases.push((const_typed(Datum::Time(time), source), flen, decimal));
+        }
+    }
+    cases.push((
+        const_typed(
+            Datum::Time(
+                Time::from_date_checked(2020, 10, 10, 10, 10, 10, 110, TimeType::Date, 0)
+                    .expect("Go source DATE fixture"),
+            ),
+            FieldType::new(C::Date),
+        ),
+        8,
+        0,
+    ));
+
+    assert_eq!(
+        cases.len(),
+        51,
+        "complete Go TestCastConstAsDecimalFieldType table"
+    );
+    for (index, (input, want_flen, want_decimal)) in cases.into_iter().enumerate() {
+        let wrapped = crate::aggregation::wrap_cast::wrap_with_cast_as_decimal(input)
+            .expect("constant decimal wrapper builds");
+        let result_type = wrapped.static_type().expect("wrapper result type");
+        assert_eq!(result_type.flen(), want_flen, "case {index} flen");
+        assert_eq!(result_type.decimal(), want_decimal, "case {index} decimal");
+    }
 }
 
 #[test]
-#[ignore = "go-parity-gap: BuildCastFunctionWithCheck drops Go's cast-as-string flen derivation (mysql default widths per source type, Tiny→4 ... LongBlob→4294967295); the Rust builder propagates the caller-supplied target type verbatim"]
 fn test_cast_as_char_field_type() {
-    // Go asserts expr.GetType(ctx).GetFlen() after wrapping constants of
-    // every source type with a cast to unspecified VarString.
+    let mut cases: Vec<(Expression, i64)> = Vec::new();
+
+    for (code, value, flen) in [
+        (C::Tiny, Datum::Int(0), 4),
+        (C::Short, Datum::Int(0), 6),
+        (C::Int24, Datum::Int(0), 9),
+        (C::Long, Datum::Int(0), 11),
+        (C::LongLong, Datum::Int(0), 20),
+    ] {
+        cases.push((const_typed(value, FieldType::new(code)), flen));
+    }
+    for (code, value, flen) in [
+        (C::Tiny, Datum::UInt(0), 3),
+        (C::Short, Datum::UInt(1), 5),
+        (C::Int24, Datum::UInt(11_111), 8),
+        (C::Long, Datum::UInt(1_111_111_111), 10),
+        (C::LongLong, Datum::UInt(111_111_111_111_111), 20),
+    ] {
+        cases.push((
+            const_typed(
+                value,
+                FieldType::new(code).with_added_flags(FieldTypeFlags::UNSIGNED),
+            ),
+            flen,
+        ));
+    }
+
+    for (value, flen) in [("12345", 12), ("1", 4), ("12345", 31)] {
+        let mut source = dec_ft();
+        source.set_flen(match flen {
+            12 => 10,
+            4 => 2,
+            31 => 30,
+            _ => unreachable!(),
+        });
+        source.set_decimal(match flen {
+            12 => 5,
+            4 => 1,
+            31 => 0,
+            _ => unreachable!(),
+        });
+        cases.push((
+            const_typed(Datum::Decimal(Decimal::from_literal(value)), source),
+            flen,
+        ));
+    }
+    cases.push((
+        const_typed(Datum::Float32(1.234), FieldType::new(C::Float)),
+        87,
+    ));
+    cases.push((
+        const_typed(Datum::Real(1.23456789), FieldType::new(C::Double)),
+        370,
+    ));
+    for (value, code, flen) in [
+        (Datum::Float32(1.234), C::Float, 87),
+        (Datum::Real(1.23456789), C::Double, 370),
+    ] {
+        cases.push((
+            const_typed(
+                value,
+                FieldType::new(code).with_added_flags(FieldTypeFlags::UNSIGNED),
+            ),
+            flen,
+        ));
+    }
+
+    for (code, kind, fsp, flen) in [
+        (C::Timestamp, TimeType::Timestamp, 0, 19),
+        (C::Timestamp, TimeType::Timestamp, 3, 23),
+        (C::Timestamp, TimeType::Timestamp, 6, 26),
+        (C::Datetime, TimeType::DateTime, 0, 19),
+        (C::Datetime, TimeType::DateTime, 3, 23),
+        (C::Datetime, TimeType::DateTime, 6, 26),
+    ] {
+        let mut source = FieldType::new(code);
+        source.set_decimal(fsp);
+        let value = Time::from_date_checked(2020, 10, 10, 10, 10, 10, 110, kind, 0)
+            .expect("Go source temporal fixture");
+        cases.push((const_typed(Datum::Time(value), source), flen));
+    }
+    for (fsp, flen) in [(0, 10), (3, 14), (6, 17)] {
+        let mut source = FieldType::new(C::Duration);
+        source.set_decimal(fsp);
+        cases.push((
+            const_typed(
+                Datum::Duration(MySqlDuration::new(10, 10, 10, 110, fsp).unwrap()),
+                source,
+            ),
+            flen,
+        ));
+    }
+    cases.push((
+        const_typed(
+            Datum::Time(
+                Time::from_date_checked(2020, 10, 10, 10, 10, 10, 110, TimeType::Date, 0)
+                    .expect("Go source DATE fixture"),
+            ),
+            FieldType::new(C::Date),
+        ),
+        10,
+    ));
+    cases.push((
+        const_typed(
+            Datum::Json(BinaryJSON::parse("1").expect("Go source JSON fixture")),
+            FieldType::new(C::Json),
+        ),
+        4_294_967_295,
+    ));
+
+    for (code, collate, flen) in [
+        (C::String, "binary", 50),
+        (C::String, "utf8mb4_bin", 50),
+        (C::VarString, "binary", 50),
+        (C::VarString, "utf8mb4_bin", 50),
+        (C::TinyBlob, "binary", 255),
+        (C::TinyBlob, "utf8mb4_bin", 255),
+        (C::Blob, "binary", 262_140),
+        (C::Blob, "utf8mb4_bin", 262_140),
+        (C::MediumBlob, "binary", 67_108_860),
+        (C::MediumBlob, "utf8mb4_bin", 67_108_860),
+        (C::LongBlob, "binary", 4_294_967_295),
+        (C::LongBlob, "utf8mb4_bin", 4_294_967_295),
+    ] {
+        let mut source = FieldType::new(code);
+        source.set_flen(if matches!(code, C::String | C::VarString) {
+            50
+        } else {
+            -1
+        });
+        source.set_collation_name(collate);
+        cases.push((const_typed(Datum::new_string("abcde"), source), flen));
+    }
+
+    assert_eq!(cases.len(), 40, "complete Go TestCastAsCharFieldType table");
+    for (index, (input, want_flen)) in cases.into_iter().enumerate() {
+        let mut target = FieldType::new(C::VarString);
+        target.set_flen(-1);
+        target.set_charset_name("utf8mb4");
+        target.set_collation_name("utf8mb4_bin");
+        let wrapped = crate::simple_expr::build_cast_function(input, target, false)
+            .expect("cast-as-char wrapper builds");
+        assert_eq!(
+            wrapped.static_type().expect("wrapper result type").flen(),
+            want_flen,
+            "case {index}"
+        );
+    }
 }
 
 #[test]

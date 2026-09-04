@@ -2,14 +2,14 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `tidb-expr` UNION source-specific decimal-cast parity batch
+- Work unit: `tidb-expr` cast-wrapper metadata-table parity batch
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: focused UNION decimal-signature regressions pass, including the
-  formerly ignored unsigned string-to-decimal source rows. Ready reports 409
-  datatype unit and 64 source/integration passes; expression reports 1,155
-  passes, one known loopback HTTP JSON-schema fixture failure, and 119
+- Validation: focused 51-row decimal-wrapper and 40-row CHAR-width table
+  regressions pass. Ready reports 409 datatype unit and 64 source/integration
+  passes; expression reports 1,159 passes, one known loopback HTTP JSON-schema
+  fixture failure, and 117
   ignored; executor reports 1,058 passes and 121 existing planner/storage/
   fixture failures. All three owner checks plus formatting and diff checks
   pass. Strict datatype clippy remains blocked only by the unrelated
@@ -121,6 +121,10 @@
   text before parsing, preserve positive DECIMAL values, and apply the merged
   target shape afterward. Focused regressions and the Ready profile are in
   `rust/testport/receipts/types_explain_format_audit.md`.
-- Next action: commit and push the UNION decimal-cast batch, then continue with
-  the next executable Rust package boundary. Direct datatype comparison
-  warning publication remains a bounded API follow-up.
+- Current batch: the complete Go-derived cast-wrapper metadata tables are
+  active in Rust: 51 decimal constant rows and 40 CHAR-width rows cover
+  source families, caps, FSP, JSON, and blob/string sizing. Focused evidence
+  is in `rust/testport/receipts/types_explain_format_audit.md`.
+- Next action: run the Ready profile, commit and push this metadata-table batch,
+  then continue with the next executable Rust package boundary. Direct
+  datatype comparison warning publication remains a bounded API follow-up.

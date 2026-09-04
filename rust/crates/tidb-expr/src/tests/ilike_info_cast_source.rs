@@ -377,7 +377,7 @@ fn test_vectorized_cast_real_as_time() {
 /// carrier is now implemented by `cast_unsigned_in_union`; without a
 /// target-specific decimal carrier this signature still cannot be driven.
 #[test]
-#[ignore = "go-parity-gap: string-to-DECIMAL inUnion signature remains unmodeled; unsigned integer UNION casts are covered"]
+#[ignore = "go-parity-gap: the vectorized string-to-DECIMAL inUnion signature remains unmodeled; scalar source-specific UNION casts are covered"]
 fn vectorized_cast_string_as_decimal_union_gap() {}
 
 /// go-parity-gap: `TestVectorizedBuiltinCastEvalOneVec` /

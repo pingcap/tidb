@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` cast-wrapper metadata tables): activated the complete
+  Go-derived `TestCastConstAsDecimalFieldType` (51 rows) and
+  `TestCastAsCharFieldType` (40 rows). The normal Rust wrapper and cast builder
+  now have executable coverage for source widths, decimal precision/scale
+  caps, temporal FSP, JSON widening, and blob/string families. Focused results
+  are recorded in `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (`tidb-expr` UNION decimal casts): aligned Go's
   `BuildCastFunction4Union` source-specific signatures. Rust now selects
   REAL/int/string/DECIMAL-to-DECIMAL UNION arms from the source eval type,
