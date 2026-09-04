@@ -286,3 +286,5 @@
 - 下轮恢复点: (1) error-code audit F2/F3/F4 核实; (2) StmtContext 补 priority/task_id/max_execution_time 穿线(2.1 显式残余); (3) B-3 命名(暂缓)。
 - F4 批(executor: 删除 DdlAdmissionError::new 隐藏默认)推送中: ~40 站点改 with_code(GENERIC_ERROR_CODE,...) 显式命名(零行为变化), const 升 pub(crate), From<ColumnTypeError> 同改。exec 套件 8 个失败经 stash A/B 证实为预存(失败名单完全一致)。fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) F3 read_only_scan errors 1235/42000; (2) F2 ~59 unknown 站点(需 live 证据, 记录); (3) F4 后续=逐站点 Go errno 对比(~40 个显式 1105)。
+- 本轮共 3 推: c4f20f9c7ef(distsql 1.1/2.1 关闭)、ca8b39ec1f0(F4 隐藏默认删除)、及上轮 f88422da30a(F1)。
+- F3 起点: rust/crates/tidb-planner/src/read_only_scan/errors.rs — ReadOnlyScanError/UnsupportedReadOnlyFeature(23 变体)无 MySQL code 字段, 经 SqlQueryError::unknown 成 1105; Go 等价拒绝=ErrNotSupportedYet 1235/42000。修法=加 code 字段+variant→errno 映射+SqlQueryError 构造点接线。
