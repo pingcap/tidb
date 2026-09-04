@@ -46,7 +46,7 @@ Projection	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column
     └─HashAgg	root		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:avg(Column, Column)->Column, funcs:firstrow(agg_predicate_pushdown.t.a)->agg_predicate_pushdown.t.a, funcs:firstrow(agg_predicate_pushdown.t.b)->agg_predicate_pushdown.t.b
       └─TableReader	root		data:HashAgg
         └─HashAgg	cop[tikv]		group by:agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, agg_predicate_pushdown.t.c, funcs:count(agg_predicate_pushdown.t.c)->Column, funcs:sum(agg_predicate_pushdown.t.c)->Column
-          └─Selection	cop[tikv]		gt(agg_predicate_pushdown.t.b, 2), or(gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.b, 2)), or(gt(agg_predicate_pushdown.t.a, 2), lt(agg_predicate_pushdown.t.b, 1))
+          └─Selection	cop[tikv]		gt(agg_predicate_pushdown.t.a, 2), gt(agg_predicate_pushdown.t.b, 2), or(gt(agg_predicate_pushdown.t.a, 1), gt(agg_predicate_pushdown.t.b, 2))
             └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select a, b, avg(c) as avgc from t group by a, b, c having
 (a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3) order by a, b, avgc;
