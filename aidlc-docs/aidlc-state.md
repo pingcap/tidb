@@ -2,7 +2,7 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` duration rounding parity batch (finding T6)
+- Work unit: `pkg/types`/`pkg/expression` `STR_TO_DATE` exhaustion parity batch (finding T10)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
@@ -42,4 +42,12 @@
   profile pass; strict clippy remains blocked by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics. Receipt:
   `rust/testport/receipts/types_duration_round_ties.md`.
+- Current batch: Rust `tidb-datatype` and live `tidb-expr` `STR_TO_DATE`
+  parsers now preserve Go's exhausted-token state for `%p`/`%H` meridiem
+  fixing. Focused source suites pass; datatype all-targets passes with 393
+  unit and 63 integration/source tests; expr all-targets has 1,130 passes,
+  one pre-existing external JSON-schema fixture failure, and 125 ignored gap
+  tests. Strict clippy remains blocked by unrelated `tidb-mysql` and generated
+  `tidb-proto` diagnostics. Receipt:
+  `rust/testport/receipts/types_str_to_date_exhaustion.md`.
 - Next action: continue with the next executable package boundary.

@@ -180,6 +180,14 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   temporal inventory, and Ready results are recorded in
   `receipts/types_duration_round_ties.md`.
 
+- 2026-09-04 (`pkg/types`/`pkg/expression` `STR_TO_DATE` exhaustion, finding
+  T10): aligned both Rust format parsers with Go's `ctx[token] = 0` state when
+  input ends before the remaining format. `%p`/`%H` meridiem fixes now see
+  token presence, while empty-fraction and skip-token behavior stays intact.
+  Focused datatype and live-expression regressions, complete owner profiles,
+  and the known external JSON-schema fixture failure are recorded in
+  `receipts/types_str_to_date_exhaustion.md`.
+
 - 2026-09-04 (`pkg/expression` decimal `DIV`, findings A/B): aligned the Rust
   decimal `IntDiv` value path with Go's post-`DecimalDiv` `ToInt`/`ToUint`
   conversion. `Decimal::div_rem_unbounded` preserves quotients above

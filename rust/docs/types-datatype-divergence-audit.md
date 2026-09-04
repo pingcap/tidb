@@ -452,17 +452,20 @@ Distinguishing input: numeric literal `0` into a `DATE` column under
 Distinguishing input: `sql_mode='NO_ZERO_IN_DATE'`,
 `STR_TO_DATE('2013-05','%Y-%m')` → Go NULL, Rust `2013-05-00`.
 
-## T10 (rank 3) — `ctx[token] = 0` on date exhaustion not ported
+## T10 (rank 3) — `ctx[token] = 0` on date exhaustion not ported (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:3021-3024` records `ctx[token] = 0` when the input
   runs out mid-format; `mysqlTimeFix` (`:2972-2978`) then errors when `%p`
   appears with `%H`, or when `Hour() == 0`.
-- Rust: `rust/crates/tidb-datatype/src/str_to_date.rs:124-126` returns early
-  with nothing recorded, so `fix_meridiem` (`:338-354`) sees `None`.
+- Rust: both `rust/crates/tidb-datatype/src/str_to_date.rs:124-143` and the
+  live `rust/crates/tidb-expr/src/time_fn/calendar.rs` evaluator now record
+  exhausted `%p`/`%H`/12-hour token presence before stopping. The focused
+  regressions and complete owner Ready profiles are recorded in
+  `rust/testport/receipts/types_str_to_date_exhaustion.md`.
 
-Distinguishing inputs: `STR_TO_DATE('11:30:45', '%H:%i:%s %p')` → Go NULL,
-Rust `0000-00-00 11:30:45`. `STR_TO_DATE('', '%p')` → Go NULL, Rust
-`0000-00-00 00:00:00`.
+Distinguishing inputs: `STR_TO_DATE('11:30:45', '%H:%i:%s %p')` → Go and Rust
+NULL. `STR_TO_DATE('', '%p')` → Go and Rust NULL, while the valid 12-hour
+case `STR_TO_DATE('11:30:45', '%h:%i:%s %p')` remains `11:30:45` (implicit AM).
 
 ## T11 (rank 3) — `%.` uses `is_ascii_punctuation` instead of `unicode.IsPunct`
 

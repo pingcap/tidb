@@ -123,6 +123,17 @@ fn parse_format(
             return Ok(!date.is_empty());
         }
         if date.is_empty() {
+            // Go's `strToDate` records the current token with a zero value
+            // when the input is exhausted. `mysqlTimeFix` then uses token
+            // presence (not just a parsed value) to reject `%p` paired with
+            // `%H`, and to reject an empty `%p`/zero-hour combination.
+            let (token, _) = next_token(format)?;
+            match token {
+                "%p" => parsed.meridiem = Some(false),
+                "%H" => parsed.hour24 = true,
+                "%h" | "%I" | "%l" => parsed.hour12 = true,
+                _ => {}
+            }
             return Ok(false);
         }
 
@@ -725,6 +736,19 @@ mod tests {
         );
         assert!(parse("2013+5", "%Y%.%c", true).is_err());
         assert!(parse("2013\u{1b4e}5", "%Y%.%c", true).is_err());
+    }
+
+    #[test]
+    fn exhausted_format_tokens_preserve_go_meridiem_fix_state() {
+        // Go records ctx["%p"] = 0 after the clock is consumed. With `%H`,
+        // mysqlTimeFix rejects the combination; with `%h`, the absent AM/PM
+        // token is treated as AM and the parsed hour remains valid.
+        assert!(parse("11:30:45", "%H:%i:%s %p", true).is_err());
+        assert_eq!(
+            parse("11:30:45", "%h:%i:%s %p", true),
+            Ok(CoreTime::from_date(0, 0, 0, 11, 30, 45, 0))
+        );
+        assert!(parse("", "%p", true).is_err());
     }
 
     #[test]

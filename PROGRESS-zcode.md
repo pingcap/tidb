@@ -76,6 +76,12 @@
   midpoint still round away from zero. Focused tie regressions and the complete
   owner profile are recorded in
   `rust/testport/receipts/types_duration_round_ties.md`.
+
+- 2026-09-04: aligned datatype and live expression `STR_TO_DATE` exhaustion
+  handling with Go's `ctx[token] = 0` state. `%p`/`%H` meridiem fixes now see
+  exhausted token presence, while empty fractions and skip tokens retain their
+  source behavior. Focused owner regressions and Ready profiles are recorded in
+  `rust/testport/receipts/types_str_to_date_exhaustion.md`.
 ## chunk A-1 范围确认（下批实现）
 ## chunk A-1 范围确认（下批实现；树当前全绿 1128/0 expr lib，A-1 实现需新上下文完整验证）
 

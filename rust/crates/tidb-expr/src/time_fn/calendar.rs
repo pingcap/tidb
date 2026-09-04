@@ -1534,6 +1534,30 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
             return Ok(Datum::Null);
         };
         format_pos += 1;
+        if date_pos >= date.len() {
+            // Go's `strToDate` records the current token with value zero and
+            // stops when the input is exhausted. `mysqlTimeFix` relies on the
+            // presence of `%p` and `%H` to reject that pairing; an absent `%p`
+            // after a 12-hour clock is treated as AM.
+            match specifier {
+                'p' => {
+                    value.am_pm = Some(false);
+                    break;
+                }
+                'H' | 'k' => {
+                    value.saw_24_hour = true;
+                    break;
+                }
+                'h' | 'I' | 'l' => {
+                    value.saw_12_hour = true;
+                    break;
+                }
+                // `%f` accepts an empty digit run, and the skip classes are
+                // no-ops on an exhausted input; retain their source behavior.
+                'f' | '@' | '#' | '.' => {}
+                _ => break,
+            }
+        }
         match specifier {
             'Y' => {
                 let Some((raw, consumed)) = parse_ascii_digits(&date[date_pos..], 4) else {

@@ -111,3 +111,15 @@ and whitespace checks passed. Strict clippy remains blocked by the unrelated
 `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics. Full commands,
 inventory, and remaining temporal boundaries are recorded in
 `rust/testport/receipts/types_duration_round_ties.md`.
+
+## `pkg/types`/`pkg/expression` `STR_TO_DATE` exhaustion batch
+
+The focused datatype and live-expression regressions passed, as did all
+existing `STR_TO_DATE` source vectors. The serialized `tidb-datatype` owner
+profile passed with 393 unit tests and 63 generated/source integration tests;
+the serialized `tidb-expr` owner profile had 1,130 passes, one pre-existing
+external HTTP JSON-schema fixture failure, and 125 documented gap tests
+ignored. Owner compilation, formatting, and whitespace checks passed. Strict
+clippy remains blocked by unrelated `tidb-mysql` `map-or-identity` and
+generated `tidb-proto` diagnostics. Full commands and boundaries are recorded
+in `rust/testport/receipts/types_str_to_date_exhaustion.md`.

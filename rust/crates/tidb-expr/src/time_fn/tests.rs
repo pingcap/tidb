@@ -798,6 +798,32 @@ fn str_to_date_punctuation_token_uses_go_unicode_categories() {
     );
 }
 
+#[test]
+fn str_to_date_exhausted_tokens_preserve_go_meridiem_fix_state() {
+    // Go records ctx["%p"] = 0 after the clock is consumed. `%H` plus that
+    // marker is invalid, while `%h` treats the absent marker as AM.
+    assert_eq!(
+        calendar::str_to_date(
+            &[string_datum("11:30:45"), string_datum("%H:%i:%s %p")],
+            &crate::NoColumns,
+        )
+        .unwrap(),
+        Datum::Null
+    );
+    assert_eq!(
+        calendar::str_to_date(
+            &[string_datum("11:30:45"), string_datum("%h:%i:%s %p")],
+            &crate::NoColumns,
+        )
+        .unwrap(),
+        Datum::new_string("11:30:45".to_owned())
+    );
+    assert_eq!(
+        calendar::str_to_date(&[string_datum(""), string_datum("%p")], &crate::NoColumns).unwrap(),
+        Datum::Null
+    );
+}
+
 /// A session whose `sql_mode` bits are chosen per test; everything else
 /// is [`crate::NoColumns`]' defaults.
 struct Modes(tidb_datatype::DateModes);
