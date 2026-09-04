@@ -282,3 +282,5 @@
 - cast 目标元数据批完成并推送 `01056120c85`(rebase 于 bcb8414aa6f 之上)。下轮恢复点: (1) 重读三份 divergence/audit 文档找新开放项; (2) B-3 命名项(暂缓); (3) 并发会话新增站点跟随。
 - F1 关闭: 审计描述的 8005 字面量站点已不存在; 现树 Undetermined 臂 code 1105 + "execution result undetermined" 正是 Go ClassGlobal terror 的 defaultMySQLErrorCode=ErrUnknown 回退(terror.go:266-274), 8005 是 local-latch 写冲突另一错误。文档已标记 CLOSED。
 - 下轮恢复点: (1) error-code audit F2/F3/F4 核实(可能同为过期或已由 error-code 批覆盖); (2) distsql-coprocessor-parity.md Rank1/Rank2 两开放项; (3) expr-builtin inventory A/B(DIV decimal 分歧)两项; (4) B-3 命名(暂缓)。
+- distsql Rank 1.1/2.1 核实为**已被并发会话修复**: 1.1 两条路径已发计算后的 flags(real_tikv_read 字段+select_push_down_flags 默认; cop_scan 经 StmtContext.push_down_flags, 有测试); 2.1 open_scan 已构造 DistSqlContext + RequestBuilder::from_context(resource group/replica read/paging), 残余字段(priority/task id/max_execution_time 等)已在代码中列为显式队列。audit 文档两节已标记 FIXED(verified)。
+- 下轮恢复点: (1) error-code audit F2/F3/F4 核实; (2) StmtContext 补 priority/task_id/max_execution_time 穿线(2.1 显式残余); (3) B-3 命名(暂缓)。

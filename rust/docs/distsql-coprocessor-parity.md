@@ -49,7 +49,20 @@ region can confirm it now warns rather than failing.
 
 ## Rank 1 — TiKV computes a different result
 
-### 1.1 `DAGRequest.flags` is hardcoded to `0` on both live paths
+### 1.1 `DAGRequest.flags` is hardcoded to `0` on both live paths — FIXED (verified 2026-09-05)
+
+Both live paths now send the computed word. The read-only tier's session
+carries a `push_down_flags` field defaulting to `select_push_down_flags()`'s
+derivation for the tier's single statement class — Go's `*ast.SelectStmt`
+arm of `ResetContextOfStmt` writes those bits as literals with no SQL-mode
+input — overridable with `set_push_down_flags` for a driver that runs a
+non-SELECT over the tier, and `construct_read_only_dag_req` passes the
+field through (`real_tikv_read.rs`). The cluster scan path threads
+`request.statement.push_down_flags` from the executor's `StmtContext` into
+`DagRequestContext::new` (`cop_scan.rs`), pinned by
+`the_statements_push_down_flags_reach_the_coprocessor_request`.
+
+Original finding, retained for the Go evidence:
 
 * Go: `pkg/executor/internal/builder/builder_utils.go:72`
   — `dagReq.Flags = sc.PushDownFlags()`, unconditionally, for every DAG.
@@ -130,7 +143,20 @@ I cannot send one request to check.
 
 ## Rank 2 — a correctness-relevant flag dropped
 
-### 2.1 `SetFromSessionVars` has no production caller
+### 2.1 `SetFromSessionVars` has no production caller — FIXED (verified 2026-09-05, bounded)
+
+The cluster scan path now builds a real `DistSqlContext` per request and
+drives the builder through `RequestBuilder::from_context` (`cop_scan.rs`
+`open_scan`): the resource group name travels per request (statement-scoped
+in Go), the replica-read preference is threaded from the `StmtContext`, and
+the IndexLookUp first-window paging floor raises the paging bounds. The
+remaining `SetFromSessionVars` inputs that no `StmtContext` carries yet —
+statement priority, request source, task id, `max_execution_time`,
+`tidb_kv_read_timeout`, the runaway checker — are documented in the code at
+the construction site as the explicit residual, so the gap is now a listed
+plumbing queue rather than an invisible default.
+
+Original finding, retained for the Go evidence:
 
 * Go: `pkg/distsql/request_builder.go:339-379` — every DAG request goes through
   `SetFromSessionVars`, which sets isolation level, priority, `NotFillCache`,
