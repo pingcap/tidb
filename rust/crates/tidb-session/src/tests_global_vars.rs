@@ -128,6 +128,27 @@ fn removed_system_variables_ignore_set_and_explain_reads() {
     );
 }
 
+/// Transcreated from Go `TestSetTIDBDistributeReorg`: the global distribution
+/// switch accepts both boolean values through the shared global accessor.
+#[test]
+fn distribute_reorg_global_switch_round_trips() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    session
+        .run("SET GLOBAL tidb_enable_dist_task = OFF")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_dist_task"),
+        Some("0".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_enable_dist_task = ON")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_dist_task"),
+        Some("1".to_owned())
+    );
+}
+
 #[test]
 fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     let globals = vars::GlobalSysvars::new();

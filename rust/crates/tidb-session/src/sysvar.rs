@@ -606,6 +606,34 @@ impl SysVarDef {
                 "The valid value of tidb_tiflash_auto_spill_ratio is between 0 and 0.85".into(),
             ));
         }
+        // Go's TTL schedule-window globals parse a short `HH:MM` value in
+        // UTC, then store/display the full-day form with an explicit `+0000`
+        // offset. Keep an already-expanded value canonical and reject invalid
+        // clock text instead of silently storing it as an opaque TypeTime.
+        if matches!(
+            self.name,
+            "tidb_ttl_job_schedule_window_start_time" | "tidb_ttl_job_schedule_window_end_time"
+        ) {
+            let text = validated.value.trim();
+            let parsed = text
+                .strip_suffix(" +0000")
+                .unwrap_or(text)
+                .split_once(':')
+                .and_then(|(hour, minute)| {
+                    Some((hour.parse::<u8>().ok()?, minute.parse::<u8>().ok()?))
+                });
+            if let Some((hour, minute)) = parsed {
+                if hour < 24 && minute < 60 {
+                    return Ok(Validated {
+                        value: format!("{hour:02}:{minute:02} +0000"),
+                        truncated: validated.truncated,
+                    });
+                }
+            }
+            return Err(ValidationError::Refused(format!(
+                "invalid TTL job schedule window time: {original}"
+            )));
+        }
         // Go's `collation_server` validation (`sysvar.go`'s `checkCollation`)
         // resolves names through the parser registry, stores the canonical
         // spelling, and returns `ErrUnknownCollation` (1273) for a missing
@@ -1481,6 +1509,46 @@ mod tests {
             "256"
         );
         assert_eq!(sv.validate_in_scope("0", SCOPE_GLOBAL).unwrap().value, "1");
+    }
+
+    /// Transcreated from Go `TestSetJobScheduleWindow`: TTL schedule globals
+    /// normalize short UTC clock values into the full `HH:MM +0000` form.
+    #[test]
+    fn ttl_job_schedule_window_validation_matches_go() {
+        for name in [
+            "tidb_ttl_job_schedule_window_start_time",
+            "tidb_ttl_job_schedule_window_end_time",
+        ] {
+            let sv = get_sys_var(name).unwrap();
+            assert_eq!(
+                sv.validate_in_scope("16:11", SCOPE_GLOBAL).unwrap().value,
+                "16:11 +0000",
+                "{name}"
+            );
+            assert_eq!(
+                sv.validate_in_scope("16:11 +0000", SCOPE_GLOBAL)
+                    .unwrap()
+                    .value,
+                "16:11 +0000",
+                "{name}"
+            );
+            assert!(
+                sv.validate_in_scope("25:00", SCOPE_GLOBAL).is_err(),
+                "{name}"
+            );
+        }
+    }
+
+    /// Transcreated from Go `TestDefaultMemoryDebugModeValue`: both memory
+    /// debug controls retain the zero default.
+    #[test]
+    fn memory_debug_mode_defaults_match_go() {
+        for name in [
+            "tidb_memory_debug_mode_min_heap_inuse",
+            "tidb_memory_debug_mode_alarm_ratio",
+        ] {
+            assert_eq!(get_sys_var(name).unwrap().value, "0", "{name}");
+        }
     }
 
     /// Transcreated from Go `TestTimestamp`: values below the minimum clamp

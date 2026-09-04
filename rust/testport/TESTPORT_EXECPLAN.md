@@ -63,6 +63,10 @@ For each bounded behavior cluster:
   QueryLogMaxLen, CommitterConcurrency, and DDLFlashbackConcurrency. The
   TiFlash numeric validation closures now match Go's -1 and 0.85 behavior;
   typed SessionVars TiFlash hook fields remain explicitly partial.
+- 2026-09-05 (`pkg/sessionctx/variable` remaining scalar hooks): added TTL
+  schedule-window UTC normalization, memory-debug defaults, and distributed
+  reorg global round-trip coverage; reconciled their b010 receipt rows while
+  retaining the process-wide typed TTL getter as an explicit boundary.
 - 2026-09-05 (`pkg/sessionctx/variable` secure_auth validation): ported
   `TestSecureAuth`'s per-variable validation. `secure_auth=OFF` now returns
   Go's 1231 wrong-value error and leaves the global ON default unchanged;
