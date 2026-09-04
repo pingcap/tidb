@@ -975,6 +975,12 @@ func checkAndRenameTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job, t
 		tblInfo.AutoIDSchemaID = 0
 	}
 
+	err = moveSepAutoIncIDOnCrossDBRename(t, tblInfo, args.OldSchemaID, args.NewSchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	tblInfo.Name = args.NewTableName
 	err = t.CreateTableOrView(args.NewSchemaID, tblInfo)
 	if err != nil {
@@ -994,6 +1000,49 @@ func checkAndRenameTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job, t
 	}
 
 	return ver, nil
+}
+
+func moveSepAutoIncIDOnCrossDBRename(t *meta.Mutator, tblInfo *model.TableInfo, oldSchemaID, newSchemaID int64) error {
+	if oldSchemaID == newSchemaID || !tblInfo.SepAutoInc() || tblInfo.GetAutoIncrementColInfo() == nil {
+		return nil
+	}
+
+	oldAutoIncID := t.GetAutoIDAccessors(oldSchemaID, tblInfo.ID).IncrementID(model.TableInfoVersion5)
+	newAutoIncID := t.GetAutoIDAccessors(newSchemaID, tblInfo.ID).IncrementID(model.TableInfoVersion5)
+	oldBase, err := oldAutoIncID.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newBase, err := newAutoIncID.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := newAutoIncID.Put(maxAutoIDBase(oldBase, newBase, tblInfo.IsAutoIncColUnsigned())); err != nil {
+		return errors.Trace(err)
+	}
+	// Del skips the write when the key does not exist. Force the old key into
+	// the transaction buffer first so the final delete leaves a tombstone and
+	// conflicts with a concurrent first refill that observed the table in the
+	// old database. Without this write conflict, that refill could commit after
+	// the rename and resurrect the old allocator key from zero.
+	if err := oldAutoIncID.Put(oldBase); err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(oldAutoIncID.Del())
+}
+
+func maxAutoIDBase(a, b int64, isUnsigned bool) int64 {
+	if isUnsigned {
+		if uint64(a) >= uint64(b) {
+			return a
+		}
+		return b
+	}
+	if a >= b {
+		return a
+	}
+	return b
 }
 
 func adjustForeignKeyChildTableInfoAfterRenameTable(
