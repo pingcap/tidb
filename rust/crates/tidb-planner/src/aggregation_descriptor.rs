@@ -82,6 +82,10 @@ pub enum AggregateKind {
     Max,
     /// MIN.
     Min,
+    /// MAX_COUNT: number of rows equal to the maximum argument.
+    MaxCount,
+    /// MIN_COUNT: number of rows equal to the minimum argument.
+    MinCount,
     /// FIRST_ROW.
     FirstRow,
     /// VAR_POP (including the SQL `VARIANCE` alias after parser normalization).
@@ -122,6 +126,10 @@ impl AggregateKind {
             Some(Self::Max)
         } else if name.eq_ignore_ascii_case("min") {
             Some(Self::Min)
+        } else if name.eq_ignore_ascii_case("max_count") {
+            Some(Self::MaxCount)
+        } else if name.eq_ignore_ascii_case("min_count") {
+            Some(Self::MinCount)
         } else if name.eq_ignore_ascii_case("firstrow") {
             Some(Self::FirstRow)
         } else if name.eq_ignore_ascii_case("var_pop") || name.eq_ignore_ascii_case("variance") {
@@ -153,7 +161,10 @@ impl AggregateKind {
     /// Whether Go aggregate evaluation records a count partial result.
     #[must_use]
     pub const fn needs_count(self) -> bool {
-        matches!(self, Self::Count | Self::Avg)
+        matches!(
+            self,
+            Self::Count | Self::Avg | Self::MaxCount | Self::MinCount
+        )
     }
 
     /// Whether Go aggregate evaluation records a value partial result.
@@ -262,6 +273,8 @@ mod tests {
             ("group_concat", AggregateKind::GroupConcat, false, true),
             ("max", AggregateKind::Max, false, true),
             ("min", AggregateKind::Min, false, true),
+            ("max_count", AggregateKind::MaxCount, true, true),
+            ("min_count", AggregateKind::MinCount, true, true),
             ("firstrow", AggregateKind::FirstRow, false, true),
             ("var_pop", AggregateKind::VarPop, false, false),
             ("var_samp", AggregateKind::VarSamp, false, false),

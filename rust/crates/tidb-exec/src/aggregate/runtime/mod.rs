@@ -33,7 +33,7 @@ pub use count::{
     CountDistinctDecimalState, CountDistinctDurationState, CountDistinctIntState,
     CountDistinctRealState, CountDistinctStringState, CountState, CountWithDistinctState,
 };
-pub use max_min::MaxMinState;
+pub use max_min::{MaxMinCountState, MaxMinState};
 pub use sum::{
     SumDecimalState, SumFloat64State, SumInt64State, SumIntError, SumState, SumUint64State,
 };
@@ -98,6 +98,17 @@ pub fn fold_values(
             let mut destination = MaxMinState::new(kind).expect("MAX/MIN kind was matched");
             destination.merge_from(&partial)?;
             Ok(destination.result())
+        }
+        AggregateKind::MaxCount | AggregateKind::MinCount => {
+            let mut partial =
+                MaxMinCountState::new(kind).expect("MAX_COUNT/MIN_COUNT kind was matched");
+            for value in &values {
+                partial.update(value)?;
+            }
+            let mut destination =
+                MaxMinCountState::new(kind).expect("MAX_COUNT/MIN_COUNT kind was matched");
+            destination.merge_from(&partial)?;
+            Ok(Datum::Int(destination.result()))
         }
         AggregateKind::VarPop
         | AggregateKind::VarSamp

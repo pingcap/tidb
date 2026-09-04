@@ -29,6 +29,102 @@ pub struct MaxMinState {
     value: Option<Datum>,
 }
 
+/// Nullable MAX_COUNT/MIN_COUNT partial state.
+///
+/// Go's pair evaluator tracks the winning value and the number of rows tied
+/// at that value. NULL arguments are ignored; an empty or all-NULL group
+/// returns the count-shaped zero value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaxMinCountState {
+    kind: AggregateKind,
+    value: Option<Datum>,
+    count: i64,
+}
+
+impl MaxMinCountState {
+    /// Creates an empty state for MAX_COUNT or MIN_COUNT.
+    #[must_use]
+    pub fn new(kind: AggregateKind) -> Option<Self> {
+        matches!(kind, AggregateKind::MaxCount | AggregateKind::MinCount).then_some(Self {
+            kind,
+            value: None,
+            count: 0,
+        })
+    }
+
+    /// Updates the winner and tie count with one input value.
+    pub fn update(&mut self, value: &Datum) -> Result<(), ExecError> {
+        if value.is_null() {
+            return Ok(());
+        }
+        let Some(current) = &self.value else {
+            value_cmp(value, value)?;
+            self.value = Some(value.clone());
+            self.count = 1;
+            return Ok(());
+        };
+        match value_cmp(value, current)? {
+            ordering if ordering == self.wanted_ordering() => {
+                self.value = Some(value.clone());
+                self.count = 1;
+            }
+            std::cmp::Ordering::Equal => {
+                self.count += 1;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Merges a partial winner/count pair into this state.
+    pub fn merge_from(&mut self, source: &Self) -> Result<(), ExecError> {
+        if self.kind != source.kind {
+            return Err(ExecError::Unsupported(
+                "MAX_COUNT/MIN_COUNT aggregate kind mismatch",
+            ));
+        }
+        let Some(source_value) = &source.value else {
+            return Ok(());
+        };
+        let Some(current) = &self.value else {
+            self.value = Some(source_value.clone());
+            self.count = source.count;
+            return Ok(());
+        };
+        match value_cmp(source_value, current)? {
+            ordering if ordering == self.wanted_ordering() => {
+                self.value = Some(source_value.clone());
+                self.count = source.count;
+            }
+            std::cmp::Ordering::Equal => {
+                self.count += source.count;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Resets the state to an empty group.
+    pub fn reset(&mut self) {
+        self.value = None;
+        self.count = 0;
+    }
+
+    /// Returns the count of rows tied at the selected extreme.
+    #[must_use]
+    pub const fn result(&self) -> i64 {
+        self.count
+    }
+
+    fn wanted_ordering(&self) -> std::cmp::Ordering {
+        match self.kind {
+            AggregateKind::MaxCount => std::cmp::Ordering::Greater,
+            AggregateKind::MinCount => std::cmp::Ordering::Less,
+            _ => unreachable!("constructor accepts only MAX_COUNT/MIN_COUNT"),
+        }
+    }
+}
+
 impl MaxMinState {
     /// Creates an empty state for MAX or MIN, rejecting unrelated kinds.
     #[must_use]

@@ -48,6 +48,15 @@ For each bounded behavior cluster:
   container's drop cleanup for cancelled partial runs. The focused
   fail-before/pass-after regression and Ready checks are recorded in
   `receipts/executor_root_distsql_indexjoin.md`.
+- 2026-09-05 (`pkg/executor/aggfuncs` max/min-count pair state): ported the
+  dependency-closed evaluator state into `tidb-exec`. `MaxMinCountState` now
+  ignores NULLs, tracks rows tied at the winning MAX/MIN extreme, merges
+  partial states with Go's winner-and-tie semantics, returns zero for empty
+  groups, and preserves native UInt/Decimal/collated-string comparisons.
+  Focused source-derived regressions and the `tidb-exec` Ready profile pass.
+  Live `tidb-executor` hash-aggregation dispatch, tipb expression enums,
+  row-based final mode, DISTINCT/window state, and SQL integration remain
+  explicit cross-crate boundaries in `receipts/expression_aggregation_audit.md`.
 - 2026-09-05 (`pkg/executor/sortexec` repeated TopN worker spill rounds):
   aligned Rust with Go's post-spill fetch loop. Workers now drain their
   bounded heaps once per shared spill generation while input continues, then
