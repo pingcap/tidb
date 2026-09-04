@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the five focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the six focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -325,3 +325,37 @@ The focused test passed after the fix; the Cargo manifest was restored to its
 original `openssl = "0.10"` line and has no diff. The full executor suite,
 parallel spill integration under live TiKV, and native TiKV behavior were not
 run.
+
+## TopN spill threshold alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this fourth
+Rust-only fix. Go's `TopNSpillAction` resolves the package-level
+`hasEnoughDataToSpill` in `sort_spill.go`, whose inclusive threshold is one
+tenth of the triggering quota. Rust reused `aggregate`'s helper, which uses a
+fifth, so a TopN holding exactly 10% of quota fell through to cancellation
+instead of requesting a spill. The TopN action now applies the sortexec
+tenth-of-quota check directly; aggregation's separate fifth threshold is
+unchanged.
+
+The focused regression is
+`topn_spill::tests::topn_requests_spill_at_exact_tenth_of_quota`. Before the
+production change it failed with `TopN must request a spill at the inclusive
+tenth-of-quota boundary`; after the change it passed. The test calls the actual
+TopN action with the operator at 10% and the trigger at its quota, proving the
+package-level helper selection and inclusive boundary.
+
+Rust ownership is unchanged from the inventory above: `topn_spill.rs` owns the
+TopN action and its compiled regression module, while `agg_spill.rs` retains
+the serial aggregation-only helper. No Go, Bazel, generated, fixture, or
+platform artifact changed.
+
+## TopN spill threshold Ready validation
+
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib topn_spill::tests::topn_requests_spill_at_exact_tenth_of_quota -- --exact --nocapture` (with a temporary host-only `openssl` vendored feature toggle; reverted immediately after the run)
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The focused test passed after the fix; the Cargo manifest was restored to its
+original `openssl = "0.10"` line and has no diff. The full executor suite,
+TopN spill integration under live TiKV, and native TiKV behavior were not run.

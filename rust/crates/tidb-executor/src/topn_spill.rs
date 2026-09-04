@@ -97,10 +97,11 @@ impl TopNSpillAction {
         (action, need_spill)
     }
 
-    /// Go `hasEnoughDataToSpill`, shared with the aggregation: a fifth of the
-    /// quota, read off the operator's own tracker.
+    /// Go `sortexec.hasEnoughDataToSpill`: a tenth of the quota, read off the
+    /// operator's own tracker. The aggregation's similarly named helper uses
+    /// a fifth, but TopN resolves the sortexec package helper instead.
     fn has_enough_data_to_spill(&self, t: &Arc<Tracker>) -> bool {
-        crate::agg_spill::has_enough_data_to_spill(&self.topn_tracker, t)
+        self.topn_tracker.bytes_consumed() >= t.get_bytes_limit() / 10
     }
 }
 
@@ -293,4 +294,29 @@ impl SpilledRun {
 
 fn spill_error(error: tidb_chunk::chunk_in_disk::DiskError) -> ExecError {
     ExecError::SpillFailed(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go's `sortexec.hasEnoughDataToSpill` allows a TopN spill at exactly a
+    /// tenth of the triggering quota. This is distinct from aggregation's
+    /// one-fifth threshold despite the shared helper name in the Go codebase.
+    #[test]
+    fn topn_requests_spill_at_exact_tenth_of_quota() {
+        let quota = 100_i64;
+        let topn_tracker = Tracker::new(1, -1);
+        topn_tracker.replace_bytes_used(quota / 10);
+        let triggered_tracker = Tracker::new(2, quota);
+        triggered_tracker.replace_bytes_used(quota);
+        let (action, need_spill) = TopNSpillAction::new(&topn_tracker);
+
+        action.action(&triggered_tracker);
+
+        assert!(
+            need_spill.load(SeqCst),
+            "TopN must request a spill at the inclusive tenth-of-quota boundary"
+        );
+    }
 }

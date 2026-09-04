@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`pkg/executor/sortexec` TopN spill threshold): aligned Rust's
+  `TopNSpillAction` with Go's package-level tenth-of-quota guard. The focused
+  action-level regression fails at exactly 10% under the old aggregation
+  one-fifth reuse and passes after the fix; the package inventory and Ready
+  evidence are recorded in `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-04 (`pkg/executor/sortexec` parallel spill trigger guard): aligned
   Rust's `ParallelSortSpillAction` with Go's requirement that the triggering
   tracker is over quota before a spill is requested. The focused action-level
