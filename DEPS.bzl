@@ -299,13 +299,6 @@ def go_deps():
         version = "v0.2.0",
     )
     go_repository(
-        name = "com_github_aliyun_alibaba_cloud_sdk_go",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/aliyun/alibaba-cloud-sdk-go",
-        sum = "h1:Q/yk4z/cHUVZfgTqtD09qeYBxHwshQAjVRX73qs8UH0=",
-        version = "v1.61.1581",
-    )
-    go_repository(
         name = "com_github_aliyun_alibabacloud_oss_go_sdk_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aliyun/alibabacloud-oss-go-sdk-v2",
@@ -1992,13 +1985,6 @@ def go_deps():
         importpath = "github.com/gogo/status",
         sum = "h1:+eIkrewn5q6b30y+g/BJINVVdi2xH7je5MPJ3ZPK3JA=",
         version = "v1.1.0",
-    )
-    go_repository(
-        name = "com_github_goji_httpauth",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/goji/httpauth",
-        sum = "h1:lBXNCxVENCipq4D1Is42JVOP4eQjlB8TQ6H69Yx5J9Q=",
-        version = "v0.0.0-20160601135302-2da839ab0f4d",
     )
     go_repository(
         name = "com_github_golang_freetype",
