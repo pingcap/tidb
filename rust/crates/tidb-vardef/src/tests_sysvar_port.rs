@@ -41,28 +41,6 @@ use super::global_sysvar_initial::{global_system_variable_initial_value, GlobalS
 use super::tidb_vars;
 
 // ---------------------------------------------------------------------------
-// pkg/sessionctx/variable/embedding_vars_test.go
-// ---------------------------------------------------------------------------
-
-/// Go `pkg/sessionctx/variable/embedding_vars_test.go::TestNormalizeOpenAIEmbeddingAPIBase`.
-// go-parity-gap: NormalizeOpenAIEmbeddingAPIBase + OpenAI endpoint whitelist live in sysvar/embedding code not ported to this crate
-#[test]
-#[ignore]
-fn normalize_open_ai_embedding_api_base_unported() {}
-
-/// Go `pkg/sessionctx/variable/embedding_vars_test.go::TestGetOpenAIEmbeddingBaseURL`.
-// go-parity-gap: GetOpenAIEmbeddingBaseURL + EmbedOpenAIAPIBase atomic + SysVar SetGlobal hooks not ported
-#[test]
-#[ignore]
-fn get_open_ai_embedding_base_url_unported() {}
-
-/// Go `pkg/sessionctx/variable/embedding_vars_test.go::TestEmbeddingAPIKeySysVars`.
-// go-parity-gap: embedding API-key SysVars with masking (maskEmbeddingAPIKey) + EmbeddingConfigVersion counter not ported
-#[test]
-#[ignore]
-fn embedding_api_key_sys_vars_unported() {}
-
-// ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/main_test.go
 // ---------------------------------------------------------------------------
 

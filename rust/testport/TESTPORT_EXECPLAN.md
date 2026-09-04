@@ -68,7 +68,11 @@ For each bounded behavior cluster:
 - 2026-09-05 (`pkg/sessionctx/variable` receipt cleanup): removed the stale
   empty ignored shims for every sysvar test whose executable coverage now
   lives in `tidb-session`; the remaining `tidb-vardef` inventory is 13
-  passing constant/initial-value checks and 11 explicit gap tests.
+  passing constant/initial-value checks and 8 explicit gap tests.
+- 2026-09-05 (`pkg/sessionctx/variable` embedding inventory): removed the
+  three stale vardef embedding shims now covered by the session-owned
+  endpoint normalizer, GLOBAL configuration-version hook, and API-key
+  masking/version tests.
 - 2026-09-05 (`pkg/sessionctx/variable` TTL schedule-window inventory): wired
   GLOBAL TypeTime writes through the issuing session's timezone so short
   `HH:MM` values retain the same numeric offset as Go's `ParseInLocation`;

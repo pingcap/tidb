@@ -15,6 +15,14 @@ use crate::sysvar::{get_sys_var, VarType};
 use crate::tests_support::session_with_privileges;
 use crate::vars::GlobalSysvars;
 use crate::{Datum, Session, StmtResult};
+use std::sync::{Mutex, OnceLock};
+
+fn embedding_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 fn one(session: &mut Session, sql: &str) -> String {
     match session.run(sql).expect(sql) {
@@ -93,6 +101,7 @@ fn normalize_openai_embedding_api_base_matches_go() {
 /// Go `embedding_vars_test.go::TestGetOpenAIEmbeddingBaseURL`.
 #[test]
 fn openai_embedding_global_write_normalizes_and_versions() {
+    let _lock = embedding_test_lock();
     let mut session = session_with_privileges();
     session.attach_globals(GlobalSysvars::new()).unwrap();
     let before = embedding::config_version();
@@ -131,6 +140,7 @@ fn openai_embedding_global_write_normalizes_and_versions() {
 /// Go `embedding_vars_test.go::TestEmbeddingAPIKeySysVars`.
 #[test]
 fn embedding_api_keys_are_masked_and_versioned() {
+    let _lock = embedding_test_lock();
     let mut session = session_with_privileges();
     session.attach_globals(GlobalSysvars::new()).unwrap();
     let key_names = [
