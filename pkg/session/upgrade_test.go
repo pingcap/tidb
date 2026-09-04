@@ -15,6 +15,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -22,7 +23,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,4 +69,37 @@ func TestUpgradeToVerFunctionsCheck(t *testing.T) {
 	require.Equal(t, int64(277), firstVersionAfterReleaseNextGen202603,
 		"versions 257 through 276 should be reserved for release-nextgen-202603")
 	require.Equal(t, currentBootstrapVersion, lastVer, "last version in upgradeToVerFunctions should match currentBootstrapVersion")
+}
+
+func TestUpgradeVersion287TTLTaskSplitBy(t *testing.T) {
+	defer memory.CleanupGlobalMemArbitratorForTest()
+
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "ALTER TABLE mysql.tidb_ttl_task DROP COLUMN split_by")
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(version287-1))
+	require.NoError(t, txn.Commit(context.Background()))
+	RevertVersionAndVariables(t, se, version287-1)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	dom.Close()
+	newDom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer newDom.Close()
+
+	se = CreateSessionAndSetID(t, store)
+	ver, err := GetBootstrapVersion(se)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	rs := MustExecToRecodeSet(t, se, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'mysql' AND table_name = 'tidb_ttl_task' AND column_name = 'split_by'")
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(context.Background(), req))
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, int64(1), req.GetRow(0).GetInt64(0))
+	require.NoError(t, rs.Close())
 }
