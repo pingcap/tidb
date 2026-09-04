@@ -486,7 +486,6 @@ pub fn is_valid_current_timestamp_expr(
 /// the small arithmetic form the source helper evaluates before parsing.
 /// Unknown AST forms preserve Go's zero-value datum (`NULL`) rather than
 /// pretending to evaluate a wider build-context surface.
-#[must_use]
 pub fn get_time_value(
     cols: &dyn Columns,
     expr: &Expr,
@@ -624,7 +623,7 @@ fn current_date_value(
     let current = current_time_value(cols, kind, fsp)?;
     let core = current.core_time();
     tidb_datatype::Time::from_date_checked(
-        core.year() as i32,
+        core.year(),
         core.month() as i32,
         core.day() as i32,
         0,
