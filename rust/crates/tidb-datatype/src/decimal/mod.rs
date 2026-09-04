@@ -1495,7 +1495,19 @@ impl Decimal {
         }
         let split = digits.len() - shift;
         let kept = &digits[..split];
-        let discarded_nonzero = digits[split..].bytes().any(|digit| digit != b'0');
+        // Go's non-word-aligned `MyDecimal.Round` branch has a documented
+        // ceiling TODO and inspects only the first digit after the cut. The
+        // word-aligned branch scans every discarded word; preserve that
+        // source inconsistency instead of applying mathematical ceiling to
+        // the whole remainder in both cases.
+        let discarded_nonzero = if target_scale >= 0 && target_scale % DIGITS_PER_WORD as i32 == 0 {
+            digits[split..].bytes().any(|digit| digit != b'0')
+        } else {
+            digits
+                .as_bytes()
+                .get(split)
+                .is_some_and(|digit| *digit != b'0')
+        };
         let mut kept = if discarded_nonzero {
             digit_add(kept, "1")
         } else {

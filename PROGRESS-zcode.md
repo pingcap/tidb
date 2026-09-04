@@ -115,6 +115,12 @@
   The already-pushed datatype and expression changes share Go's Unicode
   punctuation classifier; focused regression and Ready evidence remain in
   `rust/testport/receipts/expression_collation_audit.md`.
+
+- 2026-09-04: aligned decimal `ModeCeiling` with Go's split rounding logic.
+  Non-word-aligned cuts inspect only the first discarded digit, while aligned
+  cuts scan the full discarded word suffix. Focused decimal regression and
+  owner Ready results are recorded in
+  `rust/testport/receipts/types_decimal_round_ceiling.md`.
 ## chunk A-1 范围确认（下批实现）
 ## chunk A-1 范围确认（下批实现；树当前全绿 1128/0 expr lib，A-1 实现需新上下文完整验证）
 

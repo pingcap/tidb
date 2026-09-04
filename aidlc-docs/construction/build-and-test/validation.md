@@ -179,3 +179,11 @@ The existing focused regression and owner Ready profile cover the T11 fix:
 ASCII symbols such as `+`. The shared classifier is used by both Rust parser
 owners. Full source inventory and validation evidence remain in
 `rust/testport/receipts/expression_collation_audit.md`.
+
+## `pkg/types` decimal `ModeCeiling` batch
+
+The focused decimal round regression passed. Rust now mirrors Go's
+non-word-aligned `ModeCeiling` first-digit inspection and its word-aligned
+full-suffix control. Owner profiles, compilation, formatting, and whitespace
+checks are recorded in `rust/testport/receipts/types_decimal_round_ceiling.md`;
+the standard expression and executor profile blockers remain unrelated.

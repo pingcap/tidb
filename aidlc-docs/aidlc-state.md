@@ -2,7 +2,7 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/expression` `STR_TO_DATE` punctuation closure (finding T11)
+- Work unit: `pkg/types` decimal `ModeCeiling` parity batch (finding M5)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
@@ -78,5 +78,9 @@
   now recorded as T11 closed in the main audit. Datatype and expression use
   the shared Go Unicode punctuation classifier; focused regressions and Ready
   evidence remain in `rust/testport/receipts/expression_collation_audit.md`.
+- Current batch: Rust `Decimal::round_ceiling_to_scale` now matches Go's
+  non-word-aligned first-discarded-digit behavior while retaining the
+  word-aligned full-suffix scan. Receipt:
+  `rust/testport/receipts/types_decimal_round_ceiling.md`.
 - Next action: continue with the next executable package boundary after the
-  T11 closure is committed and pushed.
+  M5 batch is committed and pushed.

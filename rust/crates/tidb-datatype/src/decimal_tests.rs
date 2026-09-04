@@ -1123,6 +1123,29 @@ fn test_round_with_ceil() {
     }
 }
 
+/// Go's non-word-aligned `ModeCeiling` branch inspects only the first
+/// discarded digit. A later non-zero tail therefore does not resurrect
+/// `1.0001` when rounding to one fractional digit.
+#[test]
+fn decimal_round_ceiling_uses_one_digit_for_non_word_aligned_scale() {
+    assert_eq!(
+        parse_signed("1.0001").round_ceiling_to_scale(1).to_string(),
+        "1.0"
+    );
+    assert_eq!(
+        parse_signed("1.0001").round_ceiling_to_scale(3).to_string(),
+        "1.001"
+    );
+    // A word-aligned cut still scans the complete discarded fraction, as Go
+    // does in its separate branch.
+    assert_eq!(
+        parse_signed("1.000000001")
+            .round_ceiling_to_scale(0)
+            .to_string(),
+        "2"
+    );
+}
+
 /// The fixed-word `MyDecimal::round` path must inspect every discarded digit
 /// for `ModeCeiling`, not only the first digit after the requested scale.  Go's
 /// source marks this branch as a TODO; keeping the complete remainder here

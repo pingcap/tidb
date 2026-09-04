@@ -653,7 +653,7 @@ Go: `fixWordCntError(3, 8)` → `(3, 6, ErrTruncated)`, `digitsFrac` clamped to
 **no warning**. The value printed at scale 30 is identical, so this is
 warning-loss rather than a wrong number.
 
-## M5 (rank 1 in-function, rank 4 in practice) — `ModeCeiling` scans every discarded digit; Go scans one
+## M5 (rank 1 in-function, rank 4 in practice) — `ModeCeiling` scans every discarded digit; Go scans one (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:901-909` — the non-word-aligned branch
   (`frac % 9 != 0`) computes `digAfterScale`, the **single** digit at position
@@ -661,19 +661,21 @@ warning-loss rather than a wrong number.
   source carries `/* TODO - fix this code as it won't work for CEILING mode */`
   immediately above. The word-aligned branch (`:871-881`) *does* scan later
   words — the inconsistency is Go's.
-- Rust: `rust/crates/tidb-datatype/src/decimal.rs:1046` —
-  `discarded_nonzero = digits[split..].bytes().any(|d| d != b'0')`, i.e. the
-  aligned behaviour for all `frac`.
+- Rust: `Decimal::round_ceiling_to_scale` now preserves Go's branch split:
+  aligned cuts scan all discarded words, while non-word-aligned cuts inspect
+  only the first discarded digit.
 
-Distinguishing input: `1.0001` at `frac = 1`. Go `Round(&to, 1, ModeCeiling)` →
-**`1.0`**; Rust `round_ceiling_to_scale(1)` → **`1.1`**.
+Distinguishing input: `1.0001` at `frac = 1`. Go `Round(&to, 1, ModeCeiling)`
+and Rust `round_ceiling_to_scale(1)` now both return **`1.0`**.
 
 Why the `go_round_with_ceil` fixture misses it: every case there has a nonzero
 digit exactly at the cut (`15.17`@1, `123456789.987654321`@1), where the
 one-digit and all-digits rules agree.
 
 Practical blast radius: `grep -rn ModeCeiling pkg/` finds only
-`mydecimal_test.go` and `mydecimal_benchmark_test.go` — no production caller.
+`mydecimal_test.go` and `mydecimal_benchmark_test.go` — no SQL production
+caller. The focused Rust regression and owner Ready evidence are recorded in
+`rust/testport/receipts/types_decimal_round_ceiling.md`.
 
 ## M6 (rank 1 in-function, unreachable via SQL) — add/sub overflow test is result-based
 

@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (M5, `pkg/types` decimal `ModeCeiling`): aligned the Rust
+  value-layer rounder with Go's intentionally split source behavior. Aligned
+  cuts inspect all discarded words; non-word-aligned cuts inspect only the
+  first discarded digit. Focused decimal regression and Ready evidence are in
+  `receipts/types_decimal_round_ceiling.md`.
 - 2026-09-04 (T11 closure, expression `STR_TO_DATE` punctuation): recorded
   the already-pushed Unicode punctuation alignment in the main temporal audit.
   Both datatype and expression parsers use `is_go_punctuation`; the focused
