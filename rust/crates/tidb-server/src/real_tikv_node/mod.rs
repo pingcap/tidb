@@ -51,8 +51,8 @@ use tidb_exec::real_tikv_dml::{
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
     ProductionReadSessionFactory, ProductionReadTransport, ReadProcessShutdownError,
-    ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadSession,
-    RealTiKvReadSessionOpener,
+    ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadError,
+    RealTiKvReadSession, RealTiKvReadSessionOpener,
 };
 use tidb_exec::real_tikv_stats::{
     load_stats_snapshot_and_loader, update_stats_cache_from_cluster, InitialStatsLoad,
@@ -70,7 +70,8 @@ use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindVa
 use tidb_planner::read_only_scan::{
     configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredColumnKind, ConfiguredIndex,
     ConfiguredScalarType, ConfiguredTable, PreparedAggregate, PreparedAggregateKind,
-    ReadOnlyScanPlan,
+    PreparedBindError, PreparedPlanError, ReadOnlyScanError, ReadOnlyScanPlan,
+    UnsupportedReadOnlyFeature,
 };
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::ColumnInfo;
@@ -715,7 +716,7 @@ where
             let query = self
                 .inner
                 .execute_lowered_plan_with_cancellation(plan, cancellation)
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                .map_err(read_error_sql_error)?;
             return Ok(self.complete_query(query, cancellation_lease));
         }
         let lock = plan.lock();
@@ -759,7 +760,7 @@ where
                 .inner
                 .execute_lowered_plan_with_cancellation(plan, cancellation),
         }
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        .map_err(read_error_sql_error)?;
         let result = self.complete_query(query, cancellation_lease);
         let Some((rows, handles)) = overlay else {
             return Ok(result);
@@ -1067,18 +1068,74 @@ pub(crate) fn refusal_aware_error(
     refusals: &[LoadedTableRefusal],
     message: String,
 ) -> SqlQueryError {
+    loaded_table_refusal_error(refusals, &message)
+        .unwrap_or_else(|| SqlQueryError::unknown(message))
+}
+
+fn loaded_table_refusal_error(
+    refusals: &[LoadedTableRefusal],
+    message: &str,
+) -> Option<SqlQueryError> {
     let lowered = message.to_lowercase();
     for refusal in refusals {
         if lowered.contains(&refusal.name.to_lowercase()) {
-            return SqlQueryError::unknown(refusal.to_string());
+            return Some(SqlQueryError::unknown(refusal.to_string()));
         }
         if let Some((_, table)) = refusal.name.split_once('.') {
             if lowered.contains(&format!("table: {}", table.to_lowercase())) {
-                return SqlQueryError::unknown(refusal.to_string());
+                return Some(SqlQueryError::unknown(refusal.to_string()));
             }
         }
     }
-    SqlQueryError::unknown(message)
+    None
+}
+
+fn sql_query_error(code: u16, state: [u8; 5], message: String) -> SqlQueryError {
+    SqlQueryError::new(code, state, message)
+}
+
+fn read_only_sql_error(error: &ReadOnlyScanError) -> SqlQueryError {
+    let (code, state) = error.mysql_code();
+    sql_query_error(code, state, error.to_string())
+}
+
+fn prepared_plan_sql_error(error: &PreparedPlanError) -> SqlQueryError {
+    let (code, state) = error.mysql_code();
+    sql_query_error(code, state, error.to_string())
+}
+
+pub(crate) fn prepared_bind_sql_error(error: &PreparedBindError) -> SqlQueryError {
+    let (code, state) = error.mysql_code();
+    sql_query_error(code, state, error.to_string())
+}
+
+pub(crate) fn read_error_sql_error(error: RealTiKvReadError) -> SqlQueryError {
+    match error {
+        RealTiKvReadError::Plan(error) => read_only_sql_error(&error),
+        other => SqlQueryError::unknown(other.to_string()),
+    }
+}
+
+fn refusal_aware_read_only_error(
+    refusals: &[LoadedTableRefusal],
+    error: ReadOnlyScanError,
+) -> SqlQueryError {
+    let message = error.to_string();
+    if let Some(refusal_error) = loaded_table_refusal_error(refusals, &message) {
+        return refusal_error;
+    }
+    read_only_sql_error(&error)
+}
+
+pub(crate) fn refusal_aware_prepared_plan_error(
+    refusals: &[LoadedTableRefusal],
+    error: PreparedPlanError,
+) -> SqlQueryError {
+    let message = error.to_string();
+    if let Some(refusal_error) = loaded_table_refusal_error(refusals, &message) {
+        return refusal_error;
+    }
+    prepared_plan_sql_error(&error)
 }
 
 impl<T, S, C, L, P> QuerySession for RealTiKvServerSession<T, S, C, L, P>
@@ -1127,7 +1184,7 @@ where
         // a transaction's snapshot, locks, and read-your-own-writes overlay
         // apply identically to both.
         let plan = ReadOnlyScanPlan::lower(sql, self.inner.configured_table())
-            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
+            .map_err(|error| refusal_aware_read_only_error(&self.table_refusals, error))?;
         self.execute_read(plan, cancellation, cancellation_lease)
             .map(|result| result.with_process_statement(process_statement))
     }
@@ -1136,7 +1193,7 @@ where
         let catalog = ConfiguredCatalog::new([self.inner.configured_table().clone()])
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let template = prepare_configured_point_read(sql, &catalog)
-            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
+            .map_err(|error| refusal_aware_prepared_plan_error(&self.table_refusals, error))?;
         // An aggregate's result column is its own type (a DECIMAL for SUM), not
         // the summed scan column's, so it bypasses the scan-derived metadata.
         let (result_columns, result_field_types) = if let Some(aggregate) = template.aggregate() {
@@ -1149,7 +1206,7 @@ where
             // metadata; a range template needs one placeholder per marker.
             let metadata_plan = template
                 .bind(&vec![0; template.parameter_count()])
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                .map_err(|error| prepared_bind_sql_error(&error))?;
             let result_field_types = point_read_result_field_types(&metadata_plan);
             let result_columns = self
                 .inner
@@ -1178,7 +1235,7 @@ where
         let plan = statement
             .template()
             .bind(parameters)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            .map_err(|error| prepared_bind_sql_error(&error))?;
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
         let statement_status = self.wire_status();
@@ -2104,6 +2161,40 @@ mod tests {
             self.0.push(payload.to_vec());
             Ok(sequence.wrapping_add(1))
         }
+    }
+
+    #[test]
+    fn read_only_refusals_reach_the_server_with_go_wire_codes() {
+        let unsupported = refusal_aware_read_only_error(
+            &[],
+            ReadOnlyScanError::Unsupported(UnsupportedReadOnlyFeature::Ordering),
+        );
+        assert_eq!(unsupported.code, 1235);
+        assert_eq!(unsupported.state, *b"42000");
+
+        let unknown_column = refusal_aware_read_only_error(
+            &[],
+            ReadOnlyScanError::UnknownColumn("balance".to_owned()),
+        );
+        assert_eq!(unknown_column.code, 1054);
+        assert_eq!(unknown_column.state, *b"42S22");
+
+        let direct_plan = read_error_sql_error(RealTiKvReadError::Plan(
+            ReadOnlyScanError::UnknownTable("missing".to_owned()),
+        ));
+        assert_eq!(direct_plan.code, 1146);
+        assert_eq!(direct_plan.state, *b"42S02");
+
+        let prepared_plan = refusal_aware_prepared_plan_error(
+            &[],
+            PreparedPlanError::PrimaryKeyComparison,
+        );
+        assert_eq!(prepared_plan.code, 1235);
+        assert_eq!(prepared_plan.state, *b"42000");
+
+        let parameter_count = prepared_bind_sql_error(&PreparedBindError::ParameterCount(0));
+        assert_eq!(parameter_count.code, 8112);
+        assert_eq!(parameter_count.state, *b"HY000");
     }
 
     #[test]

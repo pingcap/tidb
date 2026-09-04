@@ -3,14 +3,20 @@
 
 //! Source-derived admission tests for the first direct table-read lowering.
 
+use tidb_error::{mysql::errcode, tidb};
 use tidb_planner::{
     access_path::ResolvedTableScanKind,
+    configured_catalog::ConfiguredTableLookupError,
+    index_task::ScanReadTaskRejection,
     read_only_scan::{
         BoundBigIntComparison, ConfiguredColumn, ConfiguredColumnKind, ConfiguredScalarType,
-        ConfiguredTable, ReadLockRequest, ReadLockWait, ReadOnlyScanError, ReadOnlyScanPlan,
-        UnsupportedReadOnlyFeature,
+        ConfiguredTable, PreparedBindError, PreparedPlanError, ReadLockRequest, ReadLockWait,
+        ReadOnlyScanError, ReadOnlyScanPlan, UnsupportedReadOnlyFeature,
+        UnsupportedReadOnlyPredicate,
     },
-    signed_bigint_ranger::{BigIntComparison, ComparisonOp, ComparisonOperand},
+    signed_bigint_ranger::{
+        BigIntComparison, BigIntComparisonError, ComparisonOp, ComparisonOperand,
+    },
 };
 
 fn table() -> ConfiguredTable {
@@ -30,6 +36,122 @@ fn unsupported(sql: &str, feature: UnsupportedReadOnlyFeature) {
         ReadOnlyScanPlan::lower(sql, &table()),
         Err(ReadOnlyScanError::Unsupported(feature))
     );
+}
+
+#[test]
+fn read_only_errors_keep_their_go_wire_identity() {
+    let cases = [
+        (
+            ReadOnlyScanError::Parse("bad SELECT".to_owned()),
+            errcode::ErrParse,
+            *b"42000",
+        ),
+        (
+            ReadOnlyScanError::Unsupported(UnsupportedReadOnlyFeature::Ordering),
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+        (
+            ReadOnlyScanError::UnsupportedPredicate(
+                UnsupportedReadOnlyPredicate::BooleanOperator,
+            ),
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+        (
+            ReadOnlyScanError::UnknownTable("missing".to_owned()),
+            errcode::ErrNoSuchTable,
+            *b"42S02",
+        ),
+        (
+            ReadOnlyScanError::UnknownColumn("missing".to_owned()),
+            errcode::ErrBadField,
+            *b"42S22",
+        ),
+        (
+            ReadOnlyScanError::InvalidConfiguration("bad table"),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            ReadOnlyScanError::InvalidComparison(BigIntComparisonError::InvalidOperands),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            ReadOnlyScanError::InvalidColumnIndex {
+                index: 1,
+                column_count: 0,
+            },
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            ReadOnlyScanError::PlannerRejected(ScanReadTaskRejection::MixedAccessPaths),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            ReadOnlyScanError::UnexpectedPlannerTask,
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+    ];
+    for (error, code, state) in cases {
+        assert_eq!(error.mysql_code(), (code, state), "{error}");
+    }
+
+    let prepared_cases = [
+        (
+            PreparedPlanError::ReadOnly(ReadOnlyScanError::Parse("bad SELECT".to_owned())),
+            errcode::ErrParse,
+            *b"42000",
+        ),
+        (
+            PreparedPlanError::Catalog(ConfiguredTableLookupError::UnknownTable(
+                "missing".to_owned(),
+            )),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            PreparedPlanError::Catalog(ConfiguredTableLookupError::AmbiguousTable(
+                "accounts".to_owned(),
+            )),
+            errcode::ErrUnknown,
+            *b"HY000",
+        ),
+        (
+            PreparedPlanError::PrimaryKeyComparison,
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+        (
+            PreparedPlanError::MarkerPosition(2),
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+    ];
+    for (error, code, state) in prepared_cases {
+        assert_eq!(error.mysql_code(), (code, state), "{error}");
+    }
+
+    for (error, code, state) in [
+        (
+            PreparedBindError::ParameterCount(0),
+            tidb::errcode::ErrWrongParamCount,
+            *b"HY000",
+        ),
+        (
+            PreparedBindError::ReadOnly(ReadOnlyScanError::Unsupported(
+                UnsupportedReadOnlyFeature::Limit,
+            )),
+            errcode::ErrNotSupportedYet,
+            *b"42000",
+        ),
+    ] {
+        assert_eq!(error.mysql_code(), (code, state), "{error}");
+    }
 }
 
 #[test]

@@ -174,7 +174,7 @@ cluster. Establishing that needs execution.
 
 ---
 
-### F3 (rank 1, wrong code) — planner refusals carry no code at all — PARTLY FIXED (2026-09-05): the typed pair exists; seam adoption is the residual
+### F3 (rank 1, wrong code) — planner refusals carry no code at all — FIXED (verified 2026-09-05)
 
 The topology is now traced end to end. `ReadOnlyScanError` and
 `PreparedPlanError` (`rust/crates/tidb-planner/src/read_only_scan/errors.rs`)
@@ -189,16 +189,16 @@ Go raises the equivalent refusals as `ErrNotSupportedYet` = **1235**, SQLSTATE
 unsupported-feature shapes (`pkg/errno/errcode.go`, `errname.go`); 1235 vs
 1105 and 42000 vs HY000 are both wrong.
 
-Step 1 is DONE: `ReadOnlyScanError::mysql_code()` and
-`PreparedPlanError::mysql_code()` (`read_only_scan/errors.rs`) carry the
-mapping — `Parse` 1064/42000, `Unsupported`/`UnsupportedPredicate`
-1235/42000, `UnknownTable` 1146/42S02, `UnknownColumn` 1054/42S22,
-internal invariants 1105/HY000, prepared grammar refusals 1235/42000 —
-pinned by per-variant regressions. Step 2 remains: the server seam sites
-that flatten `RealTiKvReadError`/`PreparedPlanError` through
-`SqlQueryError::unknown` (the ~25 `unknown(error.to_string())` call sites
-shared with F2) must adopt the accessor; identifying which of those sites
-the read pipeline actually reaches needs the same live evidence F2 needs.
+The bounded fix is complete: `ReadOnlyScanError`, `PreparedPlanError`, and
+`PreparedBindError` carry the Go-compatible code/SQLSTATE pair — `Parse`
+1064/42000, unsupported shapes 1235/42000, ordinary unknown tables
+1146/42S02, unknown columns 1054/42S22, internal invariants 1105/HY000,
+prepared parameter-count errors 8112/HY000, and prepared catalog lookup
+fallbacks 1105/HY000. The single-table and multi-table real-TiKV prepared
+read seams, plus the direct `RealTiKvReadError::Plan` seam, now preserve the
+typed pair instead of flattening through `SqlQueryError::unknown`. Per-variant
+planner and server regressions pin the result; see
+`rust/testport/receipts/planner_read_only_error_codes.md`.
 
 ---
 

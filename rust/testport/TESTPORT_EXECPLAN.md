@@ -7674,3 +7674,12 @@ consistency reporter as an explicit boundary. The final outcome must list
 exact files and commands,
 remaining unverified packages, and correctness, compatibility, and performance
 risks without claiming repository-wide parity.
+
+- 2026-09-05 (F3, `pkg/planner` read-only refusal error identity): the Rust
+  `ReadOnlyScanError`, prepared-plan, and prepared-bind surfaces now carry
+  Go-compatible MySQL code/SQLSTATE metadata (1064, 1235, 1146, 1054, 8112,
+  or the explicit 1105 fallback). The real-TiKV server preserves loaded
+  table refusal diagnostics while using typed errors for text, prepared, and
+  direct `RealTiKvReadError::Plan` seams. Per-variant planner and server
+  regressions are in `receipts/planner_read_only_error_codes.md`; the batch is
+  Rust-only and does not widen the bounded read planner.

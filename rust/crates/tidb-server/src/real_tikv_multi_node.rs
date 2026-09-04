@@ -48,7 +48,8 @@ use crate::real_tikv_node::{
     aggregate_result_columns, aggregate_result_field_types, complete_real_tikv_query,
     configured_catalog, default_cursor_memory, emit_connections_startup_failure,
     execute_cluster_ddl, lightweight_ddl_statement_context, parse_set_time_zone,
-    point_read_result_field_types, refusal_aware_error, run_with_process_shutdown,
+    point_read_result_field_types, prepared_bind_sql_error, read_error_sql_error,
+    refusal_aware_error, refusal_aware_prepared_plan_error, run_with_process_shutdown,
     served_table_descriptor, shape_prepared_point_read_result, time_zone_sql_error,
     RealTiKvSessionTimeZone, RunConfiguredNodeError, CURSOR_INIT_CHUNK_SIZE, CURSOR_MAX_CHUNK_SIZE,
 };
@@ -324,7 +325,7 @@ impl QuerySession for RealTiKvMultiServerSession {
     fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let template = prepare_configured_point_read(sql, &catalog)
-            .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
+            .map_err(|error| refusal_aware_prepared_plan_error(&self.table_refusals, error))?;
         let (result_columns, result_field_types) = if let Some(aggregate) = template.aggregate() {
             (
                 aggregate_result_columns(aggregate),
@@ -335,7 +336,7 @@ impl QuerySession for RealTiKvMultiServerSession {
             // metadata; a range template needs one placeholder per marker.
             let metadata_plan = template
                 .bind(&vec![0; template.parameter_count()])
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                .map_err(|error| prepared_bind_sql_error(&error))?;
             let result_field_types = point_read_result_field_types(&metadata_plan);
             let result_columns = self
                 .reader
@@ -364,7 +365,7 @@ impl QuerySession for RealTiKvMultiServerSession {
         let plan = statement
             .template()
             .bind(parameters)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            .map_err(|error| prepared_bind_sql_error(&error))?;
         let configured = self
             .reader
             .readers()
@@ -381,7 +382,7 @@ impl QuerySession for RealTiKvMultiServerSession {
         let query = self
             .reader
             .execute_point_read_plan_with_cancellation(plan, cancellation)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            .map_err(read_error_sql_error)?;
         let result = complete_real_tikv_query(query, cancellation_lease);
         Ok(shape_prepared_point_read_result(result, statement)
             .with_cursor_materialization(field_types, authority)

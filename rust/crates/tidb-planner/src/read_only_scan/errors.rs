@@ -164,6 +164,17 @@ impl Error for PreparedBindError {
     }
 }
 
+impl PreparedBindError {
+    /// The MySQL error number and SQLSTATE for this bind refusal.
+    #[must_use]
+    pub fn mysql_code(&self) -> (u16, [u8; 5]) {
+        match self {
+            Self::ParameterCount(_) => (8112, *b"HY000"),
+            Self::ReadOnly(error) => error.mysql_code(),
+        }
+    }
+}
+
 /// Why a SQL statement cannot become the first read-only table scan.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadOnlyScanError {
