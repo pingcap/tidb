@@ -67,6 +67,9 @@ For each bounded behavior cluster:
   schedule-window UTC normalization, memory-debug defaults, and distributed
   reorg global round-trip coverage; reconciled their b010 receipt rows while
   retaining the process-wide typed TTL getter as an explicit boundary.
+- 2026-09-05 (`pkg/sessionctx/variable` identity getter): added the missing
+  direct `@@last_insert_id` regression for the zero value and a value above
+  `i64::MAX`, including the `@@identity` alias, and reconciled `TestLastInsertID`.
 - 2026-09-05 (`pkg/sessionctx/variable` secure_auth validation): ported
   `TestSecureAuth`'s per-variable validation. `secure_auth=OFF` now returns
   Go's 1231 wrong-value error and leaves the global ON default unchanged;
