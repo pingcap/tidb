@@ -207,7 +207,7 @@ impl LogicalSelection {
                 return Some((existing.clone(), false));
             }
         }
-        let child = child_stats.first()?;
+        let child = &child_stats[0];
         let scaled = StatsInfo::new(
             child.row_count() * SELECTION_FACTOR,
             child

@@ -1011,8 +1011,8 @@ impl LogicalJoin {
                 return Some((existing.clone(), false));
             }
         }
-        let left = child_stats.first()?;
-        let right = child_stats.get(1)?;
+        let left = &child_stats[0];
+        let right = &child_stats[1];
         self.equal_cond_out_cnt = equal_cond_out_cnt;
         let stats = match self.join_type {
             LogicalJoinType::Semi | LogicalJoinType::AntiSemi => StatsInfo::new(

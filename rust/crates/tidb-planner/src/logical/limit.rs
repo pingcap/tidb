@@ -156,7 +156,7 @@ impl LogicalLimit {
                 return Some((existing.clone(), false));
             }
         }
-        let stats = child_stats.first()?.derive_limit_stats(self.count as f64);
+        let stats = child_stats[0].derive_limit_stats(self.count as f64);
         self.base.base.set_stats(Some(stats.clone()));
         Some((stats, true))
     }

@@ -453,7 +453,7 @@ impl LogicalWindow {
                 return Some((existing.clone(), false));
             }
         }
-        let child = child_stats.first()?;
+        let child = &child_stats[0];
         let child_len = self_schema
             .columns
             .len()

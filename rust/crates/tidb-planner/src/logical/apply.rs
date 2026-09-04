@@ -223,7 +223,7 @@ impl LogicalApply {
                 return Some((existing.clone(), false));
             }
         }
-        let left = child_stats.first()?;
+        let left = &child_stats[0];
         let right = child_stats.get(1)?;
         let mut row_count = left.row_count();
         if self.is_lateral

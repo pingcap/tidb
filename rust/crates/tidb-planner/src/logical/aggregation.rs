@@ -496,7 +496,7 @@ impl LogicalAggregation {
                 return Some((existing.clone(), false));
             }
         }
-        let child = child_stats.first()?;
+        let child = &child_stats[0];
         let mut gby_cols = Vec::new();
         for item in &self.group_by_items {
             gby_cols.extend(extract_columns(item));
