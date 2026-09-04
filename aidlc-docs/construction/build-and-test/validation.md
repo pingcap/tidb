@@ -171,3 +171,11 @@ set. Owner compilation, formatting, and whitespace checks passed; the standard
 expression and executor profile blockers remain unchanged. Full commands,
 inventory, and boundary notes are recorded in
 `rust/testport/receipts/types_str_to_date_zero_in_date.md`.
+
+## `pkg/expression` `STR_TO_DATE` punctuation closure
+
+The existing focused regression and owner Ready profile cover the T11 fix:
+`%.` consumes Go's Unicode punctuation set (including U+00BF) and rejects
+ASCII symbols such as `+`. The shared classifier is used by both Rust parser
+owners. Full source inventory and validation evidence remain in
+`rust/testport/receipts/expression_collation_audit.md`.

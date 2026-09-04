@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (T11 closure, expression `STR_TO_DATE` punctuation): recorded
+  the already-pushed Unicode punctuation alignment in the main temporal audit.
+  Both datatype and expression parsers use `is_go_punctuation`; the focused
+  `2013¿5`/`2013+5` regression and owner profile remain in
+  `receipts/expression_collation_audit.md`.
 - 2026-09-04 (T9, `pkg/types` `StrToDate` zero-in-date validation): aligned
   `Time.StrToDate` with Go's `FlagIgnoreZeroInDate` by adding an explicit
   parser argument and forwarding it to `Time::validate`. Default vector and

@@ -2,7 +2,7 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` `StrToDate` zero-in-date parity batch (finding T9)
+- Work unit: `pkg/expression` `STR_TO_DATE` punctuation closure (finding T11)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
@@ -74,5 +74,9 @@
   `FlagIgnoreZeroInDate` behavior while source-vector callers remain
   permissive. Receipt:
   `rust/testport/receipts/types_str_to_date_zero_in_date.md`.
+- Current batch: the previously implemented `STR_TO_DATE` punctuation fix is
+  now recorded as T11 closed in the main audit. Datatype and expression use
+  the shared Go Unicode punctuation classifier; focused regressions and Ready
+  evidence remain in `rust/testport/receipts/expression_collation_audit.md`.
 - Next action: continue with the next executable package boundary after the
-  T9 batch is committed and pushed.
+  T11 closure is committed and pushed.

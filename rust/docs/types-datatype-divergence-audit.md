@@ -483,17 +483,18 @@ Distinguishing inputs: `STR_TO_DATE('11:30:45', '%H:%i:%s %p')` → Go and Rust
 NULL. `STR_TO_DATE('', '%p')` → Go and Rust NULL, while the valid 12-hour
 case `STR_TO_DATE('11:30:45', '%h:%i:%s %p')` remains `11:30:45` (implicit AM).
 
-## T11 (rank 3) — `%.` uses `is_ascii_punctuation` instead of `unicode.IsPunct`
+## T11 (rank 3) — `%.` uses `is_ascii_punctuation` instead of `unicode.IsPunct` (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:3534-3543` — `skipAllPunct` → `unicode.IsPunct`,
   which **excludes** the ASCII symbols `+ < = > ^ \` | ~ $`.
-- Rust: `rust/crates/tidb-datatype/src/str_to_date.rs:235-237` —
-  `char::is_ascii_punctuation`, which includes them and excludes Latin-1
-  punctuation.
+- Rust: the datatype parser and the independent expression evaluator now use
+  the shared `tidb_datatype::is_go_punctuation` classifier, including the
+  source-version Unicode table and explicit newer-Unicode exclusions.
 
-Distinguishing inputs (divergent in both directions):
-`STR_TO_DATE('2013+5','%Y%.%c')` → Go NULL, Rust `2013-05-00`.
-`STR_TO_DATE('2013¿5','%Y%.%c')` → Go `2013-05-00`, Rust error.
+Distinguishing inputs now agree: `STR_TO_DATE('2013+5','%Y%.%c')` is NULL and
+`STR_TO_DATE('2013¿5','%Y%.%c')` is `2013-05-00`. The focused expression
+regression and Ready evidence are recorded in
+`rust/testport/receipts/expression_collation_audit.md`.
 
 ## T12 (rank 3) — float-string path hardcodes `allow_invalid_date = false` (FIXED 2026-09-04)
 
