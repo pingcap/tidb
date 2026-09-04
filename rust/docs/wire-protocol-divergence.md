@@ -111,6 +111,9 @@ both implementations. With `COLLATE utf8mb4_general_ci`, the wire id remains
   and passes it through `ResultSetOptions` to both metadata and row writers.
   `ColumnInfo::dump_charset` and `ResultEncoder::encode_data` therefore use the
   same per-command result charset as Go, including the unset/binary fallback.
+  Unknown session-charset spellings also follow Go's
+  `FindEncodingTakeUTF8AsNoop`: the encoder stays byte-preserving and
+  `ColumnCharsetID` emits charset number zero instead of refusing construction.
 
 Distinguishing case: with `SET character_set_results = latin1`, both servers
 advertise collation `47` and send `0xE9` for `SELECT 'é'`; the client no longer

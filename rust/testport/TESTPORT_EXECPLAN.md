@@ -7855,3 +7855,12 @@ risks without claiming repository-wide parity.
   responses and then sends `COM_QUIT` to prove command synchronization. The
   complete protocol/server inventory, fail-before compile evidence, and Ready
   commands are recorded in `receipts/server_refresh_command.md`.
+- 2026-09-05 (`pkg/format/textrow` unknown result charset fallback): Rust
+  `tidb-protocol::ResultEncoder` now keeps Go's binary fallback for an
+  unregistered session charset spelling such as `"utf-8"`, emits charset
+  number zero for string metadata, and preserves metadata/row bytes after a
+  source-column charset is selected. The former Rust-only construction
+  refusal and `UnsupportedCharsetName` variant were removed. The focused
+  source regression failed before the change and passes with the complete
+  textrow vectors; inventory and validation are recorded in
+  `receipts/format_textrow_audit.md`.

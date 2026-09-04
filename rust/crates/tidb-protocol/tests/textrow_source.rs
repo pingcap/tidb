@@ -18,7 +18,7 @@ use tidb_protocol::{
     append_format_float, format_text_value, TextColumn, TextFormatError, TextScalar, TYPE_DATE,
     TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_JSON,
     TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32, TYPE_TIMESTAMP, TYPE_YEAR,
-    UNSIGNED_FLAG,
+    ResultEncoder, UNSIGNED_FLAG,
 };
 
 #[test]
@@ -140,6 +140,22 @@ fn source_scalar_formatter_keeps_numeric_and_byte_boundaries() {
         format_text_value(TextColumn::new(TYPE_FLOAT), TextScalar::Null).unwrap(),
         None
     );
+}
+
+#[test]
+fn result_encoder_unknown_charset_keeps_go_binary_fallback() {
+    // Go's FindEncodingTakeUTF8AsNoop falls back to the binary encoder for an
+    // unregistered spelling (pkg/parser/charset/encoding.go:38-45). The
+    // result path therefore preserves the source bytes instead of refusing
+    // the encoder construction; this is also the behavior exercised by
+    // pkg/format/textrow/result_encoder_test.go with "utf-8".
+    let mut encoder = ResultEncoder::new("utf-8").expect("Go falls back to binary");
+    assert_eq!(encoder.column_charset_id(47, true), 0);
+    assert_eq!(encoder.encode_meta("一".as_bytes()).unwrap(), "一".as_bytes());
+    encoder
+        .update_data_encoding(47)
+        .expect("the source column charset is registered");
+    assert_eq!(encoder.encode_data("一".as_bytes()).unwrap(), "一".as_bytes());
 }
 
 #[test]

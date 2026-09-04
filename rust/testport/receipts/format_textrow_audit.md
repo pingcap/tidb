@@ -1,7 +1,7 @@
 # `pkg/format/textrow` — Go-master parity audit receipt
 
-Status: complete dependency-closed audit; no source behavior delta remains
-for the package introduced by Go commit `7a93ade309`.
+Status: complete dependency-closed audit; the unknown-session-charset fallback
+is now source-aligned for the package introduced by Go commit `7a93ade309`.
 
 Comparison source: Go `origin/master` at
 `0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package has
@@ -25,10 +25,10 @@ Rust owners.
 
 The dependency-closed owner is `tidb-protocol`: `src/textrow.rs` (616 lines)
 owns typed scalar/Datum formatting and `AppendFormatFloat`; `src/result_encoder.rs`
-(472) owns metadata/data charset policy; `src/column.rs` (227) owns column
+(488) owns metadata/data charset policy; `src/column.rs` (227) owns column
 metadata framing; `src/result.rs` (102) owns length-encoded row framing; and
 `src/resultset_stream.rs` (659) connects typed values and charset conversion to
-the live result writer. Source tests cover `tests/textrow_source.rs` (198),
+the live result writer. Source tests cover `tests/textrow_source.rs` (214),
 `tests/textrow_go_vectors.rs` (125), `tests/resultset_stream_source.rs` (226),
 and `tests/column_metadata_source.rs` (201). The generated Go-backed fixture
 `rust/difftests/transaction-tests/fixtures/textrow_vectors.tsv` has 1,516
@@ -42,24 +42,39 @@ rewriting, and result-charset/column-charset precedence. It also routes both
 borrowed and owned result rows through the same source-shaped formatter, so
 the allocation optimization does not create a second wire behavior.
 
-`ResultEncoder` reports unsupported charset names/collation IDs as an explicit
-registry boundary and its live server caller falls back to the source unset
-result state. This is a dependency guard, not a Rust-only SQL policy; the
-supported registry and all source-supported encodings are covered by vectors
-and owner tests. No production edit or duplicate regression carrier was
-justified, and no Rust-only behavior was removed.
+`ResultEncoder` now follows Go's `FindEncodingTakeUTF8AsNoop` for unknown
+session charset spellings: it retains an `Unknown` binary-fallback state,
+advertises charset number zero through `ColumnCharsetID`, and preserves source
+bytes for metadata and row data. The old Rust-only construction refusal and
+the unused `UnsupportedCharsetName` error variant are gone. Registered
+collation IDs and all source-supported encodings remain covered by vectors and
+owner tests.
+
+## 2026-09-05 fix evidence
+
+- Go `pkg/format/textrow/result_encoder_test.go::TestResultEncoder` constructs
+  `NewResultEncoder("utf-8")`; Go's unknown encoding lookup returns the binary
+  encoder and does not fail. Before this fix the Rust source regression
+  `result_encoder_unknown_charset_keeps_go_binary_fallback` failed with
+  `UnsupportedCharsetName("utf-8")`.
+- After the fix the regression verifies all three source-visible effects:
+  charset number `0`, byte-preserving metadata, and byte-preserving row data
+  even after a registered source-column charset is selected.
 
 ## Validation
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/format/textrow -count=1`
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-protocol --test all textrow -- --test-threads=1` (from `rust/`)
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked -p tidb-protocol --lib result_encoder -- --test-threads=1` (from `rust/`)
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-protocol --test all textrow -- --test-threads=1`
+- `cargo fmt --manifest-path rust/Cargo.toml --all`
+- `git diff --check`
+- Ready profile `make lint` (after the package commit is rebased onto the
+  latest `hparser-integration`)
 
-The Go suite passes; the Rust Go-vector/source tier passes five tests and the
-result-encoder owner tier passes eight tests. No code or generated artifact
-changed, so `make bazel_prepare`, failpoint toggling, and code-change lint
-were not applicable. Broader server integration is covered by existing
-protocol/server consumers and remains outside this leaf audit.
+The Go suite passes; the Rust Go-vector/source tier passes six tests, including
+the new unknown-name regression. No Go or generated artifact changed, so
+`make bazel_prepare` and failpoint toggling remain inapplicable. Broader server
+integration is covered by existing protocol/server consumers and remains
+outside this leaf audit.
 
 This receipt certifies the bounded `pkg/format/textrow` inventory and parity
 check; it is not a repository-wide transcreation claim.
