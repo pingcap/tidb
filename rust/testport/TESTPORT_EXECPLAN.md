@@ -7942,3 +7942,10 @@ risks without claiming repository-wide parity.
   `BIGINT value is out of range in '(test.t.col1 * -1)'`; the complete
   208-artifact Go inventory, fail-before/pass-after evidence, and Ready owner
   validation are recorded in `receipts/expression_overflow_column_name.md`.
+- 2026-09-05 (`pkg/expression` nested/REAL arithmetic overflow text): the
+  same `tidb-expr` overflow renderer now recurses through nested arithmetic
+  scalar functions and maps binary `FloatOverflow` to Go's `DOUBLE` 1690
+  message, retaining the source operand expression. Active regressions cover
+  `(t5.col7 + t5.col2) * 9223372036854775807` and `1e300 * 1e300`; their
+  fail-before/pass-after evidence and the combined Ready owner validation are
+  recorded in `receipts/expression_overflow_column_name.md`.

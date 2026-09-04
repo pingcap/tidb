@@ -100,3 +100,36 @@ change arithmetic, overflow classification, unsigned handling, or unnamed
 column fallback. Expression rendering for other non-constant node kinds and
 the broader Go `StringWithCtx` redaction modes remain outside this bounded
 batch.
+
+## Follow-up: nested and REAL arithmetic overflow text
+
+The same complete Go inventory and Rust owner remain the package boundary. A
+second source regression in `builtin_arithmetic_test.go` constructs
+`(t5.col7 + t5.col2) * 9223372036854775807`; before this follow-up, the nested
+scalar function was not renderable and the outer error again fell back to bare
+`IntOverflow`. The renderer now recurses through nested arithmetic scalar
+functions, preserving both qualified names and parentheses:
+
+```text
+BIGINT value is out of range in '((t5.col7 + t5.col2) * 9223372036854775807)'
+```
+
+Go's real arithmetic signatures use the same operand rendering but report the
+`DOUBLE` class. Rust now maps binary `FloatOverflow` at the scalar-function
+boundary to that source-shaped error, while the value-only AST evaluator keeps
+its existing carrier. The focused regression asserts:
+
+```text
+DOUBLE value is out of range in '(1e+300 * 1e+300)'
+```
+
+The derived-column test failed before recursive rendering with bare
+`IntOverflow`; the REAL test failed before the `FloatOverflow` mapping with
+bare `FloatOverflow`. Both passed after their respective changes. The complete
+The unfiltered `tidb-expr --lib` harness recorded 1,187 passed, 1 known
+loopback HTTP fixture failure, and 99 ignored tests; the failure is the
+pre-existing `json_schema_valid_resolves_file_and_http_references` listener
+race on `127.0.0.1:50402`. The owner nextest sweep excluding only that named
+fixture completed with 1,205 passed and 100 skipped. Package formatting,
+`git diff --check`, and the Ready `make lint` gate are rerun for the combined
+package commit.

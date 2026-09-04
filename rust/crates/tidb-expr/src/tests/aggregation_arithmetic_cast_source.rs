@@ -343,6 +343,66 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
             expression: "(test.t.col1 * -1)",
         }
     );
+
+    // The source regression also covers a derived column. The nested
+    // expression must retain both qualified names in the outer overflow.
+    let mut left = Column::new(0, int_ft());
+    left.orig_name = "t5.col7".to_owned();
+    let mut right = Column::new(1, int_ft());
+    right.orig_name = "t5.col2".to_owned();
+    let add = ScalarFunction::new(
+        CiString::new("plus"),
+        int_ft(),
+        vec![Expression::Column(left), Expression::Column(right)],
+    );
+    let multiply = ScalarFunction::new(
+        CiString::new("mul"),
+        int_ft(),
+        vec![
+            Expression::ScalarFunction(add),
+            const_typed(Datum::Int(i64::MAX), int_ft()),
+        ],
+    );
+    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[int_ft(), int_ft()], 1);
+    chunk.append_datum(0, &Datum::Int(2));
+    chunk.append_datum(1, &Datum::Int(1));
+    let error = multiply
+        .eval(&NoColumns, chunk.get_row(0))
+        .expect_err("derived column expression must overflow");
+    assert_eq!(
+        error,
+        EvalError::DataOutOfRange {
+            value: "BIGINT",
+            expression: "((t5.col7 + t5.col2) * 9223372036854775807)",
+        }
+    );
+}
+
+#[test]
+fn test_real_arithmetic_overflow_error_message() {
+    // Go's real arithmetic signatures attach the same operand expression to
+    // the DOUBLE overflow, rather than returning only a generic overflow
+    // class. This is the scalar-function path (the value-only AST evaluator
+    // intentionally retains its FloatOverflow carrier).
+    let function = ScalarFunction::new(
+        CiString::new("mul"),
+        real_ft(),
+        vec![
+            const_typed(Datum::Real(1e300), real_ft()),
+            const_typed(Datum::Real(1e300), real_ft()),
+        ],
+    );
+    let chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    let error = function
+        .eval(&NoColumns, chunk.get_row(0))
+        .expect_err("1e300 * 1e300 must overflow DOUBLE");
+    assert_eq!(
+        error,
+        EvalError::DataOutOfRange {
+            value: "DOUBLE",
+            expression: "(1e+300 * 1e+300)",
+        }
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -451,7 +511,7 @@ fn test_vectorized_builtin_arithmetic_func() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: two thirds of this test are unobservable in Rust -- there is no separate vectorized evaluator tier (one row-based path covers both), and scalar_function.rs builds overflow messages from CONSTANT operands only, so a column pair can never render '(Column#0 + Column#0)'; the constant-operand value half of these four overflow rows IS pinned by test_decimal_err_overflow"]
+#[ignore = "go-parity-gap: two thirds of this test are unobservable in Rust -- there is no separate vectorized evaluator tier (one row-based path covers both), and DECIMAL overflow expression text remains outside the integer/REAL renderer; the constant-operand value half of these four overflow rows IS pinned by test_decimal_err_overflow"]
 fn test_vectorized_decimal_err_overflow() {
     // Go: plus/minus/mul/div over 8.1e80 DECIMAL columns errors with
     // "[types:1690]DECIMAL value is out of range in '(Column#0 <op> Column#0)'".

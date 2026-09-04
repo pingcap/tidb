@@ -268,31 +268,46 @@ pub struct ScalarFunction {
     json_schema_cache: crate::builtin_ext::JsonSchemaCache,
 }
 
-/// Go's 1690 text for one binary arithmetic overflow: the result type's
-/// integer class (`BIGINT` / `BIGINT UNSIGNED`, from the function's own
-/// declared result type) and the operand list rendered as Go's
-/// `StringWithCtx(errors.RedactLogDisable)` renders constants.
-fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) -> EvalError {
-    let symbol = match op {
+fn arithmetic_symbol(op: tidb_ast::BinaryOp) -> Option<&'static str> {
+    Some(match op {
         tidb_ast::BinaryOp::Plus => "+",
         tidb_ast::BinaryOp::Minus => "-",
         tidb_ast::BinaryOp::Mul => "*",
         tidb_ast::BinaryOp::Div => "/",
         tidb_ast::BinaryOp::IntDiv => "DIV",
         tidb_ast::BinaryOp::Mod => "%",
-        _ => return EvalError::IntOverflow,
-    };
-    // A faithful operand list needs each argument rendered the way Go's
-    // `StringWithCtx` renders it. Constants carry their value, while a
-    // resolved COLUMN carries Go's `OrigName` (the qualified SQL name).
-    fn render(expression: &Expression) -> Option<String> {
+        _ => return None,
+    })
+}
+
+/// Renders the operand list Go's `StringWithCtx(errors.RedactLogDisable)` uses
+/// in an arithmetic overflow. Resolved columns and nested arithmetic
+/// functions retain their source names and shape; unknown expression kinds
+/// keep the caller's safe fallback instead of inventing a display string.
+fn arithmetic_overflow_expression(
+    function: &ScalarFunction,
+    op: tidb_ast::BinaryOp,
+    go_float_format: bool,
+) -> Option<String> {
+    let symbol = arithmetic_symbol(op)?;
+    fn render(expression: &Expression, go_float_format: bool) -> Option<String> {
         match expression {
             Expression::Constant(constant) => match &constant.value {
                 Datum::Int(value) => Some(value.to_string()),
                 Datum::UInt(value) => Some(value.to_string()),
+                Datum::Float32(value) => {
+                    if go_float_format {
+                        Some(tidb_datatype::format_float_g_shortest(f64::from(*value)))
+                    } else {
+                        Some(value.to_string())
+                    }
+                }
                 Datum::Real(value) => {
-                    // Go strconv.FormatFloat(v, 'f', -1, 64).
-                    Some(format!("{value}"))
+                    if go_float_format {
+                        Some(tidb_datatype::format_float_g_shortest(*value))
+                    } else {
+                        Some(value.to_string())
+                    }
                 }
                 Datum::Decimal(value) => Some(value.to_string()),
                 Datum::Null => Some("NULL".to_owned()),
@@ -304,17 +319,36 @@ fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) 
             Expression::CorrelatedColumn(column) if !column.column.orig_name.is_empty() => {
                 Some(column.column.orig_name.clone())
             }
+            Expression::ScalarFunction(function) => {
+                let op = arithmetic_symbol(binary_op_for_name(function.func_name.lowercase())?)?;
+                let [left, right] = function.args.as_slice() else {
+                    return None;
+                };
+                Some(format!(
+                    "({} {op} {})",
+                    render(left, go_float_format)?,
+                    render(right, go_float_format)?
+                ))
+            }
             _ => None,
         }
     }
-    let operands = match function.get_args() {
-        [left, right] => match (render(left), render(right)) {
-            (Some(left), Some(right)) => {
-                format!("({left} {symbol} {right})")
-            }
-            _ => return EvalError::IntOverflow,
-        },
-        _ => return EvalError::IntOverflow,
+    let [left, right] = function.get_args() else {
+        return None;
+    };
+    Some(format!(
+        "({} {symbol} {})",
+        render(left, go_float_format)?,
+        render(right, go_float_format)?
+    ))
+}
+
+/// Go's 1690 text for one binary integer overflow: the result type's integer
+/// class (`BIGINT` / `BIGINT UNSIGNED`, from the function's declared result
+/// type) and the rendered operand list.
+fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) -> EvalError {
+    let Some(operands) = arithmetic_overflow_expression(function, op, false) else {
+        return EvalError::IntOverflow;
     };
     let class = match function.get_static_type() {
         Some(field_type) if field_type.is_unsigned() => "BIGINT UNSIGNED",
@@ -322,6 +356,18 @@ fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) 
     };
     EvalError::DataOutOfRange {
         value: class,
+        expression: Box::leak(operands.into_boxed_str()),
+    }
+}
+
+/// Go's 1690 text for one binary REAL overflow. The real signatures use the
+/// same operand rendering as integer signatures, but always name `DOUBLE`.
+fn real_arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) -> EvalError {
+    let Some(operands) = arithmetic_overflow_expression(function, op, true) else {
+        return EvalError::FloatOverflow;
+    };
+    EvalError::DataOutOfRange {
+        value: "DOUBLE",
         expression: Box::leak(operands.into_boxed_str()),
     }
 }
@@ -979,6 +1025,7 @@ impl ScalarFunction {
                     // overflow becomes the source-shaped message here, where
                     // the argument expressions are still at hand.
                     EvalError::IntOverflow => arithmetic_overflow_error(self, op),
+                    EvalError::FloatOverflow => real_arithmetic_overflow_error(self, op),
                     other => other,
                 });
             }
