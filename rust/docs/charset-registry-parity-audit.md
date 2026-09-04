@@ -19,3 +19,15 @@ supported-charset descriptors and their default collations.
   entries) carries wire IDs for the full MySQL charset list; this
   port's vocabulary is the 7 supported charsets, and the wider table is
   a fork-scope boundary rather than a divergence to fix.
+
+## Collation ID table (2026-09-05, second pass)
+
+Mechanical diff of Go's `mysql.Collations` id-to-name map (223 entries)
+against Rust's `charset_data/collations.rs` table (273 rows): **all 223
+Go ids resolve to the same name, zero mismatches.** The 50 Rust-only
+ids (utf8_tolower_ci 76, gb18030_unicode_520_ci 250, the 0900 family,
+the 256+ dynamic range) come from Go's own collation descriptor list in
+`charset.go:424+` — the superset `GetCollationByName` serves — so the
+Rust table is that superset, not an invented addition. The id→name
+fallback (46, utf8mb4_bin... GeneralCi) matches Go's
+`DefaultCollationID`.

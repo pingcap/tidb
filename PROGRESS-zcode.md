@@ -361,3 +361,5 @@
 - 下轮恢复点: (1) 新面候选: tidb-domain infoschema 面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - charset 注册表面首审: 7=7 字符集、maxlen 与默认 collation(含 gbk/gb18030 的 new-collation 条件)全匹配; Go CharsetIDs 约 260 项 legacy 表属 fork 范围边界, 记录不修。收据 rust/docs/charset-registry-parity-audit.md。
 - 下轮恢复点: (1) collation id 表与 CharsetIDs legacy 范围决策复核; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- collation id 表第二遍: Go 223 项 id→name 在 Rust 表中零错名; 50 个 Rust-only id 全部来自 Go charset.go 描述符超集(76/250/0900 族/256+ 动态段), 回退 46 同 Go DefaultCollationID。收据已追加。
+- 下轮恢复点: (1) 新面候选继续(tidb-domain); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
