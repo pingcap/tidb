@@ -907,6 +907,10 @@ const SYSVAR_NAME_CONSTANTS: &[(&str, &str)] = &[
         "tidb_enable_shared_lock_promotion",
     ),
     (
+        "TIDB_ENABLE_SHARED_LOCK_UPGRADE",
+        "tidb_enable_shared_lock_upgrade",
+    ),
+    (
         "TIDB_ACCELERATE_USER_CREATION_UPDATE",
         "tidb_accelerate_user_creation_update",
     ),

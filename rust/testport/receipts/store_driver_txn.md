@@ -56,10 +56,11 @@ Go master added two KeyError payloads. Rust now decodes and preserves
 `SharedLockLost` as a typed client error, maps lock-upgrade conflicts to a
 synthetic non-retryable deadlock (`owner_start_ts` and key preserved), and
 supports the source-compatible `SharedLocked → Locked` buffer transition once
-an upgrade request is admitted. The transaction-level admission guard remains
-explicit until the separate Rust `LockContext.AllowSharedLockUpgrade` and SQL
-consumer boundary is audited; this avoids silently enabling upgrades without
-the source session gate. `tidb-txnkv` exposes the exact `tikv:9015` catalog
+an upgrade request is admitted. The transaction-level admission guard is now
+driven by the source-shaped Rust `LockContext.allow_shared_lock_upgrade`
+field; the separate SQL consumer boundary remains audited independently, so
+enabling the field cannot silently change session behavior before a session
+gate supplies it. `tidb-txnkv` exposes the exact `tikv:9015` catalog
 identity and a generated error helper for the Go driver mapping. Session-level
 rollback policy and the SQL executor seam remain separate package boundaries.
 
@@ -187,14 +188,14 @@ package; the clean detached Go-master run above is the Ready lint evidence.
 
 - Correctness: deadlock identity is deliberately non-retryable so one shared
   upgrader can abort and release ownership; shared-lock loss remains a typed
-  fatal error while rollback is still valid. The admission guard is retained
-  until the source session gate is represented by the Rust lock context.
+  fatal error while rollback is still valid. The source-shaped lock-context
+  gate is now represented by Rust; the SQL consumer still has to supply it.
 - Compatibility: fields 13 and 14 are additive protobuf fields; generated
   outputs were produced from the exact Go-master schema. Existing legacy
   KeyError variants retain their precedence.
 - Performance: the upgrade path adds no retry or allocation policy; the
   synthetic deadlock is constructed only on an error response.
-- Remaining work: the Rust lock-context/session gate, `pkg/session`,
-  `pkg/executor`, and real-TiKV integration consumers still need their own
-  complete Go-package audits before the repository-wide parity goal can be
-  claimed.
+- Remaining work: the SQL session/executor consumer that constructs a
+  `LockContext` for `SELECT ... FOR UPDATE` still needs its own complete
+  Go-package audit, as recorded in `shared_lock_upgrade_gate.md`; the
+  dependency-closed lock-context and variable gate itself is complete.

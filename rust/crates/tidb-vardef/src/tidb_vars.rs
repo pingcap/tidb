@@ -1211,6 +1211,10 @@ pub const DIV_PRECISION_INCREMENT: &str = "div_precision_increment";
 /// as `select for update` statements which do acquire pessimistic locks.
 /// Go `TiDBEnableSharedLockPromotion`.
 pub const TIDB_ENABLE_SHARED_LOCK_PROMOTION: &str = "tidb_enable_shared_lock_promotion";
+/// TiDBEnableSharedLockUpgrade indicates whether shared locks may be upgraded
+/// to exclusive locks during pessimistic locking.
+/// Go `TiDBEnableSharedLockUpgrade`.
+pub const TIDB_ENABLE_SHARED_LOCK_UPGRADE: &str = "tidb_enable_shared_lock_upgrade";
 /// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 /// Go `TiDBAccelerateUserCreationUpdate`.
 pub const TIDB_ACCELERATE_USER_CREATION_UPDATE: &str = "tidb_accelerate_user_creation_update";

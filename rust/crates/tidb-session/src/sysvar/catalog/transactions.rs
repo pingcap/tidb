@@ -23,7 +23,7 @@
 
 use super::super::{SysVarDef, VarType};
 
-pub(super) static ENTRIES: [SysVarDef; 48] = [
+pub(super) static ENTRIES: [SysVarDef; 49] = [
     SysVarDef {
         name: "autocommit",
         scope: 3,
@@ -184,6 +184,18 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
     },
     SysVarDef {
         name: "tidb_enable_shared_lock_promotion",
+        scope: 3,
+        value: "OFF",
+        var_type: VarType::Bool,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 0,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    },
+    SysVarDef {
+        name: "tidb_enable_shared_lock_upgrade",
         scope: 3,
         value: "OFF",
         var_type: VarType::Bool,

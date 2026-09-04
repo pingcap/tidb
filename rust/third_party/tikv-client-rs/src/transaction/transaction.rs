@@ -3241,7 +3241,10 @@ impl<PdC: PdClient> Transaction<PdC> {
                 }
                 continue;
             }
-            if self.buffer.is_shared_locked(&key) && !context.in_share_mode {
+            if self.buffer.is_shared_locked(&key)
+                && !context.in_share_mode
+                && !context.allow_shared_lock_upgrade
+            {
                 return Err(Error::StringError(
                     "upgrading a shared lock to an exclusive lock is not supported".to_owned(),
                 ));
@@ -16992,6 +16995,29 @@ mod tests {
         assert!(pessimistic
             .buffer
             .is_shared_locked(&Key::from(b"shared".to_vec())));
+
+        let mut denied_context = LockContext::new(3, 17, SystemTime::now());
+        let error = pessimistic
+            .lock_keys_with_context(&mut denied_context, ["shared".to_owned()])
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("upgrading a shared lock to an exclusive lock is not supported"));
+
+        // Go's session gate sets AllowSharedLockUpgrade on the exclusive
+        // request. With the gate enabled, a second lock call upgrades the
+        // shared key instead of refusing before the RPC is built.
+        let mut upgrade_context = LockContext::new(3, 17, SystemTime::now());
+        upgrade_context.allow_shared_lock_upgrade = true;
+        pessimistic
+            .lock_keys_with_context(&mut upgrade_context, ["shared".to_owned()])
+            .await
+            .unwrap();
+        assert!(pessimistic.buffer.is_locked(&Key::from(b"shared".to_vec())));
+        assert!(!pessimistic
+            .buffer
+            .is_shared_locked(&Key::from(b"shared".to_vec())));
         pessimistic
             .buffer
             .lock_with_returned_value(Key::from(b"shared".to_vec()), false, None)
@@ -17099,6 +17125,11 @@ mod tests {
                 ),
                 (
                     kvrpcpb::Op::SharedPessimisticLock as i32,
+                    17,
+                    kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal as i32,
+                ),
+                (
+                    kvrpcpb::Op::PessimisticLock as i32,
                     17,
                     kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeNormal as i32,
                 ),

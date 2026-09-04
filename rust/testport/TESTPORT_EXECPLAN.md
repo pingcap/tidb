@@ -47,6 +47,16 @@ For each bounded behavior cluster:
   rejected before child consumption, and low-level key helpers fail closed;
   focused Sort/TopN regressions and Ready evidence are recorded in
   `receipts/executor_root_distsql_indexjoin.md`.
+- 2026-09-05 (`pkg/sessionctx/variable` shared-lock upgrade gate): aligned
+  Rust's vendored `LockContext` and `SessionVars` with Go's
+  `AllowSharedLockUpgrade` / `EnableSharedLockUpgrade` behavior. The bool is
+  GLOBAL|SESSION, defaults OFF, inherits only for newly connected sessions,
+  and permits the shared-to-exclusive transaction-buffer transition only when
+  explicitly enabled. Focused session and vardef regressions pass; the nested
+  vendored client test remains blocked by its pre-existing standalone Tonic
+  test-helper mismatch and tempfile lock split. The SQL executor consumer that
+  constructs lock contexts for `SELECT ... FOR UPDATE` remains a separate
+  unported boundary. Receipt: `receipts/shared_lock_upgrade_gate.md`.
 - 2026-09-04 (`pkg/executor/sortexec` TopN spill threshold): aligned Rust's
   `TopNSpillAction` with Go's package-level tenth-of-quota guard. The focused
   action-level regression fails at exactly 10% under the old aggregation

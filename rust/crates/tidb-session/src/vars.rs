@@ -896,6 +896,9 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.EnablePreparedPlanCache`, maintained by the
     /// `tidb_enable_prepared_plan_cache` sysvar's `SetSession` hook.
     enable_prepared_plan_cache: bool,
+    /// Go's typed `SessionVars.EnableSharedLockUpgrade`, maintained by the
+    /// `tidb_enable_shared_lock_upgrade` sysvar's `SetSession` hook.
+    enable_shared_lock_upgrade: bool,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
     /// PARSES out of the raw text -- chiefly the optimizer's cost environment
     /// -- and re-derive only when a `SET`
@@ -933,6 +936,7 @@ impl Default for SessionVars {
                 .expect("the compiled default SQL mode is valid"),
             max_allowed_packet: 64 << 20,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
+            enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
@@ -995,6 +999,7 @@ impl SessionVars {
             .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
         let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
+        let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
@@ -1005,6 +1010,7 @@ impl SessionVars {
         self.sql_mode = sql_mode;
         self.max_allowed_packet = max_allowed_packet;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
+        self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
@@ -1045,6 +1051,15 @@ impl SessionVars {
             )
     }
 
+    fn shared_lock_upgrade_from_systems(systems: &HashMap<String, String>) -> bool {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE)
+            .map_or(
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
+                |value| value == "ON",
+            )
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -1069,6 +1084,13 @@ impl SessionVars {
     #[must_use]
     pub const fn prepared_plan_cache_enabled(&self) -> bool {
         self.enable_prepared_plan_cache
+    }
+
+    /// Go `SessionVars.EnableSharedLockUpgrade`, updated when its normalized
+    /// ON/OFF sysvar changes and consumed by the transaction lock context.
+    #[must_use]
+    pub const fn shared_lock_upgrade_enabled(&self) -> bool {
+        self.enable_shared_lock_upgrade
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -1189,11 +1211,14 @@ impl SessionVars {
         let mut restores_sql_mode = false;
         let mut restores_max_allowed_packet = false;
         let mut restores_prepared_plan_cache = false;
+        let mut restores_shared_lock_upgrade = false;
         for (key, previous) in snapshot {
             restores_sql_mode |= key == "sql_mode";
             restores_max_allowed_packet |= key == "max_allowed_packet";
             restores_prepared_plan_cache |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
+            restores_shared_lock_upgrade |=
+                key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE;
             match previous {
                 Some(value) => {
                     self.session_resolved
@@ -1218,6 +1243,9 @@ impl SessionVars {
         }
         if restores_prepared_plan_cache {
             self.enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&self.systems);
+        }
+        if restores_shared_lock_upgrade {
+            self.enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&self.systems);
         }
         self.refresh_optimizer_fix_control();
     }
@@ -1324,6 +1352,9 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE {
             self.enable_prepared_plan_cache = validated.value == "ON";
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE {
+            self.enable_shared_lock_upgrade = validated.value == "ON";
         }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
@@ -2246,6 +2277,31 @@ mod tests {
         let mut inherited = SessionVars::new();
         inherited.seed_from_globals(globals).unwrap();
         assert!(!inherited.prepared_plan_cache_enabled());
+    }
+
+    #[test]
+    fn shared_lock_upgrade_switch_uses_go_typed_state() {
+        let mut vars = SessionVars::new();
+        assert!(!vars.shared_lock_upgrade_enabled());
+        let restore = vars.snapshot_system(tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE);
+        vars.set_system(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
+            "ON".to_owned(),
+        )
+        .unwrap();
+        assert!(vars.shared_lock_upgrade_enabled());
+        vars.restore_system(restore);
+        assert!(!vars.shared_lock_upgrade_enabled());
+
+        let globals = GlobalSysvars::new();
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
+                "ON".to_owned(),
+            )
+            .unwrap();
+        vars.seed_from_globals(globals).unwrap();
+        assert!(vars.shared_lock_upgrade_enabled());
     }
 
     #[test]

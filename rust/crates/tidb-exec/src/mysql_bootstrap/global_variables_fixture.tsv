@@ -449,6 +449,7 @@ tidb_enable_resource_control	ON
 tidb_enable_reuse_chunk	ON
 tidb_enable_row_level_checksum	OFF
 tidb_enable_shared_lock_promotion	OFF
+tidb_enable_shared_lock_upgrade	OFF
 tidb_enable_stmt_summary	ON
 tidb_enable_strict_double_type_check	ON
 tidb_enable_strict_not_null_check	ON

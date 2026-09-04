@@ -15,6 +15,15 @@
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
+- Current batch: Rust's vendored `LockContext` now carries Go's
+  `AllowSharedLockUpgrade` gate, and `SessionVars` carries the matching
+  `EnableSharedLockUpgrade` bool with GLOBAL|SESSION registration, OFF
+  default, connect-time inheritance, and snapshot/restore hooks. The focused
+  session and vardef regressions pass; the standalone vendored client test is
+  blocked by its existing tempfile lock split and Tonic test-helper mismatch.
+  The SQL executor consumer that constructs lock contexts for
+  `SELECT ... FOR UPDATE` remains a separate unported boundary. Receipt:
+  `rust/testport/receipts/shared_lock_upgrade_gate.md`.
 - Current batch: Rust's static expression context now transcreates Go's
   `CtxWithHandleTruncateErrLevel`: it updates the truncate conversion flags
   and `ErrGroupTruncate` level together, preserves all other state, leaves the
