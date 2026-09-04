@@ -65,6 +65,13 @@ For each bounded behavior cluster:
   formerly ignored Go-derived schema regression is active and passes; the
   aggregate evaluator pair-state and tipb conversion remain explicit
   cross-crate boundaries in `receipts/b091.md`.
+- 2026-09-05 (`pkg/planner/core` full-text admission predicates): restored the
+  dependency-closed `ftsModifierAllowsNativePushdown` and
+  `tableHasPublicFTSIndexOnColumn` contracts in `tidb-planner::fulltext`.
+  Native FTS pushdown now admits only unmodified natural-language searches and
+  requires a public full-text index on each referenced column, with exact Go
+  truth-table regressions active. TiFlash/session index-resolution cases remain
+  explicit boundaries in `receipts/b087.md`.
 - 2026-09-05 (`pkg/executor/sortexec` constant by-item evaluation): aligned
   Rust with Go's omission of constant `ByItems` from materialized sort keys.
   Deferred constants are no longer evaluated during sort/TopN key handling;

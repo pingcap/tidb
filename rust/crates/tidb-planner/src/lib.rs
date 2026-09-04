@@ -116,6 +116,7 @@ pub mod expression_rewriter;
 pub mod final_mode_agg;
 pub mod find_best_task;
 pub mod fix_control;
+pub mod fulltext;
 pub mod group_expr;
 pub mod handle_cols;
 pub mod hash_equaler;
