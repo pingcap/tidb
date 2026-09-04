@@ -774,6 +774,16 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        // Go's `validateReadConsistencyLevel` (`session.go:702`): only
+        // `strict` and `weak` in any case pass, stored as typed; everything
+        // else is `ErrWrongTypeForVar` (1232).
+        if self.name == "tidb_read_consistency" {
+            let lowered = validated.value.to_ascii_lowercase();
+            if lowered != "strict" && lowered != "weak" {
+                return Err(ValidationError::WrongType);
+            }
+            return Ok(validated);
+        }
         if self.name != "sql_mode" {
             return Ok(validated);
         }
@@ -1297,6 +1307,18 @@ mod tests {
     /// Go `checkBoolSystemVar`: ON/OFF in any case, 0 and 1, and nothing else
     /// unless the variable converts negatives.
     #[test]
+    /// Go's `validateReadConsistencyLevel` (`session.go:702`): only
+    /// `strict`/`weak` in any case; stored as typed; anything else is
+    /// `ErrWrongTypeForVar` (1232).
+    #[test]
+    fn read_consistency_whitelist_matches_go() {
+        let sv = get_sys_var("tidb_read_consistency").unwrap();
+        assert_eq!(sv.validate("strict").unwrap().value, "strict");
+        assert_eq!(sv.validate("WEAK").unwrap().value, "WEAK");
+        assert_eq!(sv.validate("bogus"), Err(ValidationError::WrongType));
+        assert_eq!(sv.validate(""), Err(ValidationError::WrongType));
+    }
+
     fn bool_validation() {
         let sv = get_sys_var("autocommit").unwrap();
         assert_eq!(sv.var_type, VarType::Bool);
