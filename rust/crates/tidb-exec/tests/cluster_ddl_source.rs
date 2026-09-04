@@ -50,6 +50,61 @@ use tidb_model::{
 };
 use tidb_txnkv::transaction::{OptimisticMutation, OptimisticMutationKind};
 
+#[test]
+fn on_update_current_timestamp_uses_go_exact_function_and_fsp_rules() {
+    let cases = [
+        ("CREATE TABLE t (a TIMESTAMP ON UPDATE CURRENT_TIMESTAMP())", true),
+        (
+            "CREATE TABLE t (a TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3))",
+            true,
+        ),
+        // TiDB's parser canonicalizes the accepted aliases to the
+        // CURRENT_TIMESTAMP function node before validation.
+        ("CREATE TABLE t (a TIMESTAMP ON UPDATE NOW())", true),
+        ("CREATE TABLE t (a TIMESTAMP ON UPDATE LOCALTIME())", true),
+        (
+            "CREATE TABLE t (a TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP)",
+            false,
+        ),
+        (
+            "CREATE TABLE t (a TIMESTAMP ON UPDATE CURRENT_TIMESTAMP(3))",
+            false,
+        ),
+    ];
+
+    for (sql, accepted) in cases {
+        let statement = tidb_parser::parse(sql).expect("source DDL parses");
+        let tidb_ast::Stmt::Ddl(ddl) = statement else {
+            panic!("source statement is not DDL: {sql}")
+        };
+        let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() else {
+            panic!("source statement is not CREATE TABLE: {sql}")
+        };
+        let on_update = create.columns[0]
+            .options
+            .iter()
+            .find_map(|option| match option {
+                tidb_ast::ColumnOption::OnUpdate(expr) => Some(expr),
+                _ => None,
+            })
+            .expect("source column has ON UPDATE");
+        let field_type = tidb_executor::ddl::column_field_type::build_field_type(
+            &create.columns[0].name,
+            &create.columns[0].ty,
+            "utf8mb4",
+            "utf8mb4_bin",
+        )
+        .expect("source column type builds");
+        assert_eq!(
+            tidb_expr::is_valid_current_timestamp_expr(on_update, Some(&field_type)),
+            accepted,
+            "source SQL: {sql}"
+        );
+        let result = build_table_info(create, "utf8mb4", "utf8mb4_bin", ClusteredIndexDefMode::On);
+        assert_eq!(result.is_ok(), accepted, "source SQL: {sql}");
+    }
+}
+
 /// A mutable snapshot of stored meta bytes: reads observe it, and a test may
 /// apply a planned write set to it to model the transaction having committed.
 #[derive(Clone, Default)]

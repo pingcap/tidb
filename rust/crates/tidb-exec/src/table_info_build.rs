@@ -1127,7 +1127,7 @@ fn build_column(
                          DATETIME"
                     )));
                 }
-                if !is_current_timestamp(expr) {
+                if !tidb_expr::is_valid_current_timestamp_expr(expr, Some(&field_type)) {
                     return Err(DdlAdmissionError::new(format!(
                         "column `{name}` declares an ON UPDATE that is not CURRENT_TIMESTAMP"
                     )));
@@ -1665,21 +1665,6 @@ fn build_field_type(
     collate: &str,
 ) -> Refusal<FieldType> {
     Ok(build_shared_field_type(name, declared, charset, collate)?)
-}
-
-/// Whether one expression is `CURRENT_TIMESTAMP` in any of Go's spellings.
-fn is_current_timestamp(expr: &Expr) -> bool {
-    match expr {
-        Expr::Func { name, .. } => matches!(
-            name.to_ascii_uppercase().as_str(),
-            "CURRENT_TIMESTAMP" | "NOW" | "LOCALTIME" | "LOCALTIMESTAMP"
-        ),
-        Expr::Column(path) => matches!(
-            path.as_slice(),
-            [only] if only.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
-        ),
-        _ => false,
-    }
 }
 
 /// A DEFAULT retained between Go's option-order storage stages and its final

@@ -64,6 +64,9 @@ impl Columns for Zone {
     fn now(&self) -> Option<(i64, u32, i32)> {
         self.inner.now()
     }
+    fn time_zone(&self) -> SessionTimeZone {
+        <Self as ColumnResolver>::time_zone(self)
+    }
 }
 
 impl ColumnResolver for Zone {
@@ -180,16 +183,72 @@ fn test_timestamp_sysvar_renders_fixed_now_literal_rows() {
 // ---------------------------------------------------------------------------
 
 /// Go `pkg/expression/helper_test.go:32 TestGetTimeValue`.
-///
-/// go-parity-gap: `expression.GetTimeValue(ctx BuildContext, v any, tp byte,
-/// fsp int, explicitTz *time.Location)` (`helper.go:90`) is a BUILD-context
-/// helper (AST value/sentinel → temporal datum, incl. the `ast.CurrentTimestamp`
-/// sentinel and the `timestamp` sysvar read). No Rust symbol carries that
-/// dispatch surface yet; approximating it via the constant evaluator would pin
-/// different code than the Go test exercises.
 #[test]
-#[ignore = "go-parity-gap: helper.go GetTimeValue build-context helper has no Rust carrier"]
-fn test_get_time_value_build_context_helper() {}
+fn test_get_time_value_build_context_helper() {
+    use tidb_datatype::{Datum, TimeType};
+
+    let ctx = Zone {
+        inner: TimestampSysVar { offset_secs: 0 },
+    };
+    let func = |name: &str| tidb_ast::Expr::Func {
+        name: name.to_owned(),
+        args: vec![],
+        origin_position: 0,
+    };
+    let rows = [
+        (
+            tidb_ast::Expr::RawString("2012-12-12 00:00:00".to_owned()),
+            Some("2012-12-12 00:00:00"),
+        ),
+        (
+            tidb_ast::Expr::RawString("current_timestamp".to_owned()),
+            Some("1970-01-01 00:20:34"),
+        ),
+        (
+            tidb_ast::Expr::RawString("0000-00-00 00:00:00".to_owned()),
+            Some("0000-00-00 00:00:00"),
+        ),
+        (
+            tidb_ast::Expr::String("2012-12-12 00:00:00".to_owned()),
+            Some("2012-12-12 00:00:00"),
+        ),
+        (
+            tidb_ast::Expr::Int("0".to_owned()),
+            Some("0000-00-00 00:00:00"),
+        ),
+        (tidb_ast::Expr::Null, None),
+        (func("current_timestamp"), Some("CURRENT_TIMESTAMP")),
+        (
+            tidb_ast::Expr::Unary(
+                tidb_ast::UnaryOp::Minus,
+                Box::new(tidb_ast::Expr::Int("0".to_owned())),
+            ),
+            Some("0000-00-00 00:00:00"),
+        ),
+    ];
+
+    for (expr, expected) in rows {
+        let value = get_time_value(&ctx, &expr, TimeType::Timestamp, 0, None)
+            .expect("GetTimeValue source row");
+        match expected {
+            Some(expected) => assert_eq!(value.sql_string().unwrap(), expected),
+            None => assert_eq!(value, Datum::Null),
+        }
+    }
+
+    let invalid_rows = [
+        tidb_ast::Expr::RawString("2012-13-12 00:00:00".to_owned()),
+        tidb_ast::Expr::String("2012-13-12 00:00:00".to_owned()),
+        tidb_ast::Expr::Int("1".to_owned()),
+        func("xxx"),
+    ];
+    for expr in invalid_rows {
+        assert!(
+            get_time_value(&ctx, &expr, TimeType::Timestamp, 0, None).is_err(),
+            "expected GetTimeValue to reject {expr:?}"
+        );
+    }
+}
 
 /// Go `pkg/expression/helper_test.go:127 TestIsCurrentTimestampExpr`.
 #[test]

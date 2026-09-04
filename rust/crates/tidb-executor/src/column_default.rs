@@ -354,21 +354,7 @@ pub(crate) fn validate_on_update_current_timestamp(
     expr: &Expr,
     field_type: &FieldType,
 ) -> Result<(), DefaultError> {
-    if !matches!(
-        field_type.code(),
-        FieldTypeCode::Timestamp | FieldTypeCode::Datetime
-    ) {
-        return Err(DefaultError::InvalidDefault);
-    }
-    let Some(args) = clock_marker_call(expr) else {
-        return Err(DefaultError::InvalidDefault);
-    };
-    let written_fsp = match args {
-        [] => 0,
-        [only] => clock_fsp_argument(only).ok_or(DefaultError::InvalidDefault)?,
-        _ => return Err(DefaultError::InvalidDefault),
-    };
-    if written_fsp != field_type.decimal() {
+    if !tidb_expr::is_valid_current_timestamp_expr(expr, Some(field_type)) {
         return Err(DefaultError::InvalidDefault);
     }
     Ok(())
@@ -879,6 +865,36 @@ mod tests {
         let clause = default.show_create_clause(&field_type, "slash\\quote'\0nul\nline\rcarriage");
 
         assert_eq!(clause, "'slash\\\\quote''\\0nul\\nline\\rcarriage'");
+    }
+
+    #[test]
+    fn on_update_validation_uses_current_timestamp_predicate() {
+        let current = |name: &str, args: Vec<Expr>| Expr::Func {
+            name: name.to_owned(),
+            args,
+            origin_position: 0,
+        };
+        let timestamp = FieldType::new(FieldTypeCode::Timestamp);
+        let timestamp_fsp3 = timestamp.clone().with_decimal(3);
+
+        assert!(validate_on_update_current_timestamp(
+            &current("CURRENT_TIMESTAMP", vec![]),
+            &timestamp,
+        )
+        .is_ok());
+        assert!(validate_on_update_current_timestamp(
+            &current("CURRENT_TIMESTAMP", vec![Expr::Int("3".to_owned())]),
+            &timestamp_fsp3,
+        )
+        .is_ok());
+        assert!(
+            validate_on_update_current_timestamp(&current("NOW", vec![]), &timestamp,).is_err()
+        );
+        assert!(validate_on_update_current_timestamp(
+            &Expr::Column(vec!["CURRENT_TIMESTAMP".to_owned()]),
+            &timestamp,
+        )
+        .is_err());
     }
 
     fn fixed_zone(name: &str, offset_secs: i32) -> SessionTimeZone {

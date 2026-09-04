@@ -200,3 +200,11 @@
   Go's `IsValidCurrentTimestampExpr` AST/FSP predicate, including its
   first-argument-only behavior. The focused helper regression is active and
   Ready evidence is recorded in `rust/testport/receipts/b075.md`.
+- Current batch: Rust now exposes `get_time_value`, matching Go's
+  `GetTimeValue` type-switch for temporal sentinels, parser-driver values,
+  AST function markers, unary numeric conversion, and zero-value fallback.
+  The focused helper regression is active; its pre-fix carrier failed to
+  compile because no helper symbol existed. The shared current-timestamp
+  predicate now also governs CREATE/ALTER `ON UPDATE` validation, with
+  focused DDL regressions. Ready evidence is recorded in
+  `rust/testport/receipts/b075.md`.

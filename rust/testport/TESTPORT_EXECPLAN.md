@@ -46,6 +46,15 @@ For each bounded behavior cluster:
   action-level regression fails at exactly 10% under the old aggregation
   one-fifth reuse and passes after the fix; the package inventory and Ready
   evidence are recorded in `receipts/executor_root_distsql_indexjoin.md`.
+- 2026-09-04 (`tidb-expr` GetTimeValue): implemented the missing
+  `get_time_value` AST/value helper. Raw clock/date sentinels, parser-driver
+  string/int/NULL values, function-call markers, unary numeric conversion,
+  temporal parsing, and zero-value fallback now follow Go's type-switch
+  boundary. The former ignored `helper_test.go::TestGetTimeValue` carrier is
+  active; focused pre-fix compilation failed because no carrier existed. The
+  shared current-timestamp predicate now governs both CREATE-table and
+  ALTER-table `ON UPDATE` validation, with focused DDL regressions; the
+  post-fix Ready sweep is recorded in `receipts/b075.md`.
 - 2026-09-04 (`pkg/executor/sortexec` parallel spill trigger guard): aligned
   Rust's `ParallelSortSpillAction` with Go's requirement that the triggering
   tracker is over quota before a spill is requested. The focused action-level
@@ -55,9 +64,8 @@ For each bounded behavior cluster:
 - 2026-09-04 (`tidb-expr` IsValidCurrentTimestampExpr): implemented the
   missing AST-level `is_valid_current_timestamp_expr` helper with Go's
   bare-vs-explicit FSP matching and first-argument-only behavior. The former
-  ignored `helper_test.go::TestIsCurrentTimestampExpr` carrier is active;
-  `GetTimeValue` remains the adjacent build-context gap. Focused and Ready
-  evidence is recorded in `receipts/b075.md`.
+  ignored `helper_test.go::TestIsCurrentTimestampExpr` carrier is active.
+  Focused and Ready evidence is recorded in `receipts/b075.md`.
 - 2026-09-04 (`pkg/executor/sortexec` parallel spill threshold): aligned
   Rust's `ParallelSortSpillAction` with Go's inclusive
   `sortTracker.BytesConsumed() >= quota/10` guard. The focused action-level
