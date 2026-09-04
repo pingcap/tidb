@@ -305,7 +305,7 @@ pub fn convert_decimal_str_to_uint(
     let expanded = convert_scientific_notation(input).map_err(|error| (0, error))?;
     let (mut integer, fraction) = expanded
         .split_once('.')
-        .map_or((expanded.as_str(), ""), |parts| parts);
+        .unwrap_or((expanded.as_str(), ""));
     integer = integer.trim_start_matches('0');
     if integer.is_empty() {
         integer = "0";
