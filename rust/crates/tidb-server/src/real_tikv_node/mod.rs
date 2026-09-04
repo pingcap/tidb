@@ -2185,10 +2185,8 @@ mod tests {
         assert_eq!(direct_plan.code, 1146);
         assert_eq!(direct_plan.state, *b"42S02");
 
-        let prepared_plan = refusal_aware_prepared_plan_error(
-            &[],
-            PreparedPlanError::PrimaryKeyComparison,
-        );
+        let prepared_plan =
+            refusal_aware_prepared_plan_error(&[], PreparedPlanError::PrimaryKeyComparison);
         assert_eq!(prepared_plan.code, 1235);
         assert_eq!(prepared_plan.state, *b"42000");
 
