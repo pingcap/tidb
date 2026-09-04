@@ -17,6 +17,7 @@ package ddl
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,7 @@ func TestBuildStorageClassTransitionOperations(t *testing.T) {
 	}
 	physicalIDs := map[int64]struct{}{11: {}, 12: {}, 13: {}}
 
-	operations, err := buildStorageClassTransitionOperations(tblInfo, physicalIDs, 1234, "test", "orders")
+	operations, err := buildStorageClassTransitionOperations(tblInfo, physicalIDs, 9, 1234, "test", "orders")
 	require.NoError(t, err)
 	require.Len(t, operations, 2)
 
@@ -43,6 +44,7 @@ func TestBuildStorageClassTransitionOperations(t *testing.T) {
 		byDirection[operation.Direction] = operation
 	}
 	ia := byDirection[storageClassDirectionToIA]
+	require.Equal(t, int64(9), ia.schemaVersion)
 	require.Equal(t, []int64{11, 12}, ia.PhysicalTableIDs)
 	require.Zero(t, ia.PartitionID)
 	require.Empty(t, ia.PartitionName)
@@ -65,7 +67,7 @@ func TestStorageClassTransitionTracksPartitionedTableParent(t *testing.T) {
 	}
 	physicalIDs := map[int64]struct{}{10: {}, 11: {}, 12: {}}
 
-	operations, err := buildStorageClassTransitionOperations(tblInfo, physicalIDs, 1234, "test", "orders")
+	operations, err := buildStorageClassTransitionOperations(tblInfo, physicalIDs, 9, 1234, "test", "orders")
 	require.NoError(t, err)
 	require.Len(t, operations, 1)
 	require.Equal(t, []int64{10, 11, 12}, operations[0].PhysicalTableIDs)
@@ -151,6 +153,68 @@ func TestStorageClassTransitionCacheKeepsLastObservation(t *testing.T) {
 	require.Equal(t, uint64(4), transition.TotalReplicas)
 	require.Equal(t, uint64(3), transition.CompletedReplicas)
 	require.Equal(t, 0.75, transition.Progress)
+}
+
+func TestStorageClassTransitionStatusesUseCurrentNames(t *testing.T) {
+	key := storageClassTransitionKey{tableID: 10, direction: storageClassDirectionToIA, startTS: 1234}
+	manager := &storageClassTransitionManager{}
+	manager.mu.active = make(map[storageClassTransitionKey]StorageClassTransitionStatus)
+	manager.mu.observed = make(map[storageClassTransitionKey]StorageClassTransitionStatus)
+	currentTable := &model.TableInfo{
+		ID:   10,
+		Name: ast.NewCIStr("renamed_orders"),
+		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
+			{ID: 11, Name: ast.NewCIStr("renamed_p0")},
+		}},
+	}
+	infoCache := infoschema.NewCache(nil, 1)
+	infoCache.Insert(infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{currentTable}, 10), 0)
+	d := &ddl{ddlCtx: &ddlCtx{infoCache: infoCache}, storageClassTransitionManager: manager}
+	manager.mu.active[key] = StorageClassTransitionStatus{
+		TableSchema:      "old_schema",
+		TableName:        "old_orders",
+		TableID:          10,
+		PartitionName:    "old_p0",
+		PartitionID:      11,
+		Direction:        storageClassDirectionToIA,
+		StartTime:        model.TSConvert2Time(1234),
+		PhysicalTableIDs: []int64{11},
+		schemaVersion:    10,
+		startTS:          1234,
+	}
+
+	transition := d.StorageClassTransitionStatuses()[0]
+	require.Equal(t, "test", transition.TableSchema)
+	require.Equal(t, "renamed_orders", transition.TableName)
+	require.Equal(t, "renamed_p0", transition.PartitionName)
+	stored := manager.snapshot()[0]
+	require.Equal(t, "old_schema", stored.TableSchema)
+	require.Equal(t, "old_orders", stored.TableName)
+	require.Equal(t, "old_p0", stored.PartitionName)
+
+	// Do not expose stale names when a stable identity cannot be resolved from
+	// the current InfoSchema.
+	manager.mu.active[key] = StorageClassTransitionStatus{
+		TableID:       10,
+		PartitionID:   12,
+		Direction:     storageClassDirectionToIA,
+		StartTime:     model.TSConvert2Time(1234),
+		schemaVersion: 10,
+		startTS:       1234,
+	}
+	require.Empty(t, d.StorageClassTransitionStatuses())
+
+	manager.mu.active[key] = StorageClassTransitionStatus{
+		TableID:       10,
+		PartitionID:   11,
+		Direction:     storageClassDirectionToIA,
+		StartTime:     model.TSConvert2Time(1234),
+		schemaVersion: 11,
+		startTS:       1234,
+	}
+	require.Empty(t, d.StorageClassTransitionStatuses())
+	require.False(t, storageClassTransitionSchemaPublished(10, 11))
+	require.True(t, storageClassTransitionSchemaPublished(11, 11))
 }
 
 func TestValidateStorageClassTransitionTargets(t *testing.T) {

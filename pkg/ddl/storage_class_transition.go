@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -67,6 +68,7 @@ type StorageClassTransitionStatus struct {
 	LastUpdateTime    time.Time
 	StatusValid       bool
 	PhysicalTableIDs  []int64
+	schemaVersion     int64
 	startTS           uint64
 }
 
@@ -179,9 +181,13 @@ func changedStorageClassPhysicalIDs(
 func buildStorageClassTransitionOperations(
 	tblInfo *model.TableInfo,
 	physicalIDs map[int64]struct{},
+	schemaVersion int64,
 	startTS uint64,
 	schemaName, tableName string,
 ) ([]*storageClassTransitionOperation, error) {
+	if schemaVersion <= 0 {
+		return nil, errors.New("storage class transition schema version is unavailable")
+	}
 	if startTS == 0 {
 		return nil, errors.New("storage class transition start TSO is unavailable")
 	}
@@ -207,12 +213,13 @@ func buildStorageClassTransitionOperations(
 		if operation == nil {
 			operation = &storageClassTransitionOperation{
 				StorageClassTransitionStatus: StorageClassTransitionStatus{
-					TableSchema: schemaName,
-					TableName:   tableName,
-					TableID:     tblInfo.ID,
-					Direction:   direction,
-					StartTime:   model.TSConvert2Time(startTS),
-					startTS:     startTS,
+					TableSchema:   schemaName,
+					TableName:     tableName,
+					TableID:       tblInfo.ID,
+					Direction:     direction,
+					StartTime:     model.TSConvert2Time(startTS),
+					schemaVersion: schemaVersion,
+					startTS:       startTS,
 				},
 				target: target,
 			}
@@ -251,6 +258,7 @@ func stageStorageClassTransitions(
 	se *sess.Session,
 	tblInfo *model.TableInfo,
 	old map[int64]physicalStorageClass,
+	schemaVersion int64,
 	startTS uint64,
 	schemaName, tableName string,
 ) error {
@@ -282,7 +290,7 @@ func stageStorageClassTransitions(
 		addCurrentStorageClassTransitionTargets(changed, current, operation.targets)
 	}
 
-	operations, err := buildStorageClassTransitionOperations(tblInfo, changed, startTS, schemaName, tableName)
+	operations, err := buildStorageClassTransitionOperations(tblInfo, changed, schemaVersion, startTS, schemaName, tableName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -352,6 +360,9 @@ func insertRunningStorageClassTransition(
 	se *sess.Session,
 	operation *storageClassTransitionOperation,
 ) error {
+	if operation.schemaVersion <= 0 {
+		return errors.New("storage class transition schema version is unavailable")
+	}
 	targets, err := json.Marshal(operation.targets)
 	if err != nil {
 		return errors.Trace(err)
@@ -365,8 +376,8 @@ func insertRunningStorageClassTransition(
 	_, err = se.Execute(ctx,
 		`INSERT INTO mysql.tidb_storage_class_transition_history
 		 (table_schema, table_name, table_id, partition_name, partition_id, direction, state,
-		  start_ts, start_time, physical_targets)
-		 VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+		  schema_version, start_ts, start_time, physical_targets)
+		 VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 		"insert-storage-class-transition",
 		operation.TableSchema,
 		operation.TableName,
@@ -375,6 +386,7 @@ func insertRunningStorageClassTransition(
 		partitionID,
 		operation.Direction,
 		storageClassTransitionStateRunning,
+		operation.schemaVersion,
 		operation.startTS,
 		operation.StartTime,
 		targets,
@@ -388,7 +400,7 @@ func loadRunningStorageClassTransitionsForTable(
 	tableID int64,
 ) ([]*storageClassTransitionOperation, error) {
 	rows, err := se.Execute(ctx,
-		`SELECT table_schema, table_name, table_id, direction, start_ts, physical_targets
+		`SELECT table_schema, table_name, table_id, direction, schema_version, start_ts, physical_targets
 		 FROM mysql.tidb_storage_class_transition_history
 		 WHERE state = %? AND table_id = %?
 		 ORDER BY start_ts, direction`,
@@ -407,7 +419,7 @@ func loadRunningStorageClassTransitions(
 	se *sess.Session,
 ) ([]*storageClassTransitionOperation, error) {
 	rows, err := se.Execute(ctx,
-		`SELECT table_schema, table_name, table_id, direction, start_ts, physical_targets
+		`SELECT table_schema, table_name, table_id, direction, schema_version, start_ts, physical_targets
 		 FROM mysql.tidb_storage_class_transition_history
 		 WHERE state = %?
 		 ORDER BY table_id, start_ts, direction`,
@@ -428,12 +440,16 @@ func decodeRunningStorageClassTransitions(rows []chunk.Row) ([]*storageClassTran
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		startTS := row.GetUint64(4)
+		schemaVersion := row.GetInt64(4)
+		if schemaVersion <= 0 {
+			return nil, errors.Errorf("invalid storage class transition schema version for table %d", row.GetInt64(2))
+		}
+		startTS := row.GetUint64(5)
 		if startTS == 0 {
 			return nil, errors.Errorf("invalid storage class transition start TSO for table %d", row.GetInt64(2))
 		}
 		var targets []storageClassTransitionTarget
-		if err := json.Unmarshal(row.GetBytes(5), &targets); err != nil {
+		if err := json.Unmarshal(row.GetBytes(6), &targets); err != nil {
 			return nil, errors.Annotatef(err, "decode storage class transition targets for table %d", row.GetInt64(2))
 		}
 		if err := validateStorageClassTransitionTargets(targets); err != nil {
@@ -442,12 +458,13 @@ func decodeRunningStorageClassTransitions(rows []chunk.Row) ([]*storageClassTran
 
 		operation := &storageClassTransitionOperation{
 			StorageClassTransitionStatus: StorageClassTransitionStatus{
-				TableSchema: row.GetString(0),
-				TableName:   row.GetString(1),
-				TableID:     row.GetInt64(2),
-				Direction:   direction,
-				StartTime:   model.TSConvert2Time(startTS),
-				startTS:     startTS,
+				TableSchema:   row.GetString(0),
+				TableName:     row.GetString(1),
+				TableID:       row.GetInt64(2),
+				Direction:     direction,
+				StartTime:     model.TSConvert2Time(startTS),
+				schemaVersion: schemaVersion,
+				startTS:       startTS,
 			},
 			target:  target,
 			targets: targets,
@@ -525,6 +542,7 @@ func reconcileStorageClassTransitionTopology(
 	se *sess.Session,
 	tblInfo *model.TableInfo,
 	operation *storageClassTransitionOperation,
+	schemaVersion int64,
 ) error {
 	if err := se.Begin(ctx); err != nil {
 		return errors.Trace(err)
@@ -567,6 +585,7 @@ func reconcileStorageClassTransitionTopology(
 	operations, err := buildStorageClassTransitionOperations(
 		tblInfo,
 		physicalIDs,
+		schemaVersion,
 		txn.StartTS(),
 		operation.TableSchema,
 		operation.TableName,
@@ -613,9 +632,62 @@ func (m *storageClassTransitionManager) snapshot() []StorageClassTransitionStatu
 	return result
 }
 
+func setCurrentStorageClassTransitionNames(
+	status *StorageClassTransitionStatus,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+) bool {
+	if dbInfo == nil || tblInfo == nil || tblInfo.ID != status.TableID {
+		return false
+	}
+	status.TableSchema = dbInfo.Name.O
+	status.TableName = tblInfo.Name.O
+	if status.PartitionID == 0 {
+		status.PartitionName = ""
+		return true
+	}
+	if tblInfo.Partition == nil {
+		return false
+	}
+	partitionName := tblInfo.Partition.GetNameByID(status.PartitionID)
+	if partitionName == "" {
+		return false
+	}
+	status.PartitionName = partitionName
+	return true
+}
+
+func storageClassTransitionSchemaPublished(latestSchemaVersion, requiredSchemaVersion int64) bool {
+	return requiredSchemaVersion > 0 && latestSchemaVersion >= requiredSchemaVersion
+}
+
 // StorageClassTransitionStatuses returns the owner-maintained active status snapshot.
 func (d *ddl) StorageClassTransitionStatuses() []StorageClassTransitionStatus {
-	return d.storageClassTransitionManager.snapshot()
+	statuses := d.storageClassTransitionManager.snapshot()
+	if d.infoCache == nil {
+		return nil
+	}
+	is := d.infoCache.GetLatest()
+	if is == nil {
+		return nil
+	}
+	latestSchemaVersion := is.SchemaMetaVersion()
+	resolved := statuses[:0]
+	for _, status := range statuses {
+		if !storageClassTransitionSchemaPublished(latestSchemaVersion, status.schemaVersion) {
+			continue
+		}
+		tbl, ok := is.TableByID(context.Background(), status.TableID)
+		if !ok {
+			continue
+		}
+		dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
+		if !ok || !setCurrentStorageClassTransitionNames(&status, dbInfo, tbl.Meta()) {
+			continue
+		}
+		resolved = append(resolved, status)
+	}
+	return resolved
 }
 
 func (m *storageClassTransitionManager) clear() {
@@ -650,7 +722,7 @@ func discoverStorageClassTransitions(
 }
 
 func sameStorageClassTransitionStatus(a, b StorageClassTransitionStatus) bool {
-	return a.TableID == b.TableID && a.startTS == b.startTS &&
+	return a.TableID == b.TableID && a.schemaVersion == b.schemaVersion && a.startTS == b.startTS &&
 		a.PartitionID == b.PartitionID && a.Direction == b.Direction && a.StartTime.Equal(b.StartTime) &&
 		slices.Equal(a.PhysicalTableIDs, b.PhysicalTableIDs)
 }
@@ -858,11 +930,20 @@ func (m *storageClassTransitionManager) poll(
 		return historyPruneAttempted, nil
 	}
 
+	is := m.ddl.infoCache.GetLatest()
+	if is == nil {
+		return historyPruneAttempted, errors.New("latest information schema is unavailable")
+	}
+	latestSchemaVersion := is.SchemaMetaVersion()
+	eligible := make(map[storageClassTransitionKey]*storageClassTransitionOperation, len(active))
 	for key, operation := range active {
 		if err := ctx.Err(); err != nil {
 			return historyPruneAttempted, err
 		}
-		tbl, exists := m.ddl.infoCache.GetLatest().TableByID(ctx, operation.TableID)
+		if !storageClassTransitionSchemaPublished(latestSchemaVersion, operation.schemaVersion) {
+			continue
+		}
+		tbl, exists := is.TableByID(ctx, operation.TableID)
 		if !exists {
 			if _, err := supersedeStorageClassTransition(ctx, se, operation, time.Now()); err != nil {
 				logutil.DDLLogger().Warn("supersede orphaned storage class transition failed",
@@ -872,18 +953,20 @@ func (m *storageClassTransitionManager) poll(
 			delete(active, key)
 			continue
 		}
+		eligible[key] = operation
 		if storageClassTransitionTargetsExist(tbl.Meta(), operation) || !storageClassTransitionTopologyIsStable(tbl.Meta()) {
 			continue
 		}
-		if err := reconcileStorageClassTransitionTopology(ctx, se, tbl.Meta(), operation); err != nil {
+		if err := reconcileStorageClassTransitionTopology(ctx, se, tbl.Meta(), operation, latestSchemaVersion); err != nil {
 			logutil.DDLLogger().Warn("reconcile storage class transition topology failed",
 				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
 			continue
 		}
 		delete(active, key)
+		delete(eligible, key)
 	}
 	m.setActive(active)
-	if len(active) == 0 {
+	if len(eligible) == 0 {
 		return historyPruneAttempted, nil
 	}
 
@@ -893,7 +976,7 @@ func (m *storageClassTransitionManager) poll(
 	if err != nil {
 		return historyPruneAttempted, errors.Trace(err)
 	}
-	for key, operation := range active {
+	for key, operation := range eligible {
 		if err := ctx.Err(); err != nil {
 			return historyPruneAttempted, err
 		}

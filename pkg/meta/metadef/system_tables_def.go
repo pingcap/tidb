@@ -1004,6 +1004,7 @@ const (
 		state VARCHAR(16) NOT NULL,
 		total_replicas BIGINT UNSIGNED DEFAULT NULL,
 		completed_replicas BIGINT UNSIGNED DEFAULT NULL,
+		schema_version BIGINT NOT NULL,
 		start_ts BIGINT UNSIGNED NOT NULL,
 		start_time DATETIME(6) NOT NULL,
 		finish_time DATETIME(6) DEFAULT NULL,

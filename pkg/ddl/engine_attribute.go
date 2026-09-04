@@ -15,11 +15,13 @@
 package ddl
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -116,26 +118,47 @@ func (w *worker) onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if attr.StorageClass != nil && kerneltype.IsNextGen() {
-		if err := w.stageExplicitStorageClassTransition(jobCtx, job, tblInfo, oldState); err != nil {
-			return ver, errors.Trace(err)
-		}
-	}
-
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if attr.StorageClass != nil && kerneltype.IsNextGen() {
+		pending, err := w.prepareExplicitStorageClassTransition(jobCtx, job, tblInfo, oldState)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		pending.schemaVersion = ver
+		if pending.schemaVersion == 0 && job.MultiSchemaInfo != nil && job.MultiSchemaInfo.SkipVersion {
+			pending.schemaVersion = jobCtx.sharedMultiSchemaVersion
+		}
+		if pending.schemaVersion <= 0 {
+			return ver, errors.New("storage class transition schema version is unavailable")
+		}
+		if jobCtx.deferStorageClassTransitionStaging {
+			jobCtx.pendingStorageClassTransitions = append(jobCtx.pendingStorageClassTransitions, pending)
+		} else if err := pending.stage(jobCtx.stepCtx, w.sess); err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
 
-func (w *worker) stageExplicitStorageClassTransition(
+type pendingStorageClassTransition struct {
+	tblInfo       *model.TableInfo
+	old           map[int64]physicalStorageClass
+	schemaVersion int64
+	startTS       uint64
+	schemaName    string
+	tableName     string
+}
+
+func (w *worker) prepareExplicitStorageClassTransition(
 	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,
 	old map[int64]physicalStorageClass,
-) error {
+) (pendingStorageClassTransition, error) {
 	startTS := job.RealStartTS
 	if startTS == 0 {
 		startTS = job.StartTS
@@ -144,21 +167,45 @@ func (w *worker) stageExplicitStorageClassTransition(
 		startTS = jobCtx.metaMut.StartTS
 	}
 	if startTS == 0 {
-		return errors.New("storage class transition start TSO is unavailable")
+		return pendingStorageClassTransition{}, errors.New("storage class transition start TSO is unavailable")
 	}
 	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
 	if err != nil {
-		return errors.Trace(err)
+		return pendingStorageClassTransition{}, errors.Trace(err)
 	}
+	return pendingStorageClassTransition{
+		tblInfo:    tblInfo.Clone(),
+		old:        old,
+		startTS:    startTS,
+		schemaName: dbInfo.Name.O,
+		tableName:  tblInfo.Name.O,
+	}, nil
+}
+
+func (pending pendingStorageClassTransition) stage(
+	ctx context.Context,
+	se *sess.Session,
+) error {
 	return stageStorageClassTransitions(
-		jobCtx.stepCtx,
-		w.sess,
-		tblInfo,
-		old,
-		startTS,
-		dbInfo.Name.O,
-		tblInfo.Name.O,
+		ctx,
+		se,
+		pending.tblInfo,
+		pending.old,
+		pending.schemaVersion,
+		pending.startTS,
+		pending.schemaName,
+		pending.tableName,
 	)
+}
+
+func (w *worker) flushPendingStorageClassTransitions(jobCtx *jobContext) error {
+	for _, pending := range jobCtx.pendingStorageClassTransitions {
+		if err := pending.stage(jobCtx.stepCtx, w.sess); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	jobCtx.pendingStorageClassTransitions = nil
+	return nil
 }
 
 func onAlterTableStorageClassSettings(storageClass json.RawMessage, tblInfo *model.TableInfo) error {

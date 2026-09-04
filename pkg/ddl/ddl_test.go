@@ -79,6 +79,15 @@ func PruneStorageClassTransitionHistoryForTest(ctx context.Context, se *sess.Ses
 	return pruneStorageClassTransitionHistory(ctx, se)
 }
 
+// PollStorageClassTransitionsForTest runs one owner polling iteration.
+func PollStorageClassTransitionsForTest(ctx context.Context, d DDL, se *sess.Session) (bool, error) {
+	dd, ok := d.(*ddl)
+	if !ok {
+		return false, fmt.Errorf("unexpected DDL implementation %T", d)
+	}
+	return dd.storageClassTransitionManager.poll(ctx, se, false)
+}
+
 // ReconcileStorageClassTransitionTopologyForTest exposes topology reconciliation to external tests.
 func ReconcileStorageClassTransitionTopologyForTest(
 	ctx context.Context,
@@ -92,7 +101,7 @@ func ReconcileStorageClassTransitionTopologyForTest(
 	if len(operations) != 1 {
 		return fmt.Errorf("expected one running storage class transition, got %d", len(operations))
 	}
-	return reconcileStorageClassTransitionTopology(ctx, se, tblInfo, operations[0])
+	return reconcileStorageClassTransitionTopology(ctx, se, tblInfo, operations[0], operations[0].schemaVersion)
 }
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
