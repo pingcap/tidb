@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the twelve focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the thirteen focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -587,3 +587,34 @@ The full executor suite, concurrent cancellation stress across all worker
 lanes, spill integration under live TiKV, and native TiKV behavior were not
 run. The default Rust 1.95 toolchain remains below the workspace's Rust 1.97
 minimum; the pinned nightly toolchain was used for the Ready checks.
+
+## Serial sort cancellation polling alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this thirteenth
+Rust-only fix. Go's serial `sortPartition.keyColumnsLess` polls the statement
+killer every 10,240 row comparisons and checks it after each full spill chunk.
+Rust's serial `SortExec` path now passes `StatementMemory` into partition
+sorting and serial spill writes, using the 10,240-comparison interval and a
+post-chunk check. The parallel worker retains its separate 20,000-comparison
+interval and 100-row local-merge polling aligned in the preceding cluster;
+the public no-memory partition API remains available for non-statement callers.
+
+The focused regression is
+`sort::tests::serial_sort_partition_honors_query_kill_during_batch_sort`.
+Before the production change it returned `Ok(())` with a pending query kill;
+after the change it returns `ExecError::Killed`. Rust ownership remains within
+`sort.rs` and `sort_partition.rs`; no Go, Bazel, generated, fixture, or
+platform artifact changed.
+
+## Serial sort cancellation polling Ready validation
+
+- Pre-fix `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib sort::tests::serial_sort_partition_honors_query_kill_during_batch_sort -- --exact --nocapture` failed with `a killed serial partition sort must return an executor cancellation error: Ok(())`.
+- The same focused command passed after the fix with a temporary host-only vendored-OpenSSL feature toggle; the manifest was reverted immediately after the run.
+- Existing serial sort/accounting regressions passed: `a_sort_accounts_its_materialized_rows_against_the_statement`, `test_unparallel_sort_spill_disk`, `a_spilled_descending_sort_returns_every_row_in_order`, and `the_same_sort_raises_8175_when_tmp_storage_is_disabled`.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+
+The full executor suite, cancellation during a live serial spill write,
+spill integration under live TiKV, and native TiKV behavior were not run. The
+default Rust 1.95 toolchain remains below the workspace's Rust 1.97 minimum;
+the pinned nightly toolchain was used for the focused validation.

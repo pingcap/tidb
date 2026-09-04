@@ -140,7 +140,7 @@ where
         if self.current.num_rows() == 0 {
             return Ok(());
         }
-        self.current.sort_with_memory(
+        self.current.sort_with_parallel_memory(
             &self.by_items,
             &self.compare_funcs,
             &self.ctx,
@@ -580,7 +580,12 @@ where
             current.add(chunk);
 
             if self.need_spill.swap(false, SeqCst) {
-                current.spill_to_disk(&self.by_items, &self.compare_funcs, &self.ctx)?;
+                current.spill_to_disk_with_memory(
+                    &self.by_items,
+                    &self.compare_funcs,
+                    &self.ctx,
+                    &self.memory,
+                )?;
                 self.partitions.push(current);
                 current = self.new_partition(&fields);
             }
@@ -590,7 +595,7 @@ where
             self.memory.check()?;
         }
 
-        current.sort(&self.by_items, &self.compare_funcs, &self.ctx)?;
+        current.sort_with_memory(&self.by_items, &self.compare_funcs, &self.ctx, &self.memory)?;
         self.partitions.push(current);
         Ok(())
     }
@@ -1679,6 +1684,36 @@ mod tests {
         assert!(
             matches!(result, Err(ExecError::Killed(_))),
             "a killed worker batch sort must return an executor cancellation error: {result:?}"
+        );
+    }
+
+    /// Go's serial `sortPartition.keyColumnsLess` polls the SQL killer every
+    /// 10,240 comparisons. Exercise the partition directly so the pending
+    /// signal reaches the comparator checkpoint instead of the fetch loop's
+    /// ordinary post-chunk check.
+    #[test]
+    fn serial_sort_partition_honors_query_kill_during_batch_sort() {
+        let fields = vec![long()];
+        let memory = StatementMemory::default();
+        let parent = Tracker::new(1, -1);
+        let mut partition = SortPartition::new(fields.clone(), &parent, memory.spill_storage());
+        let batch_size = 8192usize;
+        let mut chunk = Chunk::new_with_capacity(&fields, batch_size);
+        for row in 0..batch_size {
+            let value = ((row * 7919) % batch_size) as i64;
+            chunk.append_int64(0, value);
+        }
+        partition.add(chunk);
+
+        memory
+            .sql_killer()
+            .send_kill_signal(KillSignal::QueryInterrupted);
+        let by_items = asc();
+        let compare_funcs = compile_compare_funcs(&by_items);
+        let result = partition.sort_with_memory(&by_items, &compare_funcs, &NoColumns, &memory);
+        assert!(
+            matches!(result, Err(ExecError::Killed(_))),
+            "a killed serial partition sort must return an executor cancellation error: {result:?}"
         );
     }
 

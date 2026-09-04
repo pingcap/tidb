@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor/sortexec` serial sort cancellation polling):
+  aligned the serial `SortPartition` comparator and spill writer with Go's
+  10,240-comparison and post-spill-chunk SQL-killer checkpoints. The focused
+  fail-before/pass-after regression and existing serial sort/spill checks are
+  recorded in `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-05 (`pkg/executor/sortexec` parallel worker cancellation polling):
   aligned Rust's persistent parallel sort workers with Go's SQL-killer
   checkpoints. Worker batch comparators now poll the statement killer every

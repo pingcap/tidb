@@ -57,9 +57,12 @@ use tidb_chunk::ColumnRead;
 
 /// Go `spillChunkSize`: rows per chunk written to the spill file.
 pub const SPILL_CHUNK_SIZE: usize = 1024;
+/// Go `signalCheckpointForSort`: comparator calls between SQL-killer polls in
+/// a serial sort partition.
+const SIGNAL_CHECKPOINT_FOR_SORT: u64 = 10_240;
 /// Go `SignalCheckpointForSort`: comparator calls between SQL-killer polls in
 /// a parallel worker.
-const SIGNAL_CHECKPOINT_FOR_SORT: u64 = 20_000;
+const SIGNAL_CHECKPOINT_FOR_PARALLEL_SORT: u64 = 20_000;
 
 /// Go `sortPartitionSpillDiskAction`: the `ActionOnExceed` a spilling sort
 /// registers on the session tracker.
@@ -271,8 +274,8 @@ impl SortPartition {
         self.sort_impl(by_items, compare_funcs, ctx, None)
     }
 
-    /// Parallel-worker variant of [`Self::sort`] that mirrors Go's
-    /// `parallelSortWorker.keyColumnsLess` signal checkpoint while the sort
+    /// Statement-aware variant of [`Self::sort`] that mirrors Go's
+    /// `sortPartition.keyColumnsLess` signal checkpoint while the serial sort
     /// comparator is running.
     pub(crate) fn sort_with_memory<C: Columns>(
         &mut self,
@@ -281,7 +284,29 @@ impl SortPartition {
         ctx: &C,
         memory: &StatementMemory,
     ) -> Result<(), ExecError> {
-        self.sort_impl(by_items, compare_funcs, ctx, Some(memory))
+        self.sort_impl(
+            by_items,
+            compare_funcs,
+            ctx,
+            Some((memory, SIGNAL_CHECKPOINT_FOR_SORT)),
+        )
+    }
+
+    /// Parallel-worker variant of [`Self::sort`] that uses Go's larger
+    /// `parallelSortWorker.SignalCheckpointForSort` interval.
+    pub(crate) fn sort_with_parallel_memory<C: Columns>(
+        &mut self,
+        by_items: &[SortByItem],
+        compare_funcs: &[Option<ColumnCompareFunc>],
+        ctx: &C,
+        memory: &StatementMemory,
+    ) -> Result<(), ExecError> {
+        self.sort_impl(
+            by_items,
+            compare_funcs,
+            ctx,
+            Some((memory, SIGNAL_CHECKPOINT_FOR_PARALLEL_SORT)),
+        )
     }
 
     fn sort_impl<C: Columns>(
@@ -289,7 +314,7 @@ impl SortPartition {
         by_items: &[SortByItem],
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
-        memory: Option<&StatementMemory>,
+        memory: Option<(&StatementMemory, u64)>,
     ) -> Result<(), ExecError> {
         if self.sorted {
             return Ok(());
@@ -315,8 +340,8 @@ impl SortPartition {
         let mut compare_count = 0u64;
         self.rows
             .sort_unstable_by(|&(left_chunk, left_row), &(right_chunk, right_row)| {
-                if let Some(memory) = memory {
-                    if compare_count >= SIGNAL_CHECKPOINT_FOR_SORT {
+                if let Some((memory, checkpoint)) = memory {
+                    if compare_count >= checkpoint {
                         if let Err(error) = memory.check() {
                             if sort_err.is_none() {
                                 sort_err = Some(error);
@@ -541,6 +566,26 @@ impl SortPartition {
         ctx: &C,
     ) -> Result<(), ExecError> {
         self.sort(by_items, compare_funcs, ctx)?;
+        self.spill_sorted_rows_to_disk(None)
+    }
+
+    /// Statement-aware serial spill variant. Go sorts a partition with the
+    /// same SQL-killer checkpoint before writing its sorted rows to disk.
+    pub(crate) fn spill_to_disk_with_memory<C: Columns>(
+        &mut self,
+        by_items: &[SortByItem],
+        compare_funcs: &[Option<ColumnCompareFunc>],
+        ctx: &C,
+        memory: &StatementMemory,
+    ) -> Result<(), ExecError> {
+        self.sort_with_memory(by_items, compare_funcs, ctx, memory)?;
+        self.spill_sorted_rows_to_disk(Some(memory))
+    }
+
+    fn spill_sorted_rows_to_disk(
+        &mut self,
+        memory: Option<&StatementMemory>,
+    ) -> Result<(), ExecError> {
         if self.rows.is_empty() {
             // Go `errSpillEmptyChunk`. Reached only if the action fires on a
             // partition that has taken no rows, which the `spillLimit` guard
@@ -562,6 +607,11 @@ impl SortPartition {
             if tmp.num_rows() >= self.spill_chunk_size {
                 in_disk.add(&tmp).map_err(spill_error)?;
                 tmp.reset();
+                if let Some(memory) = memory {
+                    // Go's `sortPartition.spillToDiskImpl` invokes
+                    // `HandleKillSignal` after each full spill chunk.
+                    memory.check()?;
+                }
             }
         }
         // Go: do not spill an empty tail chunk -- `Add` rejects it.
