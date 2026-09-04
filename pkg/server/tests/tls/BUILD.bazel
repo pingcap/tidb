@@ -5,10 +5,11 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "spiffe_test.go",
         "tls_test.go",
     ],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",
@@ -27,8 +28,10 @@ go_test(
         "//pkg/util/topsql/state",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_spiffe_go_spiffe_v2//proto/spiffe/workload",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
+        "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",
     ],
 )
