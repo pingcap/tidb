@@ -373,90 +373,148 @@ fn infer_type(
                 }
             }
             Expr::Cast(cast) => match &cast.cast_type {
+                // Each arm mirrors Go's `parseCastTypeInternal` plus the
+                // unspecified-flen/decimal wrapper in `parseCastType`
+                // (`pkg/parser/expr_cast_parser.go`), which applies
+                // `mysql.GetDefaultFieldLengthAndDecimalForCast`
+                // (`pkg/parser/mysql/util.go`); the binary flag comes from
+                // `setBinaryCastType` and reaches the wire column flags via
+                // `ConvertColumnInfo` (`pkg/server/internal/column/convert.go:31`).
                 CastType::Signed => Ok(type_metadata(
                     FieldTypeCode::LongLong,
-                    0,
-                    None,
+                    tidb_protocol::BINARY_FLAG,
+                    Some(22),
                     Some(0),
                     Collation::Binary,
                 )),
                 CastType::Unsigned | CastType::UnsignedInUnion => Ok(type_metadata(
                     FieldTypeCode::LongLong,
-                    UNSIGNED_FLAG,
-                    None,
+                    tidb_protocol::BINARY_FLAG | UNSIGNED_FLAG,
+                    Some(22),
                     Some(0),
                     Collation::Binary,
                 )),
                 CastType::Char { len, charset } => {
+                    // Go's `CHAR` production resolves the charset clause or
+                    // falls back to the connection charset; a `BINARY`
+                    // suffix sets the binary charset and `BinaryFlag`.
                     let collation = charset
                         .as_deref()
                         .and_then(Charset::from_name)
                         .map_or(default_collation, Charset::default_collation);
+                    let flags = if collation == Collation::Binary {
+                        tidb_protocol::BINARY_FLAG
+                    } else {
+                        0
+                    };
                     Ok(type_metadata(
                         FieldTypeCode::VarString,
-                        0,
+                        flags,
                         *len,
                         None,
                         collation,
                     ))
                 }
-                CastType::Binary { len } => Ok(type_metadata(
-                    FieldTypeCode::VarString,
-                    0,
-                    *len,
-                    None,
-                    Collation::Binary,
-                )),
+                CastType::Binary { len } => {
+                    // Bare `BINARY` stays `TypeVarString`; a specified
+                    // length flips the type to `TypeString`
+                    // (`tp.SetType(mysql.TypeString)`).
+                    let code = if len.is_some() {
+                        FieldTypeCode::String
+                    } else {
+                        FieldTypeCode::VarString
+                    };
+                    Ok(type_metadata(
+                        code,
+                        tidb_protocol::BINARY_FLAG,
+                        *len,
+                        None,
+                        Collation::Binary,
+                    ))
+                }
                 CastType::Decimal { flen, scale } => Ok(type_metadata(
                     FieldTypeCode::NewDecimal,
-                    0,
+                    tidb_protocol::BINARY_FLAG,
                     (*flen != 0).then_some(*flen),
                     Some(*scale as u8),
                     Collation::Binary,
                 )),
                 CastType::Date => Ok(type_metadata(
                     FieldTypeCode::Date,
-                    0,
+                    tidb_protocol::BINARY_FLAG,
                     Some(10),
-                    None,
-                    Collation::Binary,
-                )),
-                CastType::DateTime { fsp } => Ok(type_metadata(
-                    FieldTypeCode::Datetime,
-                    0,
-                    Some(19),
-                    fsp.map(|v| v as u8),
-                    Collation::Binary,
-                )),
-                CastType::Time { fsp } => Ok(type_metadata(
-                    FieldTypeCode::Duration,
-                    0,
-                    Some(10),
-                    fsp.map(|v| v as u8),
-                    Collation::Binary,
-                )),
-                CastType::Year => Ok(type_metadata(
-                    FieldTypeCode::Year,
-                    0,
-                    Some(4),
                     Some(0),
                     Collation::Binary,
                 )),
-                CastType::Double | CastType::Float => Ok(type_metadata(
-                    FieldTypeCode::Double,
-                    0,
+                CastType::DateTime { fsp } => {
+                    // Default flen 19, plus `1 + fsp` when a positive fsp
+                    // widens the type (`tp.GetFlen() + 1 + tp.GetDecimal()`).
+                    let fsp = fsp.unwrap_or(0);
+                    let flen = 19 + u32::from(fsp > 0) * (1 + fsp);
+                    Ok(type_metadata(
+                        FieldTypeCode::Datetime,
+                        tidb_protocol::BINARY_FLAG,
+                        Some(flen),
+                        Some(fsp as u8),
+                        Collation::Binary,
+                    ))
+                }
+                CastType::Time { fsp } => {
+                    let fsp = fsp.unwrap_or(0);
+                    let flen = 10 + u32::from(fsp > 0) * (1 + fsp);
+                    Ok(type_metadata(
+                        FieldTypeCode::Duration,
+                        tidb_protocol::BINARY_FLAG,
+                        Some(flen),
+                        Some(fsp as u8),
+                        Collation::Binary,
+                    ))
+                }
+                CastType::Year => Ok(type_metadata(
+                    // `TypeYear` is absent from
+                    // `defaultLengthAndDecimalForCast`, so both flen and
+                    // decimal stay unspecified.
+                    FieldTypeCode::Year,
+                    tidb_protocol::BINARY_FLAG,
                     None,
+                    None,
+                    Collation::Binary,
+                )),
+                CastType::Double => Ok(type_metadata(
+                    FieldTypeCode::Double,
+                    tidb_protocol::BINARY_FLAG,
+                    Some(22),
+                    None,
+                    Collation::Binary,
+                )),
+                CastType::Float => Ok(type_metadata(
+                    // Go's `FLOAT` cast target stays `TypeFloat` and takes
+                    // `(12, unspecified)`; only `FLOAT(p >= 25)` resolves to
+                    // `TypeDouble`, which this AST folds at parse time.
+                    FieldTypeCode::Float,
+                    tidb_protocol::BINARY_FLAG,
+                    Some(12),
                     None,
                     Collation::Binary,
                 )),
                 CastType::Vector { dimensions } => Ok(type_metadata(
                     FieldTypeCode::VectorFloat32,
-                    0,
+                    tidb_protocol::BINARY_FLAG,
                     *dimensions,
                     Some(0),
                     Collation::Binary,
                 )),
-                CastType::Json => unresolved("JSON result metadata requires a JSON value domain"),
+                CastType::Json => Ok(type_metadata(
+                    // Go also sets `mysql.ParseToJSONFlag` here, but that
+                    // flag is `1 << 18` and the server truncates the flag
+                    // word to u16 on the wire (`ConvertColumnInfo`), so it
+                    // cannot surface in result metadata.
+                    FieldTypeCode::Json,
+                    tidb_protocol::BINARY_FLAG,
+                    Some(4194304),
+                    Some(0),
+                    Collation::Utf8Mb4Bin,
+                )),
             },
             Expr::Func { name, args, .. } => infer_function(name, args, default_collation)
                 .ok_or_else(|| ResultFieldResolveError::MissingType {

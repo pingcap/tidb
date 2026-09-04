@@ -131,3 +131,176 @@ fn explicit_alias_is_distinct_from_original_column_name() {
     assert_eq!(fields.names.original_column.original, "a");
     assert_eq!(fields.names.table.original, "t");
 }
+
+/// Every `CAST` target's result metadata mirrors Go's hand-written
+/// `parseCastType`/`parseCastTypeInternal` (`pkg/parser/expr_cast_parser.go`)
+/// plus its unspecified-flen/decimal wrapper, which applies
+/// `mysql.GetDefaultFieldLengthAndDecimalForCast`
+/// (`pkg/parser/mysql/util.go` `defaultLengthAndDecimalForCast`): SIGNED and
+/// UNSIGNED are `LongLong (22, 0)`; bare `BINARY` keeps `TypeVarString` while
+/// `BINARY(n)` flips to `TypeString` (`tp.SetType(mysql.TypeString)` when the
+/// length is specified); DATETIME/TIME take their default flen 19/10 plus
+/// `1 + fsp` when a positive fsp is given; YEAR leaves flen and decimal
+/// unspecified (TypeYear is absent from the default map); DOUBLE defaults to
+/// `(22, unspecified)`, FLOAT to `(12, unspecified)` and stays `TypeFloat`;
+/// JSON defaults to `(4194304, 0)`. Every binary-charset target carries
+/// `mysql.BinaryFlag` (`setBinaryCastType`), which the server's
+/// `ConvertColumnInfo` copies into the wire column flags
+/// (`pkg/server/internal/column/convert.go:31`).
+#[test]
+fn cast_target_metadata_follows_go_parse_cast_type() {
+    use tidb_ast::{CastExpr, CastStyle, CastType};
+
+    let cast = |cast_type: CastType| {
+        Expr::Cast(CastExpr {
+            expr: Box::new(Expr::Int("1".to_owned())),
+            cast_type,
+            style: CastStyle::Cast,
+            array: false,
+        })
+    };
+    let binary = tidb_protocol::BINARY_FLAG;
+    let cases: Vec<(CastType, FieldTypeCode, u16, Option<u32>, Option<u8>)> = vec![
+        (
+            CastType::Signed,
+            FieldTypeCode::LongLong,
+            binary,
+            Some(22),
+            Some(0),
+        ),
+        (
+            CastType::Unsigned,
+            FieldTypeCode::LongLong,
+            binary | tidb_exec::UNSIGNED_FLAG,
+            Some(22),
+            Some(0),
+        ),
+        (
+            CastType::Char {
+                len: None,
+                charset: None,
+            },
+            FieldTypeCode::VarString,
+            0,
+            None,
+            None,
+        ),
+        (
+            CastType::Char {
+                len: Some(3),
+                charset: None,
+            },
+            FieldTypeCode::VarString,
+            0,
+            Some(3),
+            None,
+        ),
+        (
+            CastType::Binary { len: None },
+            FieldTypeCode::VarString,
+            binary,
+            None,
+            None,
+        ),
+        (
+            CastType::Binary { len: Some(5) },
+            FieldTypeCode::String,
+            binary,
+            Some(5),
+            None,
+        ),
+        (
+            CastType::Decimal { flen: 10, scale: 0 },
+            FieldTypeCode::NewDecimal,
+            binary,
+            Some(10),
+            Some(0),
+        ),
+        (
+            CastType::Decimal { flen: 7, scale: 2 },
+            FieldTypeCode::NewDecimal,
+            binary,
+            Some(7),
+            Some(2),
+        ),
+        (
+            CastType::Date,
+            FieldTypeCode::Date,
+            binary,
+            Some(10),
+            Some(0),
+        ),
+        (
+            CastType::DateTime { fsp: None },
+            FieldTypeCode::Datetime,
+            binary,
+            Some(19),
+            Some(0),
+        ),
+        (
+            CastType::DateTime { fsp: Some(3) },
+            FieldTypeCode::Datetime,
+            binary,
+            Some(23),
+            Some(3),
+        ),
+        (
+            CastType::Time { fsp: None },
+            FieldTypeCode::Duration,
+            binary,
+            Some(10),
+            Some(0),
+        ),
+        (
+            CastType::Time { fsp: Some(3) },
+            FieldTypeCode::Duration,
+            binary,
+            Some(14),
+            Some(3),
+        ),
+        (CastType::Year, FieldTypeCode::Year, binary, None, None),
+        (
+            CastType::Double,
+            FieldTypeCode::Double,
+            binary,
+            Some(22),
+            None,
+        ),
+        (
+            CastType::Float,
+            FieldTypeCode::Float,
+            binary,
+            Some(12),
+            None,
+        ),
+        (
+            CastType::Vector { dimensions: None },
+            FieldTypeCode::VectorFloat32,
+            binary,
+            None,
+            Some(0),
+        ),
+        (
+            CastType::Json,
+            FieldTypeCode::Json,
+            binary,
+            Some(4194304),
+            Some(0),
+        ),
+    ];
+    for (target, code, flags, flen, decimal) in cases {
+        let fields = resolve_select_fields(
+            &[SelectField::Expr {
+                expr: cast(target.clone()),
+                alias: None,
+            }],
+            Collation::Utf8Mb4Bin,
+        )
+        .expect("cast target metadata");
+        let field_type = &fields[0].field_type;
+        assert_eq!(field_type.code, code, "code for {target:?}");
+        assert_eq!(field_type.flags, flags, "flags for {target:?}");
+        assert_eq!(field_type.flen, flen, "flen for {target:?}");
+        assert_eq!(field_type.decimal, decimal, "decimal for {target:?}");
+    }
+}
