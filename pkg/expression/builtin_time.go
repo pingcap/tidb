@@ -4463,6 +4463,26 @@ func goTimeToMysqlUnixTimestamp(t time.Time, decimal int) (*types.MyDecimal, err
 	return dec, err
 }
 
+// adjustUnixTimestampForDSTOverlap makes UNIX_TIMESTAMP prefer the earlier
+// occurrence of an ambiguous wall time during a backward offset transition.
+func adjustUnixTimestampForDSTOverlap(val types.Time, t time.Time) time.Time {
+	zoneStart, _ := t.ZoneBounds()
+	if zoneStart.IsZero() {
+		return t
+	}
+	_, currentOffset := t.Zone()
+	_, previousOffset := zoneStart.Add(-time.Nanosecond).Zone()
+	if previousOffset <= currentOffset {
+		return t
+	}
+
+	earlier := t.Add(time.Duration(currentOffset-previousOffset) * time.Second)
+	if types.FromGoTime(earlier) == val.CoreTime() {
+		return earlier
+	}
+	return t
+}
+
 type builtinUnixTimestampCurrentSig struct {
 	baseBuiltinFunc
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
@@ -4524,6 +4544,7 @@ func (b *builtinUnixTimestampIntSig) evalInt(ctx EvalContext, row chunk.Row) (in
 	if err != nil {
 		return 0, false, nil
 	}
+	t = adjustUnixTimestampForDSTOverlap(val, t)
 	dec, err := goTimeToMysqlUnixTimestamp(t, 1)
 	if err != nil {
 		return 0, true, err
@@ -4560,6 +4581,7 @@ func (b *builtinUnixTimestampDecSig) evalDecimal(ctx EvalContext, row chunk.Row)
 	if err != nil {
 		return new(types.MyDecimal), false, nil
 	}
+	t = adjustUnixTimestampForDSTOverlap(val, t)
 	result, err := goTimeToMysqlUnixTimestamp(t, b.tp.GetDecimal())
 	return result, err != nil, err
 }
