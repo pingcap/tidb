@@ -338,6 +338,50 @@ func ParseFTSTokenizeIndexExpr(exprStr string) (FTSTokenizeIndexOrigin, bool) {
 	}, true
 }
 
+// FTSTokenizeIndexColumn reports whether idxInfo is a multi-valued index over a
+// tokenized column, and recovers what that column was built from.
+//
+// It does not require the FULLTEXT marker or a single-column index, so it also
+// recognises a composite index such as
+//
+//	KEY idx (tenant_id, (CAST(FTS_TOKENIZE(body, ...) AS CHAR(84) ARRAY)))
+//
+// whose leading columns bound the token lookup to one tenant. The position of
+// the tokenized column does not matter here: which columns an index range can
+// actually use is the planner's decision, made from the query's own filters.
+//
+// Exactly one tokenized column is required. Two would leave it ambiguous which
+// one a MATCH refers to, and the multi-valued index machinery permits only one
+// array column anyway.
+func FTSTokenizeIndexColumn(
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+) (FTSTokenizeIndexOrigin, bool) {
+	if idxInfo == nil || !idxInfo.MVIndex {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	var found FTSTokenizeIndexOrigin
+	tokenized := 0
+	for _, idxCol := range idxInfo.Columns {
+		offset := idxCol.Offset
+		if offset < 0 || offset >= len(tblInfo.Columns) {
+			return FTSTokenizeIndexOrigin{}, false
+		}
+		col := tblInfo.Columns[offset]
+		if !col.Hidden {
+			continue
+		}
+		if origin, ok := ParseFTSTokenizeIndexExpr(col.GeneratedExprString); ok {
+			found = origin
+			tokenized++
+		}
+	}
+	if tokenized != 1 {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	return found, true
+}
+
 // FTSTokenizeIndexOriginFromIndex reports whether idxInfo was declared as a
 // FULLTEXT index and materialised as a multi-valued index over a hidden
 // tokenized column, and if so recovers what it was declared with.
@@ -351,18 +395,10 @@ func FTSTokenizeIndexOriginFromIndex(
 	idxInfo *model.IndexInfo,
 ) (FTSTokenizeIndexOrigin, bool) {
 	if idxInfo == nil || idxInfo.Tp != pmodel.IndexTypeFulltext ||
-		idxInfo.FullTextInfo != nil || !idxInfo.MVIndex || len(idxInfo.Columns) != 1 {
+		idxInfo.FullTextInfo != nil || len(idxInfo.Columns) != 1 {
 		return FTSTokenizeIndexOrigin{}, false
 	}
-	offset := idxInfo.Columns[0].Offset
-	if offset < 0 || offset >= len(tblInfo.Columns) {
-		return FTSTokenizeIndexOrigin{}, false
-	}
-	col := tblInfo.Columns[offset]
-	if !col.Hidden {
-		return FTSTokenizeIndexOrigin{}, false
-	}
-	return ParseFTSTokenizeIndexExpr(col.GeneratedExprString)
+	return FTSTokenizeIndexColumn(tblInfo, idxInfo)
 }
 
 func ftsTokenizeIntLiteral(node ast.ExprNode) (int, bool) {

@@ -2334,13 +2334,27 @@ func (er *expressionRewriter) resolveLocalFullTextAnalyzer(numCols, stackLen int
 		columnNames[i] = colName.L
 	}
 	sessVars := er.planCtx.builder.ctx.GetSessionVars()
+	var fallback *fulltext.AnalyzerConfig
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic {
 			continue
 		}
-		if origin, ok := expression.FTSTokenizeIndexOriginFromIndex(tblInfo, idx); ok {
-			if len(columnNames) == 1 && origin.ColumnName.L == columnNames[0] {
+		if origin, ok := expression.FTSTokenizeIndexColumn(tblInfo, idx); ok {
+			if len(columnNames) != 1 || origin.ColumnName.L != columnNames[0] {
+				continue
+			}
+			if _, declared := expression.FTSTokenizeIndexOriginFromIndex(tblInfo, idx); declared {
 				return origin.AnalyzerConfig, nil
+			}
+			// An index the user wrote over FTS_TOKENIZE themselves, such as
+			// the composite (tenant_id, tokens) a multi-tenant table wants.
+			// It tokenizes the column just as a declared FULLTEXT index does,
+			// and carries the same analyzer snapshot, so it can answer a
+			// MATCH. A declared one still wins if the table has both, since
+			// that is the index the user named for this purpose.
+			if fallback == nil {
+				config := origin.AnalyzerConfig
+				fallback = &config
 			}
 			continue
 		}
@@ -2361,6 +2375,9 @@ func (er *expressionRewriter) resolveLocalFullTextAnalyzer(numCols, stackLen int
 			}
 			return config, nil
 		}
+	}
+	if fallback != nil {
+		return *fallback, nil
 	}
 	return fulltext.AnalyzerConfig{}, plannererrors.ErrFtMatchingKeyNotFound
 }

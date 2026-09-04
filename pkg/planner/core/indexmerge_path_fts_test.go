@@ -207,3 +207,71 @@ func TestFTSMatchAgainstNgramUsesMVIndex(t *testing.T) {
 	require.True(t, usesFTSMVIndex(tk, query))
 	tk.MustQuery(query).Check([][]any{{"1001"}})
 }
+
+// prepareFTSMultiTenantTable builds the shape a multi-tenant table wants: a
+// composite multi-valued index whose leading column bounds the token lookup to
+// one tenant. Each tenant holds the same rare token, so a query that does not
+// name a tenant cannot be answered from a single range.
+func prepareFTSMultiTenantTable(t *testing.T, extraIndex string) *testkit.TestKit {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_local_match_against=ON")
+	tk.MustExec(fmt.Sprintf(`create table docs (
+		id int primary key,
+		tenant_id int,
+		body varchar(255)%s,
+		key idx_tenant_body (tenant_id, (cast(fts_tokenize(body, 'STANDARD', 3, 84, 1) as char(84) array)))
+	)`, extraIndex))
+	for i := range 1000 {
+		tk.MustExec(fmt.Sprintf("insert into docs values (%d, %d, 'common filler text number %d')", i, i%10, i))
+	}
+	tk.MustExec("insert into docs values (1001, 3, 'rareone alone here')")
+	tk.MustExec("insert into docs values (1002, 7, 'rareone elsewhere here')")
+	tk.MustExec("analyze table docs")
+	return tk
+}
+
+// TestFTSMatchAgainstUsesCompositeMVIndex covers the multi-tenant shape: a
+// tenant predicate and a MATCH together must reach one bounded index range,
+// rather than scanning every tenant's rows to evaluate the MATCH.
+func TestFTSMatchAgainstUsesCompositeMVIndex(t *testing.T) {
+	tk := prepareFTSMultiTenantTable(t, "")
+
+	query := "select id from docs where tenant_id = 3 and match(body) against('+rareone' in boolean mode)"
+	plan := fmt.Sprintf("%v", tk.MustQuery("explain "+query).Rows())
+	require.Contains(t, plan, "idx_tenant_body")
+	// The range must cover both columns, or the tenant is not narrowing anything.
+	require.Contains(t, plan, `[3 "rareone",3 "rareone"]`)
+	tk.MustQuery(query).Check([][]any{{"1001"}})
+
+	// An IN list over tenants becomes one range per tenant.
+	inQuery := "select id from docs where tenant_id in (3,7) and match(body) against('+rareone' in boolean mode) order by id"
+	inPlan := fmt.Sprintf("%v", tk.MustQuery("explain "+inQuery).Rows())
+	require.Contains(t, inPlan, "idx_tenant_body")
+	tk.MustQuery(inQuery).Check([][]any{{"1001"}, {"1002"}})
+
+	// Without a tenant predicate the leading column is unbounded, so there is
+	// no range to build and the query scans - correctly, and by the ordinary
+	// index-range rules rather than anything full-text specific.
+	openQuery := "select id from docs where match(body) against('+rareone' in boolean mode) order by id"
+	require.NotContains(t, fmt.Sprintf("%v", tk.MustQuery("explain "+openQuery).Rows()), "idx_tenant_body")
+	tk.MustQuery(openQuery).Check([][]any{{"1001"}, {"1002"}})
+}
+
+// TestFTSMatchAgainstPrefersDeclaredFullTextIndex pins which index supplies the
+// analyzer when a table has both a declared FULLTEXT index and a hand-written
+// one: the declared index is the one the user named for the purpose. Both
+// tokenize identically here, so both remain usable as access paths.
+func TestFTSMatchAgainstPrefersDeclaredFullTextIndex(t *testing.T) {
+	tk := prepareFTSMultiTenantTable(t, ", fulltext index idx_body(body)")
+
+	tenantQuery := "select id from docs where tenant_id = 3 and match(body) against('+rareone' in boolean mode)"
+	require.Contains(t, fmt.Sprintf("%v", tk.MustQuery("explain "+tenantQuery).Rows()), "idx_tenant_body")
+	tk.MustQuery(tenantQuery).Check([][]any{{"1001"}})
+
+	// With no tenant predicate the single-column FULLTEXT index still answers.
+	openQuery := "select id from docs where match(body) against('+rareone' in boolean mode) order by id"
+	require.Contains(t, fmt.Sprintf("%v", tk.MustQuery("explain "+openQuery).Rows()), "idx_body")
+	tk.MustQuery(openQuery).Check([][]any{{"1001"}, {"1002"}})
+}

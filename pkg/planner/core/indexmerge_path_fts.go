@@ -77,14 +77,17 @@ func deriveFTSIndexFilters(ds *logicalop.DataSource) []expression.Expression {
 			}
 			idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 				ds.Table.Meta(), path.Index, ds.TblColsByID, true)
-			if !ok || len(idxCols) != 1 || idxCols[0].VirtualExpr == nil {
-				continue
-			}
-			tokenizeExpr, ok := unwrapJSONCast(idxCols[0].VirtualExpr)
 			if !ok {
 				continue
 			}
-			indexedCol, indexConfig, ok := expression.FTSTokenizeAnalyzerConfig(evalCtx, tokenizeExpr)
+			// The tokenized column need not be the only one. A composite index
+			// such as (tenant_id, (CAST(FTS_TOKENIZE(body, ...) AS CHAR(84)
+			// ARRAY))) bounds the token lookup to one tenant, and is the shape
+			// a multi-tenant table wants. Whether the leading columns are
+			// usable is decided below by the ordinary machinery, from the
+			// query's own filters: with no equality on tenant_id there is no
+			// range to build and no path appears.
+			tokenizeExpr, indexedCol, indexConfig, ok := ftsTokenizeIndexColumn(evalCtx, idxCols)
 			if !ok {
 				continue
 			}
@@ -159,6 +162,30 @@ func ftsMatchAgainstAsFilter(cond expression.Expression) *expression.ScalarFunct
 	default:
 		return nil
 	}
+}
+
+// ftsTokenizeIndexColumn finds the tokenized column among an index's columns
+// and reports the expression it is built over, the column it tokenizes, and the
+// analyzer that produced it.
+func ftsTokenizeIndexColumn(
+	evalCtx expression.EvalContext,
+	idxCols []*expression.Column,
+) (tokenizeExpr, indexedCol expression.Expression, config fulltext.AnalyzerConfig, ok bool) {
+	for _, idxCol := range idxCols {
+		if idxCol.VirtualExpr == nil {
+			continue
+		}
+		expr, isCast := unwrapJSONCast(idxCol.VirtualExpr)
+		if !isCast {
+			continue
+		}
+		col, cfg, isTokenize := expression.FTSTokenizeAnalyzerConfig(evalCtx, expr)
+		if !isTokenize {
+			continue
+		}
+		return expr, col, cfg, true
+	}
+	return nil, nil, fulltext.AnalyzerConfig{}, false
 }
 
 // ftsIndexTermsForMatch compiles the search string of a MATCH and returns the
