@@ -1045,6 +1045,17 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 	baseExec := exec.NewBaseExecutor(b.sctx, nil, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
+	op := "INSERT"
+	if v.IsReplace {
+		op = "REPLACE"
+	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.sctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, v.Table.Meta(), "", op))
+		return true
+	})
+
 	ivs := &InsertValues{
 		BaseExecutor:              baseExec,
 		Table:                     v.Table,
@@ -1089,6 +1100,12 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.sctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "IMPORT"))
+		return true
+	})
 	if !tbl.Meta().IsBaseTable() {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "IMPORT")
 		return nil
@@ -1121,6 +1138,12 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
+	// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+	intest.AssertFunc(func() bool {
+		sv := b.sctx.GetSessionVars()
+		intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "LOAD"))
+		return true
+	})
 	if !tbl.Meta().IsBaseTable() {
 		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
 		return nil
@@ -3032,6 +3055,12 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 				}
 			}
 		}
+		// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+		intest.AssertFunc(func() bool {
+			sv := b.sctx.GetSessionVars()
+			intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tbl.Meta(), "", "UPDATE"))
+			return true
+		})
 	}
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
@@ -3098,6 +3127,12 @@ func (b *executorBuilder) buildDelete(v *physicalop.Delete) exec.Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(context.Background(), info.TblID)
+		// Planner already rejects DML on MV/mlog tables; this catches bypass bugs.
+		intest.AssertFunc(func() bool {
+			sv := b.sctx.GetSessionVars()
+			intest.AssertNoError(plannercore.CheckMViewUpdatable(sv, tblID2table[info.TblID].Meta(), "", "DELETE"))
+			return true
+		})
 	}
 
 	if b.err = b.updateForUpdateTS(); b.err != nil {
@@ -3134,7 +3169,7 @@ func (b *executorBuilder) updateForUpdateTS() error {
 	return err
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, planID int) *analyzeTask {
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	_, offset := timeutil.Zone(b.sctx.GetSessionVars().Location())
 	sc := b.sctx.GetSessionVars().StmtCtx
@@ -3149,6 +3184,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3190,6 +3226,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	task plannercore.AnalyzeColumnsTask,
 	opts map[ast.AnalyzeOptionType]uint64,
 	schemaForVirtualColEval *expression.Schema,
+	planID int,
 ) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
@@ -3266,6 +3303,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
+		planID:      planID,
 		tableID:     task.TableID,
 		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -3413,14 +3451,14 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			return nil
 		}
 		schema := expression.NewSchema(columns...)
-		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema))
+		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema, v.ID()))
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
 		}
 	}
 	for _, task := range v.IdxTasks {
-		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
+		e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze, v.ID()))
 		if b.err != nil {
 			return nil
 		}

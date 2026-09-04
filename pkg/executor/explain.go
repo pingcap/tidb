@@ -155,9 +155,49 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 					RUVersion: ruVersion,
 				})
 			}
+			e.registerExplainRUOperatorStats(coll, ruv2Metrics, err == nil)
 		}
 	}
 	return err
+}
+
+func (e *ExplainExec) registerExplainRUOperatorStats(
+	coll *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	rootEOF bool,
+) {
+	if e.explain == nil || e.explain.Format != "ru" {
+		return
+	}
+	// An Explain may be rendered again after execution. Clear a prior snapshot
+	// before recalculating so a new fail-closed result cannot expose stale RU.
+	e.explain.SetRUResult(nil)
+	if coll == nil {
+		return
+	}
+	flat := core.FlattenPhysicalPlan(e.explain.TargetPlan, true)
+	setup := statementRUCalculationSetup{}
+	if e.explain.ExecStmt != nil {
+		setup.frontendCompileBytes = statementRUFrontendCompileBytes(&ExecStmt{
+			Ctx:      e.Ctx(),
+			Plan:     e.explain.TargetPlan,
+			StmtNode: e.explain.ExecStmt,
+		})
+	}
+	_, result, ok := calculateStatementRUWithOperators(
+		flat,
+		coll,
+		metrics,
+		setup,
+		rootEOF,
+	)
+	if !ok {
+		return
+	}
+	// The finalized result is aligned by forest/tree/operator coordinates.
+	// Plan.ID remains only an evidence lookup key, so a shallow-copied CTE
+	// definition or scalar occurrence cannot overwrite another display row.
+	e.explain.SetRUResult(result)
 }
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {

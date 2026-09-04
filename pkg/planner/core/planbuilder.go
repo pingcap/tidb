@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
@@ -3026,7 +3027,7 @@ func (b *PlanBuilder) appendAnalyzeVersionOverwriteWarning() {
 
 // buildAnalyzeTable constructs analyze tasks for each table.
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
-	p := &Analyze{Opts: opts}
+	p := Analyze{Opts: opts}.Init(b.ctx, b.getSelectOffset())
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
 	usePersistedOptions := vardef.PersistAnalyzeOptions.Load()
 
@@ -3343,7 +3344,7 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	timestampSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTimestamp)
 	durationSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDuration)
 
-	schema := newColumnsWithNames(11)
+	schema := newColumnsWithNames(17)
 	schema.Append(buildColumnWithName("", "SQL", mysql.TypeVarchar, 4096))
 	schema.Append(buildColumnWithName("", "START", mysql.TypeTimestamp, timestampSize))
 	schema.Append(buildColumnWithName("", "DURATION", mysql.TypeDuration, durationSize))
@@ -3358,6 +3359,9 @@ func buildShowSlowSchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "INTERNAL", mysql.TypeTiny, tinySize))
 	schema.Append(buildColumnWithName("", "DIGEST", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "SESSION_ALIAS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "IA_REMOTE_READ_SEGMENT_COUNT", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumnWithName("", "IA_REMOTE_READ_SEGMENT_SIZE", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumnWithName("", "IA_REMOTE_READ_SEGMENT_WAIT_TIME", mysql.TypeDouble, mysql.MaxRealWidth))
 	return schema.col2Schema(), schema.names
 }
 
@@ -4133,6 +4137,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return nil, err
 	}
+	op := "INSERT"
+	if insert.IsReplace {
+		op = "REPLACE"
+	}
+	if err := CheckMViewUpdatable(b.ctx.GetSessionVars(), tableInfo, tn.Name.O, op); err != nil {
+		return nil, err
+	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), tn.Schema, tableInfo)
 	if err != nil {
@@ -4383,7 +4394,7 @@ type colNameInOnDupExtractor struct {
 	colNameMap map[types.FieldName]*ast.ColumnNameExpr
 }
 
-func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
+func (c *colNameInOnDupExtractor) Enter(node ast.Node) bool {
 	switch x := node.(type) {
 	case *ast.ColumnNameExpr:
 		fieldName := types.FieldName{
@@ -4392,17 +4403,17 @@ func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
 			ColName: x.Name.Name,
 		}
 		c.colNameMap[fieldName] = x
-		return node, true
+		return true
 	// We don't extract the column names from the sub select.
 	case *ast.SelectStmt, *ast.SetOprStmt:
-		return node, true
+		return true
 	default:
-		return node, false
+		return false
 	}
 }
 
-func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
-	return node, true
+func (*colNameInOnDupExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *physicalop.Insert) error {
@@ -4432,7 +4443,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			if !hasWildCard {
 				colExtractor := &colNameInOnDupExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
 				for _, assign := range insert.OnDuplicate {
-					assign.Expr.Accept(colExtractor)
+					ast.Walk(assign.Expr, colExtractor)
 				}
 				actualColLen = len(sel.Fields.Fields)
 				for _, colName := range colExtractor.colNameMap {
@@ -4544,6 +4555,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		options = append(options, &loadDataOpt)
 	}
 	tnW := b.resolveCtx.GetTableName(ld.Table)
+	if err := CheckMViewUpdatable(b.ctx.GetSessionVars(), tnW.TableInfo, tnW.TableInfo.Name.O, "LOAD"); err != nil {
+		return nil, err
+	}
 	p := LoadData{
 		FileLocRef:         ld.FileLocRef,
 		OnDuplicate:        ld.OnDuplicate,
@@ -4633,7 +4647,7 @@ var (
 		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp}
 )
 
-// importIntoCollAssignmentChecker implements ast.Visitor interface.
+// importIntoCollAssignmentChecker implements ast.InPlaceVisitor interface.
 // It is used to check the column assignment expressions in IMPORT INTO statement.
 // Currently, the import into column assignment only supports some simple expressions.
 type importIntoCollAssignmentChecker struct {
@@ -4651,7 +4665,7 @@ func checkImportIntoColAssignments(assignments []*ast.Assignment) (map[string]in
 	checker := newImportIntoCollAssignmentChecker()
 	for i, assign := range assignments {
 		checker.idx = i
-		assign.Expr.Accept(checker)
+		ast.Walk(assign.Expr, checker)
 		if checker.err != nil {
 			break
 		}
@@ -4659,65 +4673,65 @@ func checkImportIntoColAssignments(assignments []*ast.Assignment) (map[string]in
 	return checker.neededVars, checker.err
 }
 
-// Enter implements ast.Visitor interface.
-func (*importIntoCollAssignmentChecker) Enter(node ast.Node) (ast.Node, bool) {
-	return node, false
+// Enter implements ast.InPlaceVisitor interface.
+func (*importIntoCollAssignmentChecker) Enter(ast.Node) bool {
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (v *importIntoCollAssignmentChecker) Leave(node ast.Node) (ast.Node, bool) {
+// Leave implements ast.InPlaceVisitor interface.
+func (v *importIntoCollAssignmentChecker) Leave(node ast.Node) bool {
 	switch n := node.(type) {
 	case *ast.ColumnNameExpr:
 		v.err = errors.Errorf("COLUMN reference is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	case *ast.SubqueryExpr:
 		v.err = errors.Errorf("subquery is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	case *ast.VariableExpr:
 		if n.IsSystem {
 			v.err = errors.Errorf("system variable is not supported in IMPORT INTO column assignment, index %d", v.idx)
-			return n, false
+			return false
 		}
 		if n.Value != nil {
 			v.err = errors.Errorf("setting a variable in IMPORT INTO column assignment is not supported, index %d", v.idx)
-			return n, false
+			return false
 		}
 		v.neededVars[strings.ToLower(n.Name)] = v.idx
 	case *ast.DefaultExpr:
 		v.err = errors.Errorf("FUNCTION default is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	case *ast.WindowFuncExpr:
 		v.err = errors.Errorf("window FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.Name, v.idx)
-		return n, false
+		return false
 	case *ast.AggregateFuncExpr:
 		v.err = errors.Errorf("aggregate FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.F, v.idx)
-		return n, false
+		return false
 	case *ast.FuncCallExpr:
 		fnName := n.FnName.L
 		switch fnName {
 		case ast.Grouping:
 			v.err = errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.FnName.O, v.idx)
-			return n, false
+			return false
 		case ast.GetVar:
 			if len(n.Args) > 0 {
 				val, ok := n.Args[0].(*driver.ValueExpr)
 				if !ok || val.Kind() != types.KindString {
 					v.err = errors.Errorf("the argument of getvar should be a constant string in IMPORT INTO column assignment, index %d", v.idx)
-					return n, false
+					return false
 				}
 				v.neededVars[strings.ToLower(val.GetString())] = v.idx
 			}
 		default:
 			if !expression.IsFunctionSupported(fnName) {
 				v.err = errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.FnName.O, v.idx)
-				return n, false
+				return false
 			}
 		}
 	case *ast.ValuesExpr:
 		v.err = errors.Errorf("VALUES is not supported in IMPORT INTO column assignment, index %d", v.idx)
-		return n, false
+		return false
 	}
-	return node, v.err == nil
+	return v.err == nil
 }
 
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (base.Plan, error) {
@@ -4789,6 +4803,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	}
 
 	tnW := b.resolveCtx.GetTableName(ld.Table)
+	if err := CheckMViewUpdatable(b.ctx.GetSessionVars(), tnW.TableInfo, tnW.TableInfo.Name.O, "IMPORT"); err != nil {
+		return nil, err
+	}
 	if tnW.TableInfo.TempTableType != model.TempTableNone {
 		return nil, errors.Errorf("IMPORT INTO does not support temporary table")
 	} else if tnW.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
@@ -5275,23 +5292,23 @@ type userVariableChecker struct {
 	hasUserVariables bool
 }
 
-func (e *userVariableChecker) Enter(in ast.Node) (ast.Node, bool) {
+func (e *userVariableChecker) Enter(in ast.Node) bool {
 	if _, ok := in.(*ast.VariableExpr); ok {
 		e.hasUserVariables = true
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (*userVariableChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (*userVariableChecker) Leave(ast.Node) bool {
+	return true
 }
 
 // Check for UserVariables
 func checkForUserVariables(in ast.Node) error {
 	v := &userVariableChecker{hasUserVariables: false}
-	_, ok := in.Accept(v)
-	if !ok || v.hasUserVariables {
+	proceed := ast.Walk(in, v)
+	if !proceed || v.hasUserVariables {
 		return dbterror.ErrViewSelectVariable
 	}
 	return nil
@@ -5631,11 +5648,65 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
+	case *ast.CreateMaterializedViewStmt:
+		err := checkForUserVariables(v.Select)
+		if err != nil {
+			return nil, err
+		}
+		if err := mviewutil.CheckMaterializedViewSelect(v.Select); err != nil {
+			return nil, err
+		}
+		nodeW := resolve.NewNodeWWithCtx(v.Select, b.resolveCtx)
+		plan, err := b.Build(ctx, nodeW)
+		if err != nil {
+			return nil, err
+		}
+		if len(v.Cols) != plan.Schema().Len() {
+			return nil, dbterror.ErrViewWrongList
+		}
+		dbName := v.ViewName.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if dbName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, v.ViewName.Name.L, "", authErr)
+	case *ast.CreateMaterializedViewLogStmt:
+		dbName := v.Table.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if dbName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
+		var createAuthErr, selectAuthErr error
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			createAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE MATERIALIZED VIEW LOG", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
+			selectAuthErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, v.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, mlogName.L, "", createAuthErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, v.Table.Name.L, "", selectAuthErr)
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
 	}
 	p := &DDL{Statement: node}
 	return p, nil
+}
+
+func (b *PlanBuilder) materializedViewLogNameForBaseTable(ctx context.Context, dbName string, baseName ast.CIStr) ast.CIStr {
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if baseTable, err := b.is.TableByName(ctx, ast.NewCIStr(dbName), baseName); err == nil {
+		return model.MaterializedViewLogTableName(baseTable.Meta().Name)
+	}
+	return model.MaterializedViewLogTableName(baseName)
 }
 
 const (

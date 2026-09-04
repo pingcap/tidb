@@ -174,7 +174,7 @@ func TestHandler(t *testing.T) {
 			require.NoError(t, fixtureEncoder.Close())
 		})
 		fixturePairs, err := fixtureEncoder.Encode(
-			[]types.Datum{types.NewIntDatum(1), types.NewIntDatum(10), types.NewIntDatum(100)},
+			[]types.Datum{types.NewIntDatum(1), types.NewIntDatum(10), {}},
 			1,
 		)
 		require.NoError(t, err)
@@ -222,10 +222,10 @@ func TestHandler(t *testing.T) {
 				actualKVs[string(pair.Key)] = string(pair.Val)
 			}
 			_, ok := actualKVs[expectedTailKey]
-			require.True(t, ok, "re-encoded KVs must contain uk_tail=100")
+			require.True(t, ok, "re-encoded KVs must contain uk_tail=NULL")
 			require.Equal(t, expectedKVs, actualKVs)
 			require.Len(t, row, 3)
-			require.Equal(t, int64(100), row[2].GetInt64())
+			require.True(t, row[2].IsNull())
 			return nil
 		})
 		dataKVHandler := conflictedkv.NewDataKVHandler(conflictedkv.NewBaseHandler(

@@ -200,6 +200,11 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	err = a.stmt.next(ctx, e, req)
 	if err != nil {
+		if errors.Cause(err) == context.DeadlineExceeded {
+			if maxExecErr := checkMaxExecutionTimeExceeded(a.stmt.Ctx); maxExecErr != nil {
+				err = maxExecErr
+			}
+		}
 		a.lastErrs = append(a.lastErrs, err)
 		return err
 	}
@@ -1169,6 +1174,11 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	err = a.next(ctx, e, exec.TryNewCacheChunk(e))
 	if err != nil {
 		return nil, err
+	}
+	if _, ok := a.Plan.(*plannercore.Analyze); ok {
+		// ANALYZE is a no-delay statement: its only Next call completes the
+		// root executor, so there is no RecordSet EOF callback to record later.
+		a.recordStatementRURootEOF()
 	}
 	err = a.handleStmtForeignKeyTrigger(ctx, e)
 	return nil, err

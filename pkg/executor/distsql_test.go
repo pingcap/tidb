@@ -662,6 +662,8 @@ func TestPartitionIndexLookUpMergeWithSkewedPartitions(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=2")
+	// Disable the per-store limiter so this test exercises the merge-sort shared limiter.
+	tk.MustExec("set @@tidb_query_cop_store_limit=0")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=1")
 	tk.MustExec("set @@tidb_max_chunk_size = 64")
 	sessionAlias := "test_partition_merge_skew"

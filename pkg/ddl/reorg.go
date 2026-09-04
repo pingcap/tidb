@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -75,6 +76,8 @@ type reorgCtx struct {
 	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
+	// snapshotVer records the read timestamp produced by a reorg worker.
+	snapshotVer uint64
 	// maxProgress is the historical maximum progress to prevent progress regression.
 	maxProgress atomicutil.Float64
 
@@ -126,7 +129,10 @@ func newReorgExprCtxWithReorgMeta(reorgMeta *model.DDLReorgMeta, warnHandler con
 		exprstatic.WithErrLevelMap(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode)),
 		exprstatic.WithWarnHandler(warnHandler),
 	)
-	return ctx.Apply(exprstatic.WithEvalCtx(evalCtx)), nil
+	return ctx.Apply(
+		exprstatic.WithEvalCtx(evalCtx),
+		exprstatic.WithNewCollationEnabled(reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled())),
+	), nil
 }
 
 // reorgTableMutateContext implements table.MutateContext for reorganization.
@@ -306,6 +312,14 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
+func (rc *reorgCtx) setSnapshotVer(snapshotVer uint64) {
+	atomic.StoreUint64(&rc.snapshotVer, snapshotVer)
+}
+
+func (rc *reorgCtx) getSnapshotVer() uint64 {
+	return atomic.LoadUint64(&rc.snapshotVer)
+}
+
 // setMaxProgress updates the maximum progress if the new progress is greater.
 // It returns the current maximum progress (which may be unchanged if newProgress <= oldMax).
 // This prevents progress regression when statistics change during backfill.
@@ -427,6 +441,9 @@ func (w *worker) runReorgJob(
 			}
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
+			if snapshotVer := rc.getSnapshotVer(); snapshotVer != 0 {
+				job.SnapshotVer = snapshotVer
+			}
 			if err != nil {
 				logutil.DDLLogger().Warn("run reorg job done",
 					zap.Int64("jobID", reorgInfo.ID),

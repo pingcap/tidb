@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -596,4 +597,105 @@ func TestSetGlobalIndexVersionFlag(t *testing.T) {
 	model.SetGlobalIndexV1Supported(true)
 	setGlobalIndexVersion(tblInfo, idxInfo)
 	require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
+}
+
+func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
+	val, changed := getJobCheckInterval(model.ActionCreateMaterializedView, 0)
+	require.Equal(t, slowDDLIntervalPolicy[0], val)
+	require.True(t, changed)
+
+	val, changed = getJobCheckInterval(model.ActionCreateMaterializedView, len(slowDDLIntervalPolicy))
+	require.Equal(t, slowDDLIntervalPolicy[len(slowDDLIntervalPolicy)-1], val)
+	require.False(t, changed)
+}
+
+func TestIsCreateMaterializedViewBaseCheckCancelledErr(t *testing.T) {
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(infoschema.ErrDatabaseNotExists.GenWithStackByArgs("test")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("invalid job")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrWrongObject.GenWithStackByArgs("test", "t", "BASE TABLE")))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", model.StateDeleteOnly)))
+	require.True(t, isCreateMaterializedViewBaseCheckCancelledErr(errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")))
+	require.False(t, isCreateMaterializedViewBaseCheckCancelledErr(fmt.Errorf("retry later")))
+}
+
+func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
+	compactSQL := func(sql string) string { return strings.Join(strings.Fields(sql), " ") }
+
+	lastSuccessRefreshEndUnixSeconds := int64(1_767_312_304)
+	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, nil, false))
+	require.NotContains(t, sqlNoUpdate, "NEXT_REFRESH_UNIX_SECONDS")
+	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
+	require.Contains(t, sqlNoUpdate, "LAST_SUCCESS_REFRESH_END_UNIX_SECONDS")
+	require.Contains(t, sqlNoUpdate, "1767312304")
+
+	sqlPrewrite := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, nil, nil, false))
+	require.NotContains(t, sqlPrewrite, "1767312304")
+	require.Contains(t, sqlPrewrite, "NULL")
+
+	nextRefreshUnixSeconds := int64(1_767_312_305)
+	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, &nextRefreshUnixSeconds, true))
+	require.Contains(t, sqlWithValue, "NEXT_REFRESH_UNIX_SECONDS")
+	require.Contains(t, sqlWithValue, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
+	require.Contains(t, sqlWithValue, "1767312305")
+
+	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessRefreshEndUnixSeconds, nil, true))
+	require.Contains(t, sqlWithNull, "NEXT_REFRESH_UNIX_SECONDS")
+	require.Contains(t, sqlWithNull, "VALUES(NEXT_REFRESH_UNIX_SECONDS)")
+	require.Contains(t, sqlWithNull, ", NULL)")
+}
+
+func TestBuildCreateMaterializedViewLogPurgeInfoUpsertSQL(t *testing.T) {
+	compactSQL := func(sql string) string { return strings.Join(strings.Fields(sql), " ") }
+
+	sqlNoUpdate := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, nil, false))
+	require.NotContains(t, sqlNoUpdate, "NEXT_PURGE_UNIX_SECONDS")
+	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
+
+	nextPurgeUnixSeconds := int64(1_767_312_305)
+	sqlWithValue := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, &nextPurgeUnixSeconds, true))
+	require.Contains(t, sqlWithValue, "NEXT_PURGE_UNIX_SECONDS")
+	require.Contains(t, sqlWithValue, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
+	require.Contains(t, sqlWithValue, "1767312305")
+
+	sqlWithNull := compactSQL(buildCreateMaterializedViewLogPurgeInfoUpsertSQL(1, nil, true))
+	require.Contains(t, sqlWithNull, "NEXT_PURGE_UNIX_SECONDS")
+	require.Contains(t, sqlWithNull, "VALUES(NEXT_PURGE_UNIX_SECONDS)")
+	require.Contains(t, sqlWithNull, ", NULL)")
+}
+
+func TestBuildCreateMaterializedViewImportSQL(t *testing.T) {
+	mvTblInfo := &model.TableInfo{
+		Name: ast.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+
+	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "")
+	require.NoError(t, err)
+	require.Contains(t, sql, "IMPORT INTO `test`.`mv` FROM (")
+	require.Contains(t, sql, "WITH disable_precheck")
+	require.NotContains(t, strings.ToUpper(sql), "AS OF TIMESTAMP")
+
+	sql, err = buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "100gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "WITH disable_precheck, disk_quota='100gib'")
+
+	sql, err = buildCreateMaterializedViewImportSQL("test", mvTblInfo, 12, "64gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "WITH disable_precheck, thread=12, disk_quota='64gib'")
+}
+
+func TestNormalizeMVDefinitionHintDBNames(t *testing.T) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("select /*+ read_from_storage(tiflash[src]) hash_join_probe(src) */ a, count(1) from t src group by a", "", "")
+	require.NoError(t, err)
+
+	selectStmt := stmt.(*ast.SelectStmt)
+	normalizeMVDefinitionHintDBNames(selectStmt, ast.NewCIStr("test"))
+	sql, err := restoreNodeToCanonicalSQL(selectStmt)
+	require.NoError(t, err)
+	require.Contains(t, sql, "READ_FROM_STORAGE(TIFLASH[`test`.`src`])")
+	require.Contains(t, sql, "HASH_JOIN_PROBE(`test`.`src`)")
 }

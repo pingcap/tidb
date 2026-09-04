@@ -149,6 +149,20 @@ func TestCreateTableArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
 		}
 	})
+	t.Run("create materialized view", func(t *testing.T) {
+		inArgs := &CreateMaterializedViewArgs{
+			TableInfo:    &TableInfo{ID: 102, MaterializedView: &MaterializedViewInfo{BaseTableIDs: []int64{88}}},
+			MLogTableIDs: []int64{99},
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateMaterializedView)))
+			args, err := GetCreateMaterializedViewArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.MLogTableIDs, args.MLogTableIDs)
+		}
+	})
 	t.Run("create view", func(t *testing.T) {
 		inArgs := &CreateTableArgs{
 			TableInfo:      &TableInfo{ID: 122},
@@ -766,6 +780,29 @@ func TestGetSetTiFlashReplicaArgs(t *testing.T) {
 			require.Equal(t, inArgsWithReset.ResetAvailable, true)
 		}
 	}
+	// With the `SkipColumnarStorageGate` field
+	inArgsWithSkipGate := &SetTiFlashReplicaArgs{
+		TiflashReplica: ast.TiFlashReplicaSpec{
+			Count:  3,
+			Labels: []string{"TiFlash1", "TiFlash2", "TiFlash3"},
+			Hypo:   true,
+		},
+		ResetAvailable:          true,
+		SkipColumnarStorageGate: true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j4 := &Job{}
+		require.NoError(t, j4.Decode(getJobBytes(t, inArgsWithSkipGate, v, ActionSetTiFlashReplica)))
+		args, err := GetSetTiFlashReplicaArgs(j4)
+		require.NoError(t, err)
+		require.Equal(t, inArgsWithSkipGate.TiflashReplica, args.TiflashReplica)
+		if v == JobVersion2 {
+			require.Equal(t, inArgsWithSkipGate.ResetAvailable, true)
+			require.Equal(t, inArgsWithSkipGate.SkipColumnarStorageGate, true)
+		} else {
+			require.False(t, args.SkipColumnarStorageGate)
+		}
+	}
 }
 
 func TestGetUpdateTiFlashReplicaStatusArgs(t *testing.T) {
@@ -1044,6 +1081,7 @@ func TestAddIndexArgs(t *testing.T) {
 			IfExist:                 false,
 			IsGlobal:                false,
 			FuncExpr:                "test_string",
+			SplitOpt:                &IndexArgSplitOpt{Num: 4},
 		}},
 		PartitionIDs: []int64{100, 101, 102},
 		OpType:       OpAddIndex,
@@ -1065,6 +1103,11 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
 		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
 		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
+		if v == JobVersion2 {
+			require.Equal(t, inArgs.IndexArgs[0].SplitOpt, a.SplitOpt)
+		} else {
+			require.Nil(t, a.SplitOpt)
+		}
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -1083,7 +1126,39 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
 		require.Equal(t, inArgs.IndexArgs[0].SQLMode, a.SQLMode)
 		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		if v == JobVersion2 {
+			require.Equal(t, inArgs.IndexArgs[0].SplitOpt, a.SplitOpt)
+		} else {
+			require.Nil(t, a.SplitOpt)
+		}
 	}
+
+	autoArgs := &ModifyIndexArgs{IndexArgs: []*IndexArg{{
+		AutoPreSplit: true,
+	}}}
+	for _, tp := range []ActionType{ActionAddIndex, ActionAddPrimaryKey} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, autoArgs, v, tp)))
+			args, err := GetModifyIndexArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, v == JobVersion2, args.IndexArgs[0].AutoPreSplit)
+			require.Nil(t, args.IndexArgs[0].SplitOpt)
+		}
+	}
+
+	job := &Job{Version: JobVersion2, Type: ActionAddIndex}
+	job.FillArgs(autoArgs)
+	_, err := job.Encode(true)
+	require.NoError(t, err)
+	var legacyArgs struct {
+		IndexArgs []struct {
+			SplitOpt *struct{} `json:"split_opt,omitempty"`
+		} `json:"index_args,omitempty"`
+	}
+	require.NoError(t, json.Unmarshal(job.RawArgs, &legacyArgs))
+	require.Len(t, legacyArgs.IndexArgs, 1)
+	require.Nil(t, legacyArgs.IndexArgs[0].SplitOpt)
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		inArgs.IndexArgs[0].IsColumnar = true
