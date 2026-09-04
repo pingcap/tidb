@@ -1565,7 +1565,7 @@ func (m *MemArbitrator) ableToGC() bool {
 
 func (m *MemArbitrator) tryRuntimeGC() bool {
 	if m.ableToGC() {
-		m.updateTrackedHeapStats()
+		m.updateTrackedHeapStats(nil)
 		m.reclaimHeap()
 		return true
 	}
@@ -2527,7 +2527,8 @@ func (m *MemArbitrator) HandleRuntimeStats(s memStats) {
 
 func (m *MemArbitrator) tryUpdateTrackedMemStats(utimeMilli int64) bool {
 	if m.avoidance.heapTracked.lastUpdateUtimeMilli.Load()+defTrackMemStatsDurMilli <= utimeMilli {
-		top3 := m.updateTrackedHeapStats()
+		var top3 top3DigestDataGroup
+		m.updateTrackedHeapStats(&top3)
 		m.digestProfileCache.top3.merge(top3, m.approxUnixTimeSec())
 		return true
 	}
@@ -2673,7 +2674,7 @@ func (t *top3DigestDataGroup) update(digestID uint64, size int64, utimeSec int64
 	}
 }
 
-func (m *MemArbitrator) updateTrackedHeapStats() (top3 top3DigestDataGroup) {
+func (m *MemArbitrator) updateTrackedHeapStats(top3 *top3DigestDataGroup) {
 	totalTrackedHeap := int64(0)
 	maxHeapUsed := int64(0)
 	idleDeadline := m.approxUnixTimeSec() - defContextCacheIdleTimeoutSec
@@ -2692,7 +2693,9 @@ func (m *MemArbitrator) updateTrackedHeapStats() (top3 top3DigestDataGroup) {
 			if ctx := e.ctx.Load(); ctx.available() {
 				inuse := ctx.arbitrateHelper.MemUsage()
 				totalTrackedHeap += min(e.pool.ApproxCap(), inuse.RootPoolUsed)
-				top3.update(ctx.id, inuse.HeapInuse, m.approxUnixTimeSec())
+				if top3 != nil {
+					top3.update(ctx.id, inuse.HeapInuse, m.approxUnixTimeSec())
+				}
 				maxHeapUsed = max(maxHeapUsed, inuse.MaxHeapUsed)
 			}
 			return true
@@ -2702,7 +2705,6 @@ func (m *MemArbitrator) updateTrackedHeapStats() (top3 top3DigestDataGroup) {
 	totalTrackedHeap += min(m.awaitFreePoolCap(), m.awaitFreePoolUsed().trackedHeap)
 	m.avoidance.heapTracked.Store(totalTrackedHeap)
 	m.avoidance.heapTracked.lastUpdateUtimeMilli.Store(nowUnixMilli())
-	return
 }
 
 func (m *MemArbitrator) tryShrinkAwaitFreePool(minRemain int64, utimeMilli int64) bool {
@@ -2798,7 +2800,7 @@ func (m *MemArbitrator) handleMemIssues() (isSafe bool) {
 	if m.atMemRisk() {
 		m.refreshRuntimeMemStats()
 		if m.isMemNoRisk() {
-			m.updateTrackedHeapStats()
+			m.updateTrackedHeapStats(nil)
 			m.updateAvoidSize() // no need to refresh runtime mem stats
 
 			{ // warning
