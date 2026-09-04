@@ -370,12 +370,21 @@ these.
    remains open about `CHAR(n)` lives in the write-time flen handling
    (`ProduceStrWithSpecifiedTp`), which belongs to the *Cast* family
    below, not to an eval builtin.
-5. *Cast* — **partly done:** to/from signed and unsigned across int, decimal and
-   real. **Not done:** the flen/flag each `CAST` *produces* (the whole
-   `builtin_cast.go` `getFunction` family), `CAST` to and from `CHAR(n)`,
-   `BINARY(n)`, `DECIMAL(p,s)`, `JSON`, and all temporal targets; the
-   `inUnion` flag, which Go consults in every `...AsIntSig` and which Rust does
-   not model at all.
+5. *Cast* — **mostly absorbed (2026-09-04/05):** to/from signed and unsigned
+   across int, decimal and real are long done; the arithmetic flen/decimal
+   rules (`setFlenDecimal4RealOrDecimal`, `setType4DivDecimal` and their
+   multiply/int-divide siblings) are implemented line-by-line in
+   `builtin_arithmetic.rs`; the `inUnion` flag is modeled
+   (`simple_expr.rs` carries the flag and selects Go's
+   `cast_*_to_decimal_in_union` signatures, `func.rs` threads it); the
+   Go-derived cast-wrapper metadata tables (decimal wrapper rows,
+   `CAST AS CHAR` width rows, temporal FSP, JSON widening) are active on
+   the normal wrapper paths; and temporal cast targets exist
+   (`wrap_with_cast_as_time`, `rewriter.rs:554`). **Residual, verified
+   narrow (2026-09-05):** audit-vs-Go spot checks of individual
+   `BINARY(n)`/`DECIMAL(p,s)` target widths beyond the activated tables,
+   and any `getFunction`-family row the metadata tables do not carry —
+   per-row work against `builtin_cast.go`, not a structural gap.
 6. *Math and rounding* — RESOLVED (2026-09-04): `ABS`, `MOD` as function
    call, `POW`, `EXP`, `LOG`, `RAND`'s per-key seeding
    (`math_fn/mod.rs:49`/`:561`), `CRC32`, and `CONV` are all implemented in

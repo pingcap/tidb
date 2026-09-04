@@ -267,3 +267,10 @@
 - Time::round_frac 时区项关闭并推送 `fb6e70a35e0`(types: 记录 zone-free to_i64 的调用方审计):
   结论——所有生产调用方 zone 安全: 表达式整数 getter 均在 WrapWithCastAsInt(session zone cast, to_i64_signed_in)之后; ranger YEAR 块的 pre_value 仅喂 out-of-range 算符翻转(2e13 量级 vs ≤2155 年界, 时区不可翻转结论); 直转路径均带 session zone。无需签名变更。
 - 下批候选: error-code ~175 站点(跨 crate)、CHAR/VARCHAR padding(storage 面)、Cast flen/flag 族、chunk A-2 offset-table strictness(docs/chunk-and-stats-divergence.md)。
+- error-code 批完成并推送 `3f45cc0b89f`(executor: derive every raised SQLSTATE from the error code):
+  MysqlError::new 删除 state 参数, 经 mysql_state(NewErr 等价)推导; 246 个字面量站点机械重写; 脚本验证所有 pre-rewrite 字面量与推导值**全部一致**=零行为变化(含 HY000 fallback 语义); 3 个外部 state 重建站点改用 with_state; ParseCoded 运行时 errno 改为 Go 式推导。
+  门禁: cargo check --all-targets 清洁; executor 套件失败数与基线一致(122 预存环境失败); fmt/clippy/diff-check/make lint PASS; 推送后 rebase 合并态 error 测试 22/0、codec 46/0。
+  本会话累计 33 提交(实际独立批次 4 个推送提交)。
+- 下批候选: CHAR/VARCHAR padding、Cast flen/flag 族、chunk A-2。
+- 本轮核实(只读): 算术 flen/decimal 规则(builtin_arithmetic.rs)已逐行实现 Go setFlenDecimal4*/setType4Div*; inUnion 已建模(simple_expr.rs:677 + func.rs 25 处); 时序 cast 目标(wrap_with_cast_as_time)存在。expr-builtin inventory 第 5 条(Cast)已改写为"mostly absorbed", 残差=逐行 BINARY(n)/DECIMAL(p,s) 宽度核对。推送 `fa26adb05b1`+inventory 改写批。
+- 下轮恢复点: (1) 逐行核对 BINARY(n)/DECIMAL(p,s) cast 目标宽度 vs builtin_cast.go(残差子批); (2) chunk A-2(docs/chunk-and-stats-divergence.md); (3) 若并发会话新增 MysqlError::new 站点跟随 error-code 新约定。
