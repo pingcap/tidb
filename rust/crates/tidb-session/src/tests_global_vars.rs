@@ -1264,3 +1264,48 @@ fn set_default_resolves_the_new_install_initial_value() {
         Some("1")
     );
 }
+
+/// Go's `validate_password.*` Validation closures (`sysvar.go:717-790`) keep
+/// the five settings coupled: raising a count raises the sibling `length` to
+/// `number + special + 2 * mixed_case`, and setting `length` below that
+/// minimum adjusts it up instead of storing the too-small value.
+#[test]
+fn validate_password_count_sets_couple_the_length_sibling_like_go() {
+    let globals = vars::GlobalSysvars::new();
+
+    // Stock counts are number 1 / special 1 / mixed 1 and length 8: raising
+    // mixed_case to 5 moves length to 1 + 1 + 2*5 = 12.
+    globals
+        .set("validate_password.mixed_case_count", "5".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "12");
+
+    // With mixed 5 the required minimum stays 12, so a too-small length is
+    // adjusted up rather than stored.
+    globals
+        .set("validate_password.length", "2".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "12");
+
+    // A length above the requirement passes through untouched.
+    globals
+        .set("validate_password.length", "20".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "20");
+
+    // Dropping the number count to 0 lowers the required floor to
+    // 0 + 1 + 2*5 = 11, which the current length 20 already exceeds, so the
+    // length is untouched; the next length set enforces the new floor.
+    globals
+        .set("validate_password.number_count", "0".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "20");
+    globals
+        .set("validate_password.length", "11".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "11");
+    globals
+        .set("validate_password.length", "5".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("validate_password.length").unwrap(), "11");
+}

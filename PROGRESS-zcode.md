@@ -312,3 +312,6 @@
 - 下轮恢复点: (1) 多行 Get/Set hook 条目的逐变量行为审计(不同类); (2) F2 live 阻塞; (3) F4 逐站点低优先级。
 - F3 seam 完成: 在保留远端 planner `mysql_code()` tuple 合约的基础上，`tidb-server` single/multi-node prepared read 与 `RealTiKvReadError::Plan` flattening 均传递 Go-compatible code/state；`PreparedBindError` 补充 8112/HY000。逐变体 planner 与 server 回归、fmt/diff-check/make lint 已验证；详见 `rust/testport/receipts/planner_read_only_error_codes.md`。
 - 下轮恢复点: (1) F2 ~59 generic unknown 站点仍需 live evidence; (2) F4 后续逐站点 Go errno 对比; (3) 重读 divergence/audit 文档寻找下一 Rust-only parity gap。
+- 下轮恢复点: (1) 多行 Get/Set hook 条目的逐变量行为审计(不同类); (2) F2/F3-seam live 阻塞; (3) F4 逐站点低优先级。
+- validate_password 耦合校验批(session): SET GLOBAL 的耦合钩子落地—length 低于 number+special+2*mixed 时上调为下限; 任一 count 设置后 length 不足则提升(updatePasswordValidationLength 语义)。回归: 5 步耦合场景(pre-fix 失败已证: "8"≠"12")。session lib 1251 通过/281 预存环境失败(A/B 一致+1 flaky 单独复跑两次通过), fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) hook 审计后续 72-4=约 68 个 Validation 条目逐个对照; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。

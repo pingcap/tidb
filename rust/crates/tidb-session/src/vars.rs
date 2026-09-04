@@ -499,12 +499,51 @@ impl GlobalSysvars {
             tidb_util::memory::validate_process_memory_setting(&key, &stored_value)
                 .map_err(VarError::ValidationRefused)?;
         }
+        // Go's `validate_password.*` Validation closures (`sysvar.go:717-790`)
+        // keep the five settings coupled: a count raise lifts the sibling
+        // `length` to `number + special + 2 * mixed_case`, and a `length` set
+        // below that floor is adjusted up instead of stored.
+        let stored_value = if key == "validate_password.length" {
+            let floor = self.validate_password_length_floor(stored_value.parse::<i64>().ok());
+            match floor {
+                Some(floor) => floor.to_string(),
+                None => stored_value,
+            }
+        } else {
+            stored_value
+        };
         {
             let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
             if let Some(other) = alias_of(&key) {
                 values.insert(other.to_owned(), stored_value.clone());
             }
             values.insert(key.clone(), stored_value.clone());
+        }
+        if matches!(
+            key.as_str(),
+            "validate_password.mixed_case_count"
+                | "validate_password.number_count"
+                | "validate_password.special_char_count"
+        ) {
+            // Setting a count raises the stored `length` to the new minimum
+            // when the current length falls short (`updatePasswordValidationLength`,
+            // `varsutil.go:446`): a plain store, no further validation.
+            if let Some(required) = self.validate_password_required_length() {
+                let length_def = get_sys_var("validate_password.length");
+                if let Some(length_def) = length_def {
+                    let mut values = self
+                        .store(length_def)
+                        .lock()
+                        .expect("global sysvar lock poisoned");
+                    let current: i64 = values
+                        .get("validate_password.length")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(8);
+                    if current < required {
+                        values.insert("validate_password.length".to_owned(), required.to_string());
+                    }
+                }
+            }
         }
         self.publish_embedding_settings();
         if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
@@ -522,6 +561,36 @@ impl GlobalSysvars {
         }
         self.publish_memory_arbitration_setting(&key);
         Ok(validated.truncated)
+    }
+
+    /// The length floor the `validate_password` coupling requires right now:
+    /// `number_count + special_char_count + 2 * mixed_case_count`
+    /// (`sysvar.go:717`'s Validation), read from the current global values
+    /// with the registry defaults (8/1/1/1) standing in for unset entries.
+    /// `None` when the stored `length` is not an integer and no floor applies.
+    fn validate_password_length_floor(&self, length: Option<i64>) -> Option<i64> {
+        let number = self.validate_password_global("validate_password.number_count", 1);
+        let special = self.validate_password_global("validate_password.special_char_count", 1);
+        let mixed = self.validate_password_global("validate_password.mixed_case_count", 1);
+        let floor = Some(number + special + 2 * mixed);
+        match length {
+            None => None,
+            Some(length) => floor.filter(|floor| length < *floor),
+        }
+    }
+
+    /// The same floor for a count raise: applies whenever the stored length
+    /// falls short of it.
+    fn validate_password_required_length(&self) -> Option<i64> {
+        self.validate_password_length_floor(self.get("validate_password.length").ok()?.parse().ok())
+    }
+
+    /// Reads one `validate_password` global, falling back to Go's default.
+    fn validate_password_global(&self, name: &str, default: i64) -> i64 {
+        self.get(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
     }
 
     /// Restores the registry default (`SET GLOBAL x = DEFAULT`).
