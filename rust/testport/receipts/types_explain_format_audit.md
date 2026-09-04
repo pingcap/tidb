@@ -675,6 +675,37 @@ Owner `cargo check --all-targets`, workspace format, and diff checks are
 required before commit; the existing strict-clippy diagnostics are unrelated
 to this formatter boundary.
 
+## Rust-only parity reconciliation: empty collation classification
+
+Go's `FieldType.IsBinaryStr` compares the stored collation string to the exact
+lower-case spelling `binary`. Legacy JSON metadata can carry an empty
+`Collate` while the Rust runtime collator cache falls back to the `Binary`
+enum; using that cache for the predicate would incorrectly classify the field
+as binary and suppress restored-data handling.
+
+Rust's `FieldType::is_binary_string` already reads `collation_name`, so the
+behavior is source-compatible. The focused regression
+`field_type::json::tests::empty_collation_name_does_not_inherit_binary_cache`
+decodes `{"Tp":253,"Charset":"utf8mb4","Collate":""}` and asserts
+non-binary character classification plus `need_restored_data() == true`.
+
+Ready validation (commands run from `rust/`):
+
+```text
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --lib field_type::json::tests::empty_collation_name_does_not_inherit_binary_cache -- --exact --nocapture
+# passed: 1 test
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 404 unit tests; 64 source/integration tests
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --all-targets -- --test-threads=1
+# 1,141 passed, 1 known loopback HTTP JSON-schema fixture failed, 122 ignored
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-executor --all-targets -- --test-threads=1
+# 1,052 passed, 121 existing planner/storage/fixture failures, 0 ignored
+```
+
+The owner compile, format, and diff checks are run before commit; no
+production implementation change was needed because the spelling-authoritative
+predicate was already present.
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

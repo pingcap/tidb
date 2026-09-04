@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (F3, `pkg/types` empty-collation predicate): reconciled the
+  field-type audit with the spelling-authoritative implementation and added a
+  legacy JSON regression proving an empty `Collate` remains a character string
+  with restored data. Ready evidence is recorded in
+  `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (F4, `pkg/types` field-type formatter): `FieldType::source_string`
   now uses the strict integer display-width default, matching Go's
   server-initialized `TiDBStrictIntegerDisplayWidth`. The focused BIGINT/BINARY

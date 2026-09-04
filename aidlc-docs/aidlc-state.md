@@ -2,13 +2,13 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` field-type formatter display-width parity batch (finding F4)
+- Work unit: `pkg/types` empty-collation predicate parity batch (finding F3)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: the focused field-type display-width regression and serialized
+- Validation: the focused empty-collation predicate regression and serialized
   datatype/expression/executor owner profiles pass or retain their known
-  baseline blockers. Datatype reports 403 unit and 64 source/integration
+  baseline blockers. Datatype reports 404 unit and 64 source/integration
   passes; expression reports 1,141 passes, one known loopback HTTP
   JSON-schema fixture failure, and 122 ignored; executor reports 1,052
   passes and 121 existing planner/storage/fixture failures. Strict
@@ -99,5 +99,9 @@
 - Current batch: Rust `FieldType::source_string` now uses the strict integer
   display-width default, so BIGINT metadata omits deprecated `(M)` widths like
   Go. Receipt: `rust/testport/receipts/types_explain_format_audit.md`.
+- Current batch: Rust field-type binary classification remains authoritative to
+  the stored collation spelling, so empty legacy `Collate` values do not inherit
+  the cached `Binary` enum. Receipt:
+  `rust/testport/receipts/types_explain_format_audit.md`.
 - Next action: continue with the next executable Rust package boundary after
   the M10 batch is committed and pushed.

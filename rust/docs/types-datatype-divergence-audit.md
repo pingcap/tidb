@@ -893,27 +893,25 @@ validation are recorded in `rust/testport/receipts/datatype_json_fieldtype_recei
 
 ## F3 — FIXED (verified 2026-09-03): `is_binary_string()` now compares the collation NAME
 
-## F3 (rank 1, reachability uncertain) — `is_binary_string()` answers "binary" for an EMPTY collation name
+## F3 (rank 1, FIXED 2026-09-04) — `is_binary_string()` answers "binary" for an EMPTY collation name
 
 - Go: `pkg/types/etc.go:125-127` — `IsBinaryStr` compares the collation
   **string** to `"binary"`.
-- Rust: `rust/crates/tidb-datatype/src/field_type/mod.rs:898-900` reads a cached
-  `Collation` **enum**. `FieldType::parser()` (`mod.rs:542-557`) seeds that enum
-  to `Collation::Binary` while `collation_name` is `""`, and
-  `From<JsonFieldType>` (`mod.rs:1424-1425`) falls back to `Collation::Binary`
-  for any name `Collation::from_name` rejects, including `""`.
+- Rust: `FieldType::is_binary_string` reads the stored collation spelling, as
+  Go does, while `FieldType::parser()` and `From<JsonFieldType>` may still seed
+  the cached enum to `Collation::Binary` for an empty/unrecognised name.
 
 Distinguishing input: a `ColumnInfo` whose `FieldType` JSON is
 `{"Tp":15,"Charset":"utf8mb4","Collate":""}` (a legacy column). Go:
 `IsBinaryStr = false`, `IsNonBinaryStr = true`, `NeedRestoredData = true`.
-Rust: `is_binary_string() = true`, `is_character_string() = false`,
-`need_restored_data() = false`. Inverted, again on the encoding path.
+Rust now returns `is_binary_string() = false`, `is_character_string() = true`,
+and `need_restored_data() = true`, matching Go on the encoding path.
 
-Left unfixed: whether an empty `Collate` occurs in currently-written meta could
-not be confirmed, and the fix is a representation change (keep the name, or
-carry an explicit "unrecognised" variant) rather than a boolean edit. The
-*unregistered-name* variant of this is not reachable — the 16 collations in the
-Rust enum exactly cover TiDB's new-collation set.
+The focused `field_type::json::tests::empty_collation_name_does_not_inherit_binary_cache`
+regression decodes the legacy JSON shape and verifies the character-string and
+restored-data outcomes. The *unregistered-name* variant is likewise
+spelling-authoritative; the 16 collations in the Rust enum only affect runtime
+collator fallback.
 
 ## F4 (rank 4, FIXED 2026-09-04) — `source_string()` / `Display` pins the display-width switch to the wrong value
 
