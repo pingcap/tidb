@@ -411,6 +411,18 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   context regression proving the record side effect. Fail-before verified.
   Receipt: `receipts/info_row_count_last_insert_id.md`.
 
+- 2026-09-04 (`FORMAT_BYTES()`/`FORMAT_NANO_TIME()` evaluation): the two
+  performance-schema formatters were registered and result-typed but had no
+  evaluation arms. Added the arms coercing the declared-ETReal argument
+  through the numeric ladder and rendering with Go's
+  `GetFormatBytes`/`GetFormatNanoTime` (`util.go:1804-1879`): IEC byte units
+  and the ns→d time ladder, 0 decimals at divisor 1, 2 decimals above, and
+  Go's scientific form (`1.02e+08`) at 100000+. Fail-before (the arms did
+  not exist) with Go's own TestFormatBytes/TestFormatNanoTime vectors plus
+  the negative and scientific rows. Receipt:
+  `receipts/cast_hybrid_push.md` sibling — the vectors live in
+  `simple_expr::tests::format_bytes_and_nano_time_follow_the_go_unit_tables`.
+
 - 2026-09-04 (hybrid-type cast push, `builtin_cast.go:2898`): ported
   `TryPushCastIntoControlFunctionForHybridType` — a numeric-target cast over
   IF/CASE/ELT pushes INTO the branches when one is a hybrid type (Enum/Set,

@@ -315,7 +315,7 @@ fn sign(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
 /// prefix rule (so `SQRT('4')` is 2 and `SIN('abc')` is 0). `ctx` carries the
 /// statement warning sink that the string case raises 1292 on; every other
 /// kind converts exactly and raises nothing.
-fn numeric_arg(v: &Datum, ctx: &dyn Columns) -> Result<Option<f64>, EvalError> {
+pub(crate) fn numeric_arg(v: &Datum, ctx: &dyn Columns) -> Result<Option<f64>, EvalError> {
     match v {
         Datum::Null => Ok(None),
         Datum::String(_) | Datum::Bytes(_) => Ok(Some(to_f64_with_mysql_string(v, ctx)?)),

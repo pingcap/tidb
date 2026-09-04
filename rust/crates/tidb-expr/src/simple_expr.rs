@@ -585,6 +585,92 @@ fn wrap_cast_for_hybrid_push(
     build_cast_function(expr, tp, false)
 }
 
+/// Go `GetFormatBytes` (`pkg/expression/util.go:1804`): byte count with IEC
+/// units; a divisor of 1 renders 0 decimals, otherwise 2 decimals with the
+/// scientific form at 100000+.
+fn format_bytes(bytes: f64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * KIB;
+    const GIB: f64 = 1024.0 * MIB;
+    const TIB: f64 = 1024.0 * GIB;
+    const PIB: f64 = 1024.0 * TIB;
+    const EIB: f64 = 1024.0 * PIB;
+    let (divisor, unit) = if bytes.abs() >= EIB {
+        (EIB, "EiB")
+    } else if bytes.abs() >= PIB {
+        (PIB, "PiB")
+    } else if bytes.abs() >= TIB {
+        (TIB, "TiB")
+    } else if bytes.abs() >= GIB {
+        (GIB, "GiB")
+    } else if bytes.abs() >= MIB {
+        (MIB, "MiB")
+    } else if bytes.abs() >= KIB {
+        (KIB, "KiB")
+    } else {
+        (1.0, "bytes")
+    };
+    if divisor == 1.0 {
+        return format!("{:.0} {}", bytes, unit);
+    }
+    let value = bytes / divisor;
+    if value.abs() >= 100000.0 {
+        format!("{} {}", format_float_e_go(value), unit)
+    } else {
+        format!("{:.2} {}", value, unit)
+    }
+}
+
+/// Go `GetFormatNanoTime` (`pkg/expression/util.go:1843`): nanoseconds with
+/// the d/h/min/s/ms/us/ns unit ladder, same decimal rules as
+/// [`format_bytes`].
+fn format_nano_time(time: f64) -> String {
+    const MICRO: f64 = 1_000.0;
+    const MILLI: f64 = 1_000.0 * MICRO;
+    const SEC: f64 = 1_000.0 * MILLI;
+    const MINUTE: f64 = 60.0 * SEC;
+    const HOUR: f64 = 60.0 * MINUTE;
+    const DAY: f64 = 24.0 * HOUR;
+    let (divisor, unit) = if time.abs() >= DAY {
+        (DAY, "d")
+    } else if time.abs() >= HOUR {
+        (HOUR, "h")
+    } else if time.abs() >= MINUTE {
+        (MINUTE, "min")
+    } else if time.abs() >= SEC {
+        (SEC, "s")
+    } else if time.abs() >= MILLI {
+        (MILLI, "ms")
+    } else if time.abs() >= MICRO {
+        (MICRO, "us")
+    } else {
+        (1.0, "ns")
+    };
+    if divisor == 1.0 {
+        return format!("{:.0} {}", time, unit);
+    }
+    let value = time / divisor;
+    if value.abs() >= 100000.0 {
+        format!("{} {}", format_float_e_go(value), unit)
+    } else {
+        format!("{:.2} {}", value, unit)
+    }
+}
+
+/// Go `strconv.FormatFloat(v, 'e', 2, 64)`: two decimal digits and a signed
+/// two-digit-minimum exponent (`1.02e+08`), which Rust's `{:.2e}` renders
+/// as `1.02e8`.
+fn format_float_e_go(value: f64) -> String {
+    let rendered = format!("{:.2e}", value);
+    let (mantissa, exponent) = rendered.split_once('e').unwrap_or((rendered.as_str(), "0"));
+    let exponent: i32 = exponent.parse().unwrap_or(0);
+    format!(
+        "{mantissa}e{}{:02}",
+        if exponent < 0 { "-" } else { "+" },
+        exponent.abs()
+    )
+}
+
 pub(crate) fn build_cast_function(
     mut expr: Expression,
     mut target: FieldType,
@@ -989,6 +1075,7 @@ mod tests {
     use super::*;
     use crate::context::NoColumns;
     use crate::exprctx::SimplePlanColumnIdAllocator;
+    use crate::expression::Constant;
     use crate::rewriter::NoResolver;
     use tidb_chunk::chunk::Chunk;
     use tidb_datatype::Datum;
@@ -1594,6 +1681,111 @@ mod tests {
         let value = node.eval(&context, row).unwrap();
         assert_eq!(value, crate::Datum::Int(42));
         assert_eq!(context.recorded.borrow().as_slice(), &[42]);
+    }
+
+    /// Go `builtinFormatBytesSig`/`builtinFormatNanoTimeSig`
+    /// (builtin_info.go:1743/1785) with `GetFormatBytes`
+    /// (`pkg/expression/util.go:1804`) and `GetFormatNanoTime`
+    /// (`:1843`): IEC byte units and the ns/d time ladder, 2-decimal
+    /// rendering above the first unit, scientific form at 100000+.
+    #[test]
+    fn format_bytes_and_nano_time_follow_the_go_unit_tables() {
+        // Go `pkg/expression/builtin_info_test.go` TestFormatBytes /
+        // TestFormatNanoTime vectors, byte-for-byte.
+        let cases: &[(&str, crate::Datum, &str)] = &[
+            ("format_bytes", crate::Datum::Int(0), "0 bytes"),
+            ("format_bytes", crate::Datum::Int(2048), "2.00 KiB"),
+            ("format_bytes", crate::Datum::Int(75295729), "71.81 MiB"),
+            ("format_bytes", crate::Datum::Int(5287242702), "4.92 GiB"),
+            ("format_bytes", crate::Datum::Int(5039757204245), "4.58 TiB"),
+            (
+                "format_bytes",
+                crate::Datum::Int(890250274520475525),
+                "790.70 PiB",
+            ),
+            (
+                "format_bytes",
+                crate::Datum::Real(18446644073709551615.0),
+                "16.00 EiB",
+            ),
+            (
+                "format_bytes",
+                crate::Datum::Real(-18446644073709551615.0),
+                "-16.00 EiB",
+            ),
+            (
+                "format_bytes",
+                crate::Datum::Real(287952852482075252752429875.0),
+                "2.50e+08 EiB",
+            ),
+            ("format_nano_time", crate::Datum::Int(0), "0 ns"),
+            ("format_nano_time", crate::Datum::Int(2000), "2.00 us"),
+            (
+                "format_nano_time",
+                crate::Datum::Int(898787877),
+                "898.79 ms",
+            ),
+            ("format_nano_time", crate::Datum::Int(9999999991), "10.00 s"),
+            (
+                "format_nano_time",
+                crate::Datum::Int(898787877424),
+                "14.98 min",
+            ),
+            (
+                "format_nano_time",
+                crate::Datum::Int(5827527520021),
+                "1.62 h",
+            ),
+            (
+                "format_nano_time",
+                crate::Datum::Int(42566623663736353),
+                "492.67 d",
+            ),
+            (
+                "format_nano_time",
+                crate::Datum::Real(4827524825702572425242552.0),
+                "5.59e+10 d",
+            ),
+            (
+                "format_nano_time",
+                crate::Datum::Int(-9999999991),
+                "-10.00 s",
+            ),
+        ];
+        let text_type = FieldType::new(FieldTypeCode::VarString);
+        for (name, argument, expected) in cases {
+            let node = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(*name),
+                text_type.clone(),
+                vec![Expression::Constant(Constant::new(
+                    argument.clone(),
+                    FieldType::new(FieldTypeCode::LongLong),
+                ))],
+            ));
+            let mut chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+            let row = chunk.get_row(0);
+            let value = node
+                .eval(&crate::context::NoColumns, row)
+                .unwrap_or_else(|error| panic!("{name}({argument:?}): {error:?}"));
+            let text = value.sql_string().expect("string result");
+            assert_eq!(text, *expected, "{name}({argument:?})");
+        }
+
+        // NULL propagates.
+        let node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("format_bytes"),
+            text_type,
+            vec![Expression::Constant(Constant::new(
+                crate::Datum::Null,
+                FieldType::new(FieldTypeCode::LongLong),
+            ))],
+        ));
+        let mut chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+        let row = chunk.get_row(0);
+        assert!(node
+            .eval(&crate::context::NoColumns, row)
+            .unwrap()
+            .is_null());
     }
 
     /// Go `ParseSimpleExpr`'s empty-string guard.
