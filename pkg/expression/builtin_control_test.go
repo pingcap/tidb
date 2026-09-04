@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -52,10 +51,8 @@ func TestCaseWhen(t *testing.T) {
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
-	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
-	require.Error(t, err)
+	// errors.New(...) sub-case retired along with the KindInterfaceDeprecated
+	// escape hatch: MakeDatums now panics on unsupported Go types.
 }
 
 func TestIf(t *testing.T) {
@@ -98,11 +95,8 @@ func TestIf(t *testing.T) {
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
-	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
-	require.Error(t, err)
-	_, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1, 2)))
+	// errors.New(...) sub-case retired; same rationale as TestCaseWhen.
+	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1, 2)))
 	require.Error(t, err)
 }
 
@@ -125,7 +119,6 @@ func TestIfNull(t *testing.T) {
 		{nil, types.Set{Value: 1, Name: "abc"}, "abc", false, false},
 		{nil, jsonInt.GetMysqlJSON(), jsonInt.GetMysqlJSON(), false, false},
 		{"abc", nil, "abc", false, false},
-		{errors.New(""), nil, "", true, true},
 	}
 
 	for _, tt := range tbl {

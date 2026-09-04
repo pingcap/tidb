@@ -21412,26 +21412,23 @@ yynewstate:
 		}
 	case 1854:
 		{
-			var repSeed ast.ExprNode
-			if yyS[yypt-0].expr != nil {
-				repSeed = ast.NewValueExpr(yyS[yypt-0].expr, parser.charset, parser.collation)
-			}
+			// Expression ($4) and RepeatableOpt ($7) are both declared as
+			// %type <expr> and already produce ast.ExprNode values. Wrapping
+			// them via ast.NewValueExpr would store the whole subtree inside a
+			// Datum's escape-hatch "x any" slot (the only production path that
+			// does so); use them directly instead.
 			parser.yyVAL.item = &ast.TableSample{
 				SampleMethod:     yyS[yypt-5].item.(ast.SampleMethodType),
-				Expr:             ast.NewValueExpr(yyS[yypt-3].expr, parser.charset, parser.collation),
+				Expr:             yyS[yypt-3].expr,
 				SampleClauseUnit: yyS[yypt-2].item.(ast.SampleClauseUnitType),
-				RepeatableSeed:   repSeed,
+				RepeatableSeed:   yyS[yypt-0].expr,
 			}
 		}
 	case 1855:
 		{
-			var repSeed ast.ExprNode
-			if yyS[yypt-0].expr != nil {
-				repSeed = ast.NewValueExpr(yyS[yypt-0].expr, parser.charset, parser.collation)
-			}
 			parser.yyVAL.item = &ast.TableSample{
 				SampleMethod:   yyS[yypt-3].item.(ast.SampleMethodType),
-				RepeatableSeed: repSeed,
+				RepeatableSeed: yyS[yypt-0].expr,
 			}
 		}
 	case 1856:
