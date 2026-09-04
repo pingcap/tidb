@@ -33,3 +33,18 @@ sets and the cited values.
 
 `cargo test -p tidb-vardef` 44+3+3 green (including the new regression);
 fmt/clippy/`git diff --check`/`make lint` pass on the batch commit.
+
+## Registry attribute diff (2026-09-05, second pass)
+
+A second pass compared every single-line `SysVar` entry in Go's
+`defaultSysVars`/`noopSysVars` (427 parseable, field-level: scope, value,
+type, min, max) against the Rust `SysVarDef` catalog. Result: **zero real
+divergences.** The only four flagged rows (`tidb_auto_analyze_start_time`,
+`tidb_auto_analyze_end_time`, `tidb_evolve_plan_task_start_time`,
+`tidb_evolve_plan_task_end_time`) were an artifact of the diff script
+lacking Go's `TypeTime` in its type table — Go declares `TypeTime`
+(`sysvar.go:865-866`) and Rust's `VarType::Time` mirrors it exactly.
+
+Multi-line entries (those carrying `GetGlobal`/`SetGlobal`/`Validation`
+hooks) are outside this mechanical pass; their behavior parity is the
+per-variable audit surface, not a table diff.

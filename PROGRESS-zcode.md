@@ -308,3 +308,5 @@
 - 下轮恢复点: (1) sysvar scope/type/default 的逐条值 diff(名字集已闭环); (2) F2/F3-seam 被 live 证据阻塞。
 - sysvar 注册表批推送 `4d1b311ab7e`。本轮累计 4 推: 12577ef915d/c07080636c8/fb20b01ab78(vardef)/4d1b311ab7e(registry)+journal 提交。
 - 下轮恢复点: (1) sysvar scope/type/default 逐条值 diff(名字集已闭环, 脚本已有, 扩展 scope/value/min/max 三元组即可); (2) F2/F3-seam 被 live 证据阻塞; (3) F4 逐站点低优先级。
+- sysvar 属性级第二遍完成: 427 条单行条目 scope/value/type/min/max 全对照, 0 真实分歧(4 条 TypeTime 标记为脚本缺陷, Go sysvar.go:865 确有 TypeTime, Rust VarType::Time 正确)。sysvar 表面(名字+属性)闭环, 已写入 vardef 收据文档。
+- 下轮恢复点: (1) 多行 Get/Set hook 条目的逐变量行为审计(不同类); (2) F2/F3-seam live 阻塞; (3) F4 逐站点低优先级。
