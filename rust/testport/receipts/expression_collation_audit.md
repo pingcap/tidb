@@ -706,3 +706,43 @@ invalid metadata is not introduced because result types come from validated
 expression inference. Compatibility risk is limited to callers that depended
 on the prior Rust-only omission of trailing zero temporal digits. Performance
 impact is one small metadata copy on each non-NULL COALESCE temporal result.
+
+## Rust follow-up: expression-level `STR_TO_DATE` punctuation
+
+The rolling Go authority is `origin/master` at `fc7788ff517c3407dc7e000be989ab23e6648211`.
+Before editing, the complete `pkg/expression` tree was re-inventoried: 208
+tracked artifacts, 146,291 lines (137 direct root artifacts, 68 production
+files, 60 tests, seven generated sources, `BUILD.bazel`, and `OWNERS`, plus
+the nested expression packages and their build/test/support inputs). The Rust
+`tidb-expr` owner and its aggregate test inputs were rechecked before editing;
+no Go, generated, fixture, platform, or Bazel file changed.
+
+Go's `STR_TO_DATE` `%.'` token calls `unicode.IsPunct` through
+`skipAllPunct`, consuming Unicode punctuation such as U+00BF INVERTED
+QUESTION MARK while excluding ASCII symbols such as `+`. The datatype Rust
+parser already had the source-version classifier, but the independent
+expression implementation in `time_fn/calendar.rs` still used
+`char::is_ascii_punctuation`. The expression-level regression
+`time_fn::tests::str_to_date_punctuation_token_uses_go_unicode_categories`
+failed before the change (`2013¿5` returned NULL); after the change it accepts
+the Unicode punctuation and rejects `2013+5`, matching Go. The classifier is
+now shared from `tidb-datatype`, keeping the Unicode 15 table and its explicit
+Unicode-16 exclusions in one owner.
+
+No Go source or generated/Bazel artifact changed. This is a bounded expression
+parser fix; the broader expression package remains non-atomic while its
+documented PB/vectorized/deferred gaps remain.
+
+## Validation for expression-level `STR_TO_DATE` punctuation
+
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib time_fn::tests::str_to_date_punctuation_token_uses_go_unicode_categories -- --exact --nocapture` — pre-fix failed (`NULL` instead of `2013-05-00`); after the fix, 1 focused test passed.
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` and `git diff --check` — passed.
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,118 tests passed, 130 documented gaps were ignored, and the known loopback HTTP JSON-schema fixture failed with `WouldBlock`; this is unrelated to the punctuation change and reproduced the same resource error in the isolated retry.
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (385 tests), covering the shared classifier owner.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed.
+
+Risks are limited to sharing a pure Unicode-category predicate across the two
+Rust parser owners. The `%.'` path performs one table lookup per consumed
+character; all other `STR_TO_DATE` tokens and expression evaluation paths are
+unchanged.

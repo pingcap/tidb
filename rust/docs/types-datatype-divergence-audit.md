@@ -504,10 +504,12 @@ Distinguishing input: `sql_mode='ALLOW_INVALID_DATES'`,
   (`core_time.rs:145-150` → `:298-309`) returns `InvalidCalendar` first. No
   non-synthetic way to build such a `CoreTime` was found.
 
-**Adjacent, out of scope:** `rust/crates/tidb-expr/src/time_fn/calendar.rs:1230`
-holds a *second, independent* `STR_TO_DATE` implementation that never calls
-`Time::str_to_date`. T9–T11 describe the `tidb-datatype` copy only; the
-expression copy needs its own pass.
+The expression crate also holds a *second*, independent `STR_TO_DATE`
+implementation at `rust/crates/tidb-expr/src/time_fn/calendar.rs:1230` that
+never calls `Time::str_to_date`. Its `%.'` punctuation token was separately
+aligned with the shared Go Unicode classifier in the expression follow-up
+recorded at `rust/testport/receipts/expression_collation_audit.md`; T9/T10
+remain datatype-only context boundaries.
 
 ---
 

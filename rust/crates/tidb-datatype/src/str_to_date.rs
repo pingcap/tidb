@@ -393,7 +393,11 @@ fn skip_while(input: &str, predicate: impl Fn(char) -> bool) -> &str {
     &input[consumed..]
 }
 
-fn is_go_punctuation(character: char) -> bool {
+/// Returns whether a character belongs to Go's `unicode.IsPunct` set.
+///
+/// The expression-level `STR_TO_DATE` implementation shares this classifier
+/// so both Rust owners consume exactly the same source-version table.
+pub fn is_go_punctuation(character: char) -> bool {
     // Go 1.25's unicode tables are Unicode 15.0. The dependency is generated
     // from Unicode 16.0, so exclude the 13 punctuation code points introduced
     // by that newer table until the Go source advances its Unicode edition.

@@ -1667,7 +1667,7 @@ pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<D
             }
             '@' => skip_parser_class(&date, &mut date_pos, |c| c.is_ascii_alphabetic()),
             '#' => skip_parser_class(&date, &mut date_pos, |c| c.is_ascii_digit()),
-            '.' => skip_parser_class(&date, &mut date_pos, |c| c.is_ascii_punctuation()),
+            '.' => skip_parser_class(&date, &mut date_pos, tidb_datatype::is_go_punctuation),
             _ => return Ok(Datum::Null),
         }
     }

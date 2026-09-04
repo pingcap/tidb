@@ -42,6 +42,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the expression-level Rust `STR_TO_DATE` `%.'` token
+  with Go's Unicode punctuation predicate. The duplicate `tidb-expr`
+  implementation now shares `tidb-datatype`'s source-version classifier,
+  consuming U+00BF while excluding ASCII `+`; the focused regression failed
+  before the change and passes after it. The complete current-master
+  `pkg/expression` inventory and Ready validation are recorded in
+  `receipts/expression_collation_audit.md`.
+
 - 2026-09-04 (batch 18, `pkg/ddl` MV purge-schedule derivation): implemented
   Go master `94a9cbedab`'s `deriveCreateMaterializedViewLogNextUnixSeconds`
   as `MlogPurgeDerived::derive` — Go's near-now decision tree (START WITH
@@ -5456,6 +5464,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: share the already source-pinned `is_go_punctuation` classifier
+  from `tidb-datatype` with the duplicate expression-level `STR_TO_DATE`
+  parser instead of introducing a second Unicode dependency/table. This keeps
+  Go's Unicode-version exclusions single-sourced while changing only the
+  previously ASCII-only expression token. Date/Author: 2026-09-04, Codex.
+
 - 2026-09-04: preserve Go's `TxnRetryableMark` as one Rust constant and append
   it in the ordinary `TxnErrorKind::WriteConflict` wire-rendering arm. Do not
   synthesize absent structured conflict fields or conflate the separate 8005
@@ -6037,6 +6051,10 @@ For each bounded behavior cluster:
   Codex.
 
 ## Surprises & Discoveries
+
+- The expression crate carried a second `STR_TO_DATE` parser that had not
+  inherited the datatype owner's Unicode punctuation correction. A shared
+  classifier closes the duplicate boundary without changing token grammar.
 
 - Go's cast-type formatter preserves a degenerate explicit empty charset as
   `CHAR CHARSET ` rather than omitting the clause. Rust had added an

@@ -237,7 +237,7 @@ pub use parser_types_errors::{
 };
 pub use session_time_zone::{SessionTimeZone, SessionTimeZoneOffset};
 pub use source_string::{HackedStr, PlainStr, SourceString};
-pub use str_to_date::get_format_type;
+pub use str_to_date::{get_format_type, is_go_punctuation};
 pub use time_parse::{
     adjust_year, extract_datetime_num, extract_duration_num, extract_duration_value, is_clock_unit,
     is_date_format, is_date_unit, is_microsecond_unit, parse_date_format, parse_datetime,

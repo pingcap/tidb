@@ -763,6 +763,29 @@ fn str_to_date_source_vectors() {
     assert!(calendar::str_to_date(&[string_datum("2020")], &crate::NoColumns).is_err());
 }
 
+/// Go's `STR_TO_DATE` `%.` token consumes Unicode punctuation
+/// (`unicode.IsPunct`) but does not consume ASCII symbols such as `+`.
+/// Keep the expression-level implementation aligned with the datatype parser
+/// rather than using Rust's ASCII-only punctuation predicate.
+#[test]
+fn str_to_date_punctuation_token_uses_go_unicode_categories() {
+    let relaxed = Modes(tidb_datatype::DateModes {
+        no_zero_date: false,
+        no_zero_in_date: true,
+        allow_invalid_dates: false,
+    });
+    assert_eq!(
+        calendar::str_to_date(&[string_datum("2013¿5"), string_datum("%Y%.%c")], &relaxed,)
+            .unwrap(),
+        Datum::new_string("2013-05-00".to_owned())
+    );
+    assert_eq!(
+        calendar::str_to_date(&[string_datum("2013+5"), string_datum("%Y%.%c")], &relaxed,)
+            .unwrap(),
+        Datum::Null
+    );
+}
+
 /// A session whose `sql_mode` bits are chosen per test; everything else
 /// is [`crate::NoColumns`]' defaults.
 struct Modes(tidb_datatype::DateModes);
