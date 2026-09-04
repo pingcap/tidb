@@ -16,7 +16,6 @@ package core
 
 import (
 	"cmp"
-	"maps"
 	"slices"
 	"strings"
 
@@ -262,7 +261,48 @@ func accessPathsForConds(
 	return newPath
 }
 
-func generateNormalIndexPartialPath4And(ds *logicalop.DataSource, normalPathCnt int, usedAccessMap map[string]expression.Expression) []*util.AccessPath {
+type expressionHashSet map[string][]expression.Expression
+
+func (s expressionHashSet) contains(expr expression.Expression) bool {
+	for _, existing := range s[string(expr.HashCode())] {
+		if expression.HashCodeEqual(expr, existing) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s expressionHashSet) add(expr expression.Expression) bool {
+	if s.contains(expr) {
+		return false
+	}
+	key := string(expr.HashCode())
+	s[key] = append(s[key], expr)
+	return true
+}
+
+func sameExpressionMultiset(lhs, rhs []expression.Expression) bool {
+	if len(lhs) != len(rhs) {
+		return false
+	}
+	matched := make([]bool, len(rhs))
+	for _, left := range lhs {
+		found := false
+		for i, right := range rhs {
+			if !matched[i] && expression.HashCodeEqual(left, right) {
+				matched[i] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func generateNormalIndexPartialPath4And(ds *logicalop.DataSource, normalPathCnt int, usedAccessMap expressionHashSet) []*util.AccessPath {
 	if res := generateANDIndexMerge4NormalIndex(ds, normalPathCnt, usedAccessMap); res != nil {
 		return res.PartialIndexPaths
 	}
@@ -270,7 +310,7 @@ func generateNormalIndexPartialPath4And(ds *logicalop.DataSource, normalPathCnt 
 }
 
 // generateANDIndexMerge4NormalIndex generates IndexMerge paths for `AND` (a.k.a. intersection type IndexMerge)
-func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt int, usedAccessMap map[string]expression.Expression) *util.AccessPath {
+func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt int, usedAccessMap expressionHashSet) *util.AccessPath {
 	// For now, we only consider intersection type IndexMerge when the index names are specified in the hints.
 	if !indexMergeHintsHasSpecifiedIdx(ds) {
 		return nil
@@ -305,7 +345,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 			// since idx2's access cond has already been covered by idx1.
 			containRelation := true
 			for _, access := range originalPath.AccessConds {
-				if _, ok := usedAccessMap[string(access.HashCode())]; !ok {
+				if !usedAccessMap.contains(access) {
 					// some condition is not covered in previous mv index partial path, use it!
 					containRelation = false
 					break
@@ -316,9 +356,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 			}
 			// for this picked normal index, mark its access conds.
 			for _, access := range originalPath.AccessConds {
-				if _, ok := usedAccessMap[string(access.HashCode())]; !ok {
-					usedAccessMap[string(access.HashCode())] = access
-				}
+				usedAccessMap.add(access)
 			}
 		}
 		newPath := originalPath.Clone()
@@ -335,7 +373,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	// 2. Collect filters that can't be covered by the partial paths and deduplicate them.
 	finalFilters := make([]expression.Expression, 0)
 	partialFilters := make([]expression.Expression, 0, len(partialPaths))
-	hashCodeSet := make(map[string]struct{})
+	coveredFilterSet := make(expressionHashSet)
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for _, path := range partialPaths {
 		// Classify filters into coveredConds and notCoveredConds.
@@ -355,19 +393,17 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 		// TableFilters can't be covered by partial path.
 		notCoveredConds = append(notCoveredConds, path.TableFilters...)
 
-		// Record covered filters in hashCodeSet.
+		// Record covered filters in coveredFilterSet.
 		// Note that we only record filters that not appear in the notCoveredConds. It's possible that a filter appear
 		// in both coveredConds and notCoveredConds (e.g. because of prefix index). So we need this extra check to
 		// avoid wrong deduplication.
-		notCoveredHashCodeSet := make(map[string]struct{})
+		notCoveredFilterSet := make(expressionHashSet)
 		for _, cond := range notCoveredConds {
-			hashCode := string(cond.HashCode())
-			notCoveredHashCodeSet[hashCode] = struct{}{}
+			notCoveredFilterSet.add(cond)
 		}
 		for _, cond := range coveredConds {
-			hashCode := string(cond.HashCode())
-			if _, ok := notCoveredHashCodeSet[hashCode]; !ok {
-				hashCodeSet[hashCode] = struct{}{}
+			if !notCoveredFilterSet.contains(cond) {
+				coveredFilterSet.add(cond)
 			}
 		}
 
@@ -378,10 +414,8 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	// Remove covered filters from finalFilters and deduplicate finalFilters.
 	dedupedFinalFilters := make([]expression.Expression, 0, len(finalFilters))
 	for _, cond := range finalFilters {
-		hashCode := string(cond.HashCode())
-		if _, ok := hashCodeSet[hashCode]; !ok {
+		if coveredFilterSet.add(cond) {
 			dedupedFinalFilters = append(dedupedFinalFilters, cond)
-			hashCodeSet[hashCode] = struct{}{}
 		}
 	}
 
@@ -407,7 +441,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 }
 
 // generateMVIndexMergePartialPaths4And try to find mv index merge partial path from a collection of cnf conditions.
-func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCnt int, indexMergeConds []expression.Expression, histColl *statistics.HistColl) ([]*util.AccessPath, map[string]expression.Expression, error) {
+func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCnt int, indexMergeConds []expression.Expression, histColl *statistics.HistColl) ([]*util.AccessPath, expressionHashSet, error) {
 	// step1: collect all mv index paths
 	possibleMVIndexPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
 	for idx := range normalPathCnt {
@@ -421,16 +455,17 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 	}
 	// step2: mapping index merge conditions into possible mv index path
 	mvAndPartialPath := make([]*util.AccessPath, 0, len(possibleMVIndexPaths))
-	usedAccessCondsMap := make(map[string]expression.Expression, len(indexMergeConds))
+	usedAccessCondsMap := make(expressionHashSet, len(indexMergeConds))
 	// fill the possible indexMergeConds down to possible index merge paths. If two index merge path
 	// share same accessFilters, pick the one with minimum countAfterAccess.
 	type record struct {
 		originOffset     int
 		paths            []*util.AccessPath
 		countAfterAccess float64
+		accessFilters    []expression.Expression
 	}
 	// mm is a map here used for de-duplicate partial paths which is derived from **same** accessFilters, not necessary to keep them both.
-	mm := make(map[string]*record, 0)
+	mm := make(map[string][]*record)
 	for idx := range possibleMVIndexPaths {
 		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 			ds.Table.Meta(),
@@ -447,8 +482,10 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 		}
 		// record the all hashcodes before accessFilters is mutated.
 		allHashCodes := make([]string, 0, len(accessFilters)+len(mvFilterMutations)-1)
+		allAccessFilters := make([]expression.Expression, 0, len(accessFilters)+len(mvFilterMutations)-1)
 		for _, accessF := range accessFilters {
 			allHashCodes = append(allHashCodes, string(accessF.HashCode()))
+			allAccessFilters = append(allAccessFilters, accessF)
 		}
 		for i, mvF := range mvFilterMutations {
 			if i == 0 {
@@ -456,6 +493,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 				continue
 			}
 			allHashCodes = append(allHashCodes, string(mvF.HashCode()))
+			allAccessFilters = append(allAccessFilters, mvF)
 		}
 		// in traveling of these mv index conditions, we can only use one of them to build index merge path, just fetch it out first.
 		// build index merge partial path for every mutation combination access filters.
@@ -480,7 +518,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 			//		And(path1, path2, And(path3, path4)) => And(path1, path2, path3, path4, merge(table-action like filter)
 			if len(partialPaths) == 1 || isIntersection {
 				for _, accessF := range accessFilters {
-					usedAccessCondsMap[string(accessF.HashCode())] = accessF
+					usedAccessCondsMap.add(accessF)
 				}
 				partialPaths4ThisMvIndex = append(partialPaths4ThisMvIndex, partialPaths...)
 			}
@@ -489,18 +527,33 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 		slices.Sort(allHashCodes)
 		allHashCodesKey := strings.Join(allHashCodes, "")
 		countAfterAccess := float64(histColl.RealtimeCount) * cardinality.CalcTotalSelectivityForMVIdxPath(histColl, partialPaths4ThisMvIndex, true)
-		if rec, ok := mm[allHashCodesKey]; !ok {
-			// compute the count after access from those intersection partial paths, for this mv index usage.
-			mm[allHashCodesKey] = &record{idx, partialPaths4ThisMvIndex, countAfterAccess}
-		} else {
-			// pick the minimum countAfterAccess's paths.
-			if rec.countAfterAccess > countAfterAccess {
-				mm[allHashCodesKey] = &record{idx, partialPaths4ThisMvIndex, countAfterAccess}
+		newRecord := &record{
+			originOffset:     idx,
+			paths:            partialPaths4ThisMvIndex,
+			countAfterAccess: countAfterAccess,
+			accessFilters:    allAccessFilters,
+		}
+		records := mm[allHashCodesKey]
+		matchedRecord := -1
+		for i, rec := range records {
+			if sameExpressionMultiset(rec.accessFilters, allAccessFilters) {
+				matchedRecord = i
+				break
 			}
+		}
+		if matchedRecord == -1 {
+			// Compute the count after access from those intersection partial paths for this MV index usage.
+			mm[allHashCodesKey] = append(records, newRecord)
+		} else if records[matchedRecord].countAfterAccess > countAfterAccess {
+			// Pick the paths with the minimum countAfterAccess among identical access filters.
+			records[matchedRecord] = newRecord
 		}
 	}
 	// after all mv index is traversed, pick those remained paths which has already been de-duplicated for its accessFilters.
-	recordsCollection := slices.Collect(maps.Values(mm))
+	var recordsCollection []*record
+	for _, records := range mm {
+		recordsCollection = append(recordsCollection, records...)
+	}
 	// according origin offset to stable the partial paths order. (golang map is not order stable)
 	slices.SortFunc(recordsCollection, func(a, b *record) int {
 		return cmp.Compare(a.originOffset, b.originOffset)
@@ -685,19 +738,19 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 	// collect the remained CNF conditions
 	var remainedCNFs []expression.Expression
 	for _, CNFItem := range indexMergeConds {
-		if _, ok := usedAccessMap[string(CNFItem.HashCode())]; !ok {
+		if !usedAccessMap.contains(CNFItem) {
 			remainedCNFs = append(remainedCNFs, CNFItem)
 		}
 	}
 
-	condInIdxFilter := make(map[string]struct{}, len(remainedCNFs))
+	condInIdxFilter := make(expressionHashSet, len(remainedCNFs))
 	// try to derive index filters for each path
 	for _, path := range combinedPartialPaths {
 		idxFilters, _ := splitIndexFilterConditions(ds, remainedCNFs, path.FullIdxCols, path.FullIdxColLens)
 		idxFilters = util.CloneExprs(idxFilters)
 		path.IndexFilters = append(path.IndexFilters, idxFilters...)
 		for _, idxFilter := range idxFilters {
-			condInIdxFilter[string(idxFilter.HashCode())] = struct{}{}
+			condInIdxFilter.add(idxFilter)
 		}
 	}
 
@@ -706,7 +759,7 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 	// the table filters.
 	var tableFilters []expression.Expression
 	for _, CNFItem := range remainedCNFs {
-		if _, ok := condInIdxFilter[string(CNFItem.HashCode())]; !ok {
+		if !condInIdxFilter.contains(CNFItem) {
 			tableFilters = append(tableFilters, CNFItem)
 		}
 	}
