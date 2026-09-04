@@ -16,6 +16,7 @@ package fulltext
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression/matchagainst"
@@ -585,4 +586,100 @@ func buildPhraseNode(tokens []Token) queryNode {
 		node.failure = buildPhraseFailure(node.tokens)
 	}
 	return node
+}
+
+// IndexTerms are tokens an index can use to generate candidate rows for a
+// query. They are an over-approximation: every document the query matches
+// satisfies them, but not every document satisfying them matches the query, so
+// the caller must still apply Query.Match as a residual filter.
+type IndexTerms struct {
+	// Required tokens must all be present. Non-empty means an intersection of
+	// per-token lookups generates the candidates.
+	Required []string
+	// Optional tokens are only set when there is no required token, and mean
+	// at least one must be present, so a union generates the candidates.
+	Optional []string
+}
+
+// IndexTerms returns tokens an index may use to narrow this query, or false
+// when the query cannot be narrowed soundly and only a full scan will do.
+//
+// Prohibited terms are never usable: they exclude documents rather than
+// requiring them. Prefix terms are skipped because a token-equality lookup
+// cannot express them; dropping them stays sound because the remaining terms
+// still over-approximate, and the residual filter rejects the extra rows.
+func (q *Query) IndexTerms() (IndexTerms, bool) {
+	if q == nil || q.matchesNothing {
+		return IndexTerms{}, false
+	}
+	group, ok := q.root.(groupNode)
+	if !ok {
+		return IndexTerms{}, false
+	}
+
+	var required []string
+	for _, clause := range group.must {
+		required = append(required, definitelyPresentTokens(clause)...)
+	}
+	if len(required) > 0 {
+		return IndexTerms{Required: dedupeTokens(required)}, true
+	}
+
+	// With nothing required, the query is satisfied by any one of the optional
+	// clauses, so a union over them is sound only if every clause contributes
+	// at least one token. A clause that contributes none - a bare prefix, say -
+	// could match a document none of the collected tokens appear in.
+	var optional []string
+	for _, clause := range group.should {
+		tokens := definitelyPresentTokens(clause)
+		if len(tokens) == 0 {
+			return IndexTerms{}, false
+		}
+		// Only the first token is needed: the clause requires all of them, so
+		// any one is enough to find every document the clause can match.
+		optional = append(optional, tokens[0])
+	}
+	if len(optional) == 0 {
+		return IndexTerms{}, false
+	}
+	return IndexTerms{Optional: dedupeTokens(optional)}, true
+}
+
+// definitelyPresentTokens returns tokens that every document matching node
+// must contain. It returns nothing when the node makes no such guarantee.
+func definitelyPresentTokens(node queryNode) []string {
+	switch n := node.(type) {
+	case termNode:
+		return []string{n.token}
+	case phraseNode:
+		// A phrase requires each of its tokens, adjacent. Adjacency cannot be
+		// checked by an index lookup, but presence can.
+		return slices.Clone(n.tokens)
+	case groupNode:
+		// Only the required clauses of a nested group guarantee a token. Its
+		// optional clauses guarantee no particular one, since a document can
+		// satisfy the group through any single branch, so a group with no
+		// required clause contributes nothing here.
+		var tokens []string
+		for _, clause := range n.must {
+			tokens = append(tokens, definitelyPresentTokens(clause)...)
+		}
+		return tokens
+	default:
+		// prefixNode, neverNode and anything added later guarantee nothing.
+		return nil
+	}
+}
+
+func dedupeTokens(tokens []string) []string {
+	seen := make(map[string]struct{}, len(tokens))
+	out := tokens[:0]
+	for _, token := range tokens {
+		if _, dup := seen[token]; dup {
+			continue
+		}
+		seen[token] = struct{}{}
+		out = append(out, token)
+	}
+	return out
 }
