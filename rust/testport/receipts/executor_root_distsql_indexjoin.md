@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the thirteen focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the fourteen focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -618,3 +618,51 @@ The full executor suite, cancellation during a live serial spill write,
 spill integration under live TiKV, and native TiKV behavior were not run. The
 default Rust 1.95 toolchain remains below the workspace's Rust 1.97 minimum;
 the pinned nightly toolchain was used for the focused validation.
+
+## RankTopN prefix-group short-circuit alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this fourteenth
+Rust-only fix. Go's `rankInfo` path in `topn.go` reads chunks until
+`offset + count`, then retains only the contiguous rows sharing the final
+truncated prefix key. Rust previously carried `PhysicalTopN.prefix_col` and
+`prefix_len` through planning metadata but never activated the executor
+short-circuit. `TopNExec` now resolves that child column in the physical
+builder, cuts its value with the existing `index_prefix_cut` implementation,
+compares truncated keys under the source collation (while preserving Go's
+exact-value `-1` path), and stops after the boundary prefix group. It sorts
+the retained rows by the normal TopN keys and caps output at `offset + count`,
+so boundary-group rows are fetched for correctness but never leaked to the
+parent.
+
+The focused regressions are
+`topn::tests::rank_topn_stops_after_the_boundary_prefix_group`, which observes
+that a chunk containing the first later prefix is fetched but not retained,
+and `topn::tests::rank_topn_unspecified_prefix_uses_exact_value_equality`,
+which keeps case-distinct values separate on Go's complete-value (`-1`)
+path. Before the production branch was restored, the short-circuit test
+failed with `left: 8, right: 6`, proving the old executor drained all rows;
+after the fix both tests pass. The existing `index_prefix_cut.rs` source and
+its Unicode/binary tests were inventoried as the shared prefix-key owner; no
+new fixture or generated/platform artifact was needed.
+
+Rust ownership remains within `topn.rs` and
+`driver/physical_builder.rs`; no Go, Bazel, generated, fixture, or platform
+artifact changed. Full planner partial-order candidate generation and live
+TiKV prefix-index scans remain explicit follow-up boundaries because the
+current Rust `CopTask` still does not carry Go's
+`PartialOrderMatchResult`; this batch only activates already-materialized
+`PhysicalTopN` prefix metadata and does not invent planner state.
+
+## RankTopN prefix-group short-circuit Ready validation
+
+- Pre-fix `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib topn::tests::rank_topn_stops_after_the_boundary_prefix_group -- --exact --nocapture` failed with `left: 8, right: 6` after temporarily disabling the missing rank branch.
+- Post-fix focused command passed for both rank regressions with the temporary host-only vendored-OpenSSL feature toggle; the Cargo manifest was reverted immediately to `openssl = "0.10"`.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The complete `tidb-executor` library suite, planner partial-order candidate
+enumeration, live prefix-index execution, spill interaction for RankTopN, and
+native TiKV behavior were not run. The default Rust 1.95 toolchain remains
+below the workspace's Rust 1.97 minimum; the pinned nightly toolchain was used
+for the Ready checks.

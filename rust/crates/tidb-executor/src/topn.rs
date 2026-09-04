@@ -65,10 +65,9 @@
 //!   reports that memory honestly.
 //! * **The final sort is stable** where Go's `slices.SortFunc` is not; only
 //!   the order of exactly-tying rows can differ, which Go does not guarantee.
-//! * **No `RankInfo`.** Go's prefix-key RankTopN truncation for already
-//!   prefix-ordered input remains deferred. The post-spill worker pool and
-//!   heap-based multi-way merge are ported; see [`crate::topn_spill`] for the
-//!   spill mechanism.
+//! * The prefix-key RankTopN path is represented by [`RankPrefix`]. It keeps
+//!   the child read bounded to the first `offset + count` rows plus the rows
+//!   sharing the boundary prefix, matching Go's `RankInfo` short-circuit.
 
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
@@ -112,6 +111,10 @@ pub struct TopNExec<C: Columns> {
     /// Go `TopNExec.chkHeap`: the retained rows, the pointers into them, the
     /// sift rules, and the emit cursor -- all of `topn_chunk_heap.go`.
     heap: TopNChunkHeap,
+    /// Go `RankInfo`: present only when the planner found a prefix-ordered
+    /// index path. RankTopN retains the boundary prefix group rather than
+    /// materializing the entire child.
+    rank_prefix: Option<RankPrefix>,
     memory: StatementMemory,
     /// Go `TopNExec.memTracker`.
     tracker: Arc<Tracker>,
@@ -247,6 +250,19 @@ struct TopNMergeHead {
     key: Vec<Datum>,
 }
 
+/// The one prefix-index key that makes Go's RankTopN safe to stop reading.
+///
+/// Go carries this as `RankInfo.TruncateKeyExprs`, field types, and prefix
+/// lengths. The physical TopN exposes the same fact as one
+/// `PrefixCol`/`PrefixLen` pair, so the executor stores the resolved child
+/// column index and type instead of re-evaluating an expression on every row.
+#[derive(Clone, Debug)]
+struct RankPrefix {
+    column_idx: usize,
+    prefix_len: i64,
+    field_type: FieldType,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_parallel_topn_worker<C>(
     input: std::sync::mpsc::Receiver<Chunk>,
@@ -376,6 +392,7 @@ where
             total_limit: offset + count,
             fetched: false,
             heap: TopNChunkHeap::new(),
+            rank_prefix: None,
             memory,
             tracker,
             disk_tracker,
@@ -407,6 +424,24 @@ where
     #[must_use]
     pub fn with_output_offsets(mut self, offsets: Option<Vec<usize>>) -> Self {
         self.column_idxs_used_by_child = offsets;
+        self
+    }
+
+    /// Enables Go's RankTopN read short-circuit for a planner-provided prefix
+    /// column. `prefix_len` is the declared index key-part length in
+    /// characters (or bytes for binary/ascii fields); `-1` means whole value.
+    #[must_use]
+    pub fn with_rank_prefix(
+        mut self,
+        column_idx: usize,
+        prefix_len: i64,
+        field_type: FieldType,
+    ) -> Self {
+        self.rank_prefix = Some(RankPrefix {
+            column_idx,
+            prefix_len,
+            field_type,
+        });
         self
     }
 
@@ -474,6 +509,36 @@ where
             .collect()
     }
 
+    /// Returns Go's truncated RankTopN prefix key for one child row.
+    fn rank_prefix_key(&self, row: tidb_chunk::row::Row<'_>) -> Datum {
+        let prefix = self.rank_prefix.as_ref().expect("rank prefix configured");
+        let mut value = row.get_datum(prefix.column_idx, &prefix.field_type);
+        crate::index_prefix_cut::cut_datum_by_prefix_len(
+            &mut value,
+            prefix.prefix_len,
+            &prefix.field_type,
+        );
+        value
+    }
+
+    /// Compares two truncated prefix keys under the source column's
+    /// collation. NULL remains equal to NULL and ordered below every value,
+    /// exactly as Go's `slices.Equal` over `truncateKey` treats the marker.
+    fn rank_prefixes_equal(&self, left: &Datum, right: &Datum) -> Result<bool, ExecError> {
+        let prefix = self.rank_prefix.as_ref().expect("rank prefix configured");
+        // Go's `UnspecifiedLength` (`-1`) path compares the hash-encoded
+        // complete datum, not its expression collation.  In particular,
+        // `utf8mb4_general_ci` values that differ only by case remain
+        // distinct here; collation folding belongs only to a truncated key.
+        if prefix.prefix_len == tidb_datatype::UNSPECIFIED_LENGTH {
+            return Ok(left == right);
+        }
+        Ok(
+            tidb_expr::compare_datums_with_collation(left, right, prefix.field_type.collation())?
+                == Ordering::Equal,
+        )
+    }
+
     /// Go `chunk.List.Add`: takes a whole child chunk into the store, with the
     /// keys for its rows.
     fn add_chunk(&mut self, chunk: Chunk) -> Result<(), ExecError> {
@@ -507,6 +572,43 @@ where
     /// initial in-memory segment. After the first spill,
     /// [`Self::fetch_parallel_remainder`] distributes later chunks across
     /// `Concurrency` workers, matching Go's post-spill worker boundary.
+    fn fetch_rank_topn(&mut self) -> Result<(), ExecError> {
+        self.ensure_heap_init();
+        let mut boundary_prefix = None;
+        let mut boundary_complete = false;
+        while !boundary_complete || (self.stored_len() as u64) < self.total_limit {
+            let mut chunk = self.child.new_chunk();
+            self.child.next(&mut chunk)?;
+            if chunk.num_rows() == 0 {
+                break;
+            }
+            for row_idx in 0..chunk.num_rows() {
+                let row = chunk.get_row(row_idx);
+                let prefix = self.rank_prefix_key(row);
+                if let Some(boundary) = boundary_prefix.as_ref() {
+                    if !self.rank_prefixes_equal(&prefix, boundary)? {
+                        boundary_complete = true;
+                        break;
+                    }
+                }
+                let key = self.eval_key(row)?;
+                self.heap.append_row(row, key);
+                if (self.stored_len() as u64) == self.total_limit {
+                    boundary_prefix = Some(prefix);
+                }
+            }
+            self.account()?;
+            if boundary_complete {
+                break;
+            }
+        }
+        self.heap.init_ptrs();
+        self.sort_survivors_ascending()
+    }
+
+    /// Go `loadChunksUntilTotalLimit` + `executeTopNWhenNoSpillTriggered` +
+    /// `executeTopN`, run as SEGMENTS: a segment ends when the child is
+    /// exhausted, or when the spill action says the store has to go to disk.
     fn fetch_and_select(&mut self) -> Result<(), ExecError> {
         // Go's `AttachChild` turns a zero-count TopN into a dual, so this
         // operator is never asked for zero rows in Go. Answering it without
@@ -515,6 +617,10 @@ where
             return Ok(());
         }
         validate_by_items(&self.by_items)?;
+
+        if self.rank_prefix.is_some() {
+            return self.fetch_rank_topn();
+        }
 
         loop {
             let exhausted = self.run_one_segment()?;
@@ -907,7 +1013,10 @@ where
         if !self.runs.is_empty() {
             return self.next_merged(req);
         }
-        let remaining = self.heap.len().saturating_sub(self.heap.idx());
+        let output_limit = self.rank_prefix.as_ref().map_or(self.heap.len(), |_| {
+            self.heap.len().min(self.total_limit as usize)
+        });
+        let remaining = output_limit.saturating_sub(self.heap.idx());
         let batch = req.required_rows().min(remaining);
         for _ in 0..batch {
             // Go polls the shared spill flag every ten output rows. If the
@@ -991,6 +1100,59 @@ mod tests {
         rows: Vec<Vec<Option<i64>>>,
         cursor: usize,
         batch: usize,
+    }
+
+    struct CountingSource {
+        meta: ExecutorMeta,
+        rows: Vec<Vec<i64>>,
+        cursor: usize,
+        batch: usize,
+        emitted: Arc<AtomicUsize>,
+    }
+
+    impl Executor for CountingSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            self.cursor = 0;
+            self.emitted.store(0, SeqCst);
+            Ok(())
+        }
+
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            let end = (self.cursor + self.batch).min(self.rows.len());
+            for row in &self.rows[self.cursor..end] {
+                for (column, value) in row.iter().copied().enumerate() {
+                    req.append_int64(column, value);
+                }
+            }
+            self.emitted.fetch_add(end - self.cursor, SeqCst);
+            self.cursor = end;
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
     }
 
     impl Executor for ChunkedSource {
@@ -1101,6 +1263,98 @@ mod tests {
             count,
             memory,
         )
+    }
+
+    #[test]
+    fn rank_topn_stops_after_the_boundary_prefix_group() {
+        let rows = vec![
+            vec![1],
+            vec![1],
+            vec![2],
+            vec![2],
+            vec![2],
+            vec![3],
+            vec![3],
+            vec![4],
+        ];
+        let emitted = Arc::new(AtomicUsize::new(0));
+        let child = Box::new(CountingSource {
+            meta: ExecutorMeta::new(schema_of(1), 0, 2, 4),
+            rows,
+            cursor: 0,
+            batch: 2,
+            emitted: Arc::clone(&emitted),
+        });
+        let mut exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(1), 1, 2, 4),
+            by(&[(0, false)]),
+            child,
+            NoColumns,
+            0,
+            3,
+            StatementMemory::default(),
+        )
+        .with_rank_prefix(0, -1, long());
+
+        assert_eq!(
+            drain(&mut exec),
+            vec![vec![Some(1)], vec![Some(1)], vec![Some(2)]]
+        );
+        assert_eq!(
+            emitted.load(SeqCst),
+            6,
+            "RankTopN must fetch the boundary group but not later prefix groups"
+        );
+    }
+
+    #[test]
+    fn rank_topn_unspecified_prefix_uses_exact_value_equality() {
+        let field_type = FieldType::new(FieldTypeCode::Varchar)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+        let exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(1), 1, 2, 4),
+            by(&[(0, false)]),
+            source(&[vec![Some(1)]], 1, 1),
+            NoColumns,
+            0,
+            1,
+            StatementMemory::default(),
+        )
+        .with_rank_prefix(0, tidb_datatype::UNSPECIFIED_LENGTH, field_type);
+
+        let upper = Datum::new_collation_string(
+            b"Prefix".to_vec(),
+            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+        );
+        let lower = Datum::new_collation_string(
+            b"prefix".to_vec(),
+            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+        );
+        assert!(!exec.rank_prefixes_equal(&upper, &lower).unwrap());
+    }
+
+    #[test]
+    fn rank_topn_truncated_prefix_uses_column_collation() {
+        let field_type = FieldType::new(FieldTypeCode::Varchar)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+        let exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(1), 1, 2, 4),
+            by(&[(0, false)]),
+            source(&[vec![Some(1)]], 1, 1),
+            NoColumns,
+            0,
+            1,
+            StatementMemory::default(),
+        )
+        .with_rank_prefix(0, 3, field_type.clone());
+        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), 2);
+        chunk.append_string(0, "abcXYZ");
+        chunk.append_string(0, "abcxyz");
+
+        let left = exec.rank_prefix_key(chunk.get_row(0));
+        let right = exec.rank_prefix_key(chunk.get_row(1));
+        assert!(exec.rank_prefixes_equal(&left, &right).unwrap());
+        assert_eq!(left.as_raw_bytes(), Some(&b"abc"[..]));
     }
 
     /// The INDEPENDENT oracle: the `Sort` + `Limit` pair this operator

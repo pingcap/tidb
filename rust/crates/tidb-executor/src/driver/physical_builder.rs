@@ -2802,19 +2802,37 @@ fn build_with_state(
                 .collect::<Result<Vec<_>, _>>()?;
             let schema = unary_schema(plan, child.as_ref());
             let output_offsets = inline_projection_offsets(&schema, child.schema());
-            Ok(Box::new(
-                TopNExec::new(
-                    meta(plan, schema),
-                    by_items,
-                    child,
-                    ctx.clone(),
-                    topn.offset,
-                    topn.count,
-                    ctx.statement_memory(),
-                )
-                .with_output_offsets(output_offsets)
-                .with_parallelism(ctx.executor_concurrency()),
-            ) as Box<dyn Executor>)
+            let child_schema = child.schema().clone();
+            let child_field_types = child.ret_field_types().to_vec();
+            let mut executor = TopNExec::new(
+                meta(plan, schema),
+                by_items,
+                child,
+                ctx.clone(),
+                topn.offset,
+                topn.count,
+                ctx.statement_memory(),
+            )
+            .with_output_offsets(output_offsets)
+            .with_parallelism(ctx.executor_concurrency());
+            if let Some(prefix_col) = topn.prefix_col {
+                let index = child_schema
+                    .columns
+                    .iter()
+                    .position(|column| column.unique_id == prefix_col)
+                    .ok_or_else(|| {
+                        DriverError::unsupported(
+                            "a physical TopN prefix column is absent from its child schema",
+                        )
+                    })?;
+                let field_type = child_field_types.get(index).cloned().ok_or_else(|| {
+                    DriverError::unsupported(
+                        "a physical TopN prefix column has no child field type",
+                    )
+                })?;
+                executor = executor.with_rank_prefix(index, topn.prefix_len as i64, field_type);
+            }
+            Ok(Box::new(executor) as Box<dyn Executor>)
         }
         PhysicalPlan::HashAgg(aggregation) => build_aggregation(
             plan,

@@ -49,6 +49,16 @@ For each bounded behavior cluster:
   one-argument scalar `INTERVAL` calls are rejected like Go. The complete
   Go-root inventory and the source-derived builtin regression matrix are
   recorded in `receipts/parser_root.md`.
+- 2026-09-05 (`pkg/executor/sortexec` RankTopN prefix-group short-circuit):
+  aligned Rust with Go's `RankInfo` prefix-index read boundary. Physical
+  TopN metadata now resolves the prefix column into `TopNExec`, which cuts
+  values through `index_prefix_cut`, preserves exact-value semantics for the
+  `-1` sentinel, and retains only the `offset + count` rows plus the
+  contiguous boundary-prefix group. Focused fail-before/pass-after regressions
+  and Ready checks are recorded in
+  `receipts/executor_root_distsql_indexjoin.md`; full planner partial-order
+  candidate generation remains an explicit boundary because Rust's `CopTask`
+  does not yet carry Go's `PartialOrderMatchResult`.
 - 2026-09-05 (`pkg/executor/sortexec` serial sort cancellation polling):
   aligned the serial `SortPartition` comparator and spill writer with Go's
   10,240-comparison and post-spill-chunk SQL-killer checkpoints. The focused
