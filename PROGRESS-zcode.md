@@ -288,3 +288,5 @@
 - 下轮恢复点: (1) F3 read_only_scan errors 1235/42000; (2) F2 ~59 unknown 站点(需 live 证据, 记录); (3) F4 后续=逐站点 Go errno 对比(~40 个显式 1105)。
 - 本轮共 3 推: c4f20f9c7ef(distsql 1.1/2.1 关闭)、ca8b39ec1f0(F4 隐藏默认删除)、及上轮 f88422da30a(F1)。
 - F3 起点: rust/crates/tidb-planner/src/read_only_scan/errors.rs — ReadOnlyScanError/UnsupportedReadOnlyFeature(23 变体)无 MySQL code 字段, 经 SqlQueryError::unknown 成 1105; Go 等价拒绝=ErrNotSupportedYet 1235/42000。修法=加 code 字段+variant→errno 映射+SqlQueryError 构造点接线。
+- F3 核实为确认开放(拓扑已全程追踪): ReadOnlyScanError/PreparedPlanError 无 code → RealTiKvReadError::Plan Display 展平 → server 侧 SqlQueryError::unknown(1105/HY000); SqlQueryError 本身(code/state/message)完全可承载。修法已写入 audit doc: planner 加 mysql_code() 访问器(Parse→1064/42000, Unsupported→1235/42000, UnknownTable→1146/42S02, UnknownColumn→1054/42S22, 不变量→1105/HY000) + seam 改用。下轮直接按此执行。
+- 下轮恢复点: (1) F3 按上述设计执行; (2) F2 ~59 unknown 站点(需 live 证据, 记录); (3) F4 后续逐站点 Go errno 对比。

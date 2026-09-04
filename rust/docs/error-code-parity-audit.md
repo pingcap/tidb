@@ -174,17 +174,28 @@ cluster. Establishing that needs execution.
 
 ---
 
-### F3 (rank 1, wrong code) — planner refusals carry no code at all
+### F3 (rank 1, wrong code) — planner refusals carry no code at all — CONFIRMED OPEN (verified 2026-09-05, fix design recorded)
 
-`rust/crates/tidb-planner/src/read_only_scan/errors.rs` defines `ReadOnlyScanError`,
-`UnsupportedReadOnlyFeature` (23 variants) and `UnsupportedReadOnlyPredicate` with **no
-MySQL code field**. They surface through `SqlQueryError::unknown` as 1105.
+The topology is now traced end to end. `ReadOnlyScanError` and
+`PreparedPlanError` (`rust/crates/tidb-planner/src/read_only_scan/errors.rs`)
+carry no MySQL code; `RealTiKvReadError::Plan` (`real_tikv_read.rs:939`)
+flattens them through `Display`; the server seams then call
+`SqlQueryError::unknown(error.to_string())` (`real_tikv_node/mod.rs:306+`),
+answering 1105/HY000. The server's `SqlQueryError` itself is fully capable
+(`sql_node.rs:270`: explicit code/state/message).
 
-Go raises `ErrNotSupportedYet` = **1235**, SQLSTATE **42000**, message
-`"This version of TiDB doesn't yet support '%s'"` for the equivalent refusals
-(`pkg/errno/errcode.go`, `errname.go`). 1235 vs 1105 and 42000 vs HY000 are both wrong, and
-`ErrorKind::NotSupportedYet` already exists in the (dead) protocol table, so the intent was
-recorded and never wired.
+Go raises the equivalent refusals as `ErrNotSupportedYet` = **1235**, SQLSTATE
+**42000**, message `"This version of TiDB doesn't yet support '%s'"` for the
+unsupported-feature shapes (`pkg/errno/errcode.go`, `errname.go`); 1235 vs
+1105 and 42000 vs HY000 are both wrong.
+
+Bounded fix design, ready to execute: (1) add a `mysql_code()`-style
+accessor on `ReadOnlyScanError`/`PreparedPlanError` mapping `Parse` to
+1064/42000, `Unsupported`/`UnsupportedPredicate` to 1235/42000,
+`UnknownTable` to 1146/42S02, `UnknownColumn` to 1054/42S22, and the
+internal-invariant variants to 1105/HY000; (2) use it at the server seam
+flatten sites instead of `unknown()`. Pinned by per-variant regressions
+surfacing the code and state.
 
 ---
 
