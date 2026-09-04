@@ -1522,6 +1522,19 @@ func TestCreateTableWithFullTextIndexBuildsMVIndex(t *testing.T) {
 	tk.MustContainErrMsg("create table bad_parser(a text, fulltext index idx(a) with parser unknown)", "FULLTEXT parser 'unknown' is not supported")
 	tk.MustContainErrMsg("create table bad_prefix(a text, fulltext index idx(a(10)))", "FULLTEXT index does not support prefix length")
 
+	// Adding the index to a table that already holds rows goes through the
+	// ordinary backfill, which has to evaluate the generated column for every
+	// existing row.
+	tk.MustExec("create table backfilled(id int primary key, a text)")
+	tk.MustExec("insert into backfilled values (1, 'distributed sql database'), (2, 'relational storage engine')")
+	tk.MustExec("alter table backfilled add fulltext index idx_a(a)")
+	tk.MustExec("admin check table backfilled")
+	tk.MustExec("set tidb_enable_local_match_against = on")
+	tk.MustQuery("select id from backfilled where match(a) against('+distributed' in boolean mode)").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("select id from backfilled where match(a) against('+storage' in boolean mode)").
+		Check(testkit.Rows("2"))
+
 	tk.MustExec("create table pt(id int, a text) partition by hash(id) partitions 2")
 	tk.MustExec("create fulltext index idx_a on pt(a)")
 	tk.MustExec("insert into pt values (1, 'distributed sql'), (2, 'relational storage')")
