@@ -4698,14 +4698,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             table,
             context,
         } => {
-            plan_create_materialized_view(&catalog, stmt, schema, table, &context.0)?;
-            // Go's remaining submission body derives the view column types by
-            // executing the definition; this tier has no SQL-execution seam
-            // over a meta snapshot, so the job cannot be assembled. A valid
-            // statement must not be pretended into success.
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
-                "materialized view job execution is not wired in this tier",
-            )));
+            return Err(DdlPlanError::Encode(
+                "materialized view DDL must execute through mysql.tidb_ddl_job".to_owned(),
+            ));
         }
         DdlStatement::CreateMaterializedViewLog { .. } => {
             // Go submits this statement as a durable job
@@ -9146,16 +9141,259 @@ fn synthesized_column_type(field_type: &FieldType) -> tidb_ast::ColumnType {
     }
 }
 
-/// Plans pinned Go `CreateMaterializedViewLog` submission and the view
-/// create's submission boundary, mirroring
-/// [`prepare_check_constraint_job_submission`].
+/// Go `CreateMaterializedView`'s remaining submission body (master
+/// `94a9cbedab`): derive the view column types by executing the canonical
+/// definition — Go's `ExecRestrictedSQL("SELECT * FROM (<selectSQL>) AS
+/// `tidb_mv_query` LIMIT 0")` — build the view `TableInfo` (flag-stripped
+/// derived columns, the one-row-per-group PRIMARY KEY/UNIQUE constraint),
+/// assemble the `MaterializedViewInfo` metadata, and pack the job envelope
+/// with its typed `CreateMaterializedViewArgs`.
+fn build_create_materialized_view_job(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    create: &tidb_ast::CreateMaterializedViewStmt,
+    schema: &str,
+    table: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<(Job, JobArgsValue), DdlPlanError> {
+    // Go's admission order, already carried by the planning prefix.
+    let prefix = plan_create_materialized_view(catalog, create, schema, table, context)?;
+    let database = find_database(catalog, schema)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(schema.to_owned()))?;
+    let base = database
+        .tables
+        .iter()
+        .find(|table| table.id == prefix.base_table_id)
+        .ok_or_else(|| DdlPlanError::TableNotExists {
+            schema: schema.to_owned(),
+            table: table.to_owned(),
+        })?;
+    let mlog_name = tidb_model::materialized_view_log_table_name(&base.name);
+    let mlog =
+        find_table(database, mlog_name.original()).ok_or_else(|| DdlPlanError::TableNotExists {
+            schema: schema.to_owned(),
+            table: mlog_name.original().to_owned(),
+        })?;
+
+    // Go derives the output schema by executing the definition. The query is
+    // single-table by admission, so a catalog bridge registering just that
+    // base table under the view's schema is the whole world the query sees.
+    let result_fields =
+        derive_materialized_view_query_columns(base, &prefix.select_sql, schema, context)?;
+    // Go `len(resultFields) != len(s.Cols)`: the declared column list must
+    // name every output column.
+    if result_fields.len() != create.columns.len() {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+            "materialized view column count {} does not match query output {}",
+            create.columns.len(),
+            result_fields.len()
+        ))));
+    }
+
+    // Go: one group-key index for the one-row-per-group contract — PRIMARY
+    // KEY when every group key is NOT NULL, UNIQUE otherwise — keyed by the
+    // declared column each GROUP BY column appears at.
+    let all_group_by_not_null = prefix
+        .analysis
+        .group_by_infos
+        .iter()
+        .all(|info| info.not_null);
+    let constraint_kind = if all_group_by_not_null {
+        tidb_ast::IndexConstraintKind::PrimaryKey
+    } else {
+        tidb_ast::IndexConstraintKind::Unique
+    };
+
+    // Go builds `ast.ColumnDef{Name: s.Cols[i], Tp: &ft}` where `ft` is the
+    // planner's result field type with the key/auto-increment/on-update flags
+    // deleted. The build's own conversion output is re-stamped with the exact
+    // derived field type, as Go copies `*rf.Column.FieldType` verbatim.
+    let mut columns = Vec::with_capacity(create.columns.len());
+    for name in &create.columns {
+        columns.push(tidb_ast::ColumnDef {
+            qualifier: Vec::new(),
+            name: name.clone(),
+            ty: tidb_ast::ColumnType {
+                name: "VARCHAR".to_owned(),
+                args: Vec::new(),
+                unsigned: false,
+                zerofill: false,
+                binary: false,
+                charset: None,
+            },
+            options: Vec::new(),
+        });
+    }
+    let keys = prefix
+        .analysis
+        .group_by_infos
+        .iter()
+        .map(|info| tidb_ast::IndexPart::Column {
+            name: create.columns[info.select_idx].clone(),
+            prefix_len: None,
+            desc: false,
+        })
+        .collect();
+    let create_table_stmt = tidb_ast::CreateTableStmt {
+        temporary: tidb_ast::CreateTableTemporary::None,
+        on_commit_delete: false,
+        if_not_exists: false,
+        name: vec![schema.to_owned(), table.to_owned()],
+        like_table: None,
+        columns,
+        table_constraints: vec![tidb_ast::TableConstraint::Index(
+            tidb_ast::IndexConstraintDefinition {
+                kind: constraint_kind,
+                if_not_exists: false,
+                name: None,
+                is_empty_index: false,
+                parts: keys,
+                options: tidb_ast::IndexOptions::default(),
+            },
+        )],
+        table_options: create.options.clone(),
+        partitioning: None,
+        splits: Vec::new(),
+        ctas: None,
+    };
+    let mut mview_table_info = build_table_info_with_context(
+        &create_table_stmt,
+        database.info.charset.as_str(),
+        database.info.collate.as_str(),
+        ClusteredIndexDefMode::On,
+        context,
+    )
+    .map_err(DdlPlanError::Admission)?;
+    for (index, (_, field_type)) in result_fields.iter().enumerate() {
+        if let Some(column) = mview_table_info.columns.get(index) {
+            let mut stamped = field_type.clone();
+            stamped.del_flags(
+                FieldTypeFlags::PRI_KEY
+                    | FieldTypeFlags::UNIQUE_KEY
+                    | FieldTypeFlags::MULTIPLE_KEY
+                    | FieldTypeFlags::AUTO_INCREMENT
+                    | FieldTypeFlags::ON_UPDATE_NOW,
+            );
+            column.write().field_type = stamped;
+        }
+    }
+    // Go `mvTableInfo.Comment = s.Comment` (empty when unset).
+    mview_table_info.comment = create.comment.clone().unwrap_or_default();
+
+    // Go: the view metadata the initial build and every later refresh read.
+    mview_table_info.materialized_view = Some(GoShared::new(tidb_model::MaterializedViewInfo {
+        base_table_ids: GoValueSlice::from(vec![prefix.base_table_id]),
+        init_build_state: tidb_model::MViewInitBuildState::INIT_BUILD_BUILDING,
+        sql_content: prefix.select_sql.clone(),
+        refresh_method: prefix.refresh_method.clone(),
+        refresh_start_with: prefix.refresh_start_with.clone(),
+        refresh_next: prefix.refresh_next.clone(),
+        alert_warning_sec: prefix.alert_warning_sec,
+        alert_overdue_sec: prefix.alert_overdue_sec,
+        alert_refresh_failed: prefix.alert_refresh_failed,
+        definition_sql_mode: u64::try_from(context.ddl_sql_mode()).unwrap_or_default(),
+        definition_div_precision_increment: i64::from(context.div_precision_increment()),
+        definition_time_zone: prefix.time_zone.clone(),
+        refresh_schedule_time_zone: prefix.time_zone.clone(),
+    }));
+
+    // Go: the job envelope. CREATE MATERIALIZED VIEW is submitted as reorg
+    // DDL — create table first, then the initial build in the reorg phase.
+    let mut job = Job::default();
+    job.version = get_job_ver_in_use();
+    job.schema_id = database.info.id;
+    job.schema_name = schema.to_lowercase().into();
+    job.table_name = mview_table_info.name.lowercase().to_owned().into();
+    job.type_ = ActionType::ACTION_CREATE_MATERIALIZED_VIEW;
+    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+    job.query = context.ddl_query().into();
+    job.cdc_write_source = context.ddl_cdc_write_source();
+    job.sql_mode = context.ddl_sql_mode();
+    job.involving_schema_info = GoSharedSlice::from_vec(vec![
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.to_lowercase().into(),
+            table: mview_table_info.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.to_lowercase().into(),
+            table: base.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.to_lowercase().into(),
+            table: mlog.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+    ]);
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::new()));
+    job.add_system_var(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION, "");
+    // Go `initMaterializedViewReorgMetaFromVariables` stamps `job.ReorgMeta`
+    // from the session's reorg worker count/batch size; the statement context
+    // carries no such snapshot yet, which the reorg-worker batch owns.
+
+    let args = <tidb_model::CreateMaterializedViewArgs as tidb_model::JobArgs>::into_job_args_value(
+        Some(GoShared::new(tidb_model::CreateMaterializedViewArgs {
+            table_info: GoField::new(Some(GoShared::new(mview_table_info))),
+            mlog_table_ids: GoField::new(GoSharedSlice::from_vec(vec![prefix.mlog_table_id])),
+        })),
+    );
+    Ok((job, args))
+}
+
+/// Go's restricted-SQL derivation over one catalog bridge: the definition is
+/// single-table by admission, so registering just the base table under the
+/// view's schema is the whole world the query sees. `LIMIT 0` keeps the
+/// execution a schema-only read, exactly as Go's wrapper does.
+fn derive_materialized_view_query_columns(
+    base: &TableInfo,
+    select_sql: &str,
+    schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<Vec<(String, FieldType)>, DdlPlanError> {
+    use tidb_executor::{Catalog, KvColumn, KvTable};
+    let kv_columns: Vec<tidb_executor::KvColumn> = base
+        .columns
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            tidb_executor::KvColumn {
+                name: column.name.original().to_owned(),
+                id: column.id,
+                field_type: column.field_type.clone(),
+                column_info_version: column.version,
+                default_value: None,
+                origin_default: None,
+                comment: column.comment.clone(),
+                generated: None,
+            }
+        })
+        .collect();
+    let mut kv_table = tidb_executor::KvTable::new(base.id, kv_columns);
+    kv_table.name = base.name.original().to_owned();
+    let mut catalog = Catalog::default();
+    catalog.create_database(schema);
+    catalog
+        .register_kv_in(schema, base.name.original(), kv_table)
+        .map_err(|error| {
+            let error = error.to_mysql_error();
+            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        })?;
+    let sql = format!("SELECT * FROM ({select_sql}) AS `tidb_mv_query` LIMIT 0");
+    tidb_executor::run_select_meta_in(&sql, &catalog, schema, context)
+        .map(|(columns, _)| columns)
+        .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::new(error.to_string())))
+}
+
+/// Plans pinned Go `CreateMaterializedViewLog` and `CreateMaterializedView`
+/// submission, mirroring [`prepare_check_constraint_job_submission`].
 ///
-/// `Ok(Some(spec))` — the log create — carries the job envelope plus typed
-/// arguments through [`crate::ddl_job_submit::prepare_submit_batch`]'s
-/// preflight (BDR role, upgrading pause, queueing state). The view create's
-/// remaining submission body needs the restricted-SQL column-type
-/// derivation this tier cannot serve, so it refuses exactly there; `Ok(None)`
-/// means the statement is not a materialized-view job action.
+/// Both statements carry the job envelope plus typed arguments through
+/// [`crate::ddl_job_submit::prepare_submit_batch`]'s preflight (BDR role,
+/// upgrading pause, queueing state). The log create's job is fully
+/// executable by the persisted step planner; the view create's initial-build
+/// reorg phase is not wired yet, so a submitted view job stays queued until
+/// that batch lands. `Ok(None)` means the statement is not a
+/// materialized-view job action.
 pub fn prepare_materialized_view_job_submission<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
@@ -9176,14 +9414,7 @@ pub fn prepare_materialized_view_job_submission<S: MetaSnapshot>(
             schema,
             table,
             context,
-        } => {
-            // Run Go's full admission order first; a valid statement then
-            // stops at the restricted-SQL derivation seam.
-            plan_create_materialized_view(&catalog, stmt, schema, table, &context.0)?;
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
-                "materialized view job execution is not wired in this tier",
-            )));
-        }
+        } => build_create_materialized_view_job(&catalog, stmt, schema, table, &context.0)?,
         _ => return Ok(None),
     };
 

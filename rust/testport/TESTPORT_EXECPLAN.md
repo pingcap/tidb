@@ -42,6 +42,25 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04 (batch 16, `pkg/ddl` MV view-create submission): implemented
+  Go master `94a9cbedab`'s `CreateMaterializedView` submission body — the
+  restricted-SQL column-type derivation (`SELECT * FROM (<canonical>) AS
+  tidb_mv_query LIMIT 0` over a driver catalog bridge registering the single
+  admitted base table), Go's column-count refusal, the view `TableInfo`
+  through the ordinary create-table build with the
+  `mviewQueryAnalysis`-derived PRIMARY KEY/UNIQUE group constraint and each
+  column re-stamped with the flag-stripped planner result type, the full
+  `MaterializedViewInfo` metadata, and the typed
+  `CreateMaterializedViewArgs` job through the shared submit preflight.
+  Both MV statements now route through `prepare_materialized_view_job_submission`
+  (`plan_ddl` answers the CHECK-style job-route guard). The view create's
+  initial-build reorg phase stays the recorded seam: a submitted view job
+  queues until that worker batch lands. The view tests drive the refusals,
+  the count mismatch, and the submitted spec (derived column types, PK
+  shape, metadata) through to a queued job row; failure sets unchanged
+  (exec 7 = base minus the batch-15 repair, session subset of base).
+  Receipt: `receipts/ddl_mview_view_submission.md`.
+
 - 2026-09-04: aligned the Rust `tidb-datatype` float-to-decimal owner for
   the complete Go-master `pkg/types` formatting boundary. `Decimal::from_f64`
   now uses shortest `%g`-compatible scientific formatting before the fixed

@@ -5113,7 +5113,9 @@ fn create_table_like_clears_materialized_view_metadata() {
 
 /// Go `CreateMaterializedView`/`CreateMaterializedViewLog` (master
 /// `94a9cbedab`): the admission checks run in source order and carry Go's
-/// exact refusals; a valid statement stops at the documented job seam.
+/// exact refusals; a valid statement submits a queueing job whose typed
+/// arguments carry the derived view table (its initial-build worker is the
+/// still-unwired reorg batch).
 #[test]
 fn materialized_view_lowering_follows_go_admission_order() {
     use tidb_executor::StmtContext;
@@ -5130,6 +5132,17 @@ fn materialized_view_lowering_follows_go_admission_order() {
             .expect("MV DDL lowers to a statement")
     };
     let mut store = bootstrapped();
+    // View statements route through the durable-job submission planner, the
+    // same way Go's `DoDDLJobWrapper` owns them.
+    let submit = |store: &mut MetaStore, sql: &str| {
+        prepare_materialized_view_job_submission(
+            store,
+            &lower_with(&enabled, sql, "u6"),
+            1_311,
+            false,
+            0,
+        )
+    };
 
     // Go `checkMaterializedViewEnabled` fires before everything else.
     let error = try_lower(
@@ -5171,25 +5184,16 @@ fn materialized_view_lowering_follows_go_admission_order() {
     let base_id = create.created_id.expect("base table id");
 
     // Go: the schema must exist at planning.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW nowhere.mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)",
-            "u6",
-        ),
-        1_301,
-    )
-    .expect_err("unknown schema refuses");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW nowhere.mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)")
+        .expect_err("unknown schema refuses");
     assert!(matches!(error, DdlPlanError::UnknownDatabase(ref db) if db == "nowhere"));
 
     // Go `validateCommentLength`: the 1024-byte comment cap.
-    let long_comment = format!(
+    let long_comment_sql = format!(
         "CREATE MATERIALIZED VIEW mv (id, k) COMMENT '{}' AS SELECT id, k FROM mv_base GROUP BY id, k",
         "x".repeat(1025)
     );
-    let error = plan_ddl(&mut store, &lower_with(&enabled, &long_comment, "u6"), 1_302)
-        .expect_err("over-long comment refuses");
+    let error = submit(&mut store, &long_comment_sql).expect_err("over-long comment refuses");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5200,16 +5204,8 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go: only a plain SELECT is accepted.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW mv (c) AS (SELECT 1 UNION SELECT 2)",
-            "u6",
-        ),
-        1_303,
-    )
-    .expect_err("set operations refuse");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (c) AS (SELECT 1 UNION SELECT 2)")
+        .expect_err("set operations refuse");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5220,16 +5216,8 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go `extractSingleTableNameFromSelect`: comma joins refuse.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW mv (a) AS (SELECT * FROM a, b GROUP BY a)",
-            "u6",
-        ),
-        1_304,
-    )
-    .expect_err("multi-table refuses");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (a) AS (SELECT * FROM a, b GROUP BY a)")
+        .expect_err("multi-table refuses");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5240,16 +5228,8 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go: the base table must live in the same schema.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM other.mv_base GROUP BY id)",
-            "u6",
-        ),
-        1_305,
-    )
-    .expect_err("cross-schema base refuses");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM other.mv_base GROUP BY id)")
+        .expect_err("cross-schema base refuses");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5260,32 +5240,16 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go: the base table must exist.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM no_base GROUP BY id)",
-            "u6",
-        ),
-        1_306,
-    )
-    .expect_err("missing base refuses");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id) AS (SELECT * FROM no_base GROUP BY id)")
+        .expect_err("missing base refuses");
     assert!(matches!(
         error,
         DdlPlanError::TableNotExists { ref table, .. } if table == "no_base"
     ));
 
     // Go: the `$mlog$` physical table must exist for the base.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)",
-            "u6",
-        ),
-        1_307,
-    )
-    .expect_err("missing mlog refuses");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base GROUP BY id, k)")
+        .expect_err("missing mlog refuses");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5308,16 +5272,8 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go `validateCreateMaterializedViewQuery`: GROUP BY is required.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base)",
-            "u6",
-        ),
-        1_308,
-    )
-    .expect_err("GROUP BY is required");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id, k) AS (SELECT id, k FROM mv_base)")
+        .expect_err("GROUP BY is required");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5328,16 +5284,8 @@ fn materialized_view_lowering_follows_go_admission_order() {
     );
 
     // Go: WITH ROLLUP refuses.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW mv (id, cnt) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id WITH ROLLUP)",
-            "u6",
-        ),
-        1_309,
-    )
-    .expect_err("ROLLUP refuses");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id, cnt) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id WITH ROLLUP)")
+        .expect_err("ROLLUP refuses");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5349,16 +5297,8 @@ fn materialized_view_lowering_follows_go_admission_order() {
 
     // Go's `mviewutil.CheckMaterializedViewSelect` clauses flow through with
     // their own messages: a locking clause is refused.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id FOR UPDATE)",
-            "u6",
-        ),
-        1_310,
-    )
-    .expect_err("locking clauses refuse");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id FOR UPDATE)")
+        .expect_err("locking clauses refuse");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
@@ -5367,23 +5307,106 @@ fn materialized_view_lowering_follows_go_admission_order() {
         "Unsupported CREATE MATERIALIZED VIEW does not support locking clauses"
     );
 
-    // A valid statement reaches the documented job seam.
-    let error = plan_ddl(
-        &mut store,
-        &lower_with(
-            &enabled,
-            "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(1) FROM mv_base GROUP BY id)",
-            "u6",
-        ),
-        1_311,
-    )
-    .expect_err("valid statements stop at the job seam");
+    // A declared column list that disagrees with the query output refuses.
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW mv (a, b, c) AS (SELECT id, COUNT(1) FROM mv_base GROUP BY id)")
+        .expect_err("the column count is checked against the query output");
     let DdlPlanError::Admission(admission) = error else {
-        panic!("expected the seam refusal")
+        panic!("expected a coded refusal")
     };
+    assert_eq!(admission.code, 1105);
     assert_eq!(
         admission.reason,
-        "materialized view job execution is not wired in this tier"
+        "materialized view column count 3 does not match query output 2"
+    );
+
+    // The valid statement submits a queueing view job whose typed arguments
+    // carry the derived view table: flag-stripped result columns, the
+    // one-row-per-group PRIMARY KEY (every group key is NOT NULL), and the
+    // MaterializedViewInfo metadata pointing back at the base.
+    let mut spec = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(1) FROM mv_base GROUP BY id)",
+    )
+    .expect("Go submission preflight succeeds")
+    .expect("the view create owns a job spec");
+    assert_eq!(spec.job.type_, ActionType::ACTION_CREATE_MATERIALIZED_VIEW);
+    assert_eq!(spec.job.state, JobState::QUEUEING);
+    assert_eq!(spec.job.table_name.to_utf8_lossy_go(), "mv");
+    assert_eq!(spec.job.involving_schema_info.len(), 3);
+    assert!(!spec.id_allocated, "the view table ID is assigned at insert");
+    assert!(spec.job.may_need_reorg(), "the initial build is reorg DDL");
+
+    let JobArgsValue::CreateMaterializedView(Some(view_args)) = &spec.args else {
+        panic!("the spec carries CreateMaterializedViewArgs")
+    };
+    let table_shared = view_args.read().table_info.get().expect("nil TableInfo");
+    // The RwLock guards must drop before the insertion attempt, whose GID
+    // assignment writes the same shared TableInfo.
+    {
+    let view = table_shared.read();
+    assert_eq!(view.name.original(), "mv");
+    assert_eq!(
+        view.materialized_view
+            .as_ref()
+            .expect("the view metadata is set")
+            .read()
+            .base_table_ids
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![base_id]
+    );
+    assert_eq!(
+        view.materialized_view.as_ref().unwrap().read().refresh_method,
+        "FAST"
+    );
+    let handles: Vec<_> = view.columns.iter_handles().into_iter().flatten().collect();
+    let columns: Vec<_> = handles.iter().map(|column| column.read()).collect();
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0].name.original(), "id");
+    assert_eq!(columns[0].field_type.code(), tidb_datatype::FieldTypeCode::Long);
+    assert_eq!(
+        columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY,
+        0,
+        "Go deletes the key flags on the derived column"
+    );
+    assert_eq!(columns[1].name.original(), "c");
+    assert_eq!(
+        columns[1].field_type.code(),
+        tidb_datatype::FieldTypeCode::LongLong,
+        "COUNT derives the Go bigint output type"
+    );
+    // One-row-per-group constraint: the only group key `id` is NOT NULL, so
+    // Go builds a PRIMARY KEY over the declared column.
+    assert!(view
+        .indices
+        .iter_deref()
+        .any(|index| index.read().primary));
+    }
+
+    // The view's own worker (the initial-build reorg phase) is not wired yet;
+    // the submitted job stays queued rather than pretending to finish.
+    let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+    let (mutations, cleanup) = plan_insert_attempt(
+        &mut store,
+        &catalog,
+        std::slice::from_mut(&mut spec),
+        &mut |_| Option::<fn()>::None,
+    )
+    .expect("the insertion attempt plans");
+    apply_mutations(&mut store, &mutations);
+    drop(cleanup);
+    let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
+    let job_table = DdlJobTable::locate(&catalog).expect("the job table exists");
+    let queued = job_table
+        .load(&mut store)
+        .expect("the queue scans")
+        .into_iter()
+        .find(|active| active.job.id == spec.job.id)
+        .expect("the view job stays queued for its worker batch");
+    assert_eq!(
+        queued.job.type_,
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW
     );
 }
 
@@ -5935,8 +5958,10 @@ fn materialized_view_query_clause_refusals_follow_go() {
         ),
     ];
     for (sql, want) in cases {
-        let error = plan_ddl(&mut store, &lower(sql), 1_501)
-            .expect_err("the clause refuses");
+        let statement = lower(sql);
+        let error =
+            prepare_materialized_view_job_submission(&mut store, &statement, 1_501, false, 0)
+                .expect_err("the clause refuses");
         let DdlPlanError::Admission(admission) = error else {
             panic!("expected a coded refusal for {sql}")
         };
