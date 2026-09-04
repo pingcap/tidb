@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` embedding receipt): re-audited the
+  b010 rows against the live session owner. `tidb-session::embedding` and
+  `tests_session_embedding_source` already cover endpoint normalization and
+  whitelist errors, GLOBAL base-URL generation semantics, and six masked API
+  keys; b010 now points to those passing tests instead of stale vardef-only
+  ignored stubs.
 - 2026-09-05 (`pkg/ddl` kill-flag helpers): transcreated the pure DDL
   `isSessionDone`, `convertKillFlag`, and `isRetryableDDLCancelErr` contracts
   in `tidb-executor::ddl`. Focused regressions cover clean/interrupted killer
