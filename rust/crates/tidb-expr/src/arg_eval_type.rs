@@ -238,6 +238,9 @@ pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
         b"TIDB_PARSE_TSO" | b"TIDB_PARSE_TSO_LOGICAL" => 1 << 0,
         // `lockFunctionClass`: lock name is ETString and timeout is ETInt.
         b"GET_LOCK" => 1 << 1,
+        // `getParamFunctionClass`: the parameter selector is the sole
+        // `types.ETInt` argument (`builtin_other.go:1911`).
+        b"GETPARAM" => 1 << 0,
         _ => 0,
     }
 }

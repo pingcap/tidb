@@ -645,6 +645,35 @@ pub(crate) fn eval_func_values(
         return Some(result);
     }
     let result = match name {
+        // Go `builtinGetParamStringSig.evalString` reads the integer selector
+        // from the plan-cache parameter list and stringifies the selected
+        // datum. An unset/out-of-range selector returns the exact
+        // `ErrParamIndexExceedParamCounts` identity; a datum that cannot be
+        // rendered by `ToString` becomes NULL without another error.
+        "GETPARAM" if vals.len() == 1 => {
+            let index = match vals[0] {
+                Datum::Null => return Some(Ok(Datum::Null)),
+                Datum::Int(index) => {
+                    usize::try_from(index).map_err(|_| EvalError::ParamIndexExceedParamCounts)
+                }
+                Datum::UInt(index) => {
+                    usize::try_from(index).map_err(|_| EvalError::ParamIndexExceedParamCounts)
+                }
+                _ => Err(EvalError::Unsupported("GETPARAM index is not an integer")),
+            };
+            let index = match index {
+                Ok(index) => index,
+                Err(error) => return Some(Err(error)),
+            };
+            let value = match ctx.get_param_value(index) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error)),
+            };
+            return Some(Ok(match value.sql_string() {
+                Ok(text) => Datum::new_string(text.into_bytes()),
+                Err(_) => Datum::Null,
+            }));
+        }
         // Go's `in` builtin: args[0] is the tested value and the rest are the
         // list. Three-valued: a match is 1; no match with a NULL anywhere
         // (including the tested value) is NULL; otherwise 0.

@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` GETPARAM): activated the Go
+  `builtinGetParamStringSig` path. The `Columns` seam now carries the
+  plan-cache parameter lookup, `GETPARAM` casts its selector to ETInt,
+  stringifies the selected datum, and preserves Go's out-of-range error
+  identity. Scalar and AST/value regressions are active in
+  `setvar_getvar_values_getparam_source`; package receipt `receipts/b070.md`
+  records the focused and Ready evidence.
 - 2026-09-04 (`tidb-expr`/`tidb-session` typed GETVAR time): aligned the
   session variable binder, result metadata, and evaluator with Go's
   `builtinGetTimeVarSig`. A stored MySQL time now mints `getvar_time`, keeps

@@ -1517,6 +1517,13 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "getvar_decimal" if args.len() == 1 => FieldType::new(FieldTypeCode::NewDecimal),
         "getvar_time" if args.len() == 1 => FieldType::new(FieldTypeCode::Datetime),
         "getvar_string" if args.len() == 1 => text(),
+        // Go `getParamFunctionClass.getFunction` returns ETString and fixes
+        // its display width at `mysql.MaxFieldVarCharLength` (65535).
+        "getparam" if args.len() == 1 => {
+            let mut ft = text();
+            ft.set_flen(65_535);
+            ft
+        }
         // `SETVAR` reports -- and stores -- its value argument's type.
         "setvar" if args.len() == 2 => args[1].static_type().cloned().unwrap_or_else(text),
         // Go reads these from `SessionVars`; each returns a string of flen 64

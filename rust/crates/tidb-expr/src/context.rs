@@ -138,6 +138,11 @@ pub enum EvalError {
     GroupConcatCut(String),
     /// A `json`-class error that carries its own MySQL error code.
     Json(JsonError),
+    /// Go `exprctx.ErrParamIndexExceedParamCounts`, raised by GETPARAM when
+    /// a plan-cache parameter index is outside the statement's parameter
+    /// list. The error has no dynamic payload; its exact message is the
+    /// package-level sentinel's whole contract.
+    ParamIndexExceedParamCounts,
     /// Go `types.ErrWrongValue` (1292) / `ErrWrongValue2` (1525) raised while
     /// BUILDING a typed temporal literal (`DATE 'lit'`, `TIMESTAMP 'lit'`).
     /// Unlike the cast of the same text, these reject the whole statement --
@@ -461,6 +466,14 @@ impl BlockEncryptionMode {
 pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
+
+    /// Go `exprctx.ParamValues.GetParamValue`, used by the internal
+    /// `GETPARAM()` builtin. A resolver with no plan-cache parameter list
+    /// exposes Go's empty-list error by default; statement/session owners
+    /// carrying prepared parameters override this method.
+    fn get_param_value(&self, _idx: usize) -> Result<Datum, EvalError> {
+        Err(EvalError::ParamIndexExceedParamCounts)
+    }
 
     /// The statement's connection charset/collation used by implicit casts.
     /// Go reads this from `BuildContext.GetCharsetInfo`; keeping it on the

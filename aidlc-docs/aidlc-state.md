@@ -160,7 +160,11 @@
   MySQL time, the rewriter carries a DATETIME result, and the evaluator
   returns that temporal value or NULL when unset. Focused/Ready evidence is
   recorded in `rust/testport/receipts/b070.md`.
-- Next action: run the final Ready profile, commit and push this
-  typed-GETVAR batch, then continue with the next executable Rust package
-  boundary. Direct datatype comparison warning publication remains a bounded
-  API follow-up.
+- Current batch: `GETPARAM()` now follows Go's plan-cache parameter signature:
+  ETInt selector coercion, parameter `ToString()` rendering, NULL/error
+  behavior, and the exact out-of-range sentinel are shared by scalar and
+  AST/value evaluation. Focused/Ready evidence is recorded in
+  `rust/testport/receipts/b070.md`.
+- Next action: continue with the next executable Rust package boundary.
+  Direct datatype comparison warning publication remains a bounded API
+  follow-up.

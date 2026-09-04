@@ -54,6 +54,24 @@ impl crate::context::Columns for VarStore {
     }
 }
 
+#[derive(Default)]
+struct ParamStore {
+    params: Vec<Datum>,
+}
+
+impl crate::context::Columns for ParamStore {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn get_param_value(&self, idx: usize) -> Result<Datum, EvalError> {
+        self.params
+            .get(idx)
+            .cloned()
+            .ok_or(EvalError::ParamIndexExceedParamCounts)
+    }
+}
+
 fn var_name(name: &str) -> Expression {
     Expression::Constant(Constant::new(
         Datum::new_string(name.to_owned()),
@@ -383,15 +401,55 @@ fn values_function_current_insert_values_gap() {}
 /// parameter rendered via `ToString()` and
 /// `exprctx.ErrParamIndexExceedParamCounts` past the end (scalar AND vec). The
 /// CONTEXT half already has its port: `exprstatic::evalctx::param_list` pins
-/// `get_param_value` including that exact error identity. The FUNCTION half —
-/// reading `args[0]` as the index and returning `ToString()` of the
-/// parameter — has no evaluation arm here yet.
-///
-/// go-parity-gap: GETPARAM() function evaluation over the plan-cache parameter
-/// list is unported; only the context-level `GetParamValue` seam exists.
+/// `get_param_value` including that exact error identity. The FUNCTION half
+/// reads `args[0]` as the index and returns `ToString()` of the parameter.
 #[test]
-#[ignore = "go-parity-gap: GETPARAM() function evaluation is unported (context-level get_param_value pinned separately in exprstatic::evalctx::param_list)"]
-fn getparam_function_evaluation_gap() {}
+fn getparam_function_evaluation_matches_plan_cache_values() {
+    let ctx = ParamStore {
+        params: vec![Datum::Int(123), Datum::new_string("abc".to_owned())],
+    };
+    let empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    for (index, expected) in [(0, "123"), (1, "abc")] {
+        let function = ScalarFunction::new(
+            CiString::new("getparam"),
+            FieldType::new(C::VarString),
+            vec![const_arg(Datum::Int(index), FieldType::new(C::LongLong))],
+        );
+        assert_eq!(
+            function.eval(&ctx, empty.get_row(0)).unwrap(),
+            Datum::new_string(expected.to_owned())
+        );
+    }
+
+    let out_of_range = ScalarFunction::new(
+        CiString::new("getparam"),
+        FieldType::new(C::VarString),
+        vec![const_arg(Datum::Int(2), FieldType::new(C::LongLong))],
+    );
+    assert_eq!(
+        out_of_range.eval(&ctx, empty.get_row(0)),
+        Err(EvalError::ParamIndexExceedParamCounts)
+    );
+
+    // The AST/value path uses the same GETPARAM dispatch and error identity,
+    // so row and chunk evaluation cannot drift.
+    let ast = tidb_ast::Expr::Func {
+        name: "getparam".to_owned(),
+        args: vec![tidb_ast::Expr::Int("1".to_owned())],
+        origin_position: 0,
+    };
+    assert_eq!(
+        crate::func::eval_func("GETPARAM", &ast_args(&ast), &ctx, None),
+        Ok(Datum::new_string("abc".to_owned()))
+    );
+}
+
+fn ast_args(expr: &tidb_ast::Expr) -> &[tidb_ast::Expr] {
+    let tidb_ast::Expr::Func { args, .. } = expr else {
+        unreachable!("test helper receives a function")
+    };
+    args
+}
 
 /// GO PORT of `pkg/expression/builtin_other_vec_test.go:58
 /// TestVectorizedBuiltinOtherFunc`'s representable arms: the map declares

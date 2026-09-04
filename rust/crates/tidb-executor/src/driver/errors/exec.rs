@@ -178,6 +178,9 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             "a binary operation between a {lhs:?} and a {rhs:?} value is not supported yet"
         )),
         EvalError::Vector(message) => MysqlError::unknown(message),
+        EvalError::ParamIndexExceedParamCounts => {
+            MysqlError::unknown("Param index exceed param counts")
+        }
     }
 }
 
