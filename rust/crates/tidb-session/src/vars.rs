@@ -902,6 +902,9 @@ pub struct SessionVars {
     /// `max_execution_time` `SetSession` hook and read by statement contexts
     /// as a millisecond deadline (zero means unlimited).
     max_execution_time: u64,
+    /// Go's typed `SessionVars.TimeZone`, resolved once by the time-zone
+    /// `SetSession` hook rather than reparsed by every statement.
+    time_zone: tidb_executor::SessionTimeZone,
     /// Go's typed `SessionVars.SelectLimit`, maintained by the
     /// `sql_select_limit` `SetSession` hook. `u64::MAX` is the unlimited
     /// default and any smaller value caps top-level SELECT/set results.
@@ -943,6 +946,51 @@ pub struct SessionVars {
     in_mview_maintenance: bool,
 }
 
+/// Resolves the validated `time_zone` text into the statement-facing zone
+/// type. Go's `timeutil.ParseTimeZone` preserves the original `+HH:MM` name
+/// on the session location even though the DAGR request later sends an empty
+/// name for fixed offsets; retaining that text here keeps both behaviors.
+fn resolve_session_time_zone_value(written: &str) -> tidb_executor::SessionTimeZone {
+    use tidb_executor::SessionTimeZone;
+
+    if !written.eq_ignore_ascii_case("SYSTEM") {
+        if let Ok(zone) = written.parse::<chrono_tz::Tz>() {
+            return SessionTimeZone::Named(zone);
+        }
+        if let Some(rest) = written.strip_prefix(['+', '-']) {
+            let negative = written.starts_with('-');
+            let mut parts = rest.split(':');
+            let hours: i32 = parts.next().unwrap_or_default().parse().unwrap_or(-1);
+            let minutes: i32 = parts.next().unwrap_or("0").parse().unwrap_or(-1);
+            if hours >= 0 && (0..60).contains(&minutes) {
+                let offset = hours * 3600 + minutes * 60;
+                let bounded = if negative {
+                    offset <= 12 * 3600 + 59 * 60
+                } else {
+                    offset <= 14 * 3600
+                };
+                if bounded {
+                    return SessionTimeZone::Fixed {
+                        name: written.to_owned(),
+                        offset_secs: if negative { -offset } else { offset },
+                    };
+                }
+            }
+        }
+    }
+
+    // SYSTEM is TiDB's process-wide SystemLocation, not an offset snapshot.
+    // Preserve a resolved IANA zone (and therefore DST), with the process
+    // local zone as the same fallback Go uses.
+    match tidb_util::timeutil::system_location() {
+        tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
+        tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
+        tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
+            SessionTimeZone::Fixed { name, offset_secs }
+        }
+    }
+}
+
 impl Default for SessionVars {
     fn default() -> Self {
         Self {
@@ -953,6 +1001,7 @@ impl Default for SessionVars {
             max_allowed_packet: 64 << 20,
             max_keys_read: 0,
             max_execution_time: 0,
+            time_zone: resolve_session_time_zone_value("SYSTEM"),
             select_limit: u64::MAX,
             multi_statement_mode: 0,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
@@ -1020,6 +1069,7 @@ impl SessionVars {
         let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
         let max_keys_read = Self::max_keys_read_from_systems(&systems);
         let max_execution_time = Self::max_execution_time_from_systems(&systems);
+        let time_zone = Self::time_zone_from_systems(&systems);
         let select_limit = Self::select_limit_from_systems(&systems);
         let multi_statement_mode = Self::multi_statement_mode_from_systems(&systems);
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
@@ -1035,6 +1085,7 @@ impl SessionVars {
         self.max_allowed_packet = max_allowed_packet;
         self.max_keys_read = max_keys_read;
         self.max_execution_time = max_execution_time;
+        self.time_zone = time_zone;
         self.select_limit = select_limit;
         self.multi_statement_mode = multi_statement_mode;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
@@ -1082,6 +1133,10 @@ impl SessionVars {
             .get("max_execution_time")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(0)
+    }
+
+    fn time_zone_from_systems(systems: &HashMap<String, String>) -> tidb_executor::SessionTimeZone {
+        resolve_session_time_zone_value(systems.get("time_zone").map_or("SYSTEM", String::as_str))
     }
 
     fn select_limit_from_systems(systems: &HashMap<String, String>) -> u64 {
@@ -1154,6 +1209,13 @@ impl SessionVars {
     #[must_use]
     pub const fn max_execution_time(&self) -> u64 {
         self.max_execution_time
+    }
+
+    /// Go `SessionVars.TimeZone`, resolved from `SET time_zone` and retained
+    /// until the next mutation or session-image reseed.
+    #[must_use]
+    pub fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
+        self.time_zone.clone()
     }
 
     /// Go `SessionVars.SelectLimit`, where `u64::MAX` means unlimited.
@@ -1303,6 +1365,7 @@ impl SessionVars {
         let mut restores_max_allowed_packet = false;
         let mut restores_max_keys_read = false;
         let mut restores_max_execution_time = false;
+        let mut restores_time_zone = false;
         let mut restores_select_limit = false;
         let mut restores_multi_statement_mode = false;
         let mut restores_prepared_plan_cache = false;
@@ -1312,6 +1375,7 @@ impl SessionVars {
             restores_max_allowed_packet |= key == "max_allowed_packet";
             restores_max_keys_read |= key == "tidb_max_keys_read";
             restores_max_execution_time |= key == "max_execution_time";
+            restores_time_zone |= key == "time_zone";
             restores_select_limit |= key == "sql_select_limit";
             restores_multi_statement_mode |= key == "tidb_multi_statement_mode";
             restores_prepared_plan_cache |=
@@ -1345,6 +1409,9 @@ impl SessionVars {
         }
         if restores_max_execution_time {
             self.max_execution_time = Self::max_execution_time_from_systems(&self.systems);
+        }
+        if restores_time_zone {
+            self.time_zone = Self::time_zone_from_systems(&self.systems);
         }
         if restores_select_limit {
             self.select_limit = Self::select_limit_from_systems(&self.systems);
@@ -1485,6 +1552,9 @@ impl SessionVars {
                 .value
                 .parse::<u64>()
                 .expect("max_execution_time validation stores unsigned decimal milliseconds");
+        }
+        if key == "time_zone" {
+            self.time_zone = resolve_session_time_zone_value(&validated.value);
         }
         if key == "sql_select_limit" {
             self.select_limit = validated
@@ -2449,6 +2519,51 @@ mod tests {
         let mut inherited = SessionVars::new();
         inherited.seed_from_globals(globals).unwrap();
         assert_eq!(inherited.select_limit(), 2);
+    }
+
+    /// Go `TestTimeZone`: validated names and fixed offsets are resolved by
+    /// the session hook, retained for statement contexts, and restored or
+    /// inherited with the session image.
+    #[test]
+    fn time_zone_uses_go_typed_state() {
+        let definition = get_sys_var("time_zone").unwrap();
+        for value in ["America/Edmonton", "+10:00", "UTC", "+00:00"] {
+            assert_eq!(definition.validate(value).unwrap().value, value);
+        }
+
+        let mut vars = SessionVars::new();
+        vars.set_system("time_zone", "+10:00".to_owned()).unwrap();
+        assert_eq!(
+            vars.session_time_zone(),
+            tidb_executor::SessionTimeZone::Fixed {
+                name: "+10:00".to_owned(),
+                offset_secs: 10 * 60 * 60,
+            }
+        );
+
+        let restore = vars.snapshot_system("time_zone");
+        vars.set_system("time_zone", "UTC".to_owned()).unwrap();
+        assert_eq!(
+            vars.session_time_zone(),
+            tidb_executor::SessionTimeZone::Named(chrono_tz::Tz::UTC)
+        );
+        vars.restore_system(restore);
+        assert_eq!(
+            vars.session_time_zone(),
+            tidb_executor::SessionTimeZone::Fixed {
+                name: "+10:00".to_owned(),
+                offset_secs: 10 * 60 * 60,
+            }
+        );
+
+        let globals = GlobalSysvars::new();
+        globals.set("time_zone", "UTC".to_owned()).unwrap();
+        let mut inherited = SessionVars::new();
+        inherited.seed_from_globals(globals).unwrap();
+        assert_eq!(
+            inherited.session_time_zone(),
+            tidb_executor::SessionTimeZone::Named(chrono_tz::Tz::UTC)
+        );
     }
 
     #[test]

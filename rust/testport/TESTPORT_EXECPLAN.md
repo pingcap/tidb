@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` timezone typed state): aligned
+  `tidb-session` with Go's `TestTimeZone`. The validated session zone is now
+  resolved once into statement-facing typed state (including fixed-offset
+  names, named IANA zones, and SYSTEM fallback), restored and inherited with
+  the session image, and consumed directly by statement snapshots. Focused
+  regressions cover Go's validation boundaries and typed propagation.
 - 2026-09-05 (`pkg/sessionctx/variable` SQL SELECT limit state): aligned
   `tidb-session` with Go's `TestSQLSelectLimit` setter contract. The
   normalized limit now lives in typed session state, survives restore and

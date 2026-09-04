@@ -261,49 +261,6 @@ impl Session {
         self.statement_var_snapshot().time_zone.clone()
     }
 
-    fn resolve_session_time_zone(&self) -> tidb_executor::SessionTimeZone {
-        use tidb_executor::SessionTimeZone;
-        let written = self
-            .vars
-            .get_system("time_zone")
-            .unwrap_or_else(|_| "SYSTEM".to_owned());
-        if !written.eq_ignore_ascii_case("SYSTEM") {
-            if let Ok(zone) = written.parse::<chrono_tz::Tz>() {
-                return SessionTimeZone::Named(zone);
-            }
-            if let Some(rest) = written.strip_prefix(['+', '-']) {
-                let negative = written.starts_with('-');
-                let mut parts = rest.split(':');
-                let hours: i32 = parts.next().unwrap_or_default().parse().unwrap_or(-1);
-                let minutes: i32 = parts.next().unwrap_or("0").parse().unwrap_or(-1);
-                if hours >= 0 && (0..60).contains(&minutes) {
-                    let offset = hours * 3600 + minutes * 60;
-                    let bounded = if negative {
-                        offset <= 12 * 3600 + 59 * 60
-                    } else {
-                        offset <= 14 * 3600
-                    };
-                    if bounded {
-                        return SessionTimeZone::Fixed {
-                            name: written.clone(),
-                            offset_secs: if negative { -offset } else { offset },
-                        };
-                    }
-                }
-            }
-        }
-        // SYSTEM is TiDB's process-wide `SystemLocation`, not an offset
-        // snapshot. Preserve a resolved IANA zone (and therefore DST), with
-        // the process-local zone as the same fallback Go uses.
-        match tidb_util::timeutil::system_location() {
-            tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
-            tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
-            tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
-                SessionTimeZone::Fixed { name, offset_secs }
-            }
-        }
-    }
-
     /// The instant every `NOW()` in one statement shares, which Go fixes on
     /// the statement context.
     ///
@@ -617,7 +574,7 @@ impl Session {
         let snapshot = Arc::new(StatementVarSnapshot {
             generation,
             version: self.vars.get_system("version").ok(),
-            time_zone: self.resolve_session_time_zone(),
+            time_zone: self.vars.session_time_zone(),
             connection_charset: self
                 .vars
                 .get_system("character_set_connection")
