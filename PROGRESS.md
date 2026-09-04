@@ -1,5 +1,7 @@
 # tidb-parity 滚动进度（本地 summary，不入库）
 
+> 已知 flaky：tidb-expr `json_schema_valid_resolves_file_and_http_references`（网络依赖，单跑通过/全量偶发，与本会话改动无关）。
+
 > 当前焦点 / 下一步：①expr-builtin 字符串族扫尾 ②chunk A-1（需 datum 决策）③parser #11（结构性）④等用户的分区对照查询后验证 Rust 裁剪。控制流审计项 3 已全闭环（惰性求值 + NULLIF 规则均与 Go 一致；CASE 静态类型提升为已记录残差）。注意：另一会话 ca9bc95d09 修了 parser 测试注册——重放我批次时需重跑 parser/lexer 套件（已验证全绿）。
 
 ## 已推送（origin/hparser-integration，截至 8e0f80e381 之后还有 f8ddb7c72a/06bccf90e2/6fba82d378/50a0a29c13/5465936985/3369859aa2）
@@ -29,3 +31,5 @@
 - 已推送 0e908e13d7：进度日志入库（PROGRESS.md 成为共享日志，其他会话也在写）。远端在其 mview/ddl 批次上叠加了我的三个提交（lexer #9、审计进度、日志）。四包套件在最终树全绿。
 
 - 控制流审计项 3 全闭环：IF/IFNULL/CASE 惰性求值与 NULLIF 规则均与 Go 一致（lib.rs:149/:160/:998、func.rs:539）；唯一残差是 CASE 的全分支静态类型提升（lib.rs:1009-1016 已记录）。
+
+- 字符串族第一批：LPAD/RPAD 内容/截断/字符计数/负长度的 Go 钉住回归（string_packet.rs，验证已实现行为）。审计 item 4 的 REPLACE/STRCMP 等已在前续实现，剩余 ELT/MAKE_SET/EXPORT_SET/packet-limited 族待逐个核对。
