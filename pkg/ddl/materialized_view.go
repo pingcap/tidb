@@ -675,6 +675,88 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	return errors.Trace(e.createTableWithInfoPost(ctx, mvTableInfo, jobW.SchemaID, scatterScope))
 }
 
+func (e *executor) DropMaterializedView(ctx sessionctx.Context, s *ast.DropMaterializedViewStmt) error {
+	is := e.infoCache.GetLatest()
+	schemaName := s.ViewName.Schema
+	if schemaName.O == "" {
+		if ctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		s.ViewName.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		if s.IfExists {
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, s.ViewName.Name)
+			return nil
+		}
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+	tbl, err := is.TableByName(e.ctx, schemaName, s.ViewName.Name)
+	if err != nil {
+		if s.IfExists && infoschema.ErrTableNotExists.Equal(err) {
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, s.ViewName.Name)
+			return nil
+		}
+		return err
+	}
+	if tbl.Meta().MaterializedView == nil {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name, "MATERIALIZED VIEW")
+	}
+
+	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: s.ViewName.Name}}}
+	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject)
+}
+
+func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMaterializedViewLogStmt) error {
+	is := e.infoCache.GetLatest()
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if ctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		s.Table.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+	baseTable, err := is.TableByName(e.ctx, schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+	baseTableID := baseTable.Meta().ID
+
+	mlogName := model.MaterializedViewLogTableName(baseTable.Meta().Name)
+	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
+	if err != nil {
+		if s.IfExists && infoschema.ErrTableNotExists.Equal(err) {
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, mlogName)
+			return nil
+		}
+		return err
+	}
+	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
+	}
+	if hasMaterializedViewDependsOnBaseTable(baseTable.Meta()) {
+		return errDropMaterializedViewLogDependent(schemaName.O, s.Table.Name.O)
+	}
+
+	failpoint.Inject("pauseDropMaterializedViewLogAfterCheck", func() {})
+	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: mlogName}}}
+	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject)
+}
+
+func appendDropMaterializedViewNotExistsNote(ctx sessionctx.Context, schemaName, tableName ast.CIStr) {
+	ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.FastGenByArgs(
+		ast.Ident{Schema: schemaName, Name: tableName}.String(),
+	))
+}
+
 func initMaterializedViewReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
 	sessionVars := sctx.GetSessionVars() //nolint:forbidigo

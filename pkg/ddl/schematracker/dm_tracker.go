@@ -357,6 +357,16 @@ func (*SchemaTracker) CreateMaterializedView(sessionctx.Context, *ast.CreateMate
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW is not supported in schema tracker")
 }
 
+// DropMaterializedView implements the DDL interface.
+func (*SchemaTracker) DropMaterializedView(sessionctx.Context, *ast.DropMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("DROP MATERIALIZED VIEW is not supported in schema tracker")
+}
+
+// DropMaterializedViewLog implements the DDL interface.
+func (*SchemaTracker) DropMaterializedViewLog(sessionctx.Context, *ast.DropMaterializedViewLogStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("DROP MATERIALIZED VIEW LOG is not supported in schema tracker")
+}
+
 // DropTable implements the DDL interface.
 func (d *SchemaTracker) DropTable(_ sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))

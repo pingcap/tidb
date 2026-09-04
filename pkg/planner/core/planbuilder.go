@@ -5676,6 +5676,19 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, v.ViewName.Name.L, "", authErr)
+	case *ast.DropMaterializedViewStmt:
+		dbName := v.ViewName.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if dbName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, v.ViewName.Name.L, "", authErr)
 	case *ast.CreateMaterializedViewLogStmt:
 		dbName := v.Table.Schema.L
 		if dbName == "" {
@@ -5692,6 +5705,20 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, mlogName.L, "", createAuthErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, v.Table.Name.L, "", selectAuthErr)
+	case *ast.DropMaterializedViewLogStmt:
+		dbName := v.Table.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if dbName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, mlogName.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, mlogName.L, "", authErr)
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
 	}

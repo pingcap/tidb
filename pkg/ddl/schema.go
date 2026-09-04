@@ -217,6 +217,27 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		for _, tblInfo := range tables {
+			if tblInfo.MaterializedView != nil {
+				if err = w.deleteCreateMaterializedViewRefreshInfo(jobCtx, tblInfo.ID); err != nil {
+					return ver, errors.Trace(err)
+				}
+				if err = w.deleteCreateMaterializedViewRefreshAlert(jobCtx, tblInfo.ID); err != nil {
+					logutil.DDLLogger().Warn(
+						"drop schema: failed to delete materialized view refresh alert",
+						zap.String("schemaName", job.SchemaName),
+						zap.String("tableName", tblInfo.Name.O),
+						zap.Int64("mviewID", tblInfo.ID),
+						zap.Error(err),
+					)
+				}
+			}
+			if tblInfo.MaterializedViewLog != nil {
+				if err = w.deleteMaterializedViewLogPurgeInfo(jobCtx, tblInfo.ID); err != nil {
+					return ver, errors.Trace(err)
+				}
+			}
+		}
 
 		// Best-effort cleanup - log errors but continue with DROP DATABASE
 		if err := batchDeleteTableAffinityGroups(jobCtx, tables); err != nil {

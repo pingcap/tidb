@@ -117,6 +117,8 @@ type Executor interface {
 	CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
+	DropMaterializedView(ctx sessionctx.Context, stmt *ast.DropMaterializedViewStmt) error
+	DropMaterializedViewLog(ctx sessionctx.Context, stmt *ast.DropMaterializedViewLogStmt) error
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
 	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
