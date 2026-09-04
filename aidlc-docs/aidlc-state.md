@@ -165,6 +165,13 @@
   behavior, and the exact out-of-range sentinel are shared by scalar and
   AST/value evaluation. Focused/Ready evidence is recorded in
   `rust/testport/receipts/b070.md`.
+- Current batch: Rust `TIDB_BOUNDED_STALENESS()` now mirrors Go's datetime
+  signature and inclusive SafeTS window selection. Invalid-zero endpoints use
+  the statement truncation policy, reversed windows return NULL, and the
+  result is DATETIME(3). `Columns::bounded_staleness_safe_time` is the narrow
+  storage/failpoint seam; contexts without a SafeTS carrier use the lower
+  endpoint. The focused and Ready evidence is recorded in
+  `rust/testport/receipts/b072.md`.
 - Next action: continue with the next executable Rust package boundary.
   Direct datatype comparison warning publication remains a bounded API
   follow-up.

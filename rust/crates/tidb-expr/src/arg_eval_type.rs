@@ -117,6 +117,9 @@ const fn datetime_arg_mask(name: &str) -> ArgMask {
         // types.ETDatetime` (timestampDiffFunctionClass) -- the UNIT is
         // argument 0 and stays a string.
         b"TIMESTAMPDIFF" => (1 << 1) | (1 << 2),
+        // `:7081` `types.ETDatetime, types.ETDatetime`
+        // (tidbBoundedStalenessFunctionClass).
+        b"TIDB_BOUNDED_STALENESS" => (1 << 0) | (1 << 1),
         // `:6551` `types.ETString, types.ETString, types.ETReal,
         // types.ETDatetime` (timestampAddFunctionClass).
         b"TIMESTAMPADD" => 1 << 2,
@@ -518,6 +521,7 @@ mod tests {
         assert_eq!(datetime_arg_mask("YEARWEEK"), 1);
         assert_eq!(datetime_arg_mask("TO_SECONDS"), 1);
         assert_eq!(datetime_arg_mask("LAST_DAY"), 1);
+        assert_eq!(datetime_arg_mask("TIDB_BOUNDED_STALENESS"), 0b11);
         // Not a member: Go declares `types.ETString` and branches on
         // `isFloat` instead (see the mask's doc).
         assert_eq!(datetime_arg_mask("TIMESTAMP"), 0);

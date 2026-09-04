@@ -20,7 +20,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, Time};
 
 /// The transaction timestamp visible to one SQL session.
 ///
@@ -473,6 +473,15 @@ pub trait Columns {
     /// carrying prepared parameters override this method.
     fn get_param_value(&self, _idx: usize) -> Result<Datum, EvalError> {
         Err(EvalError::ParamIndexExceedParamCounts)
+    }
+
+    /// Go `GetStmtMinSafeTime`'s statement-cached SafeTS converted to the
+    /// session timezone. A storage-backed statement overrides this seam;
+    /// contexts without a KV store leave it absent, so bounded staleness
+    /// falls back to the lower bound just as a zero SafeTS does for ordinary
+    /// post-epoch timestamps.
+    fn bounded_staleness_safe_time(&self) -> Option<Time> {
+        None
     }
 
     /// The statement's connection charset/collation used by implicit casts.

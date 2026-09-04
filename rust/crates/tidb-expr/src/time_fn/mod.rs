@@ -64,6 +64,7 @@ pub(crate) fn dispatch(
         "WEEK" => week(vals, cols.default_week_format()),
         "WEEKOFYEAR" => week_of_year_builtin(vals),
         "TIDB_PARSE_TSO_LOGICAL" => tidb_parse_tso_logical(vals),
+        "TIDB_BOUNDED_STALENESS" => tidb_bounded_staleness(vals, cols),
         "TIDB_CURRENT_TSO" => current_tso(vals, cols),
         "GET_FORMAT" => get_format_value(vals),
         "YEARWEEK" => yearweek(vals),
@@ -114,6 +115,53 @@ fn current_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad function arity"));
     }
     Ok(Datum::Int(cols.current_tso()))
+}
+
+/// Go `builtinTiDBBoundedStalenessSig.evalTime`: choose a read timestamp from
+/// the requested inclusive window and the statement's SafeTS. The storage
+/// layer publishes the already timezone-adjusted SafeTS through
+/// `Columns::bounded_staleness_safe_time`; a context without storage has no
+/// value and therefore uses the lower bound (the same outcome as a zero
+/// SafeTS for normal post-epoch datetimes). The result is always a DATETIME
+/// with millisecond precision, matching `setDecimalAndFlenForDatetime(3)`.
+fn tidb_bounded_staleness(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    let [left, right] = vals else {
+        return Err(EvalError::WrongParameterCount("tidb_bounded_staleness"));
+    };
+    let (Datum::Time(left), Datum::Time(right)) = (left, right) else {
+        return if vals.iter().any(Datum::is_null) {
+            Ok(Datum::Null)
+        } else {
+            Err(EvalError::Unsupported(
+                "TIDB_BOUNDED_STALENESS arguments reached the signature without ETDatetime casts",
+            ))
+        };
+    };
+    // `builtinTiDBBoundedStalenessSig` runs `InvalidZero` through
+    // `handleInvalidTimeError` before converting either endpoint to Go time.
+    // Keep that check here, after the signature cast has produced typed
+    // values, so zero/zero-in-date inputs cannot accidentally become a valid
+    // lower-bound read timestamp.
+    for value in [left, right] {
+        if value.invalid_zero() {
+            cols.handle_truncate(&format!("Incorrect datetime value: '{value}'"))?;
+            return Ok(Datum::Null);
+        }
+    }
+    if left.compare(*right).is_gt() {
+        return Ok(Datum::Null);
+    }
+    let mut result = match cols.bounded_staleness_safe_time() {
+        Some(safe) if safe.compare(*left).is_lt() => *left,
+        Some(safe) if safe.compare(*right).is_gt() => *right,
+        Some(safe) => safe,
+        None => *left,
+    };
+    result.set_kind(tidb_datatype::TimeType::DateTime);
+    result
+        .set_fsp(3)
+        .map_err(|_| EvalError::Unsupported("invalid bounded-staleness result precision"))?;
+    Ok(Datum::Time(result))
 }
 
 /// `DATE(expr)`, after Go's declared `ETDatetime` argument cast has produced

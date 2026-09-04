@@ -23,6 +23,7 @@ use super::*;
 use crate::context::SessionTimeZone;
 use crate::time_fn::dispatch;
 use std::cell::RefCell;
+use tidb_datatype::{Time, TimeType};
 
 /// A session pinned to UTC with a FIXED statement clock: everything Go's
 /// `mock.Context` + `resetStmtContext` gives a time test without host-clock
@@ -882,8 +883,100 @@ fn tidb_parse_tso_logical_consecutive_tso_counters() {
 
 /// GO PORT of `builtin_time_test.go:3546 TestTiDBBoundedStaleness`.
 #[test]
-#[ignore = "go-parity-gap: TIDB_BOUNDED_STALENESS needs Go's injectSafeTS failpoint seam plus oracle.GoTimeToTS epoch arithmetic (builtinTiDBBoundedStalenessSig, builtin_time.go:7090); neither exists in this evaluator"]
-fn tidb_bounded_staleness_safets_windows_and_monotonicity() {}
+fn tidb_bounded_staleness_safets_windows_and_monotonicity() {
+    struct SafeTsContext {
+        safe: Time,
+    }
+
+    impl Columns for SafeTsContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn bounded_staleness_safe_time(&self) -> Option<Time> {
+            Some(self.safe)
+        }
+    }
+
+    let left = Time::from_date_checked(2015, 9, 21, 9, 53, 4, 0, TimeType::DateTime, 0).unwrap();
+    let right = Time::from_date_checked(2025, 1, 2, 10, 0, 0, 0, TimeType::DateTime, 0).unwrap();
+    let safe =
+        Time::from_date_checked(2020, 6, 7, 8, 9, 10, 123_000, TimeType::DateTime, 6).unwrap();
+    let ctx = SafeTsContext { safe };
+    assert_eq!(
+        dispatched(
+            "TIDB_BOUNDED_STALENESS",
+            &[Datum::Time(left), Datum::Time(right)],
+            &ctx,
+        ),
+        Datum::Time(
+            Time::from_date_checked(2020, 6, 7, 8, 9, 10, 123_000, TimeType::DateTime, 3).unwrap(),
+        )
+    );
+
+    let before = SafeTsContext {
+        safe: Time::from_date_checked(2015, 9, 21, 9, 53, 3, 0, TimeType::DateTime, 0).unwrap(),
+    };
+    assert_eq!(
+        dispatched(
+            "TIDB_BOUNDED_STALENESS",
+            &[Datum::Time(left), Datum::Time(right)],
+            &before,
+        ),
+        Datum::Time(
+            Time::from_date_checked(2015, 9, 21, 9, 53, 4, 0, TimeType::DateTime, 3).unwrap(),
+        )
+    );
+
+    let after = SafeTsContext {
+        safe: Time::from_date_checked(2025, 1, 2, 10, 0, 1, 0, TimeType::DateTime, 0).unwrap(),
+    };
+    assert_eq!(
+        dispatched(
+            "TIDB_BOUNDED_STALENESS",
+            &[Datum::Time(left), Datum::Time(right)],
+            &after,
+        ),
+        Datum::Time(
+            Time::from_date_checked(2025, 1, 2, 10, 0, 0, 0, TimeType::DateTime, 3).unwrap(),
+        )
+    );
+
+    assert_eq!(
+        dispatched(
+            "TIDB_BOUNDED_STALENESS",
+            &[Datum::Time(right), Datum::Time(left)],
+            &ctx,
+        ),
+        Datum::Null
+    );
+
+    // The row/AST entry point applies the same ETDatetime wrappers before
+    // dispatching, so string endpoints select the same result signature and
+    // safe timestamp as the chunk path above.
+    let ast_args = [
+        tidb_ast::Expr::String("2015-09-21 09:53:04".to_owned()),
+        tidb_ast::Expr::String("2025-01-02 10:00:00".to_owned()),
+    ];
+    assert_eq!(
+        crate::func::eval_func("TIDB_BOUNDED_STALENESS", &ast_args, &ctx, None),
+        Ok(Datum::Time(
+            Time::from_date_checked(2020, 6, 7, 8, 9, 10, 123_000, TimeType::DateTime, 3).unwrap(),
+        ))
+    );
+
+    // Invalid-zero endpoints are rejected by the signature before window
+    // ordering, matching `handleInvalidTimeError` in Go.
+    let zero = Time::from_date_checked(2015, 0, 21, 9, 53, 4, 0, TimeType::DateTime, 0).unwrap();
+    assert_eq!(
+        dispatched(
+            "TIDB_BOUNDED_STALENESS",
+            &[Datum::Time(zero), Datum::Time(right)],
+            &ctx,
+        ),
+        Datum::Null
+    );
+}
 
 /// GO PORT of `builtin_time_test.go:3669 TestStrDatetimeAddDurationFreezesWarningArg`:
 /// a first argument that fails datetime parsing appends EXACTLY ONE warning

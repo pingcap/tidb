@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` TIDB_BOUNDED_STALENESS): activated the previously
+  ignored Go `TestTiDBBoundedStaleness` carrier. Rust now applies the
+  ETDatetime argument casts, rejects invalid-zero endpoints through the
+  statement truncation policy, clamps an inclusive SafeTS to the requested
+  window, preserves reversed-window NULL, and emits DATETIME(3). The new
+  `Columns::bounded_staleness_safe_time` seam represents Go's statement-cached
+  KV SafeTS/failpoint input; scalar and AST/value regressions are active in
+  `builtin_time_calendars_source`, with the narrowed storage wiring recorded
+  in `receipts/b072.md`.
 - 2026-09-04 (`tidb-expr` GETPARAM): activated the Go
   `builtinGetParamStringSig` path. The `Columns` seam now carries the
   plan-cache parameter lookup, `GETPARAM` casts its selector to ETInt,

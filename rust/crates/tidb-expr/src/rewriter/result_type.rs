@@ -1372,6 +1372,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "from_unixtime" => from_unixtime_return_type(args)?,
         "tidb_parse_tso" => tidb_parse_tso_return_type(args)?,
         "tidb_parse_tso_logical" if args.len() == 1 => int(),
+        // Go `tidbBoundedStalenessFunctionClass` fixes the result to
+        // DATETIME(3) (`setDecimalAndFlenForDatetime(3)`).
+        "tidb_bounded_staleness" if args.len() == 2 => datetime_return_type(3, false)?,
         "tidb_current_tso" if args.is_empty() => int(),
         "get_format" if args.len() == 2 => ft_with_flen(text(), 17),
         "monthname" | "dayname" | "date_format" => text(),
