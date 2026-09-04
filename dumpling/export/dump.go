@@ -1579,7 +1579,7 @@ func startHTTPService(d *Dumper) error {
 	conf := d.conf
 	if conf.StatusAddr != "" {
 		go func() {
-			err := startDumplingService(d.tctx, conf.StatusAddr)
+			err := startDumplingService(d.tctx, conf.StatusAddr, d)
 			if err != nil {
 				d.L().Info("meet error when stopping dumpling http service", log.ShortError(err))
 			}

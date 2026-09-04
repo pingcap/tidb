@@ -87,6 +87,7 @@ go_test(
         "config_test.go",
         "consistency_test.go",
         "dump_test.go",
+        "http_handler_test.go",
         "ir_impl_test.go",
         "main_test.go",
         "metadata_test.go",
