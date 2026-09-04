@@ -282,7 +282,9 @@ fn compose_by_inner_join(
     ctx: &RuleContext<'_>,
     mut aggregations: Vec<LogicalAggregation>,
 ) -> Option<LogicalPlan> {
-    let first = aggregations.first()?;
+    let first = aggregations
+        .first()
+        .expect("compose requires at least one aggregation");
     let query_block_offset = first.base.base.query_block_offset();
     let mut plan = LogicalPlan::Aggregation(aggregations.remove(0));
     for aggregation in aggregations {

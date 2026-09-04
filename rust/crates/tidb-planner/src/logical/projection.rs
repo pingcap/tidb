@@ -364,7 +364,9 @@ impl LogicalProjection {
                 return Some((existing.clone(), false));
             }
         }
-        let child = child_stats.first()?;
+        let child = child_stats
+            .first()
+            .expect("projection derive_stats requires a child");
         let mut col_ndvs = Vec::new();
         for (i, expr) in self.exprs.iter().enumerate() {
             // Go indexes `selfSchema.Columns[i]` directly

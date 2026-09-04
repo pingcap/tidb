@@ -359,7 +359,7 @@ impl LogicalApply {
             return None;
         }
         let args = function.get_args();
-        let (column, cor_col) = match (args.first()?, args.get(1)?) {
+        let (column, cor_col) = match (&args[0], &args[1]) {
             (Expression::Column(column), Expression::CorrelatedColumn(cor)) => (column, cor),
             (Expression::CorrelatedColumn(cor), Expression::Column(column)) => (column, cor),
             _ => return None,

@@ -130,7 +130,10 @@ impl LogicalIndexScan {
         if !source.pk_is_handle {
             return None;
         }
-        let handle = source.handle_cols.first()?;
+        let handle = source
+            .handle_cols
+            .first()
+            .expect("index scan requires a handle column");
         schema
             .columns
             .iter()
