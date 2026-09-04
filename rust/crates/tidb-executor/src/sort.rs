@@ -758,7 +758,10 @@ where
             self.fetched = true;
         }
 
-        let batch = self.meta.max_chunk_size();
+        // Go's `SortExec.Next` fills the parent chunk until `req.IsFull()`;
+        // preserve the caller's required-row bound rather than always
+        // emitting a full executor-sized batch.
+        let batch = req.required_rows().min(self.meta.max_chunk_size());
         if self.partitions.len() == 1 {
             return self.partitions[0].append_sorted_rows_into(req, batch);
         }
@@ -1298,6 +1301,39 @@ mod tests {
         assert_eq!(req.num_rows(), 0);
         e.next(&mut req).unwrap();
         assert_eq!(req.num_rows(), 0);
+        e.close().unwrap();
+    }
+
+    /// Go `executor_required_rows_test.go::TestSortRequiredRows`: one sorted
+    /// run must stop at the parent's requested row count on every pull, not
+    /// fill the executor's full max-sized chunk before returning.
+    #[test]
+    fn sort_honors_each_output_chunk_required_rows() {
+        let mut e = sort_over(
+            &rows1(&[
+                Some(9),
+                Some(8),
+                Some(7),
+                Some(6),
+                Some(5),
+                Some(4),
+                Some(3),
+                Some(2),
+                Some(1),
+                Some(0),
+            ]),
+            vec![SortByItem {
+                expr: col_expr(0),
+                desc: false,
+            }],
+        );
+        e.open().unwrap();
+        let mut req = e.new_chunk();
+        for (required, expected) in [(1, 1), (5, 5), (3, 3), (10, 1)] {
+            req.set_required_rows(required, e.max_chunk_size());
+            e.next(&mut req).unwrap();
+            assert_eq!(req.num_rows(), expected, "required rows: {required}");
+        }
         e.close().unwrap();
     }
 

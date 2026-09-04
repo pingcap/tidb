@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the two focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the three focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -207,3 +207,53 @@ The package source and existing tests were compared with the fetched Go master; 
 ## Risks and remaining boundaries
 
 Correctness risk is limited to tracker selection and limiter capacity wiring; ordinary paths preserve their previous tracker and no-merge behavior. Compatibility risk is limited to using the typed limiter API already defined by `pkg/kv` and `pkg/distsql`. Performance is unchanged when merge-sort is disabled and range tracking adds only the intended accounting. The remainder of the large root executor diff against Go master, nested packages, Bazel analysis, and a native Rust executor worker remain explicit follow-up boundaries.
+
+## Nested `pkg/executor/sortexec` inventory and required-row alignment
+
+The nested Go package was read and inventoried before editing at Go
+`origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`. It contains 21
+artifacts and 5,919 lines: `BUILD.bazel` (87), `OWNERS` (10),
+`benchmark_test.go` (117), `multi_way_merge.go` (200),
+`parallel_sort_spill_helper.go` (309), `parallel_sort_spill_test.go` (215),
+`parallel_sort_test.go` (189), `parallel_sort_worker.go` (264),
+`rank_topn_test.go` (216), `sort.go` (875), `sort_partition.go` (370),
+`sort_spill.go` (128), `sort_spill_test.go` (414), `sort_test.go` (141),
+`sortexec_pkg_test.go` (143), `topn.go` (899), `topn_chunk_heap.go` (189),
+`topn_spill.go` (289), `topn_spill_test.go` (590), and `topn_worker.go` (130).
+This inventory includes all production, test, benchmark, build, ownership,
+generated/platform, fixture, and build-artifact candidates present under the
+nested package; no additional generated or fixture artifact was present.
+
+The Go `SortExec.Next` contract fills the parent chunk until `req.IsFull()`.
+The source regression `executor_required_rows_test.go::TestSortRequiredRows`
+asserts that pulls requesting 1, 5, 3, and 10 rows from a ten-row sorted run
+return 1, 5, 3, and 1 rows respectively. Rust `SortExec::next` previously
+used only `max_chunk_size`, so the first pull returned all ten rows. It now
+uses `req.required_rows().min(max_chunk_size)` for both the single-partition
+and merge paths, preserving the caller's required-row bound while retaining
+the executor cap.
+
+Rust owners were inventoried in `tidb-executor`: `sort.rs` (1,431 lines),
+`sort_partition.rs` (1,050), `sort_util.rs` (1,385), and
+`parallel_sort_spill_helper.rs` (407), 4,273 lines total. The old
+`tests_required_rows_source.rs` support file is not declared by `lib.rs` and
+is therefore not executable coverage; the Go-derived regression is placed in
+the compiled `sort.rs` test module. Rust has no dependency-closed owners for
+the nested Go spill worker and TopN families in this bounded fix, so they
+remain explicit follow-up boundaries rather than speculative ports.
+
+Pre-fix evidence is the focused test failure (`left 10`, `right 1` for the
+one-row request). Post-fix evidence is the same exact test passing, together
+with the Ready checks listed below.
+
+## Sort required-row Ready validation
+
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --all-targets`
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib sort::tests::sort_honors_each_output_chunk_required_rows -- --exact --nocapture`
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The complete `tidb-executor` library suite, spill/TopN integration behavior,
+and live TiKV execution were not run; this batch changes only the common sort
+pull boundary and its focused regression.

@@ -55,6 +55,13 @@ For each bounded behavior cluster:
   unset). The Go-derived typed-time regression is active in
   `setvar_getvar_values_getparam_source`; package receipt `receipts/b070.md`
   records the narrowed inventory.
+- 2026-09-04 (`pkg/executor/sortexec` required-row pull boundary): completed
+  the nested Go `sortexec` inventory (21 artifacts, 5,919 lines) and aligned
+  Rust `SortExec::next` with Go's `req.IsFull()` boundary. A focused regression
+  covers the `[1, 5, 3, 10] -> [1, 5, 3, 1]` required-row sequence; the
+  package inventory, pre-fix failure, post-fix evidence, and remaining Rust
+  owner boundaries are recorded in
+  `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-04 (`tidb-expr` CURRENT_RESOURCE_GROUP row-path parity): wired the
   AST/value evaluator through the same session-state accessor already used by
   the rewritten ScalarFunction path. Added a direct row/AST regression so a
