@@ -593,6 +593,32 @@ where
         Ok(())
     }
 
+    /// Go `generateTopNResultsWhenNoSpillTriggered` -> `spillHeap` when an
+    /// external executor raises the spill flag during output. The heap's
+    /// pointer order is already ascending; only the suffix at `idx` remains
+    /// to be written, because rows before it have reached the caller.
+    fn spill_remaining_heap(&mut self) -> Result<(), ExecError> {
+        let start = self.heap.idx().min(self.heap.len());
+        let remaining = self.heap.row_ptrs()[start..].to_vec();
+        if !remaining.is_empty() {
+            let field_types = self.child.ret_field_types().to_vec();
+            let run = SpilledRun::write(
+                &field_types,
+                self.heap.chunks(),
+                &remaining,
+                self.spill_chunk_size,
+                &self.disk_tracker,
+                self.memory.spill_storage(),
+            )?;
+            self.runs.push(run);
+            self.spilled_runs += 1;
+        }
+        self.heap.clear();
+        self.tracker.replace_bytes_used(0);
+        self.need_spill.store(false, SeqCst);
+        Ok(())
+    }
+
     /// Phase 3: ascending order over the survivors, then emit from `offset`
     /// (Go seeds `chkHeap.idx` with it).
     fn sort_survivors_ascending(&mut self) -> Result<(), ExecError> {
@@ -764,6 +790,14 @@ where
         let remaining = self.heap.len().saturating_sub(self.heap.idx());
         let batch = req.required_rows().min(remaining);
         for _ in 0..batch {
+            // Go polls the shared spill flag every ten output rows. If the
+            // flag came from another executor, preserve already-emitted rows
+            // and switch the rest of this request to the on-disk run.
+            if self.heap.idx() % 10 == 0 && self.need_spill.load(SeqCst) {
+                self.spill_remaining_heap()?;
+                self.merged = self.offset;
+                return self.next_merged(req);
+            }
             req.append_row_by_col_idxs(
                 self.heap.row_at(self.heap.idx()),
                 self.column_idxs_used_by_child.as_deref(),
@@ -1794,6 +1828,61 @@ mod spill_tests {
         );
         assert_eq!(got, expected);
         drop(exec);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Go polls `isSpillNeeded` every ten rows while emitting an otherwise
+    /// in-memory heap. A trigger raised by another executor must spill only
+    /// the rows that have not already been emitted, then continue through the
+    /// run without replaying earlier output.
+    #[test]
+    fn topn_spills_remaining_rows_when_triggered_during_output() {
+        let dir = scratch_temp_dir("topn-output-trigger");
+        let rows = (0..64).map(|i| vec![Some(i), Some(i)]).collect::<Vec<_>>();
+        let memory = StatementMemory::new(1 << 30, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir));
+        let mut exec = topn(&rows, &[(0, false)], 3, 61, memory);
+        exec.set_spill_chunk_size_for_test(8);
+        exec.open().unwrap();
+
+        let mut req = exec.new_chunk();
+        req.set_required_rows(5, exec.max_chunk_size());
+        exec.next(&mut req).unwrap();
+        assert_eq!(
+            (0..req.num_rows())
+                .map(|row| req.get_row(row).get_int64(0))
+                .collect::<Vec<_>>(),
+            (3..8).collect::<Vec<_>>(),
+        );
+
+        // Simulate another executor crossing the session quota while this
+        // TopN is emitting. Go's result goroutine observes this on its next
+        // ten-row poll; the Rust path must make the same transition.
+        exec.need_spill.store(true, SeqCst);
+        req.set_required_rows(20, exec.max_chunk_size());
+        exec.next(&mut req).unwrap();
+        assert_eq!(
+            (0..req.num_rows())
+                .map(|row| req.get_row(row).get_int64(0))
+                .collect::<Vec<_>>(),
+            (8..28).collect::<Vec<_>>(),
+        );
+        assert_eq!(exec.num_spilled_runs(), 1);
+
+        let mut output = (0..req.num_rows())
+            .map(|row| req.get_row(row).get_int64(0))
+            .collect::<Vec<_>>();
+        loop {
+            req.set_required_rows(32, exec.max_chunk_size());
+            exec.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            output.extend((0..req.num_rows()).map(|row| req.get_row(row).get_int64(0)));
+        }
+        assert_eq!(output, (8..64).collect::<Vec<_>>());
+        exec.close().unwrap();
+        assert!(spill_files_in(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

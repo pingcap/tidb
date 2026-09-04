@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor/sortexec` output-time TopN spill): restored Go's
+  ten-row spill-flag polling while an in-memory TopN emits results. Rust now
+  spills only the un-emitted suffix and resumes through the run without
+  replaying earlier output; the focused regression's fail-before/pass-after
+  evidence and Ready checks are recorded in
+  `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-05 (`pkg/executor/sortexec` by-item validation): aligned Rust's
   `SortExec` and `TopNExec` with Go's `buildKeyColumns` contract. Scalar,
   correlated, and other non-column/non-constant order expressions are now

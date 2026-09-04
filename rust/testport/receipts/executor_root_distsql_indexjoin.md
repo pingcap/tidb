@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the seven focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the eight focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -400,4 +400,43 @@ The focused tests passed after the fix. The Cargo manifest's temporary
 host-only vendored-OpenSSL toggle was reverted to `openssl = "0.10"` and has
 no diff. The full executor suite, SQL planner coverage for expression
 materialization, spill integration under live TiKV, and native TiKV behavior
+were not run.
+
+## TopN output-time spill polling alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this eighth
+Rust-only fix. Go's `generateTopNResultsWhenNoSpillTriggered` checks the shared
+spill flag every ten output rows. If another executor crosses the session
+quota during emission, `spillHeap` writes only the still-unemitted suffix;
+already returned rows are not replayed, and the single-run output path does not
+apply the offset a second time. Rust previously emitted the in-memory heap
+without polling the flag, so an externally raised request was ignored.
+
+`TopNExec::next` now performs the same ten-row poll. The new
+`spill_remaining_heap` writes the sorted pointer suffix, clears the in-memory
+store, seeds the merge's consumed offset, and continues filling the current
+request through the run. No memory is duplicated and the ordinary multi-run
+path remains unchanged.
+
+The focused regression is
+`topn::spill_tests::topn_spills_remaining_rows_when_triggered_during_output`.
+Before the fix it failed because `num_spilled_runs()` stayed zero after the
+simulated external trigger; after the fix it passes and verifies the current
+request returns rows `8..28`, the remaining merge returns `28..64`, and no
+spill file remains after close. Rust ownership is unchanged: `topn.rs` owns
+the output poll, suffix spill, and regression; `topn_spill.rs` owns the shared
+run writer.
+
+## TopN output-time spill polling Ready validation
+
+- Pre-fix `topn::spill_tests::topn_spills_remaining_rows_when_triggered_during_output` failed with `left: 0, right: 1`, proving the old output path ignored the raised spill flag.
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib topn::spill_tests::topn_spills_remaining_rows_when_triggered_during_output -- --exact --nocapture`
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The focused test passed after the fix. The Cargo manifest's temporary
+host-only vendored-OpenSSL toggle was reverted to `openssl = "0.10"` and has
+no diff. The full executor suite, concurrent external-memory trigger under a
+live SQL session, spill integration under live TiKV, and native TiKV behavior
 were not run.
