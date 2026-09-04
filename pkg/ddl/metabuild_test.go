@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -141,7 +143,19 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 				config, err := fulltext.AnalyzerConfigFromSessionVars(
 					sctx.GetSessionVars(), model.FullTextParserTypeStandardV1)
 				require.NoError(t, err)
-				require.Equal(t, config, ctx.GetFullTextAnalyzer())
+				ctxConfig, err := ctx.GetFullTextAnalyzer()
+				require.NoError(t, err)
+				require.Equal(t, config, ctxConfig)
+			},
+		},
+		{
+			field: "fullTextAnalyzerErr",
+			check: func(ctx *metabuild.Context) {
+				// Reading the settings from a healthy session succeeds, so no
+				// failure is carried; the error path is exercised in
+				// pkg/meta/metabuild.
+				_, err := ctx.GetFullTextAnalyzer()
+				require.NoError(t, err)
 			},
 		},
 		{
@@ -181,4 +195,33 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 
 	// make sure all fields are tested (WithIgnorePath contains all fields that the below asserting will pass).
 	deeptest.AssertRecursivelyNotEqual(t, &metabuild.Context{}, &metabuild.Context{}, deeptest.WithIgnorePath(allFields))
+}
+
+// TestBuildFullTextIndexWithoutAnalyzerFails covers what the analyzer error
+// exists to prevent. A context that never resolved the settings would otherwise
+// hand out a zero-valued configuration, whose token-size bounds are 0..0: the
+// index would be created without complaint and hold no tokens at all, and every
+// MATCH compiled against it would then match nothing.
+func TestBuildFullTextIndexWithoutAnalyzerFails(t *testing.T) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(
+		"create table t(a text, fulltext index idx(a))", mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+	require.NoError(t, err)
+
+	_, err = BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
+	require.ErrorContains(t, err, "no fulltext analyzer configuration was resolved")
+
+	// A resolution failure reaches the same place, carrying its cause.
+	cause := errors.New("read innodb_ft_min_token_size")
+	_, err = BuildTableInfoFromAST(
+		metabuild.NewContext(metabuild.WithFullTextAnalyzerError(cause)), stmt.(*ast.CreateTableStmt))
+	require.ErrorIs(t, err, cause)
+
+	// A multi-column FULLTEXT index is metadata-only and needs no analyzer at
+	// build time, so it must not be caught by this.
+	multi, err := p.ParseOneStmt(
+		"create table t(a text, b text, fulltext index idx(a, b))", mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+	require.NoError(t, err)
+	_, err = BuildTableInfoFromAST(metabuild.NewContext(), multi.(*ast.CreateTableStmt))
+	require.NoError(t, err)
 }

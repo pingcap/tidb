@@ -1338,8 +1338,11 @@ func BuildTableInfo(
 		// This mirrors the ALTER TABLE / CREATE INDEX path, and is what lets
 		// the FULLTEXT KEY that SHOW CREATE TABLE prints be pasted back.
 		if constr.Tp == ast.ConstraintFulltext && fullTextIndexIsMVBacked(constr.Keys) {
-			mvSpecs, err := buildFullTextMVIndexSpec(
-				ctx.GetFullTextAnalyzer(), constr.Keys, constr.Option, tbInfo)
+			analyzer, err := ctx.GetFullTextAnalyzer()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			mvSpecs, err := buildFullTextMVIndexSpec(analyzer, constr.Keys, constr.Option, tbInfo)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

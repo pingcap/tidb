@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -40,7 +41,18 @@ func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild
 	// Resolve the fulltext analyzer settings here rather than during meta
 	// building: a FULLTEXT index freezes them into the schema, so they must be
 	// read once from the session issuing the statement.
-	if ftsConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1); err == nil {
+	//
+	// A failure is carried into the context rather than dropped. Skipping the
+	// option would leave no analyzer behind, and a FULLTEXT index built from a
+	// zero-valued configuration bounds tokens to length zero: it would be
+	// created successfully and index nothing.
+	ftsConfig, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, model.FullTextParserTypeStandardV1)
+	if err != nil {
+		opts = append(opts, metabuild.WithFullTextAnalyzerError(errors.Annotate(err,
+			"read the fulltext analyzer settings (innodb_ft_min_token_size, "+
+				"innodb_ft_max_token_size, innodb_ft_enable_stopword, ngram_token_size) "+
+				"needed to build a FULLTEXT index")))
+	} else {
 		opts = append(opts, metabuild.WithFullTextAnalyzer(ftsConfig))
 	}
 

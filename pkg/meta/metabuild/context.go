@@ -15,6 +15,7 @@
 package metabuild
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
@@ -84,7 +85,18 @@ func WithShardRowIDBits(bits uint64) Option {
 // meta building must not consult those variables itself.
 func WithFullTextAnalyzer(config fulltext.AnalyzerConfig) Option {
 	return funcOpt(func(ctx *Context) {
-		ctx.fullTextAnalyzer = config
+		ctx.fullTextAnalyzer = &config
+		ctx.fullTextAnalyzerErr = nil
+	})
+}
+
+// WithFullTextAnalyzerError records why the analyzer configuration could not be
+// resolved, so that building a FULLTEXT index reports that reason instead of
+// proceeding without one.
+func WithFullTextAnalyzerError(err error) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.fullTextAnalyzer = nil
+		ctx.fullTextAnalyzerErr = err
 	})
 }
 
@@ -119,7 +131,8 @@ type Context struct {
 	preSplitRegions                uint64
 	suppressTooLongIndexErr        bool
 	is                             infoschemactx.MetaOnlyInfoSchema
-	fullTextAnalyzer               fulltext.AnalyzerConfig
+	fullTextAnalyzer               *fulltext.AnalyzerConfig
+	fullTextAnalyzerErr            error
 }
 
 // NewContext creates a new context for meta-building.
@@ -156,9 +169,23 @@ func NewNonStrictContext() *Context {
 }
 
 // GetFullTextAnalyzer returns the analyzer configuration to freeze into a
-// FULLTEXT index definition.
-func (ctx *Context) GetFullTextAnalyzer() fulltext.AnalyzerConfig {
-	return ctx.fullTextAnalyzer
+// FULLTEXT index definition, or the reason it is unavailable.
+//
+// There is deliberately no fallback. A zero-valued configuration bounds tokens
+// to length zero, so an index built from one would be created successfully and
+// then index nothing, and every MATCH compiled against it would match nothing.
+// A caller that reaches here without a resolved analyzer has a bug, and saying
+// so is more useful than silently producing an empty index.
+func (ctx *Context) GetFullTextAnalyzer() (fulltext.AnalyzerConfig, error) {
+	if ctx.fullTextAnalyzerErr != nil {
+		return fulltext.AnalyzerConfig{}, ctx.fullTextAnalyzerErr
+	}
+	if ctx.fullTextAnalyzer == nil {
+		return fulltext.AnalyzerConfig{}, errors.New(
+			"no fulltext analyzer configuration was resolved for this statement; " +
+				"a FULLTEXT index cannot be built without one")
+	}
+	return *ctx.fullTextAnalyzer, nil
 }
 
 // GetExprCtx returns the expression context of the session.

@@ -15,6 +15,7 @@
 package metabuild_test
 
 import (
+	"github.com/pingcap/errors"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -132,9 +133,17 @@ func TestMetaBuildContext(t *testing.T) {
 		{
 			name: "fullTextAnalyzer",
 			getter: func(ctx *metabuild.Context) any {
-				return ctx.GetFullTextAnalyzer()
+				config, err := ctx.GetFullTextAnalyzer()
+				require.NoError(t, err)
+				return config
 			},
-			checkDefault: fulltext.AnalyzerConfig{},
+			checkDefault: func(ctx *metabuild.Context) {
+				// Unset is an error rather than a zero configuration. A zero
+				// one bounds tokens to length zero, so an index built from it
+				// would be created successfully and index nothing.
+				_, err := ctx.GetFullTextAnalyzer()
+				require.ErrorContains(t, err, "no fulltext analyzer configuration was resolved")
+			},
 			option: func(val any) metabuild.Option {
 				return metabuild.WithFullTextAnalyzer(val.(fulltext.AnalyzerConfig))
 			},
@@ -150,6 +159,21 @@ func TestMetaBuildContext(t *testing.T) {
 					NgramTokenSize: 2,
 				},
 			},
+		},
+		{
+			name: "fullTextAnalyzerErr",
+			getter: func(ctx *metabuild.Context) any {
+				_, err := ctx.GetFullTextAnalyzer()
+				return err
+			},
+			checkDefault: func(ctx *metabuild.Context) {
+				_, err := ctx.GetFullTextAnalyzer()
+				require.ErrorContains(t, err, "no fulltext analyzer configuration was resolved")
+			},
+			option: func(val any) metabuild.Option {
+				return metabuild.WithFullTextAnalyzerError(val.(error))
+			},
+			testVals: []any{errors.New("read innodb_ft_max_token_size")},
 		},
 		{
 			name: "is",
@@ -193,4 +217,25 @@ func TestMetaBuildContext(t *testing.T) {
 
 	// test allFields are tested
 	deeptest.AssertRecursivelyNotEqual(t, metabuild.Context{}, metabuild.Context{}, deeptest.WithIgnorePath(allFields))
+}
+
+func TestFullTextAnalyzerResolutionFailureIsReported(t *testing.T) {
+	cause := errors.New("read innodb_ft_min_token_size")
+	ctx := metabuild.NewContext(metabuild.WithFullTextAnalyzerError(cause))
+	_, err := ctx.GetFullTextAnalyzer()
+	require.ErrorIs(t, err, cause)
+
+	// A later successful resolution clears the failure, so a context is not
+	// permanently poisoned by the order its options are applied in.
+	ctx = metabuild.NewContext(
+		metabuild.WithFullTextAnalyzerError(cause),
+		metabuild.WithFullTextAnalyzer(fulltext.AnalyzerConfig{
+			ParserType:           model.FullTextParserTypeStandardV1,
+			InnodbFtMinTokenSize: 3,
+			InnodbFtMaxTokenSize: 84,
+		}),
+	)
+	config, err := ctx.GetFullTextAnalyzer()
+	require.NoError(t, err)
+	require.Equal(t, 3, config.InnodbFtMinTokenSize)
 }
