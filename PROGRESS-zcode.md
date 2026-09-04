@@ -284,3 +284,5 @@
 - 下轮恢复点: (1) error-code audit F2/F3/F4 核实(可能同为过期或已由 error-code 批覆盖); (2) distsql-coprocessor-parity.md Rank1/Rank2 两开放项; (3) expr-builtin inventory A/B(DIV decimal 分歧)两项; (4) B-3 命名(暂缓)。
 - distsql Rank 1.1/2.1 核实为**已被并发会话修复**: 1.1 两条路径已发计算后的 flags(real_tikv_read 字段+select_push_down_flags 默认; cop_scan 经 StmtContext.push_down_flags, 有测试); 2.1 open_scan 已构造 DistSqlContext + RequestBuilder::from_context(resource group/replica read/paging), 残余字段(priority/task id/max_execution_time 等)已在代码中列为显式队列。audit 文档两节已标记 FIXED(verified)。
 - 下轮恢复点: (1) error-code audit F2/F3/F4 核实; (2) StmtContext 补 priority/task_id/max_execution_time 穿线(2.1 显式残余); (3) B-3 命名(暂缓)。
+- F4 批(executor: 删除 DdlAdmissionError::new 隐藏默认)推送中: ~40 站点改 with_code(GENERIC_ERROR_CODE,...) 显式命名(零行为变化), const 升 pub(crate), From<ColumnTypeError> 同改。exec 套件 8 个失败经 stash A/B 证实为预存(失败名单完全一致)。fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) F3 read_only_scan errors 1235/42000; (2) F2 ~59 unknown 站点(需 live 证据, 记录); (3) F4 后续=逐站点 Go errno 对比(~40 个显式 1105)。

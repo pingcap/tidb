@@ -188,12 +188,20 @@ recorded and never wired.
 
 ---
 
-### F4 (rank 1, wrong code) — DDL admission refusals default to 1105
+### F4 (rank 1, wrong code) — DDL admission refusals default to 1105 — FIXED (2026-09-05, explicitness repair)
 
-`rust/crates/tidb-exec/src/table_info_build.rs:188` defines
-`const GENERIC_ERROR_CODE: u16 = 1105;`, and `DdlAdmissionError::new()` (`:119-125`) uses it
-unless the caller picks `::unsupported()` (8200) or `::with_code()`. A refusal that forgets
-to choose is silently 1105 rather than failing to compile. This is the "default that hides a
+`DdlAdmissionError::new` no longer exists. Every raise site now names its
+code: `::with_code(GENERIC_ERROR_CODE, ...)` spells out 1105 at the sites
+whose refusals have no Go counterpart yet, `::unsupported()` carries 8200,
+and `::with_code` carries Go's own errno elsewhere — so a future refusal
+cannot silently inherit a generic default. Behavior is unchanged; the
+per-site comparison of the ~40 explicit-1105 sites against the Go errno
+each equivalent refusal deserves remains a follow-up queue.
+
+Original finding: `table_info_build.rs:188` defined
+`const GENERIC_ERROR_CODE: u16 = 1105;`, and `DdlAdmissionError::new()` used it
+unless the caller picked `::unsupported()` (8200) or `::with_code()`. A refusal that forgets
+to choose was silently 1105 rather than failing to compile. This is the "default that hides a
 missing decision" shape; `::new()` should not exist without a code.
 
 ---

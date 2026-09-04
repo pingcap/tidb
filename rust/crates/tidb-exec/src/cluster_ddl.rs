@@ -72,7 +72,7 @@ use crate::cluster_catalog::{
 use crate::ddl_job_submit::GlobalIdAllocator;
 use crate::table_info_build::{
     build_table_info_with_context, default_ddl_statement_context, resolve_charset_collation,
-    ClusteredIndexDefMode,
+    ClusteredIndexDefMode, GENERIC_ERROR_CODE,
 };
 
 pub use crate::table_info_build::DdlAdmissionError;
@@ -817,9 +817,10 @@ fn database_charset_collation(
             DatabaseOption::CharacterSet(value) => charset = Some(value.as_str()),
             DatabaseOption::Collate(value) => collate = Some(value.as_str()),
             other => {
-                return Err(DdlAdmissionError::new(format!(
-                    "CREATE DATABASE option {other:?} is not supported by this node"
-                )))
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("CREATE DATABASE option {other:?} is not supported by this node"),
+                ))
             }
         }
     }
@@ -865,9 +866,12 @@ pub fn lower_ddl_with_context(
                     DatabaseOption::CharacterSet(value) => charset = Some(value.as_str()),
                     DatabaseOption::Collate(value) => collate = Some(value.as_str()),
                     other => {
-                        return Err(DdlAdmissionError::new(format!(
-                            "ALTER DATABASE option {other:?} is not supported by this node"
-                        )))
+                        return Err(DdlAdmissionError::with_code(
+                            GENERIC_ERROR_CODE,
+                            format!(
+                                "ALTER DATABASE option {other:?} is not supported by this node"
+                            ),
+                        ))
                     }
                 }
             }
@@ -984,9 +988,10 @@ fn rebuilt_bundles_for_policy(
     settings: &tidb_model::PlacementSettings,
 ) -> Result<Vec<tidb_placement::Bundle>, DdlPlanError> {
     let bundle = tidb_placement::new_bundle_from_options(Some(settings)).map_err(|error| {
-        DdlPlanError::Admission(DdlAdmissionError::new(format!(
-            "building placement rules: {error}"
-        )))
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!("building placement rules: {error}"),
+        ))
     })?;
     let names = |reference: &Option<tidb_model::GoShared<tidb_model::PolicyRefInfo>>| {
         reference
@@ -1199,7 +1204,8 @@ fn lower_alter_table_catalog(
                         ));
                     }
                     let [old] = old_name.as_slice() else {
-                        return Err(DdlAdmissionError::new(
+                        return Err(DdlAdmissionError::with_code(
+                            GENERIC_ERROR_CODE,
                             "CHANGE COLUMN takes an unqualified source column name here",
                         ));
                     };
@@ -1322,11 +1328,15 @@ fn lower_alter_table_catalog(
                 return Ok(None);
             };
             if let tidb_ast::TableOption::AutoIdCache(value) = option {
-                let new_cache = value
-                    .parse::<u64>()
-                    .map_err(|_| DdlAdmissionError::new("AUTO_ID_CACHE needs an integer value"))?;
+                let new_cache = value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "AUTO_ID_CACHE needs an integer value",
+                    )
+                })?;
                 if new_cache > i64::MAX as u64 {
-                    return Err(DdlAdmissionError::new(
+                    return Err(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
                         "table option auto_id_cache overflows int64",
                     ));
                 }
@@ -1375,10 +1385,12 @@ fn lower_alter_table_catalog(
                 // Go parses the option into `opt.UintValue`, so the written
                 // value is an unsigned literal that is then handed to
                 // `RebaseAutoID` as an `int64`.
-                let new_base = value
-                    .parse::<u64>()
-                    .map_err(|_| DdlAdmissionError::new("AUTO_INCREMENT needs an integer value"))?
-                    as i64;
+                let new_base = value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        "AUTO_INCREMENT needs an integer value",
+                    )
+                })? as i64;
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
                 return Ok(Some(DdlStatement::RebaseAutoIncrementId {
                     schema,
@@ -1397,7 +1409,9 @@ fn lower_alter_table_catalog(
                     &table,
                     &tidb_executor::StmtContext::for_query().with_strict(true),
                 )
-                .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
+                .map_err(|error| {
+                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())
+                })?;
                 return Ok(Some(DdlStatement::ModifyTableComment {
                     schema,
                     table,
@@ -1409,10 +1423,12 @@ fn lower_alter_table_catalog(
                 tidb_ast::TableOption::ForceAutoRandomBase(value) => (value, true),
                 _ => return Ok(None),
             };
-            let next = value
-                .parse::<u64>()
-                .map_err(|_| DdlAdmissionError::new("AUTO_RANDOM_BASE needs an integer value"))?
-                as i64;
+            let next = value.parse::<u64>().map_err(|_| {
+                DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    "AUTO_RANDOM_BASE needs an integer value",
+                )
+            })? as i64;
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::RebaseAutoRandom {
                 schema,
@@ -1494,7 +1510,8 @@ fn lower_alter_table_catalog(
                 ));
             }
             let [old] = old_name.as_slice() else {
-                return Err(DdlAdmissionError::new(
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
                     "CHANGE COLUMN takes an unqualified source column name here",
                 ));
             };
@@ -1555,7 +1572,10 @@ fn lower_alter_table_catalog(
         tidb_ast::AlterTableAction::AlterColumnDefault(action) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             let Some(column) = action.name.last() else {
-                return Err(DdlAdmissionError::new("ALTER COLUMN needs a column name"));
+                return Err(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    "ALTER COLUMN needs a column name",
+                ));
             };
             Ok(Some(DdlStatement::SetColumnDefault {
                 schema,
@@ -1763,7 +1783,10 @@ fn lower_rename_table_stmt(
         .map(|(from, to)| lower_rename_table_pair(from, to, default_schema))
         .collect::<Result<Vec<_>, _>>()?;
     match pairs.as_slice() {
-        [] => Err(DdlAdmissionError::new("RENAME TABLE names no table")),
+        [] => Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            "RENAME TABLE names no table",
+        )),
         [pair] => Ok(Some(DdlStatement::RenameTable {
             from_schema: pair.from_schema.clone(),
             from_table: pair.from_table.clone(),
@@ -2160,10 +2183,13 @@ fn split_name(
         )),
         [object] => Ok((default_schema.to_owned(), object.clone())),
         [schema, object] => Ok((schema.clone(), object.clone())),
-        _ => Err(DdlAdmissionError::new(format!(
-            "{what} name `{}` is not a `[schema.]name` path",
-            path.join(".")
-        ))),
+        _ => Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "{what} name `{}` is not a `[schema.]name` path",
+                path.join(".")
+            ),
+        )),
     }
 }
 
@@ -2172,12 +2198,14 @@ fn lower_drop_table(
     default_schema: &str,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     if drop.temporary != tidb_ast::DropTemporary::None {
-        return Err(DdlAdmissionError::new(
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
             "DROP TEMPORARY TABLE is not supported: this node never creates temporary tables",
         ));
     }
     let [name] = drop.names.as_slice() else {
-        return Err(DdlAdmissionError::new(
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
             "DROP TABLE names exactly one table on this node, so a failed drop \
              cannot leave the others half-applied",
         ));
@@ -2199,7 +2227,8 @@ fn lower_create_table(
     // be persisted by a cluster DDL job. The server routes it through the
     // session executor before lowering; retain this guard for direct callers.
     if create.temporary == tidb_ast::CreateTableTemporary::Local {
-        return Err(DdlAdmissionError::new(
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
             "LOCAL temporary-table DDL belongs to the session catalog",
         ));
     }
@@ -2311,7 +2340,10 @@ fn lower_create_index(
         });
     }
     if columns.is_empty() {
-        return Err(DdlAdmissionError::new("CREATE INDEX names no column"));
+        return Err(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            "CREATE INDEX names no column",
+        ));
     }
     Ok(DdlStatement::CreateIndex {
         schema,
@@ -3375,10 +3407,13 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
         let base_handle = base_info.materialized_view_base.as_ref().expect("just set");
         let mut base_meta = base_handle.write();
         if base_meta.mlog_id != 0 && base_meta.mlog_id != mlog_id {
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                "base table {} already has a materialized view log",
-                base_info.name.original()
-            ))));
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!(
+                    "base table {} already has a materialized view log",
+                    base_info.name.original()
+                ),
+            )));
         }
         base_meta.mlog_id = mlog_id;
     }
@@ -5681,9 +5716,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 let policies = load_policies(snapshot)?;
                 placement_bundles = tidb_placement::new_full_table_bundles(&policies, &info)
                     .map_err(|error| {
-                        DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                            "building placement rules: {error}"
-                        )))
+                        DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            GENERIC_ERROR_CODE,
+                            format!("building placement rules: {error}"),
+                        ))
                     })?;
             }
             // Go `createTable` stamps the job transaction's own start timestamp.
@@ -7232,9 +7268,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 let policies = load_policies(snapshot)?;
                 placement_bundles = tidb_placement::new_full_table_bundles(&policies, &info)
                     .map_err(|error| {
-                        DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                            "building placement rules: {error}"
-                        )))
+                        DdlPlanError::Admission(DdlAdmissionError::with_code(
+                            GENERIC_ERROR_CODE,
+                            format!("building placement rules: {error}"),
+                        ))
                     })?;
             }
             diff.action_type = ActionType::ACTION_TRUNCATE_TABLE;
@@ -8567,10 +8604,13 @@ fn plan_create_materialized_view(
     // the base table, whose metadata points back at the base.
     let mlog_name = tidb_model::materialized_view_log_table_name(&base.name);
     let Some(mlog) = find_table(database, mlog_name.original()) else {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-            "materialized view log does not exist for base table {}.{}",
-            base_schema, base_name
-        ))));
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "materialized view log does not exist for base table {}.{}",
+                base_schema, base_name
+            ),
+        )));
     };
     let mlog_ok = mlog
         .materialized_view_log
@@ -8578,13 +8618,16 @@ fn plan_create_materialized_view(
         .map(|log| log.read().base_table_id == base.id)
         .unwrap_or(false);
     if !mlog_ok {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-            "table {}.{} is not a materialized view log for base table {}.{}",
-            schema,
-            mlog_name.original(),
-            base_schema,
-            base_name
-        ))));
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "table {}.{} is not a materialized view log for base table {}.{}",
+                schema,
+                mlog_name.original(),
+                base_schema,
+                base_name
+            ),
+        )));
     }
 
     // Go `validateCreateMaterializedViewQuery`: the single-table contract,
@@ -8790,12 +8833,22 @@ fn build_mview_refresh_meta(
     let mut start_with = String::new();
     let mut next = String::new();
     if let Some(expr) = &refresh.start_with {
-        start_with = build_and_validate_m_view_schedule_expr(expr, "REFRESH START WITH")
-            .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::new(error.to_string())))?;
+        start_with = build_and_validate_m_view_schedule_expr(expr, "REFRESH START WITH").map_err(
+            |error| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    error.to_string(),
+                ))
+            },
+        )?;
     }
     if let Some(expr) = &refresh.next {
-        next = build_and_validate_m_view_schedule_expr(expr, "REFRESH NEXT")
-            .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::new(error.to_string())))?;
+        next = build_and_validate_m_view_schedule_expr(expr, "REFRESH NEXT").map_err(|error| {
+            DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                error.to_string(),
+            ))
+        })?;
     }
     Ok((method, start_with, next))
 }
@@ -8821,41 +8874,46 @@ fn parse_mview_attributes(attrs: Option<&str>) -> Result<(i64, i64, bool), DdlPl
     for raw_kv in attrs.split(',') {
         let kv = raw_kv.trim();
         if kv.is_empty() {
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
                 "invalid ATTRIBUTES format: empty key-value pair",
             )));
         }
         let Some(pos) = kv.find('=') else {
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                "invalid ATTRIBUTES format: {kv:?}"
-            ))));
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!("invalid ATTRIBUTES format: {kv:?}"),
+            )));
         };
         if pos == 0 || pos >= kv.len() - 1 {
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                "invalid ATTRIBUTES format: {kv:?}"
-            ))));
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!("invalid ATTRIBUTES format: {kv:?}"),
+            )));
         }
         let key = kv[..pos].trim().to_lowercase();
         let value = kv[pos + 1..].trim();
         if key.is_empty() || value.is_empty() {
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                "invalid ATTRIBUTES format: {kv:?}"
-            ))));
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!("invalid ATTRIBUTES format: {kv:?}"),
+            )));
         }
         if !seen.insert(key.clone()) {
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                "duplicate ATTRIBUTES key: {key}"
-            ))));
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!("duplicate ATTRIBUTES key: {key}"),
+            )));
         }
         match key.as_str() {
             ATTR_ALERT_WARNING | ATTR_ALERT_OVERDUE => {
                 let Ok(parsed) = value.parse::<i64>() else {
-                    return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
                         "invalid ATTRIBUTES value for {key}: {value} (must be non-negative integer seconds)"
                     ))));
                 };
                 if parsed < 0 {
-                    return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
                         "invalid ATTRIBUTES value for {key}: {value} (must be non-negative integer seconds)"
                     ))));
                 }
@@ -8869,20 +8927,22 @@ fn parse_mview_attributes(attrs: Option<&str>) -> Result<(i64, i64, bool), DdlPl
                 "yes" => alert_refresh_failed = true,
                 "no" => alert_refresh_failed = false,
                 _ => {
-                    return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                        "invalid ATTRIBUTES value for {key}: {value} (must be yes or no)"
-                    ))))
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        format!("invalid ATTRIBUTES value for {key}: {value} (must be yes or no)"),
+                    )))
                 }
             },
             _ => {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                    "unsupported ATTRIBUTES key: {key}"
-                ))))
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    format!("unsupported ATTRIBUTES key: {key}"),
+                )))
             }
         }
     }
     if alert_warning_sec > 0 && alert_overdue_sec > 0 && alert_warning_sec > alert_overdue_sec {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
             "invalid ATTRIBUTES: {ATTR_ALERT_WARNING} ({alert_warning_sec}) must be less than or equal to {ATTR_ALERT_OVERDUE} ({alert_overdue_sec})"
         ))));
     }
@@ -9367,10 +9427,13 @@ fn plan_validate_materialized_view_query(
     let mut group_by_infos = Vec::with_capacity(sel.group_by.len());
     for (index, col_name) in group_by_cols.iter().enumerate() {
         let Some(&select_idx) = select_col_idx.get(col_name) else {
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                "GROUP BY column {} must appear in SELECT list",
-                group_by_written[index]
-            ))));
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                format!(
+                    "GROUP BY column {} must appear in SELECT list",
+                    group_by_written[index]
+                ),
+            )));
         };
         group_by_infos.push(MviewGroupByInfo {
             select_idx,
@@ -9544,18 +9607,24 @@ fn check_materialized_view_log_column_supported(
     col: &tidb_model::column::ColumnInfo,
 ) -> Result<(), DdlPlanError> {
     if col.field_type.code() == FieldTypeCode::Json {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-            "{operation} does not support JSON column {}",
-            col.name.original()
-        ))));
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "{operation} does not support JSON column {}",
+                col.name.original()
+            ),
+        )));
     }
     if col.field_type.code().is_type_blob()
         && col.field_type.charset_name().eq_ignore_ascii_case("binary")
     {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-            "{operation} does not support BLOB column {}",
-            col.name.original()
-        ))));
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "{operation} does not support BLOB column {}",
+                col.name.original()
+            ),
+        )));
     }
     Ok(())
 }
@@ -9697,7 +9766,8 @@ fn build_materialized_view_log_table_info(
     let mut purge_next = String::new();
     if let Some(purge) = &create.purge {
         if purge.immediate {
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
                 "PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG",
             )));
         }
@@ -9705,16 +9775,25 @@ fn build_materialized_view_log_table_info(
         if let Some(expr) = &purge.start_with {
             purge_start_with = build_and_validate_m_view_schedule_expr(expr, "PURGE START WITH")
                 .map_err(|error| {
-                    DdlPlanError::Admission(DdlAdmissionError::new(error.to_string()))
+                    DdlPlanError::Admission(DdlAdmissionError::with_code(
+                        GENERIC_ERROR_CODE,
+                        error.to_string(),
+                    ))
                 })?;
         }
         let Some(next) = &purge.next else {
-            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
                 "PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG",
             )));
         };
-        purge_next = build_and_validate_m_view_schedule_expr(next, "PURGE NEXT")
-            .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::new(error.to_string())))?;
+        purge_next =
+            build_and_validate_m_view_schedule_expr(next, "PURGE NEXT").map_err(|error| {
+                DdlPlanError::Admission(DdlAdmissionError::with_code(
+                    GENERIC_ERROR_CODE,
+                    error.to_string(),
+                ))
+            })?;
     }
 
     // Go `BuildMLogAccumulationAlertRows`.
@@ -9756,10 +9835,13 @@ fn build_mlog_accumulation_alert_rows(
         return Ok(None);
     };
     if alert.rows < 0 {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-            "invalid ALERT ROWS value: {} (must be non-negative)",
-            alert.rows
-        ))));
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "invalid ALERT ROWS value: {} (must be non-negative)",
+                alert.rows
+            ),
+        )));
     }
     Ok(Some(u64::try_from(alert.rows).expect("non-negative")))
 }
@@ -9883,11 +9965,14 @@ fn build_create_materialized_view_job(
     // Go `len(resultFields) != len(s.Cols)`: the declared column list must
     // name every output column.
     if result_fields.len() != create.columns.len() {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-            "materialized view column count {} does not match query output {}",
-            create.columns.len(),
-            result_fields.len()
-        ))));
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!(
+                "materialized view column count {} does not match query output {}",
+                create.columns.len(),
+                result_fields.len()
+            ),
+        )));
     }
 
     // Go: one group-key index for the one-row-per-group contract — PRIMARY
@@ -10187,7 +10272,12 @@ fn derive_materialized_view_query_columns(
     let sql = format!("SELECT * FROM ({select_sql}) AS `tidb_mv_query` LIMIT 0");
     tidb_executor::run_select_meta_in(&sql, &catalog, schema, context)
         .map(|(columns, _)| columns)
-        .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::new(error.to_string())))
+        .map_err(|error| {
+            DdlPlanError::Admission(DdlAdmissionError::with_code(
+                GENERIC_ERROR_CODE,
+                error.to_string(),
+            ))
+        })
 }
 
 /// Plans pinned Go `CreateMaterializedViewLog` and `CreateMaterializedView`

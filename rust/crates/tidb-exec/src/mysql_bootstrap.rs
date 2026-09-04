@@ -61,7 +61,9 @@ use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 use crate::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
 use crate::mysql_system_tables::SYSTEM_DB;
 use crate::system_row_write::codec_table_info;
-use crate::table_info_build::{build_table_info, ClusteredIndexDefMode, DdlAdmissionError};
+use crate::table_info_build::{
+    build_table_info, ClusteredIndexDefMode, DdlAdmissionError, GENERIC_ERROR_CODE,
+};
 
 mod rows;
 
@@ -399,17 +401,20 @@ fn build_bootstrap_table(
         error,
     };
     let parsed = tidb_parser::parse(table.create_sql).map_err(|error| {
-        admission(DdlAdmissionError::new(format!(
-            "its CREATE TABLE does not parse: {error:?}"
-        )))
+        admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
+            format!("its CREATE TABLE does not parse: {error:?}"),
+        ))
     })?;
     let Stmt::Ddl(ddl) = &parsed else {
-        return Err(admission(DdlAdmissionError::new(
+        return Err(admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
             "its statement is not a DDL",
         )));
     };
     let DdlStmt::CreateTable(create) = ddl.as_ref() else {
-        return Err(admission(DdlAdmissionError::new(
+        return Err(admission(DdlAdmissionError::with_code(
+            GENERIC_ERROR_CODE,
             "its statement is not a CREATE TABLE",
         )));
     };
