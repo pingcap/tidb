@@ -26,19 +26,19 @@
 //!   half-up at fsp (`.1234567` → `.123457`), the range is
 //!   `[0, 32536771199]`, and out-of-range is NULL.
 //! - `UNIX_TIMESTAMP`'s fsp comes from the argument's fractional digits;
-//!   the value is TRUNCATED; datetimes outside
-//!   `['1970-01-01 00:00:01', '3001-01-18 23:59:59.999999']` UTC are 0;
-//!   invalid/zero datetimes are NULL; fsp 0 yields an integer, otherwise a
-//!   decimal.
+//!   the value is TRUNCATED after Go's six-digit input rounding; datetimes
+//!   outside `['1970-01-01 00:00:01', '3001-01-18 23:59:59.999999']` UTC are
+//!   0. An all-zero date or syntactically invalid value is NULL, while a
+//!   partially zero date (for example `2017-00-02`) returns numeric 0; fsp 0
+//!   yields an integer, otherwise a decimal.
 //! - `TIDB_PARSE_TSO` renders `tso >> 18` milliseconds since epoch at full
 //!   (6-digit) precision; a non-positive tso is NULL.
 //! - The zero-argument `UNIX_TIMESTAMP()` needs the statement clock and
 //!   declines when [`Columns::now`] is absent.
 
-use chrono::{Datelike, NaiveDateTime, Timelike, Utc};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
 
 use super::calendar::date_format;
-use super::convert_tz::parse_datetime;
 use crate::coerce::coerce_str;
 use crate::context::SessionTimeZone;
 use crate::{Columns, Datum, Decimal, EvalError};
@@ -181,10 +181,54 @@ pub(super) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
     let Some(text) = coerce_str(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    let Some((naive, frac)) = parse_datetime(&text) else {
+    // Go's `UNIX_TIMESTAMP` receives a DATETIME after its argument-cast
+    // layer. Numeric and DECIMAL source values therefore use the packed
+    // float-string parser, while textual/temporal values use the ordinary
+    // string parser. The AST value tier has no static FieldType, so preserve
+    // the distinction from the runtime Datum kind here.
+    let is_float = matches!(
+        vals[0],
+        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_)
+    );
+    let parsed = tidb_datatype::parse_time(
+        &text,
+        tidb_datatype::TimeType::DateTime,
+        i64::from(tidb_datatype::get_fsp(&text)),
+        is_float,
+        true,
+        false,
+        &cols.time_zone(),
+    );
+    let Ok(parsed) = parsed else {
         return Ok(Datum::Null);
     };
-    let fsp = frac.len().min(6);
+    let core = parsed.time.core_time();
+    let fsp = parsed.time.fsp() as usize;
+    // Go's IgnoreZeroInDate mode lets month/day-zero values through parsing,
+    // but `GoTime` cannot represent them and the unix conversion returns the
+    // out-of-range zero sentinel rather than attempting calendar arithmetic.
+    // An all-zero date is the separate invalid-date case: Go's `EvalTime`
+    // reports it as NULL, which is distinct from a partially zero date such
+    // as `2017-00-02` returning the numeric zero sentinel.
+    if core.year() == 0 && core.month() == 0 && core.day() == 0 {
+        return Ok(Datum::Null);
+    }
+    if core.month() == 0 || core.day() == 0 {
+        return Ok(unix_result(0, fsp));
+    }
+    let Some(date) =
+        NaiveDate::from_ymd_opt(core.year(), u32::from(core.month()), u32::from(core.day()))
+    else {
+        return Ok(unix_result(0, fsp));
+    };
+    let Some(naive) = date.and_hms_micro_opt(
+        u32::from(core.hour()),
+        u32::from(core.minute()),
+        u32::from(core.second()),
+        core.microsecond(),
+    ) else {
+        return Ok(unix_result(0, fsp));
+    };
 
     let instant = match &cols.time_zone() {
         SessionTimeZone::Local => local_to_instant(&chrono::Local, &naive),

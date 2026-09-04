@@ -1028,6 +1028,80 @@ The remaining large `TIMESTAMPADD` month-overflow and exact warning-message
 rows stay documented in the source carrier; this guard only closes the
 third-argument zero-date conversion boundary.
 
+## Rust follow-up: `UNIX_TIMESTAMP` packed numeric and zero-date inputs
+
+This focused fix remains inside the complete `pkg/expression` inventory above.
+The rolling Go comparison is `origin/master` at
+`f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; its `builtin_time.go` and
+`builtin_time_test.go` blobs are byte-identical to the previously inventoried
+`3bd6b6d4d632b16ee5db7fbbefbf21b1e57527b2` source. The Go package inventory
+therefore remains 208 recursive tracked artifacts and 146,291 lines (137
+direct-root artifacts: 68 production, 60 tests, seven generated sources,
+`BUILD.bazel`, `OWNERS`, and eight nested boundaries). The Rust `tidb-expr`
+owner remains 176 tracked artifacts and 107,196 lines. Before editing, the
+complete Go and Rust inventories, the `UNIX_TIMESTAMP` signatures/table, and
+the session-timezone source/tests were reread. No Go, generated, fixture,
+platform, Bazel, or build artifact changed.
+
+Go's `builtinUnixTimestamp*Sig` evaluates its argument through the DATETIME
+cast, but the static source kind selects `ParseTimeFromFloatString` for
+integer, real, and DECIMAL arguments. Rust previously coerced every value to a
+string and used the delimiter parser, so 12/14-digit packed values returned
+NULL and DECIMAL fractions were unproven. Rust now passes numeric/DECIMAL
+datums through the shared `parse_time(..., is_float = true)` path, preserving
+Go's YYMMDDHHMMSS and YYYYMMDDHHMMSS normalization, six-digit half-up input
+rounding, and output FSP. Textual and temporal datums retain the ordinary
+string path.
+
+Go's `IgnoreZeroInDate` handling also distinguishes an all-zero date (NULL
+from `GoTime`) from a partially zero date (`2017-00-02` returns the numeric
+zero sentinel). Rust now preserves that distinction before constructing a
+Chrono date; out-of-range instants continue through the existing zero-result
+range guard. The source carrier covers SQL literals plus direct `Real` and
+DECIMAL datums under an explicit UTC session zone.
+
+Focused fail-before/pass-after evidence:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib \
+  tests::builtin_time_calendars_source::unix_timestamp_compact_numeric_and_zero_date_rows_match_master \
+  -- --exact --nocapture
+# pre-fix: failed (`unix_timestamp(151113102019)` returned NULL)
+# after fix: 1 passed (packed int/real/DECIMAL, fraction rounding, and
+# partial-zero date rows)
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib unix_timestamp -- --nocapture --test-threads=1
+# after fix: 4 passed, including the existing all-zero-date NULL and DST
+# vectors
+```
+
+Ready validation for this package batch:
+
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`,
+  `git diff --check` — passed.
+- `... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml
+  --offline --locked -p tidb-expr --all-targets` — passed.
+- `... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml
+  --offline --locked -p tidb-expr --lib -- --test-threads=1
+  --skip builtin_ext::json::tests::json_schema_valid_resolves_file_and_http_references`
+  — 1,146 passed, 0 failed, 121 documented ignored, and one unrelated flaky
+  JSON-schema fixture skipped (its loopback `WouldBlock` failure is already
+  recorded in this receipt).
+- `PATH=... GOPATH=... TMPDIR=/tmp/tidb-codex make lint` — passed.
+
+Correctness risk is limited to the argument-cast boundary of
+`UNIX_TIMESTAMP`: numeric source kinds now receive packed numeric parsing and
+source-preserved FSP, while strings/temporal values keep their existing
+timezone and DST behavior. Compatibility risk is the intentional Go result
+split between all-zero NULL and partial-zero numeric zero; no new state or
+performance-sensitive loop is introduced. Remaining column/session warning
+observation and unsupported malformed numeric rows stay explicit boundaries
+of this value/chunk carrier.
+
 ## Rust follow-up: `FORMAT` precision and `WEIGHT_STRING` truncation warnings
 
 This batch stays inside the complete `pkg/expression` inventory at Go

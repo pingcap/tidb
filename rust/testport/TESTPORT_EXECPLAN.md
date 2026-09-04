@@ -141,6 +141,13 @@ For each bounded behavior cluster:
   integer dates continue through the existing add-unit logic. Focused source
   regression, inventory, and Ready evidence are recorded in
   `receipts/expression_collation_audit.md`.
+- 2026-09-04: aligned Rust `tidb-expr` `UNIX_TIMESTAMP` with Go's
+  source-kind-sensitive DATETIME cast. Packed 12/14-digit integer, real, and
+  DECIMAL arguments now use the shared float-string parser (including six-digit
+  half-up rounding), while strings retain their ordinary parser. All-zero
+  dates remain NULL and partial zero-in-date values return numeric zero as in
+  Go. Focused source regressions, the complete package inventory, and Ready
+  evidence are recorded in `receipts/expression_collation_audit.md`.
 - 2026-09-04 (batch 22, `pkg/ddl` MV remaining pure surface): implemented
   Go master `94a9cbedab`'s `MViewExecutionSessionVarsFromJob` (tidb-session,
   per-field fallback to the captured defaults over the job's system-variable
@@ -5796,6 +5803,14 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   existing result-range and unit-overflow checks unchanged. Date/Author:
   2026-09-04, Codex.
 
+- Decision: preserve `UNIX_TIMESTAMP`'s source datum kind through the
+  value/chunk seam. Route integer, real, float32, and DECIMAL inputs through
+  `tidb_datatype::parse_time` with `is_float = true` so packed YYMMDDHHMMSS /
+  YYYYMMDDHHMMSS values and six-digit half-up fractions match Go; route text
+  and temporal values through the ordinary string branch. Keep an explicit
+  all-zero-date NULL check before the partial zero-in-date numeric-zero
+  sentinel. Date/Author: 2026-09-04, Codex.
+
 - Decision: reuse `tidb_datatype::parse_time_from_num` for delimiter-free
   12/14-digit datetime strings and map its validated fields into the local
   `GoDateTime`, preserving Go's packed numeric normalization and two-digit-year
@@ -6457,6 +6472,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Go rejects the zero `CoreTime` while converting the evaluated DATETIME to a
   `time.Time`. The pre-add range guard preserves that rejection without
   changing valid packed-date arithmetic.
+
+- `UNIX_TIMESTAMP` exposed the same source-kind distinction as `TIMESTAMP`,
+  but its result contract has an additional split: Go returns NULL for the
+  all-zero date while a partially zero date such as `2017-00-02` returns the
+  numeric zero sentinel. Reusing the shared parser was sufficient for packed
+  numeric forms and DECIMAL rounding; the explicit all-zero check is required
+  before constructing a Chrono date.
 
 - The prior ADDTIME/SUBTIME gap was two independent source rules: integer
   arguments are cast to ETString before `ParseTimeWithString` (which accepts

@@ -173,15 +173,38 @@ fn unix_timestamp_value_table_under_utc() {
         }
     }
 
-    // go-parity-gap: this evaluator parses COMPACT NUMERIC datetime texts
-    // only up to the eight-digit YYYYMMDD form. Go's table rows
-    // `{Int(151113102019)}`, `{Real(151113102019)}` rely on
-    // `types.ParseTimeFromNum`'s 12-digit YYMMDDHHMMSS reading and expect
-    // `1447410019`, `{Decimal(7-scale "...1234567")}` additionally needs
-    // fsp-7 half-up rounding (`...123457`), and `{'2017-00-02'}` needs the
-    // IgnoreZeroInDate month-zero reader Go answers INT:0 through; none of
-    // those readers exist at this evaluator seam, so they stay unproven
-    // rather than approximated.
+    // The remaining packed numeric and zero-in-date rows are pinned by the
+    // source-type regression below.
+}
+
+/// Numeric and zero-in-date rows from Go's `TestUnixTimestamp` that exercise
+/// `ParseTimeFromNum`'s 12-digit form, decimal rounding, and permissive
+/// month-zero conversion.
+#[test]
+fn unix_timestamp_compact_numeric_and_zero_date_rows_match_master() {
+    let utc = ZonedNoColumns(SessionTimeZone::utc());
+    for (sql, want) in [
+        ("unix_timestamp(151113102019)", "INT:1447410019"),
+        ("unix_timestamp(20151113102019)", "INT:1447410019"),
+        ("unix_timestamp(151113102019.12)", "DEC:1447410019.12"),
+        (
+            "unix_timestamp(151113102019.1234567)",
+            "DEC:1447410019.123457",
+        ),
+        ("unix_timestamp('2017-00-02')", "INT:0"),
+        ("unix_timestamp('0000-00-00 00:00:00')", "NULL"),
+    ] {
+        assert_eq!(chunk_e_with(sql, &utc), want, "{sql}");
+    }
+    for (arg, want) in [
+        (Datum::Real(151113102019.0), "INT:1447410019"),
+        (
+            Datum::Decimal(crate::Decimal::from_literal("151113102019.1234567")),
+            "DEC:1447410019.123457",
+        ),
+    ] {
+        assert_eq!(dispatched("UNIX_TIMESTAMP", &[arg], &utc).label(), want);
+    }
 }
 
 /// GO PORT of `builtin_time_test.go:2275 TestDateArithFuncs` (the DAY/HOUR/
