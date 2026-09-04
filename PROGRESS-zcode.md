@@ -1,0 +1,13 @@
+# zcode 会话独立进度（避免与并发实例竞写 PROGRESS.md）
+
+> inUnion 实现规格（下周期照做）：①tidb-ast CastType 加 UnsignedInUnion 变体（镜像 Unsigned）；②tidb-expr cast.rs eval_cast 加臂：负输入钳 0（Go builtin_cast.go:998）；③simple_expr.rs build_cast_function 加 in_union 参数（unsigned-int 目标+in_union → 内部名 cast_unsigned_in_union）；④build_cast_to 保持 false 包装；新增 build_cast_to_in_union 传 true；⑤set_opr.rs build_projection4_union 的 cast 站点改调 in-union 变体；⑥回归：in-union CAST(-1 AS UNSIGNED)=0+warn；pre-fix 基线=现有 wrap。
+
+## 已完成（已推送 hparser-integration）
+- temporal 复合单元 pins（632d55f3f2）、两分组形状 pins（608dda6d29）
+- 审计对账：expr-builtin item 1/2/3/4/6/7 全闭环（466d4e6120/bdf90f7245）；chunk A-3 核实过期（0b8f2de438）
+
+## 队列
+1. 按 above 规格实现 inUnion（tidb-ast→tidb-expr→planner 三层，一个 commit）
+2. chunk A-1（datum 决策）
+3. parser #11（结构性）
+4. 分区裁剪验证（等用户对照查询）
