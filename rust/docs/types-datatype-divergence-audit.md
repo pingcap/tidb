@@ -45,10 +45,10 @@ The worst three:
   `'11:22:33abc'` is `11:22:33` in Go and `00:00:11` here; `'10:70:00'` is NULL
   in Go and `00:00:10` here.
 
-Two fixes landed in this branch (commits `4d2b945d4d`, `441fc392c9`); both are
-literal transcriptions of a Go predicate, both ship a regression test, and
-**neither test has been run**. Everything else is written up rather than
-half-implemented.
+Multiple fixes have landed in this branch, including the F1/F2 field-type
+predicates and the D/T/M temporal and decimal batches. Their focused
+regressions and Ready outcomes are recorded in the receipts referenced by each
+section; the remaining findings are explicitly bounded or still open.
 
 ---
 
@@ -569,10 +569,10 @@ ports of this one Go file.
   exponent parsing. **`Datum::Decimal` holds this one.**
 
 Where the two disagree, `mydecimal.rs` is almost always the one matching Go.
-Every finding below except M8 and M10 is against `decimal.rs`, i.e. against the
+Every remaining finding below except M8 and M10 is against `decimal.rs`, i.e. against the
 implementation the value path actually uses.
 
-## M1 (rank 1) — `shift_mysql` keeps a rounding carry Go throws away
+## M1 (rank 1) — `shift_mysql` keeps a rounding carry Go throws away (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:599-606` — after the truncating `Round`, Go tests
   the *digit geometry*, `if digitEnd <= digitBegin { *d = zeroMyDecimal;
@@ -595,7 +595,11 @@ Also reproducible at the reduced word limit the fixtures use:
 
 Control: `mydecimal.rs:632-639` has Go's check and is correct.
 
-## M2 (rank 1) — `parse_mysql` returns `BadNumber`+0 where Go escalates to `ErrOverflow`+max-decimal
+Fixed in the Rust decimal owner: `shift_mysql_with_word_limit` now checks the
+pre-round retained prefix before accepting a carry. The focused regression and
+owner validation are recorded in `rust/testport/receipts/types_explain_format_audit.md`.
+
+## M2 (rank 1) — `parse_mysql` returns `BadNumber`+0 where Go escalates to `ErrOverflow`+max-decimal (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:498-510` — on a `strToInt` error Go does **not**
   stop. It zeroes `d`, keeps the clamped exponent (`strToInt` returns
@@ -616,7 +620,10 @@ because *that* exponent trips `uintCutOff` and `strToInt` returns 0; only
 exponents in `(i64::MAX, u64::MAX]` expose the bug. Control:
 `mydecimal.rs:859-886` reproduces Go exactly.
 
-## M3 (rank 1) — `from_f64` renders positionally instead of Go's `%g`
+Fixed in the Rust decimal parser; the clamped-exponent regression and Ready
+evidence are recorded in `rust/testport/receipts/types_explain_format_audit.md`.
+
+## M3 (rank 1) — `from_f64` renders positionally instead of Go's `%g` (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:1165-1167` — `FromFloat64` is
   `strconv.FormatFloat(f, 'g', -1, 64)` then `FromString`, so large and small
@@ -637,7 +644,11 @@ Secondary: `from_f64` returns `Option<Self>` (`None` only for non-finite) and
 discards Go's `ErrTruncated`/`ErrOverflow` entirely. This compounds with D6
 above, where `Datum::to_decimal` also drops the parse error.
 
-## M4 (rank 2) — `div_mysql` / `rem_mysql` have no truncation/overflow channel
+Fixed in the Rust value layer: Go-compatible shortest-exponent formatting and
+the parse disposition are now retained; the focused regression and validation
+evidence are in `rust/testport/receipts/types_explain_format_audit.md`.
+
+## M4 (rank 2) — `div_mysql` / `rem_mysql` have no truncation/overflow channel (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:2281` — `fixWordCntError` inside `doDivMod`,
   plus the mod branch's `ErrOverflow`/`ErrTruncated` at `:2434-2447`.
@@ -652,6 +663,11 @@ Go: `fixWordCntError(3, 8)` → `(3, 6, ErrTruncated)`, `digitsFrac` clamped to
 54, **`ErrTruncated` returned**. Rust: `storage_scale = 72`, `Some(value)`,
 **no warning**. The value printed at scale 30 is identical, so this is
 warning-loss rather than a wrong number.
+
+Fixed in the Rust owner through `div_mysql_with_warning` and
+`true_div_with_warning`; the expression path consumes the warning. Focused
+datatype/expression tests and Ready evidence are recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
 
 ## M5 (rank 1 in-function, rank 4 in practice) — `ModeCeiling` scans every discarded digit; Go scans one (FIXED 2026-09-04)
 
@@ -706,7 +722,7 @@ the field; Rust callers can now obtain the same `consumed = 5` alongside the
 zero value and error. Focused regression and Ready evidence are recorded in
 `rust/testport/receipts/types_decimal_from_bin_failure.md`.
 
-## M8 (rank 3) — `mydecimal.rs` trims ASCII whitespace where Go trims Unicode whitespace
+## M8 (rank 3) — `mydecimal.rs` trims ASCII whitespace where Go trims Unicode whitespace (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:527` and `pkg/types/helper.go:134` both use
   `strings.TrimSpace`, whose `unicode.IsSpace` includes vertical tab `\x0b`.
@@ -717,6 +733,11 @@ zero value and error. Focused regression and Ready evidence are recorded in
 Distinguishing inputs: `"1\x0b"` → Go `1` with no error, Rust `1` +
 `Truncated`. `"1e\x0b5"` → Go `100000` with no error, Rust `1` + `Truncated`.
 `decimal.rs:1347` uses `str::trim` (Unicode) and matches Go.
+
+Fixed in the Rust fixed-word parser: valid UTF-8 Unicode whitespace is now
+trimmed at both source boundaries while malformed bytes remain significant.
+The focused regression is recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
 
 ## M9 / M10 (rank 4)
 
@@ -800,11 +821,12 @@ literally — early return for `Utf8Mb40900Bin`, then the full `IsBinCollation`
 membership — plus three rows appended to
 `source_need_restored_data_rows`. Note `rust/crates/tidb-datatype/src/collation.rs:301-306`
 already had a *correct* `is_bin_collation`; the field-type predicate simply was
-not using it. **The test has not been run.** `cargo check` and `cargo clippy` on
+not using it. Focused `test_need_restored_data` and
+`utf8mb4_0900_bin_never_needs_restored_data` now pass. `cargo check` and `cargo clippy` on
 `tidb-datatype` are clean (EXIT=0 each), as is `cargo check -p tidb-tablecodec
 -p tidb-codec` (EXIT=0), and `cargo fmt --all --check` is clean.
 
-## F2 (rank 1) — `FieldTypeBuilder::new()` starts at flen/decimal `-1`; Go's starts at `0`
+## F2 (rank 1, FIXED) — `FieldTypeBuilder::new()` starts at flen/decimal `-1`; Go's starts at `0`
 
 - Go: `pkg/types/field_type_builder.go:23-25` — `&FieldTypeBuilder{}` holds a
   **zero-value** `FieldType`, i.e. `flen = 0, decimal = 0`
@@ -825,8 +847,10 @@ column-definition `decimals` byte.
 
 Second distinguishing input:
 `NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP().CompactStr()` → Go
-`"varchar(0)"`; the Rust equivalent → `"varchar(5)"` (the `-1` gets substituted
-with the default flen).
+`"varchar(0)"`; Rust now returns the same zero-length rendering.
+
+Fixed in the Rust builder; the focused zero-value regression and package
+validation are recorded in `rust/testport/receipts/datatype_json_fieldtype_receipt.md`.
 
 ## F3 — FIXED (verified 2026-09-03): `is_binary_string()` now compares the collation NAME
 
@@ -1161,7 +1185,7 @@ and `mod9[to.digitsInt]` ≡ `digits_int % 9` over the whole `int8` domain);
 forward-left-aligned-fraction word packing, the `MaxInt32/2` and `MinInt32/2`
 exponent thresholds, `allZero → negative=false`, `resultFrac = digitsFrac`);
 `strToInt` (`uintCutOff`/`intCutOff`/`hasNum`, clamped value with
-`ErrBadNumber`). Except M8's whitespace point.
+`ErrBadNumber`). Unicode whitespace handling (M8) is now aligned as well.
 
 **`decimal.rs` ↔ Go:** `fixWordCntError`; `digitsToWords`; `DecimalBinSize`
 (including the negative-`xInt`/`xFrac` `ErrBadNumber` path); `readWord`;
@@ -1173,7 +1197,7 @@ bounded by `originIntSize+originFracSize`, the final `bin[0] ^= 0x80`);
 **`FromBin`** (mask derivation, `binSize > 40` rejection, short-payload zero
 fill, both `fixWordCntError` branches, the `powers10[leadingDigits+1]` and
 `> wordMax` validations, leading-zero-word `digitsInt` decrements, trailing
-partial-word scaling) except M7's return shape; `ToHashKey`/`HashKeySize`
+partial-word scaling) plus M7's structured failure outcome; `ToHashKey`/`HashKeySize`
 (precision from stripped leading/trailing zeros, `prec == 0 → 1`,
 `ErrTruncated` suppression, appended `digitsFrac` byte); `PrecisionAndFrac`;
 **`ToInt`** (verified at `±i64::MAX`, `±i64::MIN`, `i64::MIN-1`, `2^64`; the
@@ -1183,7 +1207,8 @@ partial-word scaling) except M7's return shape; `ToHashKey`/`HashKeySize`
 (verified on `ROUND(12345,-2)`, `ROUND(12365,-2)`, `ROUND(12345,-5)`,
 `ROUND(92345,-5)`, `ROUND(600,-3)`, `ROUND(6000,-4)`, and Go's
 `digitsInt+frac < 0` early-zero falling out of the digit math without a special
-case); `Shift`'s overflow condition and bound-stripping (everything but M1);
+case); `Shift`'s overflow condition and bound-stripping, including the fixed
+M1 carry-discard rule;
 `DecimalMul`'s word loop (`add2`/`add` carry chain, both `idxTo < 0` overflow
 returns, the `-0.000` check, leading-zero-word compaction); `DecimalMod` value
 and sign; `DecimalDiv`'s fraction-word budget
@@ -1306,10 +1331,10 @@ counted although they are fixed in this branch.)
 side (`charset.rs`, `collation.rs`, the encoding tables). Treat their absence
 from the findings list as "not yet audited", **not** "clean".
 
-**What is unverified because nothing can execute here.** Everything. No test
-was run, no binary was executed, no differential sweep was performed. The two
-fixes in this branch (`4d2b945d4d`, `441fc392c9`) each ship a regression test
-that has **never been run**; they compile and lint clean and nothing more.
+**What remains unverified.** The focused regressions and package Ready profiles
+for the fixes recorded in this document now execute in this worktree. A full
+Go/Rust differential sweep is still unavailable, and the open questions below
+remain bounded rather than claimed clean.
 Concretely, the following remain open questions that one execution each would
 settle:
 
@@ -1328,7 +1353,7 @@ settle:
 1. The Rust tree carries **two** decimal implementations —
    `mydecimal.rs` (a faithful word-buffer port) and `decimal.rs` (a
    digit-string reimplementation). `Datum::Decimal` holds the latter, and every
-   decimal finding except M8 and M10 is against the latter. Any claim that
+   remaining decimal finding except M8 and M10 is against the latter. Any claim that
    "`MyDecimal` is ported" has to say which of the two the value path uses.
 2. The tree also carries **two** `STR_TO_DATE` implementations —
    `tidb-datatype/src/str_to_date.rs` and
