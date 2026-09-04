@@ -539,7 +539,16 @@ pub(crate) fn build_cast_function(
         FieldTypeCode::Datetime | FieldTypeCode::Timestamp => "cast_datetime",
         FieldTypeCode::Duration => "cast_time",
         FieldTypeCode::NewDecimal => "cast_decimal",
-        FieldTypeCode::Float | FieldTypeCode::Double => "cast_double",
+        FieldTypeCode::Float | FieldTypeCode::Double => {
+            if in_union && target.flags() & FieldTypeFlags::UNSIGNED != 0 {
+                // Go `builtinCastRealAsRealSig.evalReal`
+                // (`builtin_cast.go:1346-1352`): an in-union unsigned-target
+                // cast clamps a negative to 0.
+                "cast_real_in_union"
+            } else {
+                "cast_double"
+            }
+        }
         FieldTypeCode::Json => "cast_json",
         FieldTypeCode::VectorFloat32 => "cast_vector",
         FieldTypeCode::Tiny

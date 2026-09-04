@@ -501,6 +501,30 @@ pub(crate) fn eval_func_values(
         let res = crate::cast::to_i64_signed_with_warnings(value, ctx).ok()?;
         return Some(Ok(Datum::UInt(if res < 0 { 0 } else { res as u64 })));
     }
+    if name == "cast_real_in_union" {
+        // Go `builtinCastRealAsRealSig.evalReal`
+        // (`builtin_cast.go:1346-1352`): an in-union unsigned-target cast
+        // clamps a negative to 0.
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let res = match value {
+            Datum::Real(f) => *f,
+            Datum::Int(i) => *i as f64,
+            Datum::UInt(u) => *u as f64,
+            Datum::Decimal(dec) => {
+                use std::ops::Neg;
+                let mut text = dec.to_string();
+                if text.starts_with('-') {
+                    text.remove(0);
+                }
+                text.parse::<f64>().unwrap_or(0.0)
+            }
+            _ => 0.0,
+        };
+        return Some(Ok(Datum::Real(if res < 0.0 { 0.0 } else { res })));
+    }
     if let Some(result) = crate::math_fn::dispatch_values(name, vals, ctx) {
         return Some(result);
     }
@@ -861,6 +885,29 @@ pub(crate) fn negate_if(v: Datum, neg: bool) -> Datum {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn d(s: &str) -> Datum {
+        Datum::new_string(s.to_string())
+    }
+
+    /// Go `builtinCastRealAsRealSig.evalReal`
+    /// (`builtin_cast.go:1346-1352`): an in-union unsigned-target cast
+    /// clamps a negative to 0.
+    #[test]
+    fn cast_real_in_union_clamps_negatives_to_zero() {
+        let ctx = PacketLimit::default();
+        let result = eval_func_values("cast_real_in_union", &[Datum::Real(-2.5)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Real(0.0));
+    }
+
+    #[test]
+    fn cast_real_in_union_keeps_non_negatives() {
+        let ctx = PacketLimit::default();
+        let result = eval_func_values("cast_real_in_union", &[Datum::Real(7.5)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Real(7.5));
+    }
+
     use std::cell::RefCell;
 
     use super::*;
