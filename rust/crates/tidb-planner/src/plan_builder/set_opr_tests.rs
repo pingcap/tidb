@@ -723,3 +723,45 @@ fn test_no_sequence_is_built_unless_mpp_shared_cte_execution_is_on() {
     assert_eq!(children.len(), 2);
     assert_eq!(children[0].tp(), "CTE");
 }
+
+/// The Rust `buildProjection4Union` re-points type-mismatched children to the
+/// joined type WITHOUT a cast node — the documented narrowing for Go's
+/// `BuildCastFunction4Union` (whose inUnion evaluation flag has no carrier;
+/// see the module doc). This pins that shape so any future change forces the
+/// narrowing doc to be revisited.
+#[test]
+fn union_mismatched_children_are_re_typed_in_place_like_the_documented_narrowing() {
+    let plan = build("SELECT a FROM t UNION SELECT b FROM t");
+    let LogicalPlan::Aggregation(agg) = &plan else {
+        panic!("expected an Aggregation at the root, got {}", plan.tp());
+    };
+    let LogicalPlan::UnionAll(ref union) = agg.base.children()[0] else {
+        panic!("expected a UnionAll under the Aggregation");
+    };
+    for child in union.base.children() {
+        let LogicalPlan::Projection(projection) = child else {
+            panic!("expected a Projection per branch");
+        };
+        let [expr] = projection.exprs.as_slice() else {
+            panic!("one expression per branch");
+        };
+        assert!(
+            matches!(expr, tidb_expr::expression::Expression::Column(_)),
+            "the re-pointed child stays a bare column: {expr:?}"
+        );
+    }
+    // The union column carries the joined type (LongLong, flen 20).
+    assert_eq!(union_cols_first_code(&plan), Some(FieldTypeCode::LongLong));
+    std::mem::forget(plan);
+}
+
+fn union_cols_first_code(plan: &LogicalPlan) -> Option<FieldTypeCode> {
+    plan.schema()
+        .map(|schema| {
+            schema
+                .columns
+                .first()
+                .map(|column| column.ret_type.as_ref().unwrap().code())
+        })
+        .unwrap_or(None)
+}

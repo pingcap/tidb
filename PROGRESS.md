@@ -47,3 +47,5 @@
 - chunk 审计 A-3 核实过期：引用的 panic 站点已不存在（row.rs 重构为 row_decoder.rs + ColumnLookup::Missing/Null 建模，row_decoder_source.rs:61-62 钉住）；datum 级 per-type 审计仍开放。
 
 - expr-builtin 审计 item 6（math）与 item 7（temporal）核实为已实现（RAND 种子、复合单位提取、微秒进位均已在树上），文档已更新为 RESOLVED。审计"Resume here"清单全部对账完毕。
+
+- 已推送（本轮）：union 形状 pin —— 探针发现 Rust UNION 对类型不匹配子树就地重指向 joined type（无 cast 节点），与 Go 的 BuildCastFunction4Union cast-ScalarFunction 形状不同；这正是模块文档记载的 narrowing。已转正为回归钉住（union_mismatched_children_are_re_typed_in_place_like_the_documented_narrowing）。inUnion 评估标志实现批仍待 ScalarFunction 状态扩展决策。
