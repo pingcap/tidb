@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/meta/autoid` service ownership transfer): aligned
+  `tidb-exec::AutoIdServiceAllocator` with Go master `singlePointAlloc.Transfer`.
+  Transfer now takes an exclusive binding lock, refreshes the authoritative
+  source base through `Alloc(0, 1, 1)`, rebases the destination to the greatest
+  observed value, treats same-binding transfers as no-ops, and restores the
+  source binding if the destination rebase fails. Focused Rust regressions
+  cover request identities, monotonic transfer bases, no-op transfers, and
+  rollback after an RPC error; the package receipt is updated.
 - 2026-09-05 (`pkg/planner/core` row comparison): activated the Go-derived
   `TestCompareRow` regression now that Rust's AST-level `ROW(...)` comparison
   path is live in `tidb-expr`. The registry still excludes standalone `row`

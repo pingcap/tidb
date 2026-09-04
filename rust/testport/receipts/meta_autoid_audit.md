@@ -57,12 +57,20 @@ test dependencies.
   ten errors over fifteen seconds. A typed `RpcRetryLimit` preserves the
   operation, count, elapsed interval, and final RPC error while existing
   cancellation/deadline checks still win before reset/backoff.
+- `tidb-exec::AutoIdServiceAllocator::transfer` now serializes ownership
+  transfer against allocation/rebase, refreshes the source base with
+  `Alloc(0, 1, 1)`, rebases the destination to the greatest observed value,
+  and restores the source binding when the destination RPC fails. This closes
+  the cross-database rename case that prevents a cold allocator from reusing
+  IDs after the source table moves.
 - The focused regression drives out-of-order allocation responses, lower
   non-forced rebases, exact forced rebases, and a two-error zero-duration retry
   policy to prove the loop makes exactly two calls and does not retry forever.
 
 No Rust-only allocator path was removed. The existing generation-safe
-connection reset and cancellation-aware backoff remain the transport boundary.
+connection reset and cancellation-aware backoff remain the transport boundary;
+the new transfer method is a typed Rust equivalent of Go's stateful service
+operation.
 
 ## Validation
 
@@ -74,7 +82,7 @@ blocked locally because the `bazel` executable is unavailable.
   compile with missing `stateMu`, `rpcRetryPolicy`, and related methods.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh pkg/meta/autoid -run '^(TestSinglePointAllocTransfer|TestAutoIDRPCRetry)$' -count=1` — passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 ./tools/check/failpoint-go-test.sh pkg/meta/autoid -count=1` — passed.
-- The Ready re-run of `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --lib cluster_auto_id -- --test-threads=1` was blocked before test execution by five pre-existing `FieldType::default()` compile errors in `rust/crates/tidb-exec/src/auto_pre_split.rs` (lines 367-382), outside this Go-only batch. The earlier owner run had 8 passing tests; no Rust files changed here.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --lib cluster_auto_id -- --test-threads=1` — passed (10 tests, including source-base refresh, destination rebase, same-binding no-op, and rollback-on-error transfer cases).
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
 - `git diff --check` — passed after the code and documentation edits.
