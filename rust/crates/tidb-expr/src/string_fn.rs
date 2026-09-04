@@ -1164,6 +1164,63 @@ pub(crate) fn make_set(vals: &[Datum]) -> Result<Datum, EvalError> {
     }
     Ok(Datum::new_string(parts.join(",")))
 }
+/// Go `EXPORT_SET(bits, on, off[, separator[, number_of_bits]])`
+/// (`builtin_string.go:3403`/`:3434-3542`): bit 0 first, `separator`
+/// between entries. The three-argument form uses `,` and 64 bits; the
+/// four-argument form uses the given separator with 64 bits; the
+/// five-argument form clamps a `number_of_bits` outside 0..=64 to 64. Any
+/// `NULL` argument yields `NULL`.
+pub(crate) fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
+    if !(3..=5).contains(&vals.len()) {
+        return Err(EvalError::Unsupported("bad EXPORT_SET arguments"));
+    }
+    if vals.iter().any(|v| matches!(v, Datum::Null)) {
+        return Ok(Datum::Null);
+    }
+    let bits = crate::arg_eval_type::eval_int(&vals[0])?.unwrap_or(0);
+    let Some(on) = crate::arg_eval_type::eval_string(&vals[1])? else {
+        return Ok(Datum::Null);
+    };
+    let Some(off) = crate::arg_eval_type::eval_string(&vals[2])? else {
+        return Ok(Datum::Null);
+    };
+    let on = String::from_utf8_lossy(&on).into_owned();
+    let off = String::from_utf8_lossy(&off).into_owned();
+    let (separator, number_of_bits) = match vals.len() {
+        3 => (",".to_owned(), 64),
+        4 => {
+            let Some(separator) = crate::arg_eval_type::eval_string(&vals[3])? else {
+                return Ok(Datum::Null);
+            };
+            (String::from_utf8_lossy(&separator).into_owned(), 64)
+        }
+        _ => {
+            let Some(separator) = crate::arg_eval_type::eval_string(&vals[3])? else {
+                return Ok(Datum::Null);
+            };
+            let separator = String::from_utf8_lossy(&separator).into_owned();
+            let number = crate::arg_eval_type::eval_int(&vals[4])?.unwrap_or(64);
+            let number_of_bits = if !(0..=64).contains(&number) {
+                64
+            } else {
+                number
+            };
+            (separator, number_of_bits)
+        }
+    };
+    let mut result = String::new();
+    for i in 0..number_of_bits {
+        if bits & (1 << i) > 0 {
+            result.push_str(&on);
+        } else {
+            result.push_str(&off);
+        }
+        if i < number_of_bits - 1 {
+            result.push_str(&separator);
+        }
+    }
+    Ok(Datum::new_string(result))
+}
 
 /// `FROM_BASE64(str)`: inverse of [`to_base64`], ported from
 /// `builtinFromBase64Sig.evalString` in `pkg/expression/builtin_string.go`.
@@ -2085,5 +2142,76 @@ mod hex_bit_column_tests {
             hex(&[Datum::BinaryLiteral(BinaryLiteral::from(vec![0x00, 0x41]))]).unwrap(),
             Datum::new_string("0041".to_owned())
         );
+    }
+}
+
+#[cfg(test)]
+mod export_set_tests {
+    use super::*;
+
+    fn d(s: &str) -> Datum {
+        Datum::new_string(s.to_string())
+    }
+
+    #[test]
+    fn export_set_matches_go_bit_order_and_arity_forms() {
+        // MySQL doc example: bits 0 and 2 set within 4 bits → Y,N,Y,N.
+        assert_eq!(
+            export_set(&[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(4)]).unwrap(),
+            d("Y,N,Y,N")
+        );
+        // Bit 0 first: 6 = 0b110 within 10 bits.
+        assert_eq!(
+            export_set(&[Datum::Int(6), d("1"), d("0"), d(","), Datum::Int(10)]).unwrap(),
+            d("0,1,1,0,0,0,0,0,0,0")
+        );
+        // Three-argument form: `,` separator, 64 bits (bits 0 and 3 set).
+        let three = export_set(&[Datum::Int(9), d("Y"), d("N")]).unwrap();
+        eprintln!("PROBE three: {:?}", three);
+        assert_eq!(three, d(&format!("Y,N,N,Y{}", ",N".repeat(60))));
+        // Four-argument form: the custom separator with 64 bits.
+        let expected_four = format!("Y@N@N@Y{}", "@N".repeat(60));
+        assert_eq!(
+            export_set(&[Datum::Int(9), d("Y"), d("N"), d("@")]).unwrap(),
+            d(&expected_four)
+        );
+        // Five-argument form: a negative or oversized number_of_bits clamps
+        // to 64; zero yields the empty string.
+        assert_eq!(
+            export_set(&[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(100)]).unwrap(),
+            d(&format!("Y,N,Y,N{}", ",N".repeat(60)))
+        );
+        assert_eq!(
+            export_set(&[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(0)]).unwrap(),
+            d("")
+        );
+    }
+
+    #[test]
+    fn export_set_null_arguments_propagate_like_go() {
+        for args in [
+            vec![Datum::Null, d("Y"), d("N")],
+            vec![Datum::Int(5), Datum::Null, d("N")],
+            vec![Datum::Int(5), d("Y"), Datum::Null],
+            vec![Datum::Int(5), d("Y"), d("N"), Datum::Null],
+            vec![Datum::Int(5), d("Y"), d("N"), d(","), Datum::Null],
+        ] {
+            assert_eq!(
+                export_set(&args).unwrap(),
+                Datum::Null,
+                "any NULL argument yields NULL"
+            );
+        }
+    }
+
+    #[test]
+    fn export_set_is_reachable_through_the_values_dispatch() {
+        let result = crate::func::eval_func_values(
+            "EXPORT_SET",
+            &[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(4)],
+            &crate::context::NoColumns,
+        );
+        assert!(result.is_some(), "the dispatch must own EXPORT_SET");
+        assert_eq!(result.unwrap().unwrap(), d("Y,N,Y,N"));
     }
 }

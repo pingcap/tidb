@@ -214,6 +214,13 @@ pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
         // `for i := 1; i < length; i++ { argTps[i] = types.ETString }`
         // (makeSetFunctionClass).
         b"MAKE_SET" => 1 << 0,
+        // `builtin_string.go:3368-3375` `argTps = append(argTps,
+        // types.ETInt, types.ETString, types.ETString)` then optionally
+        // `types.ETString` and `types.ETInt` (exportSetFunctionClass) --
+        // the SELECTOR (bits) is argument 0 and, in the five-argument
+        // form, `number_of_bits` is argument 4. A four-argument call
+        // ignores bit 4 because the mask is read over the actual args.
+        b"EXPORT_SET" => (1 << 0) | (1 << 4),
         // `builtin_string.go:1503-1506` `argTps := []types.EvalType{
         // types.ETString, types.ETString}` then `if hasStartPos { argTps =
         // append(argTps, types.ETInt) }` (locateFunctionClass) -- the

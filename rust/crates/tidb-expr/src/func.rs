@@ -21,9 +21,9 @@ use crate::eval_in;
 use crate::row::row_compare;
 use crate::string_fn::{
     ascii, bin, bit_count, bit_length, case_convert, char_func_with_context, concat_with_context,
-    concat_ws_with_context, elt, field, format_num, from_base64, hex, locate, locate_collation,
-    make_set, oct, ord, quote, replace, reverse, str_insert, str_take, strcmp, substring,
-    substring_index, unhex,
+    concat_ws_with_context, elt, export_set, field, format_num, from_base64, hex, locate,
+    locate_collation, make_set, oct, ord, quote, replace, reverse, str_insert, str_take, strcmp,
+    substring, substring_index, unhex,
 };
 use crate::string_packet::{pad, repeat, space, to_base64};
 use crate::time_fn::calendar::{date_add, date_diff, date_format, date_part, from_days, time_part};
@@ -589,6 +589,7 @@ pub(crate) fn eval_func_values(
         "BIT_LENGTH" => bit_length(vals),
         "FIELD" if vals.len() >= 2 => field(vals, ctx),
         "ELT" if vals.len() >= 2 => elt(vals),
+        "EXPORT_SET" => export_set(vals),
         "CONCAT_WS" if vals.len() >= 2 => concat_ws_with_context(vals, ctx),
         "SUBSTRING_INDEX" if vals.len() == 3 => substring_index(vals),
         // The parser renames `INSERT(...)` to `INSERT_FUNC` to avoid the
