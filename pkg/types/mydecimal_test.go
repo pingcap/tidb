@@ -702,6 +702,31 @@ func TestMulMyDecimal(t *testing.T) {
 	}
 }
 
+func TestMulMyDecimalTrailingZeroPrecision(t *testing.T) {
+	tests := []struct {
+		factor string
+		mulErr error
+	}{
+		{"41.18903250000", ErrTruncated},
+		{"41.1890325000", nil},
+	}
+
+	for _, tt := range tests {
+		var left, factor, right, partial MyDecimal
+		require.NoError(t, left.FromString([]byte("119.00000000")))
+		require.NoError(t, factor.FromString([]byte(tt.factor)))
+		require.NoError(t, right.FromString([]byte("0.1402072262804424940061410765110833812375")))
+		require.NoError(t, DecimalMul(&left, &factor, &partial))
+
+		for _, operands := range [][2]*MyDecimal{{&partial, &right}, {&right, &partial}} {
+			var product, rounded MyDecimal
+			require.Equal(t, tt.mulErr, DecimalMul(operands[0], operands[1], &product))
+			require.NoError(t, product.Round(&rounded, 2, ModeHalfUp))
+			require.Equal(t, "687.23", string(rounded.ToString()))
+		}
+	}
+}
+
 func TestDivModMyDecimal(t *testing.T) {
 	type tcase struct {
 		a      string
