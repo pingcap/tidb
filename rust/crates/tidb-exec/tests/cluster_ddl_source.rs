@@ -6132,6 +6132,39 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     assert!(matches!(error, DdlPlanError::Encode(ref message)
         if message.contains("initial-build data movement")));
 
+    // Simulate the data build: write test rows into the view table (the real
+    // caller would execute the REPLACE INTO ... SELECT through a session).
+    let catalog_build = load_cluster_catalog(&mut store).expect("catalog loads");
+    let build_db = catalog_build
+        .databases
+        .iter()
+        .find(|db| db.info.name.original() == "u6")
+        .expect("u6 exists");
+    let view_meta = build_db
+        .tables
+        .iter()
+        .find(|t| t.name.original() == "mv")
+        .expect("the view exists after phase 1")
+        .clone_like_go();
+    let build_rows: Vec<Vec<tidb_datatype::Datum>> = vec![
+        vec![tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(1)],
+        vec![tidb_datatype::Datum::Int(2), tidb_datatype::Datum::Int(1)],
+    ];
+    for row in &build_rows {
+        let mut values = tidb_exec::system_row_write::RowValues::new();
+        for (offset, datum) in row.iter().enumerate() {
+            let col = view_info_columns(&view_meta, offset);
+            values.insert(col, datum.clone());
+        }
+        let mutations = tidb_exec::system_row_write::store_clustered_row(
+            &view_meta,
+            None,
+            &values,
+        )
+        .expect("the build row encodes");
+        apply_mutations(&mut store, &mutations);
+    }
+
     // With the finished build's read TS, the completion transaction records
     // the refresh row, marks the view Ready, and finishes the job.
     let step = plan_persisted_materialized_view_create_job_step(
@@ -6323,6 +6356,18 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         .expect("the rolled-back job is in history");
     assert_eq!(finished.state, JobState::ROLLBACK_DONE);
 }
+
+/// Looks up the column ID at the given offset in the table.
+fn view_info_columns(table: &tidb_model::TableInfo, offset: usize) -> i64 {
+    table
+        .columns
+        .iter_deref()
+        .nth(offset)
+        .map(|c| c.read().id)
+        .expect("column exists at offset")
+}
+
+/// Looks up the column ID at the given offset in the table.
 
 /// Go `TestCreateMaterializedViewLogPreservesTextColumnTypes` (master
 /// `94a9cbedab`): TEXT columns in the log copy keep their declared type but
