@@ -217,6 +217,8 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		// TODO: Consider batching or chunking the refresh and purge cleanup
+		// statements when dropping a database with many materialized views.
 		for _, tblInfo := range tables {
 			if tblInfo.MaterializedView != nil {
 				if err = w.deleteCreateMaterializedViewRefreshInfo(jobCtx, tblInfo.ID); err != nil {

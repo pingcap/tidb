@@ -73,3 +73,66 @@ func TestUpdateMaterializedViewBaseInfoOnCreateMissingBaseTable(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func TestUpdateMaterializedViewBaseInfoOnDropPropagatesGetTableError(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	err = kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		job := &model.Job{SchemaID: 1}
+		droppingTable := &model.TableInfo{
+			ID: 2,
+			MaterializedView: &model.MaterializedViewInfo{
+				BaseTableIDs: []int64{3},
+			},
+		}
+
+		_, err := updateMaterializedViewBaseInfoOnDrop(&jobContext{metaMut: metaMut}, job, droppingTable)
+		require.Error(t, err)
+		require.True(t, meta.ErrDBNotExists.Equal(err))
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestUpdateMaterializedViewBaseInfoOnDropWithoutBaseTables(t *testing.T) {
+	droppingTable := &model.TableInfo{
+		ID:               2,
+		MaterializedView: &model.MaterializedViewInfo{},
+	}
+
+	extraInfos, err := updateMaterializedViewBaseInfoOnDrop(&jobContext{}, &model.Job{TableID: droppingTable.ID}, droppingTable)
+	require.NoError(t, err)
+	require.Empty(t, extraInfos)
+}
+
+func TestBuildDropTableInvolvingSchemaInfo(t *testing.T) {
+	base1 := &model.TableInfo{ID: 1, Name: ast.NewCIStr("base1")}
+	base2 := &model.TableInfo{ID: 2, Name: ast.NewCIStr("base2")}
+	mv := &model.TableInfo{
+		ID:   3,
+		Name: ast.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{base1.ID, base2.ID},
+		},
+	}
+	mlog := &model.TableInfo{
+		ID:   4,
+		Name: ast.NewCIStr("$mlog$base1"),
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: base1.ID,
+		},
+	}
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base1, base2, mv, mlog})
+
+	require.Equal(t, []model.InvolvingSchemaInfo{
+		{Database: "test", Table: "mv"},
+		{Database: "test", Table: "base1"},
+		{Database: "test", Table: "base2"},
+	}, buildDropTableInvolvingSchemaInfo(context.Background(), is, "test", mv))
+	require.Equal(t, []model.InvolvingSchemaInfo{
+		{Database: "test", Table: "$mlog$base1"},
+		{Database: "test", Table: "base1"},
+	}, buildDropTableInvolvingSchemaInfo(context.Background(), is, "test", mlog))
+}
