@@ -1797,13 +1797,21 @@ func (m *MemArbitrator) doReclaimNonBlockingTasks() {
 }
 
 func (m *MemArbitrator) doReclaimByWorkMode(entry *rootPoolEntry, reclaimedBytes int64) {
-	waitAverse := entry.ctx.waitAverse
-	m.doReclaimNonBlockingTasks()
-	// entry's ctx may have been modified
-	if waitAverse {
-		return
-	}
-	if m.execMu.mode == ArbitratorModePriority {
+	if m.execMu.mode == ArbitratorModeStandard || entry.ctx.waitAverse {
+		if ctx := entry.ctx.Load(); ctx.available() {
+			reason := ArbitratorStandardCancel
+			if entry.ctx.waitAverse {
+				reason = ArbitratorWaitAverseCancel
+				m.execMetrics.Cancel.WaitAverse++
+			} else {
+				m.execMetrics.Cancel.StandardMode++
+			}
+			ctx.stop(reason)
+			if m.removeTask(entry) {
+				entry.windUp(0, ArbitrateFail)
+			}
+		}
+	} else if m.execMu.mode == ArbitratorModePriority {
 		m.doReclaimMemByPriority(entry, entry.request.quota-reclaimedBytes)
 	}
 }
@@ -2849,19 +2857,7 @@ func (m *MemArbitrator) handleMemRisk() {
 	memToReclaim := m.heapController.memInuse.Load() - m.memRisk()
 
 	m.intoOOMRisk()
-
-	newKillNum, _ := m.killTopnEntry(memToReclaim)
-	underKillNum := 0
-	for _, entry := range m.underKill.entries {
-		if !entry.arbitratorMu.underKill.fail {
-			underKillNum++
-		}
-	}
-
-	if newKillNum != 0 {
-		m.heapController.memRisk.startTime.t = m.innerTime() // restart oom check
-		m.heapController.memRisk.startTime.unixMilli.Store(m.heapController.memRisk.startTime.t.UnixMilli())
-	}
+	m.killTopnEntry(memToReclaim)
 }
 
 func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed int64) {
@@ -2914,6 +2910,37 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 			}
 		}
 	}
+
+	if reclaimed >= required {
+		return
+	}
+
+	m.entryMap.contextCache.Range(func(_, value any) bool {
+		e := value.(*rootPoolEntry)
+		if e.notRunning() {
+			return true
+		}
+
+		if ctx := e.ctx.Load(); ctx.available() {
+			memoryUsed := ctx.arbitrateHelper.MemUsage().HeapInuse
+			if memoryUsed <= 0 {
+				return true
+			}
+			m.addUnderKill(e, memoryUsed, m.innerTime())
+			reclaimed += memoryUsed
+			ctx.stop(ArbitratorOOMRiskKill)
+			newKillNum++
+			m.execMetrics.Risk.OOMKill[e.ctx.memPriority]++
+			if m.removeTask(e) {
+				e.windUp(0, ArbitrateFail)
+			}
+
+			if reclaimed >= required {
+				return false
+			}
+		}
+		return true
+	})
 
 	return
 }
