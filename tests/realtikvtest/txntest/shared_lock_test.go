@@ -406,6 +406,119 @@ func TestSharedLockUpgrade(t *testing.T) {
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
+	t.Run("upgrade_multiple_shared_locks_in_one_statement", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+		enableSharedLockUpgrade(tk)
+		prepareSharedLockUpgradeTables(tk, "")
+		tk.MustExec("insert into parent values (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0), (10, 0)")
+
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into child values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10)")
+		tk.MustExec("update parent set v = v + 1 where id between 1 and 10")
+		tk.MustExec("commit")
+
+		tk.MustQuery("select * from parent order by id").Check(testkit.Rows(
+			"1 1", "2 1", "3 1", "4 1", "5 1", "6 1", "7 1", "8 1", "9 1", "10 1",
+		))
+		tk.MustQuery("select * from child order by id").Check(testkit.Rows(
+			"1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "10 10",
+		))
+		tk.MustExec("admin check table parent")
+		tk.MustExec("admin check table child")
+	})
+
+	t.Run("upgrade_multiple_shared_locks_in_separate_statements", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+		enableSharedLockUpgrade(tk)
+		prepareSharedLockUpgradeTables(tk, "")
+		tk.MustExec("insert into parent values (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0), (10, 0)")
+
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into child values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10)")
+		for id := 1; id <= 10; id++ {
+			tk.MustExec(fmt.Sprintf("update parent set v = v + 1 where id = %d", id))
+		}
+		tk.MustExec("commit")
+
+		tk.MustQuery("select * from parent order by id").Check(testkit.Rows(
+			"1 1", "2 1", "3 1", "4 1", "5 1", "6 1", "7 1", "8 1", "9 1", "10 1",
+		))
+		tk.MustQuery("select * from child order by id").Check(testkit.Rows(
+			"1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "10 10",
+		))
+		tk.MustExec("admin check table parent")
+		tk.MustExec("admin check table child")
+	})
+
+	t.Run("upgrade_multiple_shared_locks_waits_for_shared_holder", func(t *testing.T) {
+		testCases := []struct {
+			name              string
+			releaseSQL        string
+			expectedChildRows [][]any
+		}{
+			{
+				name:       "holder_commits",
+				releaseSQL: "commit",
+				expectedChildRows: testkit.Rows(
+					"1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "10 10", "11 5",
+				),
+			},
+			{
+				name:       "holder_rolls_back",
+				releaseSQL: "rollback",
+				expectedChildRows: testkit.Rows(
+					"1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "10 10",
+				),
+			},
+		}
+
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				upgrader := testkit.NewTestKit(t, store)
+				holder := testkit.NewTestKit(t, store)
+				for _, tk := range []*testkit.TestKit{upgrader, holder} {
+					tk.MustExec("use test")
+					tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+				}
+				enableSharedLockUpgrade(upgrader, holder)
+				prepareSharedLockUpgradeTables(upgrader, "")
+				upgrader.MustExec("insert into parent values (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0), (10, 0)")
+				parentTableID := external.GetTableByName(t, upgrader, "test", "parent").Meta().ID
+				blockedKey := tablecodec.EncodeRowKeyWithHandle(parentTableID, kv.IntHandle(5))
+
+				holder.MustExec("begin pessimistic")
+				holder.MustExec("insert into child values (11, 5)")
+
+				upgrader.MustExec("begin pessimistic")
+				upgraderTxn, err := upgrader.Session().Txn(false)
+				require.NoError(t, err)
+				upgrader.MustExec("insert into child values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10)")
+
+				upgradeDone := make(chan error, 1)
+				go func() {
+					upgradeDone <- upgrader.ExecToErr("update parent set v = v + 1 where id between 1 and 10")
+				}()
+
+				requireTxnLockAcquiring(t, upgrader)
+				requireStorageLockWait(t, store, upgraderTxn.StartTS(), blockedKey)
+				holder.MustExec(testCase.releaseSQL)
+				require.NoError(t, <-upgradeDone)
+				upgrader.MustExec("commit")
+
+				upgrader.MustQuery("select * from parent order by id").Check(testkit.Rows(
+					"1 1", "2 1", "3 1", "4 1", "5 1", "6 1", "7 1", "8 1", "9 1", "10 1",
+				))
+				upgrader.MustQuery("select * from child order by id").Check(testCase.expectedChildRows)
+				upgrader.MustExec("admin check table parent")
+				upgrader.MustExec("admin check table child")
+			})
+		}
+	})
+
 	t.Run("shared_lock_upgrade_waits_for_last_holder", func(t *testing.T) {
 		tk1 := testkit.NewTestKit(t, store)
 		tk2 := testkit.NewTestKit(t, store)
