@@ -17,6 +17,7 @@
 //! maintenance, and the ALTER-path purge-meta validation.
 
 use tidb_ast::MLogPurgeClause;
+use tidb_model::TableInfo;
 
 /// Go `BuildMViewImportIntoOptions` (`materialized_view.go:335`): the WITH
 /// options shared by MV IMPORT INTO execution. `disable_precheck` always
@@ -42,6 +43,74 @@ pub fn build_m_view_import_into_options(
 /// interpolated into the option string.
 fn escape_sql(value: &str) -> String {
     value.replace('\'', "''")
+}
+
+/// Go `buildCreateMaterializedViewInsertSQL` (`mview_worker.go:493`): the
+/// REPLACE INTO statement the insert-path build executes to populate the
+/// view from its definition. Errors when the view metadata or its
+/// `SQLContent` is missing.
+pub fn build_create_materialized_view_insert_sql(
+    schema_name: &str,
+    view: &TableInfo,
+) -> Result<String, String> {
+    let sql_content = sql_content_of(view)?;
+    Ok(format!(
+        "REPLACE INTO {}.{} {}",
+        quote_name(schema_name),
+        quote_name(&view.name.original()),
+        sql_content
+    ))
+}
+
+/// Go `buildCreateMaterializedViewImportSQL` (`mview_worker.go:456`): the
+/// IMPORT INTO statement the import-path build executes (TiKV stores).
+pub fn build_create_materialized_view_import_sql(
+    schema_name: &str,
+    view: &TableInfo,
+    thread_cnt: i64,
+    disk_quota: &str,
+) -> Result<String, String> {
+    let sql_content = sql_content_of(view)?;
+    let options = build_m_view_import_into_options(thread_cnt, disk_quota);
+    Ok(format!(
+        "IMPORT INTO {}.{} FROM ({}) WITH {}",
+        quote_name(schema_name),
+        quote_name(&view.name.original()),
+        sql_content,
+        options.join(", ")
+    ))
+}
+
+/// Go `hasCreateMaterializedViewBuildRows`'s probe: a one-row existence
+/// check the phase-2 tick runs to detect residual build rows from a crashed
+/// prior attempt.
+#[must_use]
+pub fn build_create_materialized_view_build_rows_check_sql(
+    schema_name: &str,
+    mview_name: &str,
+) -> String {
+    format!(
+        "SELECT 1 FROM {}.{} LIMIT 1",
+        quote_name(schema_name),
+        quote_name(mview_name)
+    )
+}
+
+fn sql_content_of(view: &TableInfo) -> Result<String, String> {
+    let meta = view
+        .materialized_view
+        .as_ref()
+        .ok_or("create materialized view: invalid select sql".to_owned())?;
+    let content = meta.read().sql_content.clone();
+    if content.is_empty() {
+        return Err("create materialized view: invalid select sql".to_owned());
+    }
+    Ok(content)
+}
+
+/// Go `sqlescape.MustEscapeSQL("%n", name)`'s back-quote wrapping.
+fn quote_name(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
 }
 
 /// Go `buildMLogPurgeMeta` (`materialized_view.go:692`): the ALTER
@@ -81,6 +150,7 @@ pub fn build_m_log_purge_meta(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_model::GoShared;
 
     #[test]
     fn import_into_options_match_gos_order_and_escaping() {
@@ -117,6 +187,53 @@ mod tests {
             }
         }
         None
+    }
+
+    #[test]
+    fn insert_sql_matches_gos_replace_into_shape() {
+        let mut view = TableInfo::default();
+        view.name = tidb_ast::CiString::new("mv");
+        let mut meta = tidb_model::MaterializedViewInfo::default();
+        meta.sql_content = "SELECT `id`, count(1) FROM `mv_base` GROUP BY `id`".to_owned();
+        view.materialized_view = Some(GoShared::new(meta));
+
+        let sql = build_create_materialized_view_insert_sql("u6", &view).expect("the SQL builds");
+        assert_eq!(
+            sql,
+            "REPLACE INTO `u6`.`mv` SELECT `id`, count(1) FROM `mv_base` GROUP BY `id`"
+        );
+    }
+
+    #[test]
+    fn import_sql_matches_gos_import_into_shape() {
+        let mut view = TableInfo::default();
+        view.name = tidb_ast::CiString::new("mv");
+        let mut meta = tidb_model::MaterializedViewInfo::default();
+        meta.sql_content = "SELECT `id` FROM `mv_base` GROUP BY `id`".to_owned();
+        view.materialized_view = Some(GoShared::new(meta));
+
+        let sql = build_create_materialized_view_import_sql("u6", &view, 4, "50GiB")
+            .expect("the SQL builds");
+        assert_eq!(
+            sql,
+            "IMPORT INTO `u6`.`mv` FROM (SELECT `id` FROM `mv_base` GROUP BY `id`) WITH disable_precheck, thread=4, disk_quota='50GiB'"
+        );
+    }
+
+    #[test]
+    fn missing_sql_content_refuses() {
+        let view = TableInfo::default();
+        let error = build_create_materialized_view_insert_sql("u6", &view)
+            .expect_err("no metadata refuses");
+        assert_eq!(error, "create materialized view: invalid select sql");
+    }
+
+    #[test]
+    fn build_rows_check_sql_matches_go() {
+        assert_eq!(
+            build_create_materialized_view_build_rows_check_sql("u6", "mv"),
+            "SELECT 1 FROM `u6`.`mv` LIMIT 1"
+        );
     }
 
     #[test]
