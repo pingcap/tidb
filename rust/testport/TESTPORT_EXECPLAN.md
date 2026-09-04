@@ -371,6 +371,15 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `[try again later]`; the focused code/state/message regression and Ready
   results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
 
+- 2026-09-04 (T14, `pkg/types` DST-adjusted convert metadata): closed the
+  type-metadata reversion Go's `Time.Convert` DST branch performs —
+  `Time{FromGoTime(tAdj)}` zeroes the type and fsp, so the adjusted value
+  reverts to DATETIME/fsp 0 (time.go:467). `convert_kind` now applies that
+  reversion after the adjusted-instant substitution; the fail-before
+  regression pins kind DateTime + fsp 0 + the adjusted rendering over the
+  2018 US DST gap. Full tidb-datatype sweep 474/474. Receipt:
+  `receipts/types_time_dst_metadata.md`; audit entry T14 marked FIXED.
+
 - 2026-09-04 (hybrid-type cast push, `builtin_cast.go:2898`): ported
   `TryPushCastIntoControlFunctionForHybridType` — a numeric-target cast over
   IF/CASE/ELT pushes INTO the branches when one is a hybrid type (Enum/Set,

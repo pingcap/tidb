@@ -384,6 +384,11 @@ impl Time {
             {
                 converted.core =
                     core_time_from_datetime(converted.core.adjusted_datetime(timezone)?);
+                // Go returns `Time{FromGoTime(tAdj)}` (time.go:467): the
+                // composite literal zeroes the type and fsp fields, so the
+                // adjusted value reverts to DATETIME with fsp 0.
+                converted.set_kind(TimeType::DateTime);
+                converted.set_fsp(0)?;
                 converted.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
                 Ok((converted, true))
             }
@@ -1041,6 +1046,28 @@ mod tests {
             .unwrap();
         assert!(adjusted);
         assert_eq!(timestamp.to_string(), "2018-03-11 03:00:00");
+    }
+
+    /// Go `Convert`'s DST-transition branch returns
+    /// `Time{FromGoTime(tAdj)}` (time.go:467) whose composite literal zeroes
+    /// the type and fsp fields: the adjusted value reverts to DATETIME with
+    /// fsp 0, regardless of the source fsp.
+    #[test]
+    fn dst_adjusted_convert_reverts_to_datetime_with_zero_fsp() {
+        let los: chrono_tz::Tz = "America/Los_Angeles".parse().unwrap();
+        let source = Time::new(
+            CoreTime::from_date(2018, 3, 11, 2, 0, 16, 567_000),
+            TimeType::DateTime,
+            3,
+        )
+        .unwrap();
+        let (converted, adjusted) = source
+            .convert_kind(TimeType::Timestamp, false, false, &los)
+            .unwrap();
+        assert!(adjusted);
+        assert_eq!(converted.kind(), TimeType::DateTime);
+        assert_eq!(converted.fsp(), 0);
+        assert_eq!(converted.to_string(), "2018-03-11 03:00:00");
     }
 
     /// Complete translation of `pkg/types/time_test.go::TestConvert`.

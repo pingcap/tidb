@@ -605,10 +605,13 @@ The TIMESTAMP ceiling and the other structural rows below remain separate.
 
 ## T14–T16 (rank 4 / structural)
 
-- **T14** Go's DST-adjusted `Convert` returns `Time{FromGoTime(tAdj)}`
-  (`time.go:467`), whose low 4 bits are zero, so the result's type reverts to
-  DATETIME and fsp to 0. Rust `convert_kind` (`mysql_time.rs:355-362`) keeps
-  `Timestamp` and the fsp. Same calendar value, different type metadata.
+- **T14 (FIXED 2026-09-04)** Go's DST-adjusted `Convert` returns
+  `Time{FromGoTime(tAdj)}` (`time.go:467`), whose low 4 bits are zero, so the
+  result's type reverts to DATETIME and fsp to 0. `convert_kind` now applies
+  the same reversion after the adjusted-instant substitution (kind →
+  DateTime, fsp → 0); pinned by
+  `mysql_time::tests::dst_adjusted_convert_reverts_to_datetime_with_zero_fsp`
+  and recorded in `rust/testport/receipts/types_time_dst_metadata.md`.
 - **T15 (FIXED 2026-09-04)** `ToPackedUint` (`time.go:646-657`) never
   validates. Rust `Time::to_packed_uint` now performs the same direct bit pack;
   the strict `PackedTime::from_parts` constructor remains reserved for callers
