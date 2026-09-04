@@ -150,3 +150,42 @@ streams so the visitor itself cannot reintroduce a stack-overflow path.
 Validation for this follow-up is recorded in the package batch: focused
 parser/hint/AST regressions, the full owner check and test suite, pinned Rust
 formatting baseline, `make lint`, and `git diff --check`.
+
+## Rust follow-up: parenthesized temporal `INTERVAL` expressions
+
+Go master commit `5bdb1b6bd179eef2d2d2778eefc2e87e6f0c6ad1` adds dedicated
+`FunctionCallKeyword` productions for the ambiguous `INTERVAL` spelling. The
+complete root-package inventory above remains the owning-package evidence
+(33 artifacts and 64,892 lines at the pinned source); this follow-up audited
+the changed `parser.y` grammar, generated-parser impact, and the twelve new
+`TestBuiltin` rows in `parser_test.go` before touching Rust.
+
+Before the fix, Rust dispatched every `INTERVAL (` prefix to the generic
+function parser. That accepted `INTERVAL()`/`INTERVAL(1)` (Go rejects both)
+and rejected valid parenthesized temporal forms such as
+`INTERVAL (q - 1) QUARTER`, including their `DATE_ADD`/`DATE_SUB` and reverse
+operand rewrites. The parser now scans the balanced parenthesized value,
+tracks top-level commas, and selects the temporal `Expr::Interval` form only
+when a recognized time unit follows; comma-bearing forms continue through the
+scalar function path. The scalar path explicitly requires at least two
+arguments, matching Go's two-argument and variadic productions.
+
+The source-derived matrix in
+`tidb-parser/tests/parser_run_test_builtin_source.rs::test_builtin` now
+includes the exact Go rows for invalid zero/one-argument calls, two- and
+variadic scalar calls, arithmetic/date-function placement, nested `ROW`
+constructors, and the `MAKEDATE` composite expression. The focused regression
+failed before the parser change on `INTERVAL()` and on the parenthesized
+temporal row, and passes after it.
+
+Ready validation for this batch:
+
+```text
+cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-parser --test all test_builtin -- --nocapture: PASS
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check: PASS
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint: PASS
+git diff --check: PASS
+```
+
+The full `tidb-parser --test all` Ready run is the next gate before the
+package batch is committed; generated Go parser artifacts remain untouched.

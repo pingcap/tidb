@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/parser` parenthesized temporal intervals): aligned the
+  hand-written Rust expression parser with Go master `5bdb1b6bd1`. The
+  keyword-form `INTERVAL (expr) UNIT` now wins over the scalar
+  `INTERVAL(expr, ...)` function only when the balanced value has no
+  top-level comma and is followed by a recognized time unit; zero- and
+  one-argument scalar `INTERVAL` calls are rejected like Go. The complete
+  Go-root inventory and the source-derived builtin regression matrix are
+  recorded in `receipts/parser_root.md`.
 - 2026-09-05 (`pkg/executor/sortexec` serial sort cancellation polling):
   aligned the serial `SortPartition` comparator and spill writer with Go's
   10,240-comparison and post-spill-chunk SQL-killer checkpoints. The focused

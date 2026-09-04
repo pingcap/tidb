@@ -23,6 +23,41 @@
 use super::*;
 
 impl Parser {
+    /// Distinguishes `INTERVAL (expr) UNIT` from the unrelated scalar
+    /// `INTERVAL(expr, ...)` function.  Go's grammar resolves this ambiguity
+    /// with dedicated productions; the hand-written parser must look through
+    /// the balanced parentheses and inspect the following unit token.
+    pub(crate) fn interval_paren_is_temporal(&self) -> bool {
+        if self.peek_n(1).kind != TokenKind::Op || self.peek_n(1).text != "(" {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut has_top_level_comma = false;
+        let mut index = self.pos + 1;
+        while let Some(token) = self.toks.get(index) {
+            if token.kind == TokenKind::Op {
+                match token.text.as_str() {
+                    "(" => depth += 1,
+                    ")" => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            let Some(unit) = self.toks.get(index + 1) else {
+                                return false;
+                            };
+                            return !has_top_level_comma
+                                && unit.kind == TokenKind::Keyword
+                                && is_interval_unit(unit.text.as_str());
+                        }
+                    }
+                    "," if depth == 1 => has_top_level_comma = true,
+                    _ => {}
+                }
+            }
+            index += 1;
+        }
+        false
+    }
+
     /// Parses `INTERVAL value unit`. The unit keyword naturally stops the
     /// value's own expression parse (it isn't a recognized infix operator),
     /// so no special precedence handling is needed to separate the two.
@@ -733,6 +768,14 @@ impl Parser {
             }
         }
         self.expect_op(")")?;
+        // The keyword-form INTERVAL scalar function has no zero- or
+        // one-argument production in TiDB's grammar.  Keep the generic
+        // function path for its two-or-more argument form, but reject the
+        // otherwise-valid generic fallback for `INTERVAL()` and
+        // `INTERVAL(value)` so those calls remain syntax errors like Go.
+        if name.eq_ignore_ascii_case("INTERVAL") && args.len() < 2 {
+            return Err(self.err_here("INTERVAL requires at least two arguments"));
+        }
         if matches!(name.to_ascii_uppercase().as_str(), "DATE_ADD" | "DATE_SUB")
             && (args.len() != 2 || !matches!(args[1], Expr::Interval { .. }))
         {
@@ -850,6 +893,40 @@ pub(super) fn is_scalar_kw_func(name: &str) -> bool {
             // {CHAR|BINARY}(N)` clause needs a genuinely different parse
             // shape this generic comma-arg path can't produce.)
             | "COLLATION"
+    )
+}
+
+fn is_interval_unit(unit: &str) -> bool {
+    matches!(
+        unit.to_ascii_uppercase().as_str(),
+        "MICROSECOND"
+            | "SECOND"
+            | "MINUTE"
+            | "HOUR"
+            | "DAY"
+            | "WEEK"
+            | "MONTH"
+            | "QUARTER"
+            | "YEAR"
+            | "SECOND_MICROSECOND"
+            | "MINUTE_MICROSECOND"
+            | "MINUTE_SECOND"
+            | "HOUR_MICROSECOND"
+            | "HOUR_SECOND"
+            | "HOUR_MINUTE"
+            | "DAY_MICROSECOND"
+            | "DAY_SECOND"
+            | "DAY_MINUTE"
+            | "DAY_HOUR"
+            | "YEAR_MONTH"
+            | "SQL_TSI_SECOND"
+            | "SQL_TSI_MINUTE"
+            | "SQL_TSI_HOUR"
+            | "SQL_TSI_DAY"
+            | "SQL_TSI_WEEK"
+            | "SQL_TSI_MONTH"
+            | "SQL_TSI_QUARTER"
+            | "SQL_TSI_YEAR"
     )
 }
 

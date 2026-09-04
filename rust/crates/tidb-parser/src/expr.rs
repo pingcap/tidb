@@ -660,21 +660,13 @@ impl Parser {
                 // by caller function name. The unit is any keyword token,
                 // captured as text; only some units are evaluated (see
                 // `tidb_expr::date_fn`).
-                // `INTERVAL(N, N1, N2, ...)` (immediately followed by `(`)
-                // is a totally unrelated GENERIC scalar function (an
-                // index-lookup among a sorted numeric list) — NOT
-                // `INTERVAL value unit`'s own date-arithmetic
-                // prefix-expression grammar at all. Read directly from
-                // `pkg/parser/expr_prefix_parser.go`'s
-                // `parsePrefixKeywordExpr` (`case interval:`): `if
-                // p.peekN(1).Tp != '(' { ...date-arith form... } else {
-                // return p.parseIdentOrFuncCall() }` — found via a
-                // restore-mismatch surfaced by adding `Expr::Row`'s own
-                // bare-paren-comma-list grammar, which had been silently
-                // absorbing `INTERVAL(...)`'s own argument list into
-                // `parse_interval`'s single `value` expression (previously
-                // a harmless `ParseError`, now a genuinely wrong parse
-                // without this check).
+                // `INTERVAL(N, N1, N2, ...)` is a totally unrelated generic
+                // scalar function (an index lookup among a sorted numeric
+                // list), while Go master also accepts a parenthesized
+                // temporal value (`INTERVAL (expr) UNIT`). The dedicated
+                // lookahead below resolves that grammar ambiguity before
+                // either parser consumes the opening parenthesis.
+                "INTERVAL" if self.interval_paren_is_temporal() => self.parse_interval(),
                 "INTERVAL"
                     if self.peek_n(1).kind == TokenKind::Op && self.peek_n(1).text == "(" =>
                 {
