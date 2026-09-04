@@ -360,19 +360,11 @@ pub fn overlaps_binary_json(
 
 /// Implements MySQL JSON_MERGE_PRESERVE.
 pub fn merge_binary_json(values: &[BinaryJSON]) -> Result<BinaryJSON, BinaryJSONError> {
-    let mut values = values
+    let values = values
         .iter()
         .map(BinaryJSON::to_node)
         .collect::<Result<Vec<_>, _>>()?;
-    let merged = if values.is_empty() {
-        JSONNode::Array(Vec::new())
-    } else {
-        let mut result = values.remove(0);
-        for value in values {
-            result = merge_preserve_node(result, value);
-        }
-        result
-    };
+    let merged = merge_binary_nodes(&values);
     BinaryJSON::from_node(&merged)
 }
 
@@ -776,33 +768,62 @@ fn nodes_equal(left: &JSONNode, right: &JSONNode) -> Result<bool, BinaryJSONErro
     Ok(compare_binary_json(&left, &right).is_eq())
 }
 
-fn merge_preserve_node(left: JSONNode, right: JSONNode) -> JSONNode {
-    match (left, right) {
-        (JSONNode::Object(mut left), JSONNode::Object(right)) => {
-            for (key, right) in right {
-                if let Some(index) = left.iter().position(|(name, _)| name == &key) {
-                    let (_, left_value) = left.remove(index);
-                    left.push((key, merge_preserve_node(left_value, right)));
-                } else {
-                    left.push((key, right));
-                }
-            }
-            JSONNode::Object(left)
-        }
-        (JSONNode::Array(mut left), JSONNode::Array(right)) => {
-            left.extend(right);
-            JSONNode::Array(left)
-        }
-        (JSONNode::Array(mut left), right) => {
-            left.push(right);
-            JSONNode::Array(left)
-        }
-        (left, JSONNode::Array(mut right)) => {
-            right.insert(0, left);
-            JSONNode::Array(right)
-        }
-        (left, right) => JSONNode::Array(vec![left, right]),
+/// Go `MergeBinaryJSON` groups each adjacent run of objects before flattening
+/// the remaining arrays. A left fold is observably different when an array
+/// interrupts two objects: the objects after that array still merge with each
+/// other, but never with the earlier array element.
+fn merge_binary_nodes(values: &[JSONNode]) -> JSONNode {
+    if values.is_empty() {
+        return JSONNode::Array(Vec::new());
     }
+
+    let mut results = Vec::with_capacity(values.len());
+    let mut index = 0;
+    while index < values.len() {
+        if matches!(values[index], JSONNode::Object(_)) {
+            let start = index;
+            while index < values.len() && matches!(values[index], JSONNode::Object(_)) {
+                index += 1;
+            }
+            results.push(merge_binary_objects(&values[start..index]));
+        } else {
+            results.push(values[index].clone());
+            index += 1;
+        }
+    }
+
+    if results.len() == 1 {
+        return results.pop().expect("one merge result");
+    }
+    let mut flattened = Vec::new();
+    for result in results {
+        match result {
+            JSONNode::Array(values) => flattened.extend(values),
+            value => flattened.push(value),
+        }
+    }
+    JSONNode::Array(flattened)
+}
+
+/// Go `mergeBinaryObject`: duplicate keys recursively use the same adjacent
+/// object/array grouping rules, and the final object is bytewise key-sorted.
+fn merge_binary_objects(objects: &[JSONNode]) -> JSONNode {
+    let mut entries: Vec<(String, JSONNode)> = Vec::new();
+    for object in objects {
+        let JSONNode::Object(values) = object else {
+            unreachable!("merge_binary_objects receives only objects");
+        };
+        for (key, value) in values {
+            if let Some(index) = entries.iter().position(|(name, _)| name == key) {
+                let previous = entries[index].1.clone();
+                entries[index].1 = merge_binary_nodes(&[previous, value.clone()]);
+            } else {
+                entries.push((key.clone(), value.clone()));
+            }
+        }
+    }
+    entries.sort_unstable_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+    JSONNode::Object(entries)
 }
 
 fn merge_patch_node(target: JSONNode, patch: JSONNode) -> JSONNode {
@@ -1329,6 +1350,10 @@ mod tests {
             (
                 vec![r#"{"comment":"1234"}"#, r#"{"comment":"abc"}"#],
                 r#"{"comment":["1234","abc"]}"#,
+            ),
+            (
+                vec!["[1]", r#"{"a":1}"#, r#"{"a":2}"#],
+                r#"[1,{"a":[1,2]}]"#,
             ),
         ] {
             let inputs = inputs.into_iter().map(json).collect::<Vec<_>>();

@@ -39,3 +39,11 @@ row-container failures, and 4 ignored tests; these are the documented macOS
 temporary-storage/concurrency failures. Strict clippy stopped on unrelated
 `tidb-mysql/src/consts.rs:117-120` `map_or_identity` diagnostics. Full details
 are in `rust/testport/receipts/chunk_a1_datum.md`.
+
+## JSON_MERGE_PRESERVE grouping batch
+
+The focused merge regression, serialized datatype owner profile (384 unit + 63
+generated/integration tests), owner compilation, formatting, and diff checks
+passed. Strict clippy remains blocked by the unrelated
+`tidb-mysql/src/consts.rs:117-120` `map_or_identity` diagnostics. Full command
+and risk details are in `rust/testport/receipts/json_merge_preserve.md`.

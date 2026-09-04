@@ -42,6 +42,12 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned Rust `tidb-datatype` `JSON_MERGE_PRESERVE` with Go's
+  adjacent-object grouping from the complete `pkg/types` JSON inventory.
+  `merge_binary_nodes` now groups object runs, recursively merges duplicate
+  keys, and flattens one array layer; the interrupted-object regression is
+  pinned in `receipts/json_merge_preserve.md`.
+
 - 2026-09-04: aligned the Rust `tidb-datatype` JSON text formatter with Go
   master's complete `pkg/types` JSON inventory (60 Go artifacts, 28,545 Go
   lines; 104 Rust artifacts, 51,114 Rust lines). Scalar values and object keys
@@ -5444,6 +5450,11 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- 2026-09-04: replace the Rust JSON merge left fold with Go's three-stage shape
+  (`MergeBinaryJSON` run grouping, recursive `mergeBinaryObject`, and one-level
+  `mergeBinaryArray` flattening). This preserves the existing `JSONNode` model
+  while restoring the source's behavior when arrays interrupt object runs.
+
 - Decision: share the existing Go-compatible float spelling helpers between
   the runtime and parser-driver default field-type owners. This keeps the
   source's `FormatFloat(..., 'f', -1, bits)` width contract in one place and
@@ -6545,6 +6556,12 @@ The JSON U+2028/U+2029 batch is bounded and executable: text rendering now
 matches Go's JSONP-safe separator escapes without changing binary storage. Its
 focused and owner validation are recorded in `receipts/json_u2028_escape.md`;
 the remaining JSON merge/invalid-byte boundaries remain separate follow-ups.
+
+The JSON_MERGE_PRESERVE batch is bounded and executable: interrupted object
+runs now produce Go's grouped duplicate-key result and array flattening. Its
+focused and owner validation are recorded in
+`receipts/json_merge_preserve.md`; invalid-byte and surrogate rendering remain
+separate follow-ups.
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state

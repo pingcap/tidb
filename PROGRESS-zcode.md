@@ -22,5 +22,11 @@
   `jsonMarshalStringTo`: scalar values and object keys now escape U+2028/U+2029
   as `\\u2028`/`\\u2029` while preserving all other `serde_json` behavior.
   Focused and full owner validation are recorded in
-  `rust/testport/receipts/json_u2028_escape.md`; the batch commit/push follows
-  pushed as commit `929dc85d5c` to `hparser-integration`.
+  `rust/testport/receipts/json_u2028_escape.md`; pushed as commit
+  `242d294f2c` to `hparser-integration`.
+
+- 2026-09-04: aligned Rust `tidb-datatype` `JSON_MERGE_PRESERVE` with Go's
+  adjacent-object grouping and one-level array flattening. The interrupted
+  object-run regression is recorded in
+  `rust/testport/receipts/json_merge_preserve.md`; pushed as commit
+  `4906026d51` to `hparser-integration`.

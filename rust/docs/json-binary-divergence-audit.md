@@ -28,7 +28,7 @@ records its results in a package receipt.
 divergences inside a working implementation, not gaps.
 
 Counts: **8 divergences found** (1 rank-1, 1 rank-2, 3 rank-3, 3 rank-4),
-**4 fixed** in this branch, **4 written up**. **27 areas verified equal.**
+**5 fixed** in this branch, **3 written up**. **27 areas verified equal.**
 
 ---
 
@@ -148,7 +148,7 @@ compare exactly; otherwise keep the epsilon.
 Fixed by replacing the helper with `autowraps_non_array`, a direct transcription
 of the Go type switch.
 
-### 4. `JSON_MERGE_PRESERVE` folds pairwise instead of grouping adjacent objects  — NOT FIXED
+### 4. `JSON_MERGE_PRESERVE` folds pairwise instead of grouping adjacent objects  — FIXED (2026-09-04)
 
 - Go: `pkg/types/json_binary_functions.go:984-1001` (`MergeBinaryJSON`) walks the
   argument list, and whenever it meets an object it takes the whole *run* of
@@ -173,10 +173,11 @@ both sides, and `JSON_MERGE_PRESERVE('{"a":1}','[2]','{"a":3}')` gives
 `[{"a": 1}, 2, {"a": 3}]` on both sides. The divergence needs an array to
 interrupt a run of two or more objects.
 
-Not fixed because restoring Go's shape is an algorithm swap, not a line edit,
-and its result cannot be checked here against even one document. The fix is a
-faithful port of `MergeBinaryJSON` + `getAdjacentObjects` + `mergeBinaryObject`
-onto `JSONNode`, replacing the fold in `merge_binary_json`.
+Fixed by faithfully porting Go's `MergeBinaryJSON` + `getAdjacentObjects` +
+`mergeBinaryObject` grouping onto `JSONNode`. Adjacent object runs merge their
+duplicate keys recursively, while the final result flattens only the adjacent
+array layer. The regression in `binary_json_ops::tests::test_binary_json_merge`
+pins the interrupted-object case from this finding.
 
 ### 5. Text output does not escape U+2028 / U+2029  — FIXED (2026-09-04)
 
