@@ -643,6 +643,38 @@ The owner `cargo check --all-targets`, workspace format check, and
 `git diff --check` are run before commit; existing strict-clippy diagnostics
 remain outside this bounded parser change.
 
+## Rust-only parity follow-up: field-type source display width
+
+Go's `FieldType.String` calls `CompactStr` using the process-wide
+`TiDBStrictIntegerDisplayWidth` switch. TiDB server startup sets that switch
+from `DeprecateIntegerDisplayWidth`, whose shipped default is strict
+(`pkg/config/config.go:1279`, `cmd/tidb-server/main.go:1154`). Rust's
+`FieldType::source_string` previously hardcoded `compact_str(false)`, so a
+BIGINT with `flen = 22` and `BINARY` rendered as `bigint(22) BINARY`.
+
+The formatter now passes `STRICT_INTEGER_DISPLAY_WIDTH`, producing Go's
+`bigint BINARY` spelling while leaving the explicit `compact_str(false)` API
+available for legacy callers. The focused regression
+`field_type_source::source_string_uses_strict_integer_display_width_default`
+asserts both branches.
+
+Ready validation (commands run from `rust/`):
+
+```text
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --lib --test field_type_source source_string_uses_strict_integer_display_width_default -- --exact --nocapture
+# passed: 1 test
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 403 unit tests; 64 source/integration tests
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --all-targets -- --test-threads=1
+# 1,141 passed, 1 known loopback HTTP JSON-schema fixture failed, 122 ignored
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-executor --all-targets -- --test-threads=1
+# 1,052 passed, 121 existing planner/storage/fixture failures, 0 ignored
+```
+
+Owner `cargo check --all-targets`, workspace format, and diff checks are
+required before commit; the existing strict-clippy diagnostics are unrelated
+to this formatter boundary.
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

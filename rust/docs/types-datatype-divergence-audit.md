@@ -915,24 +915,26 @@ carry an explicit "unrecognised" variant) rather than a boolean edit. The
 *unregistered-name* variant of this is not reachable — the 16 collations in the
 Rust enum exactly cover TiDB's new-collation set.
 
-## F4 (rank 4, latent) — `source_string()` / `Display` pins the display-width switch to the wrong value
+## F4 (rank 4, FIXED 2026-09-04) — `source_string()` / `Display` pins the display-width switch to the wrong value
 
 - Go: `pkg/parser/types/field_type.go:541-542` — `String()` calls
   `CompactStr()`, which reads the process global
   `TiDBStrictIntegerDisplayWidth`, set from `DeprecateIntegerDisplayWidth`,
   whose shipped default is `true` (`pkg/config/config.go:1279`, wired at
   `cmd/tidb-server/main.go:1154`).
-- Rust: `rust/crates/tidb-datatype/src/field_type/mod.rs:1158-1159` —
-  `vec![self.compact_str(false)]`, permanently the non-strict branch, which
-  **emits** the width.
+- Rust: `rust/crates/tidb-datatype/src/field_type/mod.rs` now passes the
+  runtime `STRICT_INTEGER_DISPLAY_WIDTH` default to `compact_str`, matching
+  the server-initialized Go policy.
 
 Distinguishing input: a `BIGINT` field type with `flen = 22` and `BinaryFlag`.
 A real tidb-server prints `bigint BINARY` (confirmed against recorded
-`tests/integrationtest/r/**`: `cast(..., bigint BINARY)`); Rust prints
-`bigint(22) BINARY`. Latent, not live: `type_desc`/`info_schema_str` callers
-correctly pass `STRICT_INTEGER_DISPLAY_WIDTH`
-(`rust/crates/tidb-session/src/show.rs:35,165`, `infoschema.rs:852,1000`), and
-`source_string` has no production caller.
+`tests/integrationtest/r/**`: `cast(..., bigint BINARY)`); Rust now does too,
+as pinned by `source_string_uses_strict_integer_display_width_default`.
+`type_desc`/`info_schema_str` callers continue to pass
+`STRICT_INTEGER_DISPLAY_WIDTH`
+(`rust/crates/tidb-session/src/show.rs:35,165`, `infoschema.rs:852,1000`),
+and `source_string` remains a formatter boundary rather than a SQL execution
+path.
 
 ## F5 / F6 (now FIXED) / F7 (verified already aligned)
 

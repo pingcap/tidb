@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (F4, `pkg/types` field-type formatter): `FieldType::source_string`
+  now uses the strict integer display-width default, matching Go's
+  server-initialized `TiDBStrictIntegerDisplayWidth`. The focused BIGINT/BINARY
+  regression and serialized Ready profile are recorded in
+  `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (M10, `pkg/types` decimal parser error identity): preserved
   Go's distinct `ErrTruncatedWrongVal("DECIMAL", ...)` outcome for empty or
   digit-less fixed-word decimal input, while keeping exponent overflow as

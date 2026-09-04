@@ -1293,9 +1293,9 @@ impl FieldType {
         format!("{}{suffix}", self.compact_str(strict_integer_display_width))
     }
 
-    /// Mirrors `FieldType.String` with the legacy display-width switch disabled.
+    /// Mirrors `FieldType.String` with TiDB's runtime display-width policy.
     pub fn source_string(&self) -> String {
-        let mut parts = vec![self.compact_str(false)];
+        let mut parts = vec![self.compact_str(STRICT_INTEGER_DISPLAY_WIDTH)];
         if self.is_unsigned() {
             parts.push("UNSIGNED".to_owned());
         }

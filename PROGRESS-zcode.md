@@ -140,6 +140,11 @@
   Empty/digit-less input now returns `TruncatedWrongValue`, while exponent
   overflow remains `BadNumber`; the focused regression and Ready profile are
   recorded in `rust/testport/receipts/types_explain_format_audit.md`.
+
+- 2026-09-04: aligned `FieldType::source_string` with Go's strict integer
+  display-width default. BIGINT metadata with a deprecated `(M)` width now
+  renders `bigint BINARY`; focused regression and Ready evidence are recorded
+  in `rust/testport/receipts/types_explain_format_audit.md`.
 ## chunk A-1 范围确认（下批实现）
 ## chunk A-1 范围确认（下批实现；树当前全绿 1128/0 expr lib，A-1 实现需新上下文完整验证）
 

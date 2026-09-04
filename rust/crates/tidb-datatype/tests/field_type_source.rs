@@ -604,6 +604,19 @@ fn parser_compact_str() {
     }
 }
 
+/// Go `FieldType.String` reads the process default, which the TiDB server
+/// initializes to strict integer display width. This keeps a non-zero BIGINT
+/// length out of the source spelling while preserving the explicit BINARY
+/// flag.
+#[test]
+fn source_string_uses_strict_integer_display_width_default() {
+    let field = FieldType::new(C::LongLong)
+        .with_flen(22)
+        .with_flags(F::BINARY);
+    assert_eq!(field.compact_str(false), "bigint(22)");
+    assert_eq!(field.source_string(), "bigint BINARY");
+}
+
 /// Go: pkg/types/field_type_test.go:25 TestFieldType.
 #[test]
 fn runtime_field_type() {
