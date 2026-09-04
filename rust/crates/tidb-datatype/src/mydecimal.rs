@@ -135,6 +135,9 @@ pub enum RoundMode {
 pub enum DecimalError {
     /// Go `ErrTruncated`: the value did not fit and digits were dropped.
     Truncated,
+    /// Go `ErrTruncatedWrongVal("DECIMAL", ...)`: no numeric digit was
+    /// present after optional whitespace and sign handling.
+    TruncatedWrongValue,
     /// Go `ErrOverflow`: the value did not fit at all.
     Overflow,
     /// Go `ErrBadNumber`: the text was not a well-formed number.
@@ -956,8 +959,8 @@ impl MyDecimal {
     /// reports truncation or overflow.
     ///
     /// Go's `ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", str)` for empty or
-    /// digit-less input becomes [`DecimalError::BadNumber`]; the wrapped
-    /// warning text belongs to the statement-context tier, not here.
+    /// digit-less input becomes [`DecimalError::TruncatedWrongValue`]; the
+    /// wrapped warning text belongs to the statement-context tier, not here.
     pub fn from_string(str: &[u8]) -> (MyDecimal, Option<DecimalError>) {
         let mut d = MyDecimal::default();
         let err = d.set_from_string(str);
@@ -975,7 +978,7 @@ impl MyDecimal {
         }
         if str.is_empty() {
             *self = MyDecimal::default();
-            return Some(DecimalError::BadNumber);
+            return Some(DecimalError::TruncatedWrongValue);
         }
         match str[0] {
             b'-' => {
@@ -1005,7 +1008,7 @@ impl MyDecimal {
         }
         if digits_int + digits_frac == 0 {
             *self = MyDecimal::default();
-            return Some(DecimalError::BadNumber);
+            return Some(DecimalError::TruncatedWrongValue);
         }
         let words_int_raw = digits_to_words(digits_int);
         let words_frac_raw = digits_to_words(digits_frac);
@@ -1855,9 +1858,30 @@ mod tests {
                 34,
                 false,
             ),
-            ("abc", "0", Some(DecimalError::BadNumber), 0, 0, false),
-            ("", "0", Some(DecimalError::BadNumber), 0, 0, false),
-            ("   ", "0", Some(DecimalError::BadNumber), 0, 0, false),
+            (
+                "abc",
+                "0",
+                Some(DecimalError::TruncatedWrongValue),
+                0,
+                0,
+                false,
+            ),
+            (
+                "",
+                "0",
+                Some(DecimalError::TruncatedWrongValue),
+                0,
+                0,
+                false,
+            ),
+            (
+                "   ",
+                "0",
+                Some(DecimalError::TruncatedWrongValue),
+                0,
+                0,
+                false,
+            ),
             ("1x", "1", Some(DecimalError::Truncated), 1, 0, false),
             ("1.2.3", "1.2", Some(DecimalError::Truncated), 1, 1, false),
             ("1e", "1", Some(DecimalError::Truncated), 1, 0, false),
@@ -1906,6 +1930,25 @@ mod tests {
             assert_eq!(d.negative, *negative, "negative for {input:?}");
             assert_eq!(d.result_frac, d.digits_frac, "result_frac for {input:?}");
         }
+    }
+
+    /// Go distinguishes a no-digit `ErrTruncatedWrongVal("DECIMAL", ...)`
+    /// from the `ErrBadNumber` returned by an exponent that cannot be parsed.
+    #[test]
+    fn from_string_preserves_no_digit_error_identity() {
+        for input in [
+            b"abc".as_slice(),
+            b"".as_slice(),
+            b"-".as_slice(),
+            b".".as_slice(),
+        ] {
+            let (value, error) = MyDecimal::from_string(input);
+            assert_eq!(value.to_string_bytes(), b"0");
+            assert_eq!(error, Some(DecimalError::TruncatedWrongValue));
+        }
+
+        let (_, error) = MyDecimal::from_string(b"1e18446744073709551620");
+        assert_eq!(error, Some(DecimalError::BadNumber));
     }
 
     /// Go's `strings.TrimSpace` removes Unicode whitespace around the

@@ -610,6 +610,39 @@ git diff --check
 # both passed
 ```
 
+## Rust-only parity follow-up: decimal no-digit error identity
+
+The `pkg/types` `MyDecimal.FromString` source has two distinct malformed-input
+outcomes. Go returns `ErrTruncatedWrongVal("DECIMAL", str)` when trimming leaves
+no digits (`pkg/types/mydecimal.go:415,443`), but reserves `ErrBadNumber` for
+malformed exponent text. Rust's fixed-word parser previously returned
+`DecimalError::BadNumber` for both cases, making the source-visible diagnostic
+identity impossible to preserve.
+
+`tidb-datatype::MyDecimal::from_string` now returns the new
+`DecimalError::TruncatedWrongValue` for empty or digit-less input (including
+`abc`, `-`, and `.`), while exponent overflow continues to return
+`DecimalError::BadNumber`. The focused regression
+`mydecimal::tests::from_string_preserves_no_digit_error_identity` covers both
+branches and asserts the zero receiver shape.
+
+Ready validation (commands run from `rust/`):
+
+```text
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --lib mydecimal::tests::from_string_preserves_no_digit_error_identity -- --exact --nocapture
+# passed: 1 test
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 403 unit tests; 63 source/integration tests
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --all-targets -- --test-threads=1
+# 1,141 passed, 1 known loopback HTTP JSON-schema fixture failed, 122 ignored
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-executor --all-targets -- --test-threads=1
+# 1,052 passed, 121 existing planner/storage/fixture failures, 0 ignored
+```
+
+The owner `cargo check --all-targets`, workspace format check, and
+`git diff --check` are run before commit; existing strict-clippy diagnostics
+remain outside this bounded parser change.
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

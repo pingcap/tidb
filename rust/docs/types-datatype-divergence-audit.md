@@ -5,12 +5,12 @@ File-by-file semantic comparison of Go `pkg/types` against
 `file:line`, and a concrete distinguishing input. Areas checked and found
 equal are listed too — that inventory tells the next reader where not to look.
 
-**Execution constraint.** Nothing can be run on this machine: `syspolicyd` is
-wedged and every freshly created executable hangs at `_dyld_start`. `cargo
-check` and `cargo clippy` work; `cargo test`, `gorun`, `goeval` and Go test
-binaries do not. **Every finding below is derived by reading source on both
-sides and none has been confirmed by execution.** Where a claim depends on
-behaviour I could not read out of the source with certainty, it says so.
+**Execution note.** The initial inventory was source-derived while
+`syspolicyd` prevented newly created Go executables from starting. The current
+dedicated worktree can run the pinned Rust nightly test profiles; Go test
+binaries and `gorun`/`goeval` remain unavailable. Each implemented finding now
+links a focused Rust regression and its Ready-profile outcome in the receipts.
+Claims that remain source-only are called out explicitly below.
 
 Standing oracle limit that motivates this audit: the integration replay
 compares rejected-vs-accepted only, never error text, and observes warnings on
@@ -35,8 +35,8 @@ The highest-impact open items are now:
   SQL-mode flags, and truncation-warning publication are pinned or dropped.
 - **D4** — malformed temporal/string comparisons still return only `Err`,
   while Go returns the zero-value ordering beside the parse error.
-- **M10** — the fixed-word parser still collapses Go's distinct no-digits
-  `TruncatedWrongValue` and exponent `BadNumber` identities.
+- **M10** — fixed 2026-09-04; the fixed-word parser now preserves Go's
+  distinct no-digits `TruncatedWrongValue` and exponent `BadNumber` identities.
 
 The former F1, D1, and T1/T2 rank-one defects are fixed in this branch; their
 focused regressions and Ready outcomes remain linked in the sections below.
@@ -784,12 +784,13 @@ The focused regression is recorded in
   owner validation is recorded in
   `rust/testport/receipts/types_explain_format_audit.md`. Unreachable at
   `DECIMAL(65)`.
-- **M10** Error identity for the no-digits case. Go
+- **M10 (FIXED 2026-09-04)** Error identity for the no-digits case. Go
   (`mydecimal.go:415, 443`) returns `ErrTruncatedWrongVal("DECIMAL", str)`
-  (MySQL 1292); `mydecimal.rs:772, 802` collapses it to
-  `DecimalError::BadNumber`, which Go uses for a *different* condition, so
-  `"abc"` and `"1e18446744073709551620"` become indistinguishable.
-  `decimal.rs:154, 184` keeps a distinct `TruncatedWrongValue` and is faithful.
+  (MySQL 1292); Rust now returns a distinct `DecimalError::TruncatedWrongValue`
+  for empty/digit-less input while retaining `BadNumber` for exponent overflow.
+  The focused `from_string_preserves_no_digit_error_identity` regression and
+  complete Ready profile are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 
 ## Decimal areas explicitly left uncertain
 

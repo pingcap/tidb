@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (M10, `pkg/types` decimal parser error identity): preserved
+  Go's distinct `ErrTruncatedWrongVal("DECIMAL", ...)` outcome for empty or
+  digit-less fixed-word decimal input, while keeping exponent overflow as
+  `BadNumber`. The focused regression and serialized Ready profile are
+  recorded in `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (M9, `pkg/types` decimal multiplication overflow sign): aligned
   Rust bounded `Decimal::mul_mysql` with Go's early `to.negative` assignment,
   preserving `-0` for opposite-signed overflow products on every overflow
