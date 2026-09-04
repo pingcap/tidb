@@ -335,6 +335,14 @@ fn test_error_msg() {
             "select 1 collate some_unknown_collation",
             "[ddl:1273]Unknown collation: 'some_unknown_collation'",
         ),
+        (
+            "SELECT CAST(1 AS FLOAT(54))",
+            "[expression:1426]Too-big precision 54 specified for 'CAST'. Maximum is 53.",
+        ),
+        (
+            "ALTER TABLE t ALGORITHM = FOO",
+            "[parser:1800]Unknown ALGORITHM 'FOO'",
+        ),
     ] {
         let error = parse(sql).unwrap_err();
         assert_eq!(error.compatibility_message(sql), expected, "{sql}");

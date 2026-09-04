@@ -324,6 +324,17 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `[try again later]`; the focused code/state/message regression and Ready
   results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
 
+- 2026-09-04 (parser coded diagnostics): aligned two grammar refusals with
+  Go's coded terrors. `CAST(1 AS FLOAT(54))` now raises
+  `[expression:1426]Too-big precision 54 specified for 'CAST'. Maximum is
+  53.` (Go `FLOAT FloatOpt`, parser.y:10078), and `ALTER TABLE t ALGORITHM =
+  FOO` raises `[parser:1800]Unknown ALGORITHM 'FOO'`
+  (`terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)`). Both were
+  uncoded generic refusals; the fail-before rows live in
+  `parser_root_source::test_error_msg`'s compatibility-message table.
+  Receipt: `receipts/cast_target_type_family.md` (FLOAT diagnostic
+  follow-up).
+
 - 2026-09-04 (`CAST ... CHARSET` boundary closed): the `CHAR` cast charset
   clause is now modeled end to end. Parse time resolves and refuses unknown
   charsets like Go's `GetDefaultCollation` diagnostic (parser.y:9971);

@@ -268,7 +268,15 @@ impl Parser {
         }
         self.expect_op(")")?;
         if m > 53 {
-            return Err(self.err_here("FLOAT precision out of range"));
+            // Go `FLOAT FloatOpt` (parser.y:10078): `ErrTooBigPrecision`
+            // is `terror.ClassExpression.NewStd(mysql.ErrTooBigPrecision)`
+            // — `[expression:1426]`, the name argument `CAST`.
+            return Err(self.err_coded(
+                1426,
+                &format!(
+                    "[expression:1426]Too-big precision {m} specified for 'CAST'. Maximum is 53."
+                ),
+            ));
         }
         Ok(if m > 24 {
             CastType::Double

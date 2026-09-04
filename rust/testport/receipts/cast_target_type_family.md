@@ -117,6 +117,17 @@ Regressions: `tests::functions::cast_char_charset_clause_resolves_and_refuses_li
 `builtin_cast_semantics::cast_char_binary_charset_truncates_bytes_not_chars`
 (fail-before: String/char-truncation instead of Bytes/byte-truncation).
 
+## Follow-up: `FLOAT(p)` overflow diagnostic (2026-09-04, same family)
+
+Go's `FLOAT FloatOpt` rule rejects `p >= 54` with `ErrTooBigPrecision`
+(`[expression:1426]Too-big precision %d specified for '%-.192s'. Maximum is
+%d.`, the name argument `CAST`). The Rust parser refused with a generic
+uncoded message. It now raises `err_coded(1426, ...)` with Go's rendered
+text; pinned in `parser_root_source::test_error_msg` alongside the
+`ALTER TABLE ALGORITHM` refusal (`[parser:1800]Unknown ALGORITHM '%s'`,
+`terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)`) which carries
+the same coded-diagnostic shape.
+
 ## Risk
 
 - Correctness: low; the changed fields are the result-type CODE, default
