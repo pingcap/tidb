@@ -541,37 +541,97 @@ pub(crate) fn parse_datetime(value: &str) -> Option<GoDateTime> {
     })
 }
 
-/// Go `ParseTimeWithString` accepts packed `YYYYMMDDHHMMSS` and
-/// `YYMMDDHHMMSS` spellings in addition to delimited dates. The ADDTIME /
-/// SUBTIME string signature reaches this parser after integer arguments have
-/// been cast to text, so preserve that packed datetime arm instead of treating
-/// the fourteen digits as an unsupported delimiter-free date.
+/// Go `ParseTimeWithString` accepts packed date/datetime spellings in addition
+/// to delimited dates. The ADDTIME/SUBTIME and TIMESTAMP string signatures
+/// reach this parser after integer arguments have been cast to text, so retain
+/// Go's width table instead of treating delimiter-free digits as unsupported.
 fn parse_compact_datetime(value: &str) -> Option<GoDateTime> {
-    if !matches!(value.len(), 12 | 14) || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    let (digits, fraction) = value.split_once('.').map_or((value, ""), |pair| pair);
+    let widths: &[usize] = match digits.len() {
+        14 => &[4, 2, 2, 2, 2, 2],
+        12 => &[2, 2, 2, 2, 2, 2],
+        11 => &[2, 2, 2, 2, 2, 1],
+        10 => &[2, 2, 2, 2, 2],
+        9 => &[2, 2, 2, 2, 1],
+        8 => &[4, 2, 2],
+        7 => &[2, 2, 2, 1],
+        6 => &[2, 2, 2],
+        5 => &[2, 2, 1],
+        _ => return None,
+    };
+    // Go's `ParseTime` gives a suffix on a date-only compact form a different
+    // meaning (for example `20170118.5` is an hour component).  The datetime
+    // fraction rows exercised by this family are the full 14-digit form;
+    // leave shorter date forms to the ordinary delimited parser so that their
+    // signature-specific handling is not guessed here.
+    if !fraction.is_empty() && digits.len() != 14 {
         return None;
     }
-    let number = value.parse::<i64>().ok()?;
-    let parsed = tidb_datatype::parse_time_from_num(
-        number,
-        tidb_datatype::TimeType::DateTime,
-        0,
-        true,
-        false,
-        true,
-        &chrono_tz::Tz::UTC,
-    )
-    .ok()?;
-    let core = parsed.time.core_time();
-    Some(GoDateTime {
-        year: i64::from(core.year()),
-        month: u32::from(core.month()),
-        day: u32::from(core.day()),
-        hour: u32::from(core.hour()),
-        minute: u32::from(core.minute()),
-        second: u32::from(core.second()),
-        micros: core.microsecond(),
-        fsp: 0,
-    })
+    if !digits.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut fields = [0i64; 6];
+    let mut offset = 0;
+    for (field, width) in fields.iter_mut().zip(widths) {
+        *field = digits.get(offset..offset + width)?.parse().ok()?;
+        offset += width;
+    }
+    let year = if matches!(digits.len(), 8 | 14) {
+        fields[0]
+    } else {
+        calendar::expand_year_for_time_diff(u32::try_from(fields[0]).ok()?, 2)
+    };
+    let month = u32::try_from(fields[1]).ok()?;
+    let day = u32::try_from(fields[2]).ok()?;
+    let hour = u32::try_from(fields[3]).ok()?;
+    let minute = u32::try_from(fields[4]).ok()?;
+    let second = u32::try_from(fields[5]).ok()?;
+    if month > 12
+        || day > 31
+        || (month != 0 && day > calendar::days_in_month_for_time_diff(year, month))
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+
+    let fsp = fraction.len().min(MAX_FSP as usize) as i32;
+    let mut micros = if fsp == 0 {
+        0
+    } else {
+        let mut padded = fraction[..fsp as usize].to_owned();
+        while padded.len() < MAX_FSP as usize {
+            padded.push('0');
+        }
+        padded.parse::<u32>().ok()?
+    };
+    let round_up =
+        fraction.len() > MAX_FSP as usize && fraction.as_bytes()[MAX_FSP as usize] >= b'5';
+    if round_up {
+        micros += 1;
+    }
+    let mut result = GoDateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        micros,
+        fsp,
+    };
+    if micros >= 1_000_000 {
+        result.micros = 0;
+        result = result.add(GoDuration {
+            micros: 1_000_000,
+            fsp,
+        })?;
+        result.fsp = fsp;
+    }
+    Some(result)
 }
 
 #[cfg(test)]

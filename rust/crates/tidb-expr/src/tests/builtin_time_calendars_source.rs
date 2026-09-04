@@ -354,11 +354,38 @@ fn timestamp_delimited_argument_rows_match_master() {
     }
 }
 
-/// Rows of `builtin_time_test.go:2563 TestTimestamp` that need the compact
-/// numeric/long-digit datetime reader.
+/// Numeric/decimal rows of `builtin_time_test.go:2563 TestTimestamp` that need
+/// source-type-specific `ParseTimeFromNum`/`ParseTimeFromDecimal` behavior.
+/// The delimiter-free STRING rows are active in
+/// [`timestamp_compact_string_rows_match_master`].
 #[test]
-#[ignore = "go-parity-gap: TIMESTAMP's compact-string rows ('20170118','170118','11111111111','20170118123056','20170118123050.xxx'), the Int/Float literal rows, Decimal(20170118123950.xxx), and issue #25093's fraction-only decimals ('0.123'->'0000-00-00 00:00:00.123','101.234'->'2000-01-01 ...') need types.ParseTimeFromNum-style readers this evaluator lacks"]
+#[ignore = "go-parity-gap: TIMESTAMP's Int/Float literal rows, Decimal(20170118123950.xxx), and issue #25093's fraction-only decimals ('0.123'->'0000-00-00 00:00:00.123','101.234'->'2000-01-01 ...') need source-type-specific numeric readers and zero-date decimal semantics this evaluator lacks"]
 fn timestamp_compact_numeric_rows() {}
+
+/// The delimiter-free STRING rows from Go's `TestTimestamp`. Integer-shaped
+/// dates and datetimes use the same 6/8/12/14-digit reader as
+/// `types.ParseTimeWithString`; a fractional suffix on the full 14-digit
+/// datetime is rounded to Go's six-digit datetime precision. Date-only
+/// compact fractions retain their separate signature-selection gap.
+#[test]
+fn timestamp_compact_string_rows_match_master() {
+    for (sql, want) in [
+        ("timestamp('20170118')", "STR:2017-01-18 00:00:00"),
+        ("timestamp('170118')", "STR:2017-01-18 00:00:00"),
+        ("timestamp('11111111111')", "STR:2011-11-11 11:11:01"),
+        ("timestamp('20170118123056')", "STR:2017-01-18 12:30:56"),
+        (
+            "timestamp('20170118123050.999')",
+            "STR:2017-01-18 12:30:50.999",
+        ),
+        (
+            "timestamp('20170118123050.1234567')",
+            "STR:2017-01-18 12:30:50.123457",
+        ),
+    ] {
+        assert_eq!(e(sql), want, "{sql}");
+    }
+}
 
 /// INTEGER-second MAKETIME rows of
 /// `builtin_time_test.go:2677 TestMakeTime`: domain overflow past minute/

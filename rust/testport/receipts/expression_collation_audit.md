@@ -900,6 +900,53 @@ The remaining Go `MAKETIME` coverage that depends on typed column metadata or
 session warning/error observation remains outside this value-tier slice; no
 package-complete parity claim is made.
 
+## Rust follow-up: `TIMESTAMP` compact STRING parsing
+
+This bounded slice remains inside the complete `pkg/expression` inventory at
+Go `origin/master` `3bd6b6d4d632b16ee5db7fbbefbf21b1e57527b2`: 208 tracked
+recursive artifacts and 146,291 Go lines (137 direct-root artifacts, 68
+production files, 60 tests, seven generated sources, `BUILD.bazel`, `OWNERS`,
+and eight nested package/build/test boundaries). The Rust `tidb-expr` owner
+remains 176 tracked artifacts and 107,196 lines. Before editing, Go's
+`builtinTimestamp1ArgSig`/`ParseTime` rows, the complete `TestTimestamp` table,
+the Rust `add_sub::timestamp` seam, and the shared duration parser were
+reread. No Go, generated, fixture, platform, or Bazel artifact changed.
+
+Go's string signature accepts compact date/datetime forms using field widths
+for 6/8/11/12/14 digits. The full 14-digit datetime form also rounds a
+fractional suffix to six digits (`.1234567` → `.123457`). Rust previously
+accepted only delimited values plus the 12/14-digit ADDTIME forms, so
+`TIMESTAMP('20170118')` returned NULL and the other compact string rows were
+unproven. The shared parser now applies the Go width table, two-digit-year
+window, calendar/time validation, and half-up microsecond carry for full
+datetime fractions.
+
+Date-only compact fractions intentionally remain a signature-selection gap:
+Go parses `TIMESTAMP('20240315.5')` as a five-hour suffix, while the numeric
+datetime fraction uses seconds. The Rust value tier does not carry that static
+signature distinction, so it does not guess at this behavior.
+
+Focused fail-before/pass-after evidence:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_time_calendars_source::timestamp_compact_string_rows_match_master \
+  -- --exact --nocapture
+# pre-fix: failed (`timestamp('20170118')` returned NULL)
+# after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib timestamp_ -- --nocapture
+# after fix: all compact/delimited timestamp carriers passed; the separate
+# numeric/decimal source-type gap remains ignored.
+```
+
+The numeric Int/Float, Decimal, and issue-25093 fraction-only rows remain
+explicitly bounded in the source carrier because their Go signature-specific
+parsers and zero-date semantics need a separate value/type batch.
+
 ## Rust follow-up: `FORMAT` precision and `WEIGHT_STRING` truncation warnings
 
 This batch stays inside the complete `pkg/expression` inventory at Go

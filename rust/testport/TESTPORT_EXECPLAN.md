@@ -73,6 +73,12 @@ For each bounded behavior cluster:
   strict writes return 8179. Focused datatype, expression, and executor
   regressions plus owner Ready results are recorded in
   `receipts/types_timestamp_dst_gap.md`.
+- 2026-09-04: aligned Rust `tidb-expr` `TIMESTAMP` string parsing with Go's
+  compact `ParseTime` forms. Delimiter-free 6/8/11/12/14-digit strings now
+  use the source field-width table, and full 14-digit datetime fractions round
+  half-up to six digits; date-only fractional suffixes remain explicitly
+  outside this signature-selection slice. Receipt:
+  `receipts/expression_collation_audit.md`.
 - 2026-09-04: aligned the Rust `tidb-expr` `MAKETIME` evaluator with Go's
   unsigned-hour guard. `Datum::UInt` now carries the source `UnsignedFlag`
   signal through the value-tier seam, so wrapped negative hours (including
@@ -5674,6 +5680,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 ## Decision Log
 
+- Decision: implement compact `TIMESTAMP` STRING parsing in the shared
+  datetime value domain with Go's width table (`14/12/11/10/9/8/7/6/5`),
+  pivot two-digit years, and six-digit half-up fractional rounding. Restrict
+  fractional compact parsing to the full 14-digit datetime form because Go's
+  date-only numeric suffix has a distinct type-selected meaning. Date/Author:
+  2026-09-04, Codex.
+
 - Decision: treat `Datum::UInt` as the value-tier equivalent of Go's
   `UnsignedFlag` for `MAKETIME`'s first argument. Detect a wrapped negative
   hour before sign selection, set the Go overflow clamp to +838 hours, and
@@ -6317,6 +6330,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Codex.
 
 ## Surprises & Discoveries
+
+- The compact parser's first generalization exposed a source distinction that
+  must remain visible: `TIMESTAMP('20240315.5')` is parsed by Go's string
+  signature as a five-hour suffix, while `TIMESTAMP('20170118123050.1234567')`
+  uses a fractional-second suffix. The Rust value tier does not yet model the
+  former signature-selection arm, so only the full datetime fractional form is
+  activated and the date-only fraction remains a documented gap.
 
 - The ignored `MAKETIME` carrier's floating-second rows already passed after
   the prior MaxFsp formatting work; its remaining failure was specifically
