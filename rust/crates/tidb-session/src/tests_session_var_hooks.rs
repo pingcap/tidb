@@ -123,6 +123,40 @@ fn session_getter_functions_read_live_defaults() {
     assert_eq!(one(&mut session, "SELECT @@last_plan_from_binding"), "0");
 }
 
+/// Go `pkg/sessionctx/variable/sysvar_test.go::TestInstanceScopedVars`:
+/// instance-only values are read from the process/config tier, not from a
+/// session copy or a stale catalog default.
+#[test]
+fn instance_scoped_getters_read_live_config_defaults() {
+    let mut session = Session::new();
+    let expected = [
+        ("tidb_general_log", "OFF"),
+        ("tidb_pprof_sql_cpu", "0"),
+        ("tidb_expensive_query_time_threshold", "60"),
+        ("tidb_expensive_txn_time_threshold", "600"),
+        ("tidb_memory_usage_alarm_ratio", "0.7"),
+        ("tidb_memory_usage_alarm_keep_record_num", "5"),
+        ("tidb_force_priority", "NO_PRIORITY"),
+        ("ddl_slow_threshold", "300"),
+        ("plugin_dir", "/data/deploy/plugin"),
+        ("plugin_load", ""),
+        ("tidb_slow_log_threshold", "300"),
+        ("tidb_record_plan_in_slow_log", "1"),
+        ("tidb_enable_slow_log", "ON"),
+        ("tidb_check_mb4_value_in_utf8", "ON"),
+        ("tidb_enable_collect_execution_info", "ON"),
+        ("tidb_log_file_max_days", "0"),
+        ("tidb_rc_read_check_ts", "OFF"),
+    ];
+    for (name, value) in expected {
+        assert_eq!(session.vars.get_system(name).unwrap(), value, "{name}");
+    }
+
+    let config = session.vars.get_system("tidb_config").unwrap();
+    assert!(config.starts_with('{'));
+    assert!(config.contains("instance"));
+}
+
 /// Go `TestLcTimeNamesReadOnly`, `TestLcMessages`, and
 /// `TestDefaultCharsetAndCollation`: locale and charset compatibility
 /// variables expose their captured defaults, `lc_messages` remains mutable,

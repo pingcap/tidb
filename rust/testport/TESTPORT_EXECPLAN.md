@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` instance-scoped getters): added the
+  live config/atomic read-through used by Go's `GetSessionOrGlobalSystemVar`
+  for the `TestInstanceScopedVars` matrix, preserving explicit `SET INSTANCE`
+  overrides and covering the JSON config getter. The focused regression and
+  receipt now record the remaining process-wide setter/unlisted-variable
+  boundaries.
 - 2026-09-05 (`pkg/sessionctx/variable` next-gen DML/replica-read hooks): added
   typed `BulkDMLEnabled` and replica-read state to Rust `SessionVars`, wired
   inheritance/restore and statement snapshots, and matched Go's next-gen 1235
@@ -62,7 +68,7 @@ For each bounded behavior cluster:
 - 2026-09-05 (`pkg/sessionctx/variable` receipt cleanup): removed the stale
   empty ignored shims for every sysvar test whose executable coverage now
   lives in `tidb-session`; the remaining `tidb-vardef` inventory is 13
-  passing constant/initial-value checks and 14 explicit gap tests.
+  passing constant/initial-value checks and 13 explicit gap tests.
 - 2026-09-05 (`pkg/sessionctx/variable` TiFlash session hooks): added typed
   SessionVars state for the three external-spill thresholds, per-node memory
   quota, and query spill ratio. Session writes, statement restore, GLOBAL

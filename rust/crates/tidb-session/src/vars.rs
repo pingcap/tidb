@@ -181,6 +181,85 @@ thread_local! {
     static EMPTY_RESOLVED: Arc<ResolvedGlobals> = Arc::default();
 }
 
+/// Reads the live process/config products behind Go's instance-scoped
+/// `GetSessionOrGlobalSystemVar` hooks. Explicit `SET INSTANCE` values remain
+/// authoritative in the registry; otherwise the current process config and
+/// vardef atomics are exposed instead of the catalog's bootstrap spelling.
+fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> Option<String> {
+    if !def.has_instance_scope() || def.has_global_scope() {
+        return None;
+    }
+    let lowered = crate::sysvar::lowered_if_needed(def.name);
+    if let Some(value) = globals
+        .store(def)
+        .lock()
+        .expect("instance sysvar lock poisoned")
+        .get(lowered.as_ref())
+    {
+        return Some(value.clone());
+    }
+
+    let config = tidb_config::config_tree::config::get_global_config();
+    let instance = &config.instance;
+    match def.name {
+        "tidb_general_log" => Some(if instance.tidb_general_log {
+            "ON".to_owned()
+        } else {
+            "OFF".to_owned()
+        }),
+        "tidb_pprof_sql_cpu" => Some(if instance.enable_pprof_sql_cpu {
+            "1".to_owned()
+        } else {
+            "0".to_owned()
+        }),
+        "ddl_slow_threshold" => Some(instance.ddl_slow_opr_threshold.to_string()),
+        "tidb_expensive_query_time_threshold" => {
+            Some(instance.expensive_query_time_threshold.to_string())
+        }
+        "tidb_expensive_txn_time_threshold" => {
+            Some(instance.expensive_txn_time_threshold.to_string())
+        }
+        "tidb_enable_slow_log" => Some(if instance.enable_slow_log.load() {
+            "ON".to_owned()
+        } else {
+            "OFF".to_owned()
+        }),
+        "tidb_slow_log_threshold" => Some(instance.slow_threshold.to_string()),
+        "tidb_record_plan_in_slow_log" => Some(instance.record_plan_in_slow_log.to_string()),
+        "tidb_check_mb4_value_in_utf8" => Some(if instance.check_mb4_value_in_utf8.load() {
+            "ON".to_owned()
+        } else {
+            "OFF".to_owned()
+        }),
+        "tidb_force_priority" => Some(instance.force_priority.clone()),
+        "tidb_memory_usage_alarm_ratio" => {
+            Some(tidb_vardef::memory_usage_alarm_ratio().to_string())
+        }
+        "tidb_memory_usage_alarm_keep_record_num" => Some(
+            tidb_vardef::MEMORY_USAGE_ALARM_KEEP_RECORD_NUM
+                .load(std::sync::atomic::Ordering::SeqCst)
+                .to_string(),
+        ),
+        "plugin_dir" => Some(instance.plugin_dir.clone()),
+        "plugin_load" => Some(instance.plugin_load.clone()),
+        "tidb_config" => Some(config.get_json_config().unwrap_or_default()),
+        "tidb_log_file_max_days" => Some(config.log.file.max_days.to_string()),
+        "tidb_enable_collect_execution_info" => {
+            Some(if instance.enable_collect_execution_info.load() {
+                "ON".to_owned()
+            } else {
+                "OFF".to_owned()
+            })
+        }
+        "tidb_rc_read_check_ts" => Some(if instance.tidb_rc_read_check_ts {
+            "ON".to_owned()
+        } else {
+            "OFF".to_owned()
+        }),
+        _ => None,
+    }
+}
+
 impl GlobalSysvars {
     /// A fresh registry with every variable at its default (Go's state on a
     /// cluster nobody has ever run `SET GLOBAL` against).
@@ -245,6 +324,11 @@ impl GlobalSysvars {
                 }
                 .to_owned(),
             );
+        }
+        if self.publishes_runtime_settings {
+            if let Some(value) = runtime_instance_value(self, def) {
+                return Ok(value);
+            }
         }
         let snapshot = Arc::clone(
             &*self
@@ -396,6 +480,11 @@ impl GlobalSysvars {
             && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
         {
             return self.get(def.name);
+        }
+        if self.publishes_runtime_settings {
+            if let Some(value) = runtime_instance_value(self, def) {
+                return Ok(value);
+            }
         }
         let snapshot = Arc::clone(
             &*self

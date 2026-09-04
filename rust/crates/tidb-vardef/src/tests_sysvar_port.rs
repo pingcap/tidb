@@ -152,12 +152,6 @@ fn skip_init_unported() {}
 #[ignore]
 fn session_getter_funcs_unported() {}
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestInstanceScopedVars`.
-// go-parity-gap: instance-scoped getters over config atomics not ported
-#[test]
-#[ignore]
-fn instance_scoped_vars_unported() {}
-
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBReplicaRead` (classic-kernel branch).
 // go-parity-gap: SysVar Validate on classic kernel not ported; the nextgen variant's
 // initial-value half is covered by `pessimistic_transaction_fair_locking_nextgen_initial_value`'s pattern
