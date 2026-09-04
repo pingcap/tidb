@@ -1405,10 +1405,7 @@ impl FieldType {
                     if self.has_flag(FieldTypeFlags::BINARY) {
                         output.push_str(" BINARY");
                     }
-                    if self.charset_name != "binary"
-                        && self.charset_name != "utf8mb4"
-                        && !self.charset_name.is_empty()
-                    {
+                    if self.charset_name != "binary" && self.charset_name != "utf8mb4" {
                         output.push_str(" CHARSET ");
                         output.push_str(&self.charset_name.to_uppercase());
                     }
@@ -1558,6 +1555,18 @@ mod tests {
             ft.runtime_collator_with_mode(true),
             crate::Collator::New(Collation::Utf8Mb4Bin)
         );
+    }
+
+    /// Go `FieldType.RestoreAsCastType` emits the explicit charset clause for
+    /// every charset other than `binary` and `utf8mb4`, including an empty
+    /// source spelling. Keep that degenerate-but-observable output intact.
+    #[test]
+    fn restore_as_cast_type_keeps_explicit_empty_charset_clause() {
+        let field_type = FieldType::new(FieldTypeCode::VarString)
+            .with_charset_name("")
+            .with_collation_name("");
+        assert_eq!(field_type.restore_as_cast_type(true), "CHAR CHARSET ");
+        assert_eq!(field_type.restore_as_cast_type(false), "CHAR");
     }
 
     fn hash_field_type(field_type: &FieldType) -> u64 {

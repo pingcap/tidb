@@ -55,6 +55,17 @@ For each bounded behavior cluster:
   object regression and the existing quote-string corpus pin the exact bytes.
   Details and Ready results are in `receipts/json_u2028_escape.md`.
 
+- 2026-09-04: aligned the Rust `tidb-datatype` cast-restoration owner for
+  Go-master `FieldType.RestoreAsCastType`'s explicit empty-charset clause.
+  `restore_as_cast_type(true)` now emits `CHAR CHARSET ` when the source
+  charset spelling is empty, matching Go's literal predicate; the
+  `explicitCharset = false` path remains unchanged. The focused regression
+  failed before the one-line production fix and passes after it. The adjacent
+  `SetElems(nil)` audit entry was rechecked and closed as stale because
+  `GoSharedSlice` already preserves JSON `null` versus `[]`. Inventory,
+  fail-before evidence, and Ready validation are recorded in
+  `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04 (batch 17, `pkg/ddl` MV view-create worker phase 1): implemented
   Go master `94a9cbedab`'s `onCreateMaterializedView` `StateNone` arm and
   `rollbackCreateMaterializedView` as
@@ -5455,6 +5466,12 @@ For each bounded behavior cluster:
   `mergeBinaryArray` flattening). This preserves the existing `JSONNode` model
   while restoring the source's behavior when arrays interrupt object runs.
 
+- Decision: remove only the Rust-side empty-charset suppression in
+  `FieldType::restore_as_cast_type`; Go's formatter intentionally appends the
+  `CHARSET ` clause for every charset other than `binary` and `utf8mb4`, and
+  the degenerate empty spelling is therefore observable. Date/Author:
+  2026-09-04, Codex.
+
 - Decision: share the existing Go-compatible float spelling helpers between
   the runtime and parser-driver default field-type owners. This keeps the
   source's `FormatFloat(..., 'f', -1, bits)` width contract in one place and
@@ -6019,6 +6036,11 @@ For each bounded behavior cluster:
   Codex.
 
 ## Surprises & Discoveries
+
+- Go's cast-type formatter preserves a degenerate explicit empty charset as
+  `CHAR CHARSET ` rather than omitting the clause. Rust had added an
+  extra non-empty check that looked defensive but was not source-compatible;
+  the focused regression made this byte-level difference visible.
 
 - Go's default field-type width is measured from its display spelling, so
   positive infinity is four bytes (`+Inf`) even though Rust's native spelling

@@ -430,6 +430,39 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # pre-fix: failed (positive infinity flen 3 instead of 4); after fix: 1 passed
 ```
 
+## Rust-only parity follow-up: explicit empty charset in cast restoration
+
+The complete 61-artifact `pkg/types` inventory above remains the owning
+package for this formatter boundary. Go's
+`FieldType.RestoreAsCastType` (`pkg/parser/types/field_type.go:642-645`) emits
+`" CHARSET " + ft.charset` whenever the charset is not `binary` or `utf8mb4`;
+an empty source charset therefore still produces the observable (degenerate)
+`"CHAR CHARSET "` result when `explicitCharset` is true. Rust's
+`FieldType::restore_as_cast_type` previously added an extra
+`!charset_name.is_empty()` guard and returned only `"CHAR"`, introducing
+Rust-only output suppression.
+
+The Rust `tidb-datatype` owner now follows the source predicate literally. The
+focused regression
+`field_type::tests::restore_as_cast_type_keeps_explicit_empty_charset_clause`
+was run with the production guard present first and failed (`"CHAR"` instead
+of `"CHAR CHARSET "`); after removing the guard it passes and also pins the
+unchanged `explicitCharset = false` result. No Go, generated, or Bazel file
+changed.
+
+The adjacent audit entry for `SetElems(nil)` was also stale, not a remaining
+implementation gap. Current `GoSharedSlice` state preserves nil versus
+allocated-empty headers through JSON as `null` versus `[]`; the existing
+`field_type::json::tests::slice_json_preserves_go_growth_duplicate_and_null_element_rules`
+test covers both forms and passed in the complete owner suite. No code change
+was needed for that boundary.
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib field_type::tests::restore_as_cast_type_keeps_explicit_empty_charset_clause -- --exact --nocapture
+# pre-fix: failed (`CHAR` instead of `CHAR CHARSET `); after fix: 1 passed
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.
@@ -504,6 +537,14 @@ For the runtime default float-width follow-up specifically:
 - `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,116 tests; 130 documented source-carrier gaps ignored).
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
 
+For the explicit empty-charset cast-restoration follow-up specifically:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib field_type::tests::restore_as_cast_type_keeps_explicit_empty_charset_clause -- --exact --nocapture` — pre-fix failed with `CHAR` instead of `CHAR CHARSET `; after the fix, 1 focused test passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (384 tests).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,117 tests passed, 130 documented gaps were ignored, and the known loopback HTTP JSON-schema fixture failed with `WouldBlock`; its isolated retry reproduced the same unrelated resource error.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match
@@ -532,3 +573,7 @@ For the runtime default float-width follow-up specifically:
 - Default float metadata compatibility: runtime field-type widths now reuse
   Go's explicit infinity/NaN spellings; finite-value formatting remains the
   existing fixed-format path.
+- Cast-restoration compatibility: callers that explicitly request charset
+  restoration now observe Go's trailing `CHARSET ` clause for an empty source
+  charset. The ordinary non-explicit path and the `binary`/`utf8mb4`
+  exclusions are unchanged; no allocation or hot-path behavior changed.

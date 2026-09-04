@@ -825,7 +825,7 @@ correctly pass `STRICT_INTEGER_DISPLAY_WIDTH`
 (`rust/crates/tidb-session/src/show.rs:35,165`, `infoschema.rs:852,1000`), and
 `source_string` has no production caller.
 
-## F5 (rank 4, now FIXED) / F6 / F7
+## F5 / F6 (now FIXED) / F7 (verified already aligned)
 
 - **F5** `default_field_type_for_value` gets `±Inf` flen wrong. Go
   (`pkg/types/field_type.go:273-278`) uses
@@ -837,27 +837,31 @@ correctly pass `STRICT_INTEGER_DISPLAY_WIDTH`
   (`value.rs:280-285`) routes through `go_fixed_shortest_f64`
   (`value.rs:341-351`) and is correct, so the two twins disagree. Test/bench
   callers only today.
-- **F6** `restore_as_cast_type` refuses to emit an empty CHARSET clause Go
-  emits. Go `pkg/parser/types/field_type.go:642-645` writes
+- **F6 (now FIXED)** `restore_as_cast_type` refused to emit an empty CHARSET
+  clause Go emits. Go `pkg/parser/types/field_type.go:642-645` writes
   `" CHARSET " + ft.charset` whenever the charset is neither `binary` nor
   `utf8mb4` — an empty charset passes. Rust
-  (`field_type/mod.rs:1249-1255`) adds `&& !self.charset_name.is_empty()`.
-  Input `FieldType{tp: VarString, charset: "", collate: ""}` with
-  `explicitCharset = true` → Go `"CHAR CHARSET "`, Rust `"CHAR"`. No parser
-  path producing an empty cast charset was found, and Go's own output is
-  degenerate.
-- **F7** `SetElems(nil)` round-trips as `[]` instead of `null`. Go
-  (`pkg/parser/types/field_type.go:303-305, 761-773`) leaves `elems == nil`,
-  marshalling to `"Elems":null`; Rust (`field_type/mod.rs:1025-1028`)
-  unconditionally sets `elems_present = true`, so `:1407` emits `"Elems":[]`.
-  Byte-level meta divergence only — Go's unmarshal accepts both. The
-  `elems_present` mechanism is otherwise a correct model of Go's nil-vs-empty
-  distinction.
+  (`field_type/mod.rs:1249-1255`) previously added
+  `&& !self.charset_name.is_empty()`. Input
+  `FieldType{tp: VarString, charset: "", collate: ""}` with
+  `explicitCharset = true` now produces `"CHAR CHARSET "` on both sides.
+  The output is degenerate, but it is part of Go's observable formatter
+  contract and is covered by a focused Rust regression.
+- **F7 (verified already aligned)** `SetElems(nil)` must round-trip as
+  `null`, not `[]`. Go (`pkg/parser/types/field_type.go:303-305, 761-773`)
+  leaves `elems == nil`, while an allocated empty slice remains distinct.
+  Current Rust stores `Elems` as `GoSharedSlice<GoString>` and
+  `set_elems(None)` restores its unallocated state; serde consequently emits
+  `"Elems":null`, while `with_elems(Vec::new())` emits `"Elems":[]`. The
+  existing `field_type::json::tests::slice_json_preserves_go_growth_duplicate_and_null_element_rules`
+  regression covers both byte-level forms. The stale `elems_present`
+  implementation cited by the original audit no longer exists.
 
-F5 is fixed in this branch: the runtime default-type path now shares the
-source-compatible `+Inf`/`-Inf`/`NaN` spelling helpers with the parser-driver
-path, and a focused regression pins the resulting float widths. F6 and F7
-remain documented boundaries.
+F5 and F6 are fixed in this branch: the runtime default-type path now shares
+the source-compatible `+Inf`/`-Inf`/`NaN` spelling helpers with the
+parser-driver path, and `restore_as_cast_type` preserves Go's explicit empty
+charset clause. Focused regressions pin both boundaries. F7 was rechecked
+against the current shared-slice representation and is already aligned.
 
 Deliberate and documented, not a finding: `parse_set_value` returns
 `TooManyElements` (`enum_set.rs:289-291`) where Go panics with an
