@@ -3336,6 +3336,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "encoding_rs",
+ "ryu",
  "serde",
  "serde_json",
  "sha2",

@@ -460,9 +460,8 @@ impl Decimal {
         if !value.is_finite() {
             return None;
         }
-        let rendered = value.to_string();
-        let expanded = crate::convert_scientific_notation(&rendered).ok()?;
-        Some(Self::from_signed_literal(&expanded))
+        let rendered = format_go_shortest_float(value);
+        Some(Self::from_signed_literal(&rendered))
     }
 
     /// Source `MyDecimal.FromParquetArray`: decode a signed big-endian
@@ -1498,6 +1497,62 @@ impl Decimal {
         let digits = pad_scale(&kept, result_scale, storage_scale);
         Decimal::new_with_storage(self.negative, digits, result_scale, storage_scale)
     }
+}
+
+fn format_go_shortest_float(value: f64) -> String {
+    let mut buffer = ryu::Buffer::new();
+    let rendered = buffer.format_finite(value);
+    let (negative, rendered) = rendered
+        .strip_prefix('-')
+        .map_or((false, rendered), |value| (true, value));
+    let (mantissa, exponent) = rendered
+        .split_once(['e', 'E'])
+        .map_or((rendered, 0), |(mantissa, exponent)| {
+            (mantissa, exponent.parse::<i32>().expect("ryu exponent"))
+        });
+    let mantissa = mantissa.strip_suffix(".0").unwrap_or(mantissa);
+    let decimal_index = mantissa.find('.').unwrap_or(mantissa.len());
+    let digits: String = mantissa
+        .chars()
+        .filter(|character| *character != '.')
+        .collect();
+    let Some(first_nonzero) = digits.bytes().position(|digit| digit != b'0') else {
+        return "0".to_owned();
+    };
+    let significant = digits[first_nonzero..].trim_end_matches('0');
+    let exponent = exponent + decimal_index as i32 - first_nonzero as i32 - 1;
+    let prefix = if negative { "-" } else { "" };
+
+    // strconv.FormatFloat with `g`, -1 chooses scientific notation below
+    // -4 or at/above six significant-digit positions.
+    if !(-4..6).contains(&exponent) {
+        let mut output = format!("{prefix}{}", &significant[..1]);
+        if significant.len() > 1 {
+            output.push('.');
+            output.push_str(&significant[1..]);
+        }
+        output.push('e');
+        output.push(if exponent >= 0 { '+' } else { '-' });
+        output.push_str(&format!("{:02}", exponent.unsigned_abs()));
+        return output;
+    }
+
+    let digits_before_decimal = exponent + 1;
+    let mut output = prefix.to_owned();
+    if digits_before_decimal <= 0 {
+        output.push_str("0.");
+        output.push_str(&"0".repeat((-digits_before_decimal) as usize));
+        output.push_str(significant);
+    } else if digits_before_decimal as usize >= significant.len() {
+        output.push_str(significant);
+        output.push_str(&"0".repeat(digits_before_decimal as usize - significant.len()));
+    } else {
+        let split = digits_before_decimal as usize;
+        output.push_str(&significant[..split]);
+        output.push('.');
+        output.push_str(&significant[split..]);
+    }
+    output
 }
 
 impl std::fmt::Display for Decimal {

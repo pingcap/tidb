@@ -1214,6 +1214,15 @@ fn parse_mysql_shift_discards_carry_after_fraction_exhaustion() {
     assert_eq!(error, Some(DecimalParseError::Truncated));
 }
 
+#[test]
+fn from_f64_uses_go_shortest_exponent_format() {
+    let tiny = Decimal::from_f64(1e-73).expect("finite decimal");
+    assert_eq!(tiny.to_string(), format!("0.{}1", "0".repeat(72)));
+
+    let wide = Decimal::from_f64(1e81).expect("finite decimal");
+    assert_eq!(wide.to_string(), "9".repeat(81));
+}
+
 /// Exact source `TestFromStringMyDecimal`, including exponent best-effort
 /// parsing and the test-only one-word buffer.
 #[test]

@@ -344,6 +344,33 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # pre-fix: failed (`1e-81` instead of `0`); after fix: 1 passed
 ```
 
+## Rust-only parity follow-up: float-to-decimal shortest formatting
+
+The complete 61-artifact `pkg/types` inventory above remains the owning
+package for float-to-decimal conversion. Go's `MyDecimal.FromFloat64`
+(`pkg/types/mydecimal.go:1164-1167`) formats with
+`strconv.FormatFloat(value, 'g', -1, 64)` before entering the fixed-word
+parser. Rust previously used `f64::to_string()` and expanded its positional
+output, so a value such as `1e-73` was rounded away by the parser's decimal
+word limit instead of preserving the source exponent; the same positional
+path also changes the 81-digit overflow boundary.
+
+The Rust `tidb-datatype` owner now uses ryu's shortest digits, applies Go's
+`%g` fixed/scientific threshold, and feeds the resulting exponent text
+directly to `Decimal::parse_mysql`. The focused
+regression `decimal_tests::from_f64_uses_go_shortest_exponent_format` covers
+the 73-place fractional value and the 81-digit overflow boundary. With the
+old positional formatter the tiny value became zero; after the change both
+values match Go's shortest-format parse. No Go, generated, or Bazel file
+changed; the Rust workspace lock records the direct formatter dependency.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib decimal_tests::from_f64_uses_go_shortest_exponent_format -- --exact
+# pre-fix: failed (`1e-73` became zero); after fix: 1 passed
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.
@@ -391,6 +418,14 @@ For the decimal-shift follow-up specifically:
 - `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (380 tests).
 - `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
 - `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,114 tests; 130 documented source-carrier gaps ignored). The first run had one transient local HTTP-fixture `WouldBlock`; its isolated retry and this full rerun passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
+
+For the float-format follow-up specifically:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib decimal_tests::from_f64_uses_go_shortest_exponent_format -- --exact` — pre-fix failed on the positional `1e-73`; after the fix, 1 focused test passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (381 tests).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,114 tests; 130 documented source-carrier gaps ignored). A first run and isolated retry exposed the pre-existing local HTTP-fixture `WouldBlock` race; the complete rerun passed.
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
 
 ## Risks and not verified

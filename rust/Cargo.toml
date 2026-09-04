@@ -191,6 +191,10 @@ aes = "0.9"
 # defaults), verified via gorun.
 serde_json = "1"
 serde_yaml = "0.9"
+# Go's `strconv.FormatFloat(..., 'g', -1, 64)` uses shortest-round-trip
+# digits; `tidb-datatype` applies Go's fixed/scientific threshold to ryu's
+# shortest representation.
+ryu = "1.0"
 # Go's `unicode.IsPunct` classifies `%.'` in STR_TO_DATE by Unicode general
 # category, rather than Rust's ASCII-only punctuation helper.
 unicode-general-category = "1.1"

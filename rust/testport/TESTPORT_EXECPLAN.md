@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-datatype` float-to-decimal owner for
+  the complete Go-master `pkg/types` formatting boundary. `Decimal::from_f64`
+  now uses shortest `%g`-compatible scientific formatting before the fixed
+  word parser, preserving both tiny exponents and the 81-digit overflow edge.
+  The focused fail-before regression, package inventory, and Ready validation
+  are recorded in `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04: aligned the Rust `tidb-datatype` decimal shift owner for the
   complete Go-master `pkg/types` fixed-word boundary. A rounding carry is now
   discarded when every original digit lies outside the retained fractional
@@ -5351,6 +5358,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: use ryu's human-readable shortest formatter for
+  `Decimal::from_f64`, apply Go's `%g` fixed/scientific threshold to those
+  digits, then pass the result directly to the existing Go-shaped decimal
+  parser. Expanding `f64::to_string()` positionally changes fixed nine-word
+  overflow/truncation behavior. Date/Author: 2026-09-04, Codex.
+
 - Decision: preserve Go's pre-round digit-bound check in Rust decimal shifting
   by inspecting the source digit prefix before accepting a rounding carry.
   Checking only the rounded numeric value would incorrectly retain a carry
@@ -5879,6 +5892,12 @@ For each bounded behavior cluster:
   Codex.
 
 ## Surprises & Discoveries
+
+- Rust's standard `f64::Display` deliberately never emits scientific notation;
+  `Decimal::from_f64` was therefore expanding an already positional string
+  before parsing. Ryu supplies the same shortest digits, while a small wrapper
+  restores Go's `%g` exponent threshold and exposes the fixed-buffer difference
+  at `1e-73`.
 
 - `Decimal::shift_mysql_with_word_limit` already rounded to the right scale,
   but it tested only `rounded.is_zero()`. For a value such as `9e-82`, Go's
