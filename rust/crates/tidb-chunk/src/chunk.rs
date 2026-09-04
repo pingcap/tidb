@@ -1845,9 +1845,12 @@ mod tests {
 
 /// Go `newChunk(elemLen...)`: positive lengths build fixed columns,
 /// otherwise variable columns, all with zero capacity.
+#[cfg(test)]
 use crate::column::{MY_DECIMAL_STRUCT_SIZE, SIZE_TIME};
+#[cfg(test)]
 use tidb_datatype::FieldTypeCode;
 
+#[cfg(test)]
 fn new_chunk_with_elem_lens(elem_lens: &[i64]) -> Chunk {
     let columns = elem_lens
         .iter()

@@ -143,7 +143,6 @@ fn mut_row() {
 }
 
 // Local shim keeping the test body close to the Go source names.
-use tidb_datatype::MyDecimal;
 
 fn string_datum(text: &str) -> tidb_datatype::StringDatum {
     tidb_datatype::StringDatum::new(text.as_bytes().to_vec(), tidb_datatype::Collation::Binary)

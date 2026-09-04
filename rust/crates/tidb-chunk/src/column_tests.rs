@@ -15,7 +15,7 @@
 use super::*;
 use crate::chunk::Chunk;
 use crate::column::Column;
-use crate::iterator::{ChunkIterator, Iterator4Chunk};
+use crate::iterator::ChunkIterator;
 use tidb_datatype::Decimal;
 
 /// Stands in for Go's `rand` in the reconstruct tests: those tests draw a
