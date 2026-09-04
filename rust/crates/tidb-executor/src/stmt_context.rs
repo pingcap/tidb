@@ -608,6 +608,10 @@ pub struct StmtContext {
     ddl_session_alias: String,
     /// Go `TraceInfo.TraceID`, captured when the DDL job is submitted.
     ddl_trace_id: Vec<u8>,
+    /// Go `SessionVars` snapshot for `AddMViewExecutionSessionVarsToJob`:
+    /// the MV-execution session variables captured for the DDL job envelope.
+    /// `None` means the defaults are used (matching a default session).
+    session_vars_image: std::collections::BTreeMap<String, String>,
     /// `NO_UNSIGNED_SUBTRACTION` changes expression typing and evaluation,
     /// not scanning, so it is kept beside the lexer's compact mode.
     no_unsigned_subtraction: bool,
@@ -890,6 +894,7 @@ impl StmtContext {
             ddl_reorg_priority: 1,
             ddl_session_alias: String::new(),
             ddl_trace_id: Vec::new(),
+            session_vars_image: std::collections::BTreeMap::new(),
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
@@ -1300,6 +1305,24 @@ impl StmtContext {
     #[must_use]
     pub fn ddl_trace_id(&self) -> &[u8] {
         &self.ddl_trace_id
+    }
+
+    /// Sets a session-variable image for `AddMViewExecutionSessionVarsToJob`
+    /// to snapshot into the DDL job envelope. The session tier calls this
+    /// with the live values of `tidb_mview_maintain_mem_quota`,
+    /// `tidb_mview_maintain_isolation_read_engines`, etc.
+    pub fn set_session_vars_image(&mut self, image: std::collections::BTreeMap<String, String>) {
+        self.session_vars_image = image;
+    }
+
+    /// Returns a cloned session-variable image, or `None` if not set.
+    #[must_use]
+    pub fn session_vars_image(&self) -> Option<std::collections::BTreeMap<String, String>> {
+        if self.session_vars_image.is_empty() {
+            None
+        } else {
+            Some(self.session_vars_image.clone())
+        }
     }
 
     /// Whether subtraction must use a signed result domain.

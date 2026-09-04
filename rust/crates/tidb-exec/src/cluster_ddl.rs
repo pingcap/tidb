@@ -10030,7 +10030,7 @@ fn build_create_materialized_view_job(
     job.add_system_var(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION, "");
     // Go `AddMViewExecutionSessionVarsToJob`: the twelve MV-execution
     // session variables ride the job for the maintenance worker.
-    add_mview_execution_session_vars_to_job(&mut job);
+    add_mview_execution_session_vars_to_job(&mut job, context);
     // Go `initMaterializedViewReorgMetaFromVariables`: CREATE MATERIALIZED
     // VIEW submits as reorg DDL, so the job carries the reorg metadata.
     job.reorg_meta = Some(GoShared::new(init_materialized_view_reorg_meta(context)?));
@@ -10075,7 +10075,15 @@ fn init_materialized_view_reorg_meta(
 /// creator's settings. The statement context carries no session-variable
 /// image, so the captured values are the default session's — the same
 /// documented reduction as the scatter-region var.
-fn add_mview_execution_session_vars_to_job(job: &mut Job) {
+fn add_mview_execution_session_vars_to_job(job: &mut Job, context: &tidb_executor::StmtContext) {
+    // The session tier may install a session-variable image on the context;
+    // when present, it provides live values for the MV-execution variables.
+    if let Some(image) = context.session_vars_image() {
+        for (name, value) in &image {
+            job.add_system_var(name.as_str(), value.as_str());
+        }
+        return;
+    }
     use tidb_vardef::defaults::{
         DEF_TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, DEF_TIDB_MVIEW_MAINTAIN_IMPORT_THREADS,
         DEF_TIDB_MVIEW_MAINTAIN_MEM_QUOTA, DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE,
