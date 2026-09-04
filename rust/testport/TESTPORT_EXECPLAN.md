@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` locale and charset compatibility):
+  reconciled `TestLcTimeNamesReadOnly`, `TestLcMessages`, and
+  `TestDefaultCharsetAndCollation`. A focused session regression now pins the
+  `en_US`, `utf8mb4`, and `utf8mb4_bin` defaults, the mutable `lc_messages`
+  setter, and the read-only `lc_time_names` 1238 refusal.
 - 2026-09-05 (`pkg/sessionctx/variable` live session getters): wired the
   missing `tidb_last_query_info` getter to session state, preserving Go's
   zero-value `QueryInfo` JSON shape alongside the existing current-TS,

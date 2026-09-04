@@ -123,6 +123,36 @@ fn session_getter_functions_read_live_defaults() {
     assert_eq!(one(&mut session, "SELECT @@last_plan_from_binding"), "0");
 }
 
+/// Go `TestLcTimeNamesReadOnly`, `TestLcMessages`, and
+/// `TestDefaultCharsetAndCollation`: locale and charset compatibility
+/// variables expose their captured defaults, `lc_messages` remains mutable,
+/// and the read-only `lc_time_names` write is rejected with 1238.
+#[test]
+fn locale_and_charset_compatibility_variables_match_go() {
+    let mut session = Session::new();
+
+    assert_eq!(
+        one(&mut session, "SELECT @@character_set_connection"),
+        "utf8mb4"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@collation_connection"),
+        "utf8mb4_bin"
+    );
+    assert_eq!(one(&mut session, "SELECT @@lc_messages"), "en_US");
+    assert_eq!(one(&mut session, "SELECT @@lc_time_names"), "en_US");
+
+    session.run("SET lc_messages = 'zh_CN'").unwrap();
+    assert_eq!(one(&mut session, "SELECT @@lc_messages"), "zh_CN");
+
+    let error = session
+        .run("SET GLOBAL lc_time_names = 'newvalue'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1238);
+    assert_eq!(one(&mut session, "SELECT @@lc_time_names"), "en_US");
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.
