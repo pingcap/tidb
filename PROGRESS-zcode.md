@@ -349,3 +349,5 @@
 - 下轮恢复点: (1) privilege 动态权限/password expiry/SET-ROLE 行为面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - privilege 第二遍: DYNAMIC_PRIVS 21=21 精确匹配(含注释剥离后脚本核验), 大小写语义一致; RegisterDynamicPrivilege 插件扩展有意不移植(const 决策已在模块文档)。收据已追加。
 - 下轮恢复点: (1) privilege 行为面(SET-ROLE/角色图、password expiry); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- privilege 第三遍: check_password_expired 忠实移植核实(1862/沙箱/lifetime 阶梯全对齐); 记录一个微差异=Go AddDate 日历日 vs Rust 秒算术(DST 边界 ±1h, 修复需 registry 携带时区)。收据已追加。
+- 下轮恢复点: (1) privilege 余项: SET-ROLE/角色图; (2) DST 微差异修复(需 registry 时区, 排队); (3) F2/F3-seam live 阻塞; (4) F4 低优先级。

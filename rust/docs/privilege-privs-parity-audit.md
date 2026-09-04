@@ -34,3 +34,19 @@ observable matching. `RegisterDynamicPrivilege` (plugin extension) is
 deliberately unported — this tier loads no plugins and the module doc
 records the `const` decision. Still open as a behavior surface:
 SET-ROLE/role-graph semantics and password-expiry policy.
+
+## Password expiry (2026-09-05, third pass)
+
+`check_password_expired` (`registry_ops.rs:812`) ports Go's decision
+(`privileges.go:490-513`) faithfully: the `Password_expired` flag, the
+lifetime ladder (`NULL` falls to the `default_password_lifetime` global,
+`0` is NEVER, positive lifetimes age out), the sandbox-mode branch that
+admits the login instead of refusing, and error 1862 with the verbatim
+message.
+
+One recorded micro-divergence: Go ages the password with
+`AddDate(0, 0, days).Before(now)` — calendar days in the server's
+location, which shifts by up to an hour across DST transitions — while
+Rust compares exact seconds. Observable only when a password's exact
+expiry instant lands inside a DST shift; porting calendar-day arithmetic
+would need the session timezone in the registry.
