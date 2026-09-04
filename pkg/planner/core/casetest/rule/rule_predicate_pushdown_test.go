@@ -79,6 +79,7 @@ func runPredicatePushdownTestDataWithResult(t *testing.T, tk *testkit.TestKit, c
 
 func TestPredicatePushdownSuite(t *testing.T) {
 	t.Run("TestConstantPropagateWithCollation", testConstantPropagateWithCollation)
+	t.Run("TestNestedInnerJoinPredicatePropagation", testNestedInnerJoinPredicatePropagation)
 	t.Run("TestPredicatePushDown", testPredicatePushDown)
 }
 
@@ -100,6 +101,27 @@ func testConstantPropagateWithCollation(t *testing.T) {
 		tk.MustExec("insert into t0 values (1, 10), (2, 20), (3, 30)")
 		tk.MustExec("insert into t2 values (1, 100), (3, 300), (4, 400)")
 		runPredicatePushdownTestDataWithResult(t, tk, cascades, "TestConstantPropagateWithCollation")
+	})
+}
+
+func testNestedInnerJoinPredicatePropagation(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t1 (a int)")
+		tk.MustExec("create table t2 (a int)")
+		tk.MustExec("create table t3 (a int)")
+		tk.MustExec("create table t4 (a int)")
+		tk.MustExec("insert into t1 values (1), (2)")
+		tk.MustExec("insert into t2 values (1), (2)")
+		tk.MustExec("insert into t3 values (1), (2)")
+		tk.MustExec("insert into t4 values (1), (2)")
+		tk.MustExec("create view v1 as select a, count(*) as c from t1 group by a")
+		tk.MustExec("create view v2 as select a from t2 where a < 2")
+		plan := strings.Join(testdata.ConvertRowsToStrings(
+			tk.MustQuery("explain format = 'plan_tree' select * from v1 join v2 on v1.a = v2.a").Rows(),
+		), "\n")
+		require.NotContains(t, plan, "lt(test.t1.a, 2)")
+		runPredicatePushdownTestDataWithResult(t, tk, cascades, "TestNestedInnerJoinPredicatePropagation")
 	})
 }
 
