@@ -1553,6 +1553,9 @@ pub struct SessionVars {
     /// `sql_select_limit` `SetSession` hook. `u64::MAX` is the unlimited
     /// default and any smaller value caps top-level SELECT/set results.
     select_limit: u64,
+    /// Go's typed `SessionVars.SelectivityFactor`, maintained by the
+    /// `tidb_opt_selectivity_factor` `SetSession` hook.
+    selectivity_factor: f64,
     /// Go's typed `SessionVars.MultiStatementMode`: OFF=0, ON=1, WARN=2.
     /// The normalized enum value drives COM_QUERY multi-statement admission.
     multi_statement_mode: u8,
@@ -1673,6 +1676,7 @@ impl Default for SessionVars {
             max_execution_time: 0,
             time_zone: resolve_session_time_zone_value("SYSTEM"),
             select_limit: u64::MAX,
+            selectivity_factor: tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR,
             multi_statement_mode: 0,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
@@ -1755,6 +1759,7 @@ impl SessionVars {
         let max_execution_time = Self::max_execution_time_from_systems(&systems);
         let time_zone = Self::time_zone_from_systems(&systems);
         let select_limit = Self::select_limit_from_systems(&systems);
+        let selectivity_factor = Self::selectivity_factor_from_systems(&systems);
         let multi_statement_mode = Self::multi_statement_mode_from_systems(&systems);
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
@@ -1786,6 +1791,7 @@ impl SessionVars {
         self.max_execution_time = max_execution_time;
         self.time_zone = time_zone;
         self.select_limit = select_limit;
+        self.selectivity_factor = selectivity_factor;
         self.multi_statement_mode = multi_statement_mode;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
@@ -1853,6 +1859,13 @@ impl SessionVars {
             .get("sql_select_limit")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(u64::MAX)
+    }
+
+    fn selectivity_factor_from_systems(systems: &HashMap<String, String>) -> f64 {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_OPT_SELECTIVITY_FACTOR)
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR)
     }
 
     fn multi_statement_mode_from_systems(systems: &HashMap<String, String>) -> u8 {
@@ -2024,6 +2037,13 @@ impl SessionVars {
     #[must_use]
     pub const fn select_limit(&self) -> u64 {
         self.select_limit
+    }
+
+    /// Go `SessionVars.SelectivityFactor`, used by cardinality fallback
+    /// estimation for predicates without statistics.
+    #[must_use]
+    pub const fn selectivity_factor(&self) -> f64 {
+        self.selectivity_factor
     }
 
     /// Go `SessionVars.MultiStatementMode`: OFF=0 refuses a multi-statement
@@ -2231,6 +2251,7 @@ impl SessionVars {
         let mut restores_max_execution_time = false;
         let mut restores_time_zone = false;
         let mut restores_select_limit = false;
+        let mut restores_selectivity_factor = false;
         let mut restores_multi_statement_mode = false;
         let mut restores_prepared_plan_cache = false;
         let mut restores_shared_lock_upgrade = false;
@@ -2251,6 +2272,8 @@ impl SessionVars {
             restores_max_execution_time |= key == "max_execution_time";
             restores_time_zone |= key == "time_zone";
             restores_select_limit |= key == "sql_select_limit";
+            restores_selectivity_factor |=
+                key == tidb_vardef::tidb_vars::TIDB_OPT_SELECTIVITY_FACTOR;
             restores_multi_statement_mode |= key == "tidb_multi_statement_mode";
             restores_prepared_plan_cache |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
@@ -2307,6 +2330,9 @@ impl SessionVars {
         }
         if restores_select_limit {
             self.select_limit = Self::select_limit_from_systems(&self.systems);
+        }
+        if restores_selectivity_factor {
+            self.selectivity_factor = Self::selectivity_factor_from_systems(&self.systems);
         }
         if restores_multi_statement_mode {
             self.multi_statement_mode = Self::multi_statement_mode_from_systems(&self.systems);
@@ -2510,6 +2536,12 @@ impl SessionVars {
                 .value
                 .parse::<u64>()
                 .expect("sql_select_limit validation stores unsigned decimal rows");
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_OPT_SELECTIVITY_FACTOR {
+            self.selectivity_factor = validated
+                .value
+                .parse::<f64>()
+                .expect("selectivity factor validation stores a decimal fraction");
         }
         if key == "tidb_multi_statement_mode" {
             self.multi_statement_mode = Self::multi_statement_mode_from_systems(&self.systems);

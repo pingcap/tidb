@@ -686,14 +686,35 @@ pub(crate) fn selectivity_with_default_string_match_selectivity(
     stats: Option<&TableStatistics>,
     default_string_match_selectivity: f64,
 ) -> f64 {
+    selectivity_with_default_string_match_selectivity_and_factor(
+        predicate,
+        table,
+        resolver,
+        stats,
+        default_string_match_selectivity,
+        tidb_planner::cost_factors::SELECTION_FACTOR,
+    )
+}
+
+/// [`selectivity_with_default_string_match_selectivity`] with the session's
+/// `tidb_opt_selectivity_factor` supplied by the caller.
+pub(crate) fn selectivity_with_default_string_match_selectivity_and_factor(
+    predicate: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    default_string_match_selectivity: f64,
+    selectivity_factor: f64,
+) -> f64 {
     let mut conjuncts = Vec::new();
     crate::plan_trace::collect_and(predicate, &mut conjuncts);
-    selectivity_of_conjuncts_with_default_string_match_selectivity(
+    selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
         &conjuncts,
         table,
         resolver,
         stats,
         default_string_match_selectivity,
+        selectivity_factor,
     )
 }
 
@@ -729,6 +750,24 @@ pub(crate) fn selectivity_of_conjuncts_with_default_string_match_selectivity(
     stats: Option<&TableStatistics>,
     default_string_match_selectivity: f64,
 ) -> f64 {
+    selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        default_string_match_selectivity,
+        tidb_planner::cost_factors::SELECTION_FACTOR,
+    )
+}
+
+fn selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    default_string_match_selectivity: f64,
+    selectivity_factor: f64,
+) -> f64 {
     selectivity_of_conjuncts_with_defaults(
         conjuncts,
         table,
@@ -736,7 +775,7 @@ pub(crate) fn selectivity_of_conjuncts_with_default_string_match_selectivity(
         stats,
         SelectivityDefaults::from_session(
             default_string_match_selectivity,
-            tidb_planner::cost_factors::SELECTION_FACTOR,
+            selectivity_factor,
         ),
     )
 }

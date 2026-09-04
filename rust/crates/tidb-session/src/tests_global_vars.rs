@@ -1220,6 +1220,35 @@ fn analyze_store_batch_size_uses_go_typed_session_hook() {
     assert_eq!(fresh.analyze_store_batch_size(), 6);
 }
 
+/// Go `TestTiDBOptSelectivityFactor`: the typed optimizer factor follows
+/// SESSION writes, statement snapshots, and GLOBAL inheritance, while the
+/// generic float validator clamps values above one to the source maximum.
+#[test]
+fn opt_selectivity_factor_uses_go_typed_session_hook() {
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+
+    assert_eq!(
+        session.vars().selectivity_factor(),
+        tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR
+    );
+    session
+        .run("SET tidb_opt_selectivity_factor = 0.7")
+        .unwrap();
+    assert_eq!(session.vars().selectivity_factor(), 0.7);
+    assert_eq!(session.ddl_statement_context().selectivity_factor(), 0.7);
+
+    session
+        .run("SET GLOBAL tidb_opt_selectivity_factor = 1.1")
+        .unwrap();
+    assert_eq!(
+        globals.get("tidb_opt_selectivity_factor").unwrap(),
+        "1"
+    );
+    let mut fresh = vars::SessionVars::new();
+    fresh.seed_from_globals(globals).unwrap();
+    assert_eq!(fresh.selectivity_factor(), 1.0);
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.

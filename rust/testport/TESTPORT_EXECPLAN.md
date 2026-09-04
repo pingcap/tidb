@@ -105,6 +105,11 @@ For each bounded behavior cluster:
   typed session product, zero disable sentinel, upper-bound clamping, restore,
   and fresh-session GLOBAL inheritance. Focused SQL coverage keeps the
   context-facing string path and Go's `SessionVars` field in lockstep.
+- 2026-09-05 (`pkg/sessionctx/variable` selectivity-factor hook): added the
+  typed `SelectivityFactor` session product, statement snapshot, and planner
+  statistics handoff so pseudo/cardinality fallback estimation receives the
+  session value instead of a fixed constant. Focused SQL coverage verifies
+  session writes, statement capture, GLOBAL clamping, and inheritance.
 - 2026-09-05 (`pkg/sessionctx/variable` resource-control hooks): published
   Go's process-wide enable and strict-mode switches on named GLOBAL writes,
   startup/cluster/reset paths, and changed resource-group hint admission to

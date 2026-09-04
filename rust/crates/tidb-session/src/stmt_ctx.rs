@@ -57,6 +57,7 @@ pub(crate) struct StatementVarSnapshot {
     cte_depth: i64,
     join_reorder_threshold: i32,
     default_string_match_selectivity: f64,
+    selectivity_factor: f64,
     enable_pseudo_for_outdated_stats: bool,
     stats_load_sync_wait_ms: u64,
     stats_load_pseudo_timeout: bool,
@@ -642,6 +643,7 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
                 .unwrap_or(0.0),
+            selectivity_factor: self.vars.selectivity_factor(),
             enable_pseudo_for_outdated_stats: on("tidb_enable_pseudo_for_outdated_stats"),
             stats_load_sync_wait_ms: self
                 .vars
@@ -826,6 +828,7 @@ impl Session {
         let cte_depth = snapshot.cte_depth;
         let join_reorder_threshold = snapshot.join_reorder_threshold;
         let default_string_match_selectivity = snapshot.default_string_match_selectivity;
+        let selectivity_factor = snapshot.selectivity_factor;
         let enable_pseudo_for_outdated_stats = snapshot.enable_pseudo_for_outdated_stats;
         let stats_load_sync_wait_ms = snapshot.stats_load_sync_wait_ms;
         let stats_load_pseudo_timeout = snapshot.stats_load_pseudo_timeout;
@@ -988,6 +991,7 @@ impl Session {
                 .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
                 .with_like_default_escape(like_default_escape)
                 .with_default_string_match_selectivity(default_string_match_selectivity)
+                .with_selectivity_factor(selectivity_factor)
                 .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
                 .with_stats_load_policy(
                     stats_load_sync_wait_ms,
@@ -1080,6 +1084,7 @@ impl Session {
         .with_no_unsigned_subtraction(sql_mode.has_no_unsigned_subtraction_mode())
         .with_like_default_escape(like_default_escape)
         .with_default_string_match_selectivity(default_string_match_selectivity)
+        .with_selectivity_factor(selectivity_factor)
         .with_pseudo_for_outdated_stats(enable_pseudo_for_outdated_stats)
         .with_stats_load_policy(
             stats_load_sync_wait_ms,

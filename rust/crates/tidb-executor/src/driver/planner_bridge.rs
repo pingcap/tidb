@@ -660,6 +660,7 @@ struct InitStats<'a> {
     catalog: &'a Catalog,
     select: Option<&'a tidb_ast::SelectStmt>,
     default_string_match_selectivity: f64,
+    selectivity_factor: f64,
     enable_pseudo_for_outdated_stats: bool,
     zone: &'a tidb_datatype::SessionTimeZone,
 }
@@ -828,12 +829,13 @@ impl OwnedRewrite for InitStats<'_> {
                     .map(|column| (column.name.clone(), column.field_type.clone()))
                     .collect(),
             );
-            let selectivity = crate::access_cost::selectivity_with_default_string_match_selectivity(
+            let selectivity = crate::access_cost::selectivity_with_default_string_match_selectivity_and_factor(
                 predicate,
                 table,
                 &crate::driver::from::scope_resolver(&scope),
                 statistics,
                 self.default_string_match_selectivity,
+                self.selectivity_factor,
             );
             source.base.base.set_stats(Some(table_stats.scale(
                 selectivity,
@@ -1029,6 +1031,7 @@ fn optimize_cte_tree(
             catalog,
             select: None,
             default_string_match_selectivity: ctx.default_string_match_selectivity(),
+            selectivity_factor: ctx.selectivity_factor(),
             enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
             zone,
         },
@@ -1479,6 +1482,7 @@ fn optimize_built_logical(
             catalog,
             select: (source_count == 1).then_some(select_hint).flatten(),
             default_string_match_selectivity: ctx.default_string_match_selectivity(),
+            selectivity_factor: ctx.selectivity_factor(),
             enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
             zone: session_zone,
         },
@@ -1499,6 +1503,7 @@ fn optimize_built_logical(
                 catalog,
                 select: (source_count == 1).then_some(select_hint).flatten(),
                 default_string_match_selectivity: ctx.default_string_match_selectivity(),
+                selectivity_factor: ctx.selectivity_factor(),
                 enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
                 zone: session_zone,
             },

@@ -623,6 +623,9 @@ pub struct StmtContext {
     /// TopN-assisted string-match estimation; any non-zero value disables it
     /// and becomes the fallback estimate.
     default_string_match_selectivity: f64,
+    /// Go `SessionVars.SelectivityFactor`, the fallback estimate for
+    /// predicates that have no usable statistics.
+    selectivity_factor: f64,
     /// Go `SessionVars.EnablePseudoForOutdatedStats`: whether this statement
     /// may replace stale analyzed distributions with pseudo statistics.
     enable_pseudo_for_outdated_stats: bool,
@@ -898,6 +901,7 @@ impl StmtContext {
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
             default_string_match_selectivity: 0.0,
+            selectivity_factor: tidb_planner::selectivity_greedy::DEF_OPT_SELECTIVITY_FACTOR,
             enable_pseudo_for_outdated_stats: false,
             stats_load_sync_wait_ms: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64,
             stats_load_pseudo_timeout: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT,
@@ -1175,6 +1179,13 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the session's general predicate selectivity factor.
+    #[must_use]
+    pub fn with_selectivity_factor(mut self, value: f64) -> Self {
+        self.selectivity_factor = value;
+        self
+    }
+
     /// Sets `@@tidb_enable_pseudo_for_outdated_stats` for this statement.
     #[must_use]
     pub fn with_pseudo_for_outdated_stats(mut self, enabled: bool) -> Self {
@@ -1347,6 +1358,12 @@ impl StmtContext {
     #[must_use]
     pub fn default_string_match_selectivity(&self) -> f64 {
         self.default_string_match_selectivity
+    }
+
+    /// Go `SessionVars.SelectivityFactor` captured for this statement.
+    #[must_use]
+    pub fn selectivity_factor(&self) -> f64 {
+        self.selectivity_factor
     }
 
     /// Go `SessionVars.GetEnablePseudoForOutdatedStats`.
