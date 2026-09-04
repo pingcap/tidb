@@ -99,15 +99,22 @@ For each bounded behavior cluster:
   `receipts/types_timestamp_dst_gap.md`.
 - 2026-09-04: aligned Rust `tidb-expr` `TIMESTAMP` string parsing with Go's
   compact `ParseTime` forms. Delimiter-free 6/8/11/12/14-digit strings now
-  use the source field-width table, and full 14-digit datetime fractions round
-  half-up to six digits; date-only fractional suffixes remain explicitly
-  outside this signature-selection slice. Receipt:
+  use the source field-width table, full 14-digit datetime fractions round
+  half-up to six digits, and date-only fractional suffixes use Go's hour rule.
+  Receipt:
   `receipts/expression_collation_audit.md`.
 - 2026-09-04: aligned the Rust `tidb-expr` `MAKETIME` evaluator with Go's
   unsigned-hour guard. `Datum::UInt` now carries the source `UnsignedFlag`
   signal through the value-tier seam, so wrapped negative hours (including
   `CAST(-1 AS UNSIGNED)`) clamp to `838:59:59`; the floating-second MaxFsp
   rows are active in `go_time_values`. Receipt:
+  `receipts/expression_collation_audit.md`.
+- 2026-09-04: aligned Rust `tidb-expr` `TIMESTAMP` numeric and DECIMAL
+  arguments with Go's `isFloat` signature route. Integer, real, float32, and
+  DECIMAL datums now use the shared `parse_time(..., is_float = true)` path,
+  covering packed numeric fractions and Issue #25093 zero-date decimal rows;
+  string/temporal datums retain their compact string parser. Focused source
+  regressions, inventory, and Ready evidence are recorded in
   `receipts/expression_collation_audit.md`.
 - 2026-09-04 (batch 22, `pkg/ddl` MV remaining pure surface): implemented
   Go master `94a9cbedab`'s `MViewExecutionSessionVarsFromJob` (tidb-session,
@@ -5706,15 +5713,24 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 - Decision: implement compact `TIMESTAMP` STRING parsing in the shared
   datetime value domain with Go's width table (`14/12/11/10/9/8/7/6/5`),
-  pivot two-digit years, and six-digit half-up fractional rounding. Restrict
-  fractional compact parsing to the full 14-digit datetime form because Go's
-  date-only numeric suffix has a distinct type-selected meaning. Date/Author:
-  2026-09-04, Codex.
+  pivot two-digit years, six-digit half-up fractional rounding, and the
+  date-only compact hour suffix. Select the parser's `is_float` branch from
+  the runtime datum kind so numeric and STRING suffix meanings remain distinct.
+  Date/Author: 2026-09-04, Codex.
 
 - Decision: treat `Datum::UInt` as the value-tier equivalent of Go's
   `UnsignedFlag` for `MAKETIME`'s first argument. Detect a wrapped negative
   hour before sign selection, set the Go overflow clamp to +838 hours, and
   leave signed negative hours and all minute/second validation unchanged.
+  Date/Author: 2026-09-04, Codex.
+
+- Decision: preserve the source datum kind for `TIMESTAMP`'s one-argument
+  parser. Route integer, real, float32, and DECIMAL values through the Go
+  `ParseTimeFromFloatString` equivalent (`parse_time` with `is_float = true`),
+  while retaining the compact STRING parser for textual and temporal values.
+  Map the shared parsed core/FSP into `GoDateTime` so numeric zero-date
+  fractions and packed datetime fractions retain Go's output precision; string
+  date-only fractions retain Go's hour interpretation.
   Date/Author: 2026-09-04, Codex.
 
 - Decision: reuse `tidb_datatype::parse_time_from_num` for delimiter-free
@@ -6358,15 +6374,20 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 - The compact parser's first generalization exposed a source distinction that
   must remain visible: `TIMESTAMP('20240315.5')` is parsed by Go's string
   signature as a five-hour suffix, while `TIMESTAMP('20170118123050.1234567')`
-  uses a fractional-second suffix. The Rust value tier does not yet model the
-  former signature-selection arm, so only the full datetime fractional form is
-  activated and the date-only fraction remains a documented gap.
+  uses a fractional-second suffix. Routing the shared parser's `is_float` bit
+  from the datum kind keeps both interpretations active in the value tier.
 
 - The ignored `MAKETIME` carrier's floating-second rows already passed after
   the prior MaxFsp formatting work; its remaining failure was specifically
   the unsigned type signal. `int_arg` correctly exposed the wrapped signed
   value, but the value-only dispatcher had discarded the `UnsignedFlag`, so
   Go's pre-sign clamp never ran.
+
+- The ignored `TIMESTAMP` numeric carrier separated two issues: Go's
+  `isFloat` flag is selected from static source type even after `EvalString`,
+  and DECIMAL zero-date fractions must survive parsing. Reusing the shared
+  float-string parser resolves both without changing the string signature;
+  the string branch now also covers the date-only hour suffix.
 
 - The prior ADDTIME/SUBTIME gap was two independent source rules: integer
   arguments are cast to ETString before `ParseTimeWithString` (which accepts

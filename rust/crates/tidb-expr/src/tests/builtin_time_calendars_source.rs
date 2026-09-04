@@ -323,8 +323,8 @@ fn date_arith_day_month_year_overflow_tables_match_master() {
 
 /// GO PORT of the DELIMITED-input rows of
 /// `builtin_time_test.go:2563 TestTimestamp`: one- and two-argument string
-/// forms. Issue #25093's fractional-only decimals and the compact numeric
-/// literals are recorded under [`timestamp_compact_numeric_rows`].
+/// forms. Numeric and DECIMAL source rows are covered by the source-type
+/// regressions immediately below.
 #[test]
 fn timestamp_delimited_argument_rows_match_master() {
     let cases = [
@@ -354,19 +354,11 @@ fn timestamp_delimited_argument_rows_match_master() {
     }
 }
 
-/// Numeric/decimal rows of `builtin_time_test.go:2563 TestTimestamp` that need
-/// source-type-specific `ParseTimeFromNum`/`ParseTimeFromDecimal` behavior.
-/// The delimiter-free STRING rows are active in
-/// [`timestamp_compact_string_rows_match_master`].
-#[test]
-#[ignore = "go-parity-gap: TIMESTAMP's Int/Float literal rows, Decimal(20170118123950.xxx), and issue #25093's fraction-only decimals ('0.123'->'0000-00-00 00:00:00.123','101.234'->'2000-01-01 ...') need source-type-specific numeric readers and zero-date decimal semantics this evaluator lacks"]
-fn timestamp_compact_numeric_rows() {}
-
 /// The delimiter-free STRING rows from Go's `TestTimestamp`. Integer-shaped
 /// dates and datetimes use the same 6/8/12/14-digit reader as
 /// `types.ParseTimeWithString`; a fractional suffix on the full 14-digit
 /// datetime is rounded to Go's six-digit datetime precision. Date-only
-/// compact fractions retain their separate signature-selection gap.
+/// compact fractions use Go's hour-suffix rule in the string signature.
 #[test]
 fn timestamp_compact_string_rows_match_master() {
     for (sql, want) in [
@@ -385,6 +377,47 @@ fn timestamp_compact_string_rows_match_master() {
     ] {
         assert_eq!(e(sql), want, "{sql}");
     }
+}
+
+/// Numeric/DECIMAL `TIMESTAMP` rows from Go's `TestTimestamp`. These remain
+/// separate from the floating-point carrier so the source-type parser choice
+/// is explicit in the regression inventory.
+#[test]
+fn timestamp_numeric_integer_and_decimal_rows_match_master() {
+    for (sql, want) in [
+        ("timestamp(170118)", "STR:2017-01-18 00:00:00"),
+        ("timestamp(20170118)", "STR:2017-01-18 00:00:00"),
+        (
+            "timestamp(20170118123950.123)",
+            "STR:2017-01-18 12:39:50.123",
+        ),
+        (
+            "timestamp(20170118123950.999)",
+            "STR:2017-01-18 12:39:50.999",
+        ),
+        ("timestamp(0.4352)", "STR:0000-00-00 00:00:00.4352"),
+        ("timestamp(0.12345678)", "STR:0000-00-00 00:00:00.123457"),
+        ("timestamp(101.234)", "STR:2000-01-01 00:00:00.000"),
+    ] {
+        assert_eq!(e(sql), want, "{sql}");
+    }
+    for sql in ["timestamp(0.9999999)", "timestamp(1.234)"] {
+        assert_eq!(e(sql), "NULL", "{sql}");
+    }
+}
+
+/// Source-type-specific floating-point rows that use Go's
+/// `ParseTimeFromFloatString` timestamp reader.
+#[test]
+fn timestamp_float_rows_match_master() {
+    assert_eq!(e("timestamp(20170118.999)"), "STR:2017-01-18 00:00:00.000");
+}
+
+/// Fraction-only DECIMAL rows from Go's `TestIssue25093`; these exercise the
+/// source numeric parser's zero-date conversion rather than compact digits.
+#[test]
+fn timestamp_fraction_only_decimal_rows_match_master() {
+    assert_eq!(e("timestamp(0.123)"), "STR:0000-00-00 00:00:00.123");
 }
 
 /// INTEGER-second MAKETIME rows of
@@ -422,10 +455,10 @@ fn maketime_integer_second_master_rows_overflow_garbage_and_null_arguments() {
 /// QUARTER overflow-over-year case, both issued month-clamp sweeps (#41052
 /// forward, #54908 backward), and the range-exit rows whose empty Go strings
 /// are NULL results here. The `{MICROSECOND,1,950501}`-style integer-date
-/// inputs ride [`timestamp_compact_numeric_rows`]'s compact-reader gap, and
-/// the `10000*365 +/- 1` MONTH amounts are additionally rejected outright by
-/// this evaluator's unit dispatcher rather than answering NULL (recorded as a
-/// gap in the batch receipt, not approximated).
+/// inputs remain an explicit TIMESTAMPADD source-type gap, and the `10000*365
+/// +/- 1` MONTH amounts are additionally rejected outright by this evaluator's
+/// unit dispatcher rather than answering NULL (recorded as a gap in the batch
+/// receipt, not approximated).
 #[test]
 fn timestamp_add_delimited_rows_match_master() {
     let cases = [

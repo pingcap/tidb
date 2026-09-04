@@ -417,13 +417,40 @@ pub(crate) fn timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
     let Some(text) = coerce_str(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    let Some(base) = parse_datetime(&text) else {
+    // Go selects `ParseTimeFromFloatString` for numeric and DECIMAL
+    // signatures, even though all signatures first call EvalString.  That
+    // parser treats a suffix after a packed date as a fractional second and
+    // preserves zero-date DECIMAL values (for example `0.123`).  String and
+    // temporal signatures use `ParseTime`; retaining the source-kind bit here
+    // keeps the date-only compact suffix (`20240315.5`) as an hour for STRING
+    // but as a fractional second for numeric values.
+    let is_float = matches!(
+        vals[0],
+        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_)
+    );
+    let parsed = tidb_datatype::parse_time(
+        &text,
+        tidb_datatype::TimeType::DateTime,
+        i64::from(get_fsp(&text)),
+        is_float,
+        true,
+        false,
+        &cols.time_zone(),
+    );
+    let Ok(parsed) = parsed else {
         cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
         return Ok(Datum::Null);
     };
+    let core = parsed.time.core_time();
     let base = GoDateTime {
-        fsp: get_fsp(&text),
-        ..base
+        year: i64::from(core.year()),
+        month: u32::from(core.month()),
+        day: u32::from(core.day()),
+        hour: u32::from(core.hour()),
+        minute: u32::from(core.minute()),
+        second: u32::from(core.second()),
+        micros: core.microsecond(),
+        fsp: parsed.time.fsp().into(),
     };
     if vals.len() == 1 {
         return Ok(Datum::new_string(base.format()));

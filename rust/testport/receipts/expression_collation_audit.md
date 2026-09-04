@@ -921,10 +921,10 @@ unproven. The shared parser now applies the Go width table, two-digit-year
 window, calendar/time validation, and half-up microsecond carry for full
 datetime fractions.
 
-Date-only compact fractions intentionally remain a signature-selection gap:
-Go parses `TIMESTAMP('20240315.5')` as a five-hour suffix, while the numeric
-datetime fraction uses seconds. The Rust value tier does not carry that static
-signature distinction, so it does not guess at this behavior.
+Date-only compact fractions use the same source distinction as Go: the STRING
+signature parses `TIMESTAMP('20240315.5')` as a five-hour suffix, while the
+numeric signature treats `.5` as a fractional second. The timestamp dispatcher
+now carries this distinction from the runtime datum kind into the shared parser.
 
 Focused fail-before/pass-after evidence:
 
@@ -939,13 +939,62 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
   -p tidb-expr --lib timestamp_ -- --nocapture
-# after fix: all compact/delimited timestamp carriers passed; the separate
-# numeric/decimal source-type gap remains ignored.
+# after fix: all compact/delimited timestamp carriers passed; numeric and
+# DECIMAL source carriers are covered by the active follow-up below.
 ```
 
-The numeric Int/Float, Decimal, and issue-25093 fraction-only rows remain
-explicitly bounded in the source carrier because their Go signature-specific
-parsers and zero-date semantics need a separate value/type batch.
+The numeric Int/Float, Decimal, and issue-25093 fraction-only rows are covered
+by the source-type follow-up below; the date-only string fraction is pinned by
+the datetime source regression as well.
+
+## Rust follow-up: `TIMESTAMP` numeric and DECIMAL source parsing
+
+This follow-up remains inside the complete `pkg/expression` inventory above at
+Go `origin/master` `3bd6b6d4d632b16ee5db7fbbefbf21b1e57527b2`. Before editing,
+the full `TestTimestamp` table was reread, including its integer, real,
+DECIMAL, and Issue #25093 rows, together with the Rust `add_sub::timestamp`
+dispatcher and the shared `tidb-datatype` numeric/float parser. No Go,
+generated, fixture, platform, or Bazel artifact changed.
+
+Go chooses `ParseTimeFromFloatString` for `Longlong`, `Float`, `Double`, and
+`NewDecimal` argument types, despite first evaluating each argument through
+the string interface. Rust previously coerced every datum to text and sent it
+through the string-only `parse_datetime` path. Consequently packed numeric
+fractions and zero-date DECIMAL values returned NULL even though Go returns a
+datetime (`20170118.999` → `2017-01-18 00:00:00.000`, `0.123` →
+`0000-00-00 00:00:00.123`). Rust now preserves the datum-kind signal and sends
+numeric/DECIMAL values through `tidb_datatype::parse_time(..., is_float =
+true)`, mapping the parsed core and FSP into the expression datetime. String,
+temporal, and duration values use the `is_float = false` compact string branch,
+including Go's date-only hour suffix. The compact reader itself now delegates
+to the shared datatype parser for the validated fields and fractional FSP.
+
+Focused fail-before/pass-after evidence:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_time_calendars_source::timestamp_fraction_only_decimal_rows_match_master \
+  -- --exact --nocapture
+# pre-fix: failed (`timestamp(0.123)` returned NULL)
+# after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_time_calendars_source::timestamp_numeric_integer_and_decimal_rows_match_master \
+  -- --exact --nocapture
+# after fix: 1 passed (packed integer, DECIMAL fractions, zero-date and
+# invalid-value rows; the REAL boundary is pinned by the focused float test)
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib timestamp -- --nocapture
+# after fix: all timestamp source carriers passed
+```
+
+The date-only compact STRING fraction (`TIMESTAMP('20240315.5')`) is covered
+by the companion datetime regression (`05:00:00.0`), preserving Go's hour
+interpretation alongside the numeric parser's fractional-second result.
 
 ## Rust follow-up: `FORMAT` precision and `WEIGHT_STRING` truncation warnings
 

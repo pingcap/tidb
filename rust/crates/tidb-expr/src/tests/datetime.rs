@@ -1397,44 +1397,38 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
     }
 }
 
-/// `TIMESTAMP` is the ONE member of the measured class this layer does NOT
-/// cover, and the reason is worth pinning rather than leaving as a silent
-/// gap.
+/// Go's `TIMESTAMP` signatures choose their parser from the argument's static
+/// type, even though both signatures first evaluate the argument as a string.
+/// The numeric and string parsers agree for packed integers, but differ when a
+/// date-only value carries a fractional suffix. Capture both outcomes here so
+/// a future refactor does not collapse the source-type distinction again.
 ///
-/// The earlier diagnosis -- that `timestamp(20240315123045)` is NULL because
-/// the argument's STATIC TYPE is not consulted -- does not survive contact
-/// with real TiDB. Go reaches `2024-03-15 12:30:45` down EITHER branch of
-/// its `isFloat` switch; captured through `gorun`:
+/// The packed integer agrees with Go down EITHER branch of its `isFloat`
+/// switch; captured through `gorun`:
 ///
 /// ```text
 /// select timestamp(20240315123045)    RS:2024-03-15 12:30:45   (isFloat)
 /// select timestamp('20240315123045')  RS:2024-03-15 12:30:45   (not isFloat)
 /// ```
 ///
-/// the shared `add_sub::parse_datetime` now accepts the packed 14-digit run,
-/// so the value agrees with Go rather than becoming a parser-only NULL.
-/// `TIMESTAMP` DOES depend on its
-/// argument's type -- Go's
-/// `switch args[0].GetType(ctx.GetEvalCtx()).GetType() { case
+/// Go's `switch args[0].GetType(ctx.GetEvalCtx()).GetType() { case
 /// mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal,
 /// mysql.TypeLonglong: isFloat = true }` (`builtin_time.go:4592-4595`)
 /// stores the answer in the SIGNATURE (`builtinTimestamp1ArgSig{bf,
-/// isFloat}`) -- and the dependence remains observable where the two
-/// PARSERS disagree, which is a value carrying a fraction. Captured:
+/// isFloat}`). The dependence remains observable for a date-only fraction:
 ///
 /// ```text
 /// select timestamp(20240315.5)    RS:2024-03-15 00:00:00.0   ParseTimeFromFloatString: `.5` is a SECOND fraction
 /// select timestamp('20240315.5')  RS:2024-03-15 05:00:00.0   ParseTime: `.5` is an HOUR
 /// ```
 ///
-/// That is signature-selection state over an `types.ETString` argument, not
-/// an argument cast, so it is NOT this rung's `types.ETDatetime` layer and
-/// must not be smuggled into it. The packed integer row is nevertheless
-/// accepted by the shared parser; the fraction-bearing rows remain explicit
-/// signature-selection gaps.
+/// The Rust evaluator now preserves the source kind and routes numeric DATUMs
+/// through `parse_time(..., is_float = true)` while string DATUMs use the
+/// `is_float = false` branch. This keeps Go's distinct date-only suffix
+/// meanings executable in both paths.
 #[test]
-fn timestamp_stays_outside_the_etdatetime_layer_and_says_why() {
+fn timestamp_numeric_and_string_fraction_use_distinct_parsers() {
     assert_eq!(e("timestamp(20240315123045)"), "STR:2024-03-15 12:30:45");
-    assert_eq!(e("timestamp(20240315.5)"), "NULL");
-    assert_eq!(e("timestamp('20240315.5')"), "NULL");
+    assert_eq!(e("timestamp(20240315.5)"), "STR:2024-03-15 00:00:00.0");
+    assert_eq!(e("timestamp('20240315.5')"), "STR:2024-03-15 05:00:00.0");
 }
