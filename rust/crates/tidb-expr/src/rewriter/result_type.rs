@@ -1515,6 +1515,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         }
         "getvar_real" if args.len() == 1 => FieldType::new(FieldTypeCode::Double),
         "getvar_decimal" if args.len() == 1 => FieldType::new(FieldTypeCode::NewDecimal),
+        "getvar_time" if args.len() == 1 => FieldType::new(FieldTypeCode::Datetime),
         "getvar_string" if args.len() == 1 => text(),
         // `SETVAR` reports -- and stores -- its value argument's type.
         "setvar" if args.len() == 2 => args[1].static_type().cloned().unwrap_or_else(text),

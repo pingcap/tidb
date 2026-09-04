@@ -1244,7 +1244,7 @@ impl ScalarFunction {
                     // (Go has the same build-time/run-time seam), so the value
                     // is converted onto the declared type rather than trusted
                     // to match it.
-                    return uservar_as_kind(kind, value);
+                    return uservar_as_kind(kind, value, ctx);
                 }
             }
             if name == "setvar" && self.args.len() == 2 {
@@ -2044,7 +2044,7 @@ impl ScalarFunction {
 /// call declared. NULL stays NULL, and a value already of that kind passes
 /// through untouched -- the conversion only matters when an assignment made
 /// during this same statement changed the kind out from under the plan.
-fn uservar_as_kind(kind: &str, value: Datum) -> Result<Datum, EvalError> {
+fn uservar_as_kind(kind: &str, value: Datum, ctx: &impl Columns) -> Result<Datum, EvalError> {
     use tidb_ast::CastType;
     if value.is_null() {
         return Ok(Datum::Null);
@@ -2054,11 +2054,13 @@ fn uservar_as_kind(kind: &str, value: Datum) -> Result<Datum, EvalError> {
             return Ok(value)
         }
         ("decimal", Datum::Decimal(_)) => return Ok(value),
+        ("time", Datum::Time(_)) => return Ok(value),
         ("string", Datum::String(_) | Datum::Bytes(_)) => return Ok(value),
         ("int", _) => CastType::Signed,
         ("uint", _) => CastType::Unsigned,
         ("real", _) => CastType::Double,
         ("decimal", _) => CastType::Decimal { flen: 0, scale: 0 },
+        ("time", _) => return crate::cast::cast_arg_as_datetime(&value, None, ctx),
         ("string", _) => CastType::Char {
             len: None,
             charset: None,
@@ -2069,7 +2071,7 @@ fn uservar_as_kind(kind: &str, value: Datum) -> Result<Datum, EvalError> {
     // numeric or string, so no arm reads the date modes or raises a warning.
     // Every target above is numeric or string, so no arm reads the
     // source type.
-    crate::cast::eval_cast(&target, value, None, &crate::NoColumns)
+    crate::cast::eval_cast(&target, value, None, ctx)
 }
 
 fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType, EvalError> {

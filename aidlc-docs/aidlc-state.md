@@ -155,7 +155,12 @@
   rewritten ScalarFunction path, eliminating the prior row-vs-chunk
   `Unsupported` split. The focused row-path regression and Ready evidence are
   recorded in `rust/testport/receipts/types_explain_format_audit.md`.
+- Current batch: typed user-variable reads now preserve Go's
+  `builtinGetTimeVarSig`: the session binder mints `getvar_time` for a stored
+  MySQL time, the rewriter carries a DATETIME result, and the evaluator
+  returns that temporal value or NULL when unset. Focused/Ready evidence is
+  recorded in `rust/testport/receipts/b070.md`.
 - Next action: run the final Ready profile, commit and push this
-  row-path follow-up, then continue with the next executable Rust package
+  typed-GETVAR batch, then continue with the next executable Rust package
   boundary. Direct datatype comparison warning publication remains a bounded
   API follow-up.

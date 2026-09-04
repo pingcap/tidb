@@ -78,6 +78,7 @@ fn uservar_read_expr(name: &str, value: Option<&Datum>) -> tidb_ast::Expr {
         Some(Datum::UInt(_)) => "uint",
         Some(Datum::Real(_)) => "real",
         Some(Datum::Decimal(_)) => "decimal",
+        Some(Datum::Time(_)) => "time",
         _ => "string",
     };
     tidb_ast::Expr::Func {

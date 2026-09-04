@@ -219,16 +219,18 @@ fn setvar_stores_session_value_and_returns_it() {
 /// signature via `BuildGetVarFunction`, which picks a class from the declared
 /// type's eval type (`pkg/expression/builtin_other.go:1207`): string values
 /// pass through verbatim, unset reads are NULL, and numeric variables return
-/// their own kinds. The TIME row (`{"h"}, timeDec.String()`) needs Go's
-/// `builtinGetTimeVarSig`; no such signature exists in this evaluator yet, so
-/// it is recorded as its own gap below instead of being silently dropped.
-///
-/// go-parity-gap: the temporal GetVar signature (row `{"h"}` →
-/// `timeDec.String()`) is unported — Rust mints only
-/// int/uint/real/decimal/string GETVAR kinds.
+/// their own kinds. The TIME row (`{"h"}, timeDec.String()`) uses Go's
+/// `builtinGetTimeVarSig`, which preserves the stored MySQL time value.
 #[test]
-#[ignore = "go-parity-gap: no builtinGetTimeVarSig equivalent; GetVar rows for typed Time variables cannot be expressed"]
-fn getvar_time_variable_signature_gap() {}
+fn getvar_time_variable_signature() {
+    let time = Time::from_date_checked(2025, 1, 2, 3, 4, 5, 0, TimeType::Timestamp, 0)
+        .expect("a valid fixed timestamp");
+    let store = VarStore {
+        vars: RefCell::new(BTreeMap::from([("h".to_owned(), Datum::Time(time))])),
+    };
+    assert_eq!(eval_getvar("time", "h", &store).unwrap(), Datum::Time(time));
+    assert_eq!(eval_getvar("time", "missing", &store).unwrap(), Datum::Null);
+}
 
 #[test]
 fn getvar_reads_typed_session_value_by_signature_kind() {
@@ -280,6 +282,7 @@ fn eval_getvar(kind: &str, name: &str, ctx: &VarStore) -> Result<Datum, EvalErro
         "uint" => FieldType::new(C::LongLong).with_unsigned(true),
         "real" => FieldType::new(C::Double),
         "decimal" => FieldType::new(C::NewDecimal),
+        "time" => FieldType::new(C::Datetime),
         _ => FieldType::new(C::VarString),
     };
     let function = ScalarFunction::new(

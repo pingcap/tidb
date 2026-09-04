@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr`/`tidb-session` typed GETVAR time): aligned the
+  session variable binder, result metadata, and evaluator with Go's
+  `builtinGetTimeVarSig`. A stored MySQL time now mints `getvar_time`, keeps
+  its DATETIME result type, and returns the same temporal value (or NULL when
+  unset). The Go-derived typed-time regression is active in
+  `setvar_getvar_values_getparam_source`; package receipt `receipts/b070.md`
+  records the narrowed inventory.
 - 2026-09-04 (`tidb-expr` CURRENT_RESOURCE_GROUP row-path parity): wired the
   AST/value evaluator through the same session-state accessor already used by
   the rewritten ScalarFunction path. Added a direct row/AST regression so a
