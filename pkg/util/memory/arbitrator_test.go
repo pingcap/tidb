@@ -1492,7 +1492,7 @@ func TestMemArbitrator(t *testing.T) {
 		cacheM.ResetRootPoolByID(entry.pool.uid, 0, false)
 		clearCtx()
 		cacheM.setUnixTimeSec(100 + defContextCacheIdleTimeoutSec - 1)
-		cacheM.updateTrackedHeapStats()
+		cacheM.updateTrackedHeapStats(nil)
 		_, cached := cacheM.entryMap.contextCache.Load(entry.pool.uid)
 		require.True(t, cached)
 
@@ -1500,19 +1500,19 @@ func TestMemArbitrator(t *testing.T) {
 		ok, clearCtx = cacheM.RestartEntryByContext(entry, nil)
 		require.True(t, ok)
 		cacheM.setUnixTimeSec(100 + defContextCacheIdleTimeoutSec)
-		cacheM.updateTrackedHeapStats()
+		cacheM.updateTrackedHeapStats(nil)
 		_, cached = cacheM.entryMap.contextCache.Load(entry.pool.uid)
 		require.True(t, cached)
 
 		cacheM.ResetRootPoolByID(entry.pool.uid, 0, false)
 		clearCtx()
 		cacheM.setUnixTimeSec(100 + 2*defContextCacheIdleTimeoutSec - 1)
-		cacheM.updateTrackedHeapStats()
+		cacheM.updateTrackedHeapStats(nil)
 		_, cached = cacheM.entryMap.contextCache.Load(entry.pool.uid)
 		require.True(t, cached)
 
 		cacheM.setUnixTimeSec(100 + 2*defContextCacheIdleTimeoutSec)
-		cacheM.updateTrackedHeapStats()
+		cacheM.updateTrackedHeapStats(nil)
 		_, cached = cacheM.entryMap.contextCache.Load(entry.pool.uid)
 		require.False(t, cached)
 		require.Zero(t, cacheM.entryMap.contextCache.num.Load())
@@ -1949,7 +1949,7 @@ func TestMemArbitrator(t *testing.T) {
 		}
 		e2 := m.addEntryForTest(nil)
 		e3 := m.addEntryForTest(newDefCtxForTest(ArbitrationPriorityMedium))
-		m.updateTrackedHeapStats()
+		m.updateTrackedHeapStats(nil)
 		usedHeap += e1Men
 		require.Equal(t, m.avoidance.heapTracked.Load(), usedHeap)
 		require.True(t, m.bufferSize() == e1Men)
@@ -1967,10 +1967,10 @@ func TestMemArbitrator(t *testing.T) {
 		require.True(t, m.avoidance.size.Load() == m.heapController.heapAlloc.Load()+m.heapController.memOffHeap.Load()-m.avoidance.heapTracked.Load())
 		require.True(t, m.avoidance.size.Load() > m.mu.limit-m.mu.softLimit.size)
 
-		m.updateTrackedHeapStats()
+		m.updateTrackedHeapStats(nil)
 		require.True(t, m.bufferSize() == e1Men)
 		e1Men = 3
-		m.updateTrackedHeapStats()
+		m.updateTrackedHeapStats(nil)
 		require.True(t, m.bufferSize() == e1Men)
 
 		now := time.Now()
@@ -2251,7 +2251,7 @@ func TestMemArbitrator(t *testing.T) {
 		m.deleteEntryForTest(e1)
 		m.checkEntryForTest()
 
-		m.updateTrackedHeapStats()
+		m.updateTrackedHeapStats(nil)
 		m.setMemStatsForTest(0, 0, 0, 0)
 	}
 	{ // test mem risk
@@ -2605,7 +2605,7 @@ func TestMemArbitrator(t *testing.T) {
 			return 31
 		}
 		e1 := m.addEntryForTest(e1ctx)
-		m.updateTrackedHeapStats()
+		m.updateTrackedHeapStats(nil)
 		require.True(t, m.bufferSize() == 31)
 
 		m.ResetRootPoolByID(e1.pool.uid, 19, true) // tune

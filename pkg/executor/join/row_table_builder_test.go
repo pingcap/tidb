@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -230,35 +229,6 @@ func TestKey(t *testing.T) {
 	probeKeyTypes = []*types.FieldType{notNullIntTp}
 	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
-}
-
-func TestPreAllocForSegmentsHandlesKillSignal(t *testing.T) {
-	intTp := types.NewFieldType(mysql.TypeLonglong)
-	buildKeyIndex := []int{0}
-	buildTypes := []*types.FieldType{intTp}
-	meta := newTableMeta(buildKeyIndex, buildTypes, buildTypes, buildTypes, nil, []int{0}, false)
-	hashJoinCtx := &HashJoinCtxV2{
-		hashTableMeta: meta,
-	}
-	hashJoinCtx.Concurrency = 1
-	hashJoinCtx.SessCtx = mock.NewContext()
-	hashJoinCtx.SetupPartitionInfo()
-	hashJoinCtx.initHashTableContext()
-	builder := createRowTableBuilder(buildKeyIndex, buildTypes, hashJoinCtx.partitionNumber, false, false, false, meta.nullMapLength)
-	builder.usedRows = []int{0}
-	builder.partIdxVector = []int{0}
-	chk := testutil.GenRandomChunks(buildTypes, 1)
-	segs := []*rowTableSegment{newRowTableSegment()}
-
-	hashJoinCtx.SessCtx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	err := builder.preAllocForSegments(segs, chk, hashJoinCtx)
-
-	require.Error(t, err)
-	require.Nil(t, segs[0].rawData)
-	require.Nil(t, segs[0].hashValues)
-	require.Nil(t, segs[0].rowStartOffset)
-	require.Nil(t, segs[0].validJoinKeyPos)
-	require.Zero(t, hashJoinCtx.hashTableContext.memoryTracker.BytesConsumed())
 }
 
 func checkColumnResult(t *testing.T, builder *rowTableBuilder, keepFilteredRows bool, result *chunk.Chunk, expected *chunk.Chunk, ctx *HashJoinCtxV2, forOtherCondition bool) {

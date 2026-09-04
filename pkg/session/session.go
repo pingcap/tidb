@@ -1517,7 +1517,6 @@ const (
 	isSelectSQLToken
 
 	defOOMRiskCheckDur   = time.Millisecond * 100 // 100ms: sleep duration when mem-arbitrator is at memory risk
-	defOOMRiskMaxDur     = time.Minute
 	defSuffixSplitDot    = ", "
 	defSuffixParseSQL    = defSuffixSplitDot + "path=ParseSQL"
 	defSuffixCompilePlan = defSuffixSplitDot + "path=CompilePlan"
@@ -1706,37 +1705,21 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	if execUseArbitrator {
 		uid := s.sessionVars.ConnectionID
-		cleanSessionPlanCache := false
+
 		if globalMemArbitrator.AtMemRisk() {
 			if s.sessionPlanCache != nil {
 				s.sessionPlanCache.DeleteAll()
-				cleanSessionPlanCache = true
 			}
-			endTime := time.Now().Add(defOOMRiskMaxDur)
 			for globalMemArbitrator.AtMemRisk() {
-				if time.Now().After(endTime) {
+				if globalMemArbitrator.AtOOMRisk() {
 					metrics.GlobalMemArbitratorSubTasks.ForceKillParse.Inc()
 					return nil, nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixParseSQL, uid)
-				}
-				if err := ctx.Err(); err != nil {
-					return nil, nil, err
 				}
 				time.Sleep(defOOMRiskCheckDur)
 			}
 		}
 
-		for {
-			if globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota) {
-				break
-			}
-			if !cleanSessionPlanCache && s.sessionPlanCache != nil {
-				s.sessionPlanCache.DeleteAll()
-				cleanSessionPlanCache = true
-			}
-			globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
-			time.Sleep(defOOMRiskCheckDur)
-		}
-
+		globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota)
 		defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
 	}
 
@@ -2587,39 +2570,28 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 	}
 
 	if execUseArbitrator {
-		cleanSessionPlanCache := false
 		if globalMemArbitrator.AtMemRisk() {
 			if s.sessionPlanCache != nil {
 				s.sessionPlanCache.DeleteAll()
-				cleanSessionPlanCache = true
 			}
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
 					metrics.GlobalMemArbitratorSubTasks.ForceKillPlan.Inc()
 					return nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixCompilePlan, sessVars.ConnectionID)
 				}
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
 				time.Sleep(defOOMRiskCheckDur)
 			}
 		}
 
-		for {
-			ok := globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
-			quotaReserved += compilePlanMemQuota
-			if ok {
-				break
-			}
-			if !cleanSessionPlanCache && s.sessionPlanCache != nil {
-				s.sessionPlanCache.DeleteAll()
-				cleanSessionPlanCache = true
-			}
-			releaseCommonQuota()
-			time.Sleep(defOOMRiskCheckDur)
-		}
-
+		ok := globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
+		quotaReserved += compilePlanMemQuota
 		defer releaseCommonQuota()
+
+		if !ok { // for SQL which needs to be controlled by mem-arbitrator
+			if s.sessionPlanCache != nil && s.sessionPlanCache.Size() > 0 {
+				s.sessionPlanCache.DeleteAll()
+			}
+		}
 	}
 
 	{

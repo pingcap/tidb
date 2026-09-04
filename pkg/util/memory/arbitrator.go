@@ -2689,10 +2689,13 @@ func (m *MemArbitrator) updateTrackedHeapStats(top3 *top3DigestDataGroup) {
 	if m.entryMap.contextCache.num.Load() != 0 {
 		m.entryMap.contextCache.Range(func(_, value any) bool {
 			e := value.(*rootPoolEntry)
-			if t := e.ctx.idleUtimeSec.Load(); t != 0 && t <= idleDeadline {
-				if _, loaded := m.entryMap.contextCache.LoadAndDelete(e.pool.uid); loaded {
-					m.entryMap.contextCache.num.Add(-1)
+			if t := e.ctx.idleUtimeSec.Load(); t != 0 && t <= idleDeadline && e.stateMu.TryLock() {
+				if t = e.ctx.idleUtimeSec.Load(); t != 0 && t <= idleDeadline {
+					if _, loaded := m.entryMap.contextCache.LoadAndDelete(e.pool.uid); loaded {
+						m.entryMap.contextCache.num.Add(-1)
+					}
 				}
+				e.stateMu.Unlock()
 			}
 			if e.notRunning() {
 				return true

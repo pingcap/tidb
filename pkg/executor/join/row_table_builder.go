@@ -482,7 +482,7 @@ func calculateFakeLength(rowLength int64) int64 {
 	return (8 - rowLength%8) % 8
 }
 
-func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) (err error) {
+func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) {
 	for i := range b.helpers {
 		b.helpers[i].reset()
 	}
@@ -519,43 +519,12 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 
 	hashJoinCtx.hashTableContext.memoryTracker.Consume(totalMemUsage)
 
-	sqlKiller := &hashJoinCtx.SessCtx.GetSessionVars().SQLKiller
-	check := func() bool {
-		if sqlKiller.Signal != 0 {
-			if err = sqlKiller.HandleSignal(); err != nil {
-				return false
-			}
-		}
-		return true
-	}
 	for partIdx, seg := range segs {
 		seg.rawData = make([]byte, 0, b.helpers[partIdx].rawDataLen)
-		if !check() {
-			break
-		}
 		seg.hashValues = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
-		if !check() {
-			break
-		}
 		seg.rowStartOffset = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
-		if !check() {
-			break
-		}
 		seg.validJoinKeyPos = make([]int, 0, b.helpers[partIdx].validRowNum)
-		if !check() {
-			break
-		}
 	}
-	if err != nil {
-		for _, seg := range segs {
-			seg.rawData = nil
-			seg.hashValues = nil
-			seg.rowStartOffset = nil
-			seg.validJoinKeyPos = nil
-		}
-		hashJoinCtx.hashTableContext.memoryTracker.Consume(-totalMemUsage)
-	}
-	return
 }
 
 func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerID int) (err error) {
@@ -572,9 +541,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		}
 	}()
 
-	if err = b.preAllocForSegments(segs, chk, hashJoinCtx); err != nil {
-		return err
-	}
+	b.preAllocForSegments(segs, chk, hashJoinCtx)
 
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
