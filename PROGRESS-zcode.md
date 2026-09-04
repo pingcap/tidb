@@ -37,3 +37,10 @@
   complete `pkg/kv`/`tidb-executor` inventories in
   `rust/testport/receipts/kv_write_conflict_retry_marker.md`; the batch is
   included in the final pushed change.
+
+- 2026-09-04: aligned Rust `tidb-error::registered_std` with Go's
+  `pkg/util/dbterror` lookup precedence. Overlapping codes now prefer the
+  TiDB/`errno` catalogue, with focused 3143/1243/1820 message and placeholder
+  regressions; the complete owner inventory and Ready profile are recorded in
+  `rust/testport/receipts/dbterror_registered_std_precedence.md`. Commit/push
+  follows the final rebase.

@@ -128,9 +128,9 @@ wire behaviour.
 ## Ranked findings
 
 Counts: **1 wrong-code class with 5 concrete instances**, **6 wrong SQLSTATEs (fixed)**,
-**2 remaining message defects**, **5 missing codes**. F7 below was fixed on
-2026-09-04; the count covers the two still-open message findings. Ranked by
-consequence.
+**1 remaining message defect**, **0 missing codes**. F5, F7, and F9 below are
+fixed as of 2026-09-04; the count covers the one still-open message finding.
+Ranked by consequence.
 
 ---
 
@@ -200,9 +200,9 @@ missing decision" shape; `::new()` should not exist without a code.
 
 ---
 
-### F5 (rank 1, message-selection) — `registered_std` consults the catalogues in the wrong order
+### F5 (rank 1, message-selection) — FIXED: `registered_std` consulted the catalogues in the wrong order
 
-`rust/crates/tidb-error/src/terror.rs:434-442`:
+Before the fix, `rust/crates/tidb-error/src/terror.rs:434-442` used:
 
 ```rust
 let message = crate::mysql::message_by_code(protocol_code)
@@ -230,15 +230,17 @@ family and TiDB's deliberate "functional index" → "expression index" rewording
 affects every expression-index error message (3751-3760, 3800, 3837, 3903, 3904, 3907,
 3909).
 
-**Currently reachable:** only two of the 38 are wired today —
+**Before the fix,** only two of the 38 were wired today —
 `ERR_DBACCESS_DENIED` (1044) and `ERR_TABLEACCESS_DENIED` (1142) at
 `rust/crates/tidb-error/src/plannererrors.rs:254-259` — and both differ only in the host
-width, so today's blast radius is a host name longer than 64 characters. The lookup order is
-still wrong, and it is a landmine for the other 36 codes as they get wired.
+width, so the historical blast radius was a host name longer than 64 characters. The
+lookup order was a landmine for the other 36 codes as they got wired.
 
-**Not fixed here:** swapping the order is a one-line change, but it silently re-renders every
-existing `registered_std` message, and I cannot run a test to confirm nothing depends on the
-current text. It needs an owner who can execute.
+The lookup now checks `tidb::message_by_code` first and falls back to the
+parser/MySQL catalogue only when the TiDB catalogue has no entry. This is the
+same precedence as Go's `errno.MySQLErrName` in `pkg/util/dbterror/terror.go`.
+The `tidb-error` owner profile and a focused regression for codes 3143, 1243,
+and 1820 pin the overlapping messages and placeholder shapes.
 
 ---
 
@@ -327,10 +329,11 @@ which is a design change, not a string fix. The in-source comment already says s
 
 ---
 
-### F9 (rank 4, missing codes) — five `plannererrors` entries are absent
+### F9 (rank 4, missing codes) — FIXED: five `plannererrors` entries were absent
 
-`rust/crates/tidb-error/src/plannererrors.rs` has 92 of Go's 98
-`pkg/util/dbterror/plannererrors/planner_terror.go` entries. Missing:
+Before the fix, `rust/crates/tidb-error/src/plannererrors.rs` had 92 of Go's
+98 `pkg/util/dbterror/plannererrors/planner_terror.go` entries. The five
+entries were:
 
 | Go entry | line | class | reachable from |
 | --- | --- | --- | --- |
@@ -340,8 +343,9 @@ which is a design change, not a string fix. The in-source comment already says s
 | `ErrPrepareDDL` | `:121` | Executor | `PREPARE s FROM 'CREATE TABLE …'` |
 | `ErrTooBigPrecision` | `:80` | Expression | `SELECT CAST(1 AS DECIMAL(65,31))` |
 
-All five are ordinary-SQL reachable, not administrative. They are absent rather than wrong,
-so they rank last — but each is a statement where we cannot currently produce TiDB's code.
+All five are ordinary-SQL reachable, not administrative. They are now present
+in `tidb-error/src/plannererrors.rs`, and the owner test forces every prototype
+to resolve through the complete catalogue.
 
 The other six flagged by a first pass were false positives: `ERR_ACCESS_DENIED` is present
 and correctly ports Go's deliberate code/message crossover — `NewStdErr(mysql.ErrAccessDenied

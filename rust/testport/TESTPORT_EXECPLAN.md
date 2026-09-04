@@ -81,6 +81,19 @@ For each bounded behavior cluster:
   normalization pin (`mydecimal.go:531-543`), and the chunk read-back
   integration pin; the two-crate sweep's 40-name failure set is identical to
   the base control run. Receipt: `receipts/chunk_a1_readback_parity.md`.
+- 2026-09-04: aligned `tidb-error::TerrorError::registered_std` with Go
+  `pkg/util/dbterror`'s complete standard-message lookup (10 Go artifacts,
+  1,118 Go lines; 42 Rust artifacts, 34,598 Rust lines). Overlapping error
+  codes now prefer the TiDB/`errno` catalogue before the parser/MySQL
+  fallback; focused 3143/1243/1820 regressions and the serialized owner
+  profile are recorded in `receipts/dbterror_registered_std_precedence.md`.
+
+- 2026-09-04: aligned the Rust `pkg/kv` write-conflict error boundary with Go
+  master's complete `pkg/kv` inventory (30 artifacts, 5,319 Go lines) and the
+  `tidb-executor` owner (290 artifacts, 195,724 Rust lines). The live 9007
+  `TxnErrorKind::WriteConflict` path now appends Go's compatibility marker
+  `[try again later]`; the focused code/state/message regression and Ready
+  results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
 
 - 2026-09-04: aligned Rust `tidb-datatype` `JSON_MERGE_PRESERVE` with Go's
   adjacent-object grouping from the complete `pkg/types` JSON inventory.
@@ -5490,6 +5503,10 @@ For each bounded behavior cluster:
   parser instead of introducing a second Unicode dependency/table. This keeps
   Go's Unicode-version exclusions single-sourced while changing only the
   previously ASCII-only expression token. Date/Author: 2026-09-04, Codex.
+- 2026-09-04: mirror Go `ErrClass.NewStd` by resolving `registered_std`
+  messages from the TiDB/`errno` catalogue first and using parser/MySQL only
+  for codes absent there. Keep explicit `registered_standard` callers intact,
+  because their hand-selected message is a separate Go source decision.
 
 - 2026-09-04: preserve Go's `TxnRetryableMark` as one Rust constant and append
   it in the ordinary `TxnErrorKind::WriteConflict` wire-rendering arm. Do not
@@ -6630,6 +6647,12 @@ The `pkg/kv` write-conflict batch is bounded and executable: the live generic
 focused code/SQLSTATE/message regression. Its inventory and Ready outcomes are
 recorded in `receipts/kv_write_conflict_retry_marker.md`; structured conflict
 metadata and the 8005 path remain separate follow-ups.
+
+The `pkg/util/dbterror` precedence batch is bounded and executable:
+`registered_std` now selects TiDB `errno` messages for overlapping codes, with
+the parser/MySQL catalogue as fallback. The focused placeholder/message
+regressions and all-target owner profile pass; details are in
+`receipts/dbterror_registered_std_precedence.md`.
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state

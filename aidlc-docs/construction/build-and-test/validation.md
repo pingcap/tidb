@@ -58,3 +58,12 @@ whitespace checks passed. Strict clippy remains blocked by unrelated
 `tidb-mysql` and generated `tidb-proto` diagnostics. The complete inventory,
 commands, and boundaries are in
 `rust/testport/receipts/kv_write_conflict_retry_marker.md`.
+
+## `pkg/util/dbterror` catalogue precedence batch
+
+The focused `registered_std` regression and serialized `tidb-error` owner
+profile passed (8 unit tests plus 31 generated/source integration tests).
+Owner compilation, formatting, whitespace, and strict clippy all passed for
+the crate. The TiDB/`errno` catalogue is now preferred for overlapping codes,
+matching Go's `ErrClass.NewStd`; full details are in
+`rust/testport/receipts/dbterror_registered_std_precedence.md`.
