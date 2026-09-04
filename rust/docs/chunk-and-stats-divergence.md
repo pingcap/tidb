@@ -106,7 +106,14 @@ decode (both proven to fail against the stricter checks). A negative LAST
 offset still maps to the crate's `InvalidOffset` error where Go's slice
 bounds would panic — the established error-for-panic representation.
 
-**A-3 (rank 3 — panic where Go returns NULL).**
+**A-3 — STALE (verified 2026-09-04).** The cited `row.rs:247-249` no longer
+exists: the row decoder was reworked into `row_decoder.rs`, whose
+`ColumnLookup` enum models Go's zero-value NULL explicitly
+(`ColumnLookup::Missing`/`::Null` arms, pinned by
+`row_decoder_source.rs:61-62`). The datum-level conversion still owes a
+per-type audit, but the referenced panic site is gone.
+
+**A-3 (ORIGINAL TEXT) (rank 3 — panic where Go returns NULL).**
 Go's `Row.DatumWithBuffer` (`row.go:152-197`) is a `switch` with **no default
 arm**: an unlisted `tp.GetType()` leaves the caller's buffer at its zero value,
 i.e. a NULL datum. Rust `row.rs:247-249` panics.
