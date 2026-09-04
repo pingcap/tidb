@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` max-execution-time typed state): aligned
+  `tidb-session` with Go's `TestMaxExecutionTime`. The validated
+  `max_execution_time` value now lives in typed session state, survives
+  statement restore and GLOBAL-to-new-session inheritance, and the statement
+  snapshot consumes that state for the millisecond deadline instead of
+  reparsing raw text. The source-derived regression pins clamping, setter,
+  restore, and inheritance behavior; existing SET_VAR coverage verifies the
+  statement-level overlay.
 - 2026-09-05 (`pkg/sessionctx/variable` max-keys-read typed state): aligned
   `tidb-session` with Go's `TestTiDBMaxKeysRead` and `TestGetMaxKeysRead`.
   `SessionVars` now maintains the validated `tidb_max_keys_read` value in

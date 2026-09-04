@@ -898,6 +898,10 @@ pub struct SessionVars {
     /// value only while a SELECT statement is active; callers pass that
     /// statement-shape bit to [`Self::max_keys_read`].
     max_keys_read: u64,
+    /// Go's typed `SessionVars.MaxExecutionTime`, maintained by the
+    /// `max_execution_time` `SetSession` hook and read by statement contexts
+    /// as a millisecond deadline (zero means unlimited).
+    max_execution_time: u64,
     /// Go's typed `SessionVars.EnablePreparedPlanCache`, maintained by the
     /// `tidb_enable_prepared_plan_cache` sysvar's `SetSession` hook.
     enable_prepared_plan_cache: bool,
@@ -941,6 +945,7 @@ impl Default for SessionVars {
                 .expect("the compiled default SQL mode is valid"),
             max_allowed_packet: 64 << 20,
             max_keys_read: 0,
+            max_execution_time: 0,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
             generation: 0,
@@ -1005,6 +1010,7 @@ impl SessionVars {
             .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
         let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
         let max_keys_read = Self::max_keys_read_from_systems(&systems);
+        let max_execution_time = Self::max_execution_time_from_systems(&systems);
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
@@ -1017,6 +1023,7 @@ impl SessionVars {
         self.sql_mode = sql_mode;
         self.max_allowed_packet = max_allowed_packet;
         self.max_keys_read = max_keys_read;
+        self.max_execution_time = max_execution_time;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
         self.session_resolved = Self::build_session_image(&self.systems);
@@ -1053,6 +1060,13 @@ impl SessionVars {
     fn max_keys_read_from_systems(systems: &HashMap<String, String>) -> u64 {
         systems
             .get("tidb_max_keys_read")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0)
+    }
+
+    fn max_execution_time_from_systems(systems: &HashMap<String, String>) -> u64 {
+        systems
+            .get("max_execution_time")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(0)
     }
@@ -1105,6 +1119,13 @@ impl SessionVars {
         } else {
             0
         }
+    }
+
+    /// Go `SessionVars.MaxExecutionTime`, in milliseconds. A zero value
+    /// preserves TiDB's unlimited-deadline sentinel.
+    #[must_use]
+    pub const fn max_execution_time(&self) -> u64 {
+        self.max_execution_time
     }
 
     /// Go `SessionVars.EnablePreparedPlanCache`, updated when its normalized
@@ -1239,12 +1260,14 @@ impl SessionVars {
         let mut restores_sql_mode = false;
         let mut restores_max_allowed_packet = false;
         let mut restores_max_keys_read = false;
+        let mut restores_max_execution_time = false;
         let mut restores_prepared_plan_cache = false;
         let mut restores_shared_lock_upgrade = false;
         for (key, previous) in snapshot {
             restores_sql_mode |= key == "sql_mode";
             restores_max_allowed_packet |= key == "max_allowed_packet";
             restores_max_keys_read |= key == "tidb_max_keys_read";
+            restores_max_execution_time |= key == "max_execution_time";
             restores_prepared_plan_cache |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
             restores_shared_lock_upgrade |=
@@ -1273,6 +1296,9 @@ impl SessionVars {
         }
         if restores_max_keys_read {
             self.max_keys_read = Self::max_keys_read_from_systems(&self.systems);
+        }
+        if restores_max_execution_time {
+            self.max_execution_time = Self::max_execution_time_from_systems(&self.systems);
         }
         if restores_prepared_plan_cache {
             self.enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&self.systems);
@@ -1401,6 +1427,12 @@ impl SessionVars {
                 .value
                 .parse::<u64>()
                 .expect("tidb_max_keys_read validation stores unsigned decimal keys");
+        }
+        if key == "max_execution_time" {
+            self.max_execution_time = validated
+                .value
+                .parse::<u64>()
+                .expect("max_execution_time validation stores unsigned decimal milliseconds");
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE {
             self.enable_prepared_plan_cache = validated.value == "ON";
@@ -2266,6 +2298,36 @@ mod tests {
         inherited.seed_from_globals(globals).unwrap();
         assert_eq!(inherited.max_keys_read(true), 100);
         assert_eq!(inherited.max_keys_read(false), 0);
+    }
+
+    /// Go `TestMaxExecutionTime`: the unsigned value clamps a negative input,
+    /// the session hook publishes the millisecond deadline into typed state,
+    /// and statement-scoped restore/global inheritance keep that state in
+    /// sync with the authoritative variable image.
+    #[test]
+    fn max_execution_time_uses_go_typed_state() {
+        let definition = get_sys_var("max_execution_time").unwrap();
+        assert_eq!(definition.validate("-10").unwrap().value, "0");
+        assert_eq!(definition.validate("99999").unwrap().value, "99999");
+
+        let mut vars = SessionVars::new();
+        assert_eq!(vars.max_execution_time(), 0);
+        vars.set_system("max_execution_time", "99999".to_owned())
+            .unwrap();
+        assert_eq!(vars.max_execution_time(), 99999);
+
+        let restore = vars.snapshot_system("max_execution_time");
+        vars.set_system("max_execution_time", "100".to_owned())
+            .unwrap();
+        assert_eq!(vars.max_execution_time(), 100);
+        vars.restore_system(restore);
+        assert_eq!(vars.max_execution_time(), 99999);
+
+        let globals = GlobalSysvars::new();
+        globals.set("max_execution_time", "250".to_owned()).unwrap();
+        let mut inherited = SessionVars::new();
+        inherited.seed_from_globals(globals).unwrap();
+        assert_eq!(inherited.max_execution_time(), 250);
     }
 
     #[test]

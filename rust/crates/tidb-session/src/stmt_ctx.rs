@@ -715,12 +715,7 @@ impl Session {
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
             ),
             enable_skew_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT_SKEW_DISTINCT_AGG),
-            max_execution_time_ms: self
-                .vars
-                .get_system("max_execution_time")
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(0),
+            max_execution_time_ms: self.vars.max_execution_time(),
             advanced_join_reorder: not_off(
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             ),
