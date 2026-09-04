@@ -773,11 +773,6 @@ type candidatePath struct {
 	// partialOrderMatch records the partial order match result for TopN optimization.
 	// When the matched is true, it means this path can provide partial order using prefix index.
 	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
-<<<<<<< HEAD
-	indexJoinCols           int                              // how many index columns are used in access conditions in this IndexJoin.
-	isFullRange             bool                             // cached result of whether this path covers the full scan range.
-	eqOrInCount             int                              // cached result of equalPredicateCount().
-=======
 	// matchWithAdvisorySortItems indicates the property matching used SortItemsHints
 	// (i.e. noSortItem && len(prop.SortItemsHints) > 0). Only relevant for IndexMerge.
 	matchWithAdvisorySortItems bool
@@ -789,7 +784,6 @@ type candidatePath struct {
 	countAfterAccess4IndexJoinOK bool    // whether countAfterAccess4IndexJoin is stable enough for skyline pruning.
 	isFullRange                  bool    // cached result of whether this path covers the full scan range.
 	eqOrInCount                  int     // cached result of equalPredicateCount().
->>>>>>> fc7788ff517 (planner: fix countAfterAccess for IndexJoin in Skyline Pruning Comparison (#70791))
 }
 
 func compareBool(l, r bool) int {
