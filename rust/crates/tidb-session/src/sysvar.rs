@@ -592,6 +592,20 @@ impl SysVarDef {
         if self.name == "secure_auth" && validated.value == "OFF" {
             return Err(ValidationError::WrongValue);
         }
+        // Go's `tiflash_query_spill_ratio` keeps the generic float range
+        // [0, 1], then narrows it in its variable-specific Validation closure
+        // to [0, 0.85]. Values below zero have already been clamped to 0 by
+        // ValidateFromType; values above 0.85 are refused with a bare 1105.
+        if self.name == "tiflash_query_spill_ratio"
+            && validated
+                .value
+                .parse::<f64>()
+                .is_ok_and(|value| value > 0.85)
+        {
+            return Err(ValidationError::Refused(
+                "The valid value of tidb_tiflash_auto_spill_ratio is between 0 and 0.85".into(),
+            ));
+        }
         // Go's `collation_server` validation (`sysvar.go`'s `checkCollation`)
         // resolves names through the parser registry, stores the canonical
         // spelling, and returns `ErrUnknownCollation` (1273) for a missing
@@ -1311,6 +1325,149 @@ mod tests {
         let sv = get_sys_var("max_execution_time").unwrap();
         assert_eq!(sv.validate("-10").unwrap().value, "0");
         assert_eq!(sv.validate("99999").unwrap().value, "99999");
+    }
+
+    /// Transcreated from Go `TestNetBufferLength`: unsigned bounds clamp to
+    /// 1024 and 1048576, while an in-range value is preserved.
+    #[test]
+    fn net_buffer_length_validation_matches_go() {
+        let sv = get_sys_var("net_buffer_length").unwrap();
+        assert_eq!(sv.validate("1").unwrap().value, "1024");
+        assert_eq!(sv.validate("10485760").unwrap().value, "1048576");
+        assert_eq!(sv.validate("524288").unwrap().value, "524288");
+    }
+
+    /// Transcreated from Go `TestTiDBBatchPendingTiFlashCount`: unsigned
+    /// values accept non-negative integers and reject decimal input.
+    #[test]
+    fn batch_pending_tiflash_count_validation_matches_go() {
+        let sv = get_sys_var("tidb_batch_pending_tiflash_count").unwrap();
+        assert_eq!(sv.validate("-10").unwrap().value, "0");
+        assert_eq!(sv.validate("9999").unwrap().value, "9999");
+        assert_eq!(sv.validate("1.5"), Err(ValidationError::WrongType));
+    }
+
+    /// Transcreated from Go `TestTiFlashMaxBytes` and
+    /// `TestTiFlashMemQuotaQueryPerNode`: signed byte quotas clamp negative
+    /// values to -1 and retain ordinary values, but do not accept an integer
+    /// outside the signed 64-bit domain.
+    #[test]
+    fn tiflash_signed_quota_validation_matches_go() {
+        for name in [
+            "tidb_max_bytes_before_tiflash_external_join",
+            "tidb_max_bytes_before_tiflash_external_group_by",
+            "tidb_max_bytes_before_tiflash_external_sort",
+            "tiflash_mem_quota_query_per_node",
+        ] {
+            let sv = get_sys_var(name).unwrap();
+            assert_eq!(sv.validate("-10").unwrap().value, "-1", "{name}");
+            assert_eq!(sv.validate("100").unwrap().value, "100", "{name}");
+            assert!(sv.validate("9223372036854775808").is_err(), "{name}");
+        }
+    }
+
+    /// Transcreated from Go `TestTiFlashQuerySpillRatio`: the generic float
+    /// range is narrowed by the variable-specific closure to [0, 0.85].
+    #[test]
+    fn tiflash_query_spill_ratio_validation_matches_go() {
+        let sv = get_sys_var("tiflash_query_spill_ratio").unwrap();
+        assert_eq!(sv.validate("-10").unwrap().value, "0");
+        assert_eq!(
+            sv.validate("100"),
+            Err(ValidationError::Refused(
+                "The valid value of tidb_tiflash_auto_spill_ratio is between 0 and 0.85".into()
+            ))
+        );
+        assert_eq!(
+            sv.validate("0.9"),
+            Err(ValidationError::Refused(
+                "The valid value of tidb_tiflash_auto_spill_ratio is between 0 and 0.85".into()
+            ))
+        );
+        assert_eq!(sv.validate("0.85").unwrap().value, "0.85");
+    }
+
+    /// Transcreated from Go `TestTiFlashHashJoinVersion`: only the legacy and
+    /// optimized spellings are accepted, case-insensitively.
+    #[test]
+    fn tiflash_hash_join_version_validation_matches_go() {
+        let sv = get_sys_var("tiflash_hash_join_version").unwrap();
+        for value in ["legacy", "optimized", "Legacy", "Optimized", "LegaCy"] {
+            assert!(sv.validate(value).is_ok(), "{value}");
+        }
+        assert_eq!(
+            sv.validate("invalid"),
+            Err(ValidationError::Refused(
+                "incorrect value: `invalid`. tiflash_hash_join_version options: legacy, optimized"
+                    .into()
+            ))
+        );
+    }
+
+    /// Transcreated from Go `TestTiDBMemQuotaQuery`: signed query memory is
+    /// unlimited at -1, with lower values clamped to that sentinel.
+    #[test]
+    fn mem_quota_query_validation_matches_go() {
+        let sv = get_sys_var("tidb_mem_quota_query").unwrap();
+        for scope in [SCOPE_GLOBAL, SCOPE_SESSION] {
+            assert_eq!(
+                sv.validate_in_scope("33554432", scope).unwrap().value,
+                "33554432"
+            );
+            assert_eq!(sv.validate_in_scope("-2", scope).unwrap().value, "-1");
+        }
+    }
+
+    /// Transcreated from Go `TestTiDBQueryLogMaxLen`: the global log-length
+    /// limit clamps into [0, 1 GiB].
+    #[test]
+    fn query_log_max_len_validation_matches_go() {
+        let sv = get_sys_var("tidb_query_log_max_len").unwrap();
+        assert_eq!(
+            sv.validate_in_scope("33554432", SCOPE_GLOBAL)
+                .unwrap()
+                .value,
+            "33554432"
+        );
+        assert_eq!(
+            sv.validate_in_scope("1073741825", SCOPE_GLOBAL)
+                .unwrap()
+                .value,
+            "1073741824"
+        );
+        assert_eq!(sv.validate_in_scope("-2", SCOPE_GLOBAL).unwrap().value, "0");
+    }
+
+    /// Transcreated from Go `TestTiDBCommitterConcurrency`: the global
+    /// committer worker count clamps into [1, 10000].
+    #[test]
+    fn committer_concurrency_validation_matches_go() {
+        let sv = get_sys_var("tidb_committer_concurrency").unwrap();
+        assert_eq!(
+            sv.validate_in_scope("1024", SCOPE_GLOBAL).unwrap().value,
+            "1024"
+        );
+        assert_eq!(
+            sv.validate_in_scope("10001", SCOPE_GLOBAL).unwrap().value,
+            "10000"
+        );
+        assert_eq!(sv.validate_in_scope("0", SCOPE_GLOBAL).unwrap().value, "1");
+    }
+
+    /// Transcreated from Go `TestTiDBDDLFlashbackConcurrency`: the global
+    /// DDL flashback worker count clamps into [1, 256].
+    #[test]
+    fn ddl_flashback_concurrency_validation_matches_go() {
+        let sv = get_sys_var("tidb_ddl_flashback_concurrency").unwrap();
+        assert_eq!(
+            sv.validate_in_scope("128", SCOPE_GLOBAL).unwrap().value,
+            "128"
+        );
+        assert_eq!(
+            sv.validate_in_scope("257", SCOPE_GLOBAL).unwrap().value,
+            "256"
+        );
+        assert_eq!(sv.validate_in_scope("0", SCOPE_GLOBAL).unwrap().value, "1");
     }
 
     /// Transcreated from Go `TestTimestamp`: values below the minimum clamp

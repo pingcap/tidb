@@ -57,6 +57,12 @@ For each bounded behavior cluster:
   sysvar compatibility table, parse-but-ignore SET behavior, and explicit
   8136 read errors with replacement guidance. Added a case-insensitive
   end-to-end regression for both SET scopes and reconciled `TestRemovedOpt`.
+- 2026-09-05 (`pkg/sessionctx/variable` numeric bounds): added focused
+  regressions for NetBufferLength, TiDBBatchPendingTiFlashCount,
+  TiFlashMaxBytes, TiFlashMemQuotaQueryPerNode, TiFlashQuerySpillRatio,
+  QueryLogMaxLen, CommitterConcurrency, and DDLFlashbackConcurrency. The
+  TiFlash numeric validation closures now match Go's -1 and 0.85 behavior;
+  typed SessionVars TiFlash hook fields remain explicitly partial.
 - 2026-09-05 (`pkg/sessionctx/variable` secure_auth validation): ported
   `TestSecureAuth`'s per-variable validation. `secure_auth=OFF` now returns
   Go's 1231 wrong-value error and leaves the global ON default unchanged;
