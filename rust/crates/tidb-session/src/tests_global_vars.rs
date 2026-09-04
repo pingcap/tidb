@@ -1187,6 +1187,35 @@ fn auto_analyze_ratio_validation_matches_go() {
     );
 }
 
+/// Go `TestTiDBAnalyzeStoreBatchSize`: the SetSession hook stores the
+/// normalized unsigned value, including the zero disable sentinel and the
+/// configured upper bound, and fresh sessions inherit GLOBAL state.
+#[test]
+fn analyze_store_batch_size_uses_go_typed_session_hook() {
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+
+    assert_eq!(
+        session.vars().analyze_store_batch_size(),
+        tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE
+    );
+    session
+        .run("SET tidb_analyze_store_batch_size = 0")
+        .unwrap();
+    assert_eq!(session.vars().analyze_store_batch_size(), 0);
+
+    session
+        .run("SET tidb_analyze_store_batch_size = 9")
+        .unwrap();
+    assert_eq!(session.vars().analyze_store_batch_size(), 8);
+
+    session
+        .run("SET GLOBAL tidb_analyze_store_batch_size = 6")
+        .unwrap();
+    let mut fresh = vars::SessionVars::new();
+    fresh.seed_from_globals(globals).unwrap();
+    assert_eq!(fresh.analyze_store_batch_size(), 6);
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.

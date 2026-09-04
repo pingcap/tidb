@@ -101,6 +101,10 @@ For each bounded behavior cluster:
   Go's minimum-ratio closure while preserving values above one and the exact
   bare refusal error. Focused SQL coverage verifies failed writes leave the
   previous GLOBAL value intact and that the 0.00001 minimum is accepted.
+- 2026-09-05 (`pkg/sessionctx/variable` AnalyzeStoreBatchSize hook): added the
+  typed session product, zero disable sentinel, upper-bound clamping, restore,
+  and fresh-session GLOBAL inheritance. Focused SQL coverage keeps the
+  context-facing string path and Go's `SessionVars` field in lockstep.
 - 2026-09-05 (`pkg/sessionctx/variable` resource-control hooks): published
   Go's process-wide enable and strict-mode switches on named GLOBAL writes,
   startup/cluster/reset paths, and changed resource-group hint admission to

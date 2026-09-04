@@ -1582,6 +1582,10 @@ pub struct SessionVars {
     /// Go's typed replica-read selection, maintained by the
     /// `tidb_replica_read` SetSession hook.
     replica_read: tidb_executor::ReplicaReadType,
+    /// Go's typed `SessionVars.AnalyzeStoreBatchSize`, maintained by the
+    /// `tidb_analyze_store_batch_size` SetSession hook. Zero disables
+    /// Analyze store batching.
+    analyze_store_batch_size: i64,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
     /// PARSES out of the raw text -- chiefly the optimizer's cost environment
     /// -- and re-derive only when a `SET`
@@ -1683,6 +1687,7 @@ impl Default for SessionVars {
             pessimistic_transaction_fair_locking: false,
             bulk_dml_enabled: false,
             replica_read: tidb_executor::ReplicaReadType::Leader,
+            analyze_store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
@@ -1765,6 +1770,7 @@ impl SessionVars {
             Self::pessimistic_transaction_fair_locking_from_systems(&systems);
         let bulk_dml_enabled = Self::bulk_dml_enabled_from_systems(&systems);
         let replica_read = Self::replica_read_from_systems(&systems);
+        let analyze_store_batch_size = Self::analyze_store_batch_size_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
@@ -1790,6 +1796,7 @@ impl SessionVars {
         self.pessimistic_transaction_fair_locking = pessimistic_transaction_fair_locking;
         self.bulk_dml_enabled = bulk_dml_enabled;
         self.replica_read = replica_read;
+        self.analyze_store_batch_size = analyze_store_batch_size;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
@@ -1958,6 +1965,13 @@ impl SessionVars {
         }
     }
 
+    fn analyze_store_batch_size_from_systems(systems: &HashMap<String, String>) -> i64 {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE)
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -2085,6 +2099,13 @@ impl SessionVars {
     #[must_use]
     pub const fn replica_read(&self) -> tidb_executor::ReplicaReadType {
         self.replica_read
+    }
+
+    /// Go `SessionVars.AnalyzeStoreBatchSize`, where zero disables Analyze
+    /// store batching.
+    #[must_use]
+    pub const fn analyze_store_batch_size(&self) -> i64 {
+        self.analyze_store_batch_size
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -2220,6 +2241,7 @@ impl SessionVars {
         let mut restores_pessimistic_transaction_fair_locking = false;
         let mut restores_bulk_dml_enabled = false;
         let mut restores_replica_read = false;
+        let mut restores_analyze_store_batch_size = false;
         for (key, previous) in snapshot {
             restores_sql_mode |= key == "sql_mode";
             restores_max_allowed_packet |= key == "max_allowed_packet";
@@ -2248,6 +2270,8 @@ impl SessionVars {
                 key == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING;
             restores_bulk_dml_enabled |= key == tidb_vardef::tidb_vars::TIDB_DML_TYPE;
             restores_replica_read |= key == tidb_vardef::tidb_vars::TIDB_REPLICA_READ;
+            restores_analyze_store_batch_size |=
+                key == tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE;
             match previous {
                 Some(value) => {
                     self.session_resolved
@@ -2323,6 +2347,10 @@ impl SessionVars {
         }
         if restores_replica_read {
             self.replica_read = Self::replica_read_from_systems(&self.systems);
+        }
+        if restores_analyze_store_batch_size {
+            self.analyze_store_batch_size =
+                Self::analyze_store_batch_size_from_systems(&self.systems);
         }
         self.refresh_optimizer_fix_control();
     }
@@ -2531,6 +2559,12 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_REPLICA_READ {
             self.replica_read = Self::replica_read_from_systems(&self.systems);
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE {
+            self.analyze_store_batch_size = validated
+                .value
+                .parse::<i64>()
+                .expect("analyze store batch size validation stores an integer");
         }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
