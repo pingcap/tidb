@@ -6324,6 +6324,73 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     assert_eq!(finished.state, JobState::ROLLBACK_DONE);
 }
 
+/// Go `TestCreateMaterializedViewLogPreservesTextColumnTypes` (master
+/// `94a9cbedab`): TEXT columns in the log copy keep their declared type but
+/// a max-length BLOB (flen 65535) is normalized back to unspecified length.
+#[test]
+fn materialized_view_log_preserves_text_column_types() {
+    use tidb_executor::StmtContext;
+    let enabled = StmtContext::for_query().with_enable_mview(true);
+    let lower = |sql: &str, schema: &str| {
+        let parsed = tidb_parser::parse(sql).expect("MV LOG DDL parses");
+        lower_ddl_with_context(&parsed, schema, &enabled)
+            .expect("MV LOG DDL admission outcome")
+            .expect("MV LOG DDL lowers to a statement")
+    };
+    let mut store = bootstrapped();
+
+    // Base table with a TEXT column and a VARCHAR column.
+    let create = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE text_base (id INT PRIMARY KEY, txt TEXT, vc VARCHAR(100))",
+            "u6",
+        ),
+        1_700,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+
+    let mut spec = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON text_base (id, txt, vc)", "u6"),
+        1_701,
+        false,
+        0,
+    )
+    .expect("submission preflight succeeds")
+    .expect("the log create owns a job spec");
+
+    let JobArgsValue::CreateMaterializedViewLog(Some(log_args)) = &spec.args else {
+        panic!("the spec carries CreateMaterializedViewLogArgs")
+    };
+    let table_shared = log_args.read().table_info.get().expect("nil TableInfo");
+    let table = table_shared.read();
+    let handles: Vec<_> = table.columns.iter_handles().into_iter().flatten().collect();
+    let cols: Vec<_> = handles.iter().map(|c| c.read()).collect();
+
+    assert_eq!(cols.len(), 5, "3 declared + 2 physical _MLOG$_ columns");
+    // TEXT column: flen is preserved (not max-length, so no normalization).
+    assert_eq!(cols[1].name.original(), "txt");
+    assert_eq!(
+        cols[1].field_type.code(),
+        tidb_datatype::FieldTypeCode::Blob,
+        "TEXT maps to TypeBlob"
+    );
+    // VARCHAR column: preserved as-is.
+    assert_eq!(cols[2].name.original(), "vc");
+    assert_eq!(
+        cols[2].field_type.code(),
+        tidb_datatype::FieldTypeCode::Varchar
+    );
+    // The two _MLOG$_ physical columns are appended after the copies.
+    assert_eq!(cols[3].name.original(), "_MLOG$_DML_TYPE");
+    assert_eq!(cols[4].name.original(), "_MLOG$_OLD_NEW");
+}
+
 /// Go `deriveCreateMaterializedViewLogNextUnixSeconds` (master
 /// `94a9cbedab`): a log WITH a purge schedule derives its deadline by
 /// evaluating the schedule expression under the recorded schedule zone
