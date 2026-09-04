@@ -1231,6 +1231,11 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 				codeMap[string(code)] = 1
 				hashcode2Expr[string(code)] = cnfItem
 			} else if _, ok := codeMap[string(code)]; ok {
+				// HashCode is a lossy digest (for example, Constant.HashCode
+				// does not encode the collation), so verify structural equality.
+				if !cnfItem.Equals(hashcode2Expr[string(code)]) {
+					continue
+				}
 				// We need this check because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
 				// We should make sure that the two `t.a=t1.a` contributes only once.
 				// TODO: do this out of this function.
@@ -1257,8 +1262,8 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 		newCNFItems := make([]Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
 			code := cnfItem.HashCode()
-			_, ok := hashcode2Expr[string(code)]
-			if !ok {
+			extracted, ok := hashcode2Expr[string(code)]
+			if !ok || !cnfItem.Equals(extracted) {
 				newCNFItems = append(newCNFItems, cnfItem)
 			}
 		}
