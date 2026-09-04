@@ -385,13 +385,10 @@ fn maketime_integer_second_master_rows_overflow_garbage_and_null_arguments() {
     }
 }
 
-/// FLOAT/second-fraction MAKETIME rows of
-/// `builtin_time_test.go:2677 TestMakeTime` plus the ±838-hour boundary
-/// values: Go renders the duration at MaxFsp (`.100000`), this evaluator
-/// derives the FRACTION DISPLAY from the written digits (`59.1` stays `.1`).
-#[test]
-#[ignore = "go-parity-gap: MAKETIME's Float-second rows ('{838,58,59.1}','{-838,59,59.1}','{1000,1,59.1}',...) expect MaxFsp six-digit durations this evaluator renders by written digits, and MAKETIME(CAST(-1 AS UNSIGNED)) needs the unsigned-wrap hour cast Go uses to reach '838:59:59'"]
-fn maketime_float_second_maxfsp_and_unsigned_cast_rows() {}
+// The remaining floating-second and unsigned-hour MAKETIME rows are active
+// in `tests::go_time_values::go_test_maketime_float_seconds_and_unsigned_hour`,
+// alongside the value-level MakeTime table.  Keep this calendar source file
+// focused on its date-arithmetic and timestamp carriers.
 
 /// GO PORT of `builtin_time_test.go:2946 TestTimestampAdd`'s delimited-date
 /// rows: second/microsecond fractions, minute rounding, WEEK/DAY spans, the

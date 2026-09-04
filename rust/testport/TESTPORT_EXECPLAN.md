@@ -50,6 +50,12 @@ For each bounded behavior cluster:
   strict writes return 8179. Focused datatype, expression, and executor
   regressions plus owner Ready results are recorded in
   `receipts/types_timestamp_dst_gap.md`.
+- 2026-09-04: aligned the Rust `tidb-expr` `MAKETIME` evaluator with Go's
+  unsigned-hour guard. `Datum::UInt` now carries the source `UnsignedFlag`
+  signal through the value-tier seam, so wrapped negative hours (including
+  `CAST(-1 AS UNSIGNED)`) clamp to `838:59:59`; the floating-second MaxFsp
+  rows are active in `go_time_values`. Receipt:
+  `receipts/expression_collation_audit.md`.
 - 2026-09-04 (batch 22, `pkg/ddl` MV remaining pure surface): implemented
   Go master `94a9cbedab`'s `MViewExecutionSessionVarsFromJob` (tidb-session,
   per-field fallback to the captured defaults over the job's system-variable
@@ -5645,6 +5651,12 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 ## Decision Log
 
+- Decision: treat `Datum::UInt` as the value-tier equivalent of Go's
+  `UnsignedFlag` for `MAKETIME`'s first argument. Detect a wrapped negative
+  hour before sign selection, set the Go overflow clamp to +838 hours, and
+  leave signed negative hours and all minute/second validation unchanged.
+  Date/Author: 2026-09-04, Codex.
+
 - Decision: reuse `tidb_datatype::parse_time_from_num` for delimiter-free
   12/14-digit datetime strings and map its validated fields into the local
   `GoDateTime`, preserving Go's packed numeric normalization and two-digit-year
@@ -6282,6 +6294,12 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Codex.
 
 ## Surprises & Discoveries
+
+- The ignored `MAKETIME` carrier's floating-second rows already passed after
+  the prior MaxFsp formatting work; its remaining failure was specifically
+  the unsigned type signal. `int_arg` correctly exposed the wrapped signed
+  value, but the value-only dispatcher had discarded the `UnsignedFlag`, so
+  Go's pre-sign clamp never ran.
 
 - The prior ADDTIME/SUBTIME gap was two independent source rules: integer
   arguments are cast to ETString before `ParseTimeWithString` (which accepts

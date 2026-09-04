@@ -854,6 +854,52 @@ PATH=... GOPATH=... TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
 
+## Rust follow-up: `MAKETIME` unsigned-hour and floating-second rows
+
+This bounded slice remains inside the complete `pkg/expression` inventory at
+Go `origin/master` `3bd6b6d4d632b16ee5db7fbbefbf21b1e57527b2`: 208 tracked
+recursive artifacts and 146,291 Go lines (137 direct-root artifacts, 68
+production files, 60 tests, seven generated sources, `BUILD.bazel`, `OWNERS`,
+and eight nested package/build/test boundaries). The Rust `tidb-expr` owner
+remains 176 tracked artifacts and 107,196 lines. Before editing, the complete
+Go `pkg/expression` inventory was retained and `builtin_time.go`'s
+`builtinMakeTimeSig.makeTime`/`evalDuration`, the full `TestMakeTime` table,
+the Rust time dispatcher, `int_arg`, `duration_precision`, and all existing
+MakeTime source/value carriers were reread. No Go, generated, fixture,
+platform, or Bazel artifact changed.
+
+Go checks `mysql.HasUnsignedFlag` on MAKETIME's hour argument before applying
+the signed range clamp. Thus `CAST(-1 AS UNSIGNED)` is treated as an unsigned
+wrapped negative and returns the positive `838:59:59` limit. Rust's value-only
+dispatcher retained the wrapped `-1` but had discarded the type signal, so it
+returned `-01:00:00`. The evaluator now treats `Datum::UInt` as the equivalent
+unsigned signal and performs the source clamp before selecting the result sign.
+
+The floating-second rows (`59.1`, negative/max-hour limits, and overflow
+clamps) are active in the same source-derived regression and retain Go's
+six-digit MaxFsp output. The old empty ignored carrier and its stale gap
+reason were removed.
+
+Focused fail-before/pass-after evidence:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::go_time_values::go_test_maketime_float_seconds_and_unsigned_hour \
+  -- --exact --nocapture
+# pre-fix: failed (`-01:00:00` instead of `838:59:59`)
+# after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib go_test_maketime -- --nocapture
+# after fix: 2 passed (integer and floating/unsigned carriers)
+```
+
+The remaining Go `MAKETIME` coverage that depends on typed column metadata or
+session warning/error observation remains outside this value-tier slice; no
+package-complete parity claim is made.
+
 ## Rust follow-up: `FORMAT` precision and `WEIGHT_STRING` truncation warnings
 
 This batch stays inside the complete `pkg/expression` inventory at Go

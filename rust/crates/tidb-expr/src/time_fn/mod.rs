@@ -1085,7 +1085,7 @@ fn maketime(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 3 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let (Some(hour), Some(minute), Some(second)) = (
+    let (Some(mut hour), Some(minute), Some(second)) = (
         int_arg(&vals[0])?,
         int_arg(&vals[1])?,
         number_arg(&vals[2])?,
@@ -1095,9 +1095,23 @@ fn maketime(vals: &[Datum]) -> Result<Datum, EvalError> {
     if !(0..60).contains(&minute) || !(0.0..60.0).contains(&second) {
         return Ok(Datum::Null);
     }
+    // Go's `makeTime` checks the argument FieldType's UnsignedFlag before it
+    // interprets the signed value.  A UInt datum carrying a wrapped negative
+    // hour (for example `CAST(-1 AS UNSIGNED)`) therefore clamps to the
+    // positive TIME limit instead of producing a negative duration.  The
+    // value-level evaluator has no separate FieldType parameter, so Datum::UInt
+    // is the equivalent type signal here.
+    let hour_unsigned = matches!(vals[0], Datum::UInt(_));
+    let mut overflow = false;
+    if hour < 0 && hour_unsigned {
+        hour = 838;
+        overflow = true;
+    }
     let negative = hour < 0;
     let hour_abs = hour.unsigned_abs();
-    let overflow = hour_abs > 838 || (hour_abs == 838 && minute == 59 && second > 59.0);
+    if hour_abs > 838 || (hour_abs == 838 && minute == 59 && second > 59.0) {
+        overflow = true;
+    }
     let total = if overflow {
         838.0 * 3600.0 + 59.0 * 60.0 + 59.0
     } else {
