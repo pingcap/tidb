@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` memory-limit parsing and remaining
+  defaults): matched Go's byte-suffix parsing and 128-byte clamp for
+  `tidb_server_memory_limit_sess_min_size`, canonicalized GC-trigger
+  percentages/fractions with the Go range, and added GLOBAL regressions.
+  Reconciled the partition-prune and ignore-inlist default rows; process-wide
+  memory tuner atomics and threshold coupling remain explicitly partial.
 - 2026-09-05 (`pkg/sessionctx/variable` DDL and optimizer globals): added
   executable Go-derived coverage for DDL reorg worker/batch unsigned bounds
   and shared GLOBAL round trips for index merge, fast reorg, disk quota,

@@ -606,6 +606,58 @@ impl SysVarDef {
                 "The valid value of tidb_tiflash_auto_spill_ratio is between 0 and 0.85".into(),
             ));
         }
+        // Go's `tidb_server_memory_limit_sess_min_size` validation first
+        // accepts an unsigned byte count, then falls back to the same
+        // integer binary-unit parser used by `parseByteSize`. Values in
+        // (0, 128) are clamped with a truncation warning and the stored form
+        // is always the decimal byte count, never the original suffix.
+        if self.name == "tidb_server_memory_limit_sess_min_size" {
+            let bytes = match validated.value.parse::<u64>() {
+                Ok(bytes) => bytes,
+                Err(_) => tidb_config::configtypes::ram_in_bytes(&validated.value)
+                    .ok()
+                    .filter(|bytes| *bytes >= 0)
+                    .map(|bytes| bytes as u64)
+                    .ok_or(ValidationError::WrongValue)?,
+            };
+            if bytes > 0 && bytes < 128 {
+                return Ok(Validated {
+                    value: "128".to_owned(),
+                    truncated: true,
+                });
+            }
+            return Ok(Validated {
+                value: bytes.to_string(),
+                truncated: validated.truncated,
+            });
+        }
+        // Go's `tidb_server_memory_limit_gc_trigger` accepts either a
+        // decimal fraction or an integer percentage below 100, stores a
+        // canonical fraction, and admits only the [0.51, 1] range. The
+        // process-wide gctuner publication and threshold coupling live
+        // outside this registry layer and remain an explicit boundary.
+        if self.name == "tidb_server_memory_limit_gc_trigger" {
+            let text = validated.value.trim();
+            let fraction = if let Some(percent) = text.strip_suffix('%') {
+                let percent = percent
+                    .parse::<u64>()
+                    .map_err(|_| ValidationError::WrongValue)?;
+                if percent == 0 || percent >= 100 {
+                    return Err(ValidationError::WrongValue);
+                }
+                percent as f64 / 100.0
+            } else {
+                text.parse::<f64>()
+                    .map_err(|_| ValidationError::WrongValue)?
+            };
+            if !fraction.is_finite() || fraction < 0.51 || fraction > 1.0 {
+                return Err(ValidationError::WrongValue);
+            }
+            return Ok(Validated {
+                value: fraction.to_string(),
+                truncated: validated.truncated,
+            });
+        }
         // Go's TTL schedule-window globals parse a short `HH:MM` value in
         // UTC, then store/display the full-day form with an explicit `+0000`
         // offset. Keep an already-expanded value canonical and reject invalid
@@ -1609,6 +1661,39 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// Transcreated from Go `TestTiDBServerMemoryLimitSessMinSize`: byte
+    /// suffixes are converted to decimal bytes and positive values below 128
+    /// are clamped with the truncation flag.
+    #[test]
+    fn server_memory_limit_session_min_size_validation_matches_go() {
+        let sv = get_sys_var("tidb_server_memory_limit_sess_min_size").unwrap();
+        let small = sv.validate("100").unwrap();
+        assert_eq!(small.value, "128");
+        assert!(small.truncated);
+        assert_eq!(sv.validate("123456").unwrap().value, "123456");
+        assert_eq!(sv.validate("123MB").unwrap().value, "128974848");
+        assert_eq!(
+            sv.validate("18446744073709551615").unwrap().value,
+            "18446744073709551615"
+        );
+        assert_eq!(sv.validate("700MBaa"), Err(ValidationError::WrongValue));
+    }
+
+    /// Transcreated from Go `TestTiDBServerMemoryLimitGCTrigger`: decimal
+    /// fractions and integer percentages normalize to a fraction, with the
+    /// lower bound and the percent parser's exclusive 100% boundary enforced.
+    #[test]
+    fn server_memory_limit_gc_trigger_validation_matches_go() {
+        let sv = get_sys_var("tidb_server_memory_limit_gc_trigger").unwrap();
+        assert_eq!(sv.validate("0.8").unwrap().value, "0.8");
+        assert_eq!(sv.validate("90%").unwrap().value, "0.9");
+        assert_eq!(sv.validate("99%").unwrap().value, "0.99");
+        assert_eq!(sv.validate("0.51").unwrap().value, "0.51");
+        assert_eq!(sv.validate("100%"), Err(ValidationError::WrongValue));
+        assert_eq!(sv.validate("101%"), Err(ValidationError::WrongValue));
+        assert_eq!(sv.validate("0.5"), Err(ValidationError::WrongValue));
     }
 
     /// Transcreated from Go `TestDefaultMemoryDebugModeValue`: both memory

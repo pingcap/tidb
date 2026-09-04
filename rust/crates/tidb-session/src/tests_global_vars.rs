@@ -216,6 +216,88 @@ fn optimizer_and_ddl_global_switches_round_trip_like_go() {
     }
 }
 
+/// Transcreated from Go `TestTiDBServerMemoryLimitSessMinSize` and
+/// `TestTiDBServerMemoryLimitGCTrigger`: GLOBAL writes store the canonical
+/// byte/fraction representation that subsequent `@@global` reads expose.
+/// The process-wide memory tuner atomics are intentionally outside this SQL
+/// registry's ownership and are covered as a receipt boundary.
+#[test]
+fn memory_limit_global_values_are_canonicalized_like_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_server_memory_limit_sess_min_size = '123MB'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_server_memory_limit_sess_min_size"
+        ),
+        Some("128974848".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_server_memory_limit_sess_min_size = '100'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_server_memory_limit_sess_min_size"
+        ),
+        Some("128".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_server_memory_limit_gc_trigger = '90%'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_server_memory_limit_gc_trigger"
+        ),
+        Some("0.9".to_owned())
+    );
+    let error = session
+        .run("SET GLOBAL tidb_server_memory_limit_gc_trigger = '100%'")
+        .expect_err("Go rejects the percent parser's 100% boundary");
+    assert_eq!(error.to_mysql_error().code, 1231);
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_server_memory_limit_gc_trigger"
+        ),
+        Some("0.9".to_owned())
+    );
+}
+
+/// Transcreated from Go `TestDefaultPartitionPruneMode` and
+/// `TestTiDBIgnoreInlistPlanDigest`: the registry defaults are visible through
+/// the same session/global read paths used by the Go mock accessor.
+#[test]
+fn remaining_optimizer_defaults_match_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tidb_partition_prune_mode"),
+        Some("dynamic".to_owned())
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_ignore_inlist_plan_digest"
+        ),
+        Some("1".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_ignore_inlist_plan_digest = ON")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_ignore_inlist_plan_digest"
+        ),
+        Some("1".to_owned())
+    );
+}
+
 #[test]
 fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     let globals = vars::GlobalSysvars::new();
