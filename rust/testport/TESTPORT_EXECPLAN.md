@@ -41,30 +41,19 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+=======
+- 2026-09-04 (batch 22, `pkg/ddl` MV remaining pure surface): implemented
+  Go master `94a9cbedab`'s `MViewExecutionSessionVarsFromJob` (tidb-session,
+  per-field fallback to the captured defaults over the job's system-variable
+  envelope), `BuildMViewImportIntoOptions` and `buildMLogPurgeMeta`
+  (tidb-executor::ddl::mview_helpers — the ALTER-path purge wording, the
+  option order/escaping, and batch 9's schedule-expression validation). The
+  pure surface of `materialized_view.go` is now fully ported; the data-build
+  execution and the session-variable image remain the recorded seams.
+  Failure sets: exec 7 (base), session byte-identical to base on the final
+  full run. Receipt: `receipts/ddl_mview_pure_surface.md`.
 
-- 2026-09-04: aligned the Rust `tidb-expr` `ADDTIME`/`SUBTIME` typed
-  DATETIME path with Go's row/vector split. Constant-folded (row-path) calls
-  now retain the parsed second operand's fractional precision, while the
-  vectorized DATETIME+TIME arm keeps Go's `Fsp=-1` behavior; the existing
-  issue-56861 carrier now pins DATE/DATETIME FSP and malformed-string NULL
-  rows. Complete package inventory and fail-before/pass-after evidence are
-  recorded in `receipts/expression_collation_audit.md`.
-
-- 2026-09-04: aligned the Rust `tidb-expr` `FORMAT` precision coercion with
-  Go's `evalNumDecArgsForFormat` and activated the existing
-  `WEIGHT_STRING AS BINARY(n)` warning carrier. Malformed string/byte precision
-  now uses the shared warning-aware integer conversion, preserving the parsed
-  value and emitting Go's 1292 event; the weight-string test now supplies a
-  warning-capable statement context and pins all three cut rows. Complete
-  package inventory and fail-before/pass-after evidence are recorded in
-  `receipts/expression_collation_audit.md`.
-
-- 2026-09-04: aligned the Rust `tidb-expr` `FROM_UNIXTIME` real-input path
-  with Go `pkg/expression/builtin_time.go` at `origin/master`
-  `fc7788ff...`. Real and float32 datum arguments now pass through the shared
-  Go-shortest `Decimal::from_f64` conversion before FSP-6 half-up rounding;
-  the focused boundary regression, complete package inventory, and existing
-  source vectors are recorded in `receipts/expression_collation_audit.md`.
+db08e71dbd3 (rust: align pkg/ddl mview remaining pure surface with Go master)
 
 - 2026-09-04: aligned the Rust `tidb-expr` `FROM_BASE64` evaluator with Go
   `pkg/expression/builtin_string.go` at `origin/master` `fc7788ff...`. The

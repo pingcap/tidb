@@ -47,6 +47,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
+use tidb_model::Job;
 use tidb_planner::fix_control::OptimizerFixControl;
 
 use crate::sysvar::{
@@ -1652,6 +1653,84 @@ pub fn get_isolation_read_engines_string(vars: &SessionVars) -> String {
     String::new()
 }
 
+/// Go `MViewExecutionSessionVarsFromJob`: reconstructs the MV execution
+/// variables from a job's system-variable envelope, falling back per field
+/// to the default session's captured values. A nil job yields the captured
+/// defaults untouched.
+#[must_use]
+pub fn m_view_execution_session_vars_from_job(
+    job: Option<&Job>,
+    default_vars: &SessionVars,
+) -> MViewExecutionSessionVars {
+    let mut target = capture_applied_m_view_execution_session_vars(default_vars);
+    let Some(job) = job else {
+        return target;
+    };
+    let read = |name: &str| -> Option<String> {
+        job.get_system_var(name)
+            .map(|value| value.to_utf8_lossy_go())
+    };
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA) {
+        if let Ok(parsed) = value.parse::<i64>() {
+            target.maintain_mem_quota = parsed;
+        }
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES) {
+        target.isolation_read_engines = value;
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MAX_TIFLASH_THREADS) {
+        if let Ok(parsed) = value.parse::<i64>() {
+            target.ti_flash_max_threads = parsed;
+        }
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN) {
+        if let Ok(parsed) = value.parse::<i64>() {
+            target.ti_flash_max_bytes_before_ext_join = parsed;
+        }
+    }
+    if let Some(value) =
+        read(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY)
+    {
+        if let Ok(parsed) = value.parse::<i64>() {
+            target.ti_flash_max_bytes_before_ext_agg = parsed;
+        }
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT) {
+        if let Ok(parsed) = value.parse::<i64>() {
+            target.ti_flash_max_bytes_before_ext_sort = parsed;
+        }
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE) {
+        if let Ok(parsed) = value.parse::<i64>() {
+            target.ti_flash_mem_quota_query_per_node = parsed;
+        }
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO) {
+        if let Ok(parsed) = value.parse::<f64>() {
+            target.ti_flash_query_spill_ratio = parsed;
+        }
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT) {
+        if let Ok(parsed) = value.parse::<i64>() {
+            target.fine_grained_stream_count = parsed;
+        }
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE) {
+        if let Ok(parsed) = value.parse::<u64>() {
+            target.fine_grained_batch_size = parsed;
+        }
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS) {
+        if let Ok(parsed) = value.parse::<i64>() {
+            target.import_threads = parsed;
+        }
+    }
+    if let Some(value) = read(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA) {
+        target.import_disk_quota = value;
+    }
+    target
+}
+
 /// Go `ApplyMViewExecutionSessionVarsWithConfig`.
 pub fn apply_m_view_execution_session_vars_with_config<'a>(
     vars: &mut SessionVars,
@@ -2471,5 +2550,42 @@ mod tests {
         fresh.set_system("autocommit", "ON".to_owned()).unwrap();
         assert_eq!(live.get_system("autocommit").unwrap(), "OFF");
         assert_eq!(fresh.get_system("autocommit").unwrap(), "ON");
+    }
+}
+
+#[cfg(test)]
+mod mview_from_job_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use tidb_model::GoShared;
+
+    #[test]
+    fn mview_execution_vars_reconstruct_from_job_envelope() {
+        let mut job_vars = BTreeMap::new();
+        job_vars.insert(
+            "tidb_mview_maintain_mem_quota".to_owned(),
+            tidb_datatype::GoString::from("123"),
+        );
+        job_vars.insert(
+            "tidb_mview_maintain_isolation_read_engines".to_owned(),
+            tidb_datatype::GoString::from("tikv"),
+        );
+        job_vars.insert(
+            "tidb_max_tiflash_threads".to_owned(),
+            tidb_datatype::GoString::from("8"),
+        );
+        let mut job = Job::default();
+        job.session_vars = Some(GoShared::new(job_vars));
+        let restored = m_view_execution_session_vars_from_job(Some(&job), &SessionVars::default());
+        assert_eq!(restored.maintain_mem_quota, 123);
+        assert_eq!(restored.isolation_read_engines, "tikv");
+        assert_eq!(restored.ti_flash_max_threads, 8);
+        // Fields absent from the envelope keep the captured defaults.
+        // Fields absent from the envelope keep the captured defaults.
+        let defaults = m_view_execution_session_vars_from_job(None, &SessionVars::default());
+        assert_eq!(
+            restored.fine_grained_batch_size, defaults.fine_grained_batch_size,
+            "absent envelope fields keep the captured default"
+        );
     }
 }

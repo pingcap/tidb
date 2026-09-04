@@ -1000,7 +1000,10 @@ mod show_index;
 mod stats_lock_arm;
 pub mod sysvar;
 pub mod vars;
-pub use vars::{GlobalSysvars, SessionVars, VarError};
+pub use vars::{
+    capture_m_view_execution_session_vars, m_view_execution_session_vars_from_job, GlobalSysvars,
+    SessionVars, VarError,
+};
 
 impl Session {
     /// Starts the cancellation lifetime for the next wire command.
