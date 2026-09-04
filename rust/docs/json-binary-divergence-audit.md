@@ -17,10 +17,10 @@ Rust sources read:
 - `rust/crates/tidb-datatype/src/binary_json_ops.rs`
 - `rust/crates/tidb-datatype/src/json_path.rs`
 
-**Nothing here was executed.** This machine cannot run freshly built binaries
-(`syspolicyd` is wedged; every new executable hangs at `_dyld_start`). Every
-finding is derived by reading both sides. `cargo check` and `cargo clippy` are
-the only gates that ran; the Go side was never run at all.
+The Go side is source-derived; this machine cannot run freshly built Go
+binaries (`syspolicyd` is wedged; every new executable hangs at `_dyld_start`).
+The Rust owner tests and compile gates are executable, and each bounded repair
+records its results in a package receipt.
 
 **The JSON type is not a stub.** ~4150 Rust lines in `tidb-datatype` against
 ~3350 Go lines of production code, and every exported Go entry point in
@@ -28,7 +28,7 @@ the only gates that ran; the Go side was never run at all.
 divergences inside a working implementation, not gaps.
 
 Counts: **8 divergences found** (1 rank-1, 1 rank-2, 3 rank-3, 3 rank-4),
-**3 fixed** in this branch, **5 written up**. **27 areas verified equal.**
+**4 fixed** in this branch, **4 written up**. **27 areas verified equal.**
 
 ---
 
@@ -178,7 +178,7 @@ and its result cannot be checked here against even one document. The fix is a
 faithful port of `MergeBinaryJSON` + `getAdjacentObjects` + `mergeBinaryObject`
 onto `JSONNode`, replacing the fold in `merge_binary_json`.
 
-### 5. Text output does not escape U+2028 / U+2029  — NOT FIXED
+### 5. Text output does not escape U+2028 / U+2029  — FIXED (2026-09-04)
 
 - Go: `pkg/types/json_binary.go:470-486`. `jsonMarshalStringTo` escapes LINE
   SEPARATOR and PARAGRAPH SEPARATOR unconditionally, with the reason in a
@@ -203,8 +203,11 @@ Everything else about the two escapers agrees: `\\`, `\"`, `\b`, `\f`, `\n`,
 left raw (Go's `jsonSafeSet` marks `` true at `json_constants.go:169`, and
 `serde_json` only escapes below `0x20`).
 
-Not fixed because it means hand-writing a `jsonMarshalStringTo` equivalent and
-routing three call sites through it, which is more than a certain one-liner.
+Fixed by routing scalar values, object keys, and JSON path-string quoting
+through a small `marshal_json_string` helper. It delegates ordinary escaping to
+`serde_json` and replaces only the two Go safety-sensitive separators. The
+focused scalar/object regression is in
+`tidb-datatype::binary_json::tests::json_text_escapes_line_and_paragraph_separators_like_go`.
 
 ---
 

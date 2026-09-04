@@ -17,3 +17,10 @@
   datum/value entry point without introducing an overflow panic. Receipt:
   `rust/testport/receipts/chunk_a1_datum.md`; pushed as commit
   `471ece97fd` to `hparser-integration`.
+
+- 2026-09-04: aligned Rust `tidb-datatype` JSON text rendering with Go's
+  `jsonMarshalStringTo`: scalar values and object keys now escape U+2028/U+2029
+  as `\\u2028`/`\\u2029` while preserving all other `serde_json` behavior.
+  Focused and full owner validation are recorded in
+  `rust/testport/receipts/json_u2028_escape.md`; the batch commit/push follows
+  pushed as commit `929dc85d5c` to `hparser-integration`.

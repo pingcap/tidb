@@ -530,7 +530,7 @@ pub fn unquote_string(text: &str) -> Result<String, BinaryJSONError> {
 
 /// Quotes a JSON path key, leaving an unescaped ECMAScript identifier bare.
 pub fn quote_json_string(text: &str) -> String {
-    let quoted = serde_json::to_string(text).expect("Rust string is valid JSON text");
+    let quoted = marshal_json_string(text);
     if is_ecmascript_identifier(text)
         && quoted.as_bytes()[1..quoted.len() - 1] == text.as_bytes()[..]
     {
@@ -538,6 +538,29 @@ pub fn quote_json_string(text: &str) -> String {
     } else {
         quoted
     }
+}
+
+/// Marshals a JSON string with Go's `jsonMarshalStringTo` safety escapes.
+/// `serde_json` deliberately emits U+2028 and U+2029 as raw UTF-8, while Go
+/// escapes both separators so a JSON document remains safe when embedded in
+/// JSONP/JavaScript. All other escaping stays delegated to `serde_json`.
+fn marshal_json_string(text: &str) -> String {
+    let quoted = serde_json::to_string(text).expect("Rust string is valid JSON text");
+    if !quoted
+        .chars()
+        .any(|ch| matches!(ch, '\u{2028}' | '\u{2029}'))
+    {
+        return quoted;
+    }
+    let mut escaped = String::with_capacity(quoted.len() + 5);
+    for ch in quoted.chars() {
+        match ch {
+            '\u{2028}' => escaped.push_str("\\u2028"),
+            '\u{2029}' => escaped.push_str("\\u2029"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 /// Decodes MySQL's JSON_UNQUOTE escape syntax.
@@ -1439,7 +1462,7 @@ fn format_value(value: &Value) -> String {
         Value::Null => "null".to_owned(),
         Value::Bool(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
-        Value::String(value) => serde_json::to_string(value).expect("valid Rust string"),
+        Value::String(value) => marshal_json_string(value),
         Value::Array(values) => format!(
             "[{}]",
             values
@@ -1457,7 +1480,7 @@ fn format_value(value: &Value) -> String {
                     .into_iter()
                     .map(|(key, value)| format!(
                         "{}: {}",
-                        serde_json::to_string(key).expect("valid Rust string"),
+                        marshal_json_string(key),
                         format_value(value)
                     ))
                     .collect::<Vec<_>>()
@@ -1482,11 +1505,7 @@ fn format_node(value: &JSONNode) -> String {
             "{{{}}}",
             values
                 .iter()
-                .map(|(key, value)| format!(
-                    "{}: {}",
-                    serde_json::to_string(key).expect("valid Rust string"),
-                    format_node(value)
-                ))
+                .map(|(key, value)| format!("{}: {}", marshal_json_string(key), format_node(value)))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -1710,9 +1729,21 @@ mod tests {
             ("''", "\"''\""),
             ("", "\"\""),
             ("\\ \" \u{8} \u{c} \n \r \t", r#""\\ \" \b \f \n \r \t""#),
+            ("\u{2028}\u{2029}", r#""\u2028\u2029""#),
         ] {
             assert_eq!(quote_json_string(raw), quoted, "{raw:?}");
         }
+    }
+
+    /// Go `jsonMarshalStringTo` escapes LINE SEPARATOR and PARAGRAPH SEPARATOR
+    /// in scalar values and object keys so rendered JSON is safe for JSONP.
+    #[test]
+    fn json_text_escapes_line_and_paragraph_separators_like_go() {
+        let scalar = BinaryJSON::parse(r#""\u2028\u2029""#).unwrap();
+        assert_eq!(scalar.to_string(), r#""\u2028\u2029""#);
+
+        let object = BinaryJSON::parse(r#"{"\u2028":"\u2029"}"#).unwrap();
+        assert_eq!(object.to_string(), r#"{"\u2028": "\u2029"}"#);
     }
 
     /// Complete translation of

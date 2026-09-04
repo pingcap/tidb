@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-datatype` JSON text formatter with Go
+  master's complete `pkg/types` JSON inventory (60 Go artifacts, 28,545 Go
+  lines; 104 Rust artifacts, 51,114 Rust lines). Scalar values and object keys
+  now escape U+2028/U+2029 as Go's `jsonMarshalStringTo`; a focused scalar/
+  object regression and the existing quote-string corpus pin the exact bytes.
+  Details and Ready results are in `receipts/json_u2028_escape.md`.
+
 - 2026-09-04 (batch 17, `pkg/ddl` MV view-create worker phase 1): implemented
   Go master `94a9cbedab`'s `onCreateMaterializedView` `StateNone` arm and
   `rollbackCreateMaterializedView` as
@@ -5442,6 +5449,10 @@ For each bounded behavior cluster:
   source's `FormatFloat(..., 'f', -1, bits)` width contract in one place and
   avoids a runtime-only special case for infinities. Date/Author: 2026-09-04,
   Codex.
+- 2026-09-04: retain `serde_json` as the general JSON string escaper, but wrap
+  it at the binary-JSON text boundary to replace only U+2028/U+2029 with the
+  Go safety escapes. This keeps ordinary quoting stable while matching Go's
+  JSONP-safe output in scalar values, object keys, and path-key quoting.
 
 - Decision: expose fixed-word truncation from decimal division as a separate
   warning-bearing API while keeping the existing value-only wrappers for
@@ -6529,6 +6540,11 @@ follow Go's fixed-word prefix/truncation result across Chunk and MutRow entry
 points. Its focused regression and owner validation are recorded in
 `receipts/chunk_a1_datum.md`; the remaining chunk wire and datum-shape items in
 `docs/chunk-and-stats-divergence.md` remain separate follow-ups.
+
+The JSON U+2028/U+2029 batch is bounded and executable: text rendering now
+matches Go's JSONP-safe separator escapes without changing binary storage. Its
+focused and owner validation are recorded in `receipts/json_u2028_escape.md`;
+the remaining JSON merge/invalid-byte boundaries remain separate follow-ups.
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state
