@@ -611,12 +611,7 @@ impl Session {
                     .vars
                     .get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT)
                     .is_ok_and(|value| !value.is_empty()),
-                max_keys_read: self
-                    .vars
-                    .get_system("tidb_max_keys_read")
-                    .ok()
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .unwrap_or(0),
+                max_keys_read: self.vars.max_keys_read(true),
                 policy: index_lookup_push_down_policy,
             };
         let snapshot = Arc::new(StatementVarSnapshot {

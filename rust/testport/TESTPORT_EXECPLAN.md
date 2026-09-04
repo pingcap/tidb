@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` max-keys-read typed state): aligned
+  `tidb-session` with Go's `TestTiDBMaxKeysRead` and `TestGetMaxKeysRead`.
+  `SessionVars` now maintains the validated `tidb_max_keys_read` value in
+  typed state, exposes the Go SELECT-only accessor contract, restores and
+  inherits it with the session image, and the statement snapshot consumes that
+  accessor instead of reparsing raw text. The source-derived regression covers
+  clamping, setter propagation, statement restore, global inheritance, and the
+  outside-SELECT zero sentinel; the existing hint-updatable registry test pins
+  the Go marker.
 - 2026-09-05 (`pkg/sessionctx/variable` default utf8mb4 collation): aligned
   `tidb-session` with Go's registry validation and deprecation warning. Valid
   names now canonicalize and emit warning 1681; non-utf8mb4 collations fail

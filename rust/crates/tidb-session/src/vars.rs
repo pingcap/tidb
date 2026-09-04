@@ -893,6 +893,11 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.MaxAllowedPacket`, maintained by the sysvar's
     /// `SetSession` hook and read directly by wire and builtin consumers.
     max_allowed_packet: u64,
+    /// Go's typed `SessionVars.MaxKeysRead`, maintained by the
+    /// `tidb_max_keys_read` `SetSession` hook. The Go accessor returns this
+    /// value only while a SELECT statement is active; callers pass that
+    /// statement-shape bit to [`Self::max_keys_read`].
+    max_keys_read: u64,
     /// Go's typed `SessionVars.EnablePreparedPlanCache`, maintained by the
     /// `tidb_enable_prepared_plan_cache` sysvar's `SetSession` hook.
     enable_prepared_plan_cache: bool,
@@ -935,6 +940,7 @@ impl Default for SessionVars {
             sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .expect("the compiled default SQL mode is valid"),
             max_allowed_packet: 64 << 20,
+            max_keys_read: 0,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
             generation: 0,
@@ -998,6 +1004,7 @@ impl SessionVars {
         let sql_mode = Self::sql_mode_from_systems(&systems)
             .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
         let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
+        let max_keys_read = Self::max_keys_read_from_systems(&systems);
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
@@ -1009,6 +1016,7 @@ impl SessionVars {
         self.autocommit = autocommit;
         self.sql_mode = sql_mode;
         self.max_allowed_packet = max_allowed_packet;
+        self.max_keys_read = max_keys_read;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
         self.session_resolved = Self::build_session_image(&self.systems);
@@ -1040,6 +1048,13 @@ impl SessionVars {
             .map_or("67108864", String::as_str)
             .parse::<u64>()
             .map_err(|error| VarError::ValidationRefused(error.to_string()))
+    }
+
+    fn max_keys_read_from_systems(systems: &HashMap<String, String>) -> u64 {
+        systems
+            .get("tidb_max_keys_read")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0)
     }
 
     fn prepared_plan_cache_from_systems(systems: &HashMap<String, String>) -> bool {
@@ -1077,6 +1092,19 @@ impl SessionVars {
     #[must_use]
     pub const fn max_allowed_packet(&self) -> u64 {
         self.max_allowed_packet
+    }
+
+    /// Go `SessionVars.GetMaxKeysRead`: `tidb_max_keys_read` limits index
+    /// lookup work only inside a SELECT. DML and all non-SELECT statement
+    /// contexts observe the zero (unlimited) sentinel even when the session
+    /// has configured a positive value.
+    #[must_use]
+    pub const fn max_keys_read(&self, in_select_stmt: bool) -> u64 {
+        if in_select_stmt {
+            self.max_keys_read
+        } else {
+            0
+        }
     }
 
     /// Go `SessionVars.EnablePreparedPlanCache`, updated when its normalized
@@ -1210,11 +1238,13 @@ impl SessionVars {
         }
         let mut restores_sql_mode = false;
         let mut restores_max_allowed_packet = false;
+        let mut restores_max_keys_read = false;
         let mut restores_prepared_plan_cache = false;
         let mut restores_shared_lock_upgrade = false;
         for (key, previous) in snapshot {
             restores_sql_mode |= key == "sql_mode";
             restores_max_allowed_packet |= key == "max_allowed_packet";
+            restores_max_keys_read |= key == "tidb_max_keys_read";
             restores_prepared_plan_cache |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
             restores_shared_lock_upgrade |=
@@ -1240,6 +1270,9 @@ impl SessionVars {
         if restores_max_allowed_packet {
             self.max_allowed_packet = Self::max_allowed_packet_from_systems(&self.systems)
                 .expect("a saved max_allowed_packet was validated before it was stored");
+        }
+        if restores_max_keys_read {
+            self.max_keys_read = Self::max_keys_read_from_systems(&self.systems);
         }
         if restores_prepared_plan_cache {
             self.enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&self.systems);
@@ -1362,6 +1395,12 @@ impl SessionVars {
                 .value
                 .parse::<u64>()
                 .expect("max_allowed_packet validation stores unsigned decimal bytes");
+        }
+        if key == "tidb_max_keys_read" {
+            self.max_keys_read = validated
+                .value
+                .parse::<u64>()
+                .expect("tidb_max_keys_read validation stores unsigned decimal keys");
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE {
             self.enable_prepared_plan_cache = validated.value == "ON";
@@ -2194,6 +2233,39 @@ mod tests {
         inherited.seed_from_globals(globals).unwrap();
         assert!(inherited.sql_mode().has_no_unsigned_subtraction_mode());
         assert!(!inherited.sql_mode().has_strict_mode());
+    }
+
+    /// Go `TestTiDBMaxKeysRead` + `TestGetMaxKeysRead`: validation clips a
+    /// negative value to zero, the session hook stores the positive value in
+    /// typed state, and the accessor returns that state only for SELECTs.
+    #[test]
+    fn max_keys_read_uses_go_select_gate_and_typed_state() {
+        let definition = get_sys_var("tidb_max_keys_read").unwrap();
+        assert_eq!(definition.validate("-1").unwrap().value, "0");
+        assert_eq!(definition.validate("0").unwrap().value, "0");
+        assert_eq!(definition.validate("1000").unwrap().value, "1000");
+
+        let mut vars = SessionVars::new();
+        assert_eq!(vars.max_keys_read(false), 0);
+        assert_eq!(vars.max_keys_read(true), 0);
+
+        vars.set_system("tidb_max_keys_read", "500".to_owned())
+            .unwrap();
+        assert_eq!(vars.max_keys_read(false), 0);
+        assert_eq!(vars.max_keys_read(true), 500);
+
+        let restore = vars.snapshot_system("tidb_max_keys_read");
+        vars.set_system("tidb_max_keys_read", "100".to_owned())
+            .unwrap();
+        vars.restore_system(restore);
+        assert_eq!(vars.max_keys_read(true), 500);
+
+        let globals = GlobalSysvars::new();
+        globals.set("tidb_max_keys_read", "100".to_owned()).unwrap();
+        let mut inherited = SessionVars::new();
+        inherited.seed_from_globals(globals).unwrap();
+        assert_eq!(inherited.max_keys_read(true), 100);
+        assert_eq!(inherited.max_keys_read(false), 0);
     }
 
     #[test]
