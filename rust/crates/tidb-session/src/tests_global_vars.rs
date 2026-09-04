@@ -225,6 +225,51 @@ fn optimizer_and_ddl_global_switches_round_trip_like_go() {
 fn memory_limit_global_values_are_canonicalized_like_go() {
     let (mut session, _, _) = two_sessions_sharing_globals();
 
+    let old_server_limit =
+        tidb_util::memory::SERVER_MEMORY_LIMIT.load(std::sync::atomic::Ordering::SeqCst);
+    session
+        .run("SET GLOBAL tidb_server_memory_limit = '100MB'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_server_memory_limit"),
+        Some("512MB".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_server_memory_limit = '0'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_server_memory_limit"),
+        Some("0".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_server_memory_limit = '18446744073709551615'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_server_memory_limit"),
+        Some("18446744073709551615".to_owned())
+    );
+    for (input, expected) in [
+        ("1234", "512MB"),
+        ("1234567890123", "1234567890123"),
+        ("10KB", "512MB"),
+        ("12345678KB", "12345678KB"),
+        ("10MB", "512MB"),
+        ("700MB", "700MB"),
+        ("20GB", "20GB"),
+        ("2TB", "2TB"),
+    ] {
+        session
+            .run(&format!("SET GLOBAL tidb_server_memory_limit = '{input}'"))
+            .unwrap();
+        assert_eq!(
+            scalar_text(&mut session, "SELECT @@global.tidb_server_memory_limit"),
+            Some(expected.to_owned()),
+            "{input}"
+        );
+    }
+    tidb_util::memory::SERVER_MEMORY_LIMIT
+        .store(old_server_limit, std::sync::atomic::Ordering::SeqCst);
+
     session
         .run("SET GLOBAL tidb_server_memory_limit_sess_min_size = '123MB'")
         .unwrap();

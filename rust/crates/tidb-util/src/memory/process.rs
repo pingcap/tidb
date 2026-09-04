@@ -366,8 +366,6 @@ pub fn parse_server_memory_limit(text: &str) -> Result<u64, String> {
     } else {
         parsed.max(512 << 20)
     };
-    i64::try_from(parsed)
-        .map_err(|_| format!("tidb_server_memory_limit is too large: {text:?}"))?;
     Ok(parsed)
 }
 

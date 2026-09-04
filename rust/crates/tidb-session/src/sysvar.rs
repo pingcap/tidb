@@ -606,6 +606,20 @@ impl SysVarDef {
                 "The valid value of tidb_tiflash_auto_spill_ratio is between 0 and 0.85".into(),
             ));
         }
+        // Go's `tidb_server_memory_limit` validation parses percentages and
+        // binary-unit byte sizes, stores the parser's normalized spelling,
+        // and clamps a positive limit below 512 MiB with a truncation warning.
+        // The host total is a process fact, so a percentage is only resolved
+        // when the runtime can provide it; byte forms remain deterministic.
+        if self.name == "tidb_server_memory_limit" {
+            let total = tidb_util::memory::mem_total().unwrap_or_default();
+            let parsed = crate::varsutil::parse_memory_limit(total, &validated.value, original)
+                .map_err(|_| ValidationError::WrongValue)?;
+            return Ok(Validated {
+                value: parsed.normalized,
+                truncated: parsed.clamped || validated.truncated,
+            });
+        }
         // Go's `tidb_server_memory_limit_sess_min_size` validation first
         // accepts an unsigned byte count, then falls back to the same
         // integer binary-unit parser used by `parseByteSize`. Values in
@@ -1702,6 +1716,24 @@ mod tests {
             "18446744073709551615"
         );
         assert_eq!(sv.validate("700MBaa"), Err(ValidationError::WrongValue));
+    }
+
+    /// Transcreated from Go `TestTiDBServerMemoryLimit`: the memory-limit
+    /// parser preserves valid unit/decimal spellings and clamps a positive
+    /// sub-512MiB value to `512MB`.
+    #[test]
+    fn server_memory_limit_validation_matches_go() {
+        let sv = get_sys_var("tidb_server_memory_limit").unwrap();
+        let small = sv.validate("100MB").unwrap();
+        assert_eq!(small.value, "512MB");
+        assert!(small.truncated);
+        assert_eq!(sv.validate("0").unwrap().value, "0");
+        assert_eq!(
+            sv.validate("18446744073709551615").unwrap().value,
+            "18446744073709551615"
+        );
+        assert_eq!(sv.validate("1073741824").unwrap().value, "1073741824");
+        assert_eq!(sv.validate("123aaa123"), Err(ValidationError::WrongValue));
     }
 
     /// Transcreated from Go `TestTiDBServerMemoryLimitGCTrigger`: decimal

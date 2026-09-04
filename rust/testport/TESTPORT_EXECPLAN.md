@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` server memory limit): wired the
+  existing Go-compatible memory-limit parser into the Rust sysvar registry,
+  including unit/percentage normalization, the 512MiB floor, and tested
+  `u64::MAX` acceptance; relaxed the process helper's unnecessary signed
+  conversion. Added end-to-end byte-form GLOBAL coverage and reconciled both
+  server-memory-limit receipt rows, retaining host/failpoint and exact-error
+  boundaries explicitly.
 - 2026-09-05 (`pkg/sessionctx/variable` mock accessor auth-plugin path):
   covered the real GLOBAL `default_authentication_plugin` enum rejection and
   accepted value path from `TestMockAPI`. The Go test's helper-only
