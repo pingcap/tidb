@@ -328,3 +328,5 @@
 - 下轮恢复点: (1) hook 白名单后续: mpp_version(需 kv MppVersion 表)/tiflash_hashagg_preaggregation_mode(核实 Go master 无此变量, 已剔除); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - mpp_version 批: kv MppVersion 表镜像移植到 vardef modes.rs(UNSPECIFIED=-1/V0..V3/newest=3 + to_mpp_version 解析, -1..3 闭区间)+mpp_version run_validation 臂(拒绝消息 "-1 (unspecified), 0, 1, 2, 3")+双侧回归。session lib 1288 通过/281 预存(失败集与既有零新增), vardef 45+3+3, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) hook 余项逐个; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- hook 审计状态收敛: 30 个待分类余项(tidb_replica_read 已核实由 Enum+possible_values 通用校验完整覆盖=部分余项或同此形态)。分类脚本对多形态 Name: 条目(常量引用/字面量/跨行)的适配未完成, 下一轮先修脚本再批量分类, 产出精确工单后逐变量落地。
+- 下轮恢复点: (1) 修分类脚本 → 30 项三分桶(Enum 通用已覆盖/警告废弃型/需真移植)→ 逐个落地; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
