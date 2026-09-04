@@ -210,4 +210,9 @@
   widths, decimal caps, temporal FSP, JSON widening, and blob families.
   Focused evidence is recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
+- 2026-09-04: aligned Rust BINARY-source `CAST AS CHAR` with Go's
+  `HandleBinaryLiteral`/`from_binary` boundary. Invalid octets now return the
+  successfully decoded prefix and publish warning 3854 in non-strict mode;
+  valid bytes remain unchanged. Focused and Ready evidence is recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 - parser #5 (RESERVED_KEYWORDS 缺 DATABASE/DATABASES/DISTINCT) 核实已被并发会话修复 — RESERVED_KEYWORDS 当前含全部 236 条含这三个关键词。审计项 5 关闭。

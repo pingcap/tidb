@@ -2074,11 +2074,15 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
             // A binary-charset CHAR target truncates in BYTES
             // (`ProduceStrWithSpecifiedTp`'s `chs == CharsetBin` branch);
             // carry that through the reconstructed cast type.
-            charset: if ret_type.is_binary_string() {
-                Some("BINARY".to_owned())
+            // For character targets retain the resolved target charset too:
+            // a BINARY source must pass through Go's `from_binary` decoder
+            // before `CAST AS CHAR`, and an explicit `CHARACTER SET` target
+            // must not silently fall back to the session default.
+            charset: Some(if ret_type.is_binary_string() {
+                "BINARY".to_owned()
             } else {
-                None
-            },
+                ret_type.charset_name().to_owned()
+            }),
         },
         "binary" => {
             // Go pads NUL bytes only the FIXED TypeString target

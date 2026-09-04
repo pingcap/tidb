@@ -1608,9 +1608,44 @@ fn test_wrap_with_cast_as_types_classes_enum_row() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: Go warns ErrTruncatedWrongVal when a BINARY-charset string payload is not valid UTF-8 before rendering bytes verbatim; the Rust binary-render path emits no event"]
 fn test_wrap_with_cast_as_string_binary_literal_warns_invalid_utf8() {
-    // Go: BinaryLiteral [0x91] under flen-1 binary VarString warns once.
+    // Go `BuildCastFunction(..., TypeVarString)` inserts `from_binary` for a
+    // BINARY source.  An invalid UTF-8 byte is truncated at the first bad
+    // group, publishes ErrCannotConvertString (3854), and returns the
+    // successfully decoded prefix in non-strict mode (empty here).
+    let mut source = FieldType::new(C::VarString);
+    source.set_charset_name("binary");
+    source.set_collation_name("binary");
+    source.set_flen(1);
+
+    let invalid = const_typed(
+        Datum::new_binary_literal(tidb_datatype::BinaryLiteral::from(vec![0x91])),
+        source.clone(),
+    );
+    let target = FieldType::new(C::VarString);
+    let ctx = WarningCtx::default();
+    let wrapped = crate::simple_expr::build_cast_function(invalid, target, false).unwrap();
+    let out = wrapped
+        .eval(&ctx, tidb_chunk::row::Row::empty())
+        .expect("CAST AS CHAR should keep the non-strict decoded prefix");
+    assert_eq!(out, Datum::new_string(""));
+    assert_eq!(ctx.0.borrow().len(), 1);
+    assert_eq!(ctx.0.borrow()[0].0, 3854);
+
+    // A valid binary payload takes the same decoder path without a warning.
+    let valid = const_typed(
+        Datum::new_binary_literal(tidb_datatype::BinaryLiteral::from(vec![b'a'])),
+        source,
+    );
+    let ctx = WarningCtx::default();
+    let wrapped =
+        crate::simple_expr::build_cast_function(valid, FieldType::new(C::VarString), false)
+            .unwrap();
+    let out = wrapped
+        .eval(&ctx, tidb_chunk::row::Row::empty())
+        .expect("valid binary string");
+    assert_eq!(out, Datum::new_string("a"));
+    assert!(ctx.0.borrow().is_empty());
 }
 
 #[test]

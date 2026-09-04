@@ -1126,6 +1126,68 @@ git diff --check
 # both passed
 ```
 
+## Rust-only parity follow-up: BINARY-source CAST AS CHAR conversion
+
+Go's `TestWrapWithCastAsString` (`pkg/expression/builtin_cast_test.go:1437-1496`)
+builds `CAST(expr AS VAR_STRING)` over a BINARY-charset source. The string cast
+class calls `HandleBinaryLiteral(..., explicitCast=true)`, which inserts the
+`from_binary` decoder. A valid payload is rendered normally; an invalid UTF-8
+payload publishes `ErrCannotConvertString` (3854) and returns the successfully
+decoded prefix in non-strict mode (empty for the single byte `0x91`).
+
+Rust previously called `Datum::sql_string` before this boundary, so the same
+payload raised an internal invalid-UTF-8 evaluation error and emitted no
+warning. `tidb-expr/src/cast.rs` now recognizes a BINARY source for a
+non-binary CHAR target, decodes with the target charset's `TransformOp::DECODE`
+policy, emits the source-shaped 3854 warning, and preserves BinaryLiteral/Bit
+raw bytes. `scalar_function.rs` carries the resolved target charset through the
+internal `cast_char` dispatch so explicit character-set casts use the same
+target as Go.
+
+Focused validation:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib test_wrap_with_cast_as_string_binary_literal_warns_invalid_utf8 -- --nocapture
+# passed: 1 test (invalid 0x91 warning + valid 0x61 no-warning rows)
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib test_wrap_with_cast_as_string -- --nocapture
+# passed: 2 tests (the focused pair plus the existing wrapper table)
+```
+
+Ready validation for this batch:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,160 passed, 1 known loopback HTTP JSON-schema fixture failed, 116 ignored
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,058 passed, 121 existing planner/storage/fixture failures, 0 ignored
+
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

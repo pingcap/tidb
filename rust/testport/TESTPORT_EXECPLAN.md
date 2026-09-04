@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` BINARY-source string casts): aligned the
+  `BuildCastFunction`/`HandleBinaryLiteral` boundary for `CAST(... AS CHAR)`.
+  Rust now decodes a BINARY-charset source through the target charset, keeps
+  the valid prefix in non-strict mode, and publishes Go's 3854 conversion
+  warning for invalid bytes. The focused valid/invalid BinaryLiteral
+  regression and Ready profile are recorded in
+  `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (`tidb-expr` cast-wrapper metadata tables): activated the complete
   Go-derived `TestCastConstAsDecimalFieldType` (51 rows) and
   `TestCastAsCharFieldType` (40 rows). The normal Rust wrapper and cast builder

@@ -29,9 +29,10 @@ use crate::Decimal;
 use crate::{Datum, EvalError};
 use tidb_ast::CastType;
 use tidb_datatype::{
-    number_to_duration, ConversionFlags, DatumValueError, EvalType, FieldType, FieldTypeCode,
-    ScalarConversionEvent, JSON_TYPE_CODE_DATE, JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION,
-    JSON_TYPE_CODE_STRING, JSON_TYPE_CODE_TIMESTAMP,
+    find_encoding, number_to_duration, ConversionFlags, DatumValueError, EvalType, FieldType,
+    FieldTypeCode, ScalarConversionEvent, TransformOp, JSON_TYPE_CODE_DATE,
+    JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION, JSON_TYPE_CODE_STRING,
+    JSON_TYPE_CODE_TIMESTAMP,
 };
 
 /// Internal marker used when a wrapper carries Go's `UnspecifiedLength`
@@ -93,7 +94,6 @@ pub(crate) fn eval_cast(
             }
         }
         CastType::Char { len, charset } => {
-            let text = string_source_text(&v, source)?;
             // Go `CHAR(n) CHARSET binary`: the ret charset is binary, so
             // `ProduceStrWithSpecifiedTp` takes its `chs == CharsetBin`
             // branch and truncates in BYTES, and `padZeroForBinaryType`
@@ -107,6 +107,39 @@ pub(crate) fn eval_cast(
                 }
                 return Ok(Datum::new_bytes(bytes));
             }
+            // `castAsStringFunctionClass` routes a BINARY-charset argument
+            // through Go's `HandleBinaryLiteral(..., explicitCast=true)`.
+            // Its `from_binary` signature decodes the raw bytes with
+            // `OpDecode`, publishes ErrCannotConvertString (3854) as a
+            // warning, and keeps the successfully decoded prefix in
+            // non-strict mode.  The generic stringifier used to reject an
+            // invalid UTF-8 byte before this boundary, which made
+            // `CAST(0x91 AS CHAR)` an execution error instead of the empty
+            // string plus one warning.
+            let target_charset = charset
+                .as_deref()
+                .unwrap_or_else(|| ctx.connection_charset_info().0);
+            let text = if source.is_some_and(FieldType::is_binary_string)
+                && !target_charset.eq_ignore_ascii_case("binary")
+            {
+                let bytes = datum_binary_bytes(&v)?;
+                let (decoded, error) = find_encoding(target_charset)
+                    .transform(&bytes, TransformOp::DECODE)
+                    .into_parts();
+                if error.is_some() {
+                    let hex = bytes
+                        .iter()
+                        .map(|byte| format!("{byte:02X}"))
+                        .collect::<String>();
+                    ctx.append_warning(
+                        3854,
+                        &format!("Cannot convert string '{hex}' from binary to {target_charset}"),
+                    );
+                }
+                String::from_utf8_lossy(&decoded).into_owned()
+            } else {
+                string_source_text(&v, source)?
+            };
             Ok(Datum::new_string(match len {
                 Some(n) => {
                     report_data_too_long(ctx, text.chars().count(), *n as usize);
@@ -449,6 +482,7 @@ fn datum_binary_bytes(value: &Datum) -> Result<Vec<u8>, EvalError> {
     match value {
         Datum::String(value) => Ok(value.bytes().to_vec()),
         Datum::Bytes(value) => Ok(value.clone()),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(value.as_bytes().to_vec()),
         _ => Ok(datum_sql_string(value)?.into_bytes()),
     }
 }
