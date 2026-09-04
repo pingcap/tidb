@@ -342,3 +342,6 @@
 - 下轮恢复点: (1) 选下一个无 audit 文档的 Go package 遍历; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - F2 静态分类完成并写入 audit: 47 站点四桶(startup 13/事务写 8/点读 prepare 8/完成杂项 18); 事务写簇修复设计=复用 txn.rs TxnErrorKind 映射, 仍需一次冲突捕获钉错误文本签名。
 - 下轮恢复点: (1) 若有 live cluster 捕获冲突错误文本→落地事务写簇 9007 路由; (2) 选下一无文档 Go package(候选 tidb-hint 已查结构在位); (3) F4 低优先级。
+- hint 面核实(只读): parse_stmt_hints/重复警告/RemoveDuplicatedHints 去重均已在位, 无需新批。
+- 树健康基线(六 crate): session 1302 通过/281 预存(环境 spill 类, A/B 已证与批次无关); vardef 45/0; planner 911/0; codec 46/0; distsql 28/0; datatype 410/0。
+- 下轮恢复点: (1) hook 余项 30 分类中"needs work"已清 5(mem_arbitrator 4+gogc), 余 5(tiflash_pipeline_model/fair_locking=惰性已记录, schema_cache_size/index_join_v2 已落地, tx_read_ts 空操作)→工单实际清空; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) 选新面: tidb-privilege 或 tidb-domain。
