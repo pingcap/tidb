@@ -338,3 +338,5 @@
 - 下轮恢复点: (1) 工单余项: tiflash_pipeline_model/schema_cache_size(opt_index_join_build_v2、pessimistic_txn_fair_locking 待读钩子体); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - index_join_v2 + schema_cache_size 批: 前者 falsy 拒绝(always-enabled 消息 1105)+truthy 规范化为 ON; 后者字节解析+64MB 下限钳/MaxInt64 上限钳(Go 的 1365 警告本边界无 sink, 值钳位保留并注释)+不可解析 1292。回归双场景。session lib 1299 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) 工单余项: tiflash_pipeline_model/pessimistic_txn_fair_locking(条目位置待查); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- 工单最终处置并推送: tiflash_pipeline_model=废弃警告型(值透传, 警告 sink 缺口同 schema_cache 钳位注释); fair_locking 拒绝臂仅 next-gen 生效(惰性)。30 项全部处置: 16 已落地+回归/2 Enum 通用覆盖/1 废弃/1 空操作/1 next-gen 惰性/若干 fork 或不存在。hook 审计关闭。
+- 下轮恢复点: (1) 选下一个无 audit 文档的 Go package 遍历; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。

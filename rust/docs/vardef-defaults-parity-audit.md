@@ -71,3 +71,18 @@ validation logic to port (`tidb_enable_tiflash_pipeline_model`,
 `tx_read_ts`), and 17 whose entries the block parser could not reach
 (mostly deprecated warn-only shapes; verify individually when
 processed).
+
+## Validation-hook worklist disposition (2026-09-05, final pass)
+
+The ten "needs work" items are dispositioned: the four
+`tidb_mem_arbitrator_*`, `tidb_gogc_tuner_threshold`,
+`tidb_opt_index_join_build_v2` and `tidb_schema_cache_size` are ported
+and regression-pinned (batches this series); `tx_read_ts`'s hook is a
+no-op passthrough; `tidb_enable_tiflash_pipeline_model` is
+deprecated-warn-only (any value passes with a deprecation warning the
+validation boundary has no sink to emit -- the same documented gap as
+the schema-cache clamp warning); and
+`tidb_pessimistic_txn_fair_locking`'s refusal arm is next-gen-only,
+inert on this node. The validation-hook audit is closed: every entry is
+either ported and pinned, covered by generic type/enum validation, or
+has its specific gap recorded.
