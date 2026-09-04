@@ -25,7 +25,6 @@ use std::marker::PhantomData;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
-use tidb_datatype::GoString;
 
 use crate::go_runtime::{
     go_64_slice_decode_capacity, GoShared, GoSharedPointerSlice, GoSharedSlice,
@@ -1470,7 +1469,7 @@ where
 /// existing map allocation and its entries when the incoming object omits a
 /// key. JSON null clears the map pointer.
 pub(crate) struct OptionSharedGoStringMapMergeSeed<'a, V>(
-    pub(crate) &'a mut Option<GoShared<BTreeMap<GoString, V>>>,
+    pub(crate) &'a mut Option<GoShared<BTreeMap<String, V>>>,
 );
 
 impl<'de, V> DeserializeSeed<'de> for OptionSharedGoStringMapMergeSeed<'_, V>
@@ -1484,7 +1483,7 @@ where
         D: Deserializer<'de>,
     {
         struct SharedMapVisitor<'a, V> {
-            destination: &'a mut Option<GoShared<BTreeMap<GoString, V>>>,
+            destination: &'a mut Option<GoShared<BTreeMap<String, V>>>,
             marker: PhantomData<V>,
         }
 
@@ -1528,10 +1527,10 @@ where
                     let mut value = V::default();
                     match map.next_value_seed(NullDefaultSeed(&mut value)) {
                         Ok(()) => {
-                            destination.insert(GoString::from(key), value);
+                            destination.insert(key, value);
                         }
                         Err(error) => {
-                            destination.insert(GoString::from(key), value);
+                            destination.insert(key, value);
                             first_error.get_or_insert(error);
                         }
                     }

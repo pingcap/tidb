@@ -31,8 +31,8 @@ use tidb_exec::cluster_catalog::{
 use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback,
     plan_ddl, plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
-    prepare_check_constraint_job_submission, AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement,
-    MdlInfoUpdate,
+    prepare_check_constraint_job_submission, prepare_materialized_view_job_submission,
+    AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate,
 };
 use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use tidb_exec::ddl_job_table::DdlJobTable;
@@ -43,8 +43,8 @@ use tidb_exec::system_row_write::store_clustered_row;
 use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
 use tidb_meta::{key, value};
 use tidb_model::{
-    ActionType, DBInfo, GoAnyView, GoShared, Job, JobState, JobVersion, MaterializedViewLogInfo,
-    SchemaState, TimeZoneLocation,
+    ActionType, DBInfo, GoAnyView, GoShared, Job, JobArgsValue, JobState, JobVersion,
+    MaterializedViewLogInfo, SchemaState, TimeZoneLocation,
 };
 use tidb_txnkv::transaction::{OptimisticMutation, OptimisticMutationKind};
 
@@ -5385,7 +5385,8 @@ fn materialized_view_lowering_follows_go_admission_order() {
 }
 
 /// Go `CreateMaterializedViewLog` (master `94a9cbedab`): the base-shape
-/// refusals, the derived `$mlog$` name collision, and the job seam.
+/// refusals, the derived `$mlog$` name collision, `BuildMaterializedViewLogTableInfo`'s
+/// own refusals, and the submitted job envelope with its typed arguments.
 #[test]
 fn materialized_view_log_lowering_follows_go_admission_order() {
     use tidb_executor::StmtContext;
@@ -5395,6 +5396,10 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
         lower_ddl_with_context(&parsed, schema, &enabled)
             .expect("MV LOG DDL admission outcome")
             .expect("MV LOG DDL lowers to a statement")
+    };
+    let submit = |store: &mut MetaStore, sql: &str| {
+        let statement = lower(sql, "u6");
+        prepare_materialized_view_job_submission(store, &statement, 1_401, false, 0)
     };
     let mut store = bootstrapped();
 
@@ -5411,23 +5416,26 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
         panic!("CREATE writes metadata")
     };
     apply(&mut store, &create);
-    let _base_id = create.created_id.expect("base table id");
+    let base_id = create.created_id.expect("base table id");
 
-    // A valid log create reaches the documented job seam (no `$mlog$`
-    // collision in a fresh catalog).
+    // The routing guard: a log create never plans through the ordinary
+    // one-write planner -- Go submits it as a durable job.
     let error = plan_ddl(
         &mut store,
         &lower("CREATE MATERIALIZED VIEW LOG ON mv_base (id)", "u6"),
         1_401,
     )
-    .expect_err("valid statements stop at the job seam");
-    let DdlPlanError::Admission(admission) = error else {
-        panic!("expected the seam refusal")
-    };
-    assert_eq!(
-        admission.reason,
-        "materialized view job execution is not wired in this tier"
-    );
+    .expect_err("the one-write planner refuses the job route");
+    assert!(matches!(error, DdlPlanError::Encode(ref message)
+        if message == "materialized view log DDL must execute through mysql.tidb_ddl_job"));
+
+    // Go: the base table must exist.
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW LOG ON no_base (id)")
+        .expect_err("missing base refuses");
+    assert!(matches!(
+        error,
+        DdlPlanError::TableNotExists { ref table, .. } if table == "no_base"
+    ));
 
     // Go: the derived `$mlog$` name collision reports `ErrTableExists`.
     // Inject a physical table occupying the derived name.
@@ -5438,57 +5446,195 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
         key::table_kv_key(112, 9_002),
         value::serialize_table_info(&occupier).expect("the occupier encodes"),
     );
-    let error = plan_ddl(
-        &mut store,
-        &lower("CREATE MATERIALIZED VIEW LOG ON mv_base (id)", "u6"),
-        1_402,
-    )
-    .expect_err("the derived mlog name already exists");
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW LOG ON mv_base (id)")
+        .expect_err("the derived mlog name already exists");
     let DdlPlanError::Admission(admission) = error else {
         panic!("expected a coded refusal")
     };
     assert_eq!(admission.code, tidb_error::tidb::errcode::ErrTableExists);
     assert_eq!(admission.reason, "Table 'u6.$mlog$mv_base' already exists");
+    store
+        .pairs
+        .remove(&key::table_kv_key(112, 9_002))
+        .expect("the occupier is removed");
 
-    // Go: the base table must exist.
-    let error = plan_ddl(
-        &mut store,
-        &lower("CREATE MATERIALIZED VIEW LOG ON no_base (id)", "u6"),
-        1_403,
-    )
-    .expect_err("missing base refuses");
-    assert!(matches!(
-        error,
-        DdlPlanError::TableNotExists { ref table, .. } if table == "no_base"
-    ));
-
-    // A valid log create on another base reaches the job seam too.
-    let fresh_create = plan_ddl(
-        &mut store,
-        &lower(
-            "CREATE TABLE other_base (id INT PRIMARY KEY AUTO_INCREMENT)",
-            "u6",
+    // `BuildMaterializedViewLogTableInfo`'s refusals, in Go's order.
+    for (sql, code, message) in [
+        (
+            "CREATE MATERIALIZED VIEW LOG ON mv_base (id, id)",
+            tidb_error::tidb::errcode::ErrDupFieldName,
+            "Duplicate column name 'id'",
         ),
-        1_404,
+        (
+            "CREATE MATERIALIZED VIEW LOG ON mv_base (id, _MLOG$_DML_TYPE)",
+            tidb_error::tidb::errcode::ErrDupFieldName,
+            "Duplicate column name '_MLOG$_DML_TYPE'",
+        ),
+        (
+            "CREATE MATERIALIZED VIEW LOG ON mv_base (no_col)",
+            tidb_error::tidb::errcode::ErrBadField,
+            "Unknown column 'no_col' in 'mv_base'",
+        ),
+        (
+            "CREATE MATERIALIZED VIEW LOG ON mv_base (id) PURGE IMMEDIATE",
+            1105,
+            "PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG",
+        ),
+        (
+            "CREATE MATERIALIZED VIEW LOG ON mv_base (id) PURGE NEXT 'x'",
+            1105,
+            "Unsupported PURGE NEXT expression must return DATETIME/TIMESTAMP, but got var_string",
+        ),
+        (
+            "CREATE MATERIALIZED VIEW LOG ON mv_base (id) ALERT ROWS -3",
+            1105,
+            "invalid ALERT ROWS value: -3 (must be non-negative)",
+        ),
+    ] {
+        let error = submit(&mut store, sql).expect_err(sql);
+        let DdlPlanError::Admission(admission) = error else {
+            panic!("expected a coded refusal for {sql}")
+        };
+        assert_eq!(admission.code, code, "{sql}");
+        assert_eq!(admission.reason, message, "{sql}");
+    }
+
+    // A JSON base column refuses; the log cannot copy it.
+    let json_create = plan_ddl(
+        &mut store,
+        &lower("CREATE TABLE json_base (id INT PRIMARY KEY, j JSON)", "u6"),
+        1_406,
     )
     .expect("CREATE plans");
-    let DdlPlan::Write(fresh_create) = fresh_create else {
+    let DdlPlan::Write(json_create) = json_create else {
         panic!("CREATE writes metadata")
     };
-    apply(&mut store, &fresh_create);
-    let error = plan_ddl(
-        &mut store,
-        &lower("CREATE MATERIALIZED VIEW LOG ON other_base (id)", "u6"),
-        1_405,
-    )
-    .expect_err("valid statements stop at the job seam");
+    apply(&mut store, &json_create);
+    let error = submit(&mut store, "CREATE MATERIALIZED VIEW LOG ON json_base (id, j)")
+        .expect_err("JSON columns refuse");
     let DdlPlanError::Admission(admission) = error else {
-        panic!("expected the seam refusal")
+        panic!("expected a coded refusal")
     };
+    assert_eq!(admission.code, 1105);
     assert_eq!(
         admission.reason,
-        "materialized view job execution is not wired in this tier"
+        "CREATE MATERIALIZED VIEW LOG does not support JSON column j"
     );
+
+    // The valid statement submits a queueing job whose typed arguments carry
+    // the built log table: copied base columns with the key/auto-increment
+    // flags deleted, the two NOT NULL `_MLOG$_*` physical columns, and the
+    // `MaterializedViewLogInfo` metadata pointing back at the base.
+    let mut spec = submit(
+        &mut store,
+        "CREATE MATERIALIZED VIEW LOG ON mv_base (id, k) PURGE NEXT CAST('2027-01-01 00:00:00' AS DATETIME) ALERT ROWS 1000",
+    )
+    .expect("Go submission preflight succeeds")
+    .expect("the log create owns a job spec");
+    assert_eq!(spec.job.type_, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG);
+    assert_eq!(spec.job.state, JobState::QUEUEING);
+    assert_eq!(spec.job.schema_name.to_utf8_lossy_go(), "u6");
+    assert_eq!(spec.job.table_name.to_utf8_lossy_go(), "$mlog$mv_base");
+    assert_eq!(spec.job.involving_schema_info.len(), 2);
+    assert_eq!(
+        spec.job.get_system_var("tidb_scatter_region").as_ref(),
+        Some(&"".into()),
+        "Go stamps the scatter scope even at its default"
+    );
+    assert!(!spec.id_allocated, "the table ID is assigned at insertion");
+    assert_eq!(spec.job.id, 0, "the job ID is assigned at insertion");
+
+    let JobArgsValue::CreateMaterializedViewLog(Some(log_args)) = &spec.args else {
+        panic!("the spec carries CreateMaterializedViewLogArgs")
+    };
+    let table_shared = log_args.read().table_info.get().expect("nil TableInfo");
+    // The built log table, asserted inside a scoped block: the RwLock guards
+    // must drop before the insertion attempt, whose GID assignment writes the
+    // same shared TableInfo.
+    {
+    let table = table_shared.read();
+    assert_eq!(table.name.original(), "$mlog$mv_base");
+    assert_eq!(table.id, 0, "the build leaves the ID to the submission");
+    {
+        let log = table
+            .materialized_view_log
+            .as_ref()
+            .expect("the log metadata is set")
+            .read();
+        assert_eq!(log.base_table_id, base_id);
+        assert_eq!(log.purge_method, "DEFERRED");
+        assert!(
+            log.purge_next.contains("2027-01-01"),
+            "the NEXT clause restores canonically: {}",
+            log.purge_next
+        );
+        assert_eq!(log.log_accumulation_alert_rows, Some(1000));
+        assert_eq!(
+            log.columns.iter().map(|c| c.original().to_owned()).collect::<Vec<_>>(),
+            vec!["id".to_owned(), "k".to_owned()],
+        );
+    }
+    let handles: Vec<_> = table.columns.iter_handles().into_iter().flatten().collect();
+    let columns: Vec<_> = handles.iter().map(|column| column.read()).collect();
+    assert_eq!(columns.len(), 4);
+    assert_eq!(columns[0].name.original(), "id");
+    assert_eq!(columns[0].field_type.code(), tidb_datatype::FieldTypeCode::Long);
+    assert_eq!(
+        columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY,
+        0,
+        "Go deletes the key flags on the log copy"
+    );
+    assert_eq!(
+        columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::AUTO_INCREMENT,
+        0,
+        "Go deletes the auto-increment flag on the log copy"
+    );
+    assert_ne!(
+        columns[0].field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL,
+        0,
+        "NOT NULL travels with the copy"
+    );
+    assert_eq!(columns[1].name.original(), "k");
+    assert_eq!(columns[2].name.original(), "_MLOG$_DML_TYPE");
+    assert_eq!(columns[2].field_type.code(), tidb_datatype::FieldTypeCode::Varchar);
+    assert_eq!(columns[2].field_type.flen(), 1);
+    assert_eq!(columns[2].field_type.charset_name(), "utf8mb4");
+    assert_ne!(
+        columns[2].field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL,
+        0,
+        "Go sets NOT NULL on the DML-type column"
+    );
+    assert_eq!(columns[3].name.original(), "_MLOG$_OLD_NEW");
+    assert_eq!(columns[3].field_type.code(), tidb_datatype::FieldTypeCode::Tiny);
+    assert_eq!(columns[3].field_type.flen(), 4);
+    }
+
+    // The insertion attempt assigns the global IDs (job + table) and lands
+    // the active job row atomically, exactly as Go's
+    // `GenGIDAndInsertJobsWithRetry` commits.
+    let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+    let (mutations, cleanup) = plan_insert_attempt(
+        &mut store,
+        &catalog,
+        std::slice::from_mut(&mut spec),
+        &mut |_| Option::<fn()>::None,
+    )
+    .expect("the insertion attempt plans");
+    apply_mutations(&mut store, &mutations);
+    drop(cleanup);
+
+    assert_ne!(spec.job.id, 0, "the job ID is assigned");
+    let assigned_table_id = table_shared.read().id;
+    assert_eq!(spec.job.table_id, assigned_table_id, "Job.TableID follows the args");
+    assert_ne!(assigned_table_id, 0, "the args' TableInfo carries its ID");
+    let job_table = DdlJobTable::locate(&catalog).expect("the job table exists");
+    let active = job_table
+        .load(&mut store)
+        .expect("the active queue scans")
+        .into_iter()
+        .find(|active| active.job.id == spec.job.id)
+        .expect("the submitted job row is active");
+    assert_eq!(active.job.type_, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG);
 }
 
 /// Go `validateCreateMaterializedViewQuery`'s clause refusals (master

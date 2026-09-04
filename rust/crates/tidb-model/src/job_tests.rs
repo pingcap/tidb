@@ -211,7 +211,7 @@ fn proxy_job_preserves_all_source_aliases_and_fresh_outer_metadata() {
         trace_id: GoSharedSlice::from_vec_with_capacity(vec![1, 2], 4),
         connection_id: 9,
     });
-    let session_vars = GoShared::new(BTreeMap::from([(GoString::from("k"), GoString::from("v"))]));
+    let session_vars = GoShared::new(BTreeMap::from([("k".to_owned(), GoString::from("v"))]));
     let warning_counts = GoShared::new(BTreeMap::from([(GoString::from("w"), 1)]));
     let location = GoShared::new(TimeZoneLocation::default());
     let mut reorg = DDLReorgMeta::default();
@@ -465,10 +465,7 @@ fn receiver_decode_reuses_pointers_maps_slices_and_rawmessage_backing() {
         trace_id: trace_bytes.clone(),
         connection_id: 1,
     });
-    let session = GoShared::new(BTreeMap::from([(
-        GoString::from("old"),
-        GoString::from("1"),
-    )]));
+    let session = GoShared::new(BTreeMap::from([("old".to_owned(), GoString::from("1"))]));
     let involving = GoSharedSlice::from_vec_with_capacity(
         vec![InvolvingSchemaInfo {
             database: GoString::from("old"),

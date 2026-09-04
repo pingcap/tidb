@@ -134,6 +134,24 @@ fn truncate_table_args(spec: &JobSpec) -> GoShared<tidb_model::TruncateTableArgs
     }
 }
 
+fn create_materialized_view_args(
+    spec: &JobSpec,
+) -> GoShared<tidb_model::CreateMaterializedViewArgs> {
+    match &spec.args {
+        JobArgsValue::CreateMaterializedView(Some(args)) => args.clone(),
+        _ => panic!("Go JobSpec.Args is not *model.CreateMaterializedViewArgs"),
+    }
+}
+
+fn create_materialized_view_log_args(
+    spec: &JobSpec,
+) -> GoShared<tidb_model::CreateMaterializedViewLogArgs> {
+    match &spec.args {
+        JobArgsValue::CreateMaterializedViewLog(Some(args)) => args.clone(),
+        _ => panic!("Go JobSpec.Args is not *model.CreateMaterializedViewLogArgs"),
+    }
+}
+
 fn table_id_count(table: &TableInfo) -> usize {
     1 + table
         .get_partition_info()
@@ -149,6 +167,24 @@ pub fn required_global_id_count(specs: &[JobSpec]) -> usize {
             continue;
         }
         match spec.job.type_ {
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
+                let args = create_materialized_view_log_args(spec);
+                let table = args
+                    .read()
+                    .table_info
+                    .get()
+                    .expect("nil CreateMaterializedViewLogArgs.TableInfo");
+                count += table_id_count(&table.read());
+            }
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
+                let args = create_materialized_view_args(spec);
+                let table = args
+                    .read()
+                    .table_info
+                    .get()
+                    .expect("nil CreateMaterializedViewArgs.TableInfo");
+                count += table_id_count(&table.read());
+            }
             ActionType::ACTION_CREATE_VIEW
             | ActionType::ACTION_CREATE_SEQUENCE
             | ActionType::ACTION_CREATE_TABLE => {
@@ -251,6 +287,30 @@ pub fn assign_global_ids(specs: &mut [JobSpec], ids: &[i64]) {
     let mut allocator = GlobalIdAssigner { ids, next: 0 };
     for spec in specs {
         match spec.job.type_ {
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
+                let args = create_materialized_view_log_args(spec);
+                let table = args
+                    .read()
+                    .table_info
+                    .get()
+                    .expect("nil CreateMaterializedViewLogArgs.TableInfo");
+                if !spec.id_allocated {
+                    allocator.assign_table(&table);
+                }
+                spec.job.table_id = table.read().id;
+            }
+            ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
+                let args = create_materialized_view_args(spec);
+                let table = args
+                    .read()
+                    .table_info
+                    .get()
+                    .expect("nil CreateMaterializedViewArgs.TableInfo");
+                if !spec.id_allocated {
+                    allocator.assign_table(&table);
+                }
+                spec.job.table_id = table.read().id;
+            }
             ActionType::ACTION_CREATE_VIEW
             | ActionType::ACTION_CREATE_SEQUENCE
             | ActionType::ACTION_CREATE_TABLE => {

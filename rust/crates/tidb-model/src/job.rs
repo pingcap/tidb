@@ -625,6 +625,16 @@ impl SubJob {
 }
 
 impl TimeZoneLocation {
+    /// Go's composite literal `model.TimeZoneLocation{Name, Offset}`: the
+    /// lazy location cache starts empty.
+    pub fn new(name: impl Into<GoString>, offset: i64) -> Self {
+        Self {
+            name: name.into(),
+            offset,
+            location: OnceLock::new(),
+        }
+    }
+
     /// Go `GetLocation`.
     pub fn get_location(&self) -> Result<GoShared<ResolvedTimeZone>, String> {
         if let Some(location) = self.location.get() {
@@ -816,7 +826,7 @@ pub struct Job {
         skip_serializing_if = "shared_map_is_none_or_empty"
     )]
     /// Session system variables captured for DDL execution.
-    pub session_vars: Option<GoShared<BTreeMap<GoString, GoString>>>,
+    pub session_vars: Option<GoShared<BTreeMap<String, GoString>>>,
     /// Latest schema version returned by the last execution step.
     #[serde(rename = "last_schema_version", default)]
     pub last_schema_version: i64,
@@ -1240,12 +1250,16 @@ impl Job {
     }
 
     /// Inserts one captured session system variable.
-    pub fn add_system_var(&mut self, name: impl Into<GoString>, value: impl Into<GoString>) {
+    ///
+    /// Go's `SessionVars` is `map[string]string`, so the map is keyed by the
+    /// plain Rust string: [`GoString`] serializes through a JSON raw value,
+    /// which serde_json rejects as a map key.
+    pub fn add_system_var(&mut self, name: impl AsRef<str>, value: impl Into<GoString>) {
         self.session_vars
             .as_ref()
             .expect("assignment to entry in nil SessionVars map")
             .write()
-            .insert(name.into(), value.into());
+            .insert(name.as_ref().to_owned(), value.into());
     }
 
     /// Returns one captured session system variable.
@@ -1253,7 +1267,7 @@ impl Job {
     pub fn get_system_var(&self, name: &str) -> Option<GoString> {
         self.session_vars
             .as_ref()
-            .and_then(|variables| variables.read().get(&GoString::from(name)).cloned())
+            .and_then(|variables| variables.read().get(name).cloned())
     }
 
     /// Reports whether this action may require data reorganization.

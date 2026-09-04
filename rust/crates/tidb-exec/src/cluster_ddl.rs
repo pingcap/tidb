@@ -58,10 +58,11 @@ use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 use tidb_model::schema_diff::{AffectedOption, SchemaDiff};
 use tidb_model::schema_state::SchemaState;
+use tidb_model::serde_helpers::GoValueSlice;
 use tidb_model::table_info::TableInfo;
 use tidb_model::{
     get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs, GoField, GoShared,
-    HistoryInfo, Job, JobArgsValue, JobState, TraceInfo,
+    GoSharedSlice, HistoryInfo, Job, JobArgsValue, JobState, TraceInfo,
 };
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
@@ -631,17 +632,25 @@ pub enum DdlStatement {
     /// Go `ast.CreateMaterializedViewStmt` lowered with its resolved target
     /// names (master `94a9cbedab`). Planning runs Go's admission checks in
     /// source order; valid statements stop at the job-execution seam, which
-    /// the materialized-view worker sub-batch wires.
+    /// the materialized-view worker sub-batch wires. The statement context
+    /// carries the envelope Go's executor stamps onto the DDL job (SQL mode,
+    /// CDC write source, tracing, canonical query text).
     CreateMaterializedView {
         stmt: Box<tidb_ast::CreateMaterializedViewStmt>,
         schema: String,
         table: String,
+        context: DdlStatementContext,
     },
-    /// Go `ast.CreateMaterializedViewLogStmt` lowered likewise.
+    /// Go `ast.CreateMaterializedViewLogStmt` lowered likewise. Unlike the
+    /// view create, the log create's job arguments are fully buildable in
+    /// this tier, so it submits through
+    /// [`prepare_materialized_view_job_submission`] like Go's
+    /// `DoDDLJobWrapper`.
     CreateMaterializedViewLog {
         stmt: Box<tidb_ast::CreateMaterializedViewLogStmt>,
         schema: String,
         table: String,
+        context: DdlStatementContext,
     },
     /// `ALTER TABLE ... CONVERT TO CHARACTER SET x [COLLATE y]` and
     /// `ALTER TABLE ... CHARACTER SET = x`, Go's
@@ -4182,17 +4191,25 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             stmt,
             schema,
             table,
+            context,
         } => {
-            plan_create_materialized_view(&catalog, stmt, schema, table)?;
-            unreachable!("plan_create_materialized_view ends at the job seam")
+            plan_create_materialized_view(&catalog, stmt, schema, table, &context.0)?;
+            // Go's remaining submission body derives the view column types by
+            // executing the definition; this tier has no SQL-execution seam
+            // over a meta snapshot, so the job cannot be assembled. A valid
+            // statement must not be pretended into success.
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
+                "materialized view job execution is not wired in this tier",
+            )));
         }
-        DdlStatement::CreateMaterializedViewLog {
-            stmt,
-            schema,
-            table,
-        } => {
-            plan_create_materialized_view_log(&catalog, stmt, schema, table)?;
-            unreachable!("plan_create_materialized_view_log ends at the job seam")
+        DdlStatement::CreateMaterializedViewLog { .. } => {
+            // Go submits this statement as a durable job
+            // (`DoDDLJobWrapper`); like the CHECK actions it must execute
+            // through `mysql.tidb_ddl_job`, via
+            // [`prepare_materialized_view_job_submission`].
+            return Err(DdlPlanError::Encode(
+                "materialized view log DDL must execute through mysql.tidb_ddl_job".to_owned(),
+            ));
         }
         DdlStatement::CreateTableLike {
             schema,
@@ -7226,6 +7243,7 @@ fn lower_create_materialized_view(
         stmt: Box::new(create.clone()),
         schema,
         table,
+        context: DdlStatementContext(context.clone()),
     })
 }
 
@@ -7246,6 +7264,7 @@ fn lower_create_materialized_view_log(
         stmt: Box::new(create.clone()),
         schema,
         table,
+        context: DdlStatementContext(context.clone()),
     })
 }
 
@@ -7258,7 +7277,8 @@ fn plan_create_materialized_view(
     create: &tidb_ast::CreateMaterializedViewStmt,
     schema: &str,
     table: &str,
-) -> Result<(), DdlPlanError> {
+    context: &tidb_executor::StmtContext,
+) -> Result<MviewCreateJobPrefix, DdlPlanError> {
     use tidb_ast::QueryStmt;
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
@@ -7375,7 +7395,7 @@ fn plan_create_materialized_view(
         .map(|log| log.read().columns.iter().cloned().collect())
         .unwrap_or_default();
     let from_alias = base_ref.alias.as_deref();
-    plan_validate_materialized_view_query(
+    let analysis = plan_validate_materialized_view_query(
         sel,
         &create.query,
         schema,
@@ -7385,11 +7405,311 @@ fn plan_create_materialized_view(
         &mlog_columns,
     )?;
 
-    // Job-execution seam: the materialized-view worker sub-batch wires the
-    // job submission this tier cannot serve yet.
-    Err(DdlPlanError::Admission(DdlAdmissionError::new(
-        "materialized view job execution is not wired in this tier",
-    )))
+    // Go `normalizeMVDefinitionHintDBNames(s.Select, schemaName)`: every
+    // optimizer-hint table reference without a schema qualifier is pinned to
+    // the view's schema, so a later refresh from another default database
+    // still resolves the hinted tables. Go mutates the statement in place;
+    // this plan borrows it, so the normalization is applied to the clone the
+    // canonical restore reads, which is its only consumer.
+    let mut normalized_select = (**sel).clone();
+    normalize_mv_definition_hint_db_names(&mut normalized_select, schema);
+
+    // Go `restoreNodeToCanonicalSQL(s.Select)` (DefaultRestoreFlags |
+    // RestoreStringWithoutCharset): the persisted `SQLContent`.
+    let normalized_query = tidb_ast::QueryStmt::Select(Box::new(normalized_select));
+    let select_sql = tidb_ast::Stmt::Query(tidb_ast::NodeBox::new(normalized_query))
+        .restore_with_flags(
+            tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::STRING_WITHOUT_CHARSET,
+        );
+
+    // Go `buildMViewRefreshMeta`: FAST is the only grammar-level method and
+    // the schedule expressions restore through the batch-9 validator.
+    let (refresh_method, refresh_start_with, refresh_next) =
+        build_mview_refresh_meta(create.refresh.as_ref())?;
+
+    // Go `parseMViewAttributes`: the ATTRIBUTES key/value alert settings.
+    let (alert_warning_sec, alert_overdue_sec, alert_refresh_failed) =
+        parse_mview_attributes(create.attributes.as_deref())?;
+
+    Ok(MviewCreateJobPrefix {
+        analysis,
+        select_sql,
+        refresh_method,
+        refresh_start_with,
+        refresh_next,
+        alert_warning_sec,
+        alert_overdue_sec,
+        alert_refresh_failed,
+        time_zone: get_time_zone(context),
+        base_table_id: base.id,
+        mlog_table_id: mlog.id,
+    })
+}
+
+/// Everything Go's `CreateMaterializedView` builds on the way to its DDL job
+/// that this planning tier can compute. Go's remaining submission body
+/// derives the view column types by executing the definition —
+/// `ExecRestrictedSQL("SELECT * FROM (<selectSQL>) AS tidb_mv_query LIMIT 0")`
+/// — and builds the view TableInfo, job envelope and
+/// `CreateMaterializedViewArgs` from the derived result fields, which needs
+/// the SQL-execution seam this tier does not have.
+#[derive(Debug)]
+pub(crate) struct MviewCreateJobPrefix {
+    /// Go `mviewQueryAnalysis`: the per-GROUP-BY select indices, NOT-NULL
+    /// flags and MIN/MAX marker the job build consumes.
+    #[allow(dead_code)]
+    pub(crate) analysis: MviewQueryAnalysis,
+    /// Go `SQLContent`: the hint-normalized canonical definition.
+    #[allow(dead_code)]
+    pub(crate) select_sql: String,
+    /// Go `RefreshMethod` ("FAST").
+    #[allow(dead_code)]
+    pub(crate) refresh_method: String,
+    /// Go `RefreshStartWith`.
+    #[allow(dead_code)]
+    pub(crate) refresh_start_with: String,
+    /// Go `RefreshNext`.
+    #[allow(dead_code)]
+    pub(crate) refresh_next: String,
+    /// Go `AlertWarningSec`.
+    #[allow(dead_code)]
+    pub(crate) alert_warning_sec: i64,
+    /// Go `AlertOverdueSec`.
+    #[allow(dead_code)]
+    pub(crate) alert_overdue_sec: i64,
+    /// Go `AlertRefreshFailed`.
+    #[allow(dead_code)]
+    pub(crate) alert_refresh_failed: bool,
+    /// Go `DefinitionTimeZone` / `RefreshScheduleTimeZone`.
+    #[allow(dead_code)]
+    pub(crate) time_zone: tidb_model::TimeZoneLocation,
+    /// The single base table's ID (`BaseTableIDs[0]`).
+    #[allow(dead_code)]
+    pub(crate) base_table_id: i64,
+    /// The derived `$mlog$` table's ID (`MLogTableIDs[0]`).
+    #[allow(dead_code)]
+    pub(crate) mlog_table_id: i64,
+}
+
+/// Go `mviewGroupByInfo` (`materialized_view.go` master `94a9cbedab`).
+#[derive(Clone, Debug)]
+pub(crate) struct MviewGroupByInfo {
+    /// The SELECT-list index this GROUP BY column appears at.
+    #[allow(dead_code)]
+    pub(crate) select_idx: usize,
+    /// Whether the base column is NOT NULL.
+    #[allow(dead_code)]
+    pub(crate) not_null: bool,
+}
+
+/// Go `mviewQueryAnalysis`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MviewQueryAnalysis {
+    /// One entry per GROUP BY column, in GROUP BY order.
+    #[allow(dead_code)]
+    pub(crate) group_by_infos: Vec<MviewGroupByInfo>,
+    /// The resolved GROUP BY column names (lowercase).
+    #[allow(dead_code)]
+    pub(crate) group_by_cols: Vec<String>,
+    /// Whether the SELECT list aggregates with MIN or MAX.
+    #[allow(dead_code)]
+    pub(crate) has_min_or_max: bool,
+}
+
+/// Go `normalizeMVDefinitionHintDBNames` over a cloned SELECT: every
+/// optimizer-hint table reference without a schema qualifier is filled with
+/// the view's default schema. Hints on every nested SELECT share the walk.
+fn normalize_mv_definition_hint_db_names(select: &mut tidb_ast::SelectStmt, default_schema: &str) {
+    if default_schema.is_empty() {
+        return;
+    }
+    struct Normalizer<'a> {
+        default_db: &'a str,
+    }
+    impl tidb_ast::Visitor for Normalizer<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
+                normalize_hints_in_select(select, self.default_db);
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    fn normalize_hints_in_select(select: &mut tidb_ast::SelectStmt, default_db: &str) {
+        use tidb_ast::HintKind;
+        for hint in &mut select.hints {
+            match &mut hint.kind {
+                HintKind::Tables { tables, .. } => {
+                    for table in tables {
+                        if table.db_name.is_none() {
+                            table.db_name = Some(default_db.to_owned());
+                        }
+                    }
+                }
+                HintKind::Index { table, .. } => {
+                    if table.db_name.is_none() {
+                        table.db_name = Some(default_db.to_owned());
+                    }
+                }
+                HintKind::ReadFromStorage { groups, .. } => {
+                    for (_, tables) in groups {
+                        for table in tables {
+                            if table.db_name.is_none() {
+                                table.db_name = Some(default_db.to_owned());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    use tidb_ast::Visitable;
+    let mut normalizer = Normalizer {
+        default_db: default_schema,
+    };
+    select.accept(&mut normalizer);
+}
+
+/// Go `buildMViewRefreshMeta`: FAST with optional START WITH / NEXT schedule
+/// expressions validated through the batch-9 canonical builder (whose
+/// expression context is the standalone NoColumns scope, not the session).
+fn build_mview_refresh_meta(
+    refresh: Option<&tidb_ast::MViewRefreshClause>,
+) -> Result<(String, String, String), DdlPlanError> {
+    use tidb_executor::ddl::mview_schedule_expr::build_and_validate_m_view_schedule_expr;
+    let Some(refresh) = refresh else {
+        return Ok(("FAST".to_owned(), String::new(), String::new()));
+    };
+    // The grammar only accepts FAST (`MViewRefreshMethod::Fast`).
+    let method = "FAST".to_owned();
+    let mut start_with = String::new();
+    let mut next = String::new();
+    if let Some(expr) = &refresh.start_with {
+        start_with = build_and_validate_m_view_schedule_expr(expr, "REFRESH START WITH")
+            .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::new(error.to_string())))?;
+    }
+    if let Some(expr) = &refresh.next {
+        next = build_and_validate_m_view_schedule_expr(expr, "REFRESH NEXT")
+            .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::new(error.to_string())))?;
+    }
+    Ok((method, start_with, next))
+}
+
+/// Go `parseMViewAttributes`: the comma-separated `ATTRIBUTES` key/value
+/// alert settings, validated exactly as Go's parser does.
+fn parse_mview_attributes(attrs: Option<&str>) -> Result<(i64, i64, bool), DdlPlanError> {
+    // Go `mviewAttrAlert*` key spellings.
+    const ATTR_ALERT_WARNING: &str = "mview_alert_warning";
+    const ATTR_ALERT_OVERDUE: &str = "mview_alert_overdue";
+    const ATTR_ALERT_REFRESH_FAILED: &str = "mview_alert_refresh_failed";
+    let Some(attrs) = attrs else {
+        return Ok((0, 0, false));
+    };
+    let attrs = attrs.trim();
+    if attrs.is_empty() {
+        return Ok((0, 0, false));
+    }
+    let mut alert_warning_sec = 0_i64;
+    let mut alert_overdue_sec = 0_i64;
+    let mut alert_refresh_failed = false;
+    let mut seen = std::collections::HashSet::new();
+    for raw_kv in attrs.split(',') {
+        let kv = raw_kv.trim();
+        if kv.is_empty() {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
+                "invalid ATTRIBUTES format: empty key-value pair",
+            )));
+        }
+        let Some(pos) = kv.find('=') else {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                "invalid ATTRIBUTES format: {kv:?}"
+            ))));
+        };
+        if pos == 0 || pos >= kv.len() - 1 {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                "invalid ATTRIBUTES format: {kv:?}"
+            ))));
+        }
+        let key = kv[..pos].trim().to_lowercase();
+        let value = kv[pos + 1..].trim();
+        if key.is_empty() || value.is_empty() {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                "invalid ATTRIBUTES format: {kv:?}"
+            ))));
+        }
+        if !seen.insert(key.clone()) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                "duplicate ATTRIBUTES key: {key}"
+            ))));
+        }
+        match key.as_str() {
+            ATTR_ALERT_WARNING | ATTR_ALERT_OVERDUE => {
+                let Ok(parsed) = value.parse::<i64>() else {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                        "invalid ATTRIBUTES value for {key}: {value} (must be non-negative integer seconds)"
+                    ))));
+                };
+                if parsed < 0 {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                        "invalid ATTRIBUTES value for {key}: {value} (must be non-negative integer seconds)"
+                    ))));
+                }
+                if key == ATTR_ALERT_WARNING {
+                    alert_warning_sec = parsed;
+                } else {
+                    alert_overdue_sec = parsed;
+                }
+            }
+            ATTR_ALERT_REFRESH_FAILED => match value.to_lowercase().as_str() {
+                "yes" => alert_refresh_failed = true,
+                "no" => alert_refresh_failed = false,
+                _ => {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                        "invalid ATTRIBUTES value for {key}: {value} (must be yes or no)"
+                    ))))
+                }
+            },
+            _ => {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                    "unsupported ATTRIBUTES key: {key}"
+                ))))
+            }
+        }
+    }
+    if alert_warning_sec > 0 && alert_overdue_sec > 0 && alert_warning_sec > alert_overdue_sec {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+            "invalid ATTRIBUTES: {ATTR_ALERT_WARNING} ({alert_warning_sec}) must be less than or equal to {ATTR_ALERT_OVERDUE} ({alert_overdue_sec})"
+        ))));
+    }
+    Ok((alert_warning_sec, alert_overdue_sec, alert_refresh_failed))
+}
+
+/// Go `ddlutil.GetTimeZone`: the session zone's IANA name when one resolves,
+/// otherwise the fixed offset in seconds east of UTC.
+fn get_time_zone(context: &tidb_executor::StmtContext) -> tidb_model::TimeZoneLocation {
+    use tidb_datatype::SessionTimeZone;
+    let zone = context.session_zone();
+    let (name, offset) = match &zone {
+        // Go: `time.LoadLocation(loc.String())` succeeds for a named zone, so
+        // the name is recorded with a zero offset.
+        SessionTimeZone::Named(_) => (zone.dag_zone().0, 0),
+        SessionTimeZone::Local => ("Local".to_owned(), 0),
+        SessionTimeZone::Fixed { name, offset_secs } => {
+            // Go's fixed zones are the anonymous `+HH:MM` ones (empty
+            // `String()`), which fall through to the offset branch; a named
+            // fixed zone such as UTC loads by name.
+            if name.is_empty() || name.starts_with(['+', '-']) {
+                (String::new(), i64::from(*offset_secs))
+            } else {
+                (name.clone(), 0)
+            }
+        }
+    };
+    tidb_model::TimeZoneLocation::new(name, offset)
 }
 
 /// Go's `resolveMViewColumnName` against the base column map: a schema
@@ -7564,9 +7884,8 @@ impl tidb_expr::rewriter::ColumnResolver for BaseTableResolver<'_> {
 
 /// Go `validateCreateMaterializedViewQuery`: the single-table contract, the
 /// SELECT-clause refusals, the GROUP BY requirements, the clause refusals
-/// and the per-column analysis, in source order. The result analysis feeds
-/// the job submission, which this tier does not wire yet, so only the
-/// refusals are observable.
+/// and the per-column analysis, in source order. The returned analysis is
+/// what Go's job build consumes (`mviewQueryAnalysis`).
 #[allow(clippy::too_many_arguments)]
 fn plan_validate_materialized_view_query(
     sel: &tidb_ast::SelectStmt,
@@ -7576,7 +7895,7 @@ fn plan_validate_materialized_view_query(
     base: &TableInfo,
     from_alias: Option<&str>,
     mlog_columns: &[tidb_ast::CiString],
-) -> Result<(), DdlPlanError> {
+) -> Result<MviewQueryAnalysis, DdlPlanError> {
     use tidb_datatype::FieldTypeFlags;
     use tidb_model::column::ColumnInfo;
 
@@ -7636,6 +7955,9 @@ fn plan_validate_materialized_view_query(
     let mut group_by_set: std::collections::HashSet<String> =
         std::collections::HashSet::with_capacity(sel.group_by.len());
     let mut group_by_cols: Vec<String> = Vec::with_capacity(sel.group_by.len());
+    let mut group_by_written: Vec<String> = Vec::with_capacity(sel.group_by.len());
+    let mut group_by_not_null: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::with_capacity(sel.group_by.len());
     let mut used_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
     for item in &sel.group_by {
         let path = match &item.expr {
@@ -7653,7 +7975,14 @@ fn plan_validate_materialized_view_query(
                 "duplicate GROUP BY column is not supported in CREATE MATERIALIZED VIEW",
             )));
         }
+        let base_column = base_col_map.get(&col_name).expect("resolved column");
         group_by_cols.push(col_name.clone());
+        // Go records the written name for the SELECT-coverage error.
+        group_by_written.push(path.last().cloned().unwrap_or_default());
+        group_by_not_null.insert(
+            col_name.clone(),
+            base_column.read().get_flag() & u64::from(FieldTypeFlags::NOT_NULL) != 0,
+        );
         used_cols.insert(col_name.clone());
     }
 
@@ -7832,13 +8161,20 @@ fn plan_validate_materialized_view_query(
     }
 
     // Go's groupByInfos: every GROUP BY column must appear in the SELECT
-    // list (a plain 1105, matching Go's errors.Errorf).
-    for col_name in &group_by_cols {
-        if !select_col_idx.contains_key(col_name) {
+    // list (a plain 1105, matching Go's errors.Errorf, which quotes the
+    // written name).
+    let mut group_by_infos = Vec::with_capacity(sel.group_by.len());
+    for (index, col_name) in group_by_cols.iter().enumerate() {
+        let Some(&select_idx) = select_col_idx.get(col_name) else {
             return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
-                "GROUP BY column {col_name} must appear in SELECT list"
+                "GROUP BY column {} must appear in SELECT list",
+                group_by_written[index]
             ))));
-        }
+        };
+        group_by_infos.push(MviewGroupByInfo {
+            select_idx,
+            not_null: group_by_not_null[col_name],
+        });
     }
 
     // Go: MIN/MAX requires a visible public index whose leading columns
@@ -7865,17 +8201,27 @@ fn plan_validate_materialized_view_query(
         }
     }
 
-    Ok(())
+    Ok(MviewQueryAnalysis {
+        group_by_infos,
+        group_by_cols,
+        has_min_or_max,
+    })
 }
 
 /// Go `CreateMaterializedViewLog`'s catalog checks, in source order, and the
 /// same documented job seam.
-fn plan_create_materialized_view_log(
+/// Go `CreateMaterializedViewLog`'s submission body (`materialized_view.go`
+/// master `94a9cbedab`): the catalog checks in source order, then
+/// `BuildMaterializedViewLogTableInfo`, then the job envelope with its typed
+/// `CreateMaterializedViewLogArgs`, ready for the shared
+/// `prepare_submit_batch` preflight.
+fn build_create_materialized_view_log_job(
     catalog: &crate::cluster_catalog::ClusterCatalog,
     create: &tidb_ast::CreateMaterializedViewLogStmt,
     schema: &str,
     table: &str,
-) -> Result<(), DdlPlanError> {
+    context: &tidb_executor::StmtContext,
+) -> Result<(Job, JobArgsValue), DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
     };
@@ -7913,7 +8259,437 @@ fn plan_create_materialized_view_log(
         )));
     }
 
-    Err(DdlPlanError::Admission(DdlAdmissionError::new(
-        "materialized view job execution is not wired in this tier",
-    )))
+    // Go `BuildMaterializedViewLogTableInfo`.
+    let mlog_table_info = build_materialized_view_log_table_info(
+        database.info.charset.as_str(),
+        database.info.collate.as_str(),
+        base,
+        create,
+        schema,
+        context,
+    )?;
+
+    // Go: the job envelope. The table ID is assigned at submission by
+    // `assignGIDsForJobs`'s materialized-view-log arm (the args' TableInfo is
+    // mutated in place and `Job.TableID` follows it).
+    let mut job = Job::default();
+    job.version = get_job_ver_in_use();
+    job.schema_id = database.info.id;
+    job.schema_name = schema.to_lowercase().into();
+    job.table_name = mlog_table_info.name.lowercase().to_owned().into();
+    job.type_ = ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG;
+    job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+    job.query = context.ddl_query().into();
+    job.cdc_write_source = context.ddl_cdc_write_source();
+    job.sql_mode = context.ddl_sql_mode();
+    job.involving_schema_info = GoSharedSlice::from_vec(vec![
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.to_lowercase().into(),
+            table: mlog_table_info.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+        tidb_model::InvolvingSchemaInfo {
+            database: schema.to_lowercase().into(),
+            table: base.name.lowercase().to_owned().into(),
+            ..tidb_model::InvolvingSchemaInfo::default()
+        },
+    ]);
+    // Go `SessionVars: make(map[string]string)` then
+    // `job.AddSystemVars(TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))`.
+    // The statement context carries no system-variable snapshot, so the
+    // default scope (`""`) is what this tier records.
+    job.session_vars = Some(GoShared::new(std::collections::BTreeMap::new()));
+    job.add_system_var(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION, "");
+
+    let args =
+        <tidb_model::CreateMaterializedViewLogArgs as tidb_model::JobArgs>::into_job_args_value(
+            Some(GoShared::new(tidb_model::CreateMaterializedViewLogArgs {
+                table_info: GoField::new(Some(GoShared::new(mlog_table_info))),
+            })),
+        );
+    Ok((job, args))
+}
+
+/// Go `FieldTypeForMaterializedViewLogColumn`: the log copy of one base
+/// column drops the key, auto-increment and on-update flags, and normalizes
+/// a max-length BLOB back to the unspecified length.
+fn field_type_for_materialized_view_log_column(
+    base_col: &tidb_model::column::ColumnInfo,
+) -> FieldType {
+    let mut ft = base_col.field_type.clone();
+    ft.del_flags(
+        FieldTypeFlags::PRI_KEY
+            | FieldTypeFlags::UNIQUE_KEY
+            | FieldTypeFlags::MULTIPLE_KEY
+            | FieldTypeFlags::AUTO_INCREMENT
+            | FieldTypeFlags::ON_UPDATE_NOW,
+    );
+    normalize_materialized_view_log_blob_flen(&mut ft);
+    ft
+}
+
+/// Go `normalizeMaterializedViewLogBlobFlen`: `TypeBlob` at the 65535
+/// maximum is the unspecified TEXT declaration.
+fn normalize_materialized_view_log_blob_flen(ft: &mut FieldType) {
+    if ft.code() == FieldTypeCode::Blob && ft.flen() == BLOB_MAX_LENGTH {
+        ft.set_flen(tidb_datatype::UNSPECIFIED_LENGTH);
+    }
+}
+
+/// Go `CheckMaterializedViewLogColumnSupported`: a log cannot copy JSON or
+/// binary BLOB columns.
+fn check_materialized_view_log_column_supported(
+    operation: &str,
+    col: &tidb_model::column::ColumnInfo,
+) -> Result<(), DdlPlanError> {
+    if col.field_type.code() == FieldTypeCode::Json {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+            "{operation} does not support JSON column {}",
+            col.name.original()
+        ))));
+    }
+    if col.field_type.code().is_type_blob()
+        && col.field_type.charset_name().eq_ignore_ascii_case("binary")
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+            "{operation} does not support BLOB column {}",
+            col.name.original()
+        ))));
+    }
+    Ok(())
+}
+
+/// Go `blobMaxLength` (`pkg/ddl/executor.go`).
+const BLOB_MAX_LENGTH: i64 = 65535;
+
+/// Go `BuildMaterializedViewLogTableInfo` (`materialized_view.go` master
+/// `94a9cbedab`): the log table's columns (copies of the declared base
+/// columns plus the two physical `_MLOG$_*` columns), its purge schedule,
+/// and the `MaterializedViewLogInfo` metadata.
+#[allow(clippy::too_many_arguments)]
+fn build_materialized_view_log_table_info(
+    schema_charset: &str,
+    schema_collate: &str,
+    base: &TableInfo,
+    create: &tidb_ast::CreateMaterializedViewLogStmt,
+    schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<TableInfo, DdlPlanError> {
+    use tidb_executor::ddl::mview_schedule_expr::build_and_validate_m_view_schedule_expr;
+
+    let mlog_name = tidb_model::materialized_view_log_table_name(&base.name);
+    // Go `checkTooLongTable`: the derived name is still an identifier.
+    if mlog_name.original().chars().count() > MAX_TABLE_NAME_LENGTH {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrTooLongIdent,
+            format!("Identifier name '{}' is too long", mlog_name.original()),
+        )));
+    }
+
+    let col_map: std::collections::HashMap<String, GoShared<tidb_model::column::ColumnInfo>> = base
+        .columns
+        .iter_deref()
+        .map(|col| (col.read().name.lowercase().to_owned(), col.clone()))
+        .collect();
+    let mut seen_cols = std::collections::HashSet::with_capacity(create.columns.len());
+    let mut col_defs = Vec::with_capacity(create.columns.len() + 2);
+    for col in &create.columns {
+        let lower = col.to_lowercase();
+        if !seen_cols.insert(lower.clone()) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrDupFieldName,
+                format!("Duplicate column name '{col}'"),
+            )));
+        }
+        if lower == tidb_model::MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME.to_lowercase()
+            || lower == tidb_model::MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME.to_lowercase()
+        {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrDupFieldName,
+                format!("Duplicate column name '{col}'"),
+            )));
+        }
+        let Some(base_col) = col_map.get(&lower) else {
+            // Go quotes the base table name as written on the statement.
+            let written_table = create.table.last().map(String::as_str).unwrap_or_default();
+            return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrBadField,
+                format!("Unknown column '{col}' in '{written_table}'"),
+            )));
+        };
+        let base_column = base_col.read();
+        check_materialized_view_log_column_supported("CREATE MATERIALIZED VIEW LOG", &base_column)?;
+        let field_type = field_type_for_materialized_view_log_column(&base_column);
+        col_defs.push((col.clone(), field_type));
+    }
+
+    // Go appends the two physical log columns: `_MLOG$_DML_TYPE` VARCHAR(1)
+    // and `_MLOG$_OLD_NEW` TINYINT(4), both NOT NULL. Their charsets are left
+    // empty on the field type so the table build fills them from the table
+    // default, exactly as Go's `setCharsetCollationFlenDecimal` does.
+    let mut columns = Vec::with_capacity(col_defs.len() + 2);
+    for (name, field_type) in &col_defs {
+        columns.push(tidb_ast::ColumnDef {
+            qualifier: Vec::new(),
+            name: name.clone(),
+            ty: synthesized_column_type(field_type),
+            options: Vec::new(),
+        });
+    }
+    let mut dml_type = FieldType::new(FieldTypeCode::Varchar);
+    dml_type.set_flen(1);
+    dml_type.set_flags(FieldTypeFlags::NOT_NULL);
+    columns.push(tidb_ast::ColumnDef {
+        qualifier: Vec::new(),
+        name: tidb_model::MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME.to_owned(),
+        ty: synthesized_column_type(&dml_type),
+        options: vec![tidb_ast::ColumnOption::NotNull],
+    });
+    let mut old_new = FieldType::new(FieldTypeCode::Tiny);
+    old_new.set_flen(4);
+    old_new.set_flags(FieldTypeFlags::NOT_NULL);
+    columns.push(tidb_ast::ColumnDef {
+        qualifier: Vec::new(),
+        name: tidb_model::MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME.to_owned(),
+        ty: synthesized_column_type(&old_new),
+        options: vec![tidb_ast::ColumnOption::NotNull],
+    });
+
+    // Go builds the log through the ordinary create-table build path
+    // (`BuildTableInfoWithStmt`) with the schema's charset and collation.
+    let create_table_stmt = tidb_ast::CreateTableStmt {
+        temporary: tidb_ast::CreateTableTemporary::None,
+        on_commit_delete: false,
+        if_not_exists: false,
+        name: vec![schema.to_owned(), mlog_name.original().to_owned()],
+        like_table: None,
+        columns,
+        table_constraints: Vec::new(),
+        table_options: create.options.clone(),
+        partitioning: None,
+        splits: Vec::new(),
+        ctas: None,
+    };
+    let mut mlog_table_info = build_table_info_with_context(
+        &create_table_stmt,
+        schema_charset,
+        schema_collate,
+        ClusteredIndexDefMode::On,
+        context,
+    )
+    .map_err(DdlPlanError::Admission)?;
+
+    // Go's `ColumnDef.Tp` IS the final field type: the build copies it
+    // verbatim. Re-stamp the computed log field types over the build's
+    // conversion so each copied column carries Go's exact
+    // `FieldTypeForMaterializedViewLogColumn` result.
+    for (index, (_, field_type)) in col_defs.iter().enumerate() {
+        if let Some(column) = mlog_table_info.columns.get(index) {
+            column.write().field_type = field_type.clone();
+        }
+    }
+
+    // Go: the purge schedule, validated through the batch-9 canonical
+    // schedule-expression builder.
+    let mut purge_method = String::new();
+    let mut purge_start_with = String::new();
+    let mut purge_next = String::new();
+    if let Some(purge) = &create.purge {
+        if purge.immediate {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
+                "PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG",
+            )));
+        }
+        purge_method = "DEFERRED".to_owned();
+        if let Some(expr) = &purge.start_with {
+            purge_start_with = build_and_validate_m_view_schedule_expr(expr, "PURGE START WITH")
+                .map_err(|error| {
+                    DdlPlanError::Admission(DdlAdmissionError::new(error.to_string()))
+                })?;
+        }
+        let Some(next) = &purge.next else {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
+                "PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG",
+            )));
+        };
+        purge_next = build_and_validate_m_view_schedule_expr(next, "PURGE NEXT")
+            .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::new(error.to_string())))?;
+    }
+
+    // Go `BuildMLogAccumulationAlertRows`.
+    let log_accumulation_alert_rows =
+        build_mlog_accumulation_alert_rows(create.accumulation_alert.as_ref())?;
+
+    // Go `ddlutil.GetTimeZone(ctx)`.
+    let purge_schedule_time_zone = get_time_zone(context);
+
+    mlog_table_info.materialized_view_log =
+        Some(GoShared::new(tidb_model::MaterializedViewLogInfo {
+            base_table_id: base.id,
+            columns: GoValueSlice::from(
+                create
+                    .columns
+                    .iter()
+                    .map(|column| tidb_ast::CiString::new(column.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            purge_method,
+            purge_start_with,
+            purge_next,
+            log_accumulation_alert_rows,
+            definition_sql_mode: u64::try_from(context.ddl_sql_mode()).unwrap_or_default(),
+            purge_schedule_time_zone,
+        }));
+    Ok(mlog_table_info)
+}
+
+/// Go `mysql.MaxTableNameLength` (`checkTooLongTable`).
+const MAX_TABLE_NAME_LENGTH: usize = 64;
+
+/// Go `BuildMLogAccumulationAlertRows`: `None` when the statement wrote no
+/// `ALERT ROWS`; a negative value refuses.
+fn build_mlog_accumulation_alert_rows(
+    alert: Option<&tidb_ast::MLogAccumulationAlertClause>,
+) -> Result<Option<u64>, DdlPlanError> {
+    let Some(alert) = alert else {
+        return Ok(None);
+    };
+    if alert.rows < 0 {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+            "invalid ALERT ROWS value: {} (must be non-negative)",
+            alert.rows
+        ))));
+    }
+    Ok(Some(u64::try_from(alert.rows).expect("non-negative")))
+}
+
+/// A parser-shaped type rendering of one computed log field type, feeding
+/// the ordinary create-table build path. The build's conversion output is
+/// re-stamped afterwards, so this only has to resolve charset/collate and
+/// pass admission exactly like the equivalent Go `ast.ColumnDef{Tp}` would.
+fn synthesized_column_type(field_type: &FieldType) -> tidb_ast::ColumnType {
+    use FieldTypeCode as Code;
+    let binary_charset = field_type.charset_name().eq_ignore_ascii_case("binary");
+    let name = match field_type.code() {
+        Code::Tiny => "TINYINT",
+        Code::Short => "SMALLINT",
+        Code::Int24 => "MEDIUMINT",
+        Code::Long => "INT",
+        Code::LongLong => "BIGINT",
+        Code::Float => "FLOAT",
+        Code::Double => "DOUBLE",
+        Code::NewDecimal => "DECIMAL",
+        Code::Varchar if binary_charset => "VARBINARY",
+        Code::Varchar => "VARCHAR",
+        Code::String if binary_charset => "BINARY",
+        Code::String => "CHAR",
+        Code::TinyBlob if binary_charset => "TINYBLOB",
+        Code::TinyBlob => "TINYTEXT",
+        Code::Blob if binary_charset => "BLOB",
+        Code::Blob => "TEXT",
+        Code::MediumBlob if binary_charset => "MEDIUMBLOB",
+        Code::MediumBlob => "MEDIUMTEXT",
+        Code::LongBlob if binary_charset => "LONGBLOB",
+        Code::LongBlob => "LONGTEXT",
+        Code::Enum => "ENUM",
+        Code::Set => "SET",
+        Code::Bit => "BIT",
+        Code::Json => "JSON",
+        Code::Date => "DATE",
+        Code::Datetime => "DATETIME",
+        Code::Timestamp => "TIMESTAMP",
+        Code::Duration => "TIME",
+        Code::Year => "YEAR",
+        // The catalog this tier serves never stores these column codes
+        // (`Geometry`, `VectorFloat32`, `Null`, ... are refused at create),
+        // so the placeholder never survives the stamp.
+        _ => "VARCHAR",
+    };
+    let mut args = Vec::new();
+    match field_type.code() {
+        Code::NewDecimal => {
+            args.push(tidb_ast::ColumnTypeArg::text(field_type.flen().to_string()));
+            args.push(tidb_ast::ColumnTypeArg::text(
+                field_type.decimal().to_string(),
+            ));
+        }
+        Code::Datetime | Code::Timestamp | Code::Duration => {
+            if field_type.decimal() != tidb_datatype::UNSPECIFIED_FSP {
+                args.push(tidb_ast::ColumnTypeArg::text(
+                    field_type.decimal().to_string(),
+                ));
+            }
+        }
+        Code::Enum | Code::Set => {
+            for member in field_type.elems_snapshot() {
+                args.push(tidb_ast::ColumnTypeArg::text(member.to_utf8_lossy_go()));
+            }
+        }
+        _ => {
+            if field_type.flen() >= 0 {
+                args.push(tidb_ast::ColumnTypeArg::text(field_type.flen().to_string()));
+            }
+        }
+    }
+    tidb_ast::ColumnType {
+        name: name.to_owned(),
+        args,
+        unsigned: field_type.flags() & FieldTypeFlags::UNSIGNED != 0,
+        zerofill: field_type.flags() & FieldTypeFlags::ZEROFILL != 0,
+        binary: false,
+        charset: None,
+    }
+}
+
+/// Plans pinned Go `CreateMaterializedViewLog` submission and the view
+/// create's submission boundary, mirroring
+/// [`prepare_check_constraint_job_submission`].
+///
+/// `Ok(Some(spec))` — the log create — carries the job envelope plus typed
+/// arguments through [`crate::ddl_job_submit::prepare_submit_batch`]'s
+/// preflight (BDR role, upgrading pause, queueing state). The view create's
+/// remaining submission body needs the restricted-SQL column-type
+/// derivation this tier cannot serve, so it refuses exactly there; `Ok(None)`
+/// means the statement is not a materialized-view job action.
+pub fn prepare_materialized_view_job_submission<S: MetaSnapshot>(
+    snapshot: &mut S,
+    statement: &DdlStatement,
+    start_ts: u64,
+    upgrading: bool,
+    min_job_id: i64,
+) -> Result<Option<crate::ddl_job_submit::JobSpec>, DdlPlanError> {
+    let catalog = load_cluster_catalog(snapshot)?;
+    let (job, args) = match statement {
+        DdlStatement::CreateMaterializedViewLog {
+            stmt,
+            schema,
+            table,
+            context,
+        } => build_create_materialized_view_log_job(&catalog, stmt, schema, table, &context.0)?,
+        DdlStatement::CreateMaterializedView {
+            stmt,
+            schema,
+            table,
+            context,
+        } => {
+            // Run Go's full admission order first; a valid statement then
+            // stops at the restricted-SQL derivation seam.
+            plan_create_materialized_view(&catalog, stmt, schema, table, &context.0)?;
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(
+                "materialized view job execution is not wired in this tier",
+            )));
+        }
+        _ => return Ok(None),
+    };
+
+    let mut specs = [crate::ddl_job_submit::JobSpec {
+        job,
+        args,
+        id_allocated: false,
+    }];
+    crate::ddl_job_submit::prepare_submit_batch(
+        snapshot, &catalog, &mut specs, start_ts, upgrading, min_job_id,
+    )?;
+    let [spec] = specs;
+    Ok(Some(spec))
 }

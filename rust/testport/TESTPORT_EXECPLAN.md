@@ -42,6 +42,35 @@ For each bounded behavior cluster:
 
 ## Progress
 
+## Progress
+
+- 2026-09-04 (batch 14, `pkg/ddl` MV log-create submission): implemented Go
+  master `94a9cbedab`'s `CreateMaterializedViewLog` submission and the
+  portable prefix of `CreateMaterializedView`. The log create now submits
+  through `prepare_materialized_view_job_submission` (the CHECK-shaped
+  durable-job route): the admission order, `BuildMaterializedViewLogTableInfo`
+  in full (flag-deleted base-column copies stamped with Go's exact
+  `FieldTypeForMaterializedViewLogColumn` result, the reserved-name/JSON/BLOB
+  refusals, the NOT NULL `_MLOG$_DML_TYPE` VARCHAR(1) and `_MLOG$_OLD_NEW`
+  TINYINT(4) physical columns, the 1059 derived-name cap, PURGE
+  IMMEDIATE/NEXT validation through batch 9's schedule-expression builder,
+  `BuildMLogAccumulationAlertRows`, and `MaterializedViewLogInfo` with the
+  SQL mode and `GetTimeZone` pair), then the job envelope with typed args
+  and the shared submit preflight; the GID-allocation MV arms in
+  `ddl_job_submit` (batch 10's recorded gap) assign the table ID inside the
+  args and stamp `Job.TableID`. The view create advances through hint-DB
+  normalization, canonical restore, refresh/attributes meta and the returned
+  `mviewQueryAnalysis` (the SELECT-coverage error now quotes the written
+  GROUP BY name like Go), stopping at Go's restricted-SQL derivation seam.
+  `job.session_vars` moved to a plain-string key map so Go's
+  `map[string]string` envelope serializes (GoString raw-value keys cannot be
+  JSON map keys — exercised here for the first time). One regression drives
+  the log create from statement to active job row; the full `tidb-exec`
+  failure set is identical to the base (8; re-verified on the stashed base),
+  `tidb-executor`'s too (165, pre-existing on the current base — the earlier
+  "29" note was stale), `tidb-session` matches its recorded 690, and
+  `tidb-model` is 321/321. Receipt: `receipts/ddl_mview_log_submit.md`.
+
 - 2026-09-03 (batch 13, `pkg/ddl` MV query analysis): implemented Go master
   `94a9cbedab`'s `validateCreateMaterializedViewQuery` analysis body in
   `plan_validate_materialized_view_query`: `resolveMViewColumnName` (schema/
