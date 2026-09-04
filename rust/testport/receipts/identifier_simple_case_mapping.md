@@ -64,6 +64,21 @@ cargo +nightly-2026-08-22 clippy --offline --locked -p tidb-parser --all-targets
 # no diagnostics in touched code
 ```
 
+## Planner keys (2026-09-04, same finding)
+
+`pkg/planner/core/schema_table_key.go` keys aliases with `ast.CIStr.L`
+(`newTableAliasKey`/`newQualifiedTableAliasKey`), and `ast/model.go:302`
+defines `CIStr.L = strings.ToLower(s)` — the same simple mapping. The
+planner's `SchemaTableKey`/`TableAliasKey` leaves and the view-recursion,
+hint-table, alias-collision, and `USING`-column key sites in
+`plan_builder/from.rs` used Rust's full `to_lowercase`: a schema/table/alias
+named `ΟΔΟΣ` keyed with final sigma on one side and sigma on the other would
+split one identity into two (or hide a collision). All thirteen sites now use
+`tidb_mysql::to_lowercase` (tidb-planner gains the `tidb-mysql` dependency;
+`Cargo.lock` updated). Fail-before regression:
+`schema_table_key::tests::keys_use_the_go_simple_case_mapping` (schema keyed
+`οδος` with ς pre-fix, `οδοσ` post-fix).
+
 ## Risk
 
 - Correctness: low; the simple mapper is the exact `strings.ToLower` port

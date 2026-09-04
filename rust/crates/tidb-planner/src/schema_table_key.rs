@@ -32,8 +32,8 @@ impl SchemaTableKey {
     #[must_use]
     pub fn new(schema: &str, table: &str) -> Self {
         Self {
-            schema: schema.to_lowercase(),
-            table: table.to_lowercase(),
+            schema: tidb_mysql::to_lowercase(schema),
+            table: tidb_mysql::to_lowercase(table),
         }
     }
 
@@ -64,7 +64,7 @@ impl TableAliasKey {
     pub fn new(name: &str) -> Self {
         Self {
             schema: String::new(),
-            name: name.to_lowercase(),
+            name: tidb_mysql::to_lowercase(name),
             qualified: false,
         }
     }
@@ -73,8 +73,8 @@ impl TableAliasKey {
     #[must_use]
     pub fn qualified(schema: &str, name: &str) -> Self {
         Self {
-            schema: schema.to_lowercase(),
-            name: name.to_lowercase(),
+            schema: tidb_mysql::to_lowercase(schema),
+            name: tidb_mysql::to_lowercase(name),
             qualified: true,
         }
     }
@@ -96,5 +96,27 @@ impl TableAliasKey {
     #[must_use]
     pub const fn is_qualified(&self) -> bool {
         self.qualified
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go keys read `ast.CIStr.L` (`strings.ToLower`, `ast/model.go:302`) —
+    /// the SIMPLE Unicode case mapping. A trailing capital sigma lowercases
+    /// to sigma (U+03C3), never to final sigma (U+03C2); Rust's full
+    /// `str::to_lowercase` would produce the latter and split the identity
+    /// of one and the same schema/table between writer and reader.
+    #[test]
+    fn keys_use_the_go_simple_case_mapping() {
+        let key = SchemaTableKey::new("\u{39F}\u{394}\u{39F}\u{3A3}", "T");
+        assert_eq!(key.schema(), "\u{3BF}\u{3B4}\u{3BF}\u{3C3}");
+        assert_eq!(key.table(), "t");
+        assert!(!key.schema().contains('\u{3C2}'));
+
+        let alias = TableAliasKey::qualified("\u{39F}\u{394}\u{39F}\u{3A3}", "A");
+        assert_eq!(alias.schema(), "\u{3BF}\u{3B4}\u{3BF}\u{3C3}");
+        assert_eq!(alias.name(), "a");
     }
 }

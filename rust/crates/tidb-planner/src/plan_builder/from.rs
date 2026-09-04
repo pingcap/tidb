@@ -341,9 +341,13 @@ impl JoinHints {
     /// Records `flags` for an (optionally qualified) table alias.
     pub fn hint_table(&mut self, db_name: &str, table_name: &str, flags: u32) {
         let key = if db_name.is_empty() {
-            table_name.to_lowercase()
+            tidb_mysql::to_lowercase(table_name)
         } else {
-            format!("{}.{}", db_name.to_lowercase(), table_name.to_lowercase())
+            format!(
+                "{}.{}",
+                tidb_mysql::to_lowercase(db_name),
+                tidb_mysql::to_lowercase(table_name)
+            )
         };
         *self.tables.entry(key).or_insert(0) |= flags;
     }
@@ -628,17 +632,30 @@ pub fn is_table_alias_duplicate(
     // alias to collide. A nested `*ast.Join` is walked by the caller.
     let (key, display) = match node {
         JoinNode::Table(table_ref) => match table_ref.alias.as_deref() {
-            Some(alias) if !alias.is_empty() => ((String::new(), alias.to_lowercase()), alias),
+            Some(alias) if !alias.is_empty() => {
+                ((String::new(), tidb_mysql::to_lowercase(alias)), alias)
+            }
             _ => match table_ref.name.as_slice() {
                 // `newQualifiedTableAliasKey(Schema, Name)` when the reference
                 // is schema-qualified, `newTableAliasKey(Name)` otherwise.
-                [db, table] => ((db.to_lowercase(), table.to_lowercase()), table.as_str()),
-                [table] => ((String::new(), table.to_lowercase()), table.as_str()),
+                [db, table] => (
+                    (
+                        tidb_mysql::to_lowercase(db),
+                        tidb_mysql::to_lowercase(table),
+                    ),
+                    table.as_str(),
+                ),
+                [table] => (
+                    (String::new(), tidb_mysql::to_lowercase(table)),
+                    table.as_str(),
+                ),
                 _ => return Ok(()),
             },
         },
         JoinNode::Derived { alias, .. } => match alias.as_deref() {
-            Some(alias) if !alias.is_empty() => ((String::new(), alias.to_lowercase()), alias),
+            Some(alias) if !alias.is_empty() => {
+                ((String::new(), tidb_mysql::to_lowercase(alias)), alias)
+            }
             // Go's `tabName.L == ""` with a non-`TableName` source leaves the
             // key empty and `len(tabName.L) != 0` false, so nothing is
             // recorded and nothing can collide.
@@ -1188,7 +1205,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut filter: BTreeMap<String, bool> = join
             .using
             .iter()
-            .map(|column| (column.to_lowercase(), true))
+            .map(|column| (tidb_mysql::to_lowercase(column), true))
             .collect();
         self.coalesce_common_columns(p, left, right, join.tp, Some(&mut filter))
     }
@@ -1531,7 +1548,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         db_name: &str,
         table_name: &str,
     ) -> Result<ViewBuildGuard, PlanError> {
-        let key: super::SchemaTableKey = (db_name.to_lowercase(), table_name.to_lowercase());
+        let key: super::SchemaTableKey = (
+            tidb_mysql::to_lowercase(db_name),
+            tidb_mysql::to_lowercase(table_name),
+        );
         // "If this view has already been on the building stack, it means this
         // view contains a recursive definition."
         if self.building_view_stack.contains(&key) {

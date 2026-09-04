@@ -3804,6 +3804,7 @@ dependencies = [
  "tidb-hash",
  "tidb-hint",
  "tidb-model",
+ "tidb-mysql",
  "tidb-parser",
  "tidb-proto",
  "tidb-resolve",
