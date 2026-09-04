@@ -499,6 +499,25 @@ impl GlobalSysvars {
             tidb_util::memory::validate_process_memory_setting(&key, &stored_value)
                 .map_err(VarError::ValidationRefused)?;
         }
+        // Go's `tidb_trace_event` GLOBAL hook owns the process-wide flight
+        // recorder. A JSON configuration starts/replaces the recorder, while
+        // an empty assignment closes it. Keep this publication after all
+        // registry validation but before storing the SQL-facing value so a
+        // malformed trigger cannot leave a half-applied setting behind.
+        if self.publishes_runtime_settings && key == "tidb_trace_event" {
+            if stored_value.is_empty() {
+                if let Some(recorder) = tidb_util::traceevent::get_flight_recorder() {
+                    recorder.close();
+                }
+            } else {
+                let config = serde_json::from_str::<tidb_util::traceevent::FlightRecorderConfig>(
+                    &stored_value,
+                )
+                .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
+                tidb_util::traceevent::start_log_flight_recorder(config)
+                    .map_err(VarError::ValidationRefused)?;
+            }
+        }
         // Go's `validate_password.*` Validation closures (`sysvar.go:717-790`)
         // keep the five settings coupled: a count raise lifts the sibling
         // `length` to `number + special + 2 * mixed_case`, and a `length` set

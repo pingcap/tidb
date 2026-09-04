@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` trace-event global hook): connected
+  `SET GLOBAL tidb_trace_event` to the existing Rust flight-recorder runtime,
+  including JSON trigger compilation, replacement, and empty-value close.
+  Added an end-to-end regression; the Go classic-kernel refusal branch remains
+  an explicit partial boundary.
 - 2026-09-05 (`pkg/sessionctx/variable` memory-limit parsing and remaining
   defaults): matched Go's byte-suffix parsing and 128-byte clamp for
   `tidb_server_memory_limit_sess_min_size`, canonicalized GC-trigger

@@ -298,6 +298,36 @@ fn remaining_optimizer_defaults_match_go() {
     );
 }
 
+/// Transcreated from Go `TestTiDBTraceEventSysVar`: a valid JSON GLOBAL
+/// assignment starts the process recorder with the requested categories and
+/// sampling trigger, while an empty assignment closes it.
+#[test]
+fn trace_event_global_sysvar_controls_the_flight_recorder() {
+    if let Some(recorder) = tidb_util::traceevent::get_flight_recorder() {
+        recorder.close();
+    }
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    session
+        .run(
+            r#"SET GLOBAL tidb_trace_event = '{"enabled_categories":["*"],"dump_trigger":{"type":"sampling","sampling":1}}'"#,
+        )
+        .unwrap();
+    let recorder = tidb_util::traceevent::get_flight_recorder().expect("recorder started");
+    assert_eq!(
+        recorder.config,
+        tidb_util::traceevent::FlightRecorderConfig {
+            enabled_categories: vec!["*".to_owned()],
+            dump_trigger: tidb_util::traceevent::DumpTriggerConfig {
+                kind: "sampling".to_owned(),
+                sampling: 1,
+                ..Default::default()
+            },
+        }
+    );
+    session.run("SET GLOBAL tidb_trace_event = ''").unwrap();
+    assert!(tidb_util::traceevent::get_flight_recorder().is_none());
+}
+
 #[test]
 fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     let globals = vars::GlobalSysvars::new();
