@@ -857,6 +857,49 @@ fn global_isolation_skip_waits_for_the_next_session() {
     );
 }
 
+/// Go `TestReadOnlyNoop`: GLOBAL writes consult the GLOBAL copy of
+/// `tidb_enable_noop_functions`, and all five `noop.go` variables refuse ON
+/// with 1235 until that gate is enabled. A refused write leaves the global
+/// value OFF; once enabled, each variable stores ON and can be reset.
+#[test]
+fn global_read_only_noop_variables_need_the_global_gate() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    for (name, clause) in [
+        ("tx_read_only", "READ ONLY"),
+        ("transaction_read_only", "READ ONLY"),
+        ("offline_mode", "OFFLINE MODE"),
+        ("super_read_only", "READ ONLY"),
+        ("read_only", "READ ONLY"),
+    ] {
+        let error = session
+            .run(&format!("SET GLOBAL {name} = ON"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1235, "{name}");
+        assert!(error.message.contains(clause), "{error:?}");
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some("0".to_owned()),
+            "a refused global write must keep {name}=OFF"
+        );
+
+        session
+            .run("SET GLOBAL tidb_enable_noop_functions = ON")
+            .unwrap();
+        session.run(&format!("SET GLOBAL {name} = ON")).unwrap();
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some("1".to_owned()),
+            "the global gate must allow {name}=ON"
+        );
+        session.run(&format!("SET GLOBAL {name} = OFF")).unwrap();
+        session
+            .run("SET GLOBAL tidb_enable_noop_functions = OFF")
+            .unwrap();
+    }
+}
+
 /// Go's `max_allowed_packet` `Validation`: a SESSION write is `ErrReadOnly`
 /// (1621) even though the variable has session scope for READING.
 #[test]

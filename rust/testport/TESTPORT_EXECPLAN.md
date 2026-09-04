@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` SQL mode and no-op read-only gates):
+  reconciled the remaining `TestSQLModeVar`, `TestReadOnlyNoop`, and
+  `TestSQLAutoIsNull` receipt rows with their live Rust owners. Added a
+  global-scope regression covering all five `noop.go` variables: OFF refuses
+  with 1235 and leaves the value unchanged, while the global
+  `tidb_enable_noop_functions` gate allows ON and reset. Existing focused
+  tests cover Go SQL-mode normalization/typed state and the relaxed
+  `sql_auto_is_null` SET_VAR path.
 - 2026-09-05 (`pkg/sessionctx/variable` transaction isolation): reconciled
   `TestTxnIsolation` with the existing Go-aligned validation and session hook.
   Added a focused regression proving `SET GLOBAL
