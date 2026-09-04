@@ -292,3 +292,5 @@
 - 下轮恢复点: (1) F3 按上述设计执行; (2) F2 ~59 unknown 站点(需 live 证据, 记录); (3) F4 后续逐站点 Go errno 对比。
 - F3 第一步完成: ReadOnlyScanError/PreparedPlanError 的 mysql_code() 访问器落地(逐变体 Go errno: Parse 1064/42000, Unsupported/UnsupportedPredicate 1235/42000, UnknownTable 1146/42S02, UnknownColumn 1054/42S22, 内部不变量 1105/HY000, prepared 语法拒绝 1235/42000), 2 个逐变体回归全绿。planner 911/0, fmt/clippy/diff-check/make lint PASS。
 - 残余: server seam(~25 处 unknown 展平点与 F2 共享)采纳 accessor 需先定位 read 管道实际可达站点(live 证据)。
+- F3 第一步推送 `67958fd5b7d`(rebase 于远端新提交之上)。本会话累计推送: c4f20f9c7ef, ca8b39ec1f0, 24649548b64(journal), 67958fd5b7d。
+- 下轮恢复点: (1) F3 残余=server seam 采纳(需定位可达站点); (2) F2 ~59 unknown(需 live 证据); (3) F4 后续逐站点 Go errno 对比(~40 显式 1105); (4) 重读三份 divergence/audit 文档找新开放项。
