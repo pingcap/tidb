@@ -855,6 +855,24 @@ impl SysVarDef {
                     .to_owned(),
             ));
         }
+        // Direct registry users (including Go's validation unit tests) may
+        // toggle the process-wide scheduler products without a GLOBAL table.
+        // Preserve the source closure's prerequisite check here; SQL writes
+        // additionally validate their pending GLOBAL image in `GlobalSysvars`.
+        if self.name == tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY
+            && (!tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst)
+                || !tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+                    .load(std::sync::atomic::Ordering::SeqCst))
+        {
+            let run_auto_analyze = tidb_vardef::RUN_AUTO_ANALYZE
+                .load(std::sync::atomic::Ordering::SeqCst);
+            let enable_auto_analyze_priority_queue = tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+                .load(std::sync::atomic::Ordering::SeqCst);
+            return Err(ValidationError::Refused(format!(
+                "cannot set {}: requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue to be true. Current values: tidb_enable_auto_analyze={}, tidb_enable_auto_analyze_priority_queue={}",
+                self.name, run_auto_analyze, enable_auto_analyze_priority_queue
+            )));
+        }
         // Pinned Go deprecated the auto-analyze scheduler switch after making
         // the priority queue unconditional. Its bool type validation still
         // runs first, then the variable-specific closure refuses OFF.

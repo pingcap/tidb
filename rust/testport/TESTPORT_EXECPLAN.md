@@ -92,6 +92,11 @@ For each bounded behavior cluster:
   updates for ON/0/1 session writes. Focused regressions cover the SQL
   readback and typed products; optional PD callback and absent planner consumer
   remain explicit boundaries.
+- 2026-09-05 (`pkg/sessionctx/variable` auto-analyze concurrency gate): wired
+  the `RunAutoAnalyze`, priority-queue, and concurrency process products and
+  made GLOBAL concurrency writes enforce Go's prerequisite switches against
+  the pending table image. The focused regression covers both refusal paths,
+  the source error text, and successful atomic/readback publication.
 - 2026-09-05 (`pkg/sessionctx/variable` TTL schedule-window inventory): wired
   GLOBAL TypeTime writes through the issuing session's timezone so short
   `HH:MM` values retain the same numeric offset as Go's `ParseInLocation`;

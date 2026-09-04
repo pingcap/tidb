@@ -85,6 +85,19 @@ pub static SCHEMA_CACHE_SIZE: AtomicU64 =
 pub static CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO.to_bits());
 
+/// Go `vardef.RunAutoAnalyze`, the process-wide auto-analyze enable switch.
+pub static RUN_AUTO_ANALYZE: AtomicBool =
+    AtomicBool::new(defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE);
+
+/// Go `vardef.EnableAutoAnalyzePriorityQueue`, the process-wide scheduler
+/// mode switch consulted by auto-analyze concurrency validation.
+pub static ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE: AtomicBool =
+    AtomicBool::new(defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE);
+
+/// Go `vardef.AutoAnalyzeConcurrency`, the process-wide concurrency value.
+pub static AUTO_ANALYZE_CONCURRENCY: AtomicI64 =
+    AtomicI64::new(defaults::DEF_TIDB_AUTO_ANALYZE_CONCURRENCY);
+
 const OOM_ACTION_CANCEL: u8 = 0;
 const OOM_ACTION_LOG: u8 = 1;
 

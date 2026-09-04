@@ -343,6 +343,49 @@ fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> O
     }
 }
 
+/// Reads the process-wide auto-analyze products Go exposes through the
+/// GLOBAL getter hooks. The registry still owns validation and persistence;
+/// these atomics are the live scheduler-facing authority.
+fn runtime_auto_analyze_value(name: &str) -> Option<String> {
+    match name {
+        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE => Some(if tidb_vardef::RUN_AUTO_ANALYZE
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            "ON".to_owned()
+        } else {
+            "OFF".to_owned()
+        }),
+        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => Some(
+            if tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                "ON".to_owned()
+            } else {
+                "OFF".to_owned()
+            },
+        ),
+        tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY => Some(
+            tidb_vardef::AUTO_ANALYZE_CONCURRENCY
+                .load(std::sync::atomic::Ordering::SeqCst)
+                .to_string(),
+        ),
+        tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO =>
+            Some(
+                tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio().to_string(),
+            ),
+        _ => None,
+    }
+}
+
+fn is_auto_analyze_setting(name: &str) -> bool {
+    matches!(
+        name,
+        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE
+            | tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+            | tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY
+    )
+}
+
 impl GlobalSysvars {
     /// A fresh registry with every variable at its default (Go's state on a
     /// cluster nobody has ever run `SET GLOBAL` against).
@@ -407,6 +450,11 @@ impl GlobalSysvars {
                 }
                 .to_owned(),
             );
+        }
+        if self.publishes_runtime_settings {
+            if let Some(value) = runtime_auto_analyze_value(def.name) {
+                return Ok(value);
+            }
         }
         if self.publishes_runtime_settings {
             if let Some(value) = runtime_instance_value(self, def) {
@@ -505,11 +553,6 @@ impl GlobalSysvars {
         let stats_cache_mem_quota = effective(tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA)
             .parse::<i64>()
             .expect("validated statistics cache quota is an integer");
-        let circuit_breaker_pd_metadata_error_rate_threshold_ratio = effective(
-            tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO,
-        )
-        .parse::<f64>()
-        .unwrap_or(tidb_vardef::defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO);
         let mut publish = self
             .resolved
             .write()
@@ -536,9 +579,6 @@ impl GlobalSysvars {
             );
             tidb_vardef::STATS_CACHE_MEM_QUOTA
                 .store(stats_cache_mem_quota, std::sync::atomic::Ordering::SeqCst);
-            tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(
-                circuit_breaker_pd_metadata_error_rate_threshold_ratio,
-            );
         }
     }
 
@@ -574,6 +614,9 @@ impl GlobalSysvars {
         }
         if self.publishes_runtime_settings {
             if let Some(value) = runtime_instance_value(self, def) {
+                return Ok(value);
+            }
+            if let Some(value) = runtime_auto_analyze_value(def.name) {
                 return Ok(value);
             }
         }
@@ -668,6 +711,14 @@ impl GlobalSysvars {
                 self.publish_schema_cache_size(&value);
             }
         }
+        if is_auto_analyze_setting(name) {
+            self.publish_auto_analyze_setting(name);
+        }
+        if name.eq_ignore_ascii_case(
+            tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO,
+        ) {
+            self.publish_circuit_breaker_ratio();
+        }
         self.publish_embedding_settings();
         self.refresh_resolved();
     }
@@ -707,6 +758,29 @@ impl GlobalSysvars {
             .validate_in_scope(&value, scope)
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
+        // Go's `tidb_auto_analyze_concurrency` Validation observes the two
+        // current GLOBAL switches. Check the table being written (rather
+        // than process atomics) so a cluster scratch image validates a
+        // statement against its own pending rows and unrelated registries in
+        // parallel tests cannot change the answer mid-write.
+        if key == tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY {
+            let run_auto_analyze = self.global_bool_value(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE,
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE,
+            );
+            let enable_auto_analyze_priority_queue = self.global_bool_value(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE,
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE,
+            );
+            if !run_auto_analyze || !enable_auto_analyze_priority_queue {
+                return Err(VarError::ValidationRefused(format!(
+                    "cannot set {}: requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue to be true. Current values: tidb_enable_auto_analyze={}, tidb_enable_auto_analyze_priority_queue={}",
+                    tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY,
+                    run_auto_analyze,
+                    enable_auto_analyze_priority_queue
+                )));
+            }
+        }
         if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
             OptimizerFixControl::parse(&validated.value)
                 .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
@@ -791,6 +865,13 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE {
             self.publish_schema_cache_size(&stored_value);
         }
+        if is_auto_analyze_setting(&key) {
+            self.publish_auto_analyze_setting(&key);
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
+        {
+            self.publish_circuit_breaker_ratio();
+        }
         self.refresh_resolved();
         if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
             self.publish_redaction_mode();
@@ -834,6 +915,64 @@ impl GlobalSysvars {
         tidb_vardef::SCHEMA_CACHE_SIZE.store(bytes, std::sync::atomic::Ordering::SeqCst);
     }
 
+    fn publish_auto_analyze_setting(&self, name: &str) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        match name {
+            tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE => {
+                tidb_vardef::RUN_AUTO_ANALYZE.store(
+                    self.global_bool_value(
+                        name,
+                        tidb_vardef::defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE,
+                    ),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+            tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => {
+                tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(
+                    self.global_bool_value(
+                        name,
+                        tidb_vardef::defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE,
+                    ),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+            tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY => {
+                let value = get_sys_var(name)
+                    .and_then(|def| {
+                        self.store(def)
+                            .lock()
+                            .ok()
+                            .and_then(|values| values.get(name).cloned())
+                    })
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_AUTO_ANALYZE_CONCURRENCY);
+                tidb_vardef::AUTO_ANALYZE_CONCURRENCY
+                    .store(value, std::sync::atomic::Ordering::SeqCst);
+            }
+            _ => {}
+        }
+    }
+
+    fn publish_circuit_breaker_ratio(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        let value = get_sys_var(
+            tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO,
+        )
+        .and_then(|def| {
+            self.store(def)
+                .lock()
+                .ok()
+                .and_then(|values| values.get(def.name).cloned())
+        })
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(tidb_vardef::defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO);
+        tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(value);
+    }
+
     /// The length floor the `validate_password` coupling requires right now:
     /// `number_count + special_char_count + 2 * mixed_case_count`
     /// (`sysvar.go:717`'s Validation), read from the current global values
@@ -864,6 +1003,19 @@ impl GlobalSysvars {
             .unwrap_or(default)
     }
 
+    fn global_bool_value(&self, name: &str, default: bool) -> bool {
+        let Some(def) = get_sys_var(name) else {
+            return default;
+        };
+        self.store(def)
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .get(name)
+            .map_or(default, |value| {
+                value.eq_ignore_ascii_case("ON") || value == "1"
+            })
+    }
+
     /// Restores the registry default (`SET GLOBAL x = DEFAULT`).
     pub fn reset(&self, name: &str) -> Result<(), VarError> {
         let def = get_sys_var(name)
@@ -892,6 +1044,13 @@ impl GlobalSysvars {
                     .to_string()
                     .as_str(),
             );
+        }
+        if is_auto_analyze_setting(&key) {
+            self.publish_auto_analyze_setting(&key);
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
+        {
+            self.publish_circuit_breaker_ratio();
         }
         self.refresh_resolved();
         if !def.has_global_scope() {
@@ -949,6 +1108,8 @@ impl GlobalSysvars {
         let mut loaded_require_secure_transport = false;
         let mut loaded_ttl_job_enable = false;
         let mut loaded_schema_cache_size = false;
+        let mut loaded_auto_analyze = false;
+        let mut loaded_circuit_breaker_ratio = false;
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
             if let Some(def) = get_sys_var(&key) {
@@ -960,6 +1121,9 @@ impl GlobalSysvars {
                     key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT;
                 loaded_ttl_job_enable |= key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE;
                 loaded_schema_cache_size |= key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE;
+                loaded_auto_analyze |= is_auto_analyze_setting(&key);
+                loaded_circuit_breaker_ratio |= key
+                    == tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO;
                 self.store(def)
                     .lock()
                     .expect("global sysvar lock poisoned")
@@ -985,6 +1149,18 @@ impl GlobalSysvars {
             if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
                 self.publish_schema_cache_size(&value);
             }
+        }
+        if loaded_auto_analyze {
+            for name in [
+                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE,
+                tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE,
+                tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY,
+            ] {
+                self.publish_auto_analyze_setting(name);
+            }
+        }
+        if loaded_circuit_breaker_ratio {
+            self.publish_circuit_breaker_ratio();
         }
         self.publish_embedding_settings();
         self.refresh_resolved();
@@ -1032,6 +1208,14 @@ impl GlobalSysvars {
         if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
             self.publish_schema_cache_size(&value);
         }
+        for name in [
+            tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE,
+            tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE,
+            tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY,
+        ] {
+            self.publish_auto_analyze_setting(name);
+        }
+        self.publish_circuit_breaker_ratio();
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();

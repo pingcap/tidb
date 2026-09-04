@@ -1028,6 +1028,74 @@ fn enable_window_function_session_hook_updates_typed_state() {
     assert!(session.vars().window_function_enabled());
 }
 
+/// Go `TestTiDBAutoAnalyzeConcurrencyValidation`: concurrency writes require
+/// both process-wide auto-analyze switches, then publish the validated value
+/// to the scheduler-facing atomic when the prerequisites are enabled.
+#[test]
+fn auto_analyze_concurrency_requires_enabled_scheduler() {
+    struct RestoreAutoAnalyze {
+        run: bool,
+        priority_queue: bool,
+        concurrency: i64,
+    }
+    impl Drop for RestoreAutoAnalyze {
+        fn drop(&mut self) {
+            tidb_vardef::RUN_AUTO_ANALYZE.store(self.run, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+                .store(self.priority_queue, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::AUTO_ANALYZE_CONCURRENCY
+                .store(self.concurrency, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let _restore = RestoreAutoAnalyze {
+        run: tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst),
+        priority_queue: tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+            .load(std::sync::atomic::Ordering::SeqCst),
+        concurrency: tidb_vardef::AUTO_ANALYZE_CONCURRENCY
+            .load(std::sync::atomic::Ordering::SeqCst),
+    };
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_enable_auto_analyze = OFF")
+        .unwrap();
+    assert!(!tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst));
+    let error = session
+        .run("SET GLOBAL tidb_auto_analyze_concurrency = 10")
+        .expect_err("disabled auto-analyze must reject concurrency changes");
+    assert!(error
+        .to_mysql_error()
+        .message
+        .contains("requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue"));
+
+    session
+        .run("SET GLOBAL tidb_enable_auto_analyze = ON")
+        .unwrap();
+    tidb_vardef::RUN_AUTO_ANALYZE.store(true, std::sync::atomic::Ordering::SeqCst);
+    tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(false, std::sync::atomic::Ordering::SeqCst);
+    let error = session
+        .run("SET GLOBAL tidb_auto_analyze_concurrency = 10")
+        .expect_err("disabled priority queue must reject concurrency changes");
+    assert!(error
+        .to_mysql_error()
+        .message
+        .contains("tidb_enable_auto_analyze_priority_queue=false"));
+
+    tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(true, std::sync::atomic::Ordering::SeqCst);
+    session
+        .run("SET GLOBAL tidb_auto_analyze_concurrency = 10")
+        .unwrap();
+    assert_eq!(
+        tidb_vardef::AUTO_ANALYZE_CONCURRENCY.load(std::sync::atomic::Ordering::SeqCst),
+        10
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_auto_analyze_concurrency"),
+        Some("10".to_owned())
+    );
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.
