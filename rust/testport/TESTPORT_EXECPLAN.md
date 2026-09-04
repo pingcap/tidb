@@ -97,6 +97,12 @@ For each bounded behavior cluster:
   truncation policy. Focused fail-before/pass-after regressions, package
   inventory, and Ready validation are recorded in
   `receipts/types_explain_format_audit.md`.
+- 2026-09-04: aligned the Rust `tidb-datatype` runtime default-field-type
+  owner for Go's float-width spelling boundary. `DefaultTypeForValue` now
+  measures `+Inf`/`-Inf`/`NaN` through the source-compatible format helpers,
+  matching the protocol `flen` for non-finite float32/float64 values. The
+  focused fail-before/pass-after regression, package inventory, and Ready
+  validation are recorded in `receipts/types_explain_format_audit.md`.
 
 - 2026-09-04: aligned the Rust `tidb-datatype` float-to-decimal owner for
   the complete Go-master `pkg/types` formatting boundary. `Decimal::from_f64`
@@ -5431,6 +5437,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: share the existing Go-compatible float spelling helpers between
+  the runtime and parser-driver default field-type owners. This keeps the
+  source's `FormatFloat(..., 'f', -1, bits)` width contract in one place and
+  avoids a runtime-only special case for infinities. Date/Author: 2026-09-04,
+  Codex.
+
 - Decision: expose fixed-word truncation from decimal division as a separate
   warning-bearing API while keeping the existing value-only wrappers for
   callers that do not carry a statement context; wire only the SQL `/` path
@@ -5985,6 +5997,11 @@ For each bounded behavior cluster:
   Codex.
 
 ## Surprises & Discoveries
+
+- Go's default field-type width is measured from its display spelling, so
+  positive infinity is four bytes (`+Inf`) even though Rust's native spelling
+  is three (`inf`). The parser-driver path already had the source spelling
+  helpers; the runtime path had independently reverted to native formatting.
 
 - Go's decimal division error is not a failed value: `DecimalDiv` retains the
   quotient while `fixWordCntError` drops hidden fractional words and returns

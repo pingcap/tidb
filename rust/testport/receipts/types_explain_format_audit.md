@@ -407,6 +407,29 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # passed: 1 test
 ```
 
+## Rust-only parity follow-up: runtime default float widths
+
+The complete 61-artifact `pkg/types` inventory above remains the owning
+package for default field-type metadata. Go's `DefaultTypeForValue` formats
+`float32` and `float64` with `strconv.FormatFloat(..., 'f', -1, bits)` before
+setting `flen`; this spells positive infinity as `+Inf`, negative infinity as
+`-Inf`, and NaN as `NaN`. Rust's runtime path previously measured the native
+`to_string()` spelling, so `Datum`-equivalent positive infinity reported
+`flen = 3` instead of Go's `4`. The parser-driver twin already had the source
+spelling helpers, but the runtime owner did not reuse them.
+
+The Rust owner now uses the existing `go_fixed_shortest_f32` and
+`go_fixed_shortest_f64` helpers for both runtime float cases. The focused
+regression `field_type::tests::default_float_type_width_uses_go_infinity_spelling`
+failed before the change (`3` instead of `4`) and passes after the fix for
+positive/negative infinity and NaN. No Go, generated, or Bazel file changed.
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib field_type::tests::default_float_type_width_uses_go_infinity_spelling -- --exact --nocapture
+# pre-fix: failed (positive infinity flen 3 instead of 4); after fix: 1 passed
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.
@@ -473,6 +496,14 @@ For the decimal-division disposition follow-up specifically:
 - `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
 
+For the runtime default float-width follow-up specifically:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib field_type::tests::default_float_type_width_uses_go_infinity_spelling -- --exact --nocapture` — pre-fix failed with positive infinity `flen = 3` instead of `4`; after the fix, 1 focused test passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (383 tests).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,116 tests; 130 documented source-carrier gaps ignored).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match
@@ -498,3 +529,6 @@ For the decimal-division disposition follow-up specifically:
   statement context can consume Go's truncation disposition. MOD's raw-error
   handling remains an explicit follow-up rather than being assigned the
   division warning policy.
+- Default float metadata compatibility: runtime field-type widths now reuse
+  Go's explicit infinity/NaN spellings; finite-value formatting remains the
+  existing fixed-format path.

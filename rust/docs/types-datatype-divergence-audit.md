@@ -825,7 +825,7 @@ correctly pass `STRICT_INTEGER_DISPLAY_WIDTH`
 (`rust/crates/tidb-session/src/show.rs:35,165`, `infoschema.rs:852,1000`), and
 `source_string` has no production caller.
 
-## F5 / F6 / F7 (rank 4)
+## F5 (rank 4, now FIXED) / F6 / F7
 
 - **F5** `default_field_type_for_value` gets `±Inf` flen wrong. Go
   (`pkg/types/field_type.go:273-278`) uses
@@ -853,6 +853,11 @@ correctly pass `STRICT_INTEGER_DISPLAY_WIDTH`
   Byte-level meta divergence only — Go's unmarshal accepts both. The
   `elems_present` mechanism is otherwise a correct model of Go's nil-vs-empty
   distinction.
+
+F5 is fixed in this branch: the runtime default-type path now shares the
+source-compatible `+Inf`/`-Inf`/`NaN` spelling helpers with the parser-driver
+path, and a focused regression pins the resulting float widths. F6 and F7
+remain documented boundaries.
 
 Deliberate and documented, not a finding: `parse_set_value` returns
 `TooManyElements` (`enum_set.rs:289-291`) where Go panics with an

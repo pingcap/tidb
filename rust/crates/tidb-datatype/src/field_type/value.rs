@@ -119,13 +119,13 @@ pub fn default_field_type_for_value(
         FieldTypeValue::Float32(value) => binary(
             field_type
                 .with_code(FieldTypeCode::Float)
-                .with_flen(value.to_string().len() as i64)
+                .with_flen(go_fixed_shortest_f32(value).len() as i64)
                 .with_decimal(UNSPECIFIED_LENGTH),
         ),
         FieldTypeValue::Float64(value) => binary(
             field_type
                 .with_code(FieldTypeCode::Double)
-                .with_flen(value.to_string().len() as i64)
+                .with_flen(go_fixed_shortest_f64(value).len() as i64)
                 .with_decimal(UNSPECIFIED_LENGTH),
         ),
         FieldTypeValue::Bytes(value) => binary(

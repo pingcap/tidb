@@ -1469,8 +1469,8 @@ mod tests {
     use std::hash::{Hash, Hasher};
 
     use super::{
-        FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH,
-        UNSPECIFIED_LENGTH,
+        default_field_type_for_value, FieldType, FieldTypeCode, FieldTypeFlags, FieldTypeValue,
+        MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
     };
 
     // The Go-compatible mutators (SetFlag/AddFlag/AndFlag/ToggleFlag/DelFlag,
@@ -1671,6 +1671,39 @@ mod tests {
 
         let unsigned = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
         assert!(unsigned.is_unsigned());
+    }
+
+    /// Go `DefaultTypeForValue` uses `strconv.FormatFloat(..., 'f', -1, bits)`
+    /// for float widths, which spells positive infinity as `+Inf`. Rust's
+    /// native formatter spells it `inf`, so the sign is semantically the same
+    /// but the protocol field length is one byte shorter without the source
+    /// spelling helper.
+    #[test]
+    fn default_float_type_width_uses_go_infinity_spelling() {
+        let float32 = default_field_type_for_value(
+            FieldTypeValue::Float32(f32::INFINITY),
+            "utf8mb4",
+            "utf8mb4_bin",
+        );
+        assert_eq!(float32.code(), FieldTypeCode::Float);
+        assert_eq!(float32.flen(), 4);
+
+        let float64 = default_field_type_for_value(
+            FieldTypeValue::Float64(f64::INFINITY),
+            "utf8mb4",
+            "utf8mb4_bin",
+        );
+        assert_eq!(float64.code(), FieldTypeCode::Double);
+        assert_eq!(float64.flen(), 4);
+
+        for value in [f32::NEG_INFINITY, f32::NAN] {
+            let field_type = default_field_type_for_value(
+                FieldTypeValue::Float32(value),
+                "utf8mb4",
+                "utf8mb4_bin",
+            );
+            assert_eq!(field_type.flen(), if value.is_nan() { 3 } else { 4 });
+        }
     }
 
     /// Source: `pkg/types/etc.go` and `pkg/types/etc_test.go`.
