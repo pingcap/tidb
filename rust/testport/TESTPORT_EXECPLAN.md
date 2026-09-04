@@ -97,6 +97,11 @@ For each bounded behavior cluster:
   made GLOBAL concurrency writes enforce Go's prerequisite switches against
   the pending table image. The focused regression covers both refusal paths,
   the source error text, and successful atomic/readback publication.
+- 2026-09-05 (`pkg/sessionctx/variable` resource-control hooks): published
+  Go's process-wide enable and strict-mode switches on named GLOBAL writes,
+  startup/cluster/reset paths, and changed resource-group hint admission to
+  consume the authoritative typed global state. Added a focused ON/OFF
+  regression; the optional domain callback remains outside this Rust owner.
 - 2026-09-05 (`pkg/sessionctx/variable` TTL schedule-window inventory): wired
   GLOBAL TypeTime writes through the issuing session's timezone so short
   `HH:MM` values retain the same numeric offset as Go's `ParseInLocation`;

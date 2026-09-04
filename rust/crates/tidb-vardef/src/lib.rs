@@ -98,6 +98,15 @@ pub static ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE: AtomicBool =
 pub static AUTO_ANALYZE_CONCURRENCY: AtomicI64 =
     AtomicI64::new(defaults::DEF_TIDB_AUTO_ANALYZE_CONCURRENCY);
 
+/// Go `vardef.EnableResourceControl`. The classic server initializes this
+/// process switch only when its global-variable cache is rebuilt, so the
+/// zero-value is intentionally disabled even though the SQL default is ON.
+pub static ENABLE_RESOURCE_CONTROL: AtomicBool = AtomicBool::new(false);
+
+/// Go `vardef.EnableResourceControlStrictMode`.
+pub static ENABLE_RESOURCE_CONTROL_STRICT_MODE: AtomicBool =
+    AtomicBool::new(defaults::DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE);
+
 const OOM_ACTION_CANCEL: u8 = 0;
 const OOM_ACTION_LOG: u8 = 1;
 

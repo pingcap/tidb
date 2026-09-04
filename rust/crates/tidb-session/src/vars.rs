@@ -373,6 +373,22 @@ fn runtime_auto_analyze_value(name: &str) -> Option<String> {
             Some(
                 tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio().to_string(),
             ),
+        tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL => Some(if tidb_vardef::ENABLE_RESOURCE_CONTROL
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            "ON".to_owned()
+        } else {
+            "OFF".to_owned()
+        }),
+        tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE => Some(
+            if tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                "ON".to_owned()
+            } else {
+                "OFF".to_owned()
+            },
+        ),
         _ => None,
     }
 }
@@ -383,6 +399,14 @@ fn is_auto_analyze_setting(name: &str) -> bool {
         tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE
             | tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
             | tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY
+    )
+}
+
+fn is_resource_control_setting(name: &str) -> bool {
+    matches!(
+        name,
+        tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL
+            | tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE
     )
 }
 
@@ -597,6 +621,25 @@ impl GlobalSysvars {
         (snapshot.oom_action, snapshot.tmp_storage_on_oom)
     }
 
+    /// Reads the current GLOBAL resource-control enable value for statement
+    /// admission. The table is authoritative for this registry (and for a
+    /// cluster scratch image); the process atomic is published alongside it
+    /// for Go-compatible callbacks.
+    pub(crate) fn resource_control_enabled(&self) -> bool {
+        self.global_bool_value(
+            tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL,
+            tidb_vardef::defaults::DEF_TIDB_ENABLE_RESOURCE_CONTROL,
+        )
+    }
+
+    /// Reads the current GLOBAL resource-control strict-mode value.
+    pub(crate) fn resource_control_strict_mode(&self) -> bool {
+        self.global_bool_value(
+            tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE,
+            tidb_vardef::defaults::DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE,
+        )
+    }
+
     /// Reads one variable by its registry position, skipping the name probe
     /// callers already paid (`SessionVars::get_system` resolves the index
     /// once for both tiers). Same image-then-authoritative fallback as
@@ -718,6 +761,9 @@ impl GlobalSysvars {
             tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO,
         ) {
             self.publish_circuit_breaker_ratio();
+        }
+        if is_resource_control_setting(name) {
+            self.publish_resource_control_setting(name);
         }
         self.publish_embedding_settings();
         self.refresh_resolved();
@@ -872,6 +918,9 @@ impl GlobalSysvars {
         {
             self.publish_circuit_breaker_ratio();
         }
+        if is_resource_control_setting(&key) {
+            self.publish_resource_control_setting(&key);
+        }
         self.refresh_resolved();
         if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
             self.publish_redaction_mode();
@@ -973,6 +1022,29 @@ impl GlobalSysvars {
         tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(value);
     }
 
+    fn publish_resource_control_setting(&self, name: &str) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        let default = if name == tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL {
+            tidb_vardef::defaults::DEF_TIDB_ENABLE_RESOURCE_CONTROL
+        } else {
+            tidb_vardef::defaults::DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE
+        };
+        let enabled = self.global_bool_value(name, default);
+        match name {
+            tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL => {
+                tidb_vardef::ENABLE_RESOURCE_CONTROL
+                    .store(enabled, std::sync::atomic::Ordering::SeqCst);
+            }
+            tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE => {
+                tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
+                    .store(enabled, std::sync::atomic::Ordering::SeqCst);
+            }
+            _ => {}
+        }
+    }
+
     /// The length floor the `validate_password` coupling requires right now:
     /// `number_count + special_char_count + 2 * mixed_case_count`
     /// (`sysvar.go:717`'s Validation), read from the current global values
@@ -1052,6 +1124,9 @@ impl GlobalSysvars {
         {
             self.publish_circuit_breaker_ratio();
         }
+        if is_resource_control_setting(&key) {
+            self.publish_resource_control_setting(&key);
+        }
         self.refresh_resolved();
         if !def.has_global_scope() {
             self.record_instance_mutation(InstanceMutation::Reset(key.clone()));
@@ -1110,6 +1185,7 @@ impl GlobalSysvars {
         let mut loaded_schema_cache_size = false;
         let mut loaded_auto_analyze = false;
         let mut loaded_circuit_breaker_ratio = false;
+        let mut loaded_resource_control = false;
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
             if let Some(def) = get_sys_var(&key) {
@@ -1124,6 +1200,7 @@ impl GlobalSysvars {
                 loaded_auto_analyze |= is_auto_analyze_setting(&key);
                 loaded_circuit_breaker_ratio |= key
                     == tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO;
+                loaded_resource_control |= is_resource_control_setting(&key);
                 self.store(def)
                     .lock()
                     .expect("global sysvar lock poisoned")
@@ -1161,6 +1238,14 @@ impl GlobalSysvars {
         }
         if loaded_circuit_breaker_ratio {
             self.publish_circuit_breaker_ratio();
+        }
+        if loaded_resource_control {
+            for name in [
+                tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL,
+                tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE,
+            ] {
+                self.publish_resource_control_setting(name);
+            }
         }
         self.publish_embedding_settings();
         self.refresh_resolved();
@@ -1216,6 +1301,10 @@ impl GlobalSysvars {
             self.publish_auto_analyze_setting(name);
         }
         self.publish_circuit_breaker_ratio();
+        self.publish_resource_control_setting(tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL);
+        self.publish_resource_control_setting(
+            tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE,
+        );
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();
@@ -2269,6 +2358,17 @@ impl SessionVars {
     /// converting their GLOBAL sysvar text on every statement.
     pub(crate) fn statement_memory_policy(&self) -> (tidb_executor::OomAction, bool) {
         self.globals.statement_memory_policy()
+    }
+
+    /// Go's process-wide resource-control enable switch, published by the
+    /// GLOBAL sysvar hook and consumed by statement hint admission.
+    pub(crate) fn resource_control_enabled(&self) -> bool {
+        self.globals.resource_control_enabled()
+    }
+
+    /// Go's process-wide resource-control strict-mode switch.
+    pub(crate) fn resource_control_strict_mode(&self) -> bool {
+        self.globals.resource_control_strict_mode()
     }
 
     /// Sets a session system variable, validating the value as Go's

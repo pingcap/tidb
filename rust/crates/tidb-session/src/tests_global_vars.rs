@@ -1096,6 +1096,62 @@ fn auto_analyze_concurrency_requires_enabled_scheduler() {
     );
 }
 
+/// Go `TestTiDBEnableResourceControl` and
+/// `TestTiDBResourceControlStrictMode`: the GLOBAL hooks publish the
+/// process-wide switches consumed by resource-group hint admission, while
+/// SQL reads retain the normalized ON/OFF values.
+#[test]
+fn resource_control_global_hooks_publish_process_switches() {
+    struct RestoreResourceControl {
+        enabled: bool,
+        strict: bool,
+    }
+    impl Drop for RestoreResourceControl {
+        fn drop(&mut self) {
+            tidb_vardef::ENABLE_RESOURCE_CONTROL
+                .store(self.enabled, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
+                .store(self.strict, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let _restore = RestoreResourceControl {
+        enabled: tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst),
+        strict: tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
+            .load(std::sync::atomic::Ordering::SeqCst),
+    };
+    tidb_vardef::ENABLE_RESOURCE_CONTROL.store(false, std::sync::atomic::Ordering::SeqCst);
+    tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    assert!(session.vars().resource_control_enabled());
+    assert!(!tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(session.vars().resource_control_strict_mode());
+
+    session
+        .run("SET GLOBAL tidb_enable_resource_control = ON")
+        .unwrap();
+    assert!(session.vars().resource_control_enabled());
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_resource_control"),
+        Some("1".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_resource_control_strict_mode = OFF")
+        .unwrap();
+    assert!(!session.vars().resource_control_strict_mode());
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_resource_control_strict_mode"),
+        Some("0".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_enable_resource_control = OFF")
+        .unwrap();
+    assert!(!session.vars().resource_control_enabled());
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.

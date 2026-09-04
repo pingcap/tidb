@@ -314,18 +314,12 @@ impl Session {
     }
 
     fn resource_group_hint_rejection(&self) -> Option<ResourceGroupHintRejection> {
-        let resource_control_enabled = self
-            .vars
-            .get_system("tidb_enable_resource_control")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        let resource_control_enabled = self.vars.resource_control_enabled();
         if !resource_control_enabled {
             return Some(ResourceGroupHintRejection::Disabled);
         }
 
-        let strict_mode = self
-            .vars
-            .get_system("tidb_resource_control_strict_mode")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        let strict_mode = self.vars.resource_control_strict_mode();
         (strict_mode
             && !self.has_dynamic_privilege("RESOURCE_GROUP_ADMIN", false)
             && !self.has_dynamic_privilege("RESOURCE_GROUP_USER", false))
