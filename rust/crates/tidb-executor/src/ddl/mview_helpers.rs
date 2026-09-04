@@ -39,6 +39,76 @@ pub fn build_m_view_import_into_options(
     options
 }
 
+/// Go `CheckMViewReadable` (`planner/core/util.go`): refuses reads on a
+/// materialized view whose initial build is not ready yet. Internal
+/// maintenance sessions bypass this check.
+#[must_use]
+pub fn check_m_view_readable(
+    init_build_state: tidb_model::MViewInitBuildState,
+    in_mview_maintenance: bool,
+    in_restricted_sql: bool,
+    alias_name: &str,
+) -> Result<(), String> {
+    use tidb_model::MViewInitBuildState;
+    if init_build_state.is_ready() {
+        return Ok(());
+    }
+    if !allow_m_view_maintenance_bypass(in_mview_maintenance, in_restricted_sql)? {
+        let object_name = if alias_name.is_empty() {
+            "this materialized view"
+        } else {
+            alias_name
+        };
+        return Err(init_build_state.access_error_message(object_name));
+    }
+    Ok(())
+}
+
+/// Go `CheckMViewUpdatable` (`planner/core/util.go`): refuses DML on
+/// materialized view / materialized view log tables unless the session is
+/// in internal maintenance mode.
+#[must_use]
+pub fn check_m_view_updatable(
+    has_materialized_view: bool,
+    has_materialized_view_log: bool,
+    in_mview_maintenance: bool,
+    in_restricted_sql: bool,
+    alias_name: &str,
+    op: &str,
+) -> Result<(), String> {
+    if !has_materialized_view && !has_materialized_view_log {
+        return Ok(());
+    }
+    if !allow_m_view_maintenance_bypass(in_mview_maintenance, in_restricted_sql)? {
+        let object_name = if alias_name.is_empty() {
+            "this table"
+        } else {
+            alias_name
+        };
+        return Err(format!(
+            "Table '{object_name}' is not updatable, it is a {op} target that is a materialized view or log"
+        ));
+    }
+    Ok(())
+}
+
+/// Go `allowMViewMaintenanceBypass`: internal maintenance sessions (running
+/// restricted SQL) may bypass the MV access checks.
+fn allow_m_view_maintenance_bypass(
+    in_mview_maintenance: bool,
+    in_restricted_sql: bool,
+) -> Result<bool, String> {
+    if !in_mview_maintenance {
+        return Ok(false);
+    }
+    if !in_restricted_sql {
+        return Err(
+            "materialized view maintenance should only run in restricted SQL mode".to_owned(),
+        );
+    }
+    Ok(true)
+}
+
 /// Go `sqlescape.MustEscapeSQL`'s single-quote doubling for the value
 /// interpolated into the option string.
 fn escape_sql(value: &str) -> String {
@@ -248,5 +318,62 @@ mod tests {
             build_m_log_purge_meta(Some(&clause)).expect_err("IMMEDIATE refuses"),
             "PURGE IMMEDIATE is not supported for ALTER MATERIALIZED VIEW LOG"
         );
+    }
+}
+
+#[cfg(test)]
+mod mview_access_tests {
+    use super::*;
+    use tidb_model::{GoShared, MViewInitBuildState, MaterializedViewInfo};
+
+    #[test]
+    fn readable_refuses_building_state() {
+        let error = check_m_view_readable(
+            MViewInitBuildState::INIT_BUILD_BUILDING,
+            false,
+            false,
+            "mv_test",
+        )
+        .expect_err("Building state should refuse reads");
+        assert_eq!(
+            error,
+            "materialized view mv_test initial build is in progress"
+        );
+    }
+
+    #[test]
+    fn readable_allows_ready_state() {
+        check_m_view_readable(MViewInitBuildState::INIT_BUILD_READY, false, false, "mv")
+            .expect("Ready state should allow reads");
+    }
+
+    #[test]
+    fn readable_bypasses_with_maintenance_session() {
+        check_m_view_readable(MViewInitBuildState::INIT_BUILD_BUILDING, true, true, "mv")
+            .expect("maintenance session should bypass");
+    }
+
+    #[test]
+    fn maintenance_bypass_requires_restricted_sql() {
+        let error = allow_m_view_maintenance_bypass(true, false)
+            .expect_err("non-restricted SQL should refuse the bypass");
+        assert_eq!(
+            error,
+            "materialized view maintenance should only run in restricted SQL mode"
+        );
+    }
+
+    #[test]
+    fn updatable_refuses_mv_tables() {
+        let error = check_m_view_updatable(true, false, false, false, "mv_test", "UPDATE")
+            .expect_err("MV tables should refuse DML");
+        assert!(error.contains("mv_test"));
+        assert!(error.contains("UPDATE"));
+    }
+
+    #[test]
+    fn updatable_allows_non_mv_tables() {
+        check_m_view_updatable(false, false, false, false, "regular", "UPDATE")
+            .expect("non-MV tables should allow DML");
     }
 }
