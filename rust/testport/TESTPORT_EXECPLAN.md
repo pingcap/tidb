@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` MD5/PASSWORD session charset): activated the
+  Go-derived GBK constant-conversion rows through a connection-aware resolver.
+  Valid GBK strings now exercise the normal `to_binary` boundary before
+  hashing, while the unrepresentable `ㅂ123` rows surface the same
+  construction/evaluation error as Go. Focused and Ready evidence is recorded
+  in `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (`tidb-expr` DATE zero-date SQL modes): activated the Go-derived
   zero-date rows through explicit `NO_ZERO_DATE` and `NO_ZERO_IN_DATE`
   statement contexts. The live `DATE()` cast now has regression coverage for

@@ -23,11 +23,9 @@
 //! - Go switches the session's `character_set_connection` before building the
 //!   constants (`cryptTests`.chs), so its string literals arrive at the
 //!   builtin already GBK-encoded through `charset.Transform(OpEncode)`.
-//!   Rust's rewrite tier reads one process-wide connection charset
-//!   ([`crate::collation_derive::connection_charset_info`]), so the GBK rows
-//!   feed PRE-ENCODED byte datums instead -- the same convention this crate's
-//!   `builtin_ext/crypto.rs` test module uses -- and pin the encoded bytes
-//!   themselves (see `encoding_error_rows_are_session_shape_gaps`).
+//!   Direct dispatch rows feed PRE-ENCODED byte datums, while the
+//!   connection-aware rewrite regression exercises the same `to_binary`
+//!   boundary (see `encoding_error_rows_follow_session_charset_conversion`).
 //! - Go selects the AES signature from `@@block_encryption_mode` at
 //!   getFunction time. Rust reads the same statement snapshot through
 //!   [`Columns::block_encryption_mode`], so each mode's vectors run under a
@@ -38,6 +36,8 @@ use std::collections::HashMap;
 
 use super::*;
 use crate::{BlockEncryptionMode, Columns};
+use tidb_ast::{QueryStmt, SelectField, Stmt};
+use tidb_datatype::{FieldType, SessionTimeZone};
 
 /// The AES mode snapshot plus warning sink.
 struct ModeContext {
@@ -957,9 +957,8 @@ fn test_sha2_hash() {
 
 /// GO PORT of `pkg/expression/builtin_encryption_test.go:462 TestMD5Hash`
 /// over its row table. The rows that exist only under a GBK connection keep
-/// their digest invariant on the same GBK bytes; the ERROR row that requires
-/// a failing session-level charset transform is recorded as a gap in
-/// [`encoding_error_rows_are_session_shape_gaps`].
+/// their digest invariant on the same GBK bytes; the unrepresentable-character
+/// row is covered through the connection-aware rewrite regression below.
 #[test]
 fn test_md5_hash() {
     let rows: [(Datum, &str); 11] = [
@@ -999,15 +998,71 @@ fn gsk_one_two_three_bytes() -> Vec<u8> {
     vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd]
 }
 
-/// go-parity-gap: the `{ㅂ123, gbk}` MD5/PASSWORD rows fail inside Go's
-/// CONSTANT-BUILD step (`charset.Transform(OpEncode)` errors while typing the
-/// literal for `character_set_connection=gbk`), which in Rust lives behind
-/// the process-wide `connection_charset_info()` singleton that tests cannot
-/// point at GBK. Everything after that failed conversion matches: the error
-/// rows are recorded here rather than re-shaped into fabricated datums.
+/// Go's `{ㅂ123, gbk}` MD5/PASSWORD rows fail inside the CONSTANT-BUILD step
+/// (`charset.Transform(OpEncode)` errors while typing the literal for
+/// `character_set_connection=gbk`). A connection-aware resolver exercises the
+/// same ordinary `to_binary` boundary in Rust, so valid GBK rows and the
+/// unrepresentable-character error can be asserted through the live SQL path.
 #[test]
-#[ignore = "go-parity-gap: session charset conversion of constants (character_set_connection) is process-global in Rust; the MD5/PASSWORD '{ㅂ123,gkb}->error' rows cannot drive Transform(OpEncode) failure"]
-fn encoding_error_rows_are_session_shape_gaps() {}
+fn encoding_error_rows_follow_session_charset_conversion() {
+    struct GbkSession;
+
+    impl crate::rewriter::ColumnResolver for GbkSession {
+        fn resolve(&self, _: &[String]) -> Option<(usize, FieldType, i64)> {
+            None
+        }
+
+        fn time_zone(&self) -> SessionTimeZone {
+            SessionTimeZone::utc()
+        }
+
+        fn connection_charset_info(&self) -> (&str, &str) {
+            ("gbk", "gbk_bin")
+        }
+    }
+
+    impl Columns for GbkSession {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn connection_charset_info(&self) -> (&str, &str) {
+            ("gbk", "gbk_bin")
+        }
+    }
+
+    let eval = |sql: &str| {
+        let statement = tidb_parser::parse(&format!("SELECT {sql}")).expect("parse");
+        let Stmt::Query(query) = statement else {
+            panic!("expected query")
+        };
+        let QueryStmt::Select(select) = query.into_inner() else {
+            panic!("expected SELECT")
+        };
+        let SelectField::Expr { expr, .. } = &select.fields[0] else {
+            panic!("expected expression")
+        };
+        let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GbkSession).expect("rewrite");
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        rewritten.eval(&GbkSession, chunk.get_row(0))
+    };
+
+    // Go's valid GBK rows are encoded before MD5/PASSWORD see the bytes.
+    assert_eq!(
+        eval("md5('一二三')").expect("MD5 evaluates"),
+        Datum::new_string("a45d4af7b243e7f393fa09bed72ac73e")
+    );
+    assert_eq!(
+        eval("password('一二三四')").expect("PASSWORD evaluates"),
+        Datum::new_string("*48E0460AD45CF66AC6B8C18CB8B4BC8A403D935B")
+    );
+
+    // U+3142 is not representable in GBK, so Go's constant construction and
+    // Rust's live `to_binary` wrapper both surface an evaluation error.
+    assert!(eval("md5('ㅂ123')").is_err());
+    assert!(eval("password('ㅂ123')").is_err());
+}
 
 /// GO PORT of `pkg/expression/builtin_encryption_test.go:527 TestRandomBytes`
 /// over its exact argument sequence: 32 succeeds with 32 bytes, 1025/-32/0
@@ -1224,11 +1279,11 @@ fn test_validate_password_strength() {
 /// GO PORT of `pkg/expression/builtin_encryption_test.go:730 TestPassword`
 /// over its row table including the deprecation warning counter. The
 /// invalid-GBK error row is carried by
-/// [`encoding_error_rows_are_session_shape_gaps`].
+/// [`encoding_error_rows_follow_session_charset_conversion`].
 #[test]
 fn test_password() {
     // The hashed rows, with their Go digests; the {"ㅂ123"/gbk} error row is
-    // the documented session-shape gap (see module header).
+    // exercised through the connection-aware SQL rewrite regression.
     let rows: [(Datum, &str); 7] = [
         (s(""), ""),
         (s("abc"), "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E"),

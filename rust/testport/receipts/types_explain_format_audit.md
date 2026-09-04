@@ -1298,6 +1298,60 @@ git diff --check
 # both passed
 ```
 
+## Rust-only parity follow-up: MD5/PASSWORD session charset
+
+Go's `TestMD5Hash` and `TestPassword`
+(`pkg/expression/builtin_encryption_test.go:462-760`) rebuild constants after
+switching `character_set_connection`. Valid GBK strings are encoded before the
+digest, while `ㅂ123` cannot be represented by GBK and fails during constant
+construction.
+
+The direct Rust crypto tests historically supplied pre-encoded GBK byte
+datums, leaving the connection-conversion failure as an ignored shape gap.
+`encoding_error_rows_follow_session_charset_conversion` now builds both
+functions through `rewrite_expr_resolved` with a resolver returning
+`("gbk", "gbk_bin")`. It asserts the Go GBK digests for `一二三`/`一二三四`
+and the conversion errors for the unrepresentable `ㅂ123` rows, exercising the
+ordinary `to_binary` boundary used by live SQL evaluation.
+
+Focused validation:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib encoding_error_rows_follow_session_charset_conversion -- --nocapture
+# passed: 1 test (GBK MD5/PASSWORD values and unrepresentable-character errors)
+```
+
+Ready validation for this batch:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,163 passed, 1 known loopback HTTP JSON-schema fixture failed, 113 ignored
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,058 passed, 121 existing planner/storage/fixture failures, 0 ignored
+
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match
