@@ -34,15 +34,22 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestGetStartMode(t *testing.T) {
@@ -50,6 +57,95 @@ func TestGetStartMode(t *testing.T) {
 	require.Equal(t, ddl.Normal, getStartMode(currentBootstrapVersion+1))
 	require.Equal(t, ddl.Upgrade, getStartMode(currentBootstrapVersion-1))
 	require.Equal(t, ddl.Bootstrap, getStartMode(0))
+}
+
+func TestNormalizeStmtCancellationError(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	require.NoError(t, handlePendingSQLKillerSignal(vars))
+	vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(handlePendingSQLKillerSignal(vars)))
+
+	// A successful or undetermined commit result takes priority over a timeout signal.
+	require.NoError(t, normalizeStmtCancellationError(vars, nil))
+	require.True(t, terror.ErrResultUndetermined.Equal(
+		normalizeStmtCancellationError(vars, terror.ErrResultUndetermined),
+	))
+
+	otherErr := errors.New("other error")
+	require.ErrorIs(t, normalizeStmtCancellationError(vars, otherErr), otherErr)
+
+	err := normalizeStmtCancellationError(vars, context.Canceled)
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = normalizeStmtCancellationError(vars, context.DeadlineExceeded)
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = normalizeStmtCancellationError(vars, status.Error(codes.Canceled, "canceled"))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	err = normalizeStmtCancellationError(vars, status.Error(codes.DeadlineExceeded, "deadline exceeded"))
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+}
+
+func TestPendingKillSignalBeforeCommitScope(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	require.False(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, false))
+	require.False(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
+
+	// The DML-timeout race guard applies to MaxExecTimeExceeded even when the
+	// statement is not eligible for a connection-alive check.
+	vars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, false))
+	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
+	vars.SQLKiller.Reset()
+
+	// Other cancellation signals must not be consumed by the new guard. Some
+	// executors, such as BRIE, have already returned QueryInterrupted from Next.
+	vars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.False(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, false))
+	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
+}
+
+func TestSetProcessInfoPreservesTimeoutDuringTxnRetry(t *testing.T) {
+	se := &session{sessionVars: variable.NewSessionVars(nil)}
+	start := time.Now().Add(-time.Second)
+	se.SetProcessInfo("commit", start, mysql.ComQuery, 200)
+
+	se.sessionVars.RetryInfo.Retrying = true
+	se.SetProcessInfo("insert into t values (1)", time.Now(), mysql.ComQuery, 0)
+	pi := se.ShowProcess()
+	require.Equal(t, start, pi.Time)
+	require.Equal(t, uint64(200), pi.MaxExecutionTime)
+
+	// A disabled outer COMMIT timeout must not be enabled by a replayed history statement.
+	se = &session{sessionVars: variable.NewSessionVars(nil)}
+	se.SetProcessInfo("commit", start, mysql.ComQuery, 0)
+	se.sessionVars.RetryInfo.Retrying = true
+	se.SetProcessInfo("insert /*+ set_var(tidb_dml_max_execution_time=200) */ into t values (1)", time.Now(), mysql.ComQuery, 200)
+	pi = se.ShowProcess()
+	require.Equal(t, start, pi.Time)
+	require.Equal(t, uint64(0), pi.MaxExecutionTime)
+}
+
+func TestSetProcessInfoDistinguishesSameSQLStatements(t *testing.T) {
+	se := &session{sessionVars: variable.NewSessionVars(nil)}
+	const sql = "insert into t values (1)"
+
+	firstStmtCtx := stmtctx.NewStmtCtx()
+	se.sessionVars.StmtCtx = firstStmtCtx
+	firstStart := time.Unix(1, 0)
+	se.SetProcessInfo(sql, firstStart, mysql.ComQuery, 0)
+	se.SetProcessInfo(sql, time.Unix(2, 0), mysql.ComQuery, 200)
+
+	pi := se.ShowProcess()
+	require.Equal(t, firstStart, pi.Time)
+	require.Equal(t, uint64(200), pi.MaxExecutionTime)
+
+	secondStmtCtx := stmtctx.NewStmtCtx()
+	se.sessionVars.StmtCtx = secondStmtCtx
+	secondStart := time.Unix(3, 0)
+	se.SetProcessInfo(sql, secondStart, mysql.ComQuery, 0)
+
+	pi = se.ShowProcess()
+	require.Equal(t, secondStart, pi.Time)
+	require.Equal(t, uint64(0), pi.MaxExecutionTime)
 }
 
 func TestMustGetStoreBootstrapVersionRetriesTransaction(t *testing.T) {

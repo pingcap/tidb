@@ -945,16 +945,9 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 			// Use range scan instead of point get to avoid optimization
 			startTime := time.Now()
 			if tc.expectTimeout {
-				err := tk.QueryToErr("select * from t where a >= 1")
-				if err != nil {
-					require.Contains(t, err.Error(), "maximum statement execution time exceeded")
-				} else {
-					pi := tk.Session().ShowProcess()
-					require.NotNil(t, pi)
-					processElapsed := time.Since(pi.Time)
-					require.GreaterOrEqual(t, processElapsed, time.Duration(tc.maxExecutionTime)*time.Millisecond,
-						"ProcessInfo elapsed time should exceed max_execution_time. Got %v", processElapsed)
-				}
+				rs, err := tk.Exec("select * from t where a >= 1")
+				require.Nil(t, rs)
+				require.ErrorContains(t, err, "maximum statement execution time exceeded")
 			} else {
 				tk.MustQuery("select * from t where a >= 1")
 			}
@@ -977,6 +970,27 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("set @@tidb_dml_max_execution_time = 50")
+
+	const failpointName = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+	func() {
+		require.NoError(t, failpoint.Enable(failpointName, "return(300)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable(failpointName))
+		}()
+
+		rs, err := tk.Exec("insert into t values (1)")
+		require.Nil(t, rs)
+		require.ErrorContains(t, err, "maximum statement execution time exceeded")
+	}()
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
 func TestInsertRowsColMultiplyRUV2SQLPath(t *testing.T) {

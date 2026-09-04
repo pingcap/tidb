@@ -1262,7 +1262,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 		})
 		if err == nil {
-			err = s.doCommit(ctx)
+			err = handlePendingSQLKillerSignal(sessVars)
+			if err == nil {
+				err = s.doCommit(ctx)
+			}
 			if err == nil {
 				break
 			}
@@ -1338,6 +1341,10 @@ func getSessionFactoryInternal(store kv.Storage, createSessFn func(store kv.Stor
 			return nil, err
 		}
 		err = se.sessionVars.SetSystemVar(vardef.MaxExecutionTime, "0")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = se.sessionVars.SetSystemVar(vardef.TiDBDMLMaxExecutionTime, "0")
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1814,9 +1821,14 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 			pi.BriefBinaryPlan = oldPi.BriefBinaryPlan
 		}
 	}
-	// We set process info before building plan, so we extended execution time.
-	if oldPi != nil && oldPi.Info == pi.Info && oldPi.Command == pi.Command {
+	// We set process info before building plan, so we extended execution time. Transaction
+	// retries also keep the outer statement's deadline while replaying its statement history.
+	if oldPi != nil && (oldPi.StmtCtx == pi.StmtCtx && oldPi.Info == pi.Info && oldPi.Command == pi.Command ||
+		s.sessionVars.RetryInfo.Retrying) {
 		pi.Time = oldPi.Time
+		if s.sessionVars.RetryInfo.Retrying {
+			pi.MaxExecutionTime = oldPi.MaxExecutionTime
+		}
 	}
 	if oldPi != nil && oldPi.CurTxnStartTS != 0 && oldPi.CurTxnStartTS == pi.CurTxnStartTS {
 		// Keep the last expensive txn log time, avoid print too many expensive txn logs.
