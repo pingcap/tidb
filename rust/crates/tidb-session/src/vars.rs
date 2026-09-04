@@ -902,6 +902,10 @@ pub struct SessionVars {
     /// `max_execution_time` `SetSession` hook and read by statement contexts
     /// as a millisecond deadline (zero means unlimited).
     max_execution_time: u64,
+    /// Go's typed `SessionVars.SelectLimit`, maintained by the
+    /// `sql_select_limit` `SetSession` hook. `u64::MAX` is the unlimited
+    /// default and any smaller value caps top-level SELECT/set results.
+    select_limit: u64,
     /// Go's typed `SessionVars.MultiStatementMode`: OFF=0, ON=1, WARN=2.
     /// The normalized enum value drives COM_QUERY multi-statement admission.
     multi_statement_mode: u8,
@@ -949,6 +953,7 @@ impl Default for SessionVars {
             max_allowed_packet: 64 << 20,
             max_keys_read: 0,
             max_execution_time: 0,
+            select_limit: u64::MAX,
             multi_statement_mode: 0,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
@@ -1015,6 +1020,7 @@ impl SessionVars {
         let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
         let max_keys_read = Self::max_keys_read_from_systems(&systems);
         let max_execution_time = Self::max_execution_time_from_systems(&systems);
+        let select_limit = Self::select_limit_from_systems(&systems);
         let multi_statement_mode = Self::multi_statement_mode_from_systems(&systems);
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
@@ -1029,6 +1035,7 @@ impl SessionVars {
         self.max_allowed_packet = max_allowed_packet;
         self.max_keys_read = max_keys_read;
         self.max_execution_time = max_execution_time;
+        self.select_limit = select_limit;
         self.multi_statement_mode = multi_statement_mode;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
@@ -1075,6 +1082,13 @@ impl SessionVars {
             .get("max_execution_time")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(0)
+    }
+
+    fn select_limit_from_systems(systems: &HashMap<String, String>) -> u64 {
+        systems
+            .get("sql_select_limit")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(u64::MAX)
     }
 
     fn multi_statement_mode_from_systems(systems: &HashMap<String, String>) -> u8 {
@@ -1140,6 +1154,12 @@ impl SessionVars {
     #[must_use]
     pub const fn max_execution_time(&self) -> u64 {
         self.max_execution_time
+    }
+
+    /// Go `SessionVars.SelectLimit`, where `u64::MAX` means unlimited.
+    #[must_use]
+    pub const fn select_limit(&self) -> u64 {
+        self.select_limit
     }
 
     /// Go `SessionVars.MultiStatementMode`: OFF=0 refuses a multi-statement
@@ -1283,6 +1303,7 @@ impl SessionVars {
         let mut restores_max_allowed_packet = false;
         let mut restores_max_keys_read = false;
         let mut restores_max_execution_time = false;
+        let mut restores_select_limit = false;
         let mut restores_multi_statement_mode = false;
         let mut restores_prepared_plan_cache = false;
         let mut restores_shared_lock_upgrade = false;
@@ -1291,6 +1312,7 @@ impl SessionVars {
             restores_max_allowed_packet |= key == "max_allowed_packet";
             restores_max_keys_read |= key == "tidb_max_keys_read";
             restores_max_execution_time |= key == "max_execution_time";
+            restores_select_limit |= key == "sql_select_limit";
             restores_multi_statement_mode |= key == "tidb_multi_statement_mode";
             restores_prepared_plan_cache |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
@@ -1323,6 +1345,9 @@ impl SessionVars {
         }
         if restores_max_execution_time {
             self.max_execution_time = Self::max_execution_time_from_systems(&self.systems);
+        }
+        if restores_select_limit {
+            self.select_limit = Self::select_limit_from_systems(&self.systems);
         }
         if restores_multi_statement_mode {
             self.multi_statement_mode = Self::multi_statement_mode_from_systems(&self.systems);
@@ -1460,6 +1485,12 @@ impl SessionVars {
                 .value
                 .parse::<u64>()
                 .expect("max_execution_time validation stores unsigned decimal milliseconds");
+        }
+        if key == "sql_select_limit" {
+            self.select_limit = validated
+                .value
+                .parse::<u64>()
+                .expect("sql_select_limit validation stores unsigned decimal rows");
         }
         if key == "tidb_multi_statement_mode" {
             self.multi_statement_mode = Self::multi_statement_mode_from_systems(&self.systems);
@@ -2390,6 +2421,34 @@ mod tests {
         let mut inherited = SessionVars::new();
         inherited.seed_from_globals(globals).unwrap();
         assert_eq!(inherited.multi_statement_mode(), 2);
+    }
+
+    /// Go `TestSQLSelectLimit`: the unsigned limit clips negatives to zero,
+    /// stores the normalized value in `SessionVars.SelectLimit`, and restores
+    /// the unlimited MaxUint64 default through the ordinary session image.
+    #[test]
+    fn sql_select_limit_uses_go_typed_state() {
+        let definition = get_sys_var("sql_select_limit").unwrap();
+        assert_eq!(definition.validate("-10").unwrap().value, "0");
+        assert_eq!(definition.validate("9999").unwrap().value, "9999");
+
+        let mut vars = SessionVars::new();
+        assert_eq!(vars.select_limit(), u64::MAX);
+        vars.set_system("sql_select_limit", "9999".to_owned())
+            .unwrap();
+        assert_eq!(vars.select_limit(), 9999);
+
+        let restore = vars.snapshot_system("sql_select_limit");
+        vars.set_system("sql_select_limit", "0".to_owned()).unwrap();
+        assert_eq!(vars.select_limit(), 0);
+        vars.restore_system(restore);
+        assert_eq!(vars.select_limit(), 9999);
+
+        let globals = GlobalSysvars::new();
+        globals.set("sql_select_limit", "2".to_owned()).unwrap();
+        let mut inherited = SessionVars::new();
+        inherited.seed_from_globals(globals).unwrap();
+        assert_eq!(inherited.select_limit(), 2);
     }
 
     #[test]

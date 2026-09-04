@@ -1232,13 +1232,10 @@ impl Session {
     /// EXPLAIN. `SELECT ... INTO OUTFILE` is excluded exactly as Go excludes
     /// it, even though this tier refuses that clause anyway.
     pub(crate) fn try_add_extra_limit(&self, stmt: &mut Stmt) {
-        let cap = match self.vars.get_system("sql_select_limit") {
-            Ok(value) => match value.parse::<u64>() {
-                Ok(cap) if cap != u64::MAX => cap,
-                _ => return,
-            },
-            Err(_) => return,
-        };
+        let cap = self.vars.select_limit();
+        if cap == u64::MAX {
+            return;
+        }
         let limit = tidb_ast::Limit {
             offset: None,
             count: tidb_ast::Expr::Int(cap.to_string()),

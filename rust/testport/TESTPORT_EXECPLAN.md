@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` SQL SELECT limit state): aligned
+  `tidb-session` with Go's `TestSQLSelectLimit` setter contract. The
+  normalized limit now lives in typed session state, survives restore and
+  GLOBAL-to-new-session inheritance, and `TryAddExtraLimit` consumes that
+  state. The focused typed-state regression passes; the broader existing
+  scalar-subquery fixture remains a separate planner-schema failure and is
+  recorded as a partial-port boundary in b010.
 - 2026-09-05 (`pkg/sessionctx/variable` multi-statement mode state): aligned
   `tidb-session` with Go's `TestTiDBMultiStatementMode` and the connection
   admission path. The normalized OFF/ON/WARN enum now lives in typed session
