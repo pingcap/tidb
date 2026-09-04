@@ -15,10 +15,15 @@ supported-charset descriptors and their default collations.
   new-collation state (`charset.go:239-243`), which Rust's
   `default_collation` mirrors through `new_collation_enabled()`
   (`charset.rs:105-117`).
-- **Out of scope, deliberately**: Go's `CharsetIDs` legacy map (~260
-  entries) carries wire IDs for the full MySQL charset list; this
-  port's vocabulary is the 7 supported charsets, and the wider table is
-  a fork-scope boundary rather than a divergence to fix.
+- **The wider MySQL list is mirrored, not missing.** The
+  script-generated `charset_data/known_charsets.rs` mirrors the full
+  supported-descriptor table (descriptions, maxlens, default
+  collations), and `charset_data/collations.rs` mirrors the 273-row
+  collation descriptor superset. Regenerating with
+  `rust/scripts/generate-parser-charset.py` against this Go master
+  produces a byte-identical tree (2026-09-05), so the generated layer
+  is current; the Go `CharsetIDs` legacy wire-id map is served by the
+  same generated collation table.
 
 ## Collation ID table (2026-09-05, second pass)
 
