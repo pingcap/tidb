@@ -2568,6 +2568,12 @@ impl From<crate::mview_refresh_info_table::MviewRefreshInfoTableError> for DdlPl
     }
 }
 
+impl From<crate::mview_alert_table::MviewAlertTableError> for DdlPlanError {
+    fn from(error: crate::mview_alert_table::MviewAlertTableError) -> Self {
+        DdlPlanError::Encode(error.to_string())
+    }
+}
+
 /// What one planned catalog change will publish.
 #[derive(Clone, Debug)]
 pub enum DdlPlan {
@@ -4297,6 +4303,14 @@ fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
 
     if let Some(row) = refresh_table.find(snapshot, active.job.table_id)? {
         refresh_table.append_delete(&row, &mut mutations)?;
+    }
+    // Go `deleteCreateMaterializedViewRefreshAlert`: the create rollback also
+    // removes the view's alert row (written only by refresh workers, so this
+    // is normally a no-op on the create path).
+    if let Ok(alert_table) = crate::mview_alert_table::MviewAlertTable::locate(catalog) {
+        if let Some(row) = alert_table.find(snapshot, active.job.table_id)? {
+            alert_table.append_delete(&row, &mut mutations)?;
+        }
     }
 
     active.job.state = JobState::ROLLBACK_DONE;
