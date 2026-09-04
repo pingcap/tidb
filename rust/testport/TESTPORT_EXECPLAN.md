@@ -47,6 +47,16 @@ For each bounded behavior cluster:
   write final runs at EOF; all runs feed the existing merge. The focused
   fail-before/pass-after regression and Ready checks are recorded in
   `receipts/executor_root_distsql_indexjoin.md`.
+- 2026-09-05 (`pkg/expression` UNCOMPRESS output bound): aligned Rust's
+  `tidb-expr::builtin_ext::crypto::inflate` with Go's `limitedBuffer` security
+  contract. Zlib output is now bounded while streaming at the framed
+  four-byte declared length; over-limit output produces the distinct
+  `ZlibZBuf`/1258 warning, while malformed streams retain 1259. A focused
+  inflater regression and the two source-derived overlong-payload tests pass.
+  The Go statement-memory tracker/`LogOnExceed` accounting and vectorized
+  differential harness remain explicit cross-layer boundaries. The complete
+  208-artifact `pkg/expression` inventory and owner/validation evidence are
+  recorded in `receipts/b067.md`.
 - 2026-09-05 (`pkg/executor/sortexec` constant by-item evaluation): aligned
   Rust with Go's omission of constant `ByItems` from materialized sort keys.
   Deferred constants are no longer evaluated during sort/TopN key handling;

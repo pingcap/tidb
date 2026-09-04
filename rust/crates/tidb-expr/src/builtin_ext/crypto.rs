@@ -25,8 +25,8 @@
 //! stream. The compressed block layout is deliberately left to Rust's zlib
 //! encoder; SQL observes a standards-compliant stream and the framing, not a
 //! particular standard-library DEFLATE strategy. The inverse functions require
-//! a complete checksummed stream and append TiDB's corruption warnings to the
-//! statement context.
+//! a complete checksummed stream, cap inflation at the framed original length,
+//! and append TiDB's corruption warnings to the statement context.
 //!
 use std::io::Write;
 
@@ -103,11 +103,20 @@ fn frame_compressed(original_len: u32, compressed: Vec<u8>) -> Vec<u8> {
     framed
 }
 
-/// Inflates a zlib stream, returning `None` on any decode error. Port of the
-/// decode half of `pkg/expression/builtin_encryption.go`'s `inflate`
-/// (`compress/zlib`), which reads the whole stream and verifies its Adler-32
-/// checksum; trailing bytes past the stream end are ignored.
-fn inflate(data: &[u8]) -> Option<Vec<u8>> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InflateError {
+    Decode,
+    OutputLimit,
+}
+
+/// Inflates a zlib stream up to the framed output limit, returning a distinct
+/// error for malformed streams versus output that crosses `max_output`.
+/// This is the bounded counterpart of
+/// `pkg/expression/builtin_encryption.go`'s `inflate`: Go's `limitedBuffer`
+/// rejects the write that would cross the four-byte declared length, so the
+/// decoder must not materialize an attacker-controlled expansion before
+/// reporting `ZlibZBuf`. Trailing bytes past the stream end are ignored.
+fn inflate(data: &[u8], max_output: usize) -> Result<Vec<u8>, InflateError> {
     let mut decoder = Decompress::new(true);
     let mut out = Vec::new();
     let mut input_offset = 0;
@@ -115,14 +124,26 @@ fn inflate(data: &[u8]) -> Option<Vec<u8>> {
     loop {
         let input_before = decoder.total_in();
         let output_before = decoder.total_out();
+        let remaining = max_output.saturating_sub(out.len());
+        // Give zlib one byte beyond the remaining budget so an over-limit
+        // write is detected without ever appending bytes past the limit.
+        let output_len = chunk.len().min(remaining.saturating_add(1));
         let status = decoder
-            .decompress(&data[input_offset..], &mut chunk, FlushDecompress::None)
-            .ok()?;
-        input_offset = usize::try_from(decoder.total_in()).ok()?;
-        let produced = usize::try_from(decoder.total_out() - output_before).ok()?;
+            .decompress(
+                &data[input_offset..],
+                &mut chunk[..output_len],
+                FlushDecompress::None,
+            )
+            .map_err(|_| InflateError::Decode)?;
+        input_offset = usize::try_from(decoder.total_in()).map_err(|_| InflateError::Decode)?;
+        let produced = usize::try_from(decoder.total_out() - output_before)
+            .map_err(|_| InflateError::Decode)?;
+        if produced > remaining {
+            return Err(InflateError::OutputLimit);
+        }
         out.extend_from_slice(&chunk[..produced]);
         if status == Status::StreamEnd {
-            return Some(out);
+            return Ok(out);
         }
         // `compress/zlib.NewReader` refuses a stream that ends before the
         // DEFLATE terminator and Adler-32 checksum.  The high-level flate2
@@ -130,7 +151,7 @@ fn inflate(data: &[u8]) -> Option<Vec<u8>> {
         // truncated input, so require either stream completion or forward
         // progress toward it here.
         if decoder.total_in() == input_before && produced == 0 {
-            return None;
+            return Err(InflateError::Decode);
         }
     }
 }
@@ -152,9 +173,19 @@ fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     }
     let length = u32::from_le_bytes(payload[0..4].try_into().unwrap());
-    let Some(bytes) = inflate(&payload[4..]) else {
-        ctx.append_warning(1259, "ZLIB: Input data corrupted");
-        return Ok(Datum::Null);
+    let bytes = match inflate(&payload[4..], length as usize) {
+        Ok(bytes) => bytes,
+        Err(InflateError::OutputLimit) => {
+            ctx.append_warning(
+                1258,
+                "ZLIB: Not enough room in the output buffer (probably, length of uncompressed data was corrupted)",
+            );
+            return Ok(Datum::Null);
+        }
+        Err(InflateError::Decode) => {
+            ctx.append_warning(1259, "ZLIB: Input data corrupted");
+            return Ok(Datum::Null);
+        }
     };
     if length < bytes.len() as u32 {
         ctx.append_warning(
@@ -680,7 +711,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
-    use super::{dispatch, frame_compressed};
+    use super::{dispatch, frame_compressed, inflate};
     use crate::{Columns, Datum, Decimal, EvalError};
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
@@ -982,6 +1013,21 @@ mod tests {
         assert_eq!(call("COMPRESS", &[Datum::Null]), Datum::Null);
         assert_eq!(call("UNCOMPRESS", &[Datum::Null]), Datum::Null);
         assert_eq!(call("UNCOMPRESSED_LENGTH", &[Datum::Null]), Datum::Null);
+    }
+
+    #[test]
+    fn inflate_rejects_output_past_declared_length_before_materializing_it() {
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let body = vec![0u8; 4096];
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&body).expect("zlib write");
+        let stream = encoder.finish().expect("zlib finish");
+
+        assert!(inflate(&stream, 32).is_err());
+        assert_eq!(inflate(&stream, body.len()).expect("within limit"), body);
     }
 
     /// Go's `zlib.NewReader` rejects a truncated stream even when it has not
