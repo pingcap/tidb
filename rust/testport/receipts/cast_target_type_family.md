@@ -85,6 +85,38 @@ cargo +nightly-2026-08-22 clippy --offline --locked -p tidb-expr --all-targets
 # no diagnostics in touched code
 ```
 
+## Follow-up: the `CHAR ... CHARSET` boundary closed (2026-09-04)
+
+The first pass left the `CHAR` charset clause restore-only. It is now modeled
+end to end:
+
+- parser.y resolves the charset at parse time
+  (`charset.GetDefaultCollation`, parser.y:9971) and refuses unknown names
+  (`Get collation error for charset: %s`); the Rust Char rule validates via
+  `tidb_lexer::canonical_charset` with the same diagnostic.
+- `cast_target` stamps the charset name and its default collation onto the
+  target (`BINARY` suffix: `BinaryFlag` + binary, the `OptBinary.IsBinary`
+  arm; named charsets: name + default collation).
+- Evaluation follows the ret charset: `ProduceStrWithSpecifiedTp`'s
+  `chs == CharsetBin` branch truncates in BYTES for a binary-charset CHAR
+  (`pkg/types/datum.go:1264-1270`), and `padZeroForBinaryType` never pads a
+  `TypeVarString` — so `CAST('hi' AS CHAR(5) CHARSET binary)` is the
+  two-byte `hi`, and `CAST('你好' AS CHAR(3) CHARSET binary)` byte-truncates
+  to the three bytes of `你`. The utf8mb4 default keeps character-oriented
+  truncation.
+
+`CHAR(3) BINARY` (the `OptBinary.IsBinary` suffix) and
+`CHAR(3) CHARSET binary` collapse to the same AST payload, matching Go's own
+restore collapse; Go's only distinction between them is the `BinaryFlag`,
+whose flag-only residue is recorded here as the remaining narrow gap.
+
+Regressions: `tests::functions::cast_char_charset_clause_resolves_and_refuses_like_go`
+(fail-before: the unknown charset parsed pre-fix),
+`rewriter::result_type::tests::char_cast_target_carries_the_explicit_charset`
+(fail-before: charset empty, collation empty),
+`builtin_cast_semantics::cast_char_binary_charset_truncates_bytes_not_chars`
+(fail-before: String/char-truncation instead of Bytes/byte-truncation).
+
 ## Risk
 
 - Correctness: low; the changed fields are the result-type CODE, default

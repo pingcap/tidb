@@ -156,7 +156,18 @@ impl Parser {
                 self.bump();
                 Some("BINARY".to_string())
             } else {
-                self.parse_optional_charset_clause()?
+                let charset = self.parse_optional_charset_clause()?;
+                // Go's Char rule resolves the charset's default collation at
+                // parse time (`charset.GetDefaultCollation`, parser.y:9971):
+                // an unknown name refuses the statement.
+                if let Some(name) = &charset {
+                    if canonical_charset(name).is_none() {
+                        return Err(
+                            self.err_here(&format!("Get collation error for charset: {name}"))
+                        );
+                    }
+                }
+                charset
             };
             // `len` and `charset` are independent — both may be given
             // together (see `tidb_ast::CastType::Char`'s own doc for why

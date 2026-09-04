@@ -250,10 +250,24 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
             set_binary_charset(&mut ft);
             ft
         }
-        CastType::Char { len, .. } => {
+        CastType::Char { len, charset } => {
             let mut ft = FieldType::new(FieldTypeCode::VarString);
             if let Some(len) = len {
                 ft.set_flen(i64::from(*len));
+            }
+            // Go's `CHAR OptFieldLen OptBinary` rule: the `BINARY` suffix is
+            // `IsBinary` (BinaryFlag + binary charset/collation); a named
+            // charset resolves its default collation via
+            // `charset.GetDefaultCollation` (parser.y:9971). The no-clause
+            // shape takes the session charset — the recorded boundary here.
+            match charset.as_deref() {
+                Some("BINARY") => set_binary_charset(&mut ft),
+                Some(name) => {
+                    let collation = tidb_datatype::get_default_collation(name).ok()?;
+                    ft.set_charset_name(name.to_owned());
+                    ft.set_collation_name(collation);
+                }
+                None => {}
             }
             ft
         }

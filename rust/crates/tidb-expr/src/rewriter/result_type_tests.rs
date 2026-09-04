@@ -1207,3 +1207,34 @@ mod go_string_flen_tests {
         assert_go("to_base64", &[c_binary()], FieldTypeCode::VarString, 28);
     }
 }
+
+#[test]
+fn char_cast_target_carries_the_explicit_charset() {
+    // Go's `CHAR ... CHARSET binary` suffix sets the binary charset,
+    // collation, AND BinaryFlag.
+    let (_, char_binary) = cast_target(&tidb_ast::CastType::Char {
+        len: Some(5),
+        charset: Some("BINARY".to_owned()),
+    })
+    .unwrap();
+    assert!(char_binary.is_binary_string(), "{char_binary:?}");
+
+    // A named charset keeps its name and takes its default collation
+    // (`charset.GetDefaultCollation`, parser.y:9971).
+    let (_, char_latin1) = cast_target(&tidb_ast::CastType::Char {
+        len: Some(5),
+        charset: Some("LATIN1".to_owned()),
+    })
+    .unwrap();
+    assert_eq!(char_latin1.charset_name(), "LATIN1");
+    assert_eq!(char_latin1.collation_name(), "latin1_bin");
+    assert!(!char_latin1.is_binary_string());
+
+    // An unknown name cannot resolve a collation: Go refuses at parse time,
+    // so the target builder has no shape to hand back.
+    assert!(cast_target(&tidb_ast::CastType::Char {
+        len: Some(5),
+        charset: Some("UNKNOWNCS".to_owned()),
+    })
+    .is_none());
+}

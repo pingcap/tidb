@@ -92,8 +92,21 @@ pub(crate) fn eval_cast(
                 Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
             }
         }
-        CastType::Char { len, .. } => {
+        CastType::Char { len, charset } => {
             let text = string_source_text(&v, source)?;
+            // Go `CHAR(n) CHARSET binary`: the ret charset is binary, so
+            // `ProduceStrWithSpecifiedTp` takes its `chs == CharsetBin`
+            // branch and truncates in BYTES, and `padZeroForBinaryType`
+            // never pads a `TypeVarString` target. The default (session)
+            // charset keeps character-oriented truncation.
+            if charset.as_deref() == Some("BINARY") {
+                let mut bytes = datum_binary_bytes(&v)?;
+                if let Some(n) = len {
+                    report_data_too_long(ctx, bytes.len(), *n as usize);
+                    bytes.truncate(*n as usize);
+                }
+                return Ok(Datum::new_bytes(bytes));
+            }
             Ok(Datum::new_string(match len {
                 Some(n) => {
                     report_data_too_long(ctx, text.chars().count(), *n as usize);

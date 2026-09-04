@@ -207,3 +207,46 @@ mod tests {
         );
     }
 }
+
+/// Go `CHAR(n) CHARSET binary`: the ret charset is binary, so
+/// `ProduceStrWithSpecifiedTp` truncates in BYTES (`chs == CharsetBin`
+/// branch, `pkg/types/datum.go:1264-1270`) and `padZeroForBinaryType`
+/// refuses to pad (its gate is the FIXED `TypeString` code). The default
+/// utf8mb4 CHAR keeps character-oriented truncation.
+#[test]
+fn cast_char_binary_charset_truncates_bytes_not_chars() {
+    use tidb_ast::CastType;
+    use tidb_datatype::FieldType;
+
+    fn eval_char(len: Option<u32>, charset: Option<&str>, value: &str) -> crate::Datum {
+        crate::cast::eval_cast(
+            &CastType::Char {
+                len,
+                charset: charset.map(str::to_owned),
+            },
+            crate::Datum::new_string(value),
+            None,
+            &crate::context::NoColumns,
+        )
+        .unwrap()
+    }
+
+    // 2 bytes of 6: a full `你` byte-truncates to the first 3 bytes.
+    let crate::Datum::Bytes(truncated) = eval_char(Some(3), Some("BINARY"), "你好") else {
+        panic!("a binary-charset CHAR result is raw bytes")
+    };
+    assert_eq!(truncated, "你".as_bytes());
+
+    // A value already shorter than the target: NO NUL padding (the
+    // TypeString gate), unlike CAST AS BINARY(5).
+    let crate::Datum::Bytes(unpadded) = eval_char(Some(5), Some("BINARY"), "hi") else {
+        panic!("expected raw bytes")
+    };
+    assert_eq!(unpadded, b"hi");
+
+    // The default (utf8mb4) CHAR keeps character-oriented truncation.
+    let crate::Datum::String(text) = eval_char(Some(1), None, "你好") else {
+        panic!("expected a collation string")
+    };
+    assert_eq!(text.as_utf8().unwrap(), "你");
+}

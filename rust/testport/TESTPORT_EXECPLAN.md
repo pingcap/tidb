@@ -317,6 +317,17 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `[try again later]`; the focused code/state/message regression and Ready
   results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
 
+- 2026-09-04 (`CAST ... CHARSET` boundary closed): the `CHAR` cast charset
+  clause is now modeled end to end. Parse time resolves and refuses unknown
+  charsets like Go's `GetDefaultCollation` diagnostic (parser.y:9971);
+  `cast_target` stamps the charset name plus its default collation (the
+  `BINARY` suffix adds `BinaryFlag`); and evaluation follows the ret charset
+  — `ProduceStrWithSpecifiedTp`'s `chs == CharsetBin` branch byte-truncates
+  while `padZeroForBinaryType` never pads a `TypeVarString`. Three
+  fail-before regressions (parse refusal, target metadata, byte-vs-char
+  truncation). Receipt: `receipts/cast_target_type_family.md` (CHAR charset
+  follow-up section).
+
 - 2026-09-04 (planner identifier keys + NUL-padding gate): extended finding
   #196 to the planner — `SchemaTableKey`/`TableAliasKey` and the
   view-recursion, hint-table, alias-collision, and `USING`-column key sites

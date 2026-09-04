@@ -2038,7 +2038,14 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
         "unsigned_in_union" => CastType::UnsignedInUnion,
         "char" => CastType::Char {
             len: len(),
-            charset: None,
+            // A binary-charset CHAR target truncates in BYTES
+            // (`ProduceStrWithSpecifiedTp`'s `chs == CharsetBin` branch);
+            // carry that through the reconstructed cast type.
+            charset: if ret_type.is_binary_string() {
+                Some("BINARY".to_owned())
+            } else {
+                None
+            },
         },
         "binary" => {
             // Go pads NUL bytes only the FIXED TypeString target
