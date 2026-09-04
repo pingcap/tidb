@@ -3,7 +3,7 @@
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
 - Work unit: `pkg/util/dbterror` standard-message precedence parity batch
-- Go oracle: fetched `origin/master` (`6331b8787b4203a91aafe49ee1dc801ee497bf98`)
+- Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
 - Validation: the focused catalogue-precedence regression, serialized
