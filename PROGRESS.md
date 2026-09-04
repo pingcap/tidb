@@ -2,7 +2,7 @@
 
 > 已知 flaky：tidb-expr `json_schema_valid_resolves_file_and_http_references`（网络依赖，单跑通过/全量偶发，与本会话改动无关）。
 
-> 当前焦点 / 下一步（union shape-pin 测试草稿未通过 harness 断言，已回退；inUnion 评估标志的 ignored gap pin 待下轮用 set_opr_tests 真实 harness 重写）：①expr-builtin temporal arithmetic（DATE_ADD/DATE_SUB/DATEDIFF/TIMESTAMPDIFF/EXTRACT，审计建议顺序 2——完全未扫）②chunk A-3 已核实过期（row.rs 重构为 row_decoder.rs，Missing/Null 已建模；datum 级 per-type 审计仍开放）③parser #11（结构性）④CAST 面：套件全绿，大缺口=inUnion flag 与 CAST flen/flag 产出族（audit item 5），需要多批次。⑤等用户的分区对照查询后验证 Rust 裁剪。注意：另一会话 ca9bc95d09 修了 parser 测试注册——重放我批次时需重跑 parser/lexer 套件（已验证全绿）。
+> 当前焦点 / 下一步（2026-09-05 更新：表达式层全覆盖核验完成——temporal 算术 DATE_ADD/DATE_SUB/DATEDIFF/TIMESTAMPDIFF/TIMESTAMPADD/EXTRACT 已逐函数核验；CAST 面套件全绿，inUnion 已由兄弟会话落地；registry arity 283 类在 tip 重验零分歧。开放项均阻塞于外部输入：①parser #11 字节流管道架构决策 ②#202 名称键引用表示决策（大）③CHAR coercibility/collation 架构（binary decode/warning 流细节）④#199 estRows fixture 捕获 ⑤#186 剩余转码保真度 ⑥wire D11 terminal-EOF 计数需 engine-trait 扩展 ⑦分区裁剪验证等用户对照查询 ⑧tidb-session sysvar pin（973 vs 971）与集成失败为兄弟会话在途工作 ⑨tpcds 对照需 dsdgen fixture 与双端 server。循环恢复点=本表+各回执 blocker 注记。）
 
 ## 已推送（origin/hparser-integration，截至 8e0f80e381 之后还有 f8ddb7c72a/06bccf90e2/6fba82d378/50a0a29c13/5465936985/3369859aa2）
 
