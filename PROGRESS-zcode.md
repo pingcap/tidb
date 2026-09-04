@@ -359,3 +359,5 @@
 - 下轮恢复点: (1) config 嵌套段默认值(TiKVClient/PDClient/内存限制)表 diff; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - config 嵌套段第二遍: PessimisticTxn/TrxSummary/Performance 逐字段全一致(txn 尺寸限制 6MB/100MB 经 config.go:64-66 核实); TiKVClient/PDClient 属 client-go 外部谱系(由 third_party 重同步流程负责), 不在本审计声明内。收据已追加。
 - 下轮恢复点: (1) 新面候选: tidb-domain infoschema 面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- charset 注册表面首审: 7=7 字符集、maxlen 与默认 collation(含 gbk/gb18030 的 new-collation 条件)全匹配; Go CharsetIDs 约 260 项 legacy 表属 fork 范围边界, 记录不修。收据 rust/docs/charset-registry-parity-audit.md。
+- 下轮恢复点: (1) collation id 表与 CharsetIDs legacy 范围决策复核; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
