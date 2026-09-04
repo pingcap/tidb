@@ -42,5 +42,5 @@
   `pkg/util/dbterror` lookup precedence. Overlapping codes now prefer the
   TiDB/`errno` catalogue, with focused 3143/1243/1820 message and placeholder
   regressions; the complete owner inventory and Ready profile are recorded in
-  `rust/testport/receipts/dbterror_registered_std_precedence.md`. Commit/push
-  follows the final rebase.
+  `rust/testport/receipts/dbterror_registered_std_precedence.md`; pushed as
+  commit `3c1119e3b6` to `hparser-integration`.

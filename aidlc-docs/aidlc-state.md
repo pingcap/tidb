@@ -18,7 +18,7 @@
   `hparser-integration`.
 - Commit/push: `pkg/kv` retry-marker batch is validated and the receipt is
   included in the final pushed change.
-- Commit/push: `pkg/util/dbterror` precedence batch is validated; commit and
-  push are pending the final rebase.
-- Next action: commit the catalogue-precedence batch, rebase onto the latest
-  `hparser-integration`, push, and verify the remote tip.
+- Commit/push: `pkg/util/dbterror` precedence batch is validated and pushed as
+  `3c1119e3b6` to `hparser-integration`; the later state-only oracle update is
+  `8552e1a508`.
+- Next action: continue with the next executable package boundary.
