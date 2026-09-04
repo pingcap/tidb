@@ -175,6 +175,15 @@ func (rc *LogClient) loadSchemasMap(
 	return dbMaps, errors.Trace(err)
 }
 
+// LoadSchemasMap loads the persisted PiTR ID map for the specified restored TS.
+func (rc *LogClient) LoadSchemasMap(
+	ctx context.Context,
+	restoredTS uint64,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+) ([]*backuppb.PitrDBMap, error) {
+	return rc.loadSchemasMap(ctx, restoredTS, logCheckpointMetaManager)
+}
+
 func (rc *LogClient) loadPITRIDMapBackupMeta(metaData []byte) (*backuppb.BackupMeta, error) {
 	backupMeta := &backuppb.BackupMeta{}
 	if err := backupMeta.Unmarshal(metaData); err != nil {
