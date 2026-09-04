@@ -408,12 +408,18 @@ func isNDVClose(lhs, rhs float64) bool {
 // a per-probe lookup key, so the compare-time access count should be:
 //
 //	Estimation(t1.b=1) / NDV(t1.a)
+//
+// countAfterAccess4IndexJoinOK is false when the join-key NDV is not stable
+// enough for this strong skyline pruning rule, such as pseudo/missing stats,
+// prefix index columns, multiple join keys, or no initialized single-column stats.
+// If the single stable join key is already covered by CountAfterAccess, this
+// function returns the original CountAfterAccess with ok=true.
 func indexJoinPathCountAfterAccess4Compare(
 	indexJoinInfo *indexJoinPathInfo,
 	path *util.AccessPath,
 	idxOff2KeyOff []int,
 	usedColsLen int,
-) (float64, bool) {
+) (countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) {
 	if path.CountAfterAccess <= 0 ||
 		indexJoinInfo.innerTableStats == nil ||
 		indexJoinInfo.innerTableStats.StatsVersion == statistics.PseudoVersion ||
@@ -444,8 +450,6 @@ func indexJoinPathCountAfterAccess4Compare(
 			needNDVAdjust = true
 		}
 	}
-	// if there are multiple join keys, we might not get a relatively accurate NDV estimate,
-	// so we don't adjust CountAfterAccess in these cases.
 	if !joinKeyFound || joinKeyColSeen > 1 {
 		return path.CountAfterAccess, false
 	}
