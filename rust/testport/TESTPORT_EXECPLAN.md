@@ -60,6 +60,13 @@ For each bounded behavior cluster:
   shape, metadata) through to a queued job row; failure sets unchanged
   (exec 7 = base minus the batch-15 repair, session subset of base).
   Receipt: `receipts/ddl_mview_view_submission.md`.
+- 2026-09-04: aligned the Rust `tidb-datatype` decimal division owner for the
+  complete Go-master `pkg/types` fixed-word boundary. Quotients now retain
+  Go's `ErrTruncated` disposition when fractional words exceed the nine-word
+  buffer, and the expression `/` path routes that event through the session
+  truncation policy. Focused fail-before/pass-after regressions, package
+  inventory, and Ready validation are recorded in
+  `receipts/types_explain_format_audit.md`.
 
 - 2026-09-04: aligned the Rust `tidb-datatype` float-to-decimal owner for
   the complete Go-master `pkg/types` formatting boundary. `Decimal::from_f64`
@@ -5394,6 +5401,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: expose fixed-word truncation from decimal division as a separate
+  warning-bearing API while keeping the existing value-only wrappers for
+  callers that do not carry a statement context; wire only the SQL `/` path
+  to `EvalContext::handle_truncate`, matching Go's `DecimalDiv`/`HandleTruncate`
+  order. Date/Author: 2026-09-04, Codex.
+
 - Decision: use ryu's human-readable shortest formatter for
   `Decimal::from_f64`, apply Go's `%g` fixed/scientific threshold to those
   digits, then pass the result directly to the existing Go-shaped decimal
@@ -5936,6 +5949,12 @@ For each bounded behavior cluster:
   Codex.
 
 ## Surprises & Discoveries
+
+- Go's decimal division error is not a failed value: `DecimalDiv` retains the
+  quotient while `fixWordCntError` drops hidden fractional words and returns
+  `ErrTruncated`. The Rust digit-string implementation had no word-boundary
+  check, so its visible quotient matched while its hidden precision and
+  warning stream diverged.
 
 - Rust's standard `f64::Display` deliberately never emits scientific notation;
   `Decimal::from_f64` was therefore expanding an already positional string

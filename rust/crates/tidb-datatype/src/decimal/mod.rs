@@ -1053,8 +1053,25 @@ impl Decimal {
 
     /// Source `DecimalDiv`: retain the whole base-1e9 fraction words produced
     /// by the division while exposing `div_precision_increment` through
-    /// `resultFrac`.
+    /// `resultFrac`. Use [`Self::div_mysql_with_warning`] when the caller
+    /// needs Go's fixed-word disposition as well.
     pub fn div_mysql(&self, other: &Decimal, frac_increment: u32) -> Option<Decimal> {
+        self.div_mysql_with_warning(other, frac_increment)
+            .map(|(value, _)| value)
+    }
+
+    /// Source `DecimalDiv`, retaining the fixed-word disposition beside the
+    /// quotient. `None` means division by zero.
+    pub fn div_mysql_with_warning(
+        &self,
+        other: &Decimal,
+        frac_increment: u32,
+    ) -> Option<(Decimal, Option<DecimalCodecWarning>)> {
+        self.div_mysql_unbounded(other, frac_increment)
+            .map(bound_decimal_codec_result)
+    }
+
+    fn div_mysql_unbounded(&self, other: &Decimal, frac_increment: u32) -> Option<Decimal> {
         if other.is_zero() {
             return None;
         }
@@ -1172,7 +1189,18 @@ impl Decimal {
     /// divisor. Sign follows the standard XOR rule, same as every other
     /// decimal operator.
     pub fn true_div(&self, other: &Decimal, target_scale: u32) -> Option<Decimal> {
-        self.div_mysql(other, target_scale.saturating_sub(self.scale))
+        self.true_div_with_warning(other, target_scale)
+            .map(|(value, _)| value)
+    }
+
+    /// MySQL `/` division with the fixed-word disposition retained beside the
+    /// quotient. `None` means division by zero.
+    pub fn true_div_with_warning(
+        &self,
+        other: &Decimal,
+        target_scale: u32,
+    ) -> Option<(Decimal, Option<DecimalCodecWarning>)> {
+        self.div_mysql_with_warning(other, target_scale.saturating_sub(self.scale))
     }
 
     /// Rounds to the nearest integer, ties away from zero — MySQL's
@@ -1692,6 +1720,51 @@ fn pad_scale(digits: &str, scale: u32, target: u32) -> String {
 /// even when its SQL-visible `resultFrac` is smaller.
 fn word_scale(scale: u32) -> u32 {
     scale.div_ceil(9) * 9
+}
+
+/// Applies Go `DecimalDiv`'s nine-word result bound after the digit-string
+/// arithmetic has produced its exact value. The SQL-visible scale remains
+/// intact; only hidden fractional words are dropped when the source reports
+/// `ErrTruncated`.
+fn bound_decimal_codec_result(value: Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
+    if value.is_zero() {
+        return (value, None);
+    }
+    let split = value
+        .digits
+        .len()
+        .saturating_sub(value.storage_scale as usize);
+    let integer_digits = value.digits[..split].trim_start_matches('0').len();
+    let words_int = digits_to_words(integer_digits);
+    let words_frac = digits_to_words(value.storage_scale as usize);
+    let (_, fixed_frac, warning) = fix_word_cnt_error(words_int, words_frac);
+    match warning {
+        None => (value, None),
+        Some(DecimalCodecWarning::Overflow) => (
+            Decimal::max_or_min(
+                value.negative,
+                (CODEC_WORD_BUF_LEN * DIGITS_PER_WORD) as u32,
+                0,
+            ),
+            warning,
+        ),
+        Some(DecimalCodecWarning::Truncated) => {
+            let target_storage = (fixed_frac * DIGITS_PER_WORD) as u32;
+            let target_storage = target_storage.max(value.scale);
+            let discarded = value.storage_scale.saturating_sub(target_storage) as usize;
+            let digits = if discarded == 0 {
+                value.digits.clone()
+            } else {
+                value.digits[..value.digits.len() - discarded]
+                    .to_owned()
+                    .into()
+            };
+            (
+                Decimal::new_with_storage(value.negative, digits, value.scale, target_storage),
+                warning,
+            )
+        }
+    }
 }
 
 /// Left-pads two unsigned digit strings with `0` to equal length, so they can

@@ -371,6 +371,42 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # pre-fix: failed (`1e-73` became zero); after fix: 1 passed
 ```
 
+## Rust-only parity follow-up: decimal division codec disposition
+
+The complete 61-artifact `pkg/types` inventory above remains the owning
+package for decimal division. Go's `DecimalDiv` applies `fixWordCntError` to
+the quotient's integer and fractional word counts and returns
+`ErrTruncated` when the nine-word buffer cannot retain all fractional words;
+the value remains usable and the expression layer routes that event through
+`HandleTruncate`. Rust's digit-string `div_mysql` previously retained all
+hidden quotient digits and exposed only `Option<Decimal>`, so this event was
+silently lost.
+
+The Rust datatype owner now exposes the source disposition through
+`div_mysql_with_warning` and `true_div_with_warning`, while the existing
+value-only methods remain compatibility wrappers. The expression `/` path
+consumes the warning with its session truncation policy. No Go, generated, or
+Bazel file changed; MOD remains an explicit follow-up because its evaluator
+needs a separate raw-error policy.
+
+The focused regression
+`decimal_tests::decimal_division_clamps_fractional_words_at_the_codec_boundary`
+failed before the change because the 20-digit/30-scale quotient retained 72
+fractional digits instead of Go's 54 and passes after the fix. The dependent
+expression regression `ops::tests::decimal_division_reports_codec_truncation_warning`
+also confirms the retained value plus one 1292 warning.
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib decimal_tests::decimal_division_clamps_fractional_words_at_the_codec_boundary -- --exact
+# pre-fix: failed (72 retained digits instead of 54); after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib ops::tests::decimal_division_reports_codec_truncation_warning -- --exact
+# passed: 1 test
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.
@@ -428,6 +464,15 @@ For the float-format follow-up specifically:
 - `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,114 tests; 130 documented source-carrier gaps ignored). A first run and isolated retry exposed the pre-existing local HTTP-fixture `WouldBlock` race; the complete rerun passed.
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
 
+For the decimal-division disposition follow-up specifically:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib decimal_tests::decimal_division_clamps_fractional_words_at_the_codec_boundary -- --exact` — pre-fix failed with 72 retained fractional digits instead of 54; after the fix, 1 focused test passed.
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib ops::tests::decimal_division_reports_codec_truncation_warning -- --exact` — passed (1 focused test).
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (382 tests).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,116 tests; 130 documented source-carrier gaps ignored).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match
@@ -448,3 +493,8 @@ For the float-format follow-up specifically:
 - Performance: `%.'` now performs one table lookup per consumed Unicode scalar
   instead of the previous ASCII predicate; this is limited to the explicit
   STR_TO_DATE punctuation token.
+- Decimal division compatibility: the existing value-only division methods
+  remain wrappers around the warning-bearing API, while callers that carry a
+  statement context can consume Go's truncation disposition. MOD's raw-error
+  handling remains an explicit follow-up rather than being assigned the
+  division warning policy.

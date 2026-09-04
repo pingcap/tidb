@@ -757,9 +757,15 @@ pub(crate) fn eval_binary_full(
             return Ok(Datum::Null);
         }
         let target_scale = a.scale() + effective_div_precision_increment(div_precision_increment);
-        let quotient = a
-            .true_div(&b, target_scale)
+        let (quotient, warning) = a
+            .true_div_with_warning(&b, target_scale)
             .ok_or(EvalError::DecimalOverflow)?;
+        if warning == Some(tidb_datatype::DecimalCodecWarning::Overflow) {
+            return Err(EvalError::DecimalOverflow);
+        }
+        if warning == Some(tidb_datatype::DecimalCodecWarning::Truncated) {
+            ctx.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{quotient}'"))?;
+        }
         let (precision, fraction) = quotient.precision_and_frac();
         // Go MyDecimal has nine base-1e9 words. Fractional words may be
         // rounded/truncated, but an integer part needing a tenth word is
@@ -1941,6 +1947,27 @@ mod tests {
         assert_eq!(div(dec("0.1"), dec("0.3")), "0.33333");
         assert_eq!(div(Datum::Int(5), Datum::Int(3)), "1.6667");
         assert_eq!(div(Datum::Int(1), Datum::Int(0)), "NULL".to_owned());
+    }
+
+    /// Go's decimal division keeps the quotient but sends a nine-word
+    /// fractional-buffer truncation through `HandleTruncate`.
+    #[test]
+    fn decimal_division_reports_codec_truncation_warning() {
+        let left = Datum::Decimal(Decimal::from_literal(
+            "10000000000000000000.000000000000000000000000000000",
+        ));
+        let right = Datum::Decimal(Decimal::from_literal("3.000000000000000000000000000000"));
+        let warnings = WarningLog::default();
+        let result =
+            super::eval_binary_with_div_precision(BinaryOp::Div, left, right, 4, &warnings)
+                .expect("decimal division remains a value with a warning");
+        assert!(matches!(result, Datum::Decimal(_)));
+        let warnings = warnings.taken();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].0, 1292);
+        assert!(warnings[0]
+            .1
+            .starts_with("Truncated incorrect DECIMAL value: '"));
     }
 
     // Go TestDecimalErrOverflow. The executor layer maps this error class to

@@ -1437,6 +1437,23 @@ fn test_div_mod_my_decimal() {
     }
 }
 
+/// Go's `DecimalDiv` clamps a quotient that needs more than the nine-word
+/// decimal buffer and returns `ErrTruncated` alongside the retained value.
+#[test]
+fn decimal_division_clamps_fractional_words_at_the_codec_boundary() {
+    let left = parse_signed("10000000000000000000.000000000000000000000000000000");
+    let right = parse_signed("3.000000000000000000000000000000");
+    let (value, warning) = left
+        .div_mysql_with_warning(&right, 4)
+        .expect("nonzero divisor");
+    assert_eq!(warning, Some(DecimalCodecWarning::Truncated));
+    let storage = value.storage_string();
+    let (_, fraction) = storage
+        .split_once('.')
+        .expect("division keeps a fractional part");
+    assert_eq!(fraction.len(), 54);
+}
+
 #[test]
 fn integer_division_fast_path_matches_decimal_long_division() {
     for (left, right, increment, expected) in [
