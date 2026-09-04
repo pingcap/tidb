@@ -179,18 +179,19 @@ PHP `mysqlnd` persistent connections and `mysql_change_user()` send
 `COM_CHANGE_USER`. Because each does get *a* packet back, these are refusals,
 not desyncs.
 
-### D7. The errno for a genuinely unknown command differs
+### D7. The errno for a genuinely unknown command differs (FIXED)
 
 - Go: `pkg/server/conn.go:1592-1593` default arm returns
   `mysql.NewErrf(mysql.ErrUnknown /* 1105 */, "command %d not supported now", nil, cmd)`,
   written with SQLSTATE `HY000`.
-- Rust: `mysql_connection.rs:1453-1463` uses `ER_UNKNOWN_COM_ERROR` (1047).
+- Rust: `mysql_connection.rs` now routes `Command::Unknown` through the Go
+  generic unknown error (1105/HY000); 1047/08S01 remains reserved for a known
+  command that this node explicitly refuses.
 
-Distinguishing case: send command byte `0xfa`. Go replies
-`ERR 1105 HY000 "command 250 not supported now"`; Rust replies
-`ERR 1047 08S01 "command is not supported by the read-only Rust SQL node"`.
-(1047's SQLSTATE was `HY000` before commit `b05550e670`; the errno itself is
-still deliberately different and is left alone here.)
+Distinguishing case: send command byte `0xfa`. Both implementations now reply
+`ERR 1105 HY000 "command 250 not supported now"`; sending a known but
+unsupported command such as `COM_FIELD_LIST` still takes the separate Rust
+1047/08S01 refusal path.
 
 ### D8. `CLIENT_COMPRESS` / `CLIENT_ZSTD_COMPRESSION_ALGORITHM` are implemented but never advertised
 
@@ -365,6 +366,9 @@ Both were single wrong constants, `cargo check` and `cargo clippy` clean, and
 - `ER_UNKNOWN_COM_ERROR` (1047) now carries SQLSTATE `08S01`. Go resolves every
   ERR packet's state through `mysql.MySQLState`, which maps `ErrUnknownCom` to
   `08S01`; both call sites hardcoded the `HY000` default.
+- Genuinely unknown command bytes now keep Go's generic `ErrUnknown` identity
+  (1105/HY000 and `command %d not supported now`) instead of being flattened
+  into the known-command `ErrUnknownCom` (1047/08S01) refusal.
 
 ## Known gaps that are not divergences in the compared files
 

@@ -7725,3 +7725,12 @@ risks without claiming repository-wide parity.
   direct `RealTiKvReadError::Plan` seams. Per-variant planner and server
   regressions are in `receipts/planner_read_only_error_codes.md`; the batch is
   Rust-only and does not widen the bounded read planner.
+- 2026-09-05 (`pkg/server` unknown-command wire error identity): the Rust
+  command loop now separates genuinely unowned command bytes from known but
+  unsupported commands. `Command::Unknown` answers with Go's generic
+  `ErrUnknown` 1105/`HY000` and `command %d not supported now`; the existing
+  1047/`08S01` refusal remains for known `COM_FIELD_LIST` and
+  `COM_RESET_CONNECTION`. The focused fail-before/pass-after regression and
+  package inventory are recorded in
+  `receipts/server_unknown_command_error.md`; those known-command owners remain
+  explicit follow-up boundaries.

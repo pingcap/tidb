@@ -239,6 +239,18 @@ const ER_WRONG_ARGUMENTS: u16 = 1210;
 pub(crate) const ER_UNKNOWN_STMT_HANDLER: u16 = 1243;
 pub(crate) const RESULT_BATCH_SIZE: usize = 128;
 
+/// Go `clientConn.dispatch`'s default arm (`pkg/server/conn.go:1592-1593`)
+/// for a command byte with no owner. This is deliberately distinct from
+/// `ER_UNKNOWN_COM_ERROR` (1047), which is Go's errno for a *known* command
+/// such as `COM_FIELD_LIST` that this bounded node has not implemented.
+fn unknown_command_error(code: u8) -> SqlQueryError {
+    SqlQueryError::new(
+        ER_UNKNOWN_ERROR,
+        *b"HY000",
+        format!("command {code} not supported now"),
+    )
+}
+
 struct ConnectionPreparedStatement {
     /// The parsed statement is immutable after PREPARE.  Keep it behind an
     /// `Arc` so COM_STMT_EXECUTE only clones a pointer; cloning the retained
@@ -2258,15 +2270,21 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     ),
                 )?;
             }
-            Command::FieldList(_) | Command::ResetConnection | Command::Unknown { .. } => {
-                write_error(
-                    &mut output,
-                    1,
-                    ER_UNKNOWN_COM_ERROR,
-                    ER_UNKNOWN_COM_ERROR_STATE,
-                    "command is not supported by the read-only Rust SQL node",
-                    protocol_41,
-                )?
+            Command::FieldList(_) | Command::ResetConnection => write_error(
+                &mut output,
+                1,
+                ER_UNKNOWN_COM_ERROR,
+                ER_UNKNOWN_COM_ERROR_STATE,
+                "command is not supported by the read-only Rust SQL node",
+                protocol_41,
+            )?,
+            Command::Unknown { code, .. } => {
+                // Go's default dispatch arm answers a genuinely unknown
+                // command with generic 1105/HY000 and the command byte in the
+                // message.  1047/08S01 belongs only to a known command that
+                // this node refuses, not to an unowned command byte.
+                let error = unknown_command_error(code);
+                write_query_error(&mut output, &error, protocol_41)?;
             }
         }
     }
@@ -2562,5 +2580,20 @@ mod decode_client_sql_tests {
         let sql = decode_client_sql(b"SELECT '\xc4\xe3'", "gbk").expect("decodes");
         assert_eq!(sql, "SELECT '你'");
         assert!(decode_client_sql(b"SELECT '\x81\x20'", "gbk").is_err());
+    }
+}
+
+#[cfg(test)]
+mod unknown_command_tests {
+    use super::unknown_command_error;
+
+    #[test]
+    fn unknown_command_keeps_go_generic_error_identity() {
+        // Go's `default` dispatch (`pkg/server/conn.go:1592-1593`) formats
+        // the raw command byte as decimal and uses `mysql.ErrUnknown`.
+        let error = unknown_command_error(0xfa);
+        assert_eq!(error.code, 1105);
+        assert_eq!(error.state, *b"HY000");
+        assert_eq!(error.message, "command 250 not supported now");
     }
 }
