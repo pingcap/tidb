@@ -224,7 +224,7 @@ impl LogicalApply {
             }
         }
         let left = &child_stats[0];
-        let right = child_stats.get(1)?;
+        let right = &child_stats[1];
         let mut row_count = left.row_count();
         if self.is_lateral
             && matches!(
