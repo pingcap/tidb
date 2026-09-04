@@ -102,6 +102,9 @@ func generateMydumperPattern(file mydump.FileInfo) string {
 		dirPrefix = full[:idx+1]
 		name = full[idx+1:]
 	}
+	if !strings.HasPrefix(name, dbName+"."+tableName+".") {
+		return ""
+	}
 
 	// compression ext from filename when compression exists (last suffix like .gz/.zst)
 	compExt := ""
