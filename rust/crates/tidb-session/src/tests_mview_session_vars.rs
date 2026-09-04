@@ -167,6 +167,53 @@ fn capture_on_fresh_session_reads_defaults() {
     );
 }
 
+/// Go `AddMViewExecutionSessionVarsToJob`'s capture side: the image carries
+/// the canonical sysvar names mapped to the session's LIVE values, so a
+/// submitted MV job inherits the creator's settings rather than the
+/// defaults. The DDL statement context installs exactly this image.
+#[test]
+fn session_vars_image_carries_live_values() {
+    let mut vars = SessionVars::new();
+    vars.set_system("tidb_mview_maintain_import_threads", "8".to_owned())
+        .expect("seed import threads");
+    vars.set_system("tidb_isolation_read_engines", "tikv".to_owned())
+        .expect("seed the isolation engines");
+    let image = super::vars::m_view_execution_session_vars_image(&vars);
+    assert_eq!(image.len(), 12, "the twelve MV-execution variables");
+    assert_eq!(
+        image
+            .get("tidb_mview_maintain_import_threads")
+            .map(String::as_str),
+        Some("8")
+    );
+    assert_eq!(
+        image
+            .get("tidb_mview_maintain_isolation_read_engines")
+            .map(String::as_str),
+        Some("tikv")
+    );
+    // Untouched knobs stay at their registry defaults.
+    assert_eq!(
+        image
+            .get("tidb_mview_maintain_mem_quota")
+            .map(String::as_str),
+        Some("2147483648")
+    );
+
+    // The DDL statement context carries the image forward.
+    let session = crate::Session::new();
+    let context = session.ddl_statement_context();
+    let carried = context
+        .session_vars_image()
+        .expect("the DDL context carries the image");
+    assert_eq!(
+        carried
+            .get("tidb_mview_maintain_import_threads")
+            .map(String::as_str),
+        Some("0")
+    );
+}
+
 /// Go `ApplyMViewExecutionSessionVarsWithConfig` with the mem-quota name
 /// pointed at `tidb_mem_quota_query` (the maintenance-session shape): the
 /// target values land, the restore handle puts them back, and capture-applied

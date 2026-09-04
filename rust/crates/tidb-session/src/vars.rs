@@ -2552,6 +2552,29 @@ fn restore_m_view_execution_session_vars(
     }
 }
 
+/// Go `AddMViewExecutionSessionVarsToJob`'s capture side: the live values of
+/// the twelve MV-execution session variables as the (name, value) image the
+/// DDL job envelope snapshots. Go's job writer reads the same typed fields
+/// off `SessionVars`; the names are the canonical sysvar names Go stores in
+/// the job's system-var list (the default maintained-variable names). The
+/// session tier installs this image on every DDL statement context, so a
+/// submitted MV job inherits the creator's settings instead of the
+/// defaults.
+#[must_use]
+pub fn m_view_execution_session_vars_image(
+    vars: &SessionVars,
+) -> std::collections::BTreeMap<String, String> {
+    let captured = capture_m_view_execution_session_vars(vars);
+    build_m_view_execution_session_var_assignments(
+        &captured,
+        tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA,
+        tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES,
+    )
+    .into_iter()
+    .map(|assignment| (assignment.name, assignment.value))
+    .collect()
+}
+
 fn system_i64(vars: &SessionVars, name: &str) -> i64 {
     vars.get_system(name)
         .ok()

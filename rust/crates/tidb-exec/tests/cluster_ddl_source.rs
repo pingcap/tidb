@@ -5177,7 +5177,19 @@ fn create_table_like_clears_materialized_view_metadata() {
 fn materialized_view_lowering_follows_go_admission_order() {
     use tidb_executor::StmtContext;
     let disabled = StmtContext::for_query();
-    let enabled = StmtContext::for_query().with_enable_mview(true);
+    // The session tier installs the live MV-execution variable image on the
+    // DDL context (tidb-session `m_view_execution_session_vars_image`);
+    // this two-key image stands in for it and proves the envelope records
+    // the LIVE values rather than the defaults.
+    let mut enabled = StmtContext::for_query().with_enable_mview(true);
+    enabled.set_session_vars_image(
+        [
+            ("tidb_mview_maintain_import_threads".to_owned(), "7".to_owned()),
+            ("tidb_max_tiflash_threads".to_owned(), "16".to_owned()),
+        ]
+        .into_iter()
+        .collect(),
+    );
     let try_lower = |context: &StmtContext, sql: &str, schema: &str| {
         let parsed = tidb_parser::parse(sql)
             .unwrap_or_else(|error| panic!("MV DDL does not parse ({sql}): {error:?}"));
@@ -5430,24 +5442,27 @@ fn materialized_view_lowering_follows_go_admission_order() {
         .read()
         .clone();
     drop(reorg);
-    assert_eq!(job_vars.len(), 13, "scatter region + the twelve MV vars");
+    assert_eq!(
+        job_vars.len(),
+        3,
+        "scatter region + the two image-supplied MV vars (the session tier always supplies the full twelve)"
+    );
     assert_eq!(
         job_vars
-            .get("tidb_mview_maintain_mem_quota")
+            .get("tidb_mview_maintain_import_threads")
             .map(|v| v.to_utf8_lossy_go()),
-        Some("2147483648".into())
+        Some("7".into()),
+        "the image's live value rides the envelope"
     );
     assert_eq!(
         job_vars
             .get("tidb_max_tiflash_threads")
             .map(|v| v.to_utf8_lossy_go()),
-        Some("-1".into())
+        Some("16".into())
     );
     assert_eq!(
-        job_vars
-            .get("tiflash_query_spill_ratio")
-            .map(|v| v.to_utf8_lossy_go()),
-        Some("0.7".into())
+        job_vars.get("tidb_scatter_region").map(|v| v.to_utf8_lossy_go()),
+        Some(String::new())
     );
 
     let JobArgsValue::CreateMaterializedView(Some(view_args)) = &spec.args else {

@@ -420,7 +420,14 @@ impl Session {
     /// while its default checks still consult the captured strict/date modes
     /// and session time zone.
     pub fn ddl_statement_context(&self) -> tidb_executor::StmtContext {
-        self.statement_context(false)
+        // The MV-execution session variables ride every DDL context: Go's
+        // `AddMViewExecutionSessionVarsToJob` snapshots them into the job
+        // envelope at submission, and a context without the image would
+        // record the defaults instead of the creator's settings.
+        let mut context = self.statement_context(false);
+        context
+            .set_session_vars_image(crate::vars::m_view_execution_session_vars_image(&self.vars));
+        context
     }
 
     /// Starts a statement executed by a server-owned route and returns the
