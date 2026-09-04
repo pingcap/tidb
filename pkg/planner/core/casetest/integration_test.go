@@ -346,6 +346,27 @@ func TestTiFlashExtraColumnPrune(t *testing.T) {
 			})
 			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
+
+		tk.MustExec("set @@tidb_enforce_mpp = off")
+		tk.MustExec("set @@tidb_isolation_read_engines = 'tikv,tiflash'")
+		sql := "select _tidb_commit_ts from t1"
+		tk.MustHavePlan(sql, "TableFullScan")
+		require.False(t, tk.HasTiFlashPlan(sql))
+
+		tk.MustExec("drop table if exists t_commit_ts")
+		tk.MustExec("create table t_commit_ts(a int primary key, b int, c int, index idx_b(b), index idx_c(c))")
+		pointGetSQL := "select _tidb_commit_ts from t_commit_ts where a = 1"
+		tk.MustHavePlan(pointGetSQL, "TableRangeScan")
+		tk.MustNotHavePlan(pointGetSQL, "Point_Get")
+		batchPointGetSQL := "select _tidb_commit_ts from t_commit_ts where a in (1, 2)"
+		tk.MustHavePlan(batchPointGetSQL, "TableRangeScan")
+		tk.MustNotHavePlan(batchPointGetSQL, "Batch_Point_Get")
+		indexLookUpSQL := "select _tidb_commit_ts from t_commit_ts use index (idx_b) where b = 1"
+		tk.MustHavePlan(indexLookUpSQL, "IndexLookUp")
+		tk.MustNotHavePlan(indexLookUpSQL, "IndexReader")
+
+		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+		require.Error(t, tk.ExecToErr(sql))
 	})
 }
 

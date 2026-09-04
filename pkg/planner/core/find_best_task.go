@@ -52,6 +52,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -1999,6 +2000,15 @@ func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
 	return true
 }
 
+func accessesExtraCommitTSColumn(ds *logicalop.DataSource) bool {
+	for _, col := range ds.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			return true
+		}
+	}
+	return false
+}
+
 // exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
 // See #46177 for more information.
 func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
@@ -2124,6 +2134,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	t = base.InvalidTask
 	candidates := skylinePruning(ds, prop)
 	pruningInfo := getPruningInfo(ds, candidates, prop)
+	accessesCommitTS := accessesExtraCommitTSColumn(ds)
 	defer func() {
 		if err == nil && t != nil && !t.Invalid() && pruningInfo != "" {
 			warnErr := errors.NewNoStackError(pruningInfo)
@@ -2172,7 +2183,8 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			return t, nil
 		}
 
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds)
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV &&
+			isPointGetConvertableSchema(ds) && !accessesCommitTS
 		if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 			canConvertPointGet = false
 		}
@@ -2260,11 +2272,12 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		if path.IsTablePath() {
 			// prefer tiflash, while current table path is tikv, skip it.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+			// TiFlash cannot provide _tidb_commit_ts, so retain the TiKV path when this column is accessed.
+			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV && !accessesCommitTS {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
-			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
+			if (ds.PreferStoreType&h.PreferTiKV != 0 || accessesCommitTS) && path.StoreType == kv.TiFlash {
 				continue
 			}
 			if !ds.HasTiFlash() && path.StoreType == kv.TiFlash {
@@ -2314,6 +2327,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 
 // convertToIndexMergeScan builds the index merge scan for intersection or union cases.
 func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) (task base.Task, err error) {
+	if accessesExtraCommitTSColumn(ds) {
+		return base.InvalidTask, nil
+	}
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
 		return base.InvalidTask, nil
 	}
@@ -2552,6 +2568,9 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath) (task base.Task, err error) {
+	if candidate.path.IsSingleScan && accessesExtraCommitTSColumn(ds) {
+		return base.InvalidTask, nil
+	}
 	if candidate.path.Index.MVIndex {
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
@@ -2969,6 +2988,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 
 func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath) (base.Task, error) {
+	if accessesExtraCommitTSColumn(ds) {
+		return base.InvalidTask, plannererrors.ErrInternal.GenWithStack(
+			"Usage of column name '%s' is not supported for TABLESAMPLE", model.ExtraCommitTSName.O)
+	}
 	if prop.TaskTp == property.CopMultiReadTaskType {
 		return base.InvalidTask, nil
 	}
