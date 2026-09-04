@@ -284,7 +284,8 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 		for _, ranges := range groupedRanges {
 			for _, t := range tables {
 				if isIdxScan {
-					kvRange, err := distsql.IndexRangesToKVRanges(dctx, t.physTblID, e.indexes[i].ID, ranges)
+					kvRange, err := distsql.IndexRangesToKVRanges(dctx, t.physTblID, e.indexes[i].ID, ranges,
+						distsql.UnsignedIntHandleSuffixDim(e.table.Meta(), e.indexes[i]))
 					if err != nil {
 						return err
 					}

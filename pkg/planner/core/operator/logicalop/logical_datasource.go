@@ -665,7 +665,7 @@ func (ds *DataSource) HandleColsToAppend(path *util.AccessPath, declaredCols []*
 		return ds.CommonHandleCols, ds.CommonHandleLens
 	}
 	handleCol := ds.GetPKIsHandleCol()
-	if handleCol == nil || mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
+	if handleCol == nil {
 		return nil, nil
 	}
 	for _, col := range declaredCols {
@@ -674,6 +674,27 @@ func (ds *DataSource) HandleColsToAppend(path *util.AccessPath, declaredCols []*
 		}
 	}
 	return []*expression.Column{handleCol}, []int{types.UnspecifiedLength}
+}
+
+// HasUnsignedIntHandleSuffix reports whether the range columns of path end with the
+// unsigned integer handle that HandleColsToAppend appends. TiKV stores an integer handle
+// suffix as the handle reinterpreted as an int64, so a handle above math.MaxInt64 sorts
+// before the rest of its declared-column prefix. Callers that rely on the index providing
+// SQL order must therefore stop at the declared index columns.
+func (ds *DataSource) HasUnsignedIntHandleSuffix(path *util.AccessPath) bool {
+	return hasUnsignedIntHandleSuffix(ds.TableInfo, path.Index, path.IdxCols)
+}
+
+// hasUnsignedIntHandleSuffix reports whether idxCols — the declared columns of idx
+// followed by whatever HandleColsToAppend appended to them — ends with an unsigned
+// integer handle. Only an integer handle is stored in the reinterpreted-int64 form; a
+// common handle is appended as ordinary column values and keeps SQL order.
+func hasUnsignedIntHandleSuffix(tblInfo *model.TableInfo, idx *model.IndexInfo, idxCols []*expression.Column) bool {
+	if idx == nil || tblInfo == nil || tblInfo.IsCommonHandle || len(idxCols) <= len(idx.Columns) {
+		return false
+	}
+	handleCol := idxCols[len(idx.Columns)]
+	return handleCol != nil && mysql.HasUnsignedFlag(handleCol.RetType.GetFlag())
 }
 
 // NewExtraHandleSchemaCol creates a new column for extra handle.
