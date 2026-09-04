@@ -23,3 +23,14 @@ any `ALL_*` list on either side.
 Dynamic privileges (Go `dynamicPrivs` in
 `pkg/privilege/privileges/privileges.go`), password-expiry policy, and
 SET-ROLE semantics are per-behavior audits, not table diffs.
+
+## Dynamic privileges (2026-09-05, second pass)
+
+Go's `dynamicPrivs` registry (21 entries, `privileges.go:60-82`) matches
+Rust's `DYNAMIC_PRIVS` element for element. Go canonicalizes names to
+upper case at registration and refuses names over 32 characters; Rust's
+`is_dynamic_privilege` compares case-insensitively, which is the same
+observable matching. `RegisterDynamicPrivilege` (plugin extension) is
+deliberately unported — this tier loads no plugins and the module doc
+records the `const` decision. Still open as a behavior surface:
+SET-ROLE/role-graph semantics and password-expiry policy.
