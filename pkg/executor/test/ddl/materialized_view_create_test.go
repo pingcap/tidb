@@ -77,6 +77,7 @@ func TestCreateMaterializedViewAndLog(t *testing.T) {
 	require.Contains(t, baseTable.Meta().MaterializedViewBase.MViewIDs, mviewTable.Meta().ID)
 	require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
 	require.Equal(t, baseTable.Meta().ID, mlogTable.Meta().MaterializedViewLog.BaseTableID)
+	require.Equal(t, []int64{mviewTable.Meta().ID}, mlogTable.Meta().MaterializedViewLog.DependentMViewIDs)
 	require.NotNil(t, mviewTable.Meta().MaterializedView)
 	require.Equal(t, model.MViewInitBuildReady, mviewTable.Meta().MaterializedView.GetInitBuildState())
 	require.Equal(t, 9, mviewTable.Meta().MaterializedView.DefinitionDivPrecisionIncrement)

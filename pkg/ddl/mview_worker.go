@@ -389,6 +389,7 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 
 func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, createdTable *model.TableInfo) ([]schemaIDAndTableInfo, error) {
 	var baseTableIDs []int64
+	var mlogTableIDs []int64
 	var apply func(*model.TableInfo) error
 	switch {
 	case createdTable.MaterializedView != nil:
@@ -397,6 +398,9 @@ func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, 
 			return nil, errors.New("materialized view must reference at least one base table")
 		}
 		baseTableIDs = createdTable.MaterializedView.BaseTableIDs
+		if args, ok := jobCtx.jobArgs.(*model.CreateMaterializedViewArgs); ok && args != nil {
+			mlogTableIDs = args.MLogTableIDs
+		}
 		apply = func(base *model.TableInfo) error {
 			if base.MaterializedViewBase == nil {
 				base.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
@@ -424,7 +428,7 @@ func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, 
 	default:
 		return nil, nil
 	}
-	extraInfos := make([]schemaIDAndTableInfo, 0, len(baseTableIDs))
+	extraInfos := make([]schemaIDAndTableInfo, 0, len(baseTableIDs)+len(mlogTableIDs))
 	processed := make(map[int64]struct{}, len(baseTableIDs))
 	for _, baseID := range baseTableIDs {
 		if baseID == 0 {
@@ -449,6 +453,53 @@ func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, 
 			return nil, errors.Trace(err)
 		}
 		extraInfos = append(extraInfos, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: base})
+	}
+	processedMLogs := make(map[int64]struct{}, len(mlogTableIDs))
+	for _, mlogID := range mlogTableIDs {
+		if mlogID == 0 {
+			job.State = model.JobStateCancelled
+			return nil, errors.New("materialized view log id is invalid")
+		}
+		if _, ok := processedMLogs[mlogID]; ok {
+			continue
+		}
+		processedMLogs[mlogID] = struct{}{}
+		mlog, err := getTableInfo(jobCtx.metaMut, mlogID, job.SchemaID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(err)
+		}
+		if mlog.MaterializedViewLog == nil {
+			job.State = model.JobStateCancelled
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid materialized view log")
+		}
+		isBaseTable := false
+		for _, baseID := range baseTableIDs {
+			if mlog.MaterializedViewLog.BaseTableID == baseID {
+				isBaseTable = true
+				break
+			}
+		}
+		if !isBaseTable {
+			job.State = model.JobStateCancelled
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: materialized view log does not belong to a base table")
+		}
+		dependent := false
+		for _, mviewID := range mlog.MaterializedViewLog.DependentMViewIDs {
+			if mviewID == createdTable.ID {
+				dependent = true
+				break
+			}
+		}
+		if dependent {
+			continue
+		}
+		mlog.MaterializedViewLog.DependentMViewIDs = append(mlog.MaterializedViewLog.DependentMViewIDs, createdTable.ID)
+		if err := updateTable(jobCtx.metaMut, job.SchemaID, mlog, true); err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(err)
+		}
+		extraInfos = append(extraInfos, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: mlog})
 	}
 	return extraInfos, nil
 }
@@ -872,12 +923,32 @@ func hasMaterializedViewDependsOnBaseTable(baseTableInfo *model.TableInfo) bool 
 	return baseTableInfo.MaterializedViewBase != nil && len(baseTableInfo.MaterializedViewBase.MViewIDs) > 0
 }
 
+func hasMaterializedViewDependsOnMaterializedViewLog(mlogTableInfo *model.TableInfo) bool {
+	return mlogTableInfo.MaterializedViewLog != nil && len(mlogTableInfo.MaterializedViewLog.DependentMViewIDs) > 0
+}
+
+func removeMaterializedViewID(ids []int64, mviewID int64) ([]int64, bool) {
+	removed := false
+	filtered := ids[:0]
+	for _, id := range ids {
+		if id == mviewID {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, id)
+	}
+	return filtered, removed
+}
+
 func errDropMaterializedViewLogDependent(schemaName, baseTableName string) error {
 	return errors.Errorf("cannot drop materialized view log on %s.%s: dependent materialized views exist", schemaName, baseTableName)
 }
 
 func checkDropMaterializedViewLogHasNoDependentMVs(jobCtx *jobContext, job *model.Job, droppingTable *model.TableInfo) error {
 	if droppingTable.MaterializedViewLog == nil {
+		return nil
+	}
+	if !hasMaterializedViewDependsOnMaterializedViewLog(droppingTable) {
 		return nil
 	}
 	baseTableID := droppingTable.MaterializedViewLog.BaseTableID
@@ -888,11 +959,8 @@ func checkDropMaterializedViewLogHasNoDependentMVs(jobCtx *jobContext, job *mode
 		}
 		return errors.Trace(err)
 	}
-	if hasMaterializedViewDependsOnBaseTable(baseTblInfo) {
-		job.State = model.JobStateCancelled
-		return errDropMaterializedViewLogDependent(job.SchemaName, baseTblInfo.Name.O)
-	}
-	return nil
+	job.State = model.JobStateCancelled
+	return errDropMaterializedViewLogDependent(job.SchemaName, baseTblInfo.Name.O)
 }
 
 func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, droppingTable *model.TableInfo) ([]schemaIDAndTableInfo, error) {
@@ -946,8 +1014,27 @@ func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, dr
 		if err != nil || base == nil {
 			continue
 		}
+		var mlogID int64
+		if droppingTable.MaterializedView != nil && base.MaterializedViewBase != nil {
+			mlogID = base.MaterializedViewBase.MLogID
+		}
 		apply(base)
 		extraInfos = append(extraInfos, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: base})
+		if mlogID == 0 {
+			continue
+		}
+		mlog, err := jobCtx.metaMut.GetTable(job.SchemaID, mlogID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if mlog == nil || mlog.MaterializedViewLog == nil {
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("drop materialized view: invalid materialized view log")
+		}
+		var removed bool
+		mlog.MaterializedViewLog.DependentMViewIDs, removed = removeMaterializedViewID(mlog.MaterializedViewLog.DependentMViewIDs, job.TableID)
+		if removed {
+			extraInfos = append(extraInfos, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: mlog})
+		}
 	}
 	return extraInfos, nil
 }

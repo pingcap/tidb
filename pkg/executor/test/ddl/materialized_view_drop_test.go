@@ -118,9 +118,13 @@ func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *t
 	tk.MustQuery("show tables like '$mlog$t_drop_recheck'").Check(testkit.Rows("$mlog$t_drop_recheck"))
 
 	tk.MustExec("drop materialized view mv_drop_dep")
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("$mlog$t_drop_recheck"))
+	require.NoError(t, err)
+	require.Empty(t, mlogTable.Meta().MaterializedViewLog.DependentMViewIDs)
 	tk.MustExec("drop materialized view log on t_drop_recheck")
 
-	is := dom.InfoSchema()
+	is = dom.InfoSchema()
 	baseTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_drop_recheck"))
 	require.NoError(t, err)
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
