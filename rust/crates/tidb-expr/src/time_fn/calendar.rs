@@ -1279,17 +1279,21 @@ fn parse_signed_duration_hms(s: &str) -> Option<(bool, u32, u32, u32, u32)> {
         Some(rest) => (true, rest),
         None => (false, s),
     };
-    if body.contains('-') || !body.contains(':') {
+    if body.contains('-') {
         return None;
     }
-    let mut parts = body.splitn(3, ':');
-    let h: u32 = parts.next()?.trim().parse().ok()?;
-    let mi: u32 = parts.next()?.trim().parse().ok()?;
-    let sec_field = parts.next()?.trim();
+    // Go `ParseDurationValue` distributes the `:`-separated groups onto the
+    // unit's fields from the RIGHT: three groups cover h/mi/sec, two cover
+    // mi/sec, one covers sec alone. The last group may carry the fraction.
+    let mut groups: Vec<&str> = body.split(':').collect();
+    let sec_field = groups.last_mut()?;
     let (sec_digits, fraction) = sec_field
         .split_once('.')
-        .map_or((sec_field, ""), |pair| pair);
-    let sec: u32 = sec_digits.parse().ok()?;
+        .map_or((*sec_field, ""), |pair| pair);
+    *sec_field = sec_digits;
+    if groups.iter().any(|group| group.is_empty()) || fraction.is_empty() && groups.len() == 0 {
+        return None;
+    }
     if !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
@@ -1298,6 +1302,26 @@ fn parse_signed_duration_hms(s: &str) -> Option<(bool, u32, u32, u32, u32)> {
         0
     } else {
         fraction.parse::<u32>().ok()? * 10u32.pow(6 - fraction.len() as u32)
+    };
+    let parse_field = |field: &str| -> Option<u32> {
+        if field.is_empty() {
+            return None;
+        }
+        field.trim().parse().ok()
+    };
+    let (h, mi, sec) = match groups.len() {
+        3 => (
+            parse_field(groups[0].trim())?,
+            parse_field(groups[1].trim())?,
+            parse_field(groups[2].trim())?,
+        ),
+        2 => (
+            0,
+            parse_field(groups[0].trim())?,
+            parse_field(groups[1].trim())?,
+        ),
+        1 => (0, 0, parse_field(groups[0].trim())?),
+        _ => return None,
     };
     if mi > 59 || sec > 59 {
         return None;
@@ -2226,5 +2250,57 @@ mod week_tests {
             assert_eq!(week_of_year(y, m, d, 2, true).0, xu, "%X {y}-{m}-{d}");
             assert_eq!(week_of_year(y, m, d, 3, true).0, xl, "%x {y}-{m}-{d}");
         }
+    }
+}
+
+#[cfg(test)]
+mod composite_extract_tests {
+    use super::*;
+
+    /// Go `ExtractDatetimeNum`/`ExtractDurationNum` per composite unit
+    /// (`pkg/types/time.go`): the compound extraction concatenates the fields
+    /// WITHOUT separators — the fractional-second compounds retain six-digit
+    /// microseconds from string inputs, and a negative duration applies its sign
+    /// to the WHOLE composite result rather than per-field.
+    #[test]
+    fn composite_extracts_concatenate_fields_like_go() {
+        // DAY_MICROSECOND over a datetime: day 1 + 01:02:03.456700.
+        let date = Datum::new_string("2023-03-14 01:02:03.4567".to_string());
+        assert_eq!(
+            extract_composite("DAY_MICROSECOND", &[date]).unwrap(),
+            Datum::Int(14_010_203_456_700)
+        );
+        // HOUR_MICROSECOND over a duration string.
+        assert_eq!(
+            extract_composite(
+                "HOUR_MICROSECOND",
+                &[Datum::new_string("01:02:03.4567".to_string())],
+            )
+            .unwrap(),
+            Datum::Int(102_034_567_00)
+        );
+        // MINUTE_MICROSECOND over `02:03.4567` — DIAGNOSED DIVERGENCE: Go's
+        // `ParseDurationValue` splits `mm:ss.ffffff` (two groups) and yields
+        // 203456700, while `parse_signed_duration_hms` demands an `HH:`
+        // prefix and returns NULL. Queued for its own batch (the fix must
+        // mirror Go's group-count-based field distribution, not a special
+        // case).
+        // SECOND_MICROSECOND.
+        assert_eq!(
+            extract_composite(
+                "SECOND_MICROSECOND",
+                &[Datum::new_string("03.4567".to_string())],
+            )
+            .unwrap(),
+            Datum::Int(3_456_700)
+        );
+        // A negative duration applies its sign to the WHOLE composite result.
+        let dur = Datum::new_string("-01:02:03.4567".to_string());
+        assert_eq!(
+            extract_composite("DAY_MICROSECOND", &[dur]).unwrap(),
+            // A Duration has no day field: DAY_MICROSECOND degenerates to the
+            // h/mi/s/us composite, sign applied to the whole result.
+            Datum::Int(-10_203_456_700)
+        );
     }
 }
