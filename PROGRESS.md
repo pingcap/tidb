@@ -45,3 +45,5 @@
 - 审计 item 4（字符串族）关闭：INSERT packet 溢出已被 TestInsertBinarySig 移植钉住、STRCMP collation 已实现、ELT/FIELD/MAKE_SET/EXPORT_SET 覆盖齐；CHAR/VARCHAR padding 归 storage 面仍开放。已推送。
 
 - chunk 审计 A-3 核实过期：引用的 panic 站点已不存在（row.rs 重构为 row_decoder.rs + ColumnLookup::Missing/Null 建模，row_decoder_source.rs:61-62 钉住）；datum 级 per-type 审计仍开放。
+
+- expr-builtin 审计 item 6（math）与 item 7（temporal）核实为已实现（RAND 种子、复合单位提取、微秒进位均已在树上），文档已更新为 RESOLVED。审计"Resume here"清单全部对账完毕。

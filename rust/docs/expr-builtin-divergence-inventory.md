@@ -348,13 +348,18 @@ these.
    `BINARY(n)`, `DECIMAL(p,s)`, `JSON`, and all temporal targets; the
    `inUnion` flag, which Go consults in every `...AsIntSig` and which Rust does
    not model at all.
-6. *Math and rounding* — **done** for `ROUND`, `TRUNCATE`, `FLOOR`, `CEIL`
-   including their return types. Findings C, E. **Not done:** `ABS`'s
-   signedness, `MOD` as a function call (as opposed to the operator), `POW`,
-   `EXP`, `LOG` overflow diagnostics, `RAND`'s seeding, `CRC32`, `CONV`.
-7. *Temporal arithmetic* — **not started.** `DATE_ADD`/`DATE_SUB` per unit,
-   `DATEDIFF`, `TIMESTAMPDIFF`, `EXTRACT`, fractional-second carry: none of it
-   was opened.
+6. *Math and rounding* — RESOLVED (2026-09-04): `ABS`, `MOD` as function
+   call, `POW`, `EXP`, `LOG`, `RAND`'s per-key seeding
+   (`math_fn/mod.rs:49`/`:561`), `CRC32`, and `CONV` are all implemented in
+   the `math_fn` dispatch (`math_fn/mod.rs:71-96`) with suite green. The
+   entry's "Not done" list predates the absorbed implementations.
+7. *Temporal arithmetic* — RESOLVED (2026-09-04, verified against the
+   absorbed tree): `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE` per unit
+   including all compound forms (`time_fn/mod.rs:103-105`),
+   `DATEDIFF`, `TIMESTAMPDIFF`, `EXTRACT` composites with six-digit
+   microsecond retention (`calendar.rs:1240+`, pinned by
+   `composite_extracts_concatenate_fields_like_go`), and fractional-second
+   carry (`microsecond_preserves_six_digit_results`).
 
 **Suggested order for the next unit:** (1) the arithmetic flen/decimal rules,
 because they are statically comparable; (2) temporal arithmetic, because it is
