@@ -334,3 +334,5 @@
 - 下轮恢复点: (1) 10 条 NEEDS WORK 逐个落地(mem_arbitrator 4 连+gogc_tuner_threshold+tiflash_pipeline_model+schema_cache_size+opt_index_join_build_v2+pessimistic_txn_fair_locking+tx_read_ts); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - mem_arbitrator 簇批(4 变量): mode 小写白名单 disable/standard/priority; wait_averse 精确 0/1/nolimit; query_reserved 0 或 >1 的整数; soft_limit 0/auto 规范化+其余值透传(字节表未移植, 代码中记录)。拒绝均 1105 Refused。session lib 1292 通过/281 预存, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) 工单余项: gogc_tuner_threshold/max/min、tiflash_pipeline_model、schema_cache_size、opt_index_join_build_v2、pessimistic_txn_fair_locking、tx_read_ts; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- gogc_tuner_threshold 批: 钩子在 Go 于类型归一化前消费原始值(tidbOptFloat64 非法值静默回退默认 0.6; 最短浮点文本存储; 范围守卫为 && 矛盾条件死代码+tuner 运行态比较未启动时为 0 不拒绝)—Rust 在 validate_in_scope 归一化前拦截实现, 3 断言回归(bogus→"0.6"/-5 透传)。tx_read_ts 钩子为空操作已核实关闭。session lib 1297 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) 工单余项: tiflash_pipeline_model/schema_cache_size(opt_index_join_build_v2、pessimistic_txn_fair_locking 待读钩子体); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。

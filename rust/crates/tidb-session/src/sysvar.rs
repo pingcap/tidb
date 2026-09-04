@@ -511,6 +511,20 @@ impl SysVarDef {
     /// Go `SysVar.ValidateFromType` including its `scope` argument, which only
     /// the empty-value escape hatch reads.
     pub fn validate_in_scope(&self, value: &str, scope: u8) -> Result<Validated, ValidationError> {
+        // Go's tidb_gogc_tuner_threshold Validation (`sysvar.go:1270`)
+        // consumes the RAW value before any type normalization: a
+        // non-numeric input silently falls back to the default 0.6
+        // (`tidbOptFloat64`), numbers store as their shortest float text,
+        // and the two range guards are dead (an `&&` over contradictory
+        // predicates) plus a runtime-tuner comparison whose tuner reads 0
+        // until startup sets it, so neither can reject here.
+        if self.name == "tidb_gogc_tuner_threshold" {
+            let float_value = value.parse::<f64>().unwrap_or(0.6);
+            return Ok(Validated {
+                value: format!("{float_value}"),
+                truncated: false,
+            });
+        }
         let validated = self.normalize_by_type(value, scope)?;
         self.run_validation(validated, value)
     }
@@ -2025,6 +2039,17 @@ mod tests {
             reserved.validate("1"),
             Err(ValidationError::Refused(_))
         ));
+    }
+
+    /// Go's tidb_gogc_tuner_threshold Validation (`sysvar.go:1270`):
+    /// non-numeric input silently becomes the 0.6 default, numbers store as
+    /// their shortest float text, and the range guards are dead code.
+    #[test]
+    fn gogc_tuner_threshold_falls_back_to_the_default_like_go() {
+        let sv = get_sys_var("tidb_gogc_tuner_threshold").unwrap();
+        assert_eq!(sv.validate("0.3").unwrap().value, "0.3");
+        assert_eq!(sv.validate("bogus").unwrap().value, "0.6");
+        assert_eq!(sv.validate("-5").unwrap().value, "-5");
     }
 
     fn bool_validation() {
