@@ -91,8 +91,8 @@ pub struct Opaque {
 /// The complete set of source values accepted by `CreateBinaryJSON`.
 ///
 /// A typed enum replaces Go's runtime `any` switch, making unsupported inputs
-/// unrepresentable while retaining `json.Number`'s signed-integer-then-double
-/// conversion rule.
+/// unrepresentable while retaining `json.Number`'s signed-integer, unsigned-
+/// integer, then double conversion rule.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BinaryJSONValue {
     /// JSON null.
@@ -438,6 +438,8 @@ fn typed_value_to_node(value: &BinaryJSONValue) -> Result<JSONNode, BinaryJSONEr
         BinaryJSONValue::Number(value) => {
             if let Ok(value) = value.parse::<i64>() {
                 typed_value_to_node(&BinaryJSONValue::Int64(value))
+            } else if let Ok(value) = value.parse::<u64>() {
+                typed_value_to_node(&BinaryJSONValue::Uint64(value))
             } else {
                 let value = value
                     .parse::<f64>()
@@ -1636,7 +1638,7 @@ mod tests {
             ),
             (
                 BinaryJSONValue::Number(u64::MAX.to_string()),
-                JSON_TYPE_CODE_FLOAT64,
+                JSON_TYPE_CODE_UINT64,
             ),
         ] {
             let value = BinaryJSON::from_typed_value(&input).unwrap();
@@ -1656,6 +1658,16 @@ mod tests {
         // Go accepts `any`, so its source test can pass int8 and assert the
         // dynamic unknown-type panic. Rust accepts the closed BinaryJSONValue
         // enum instead; an unlisted dynamic input cannot reach this function.
+    }
+
+    #[test]
+    fn json_number_uint64_uses_unsigned_storage_like_go() {
+        let value =
+            BinaryJSON::from_typed_value(&BinaryJSONValue::Number(u64::MAX.to_string())).unwrap();
+
+        assert_eq!(value.type_code(), JSON_TYPE_CODE_UINT64);
+        assert_eq!(value.as_u64(), Some(u64::MAX));
+        assert_eq!(value.to_string(), u64::MAX.to_string());
     }
 
     #[test]

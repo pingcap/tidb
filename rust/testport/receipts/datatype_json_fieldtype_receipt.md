@@ -65,15 +65,43 @@ change (verified by stashing the edit) — a pre-existing condition of that
 crate's absorbed state, queued for its own sweep; this batch neither adds
 nor removes any of them.
 
+## Batch 4: `json.Number` preserves the unsigned-integer tier
+
+The complete `pkg/types` root inventory contains 60 Go production, test,
+benchmark, support, and build artifacts (28,703 lines); its nested
+`pkg/types/parser_driver` package is a separate owner. No Go platform-specific,
+generated, fixture, or additional build variant exists in the root package.
+The relevant source is `json_binary.go` (1,043 lines), with its source tests in
+`json_binary_test.go` (850 lines). The Rust `tidb-datatype` owner inventory is
+104 artifacts (production modules, inline/source tests, benches, fuzz target,
+generated collation inputs, and the 830-row JSON fixture).
+
+Go's `appendBinaryNumber` (`pkg/types/json_binary.go`) tries `Int64`, then
+base-10 `ParseUint`, and only then `Float64`. Rust's `BinaryJSONValue::Number`
+previously tried only `i64` and `f64`, so `u64::MAX` was stored as a DOUBLE
+(type code `0x0b`) instead of an UNSIGNED INTEGER (`0x0a`). The conversion now
+keeps the unsigned tier before the floating fallback. The existing create
+binary vector and the focused `json_number_uint64_uses_unsigned_storage_like_go`
+regression both pin the type code, payload, and rendered value. The focused
+test failed before the production change with `left: 11, right: 10`.
+
 ## Validation
 
 Profile: Ready for this bounded Rust package batch.
 
 - Pre-fix baseline: the regression FAILS against the unfixed parser
   (stashed production edit), passes after.
-- Full `tidb-datatype` suite: 370 lib + 62 aggregate tests, 0 failed.
+- Current full `tidb-datatype` suite: 411 lib + 64 aggregate tests, 0 failed.
 - `cargo fmt --all -- --check`, workspace `make lint`, `git diff --check`:
   clean (recorded in `TESTPORT_EXECPLAN.md`).
+- Batch 4 focused regression: `cargo +nightly-2026-08-22 test
+  --manifest-path rust/Cargo.toml -p tidb-datatype --lib
+  binary_json::tests::json_number_uint64_uses_unsigned_storage_like_go --
+  --exact --nocapture` — failed before the production edit and passed after.
+- Batch 4 owner checks: the `binary_json` lib subset passed 30 tests, the
+  generated aggregate source binary passed 64 tests, the complete datatype
+  lib passed 411 tests, and `go test ./pkg/types -count=1` passed against the
+  Go authority.
 
 ## Risks
 

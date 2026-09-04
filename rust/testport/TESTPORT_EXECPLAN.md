@@ -7878,3 +7878,11 @@ risks without claiming repository-wide parity.
   source regression failed before the change and passes with the complete
   textrow vectors; inventory and validation are recorded in
   `receipts/format_textrow_audit.md`.
+- 2026-09-05 (`pkg/types` JSON number conversion): Rust
+  `tidb-datatype::BinaryJSONValue::Number` now follows Go's
+  `appendBinaryNumber` order (`Int64`, base-10 `Uint64`, then `Float64`), so
+  unsigned JSON-number text such as `18446744073709551615` remains an
+  `UNSIGNED INTEGER` instead of being widened to DOUBLE. The focused
+  fail-before/pass-after regression, complete 60-artifact Go package and
+  104-artifact Rust owner inventory are recorded in
+  `receipts/datatype_json_fieldtype_receipt.md`.
