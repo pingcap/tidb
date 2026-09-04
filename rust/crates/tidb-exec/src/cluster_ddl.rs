@@ -4102,7 +4102,6 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
                     &view_meta.refresh_next,
                     &zone,
                     view_meta.definition_sql_mode,
-                    &tidb_executor::StmtContext::for_query(),
                     "",
                     &view_info_name(&view_table_shared),
                     &tidb_executor::ddl::mview_schedule_expr::log_create_materialized_view_next_unix_seconds_update_null,

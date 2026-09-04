@@ -142,7 +142,6 @@ pub fn derive_schedule_decision(
     next_expr: &str,
     zone: &ResolvedTimeZone,
     sql_mode: u64,
-    context: &StmtContext,
     schema_name: &str,
     table_name: &str,
     log_null: &dyn Fn(&str, &str, &str, &str, &str),

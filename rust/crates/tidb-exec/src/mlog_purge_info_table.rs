@@ -292,7 +292,6 @@ impl MlogPurgeDerived {
             &log_meta.purge_next,
             &zone,
             log_meta.definition_sql_mode,
-            context,
             "",
             "",
             &tidb_executor::ddl::mview_schedule_expr::log_create_materialized_view_log_next_unix_seconds_update_null,
