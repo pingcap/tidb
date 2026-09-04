@@ -1712,6 +1712,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+	// RangeMaxCount is the maximum number of ranges the optimizer may build. When constructing more ranges would exceed
+	// the limit, it chooses less accurate ranges such as ranges built from a shorter index prefix. 0 disables the limit.
+	RangeMaxCount int64
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string

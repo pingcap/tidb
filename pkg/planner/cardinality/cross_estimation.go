@@ -159,7 +159,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	if len(accessConds) == 0 {
 		return 0, false, corr
 	}
-	ranges, accessConds, _, err := ranger.BuildColumnRange(accessConds, sctx.GetRangerCtx(), col.RetType, types.UnspecifiedLength, sctx.GetSessionVars().RangeMaxSize)
+	ranges, accessConds, _, err := ranger.BuildColumnRange(accessConds, sctx.GetRangerCtx(), col.RetType, types.UnspecifiedLength, sctx.GetSessionVars().RangeMaxSize, sctx.GetSessionVars().RangeMaxCount)
 	if len(ranges) == 0 || len(accessConds) == 0 || err != nil {
 		return 0, err == nil, corr
 	}

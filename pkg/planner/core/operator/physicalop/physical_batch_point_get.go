@@ -398,7 +398,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 			// https://github.com/pingcap/tidb/pull/62002#discussion_r2171420731
 			if !collate.IsBinCollation(col.GetType(evalCtx).GetCollate()) {
 				// If a non-binary collation is used, the values in `p.IndexValues` are sort keys and cannot be used for partition pruning.
-				r, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), p.AccessConditions, p.IdxCols, p.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
+				r, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), p.AccessConditions, p.IdxCols, p.IdxColLens, sctx.GetSessionVars().RangeMaxSize, sctx.GetSessionVars().RangeMaxCount)
 				if err != nil {
 					return false, err
 				}
