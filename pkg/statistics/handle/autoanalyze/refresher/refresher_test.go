@@ -551,6 +551,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 		return nil
 	}))
 	r.WaitAutoAnalyzeFinishedForTest()
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 
 	is := dom.InfoSchema()
 	// t1 is not analyzed.
