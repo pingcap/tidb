@@ -47,6 +47,10 @@ For each bounded behavior cluster:
   Go's TTL worker uses. Removed the now-stale empty TiFlash/TTL gap tests and
   added a focused regression; external-workload notification remains a
   documented partial boundary.
+- 2026-09-05 (`pkg/sessionctx/variable` receipt cleanup): removed the stale
+  empty ignored shims for every sysvar test whose executable coverage now
+  lives in `tidb-session`; the remaining `tidb-vardef` inventory is 13
+  passing constant/initial-value checks and 14 explicit gap tests.
 - 2026-09-05 (`pkg/sessionctx/variable` TiFlash session hooks): added typed
   SessionVars state for the three external-spill thresholds, per-node memory
   quota, and query spill ratio. Session writes, statement restore, GLOBAL

@@ -126,12 +126,6 @@ fn tidb_replica_read_in_next_gen_unported() {}
 // pkg/sessionctx/variable/removed_test.go
 // ---------------------------------------------------------------------------
 
-/// Go `pkg/sessionctx/variable/removed_test.go::TestRemovedOpt`.
-// go-parity-gap: CheckSysVarIsRemoved/IsRemovedSysVar removed-variable tables not ported
-#[test]
-#[ignore]
-fn removed_opt_unported() {}
-
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/statusvar_test.go
 // ---------------------------------------------------------------------------
@@ -145,72 +139,6 @@ fn status_var_unported() {}
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/sysvar_test.go (first 50 tests, canonical order)
 // ---------------------------------------------------------------------------
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestSQLSelectLimit`.
-// go-parity-gap: SysVar Validate autoconvert-out-of-range + SessionVars.SelectLimit not ported
-#[test]
-#[ignore]
-fn sql_select_limit_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBTraceEventSysVar`.
-// go-parity-gap: traceevent flight recorder + kernel-type-dependent SetGlobal not ported
-#[test]
-#[ignore]
-fn tidb_trace_event_sys_var_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestMaxExecutionTime`.
-// go-parity-gap: SysVar Validate clamping + SessionVars.MaxExecutionTime not ported
-#[test]
-#[ignore]
-fn max_execution_time_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBMaxKeysRead`.
-// go-parity-gap: SysVar Validate + SessionVars.MaxKeysRead/IsHintUpdatableVerified not ported
-#[test]
-#[ignore]
-fn tidb_max_keys_read_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestGetMaxKeysRead`.
-// go-parity-gap: SessionVars.StmtCtx.GetMaxKeysRead statement-context behavior not ported
-#[test]
-#[ignore]
-fn get_max_keys_read_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiFlashHashJoinVersion`.
-// go-parity-gap: SysVar Validation case-insensitive enum check not ported
-#[test]
-#[ignore]
-fn tiflash_hash_join_version_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestCollationServer`.
-// go-parity-gap: collation normalization/validation + charset side-effect hook not ported
-#[test]
-#[ignore]
-fn collation_server_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestDefaultCollationForUTF8MB4`.
-// go-parity-gap: collation validation + StmtCtx warning capture not ported
-#[test]
-#[ignore]
-fn default_collation_for_utf8mb4_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTxnIsolation`.
-// go-parity-gap: isolation-level validation + skip-isolation-check interaction not ported
-#[test]
-#[ignore]
-fn txn_isolation_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBMultiStatementMode`.
-// go-parity-gap: enum validation + SessionVars.MultiStatementMode field not ported
-#[test]
-#[ignore]
-fn multi_statement_mode_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestReadOnlyNoop`.
-// go-parity-gap: noop-function gating via tidb_enable_noop_functions not ported
-#[test]
-#[ignore]
-fn read_only_noop_unported() {}
 
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestSkipInit`.
 // go-parity-gap: SysVar struct construction + SkipInit flag not ported
@@ -230,54 +158,12 @@ fn session_getter_funcs_unported() {}
 #[ignore]
 fn instance_scoped_vars_unported() {}
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestSecureAuth`.
-// go-parity-gap: secure_auth validation rejecting OFF not ported
-#[test]
-#[ignore]
-fn secure_auth_unported() {}
-
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBReplicaRead` (classic-kernel branch).
 // go-parity-gap: SysVar Validate on classic kernel not ported; the nextgen variant's
 // initial-value half is covered by `pessimistic_transaction_fair_locking_nextgen_initial_value`'s pattern
 #[test]
 #[ignore]
 fn replica_read_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestSQLAutoIsNull`.
-// go-parity-gap: sql_auto_is_null/noop interplay validation not ported
-#[test]
-#[ignore]
-fn sql_auto_is_null_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestLastInsertID`.
-// go-parity-gap: GetSessionOrGlobalSystemVar + GetNativeValType Datum conversion not ported
-#[test]
-#[ignore]
-fn last_insert_id_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTimestamp`.
-// go-parity-gap: timestamp range validation + StmtCtx warnings not ported
-#[test]
-#[ignore]
-fn timestamp_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestIdentity`.
-// go-parity-gap: identity/last_insert_id synonym getter not ported
-#[test]
-#[ignore]
-fn identity_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestLcTimeNamesReadOnly`.
-// go-parity-gap: lc_time_names read-only validation not ported
-#[test]
-#[ignore]
-fn lc_time_names_read_only_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestLcMessages`.
-// go-parity-gap: locale validation + session getter not ported
-#[test]
-#[ignore]
-fn lc_messages_unported() {}
 
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestDDLWorkers`.
 ///
@@ -307,12 +193,6 @@ fn ddl_workers_bounds() {
     );
 }
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestDefaultCharsetAndCollation`.
-// go-parity-gap: character_set_connection/collation_connection getters over mysql.DefaultCharset not ported
-#[test]
-#[ignore]
-fn default_charset_and_collation_unported() {}
-
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestIndexMergeSwitcher`.
 ///
 /// Partial port: the Go test asserts
@@ -328,36 +208,6 @@ fn index_merge_switcher_default() {
     );
 }
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestNetBufferLength`.
-// go-parity-gap: net_buffer_length range clamping in Validate not ported
-#[test]
-#[ignore]
-fn net_buffer_length_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBBatchPendingTiFlashCount`.
-// go-parity-gap: unsigned-int validation rejecting non-integer input not ported
-#[test]
-#[ignore]
-fn batch_pending_tiflash_count_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBMemQuotaQuery`.
-// go-parity-gap: byte-value clamping (-2 -> -1) in Validate across both scopes not ported
-#[test]
-#[ignore]
-fn mem_quota_query_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBQueryLogMaxLen`.
-// go-parity-gap: byte-value range clamping in global-scope Validate not ported
-#[test]
-#[ignore]
-fn query_log_max_len_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBCommitterConcurrency`.
-// go-parity-gap: concurrency range clamping (1..10000) in Validate not ported
-#[test]
-#[ignore]
-fn committer_concurrency_unported() {}
-
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBDDLFlashbackConcurrency`.
 ///
 /// Partial port: pins `MaxConfigurableConcurrency` (= 256, the clamp bound
@@ -369,18 +219,6 @@ fn ddl_flashback_concurrency_bound() {
     const MAX_CONFIGURABLE_CONCURRENCY: u32 = 256;
     assert_eq!(256, MAX_CONFIGURABLE_CONCURRENCY);
 }
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestDefaultMemoryDebugModeValue`.
-// go-parity-gap: memory-debug-mode session getters returning "0" not ported
-#[test]
-#[ignore]
-fn default_memory_debug_mode_value_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestSetTIDBDistributeReorg`.
-// go-parity-gap: MockGlobalAccessor SetGlobalSysVar round-trip not ported
-#[test]
-#[ignore]
-fn set_tidb_distribute_reorg_unported() {}
 
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestDefaultPartitionPruneMode`.
 ///
