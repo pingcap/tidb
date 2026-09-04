@@ -24,6 +24,7 @@
 
 use tidb_ast::{Join, JoinNode, JoinType, SelectStmt, Stmt};
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
+use tidb_expr::schema::Schema;
 use tidb_expr::ZonedNoColumns;
 use tidb_funcdep::ColSet;
 
@@ -524,16 +525,10 @@ fn test_lateral_derived_table_becomes_a_logical_apply() {
 #[test]
 fn test_lateral_refuses_the_clauses_go_refuses() {
     let harness = Harness::new();
-    for (sql, expected) in [
-        (
-            "SELECT * FROM t1 LEFT JOIN LATERAL (SELECT 1 AS la) AS d ON TRUE",
-            "LEFT JOIN is not supported with LATERAL",
-        ),
-        (
-            "SELECT * FROM t1 RIGHT JOIN LATERAL (SELECT 1 AS la) AS d ON TRUE",
-            "RIGHT JOIN is not supported with LATERAL",
-        ),
-    ] {
+    for (sql, expected) in [(
+        "SELECT * FROM t1 RIGHT JOIN LATERAL (SELECT 1 AS la) AS d ON TRUE",
+        "RIGHT JOIN is not supported with LATERAL",
+    )] {
         let mut builder = harness.builder();
         let from = from_clause(sql);
         let error = builder.build_join(&from).expect_err("LATERAL refuses this");
@@ -542,6 +537,50 @@ fn test_lateral_refuses_the_clauses_go_refuses() {
             "expected {expected:?}, got {error:?}"
         );
     }
+}
+
+#[test]
+fn test_left_lateral_builds_a_nullable_outer_apply() {
+    // Go `buildLateralJoin` (`:1004`) accepts LEFT JOIN, sets the outer-join
+    // optimization flags, and clears NOT NULL from the inner side in both
+    // Schema and FullSchema because unmatched outer rows are NULL-extended.
+    let harness = primary_key_catalog();
+    let mut builder = harness.builder();
+    let from = from_clause("SELECT * FROM t1 LEFT JOIN LATERAL (SELECT a FROM t2) AS d ON TRUE");
+    let plan = builder
+        .build_join(&from)
+        .expect("LEFT JOIN LATERAL is supported");
+    let LogicalPlan::Apply(apply) = &plan else {
+        panic!("expected a LogicalApply, got {}", plan.tp());
+    };
+    assert_eq!(apply.join.join_type, LogicalJoinType::LeftOuter);
+    assert!(apply.is_lateral);
+    assert!(builder.opt_flag & flags::ELIMINATE_OUTER_JOIN != 0);
+    assert!(builder.opt_flag & flags::OUTER_JOIN_TO_SEMI_JOIN != 0);
+
+    let left_len = apply
+        .join
+        .base
+        .children()
+        .first()
+        .and_then(LogicalPlan::schema)
+        .map_or(0, Schema::len);
+    let schema = apply.join.base.base.schema().expect("Apply schema");
+    let inner = &schema.columns[left_len..];
+    assert!(!inner.is_empty());
+    assert!(inner.iter().all(|column| {
+        column
+            .ret_type
+            .as_ref()
+            .is_none_or(|ty| !ty.has_flag(FieldTypeFlags::NOT_NULL))
+    }));
+    let full = apply.join.full_schema.as_ref().expect("FullSchema");
+    assert!(full.columns[left_len..].iter().all(|column| {
+        column
+            .ret_type
+            .as_ref()
+            .is_none_or(|ty| !ty.has_flag(FieldTypeFlags::NOT_NULL))
+    }));
 }
 
 // ***** derived tables *****

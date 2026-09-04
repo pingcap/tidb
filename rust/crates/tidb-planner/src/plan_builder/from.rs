@@ -1069,12 +1069,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     /// Go `buildLateralJoin(ctx, leftPlan, rightPlan, joinNode)` (`:956`):
-    /// a `LATERAL` derived table is a `LogicalApply` with `InnerJoin`.
+    /// a `LATERAL` derived table is a `LogicalApply` with `InnerJoin` or
+    /// `LeftOuterJoin`.
     ///
     /// # Errors
     ///
-    /// `ErrInvalidLateralJoin` for `NATURAL`, `USING`, `LEFT JOIN` or
-    /// `RIGHT JOIN` beside `LATERAL`, or the `ON` clause's own error.
+    /// `ErrInvalidLateralJoin` for `NATURAL`, `USING`, or `RIGHT JOIN` beside
+    /// `LATERAL`, or the `ON` clause's own error.
     pub fn build_lateral_join(
         &mut self,
         left_plan: LogicalPlan,
@@ -1093,11 +1094,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 "Invalid LATERAL join: USING clause is not supported with LATERAL",
             ));
         }
-        match join_node.tp {
+        let join_type = match join_node.tp {
             JoinType::Left => {
-                return Err(PlanError::internal(
-                    "Invalid LATERAL join: LEFT JOIN is not supported with LATERAL",
-                ))
+                self.opt_flag |= flags::ELIMINATE_OUTER_JOIN | flags::OUTER_JOIN_TO_SEMI_JOIN;
+                LogicalJoinType::LeftOuter
             }
             JoinType::Right => {
                 return Err(PlanError::internal(
@@ -1105,8 +1105,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 ))
             }
             // Comma syntax and an explicit `INNER JOIN` are the same node.
-            JoinType::Cross => {}
-        }
+            JoinType::Cross => LogicalJoinType::Inner,
+        };
 
         let outer_schema = match find_join_full_schema(&left_plan) {
             Some((schema, _)) => schema.clone(),
@@ -1126,7 +1126,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let right_full = find_join_full_schema(&right_plan)
             .map(|(schema, names)| (schema.clone(), names.to_vec()));
 
-        let mut apply = LogicalApply::new(self.base(LogicalApply::TYPE), LogicalJoinType::Inner);
+        let mut apply = LogicalApply::new(self.base(LogicalApply::TYPE), join_type);
         apply.cor_cols = cor_cols;
         // "Allow decorrelation; optimizer will decide if safe."
         apply.no_decorrelate = false;
@@ -1134,7 +1134,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         apply.is_lateral = true;
         apply.join.base.set_children(vec![left_plan, right_plan]);
 
-        let schema = merge_schema(Some(&left_schema), Some(&right_schema)).unwrap_or_default();
+        let mut schema = merge_schema(Some(&left_schema), Some(&right_schema)).unwrap_or_default();
+        if join_type == LogicalJoinType::LeftOuter {
+            let schema_len = schema.len();
+            reset_not_null_flag(&mut schema, left_schema.len(), schema_len);
+        }
         apply.join.base.base.set_schema(Some(schema));
         // `:1017` The names are CLONED and the `DBName` is deliberately NOT
         // overridden: a real table inside the right subtree must keep its own
@@ -1145,14 +1149,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         // `:1029` The same `FullSchema`/`FullNames` merge `buildJoin` does.
         // There is no RIGHT-join swap because `LATERAL` refuses `RIGHT JOIN`
-        // above, and no `ResetNotNullFlag` because `InnerJoin` loses no
-        // nullability.
+        // above. LEFT JOIN null-extends the inner side, so its FullSchema
+        // columns lose NOT NULL just like the visible schema above.
         let (l_full_schema, l_full_names) =
             left_full.unwrap_or_else(|| (left_schema.clone(), left_names.clone()));
         let (r_full_schema, r_full_names) =
             right_full.unwrap_or_else(|| (right_schema.clone(), right_names.clone()));
-        apply.join.full_schema =
-            Some(merge_schema(Some(&l_full_schema), Some(&r_full_schema)).unwrap_or_default());
+        let mut full_schema =
+            merge_schema(Some(&l_full_schema), Some(&r_full_schema)).unwrap_or_default();
+        if join_type == LogicalJoinType::LeftOuter {
+            let full_len = full_schema.len();
+            reset_not_null_flag(&mut full_schema, l_full_schema.len(), full_len);
+        }
+        apply.join.full_schema = Some(full_schema);
         apply.join.full_names = l_full_names
             .iter()
             .chain(r_full_names.iter())

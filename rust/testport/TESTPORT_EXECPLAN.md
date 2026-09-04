@@ -71,6 +71,13 @@ For each bounded behavior cluster:
   recursive/operator regressions pass; the complete 43-artifact Go owner
   inventory and Ready evidence are recorded in
   `receipts/logical_apply_lateral_stats.md`.
+- 2026-09-05 (`pkg/planner/core` LEFT JOIN LATERAL builder): removed Rust's
+  stale rejection of LEFT JOIN beside LATERAL. The Rust plan builder now
+  creates a `LeftOuter` Apply, enables Go's outer-join optimization flags, and
+  clears NOT NULL from the inner columns in Schema and FullSchema. RIGHT,
+  NATURAL, and USING LATERAL errors remain source-aligned. Focused plan-builder
+  regressions and the complete 107-artifact Go owner inventory are recorded in
+  `receipts/logical_plan_builder_left_lateral.md`.
 - 2026-09-04 (`pkg/executor/sortexec` TopN spill threshold): aligned Rust's
   `TopNSpillAction` with Go's package-level tenth-of-quota guard. The focused
   action-level regression fails at exactly 10% under the old aggregation

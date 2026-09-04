@@ -223,3 +223,8 @@
   correlated lateral inners without explicit keys retain Go's product
   fallback. Focused recursive/operator tests and the package Ready profile
   are recorded in `rust/testport/receipts/logical_apply_lateral_stats.md`.
+- Current batch: Rust's FROM builder now accepts Go's LEFT JOIN LATERAL shape,
+  creates a nullable `LeftOuter` Apply, and retains the Go outer-join
+  optimization flags. RIGHT/NATURAL/USING LATERAL rejection remains aligned;
+  focused builder regressions and Ready evidence are recorded in
+  `rust/testport/receipts/logical_plan_builder_left_lateral.md`.
