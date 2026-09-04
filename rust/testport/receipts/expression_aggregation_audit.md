@@ -5,9 +5,10 @@ slice. The Go `max_count`/`min_count` family is a cross-package feature: parser
 names and grammar, expression descriptors, aggregate runtime, hash aggregation,
 planner routing, protobuf projection, and KV pushdown all change together. This
 batch closes the dependency-closed descriptor/type-inference/pushdown portion
-in `tidb-expr`; this follow-up adds the dependency-closed pair accumulator in
-`tidb-exec`, while live SQL wiring and aggregate protobuf projection remain
-explicit boundaries in their owning crates.
+in `tidb-expr`; the follow-up adds the pair accumulator in `tidb-exec`; and this
+batch wires live executor hash aggregation, TiKV pushdown, and tipb enum
+surfaces. Row-based/window SQL wiring remains an explicit boundary in its
+owning crates.
 
 Comparison source: Go `origin/master` at commit
 `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (2026-09-04). The relevant Go
@@ -67,17 +68,21 @@ are projected by `tidb-proto`; planner and KV pushdown consume the descriptor.
 
 Before the descriptor batch, the Rust owner had no `MAX_COUNT`/`MIN_COUNT`
 names or descriptor type-inference/pushdown arms. Those exact Go arms are now
-present, and this follow-up adds the executor pair state described below,
+present, and the executor follow-ups add the pair state described below,
 including count-shaped return/default metadata, one-stage TiFlash-only
 pushdown, original extreme-value typing across `Split`, outer-join count
 defaults, and NOT NULL behavior. The pair state remains outside `tidb-expr`
-in the aggregate runtime owners, and protobuf `ExprType_MaxCount` /
-`ExprType_MinCount` remains absent from `tidb-proto`.
+in the aggregate runtime owners. Live hash aggregation, partial-state spill
+merge, TiKV pushdown lowering, and protobuf `ExprType_MaxCount` /
+`ExprType_MinCount` (3023/3022) are now wired across `tidb-executor`,
+`tidb-exec`, and `tidb-proto`.
 
 The existing source-parity tests therefore remain explicit, actionable gaps:
 
-- `test_agg_func_max_min_count_to_pb` — ignored because the Rust protobuf
-  projection lacks the aggregate ExprType members.
+- `test_agg_func_max_min_count_to_pb` — remains ignored because the source
+  carrier's aggregate protobuf adapter is not yet owned by the Rust test
+  harness; the underlying tipb enum values and cop-scan lowering are now
+  present and covered by a focused Rust regression.
 - `test_max_min_count` — the descriptor-side carrier remains ignored because
   its SQL evaluator harness is outside the `tidb-expr` seed. The dependency-
   closed pair-state semantics are now covered by
@@ -108,22 +113,34 @@ count. Focused source-derived regressions cover MAX/MIN ties, NULL/default
 semantics, UInt/Decimal/case-insensitive string comparison, partial merges,
 kind mismatch, and reset behavior.
 
-The remaining boundaries are intentional and tracked: `tidb-executor`'s live
-hash-aggregation dispatch still has no MaxCount/MinCount arm; tipb/protobuf
-`ExprType_MaxCount` and `ExprType_MinCount` are absent; and Go's row-based
-final mode, DISTINCT/window sliding state, memory tracker, and SQL integration
-tests have no Rust owner yet. These must be implemented together before the
-package can claim end-to-end parity.
+The dependency-closed live path now includes `AggKind::MinCount`/
+`MaxCount` in `tidb-executor` hash aggregation, spill serialization and
+parallel merge, access/table local partial aggregation, physical-builder
+routing, pushdown blacklist classification, and TiKV cop-scan lowering. The
+new `tipb.ExprType` values are `MinCount = 3022` and `MaxCount = 3023`, matching
+Go's generated enum. Focused regressions cover runtime tie counts, aggregate
+kind construction, and cop-scan enum projection.
+
+The remaining boundaries are intentional and tracked: Go's row-based final
+mode, DISTINCT/window sliding state, memory tracker, aggregate protobuf
+adapter test harness, and SQL integration tests have no complete Rust owner
+yet. These must be implemented together before the package can claim
+end-to-end parity.
 
 ## Validation
 
-Profile: Ready for the bounded descriptor slice; package-complete parity is not
-claimed while evaluator/PB owners remain unported.
+Profile: Ready for the dependency-closed descriptor/runtime/hash-aggregation
+slice; package-complete parity is not claimed while row-based/window/SQL
+owners remain unported.
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/expression/aggregation -count=1` — package tests passed.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr max_min_count -- --nocapture` — 6 active descriptor regressions passed; the SQL evaluator and PB source carriers remain ignored for their documented owner gaps.
 - `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-exec --test all max_min_count_runtime_source -- --nocapture` — 3 focused pair-state regressions passed.
 - `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-exec` — passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-executor max_min_count -- --nocapture` — 2 focused regressions passed (runtime kind mapping and hash-aggregation tie counts).
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-exec cop_scan::tests::max_min_count_uses_the_go_tipb_aggregate_enums -- --nocapture` — cop-scan enum projection regression passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-executor -p tidb-exec -p tidb-proto` — passed after wiring hash aggregation, local partial scans, and tipb enums.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-exec --test all -- --test-threads=1` — the Ready suite reached all three max/min-count runtime regressions (passed), then reported the pre-existing `analyze_added_column_source::a_column_added_after_the_rows_analyzes_as_its_origin_default` and `placement_delivery_source::a_bundle_delivery_is_gos_post_with_partial_true` failures before the next placement fixture hung; the run was interrupted. No max/min-count test failed.
 - `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-exec --test all -- --test-threads=1` — Ready suite reached the new 3 pair-state tests (all passed), then reported the pre-existing `analyze_added_column_source::a_column_added_after_the_rows_analyzes_as_its_origin_default` and `placement_delivery_source::a_bundle_delivery_is_gos_post_with_partial_true` failures; the next placement-delivery case hung awaiting its external fixture, so the run was interrupted after the baseline failure/hang. No max/min-count test failed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex go test ./pkg/executor/aggfuncs -run 'TestMaxMinCountAllMaxMinTypes|TestMaxMinCountDuplicateSemantics|TestMergePartialResult4MaxMinCount' -count=1` — blocked before test selection by the pre-existing `pkg/session/session.go` metrics mismatch (`CancelWaitAversePlan` and `CancelStandardModePlan` are absent).
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed.

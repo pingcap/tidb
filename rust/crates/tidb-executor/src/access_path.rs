@@ -2508,6 +2508,12 @@ impl IndexRangeSourceExec {
                         is_max: bool,
                         collation: tidb_datatype::Collation,
                     },
+                    ExtremeCount {
+                        value: Option<Datum>,
+                        count: i64,
+                        is_max: bool,
+                        collation: tidb_datatype::Collation,
+                    },
                 }
 
                 let input_types = self.partial_input_types.clone().ok_or_else(|| {
@@ -2541,6 +2547,22 @@ impl IndexRangeSourceExec {
                                 function.input.as_ref(),
                             ),
                         },
+                        PushdownAggregateKind::MinCount => PartialValue::ExtremeCount {
+                            value: None,
+                            count: 0,
+                            is_max: false,
+                            collation: crate::remote_scan::extreme_collation(
+                                function.input.as_ref(),
+                            ),
+                        },
+                        PushdownAggregateKind::MaxCount => PartialValue::ExtremeCount {
+                            value: None,
+                            count: 0,
+                            is_max: true,
+                            collation: crate::remote_scan::extreme_collation(
+                                function.input.as_ref(),
+                            ),
+                        },
                     })
                     .collect::<Vec<_>>();
 
@@ -2565,14 +2587,16 @@ impl IndexRangeSourceExec {
                             (PartialValue::Count(count), Some(_)) => *count += 1,
                             (PartialValue::SumDecimal(_), None)
                             | (PartialValue::SumReal(_), None)
-                            | (PartialValue::Extreme { .. }, None) => {
+                            | (PartialValue::Extreme { .. }, None)
+                            | (PartialValue::ExtremeCount { .. }, None) => {
                                 return Err(ExecError::unsupported(
                                     "only COUNT may omit an index partial aggregate input",
                                 ));
                             }
                             (PartialValue::SumDecimal(_), Some(Datum::Null))
                             | (PartialValue::SumReal(_), Some(Datum::Null))
-                            | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
+                            | (PartialValue::Extreme { .. }, Some(Datum::Null))
+                            | (PartialValue::ExtremeCount { .. }, Some(Datum::Null)) => {}
                             (PartialValue::SumDecimal(sum), Some(input)) => {
                                 let addend = match input {
                                     Datum::Int(value) => Decimal::from_int(value),
@@ -2614,6 +2638,33 @@ impl IndexRangeSourceExec {
                                     *value = Some(candidate);
                                 }
                             }
+                            (
+                                PartialValue::ExtremeCount {
+                                    value,
+                                    count,
+                                    is_max,
+                                    collation,
+                                },
+                                Some(candidate),
+                            ) => match value.as_ref() {
+                                None => {
+                                    *value = Some(candidate);
+                                    *count = 1;
+                                }
+                                Some(current) => {
+                                    let ordering = tidb_expr::compare_datums_with_collation(
+                                        &candidate, current, *collation,
+                                    )?;
+                                    if (*is_max && ordering == std::cmp::Ordering::Greater)
+                                        || (!*is_max && ordering == std::cmp::Ordering::Less)
+                                    {
+                                        *value = Some(candidate);
+                                        *count = 1;
+                                    } else if ordering == std::cmp::Ordering::Equal {
+                                        *count += 1;
+                                    }
+                                }
+                            },
                         }
                     }
                 }
@@ -2625,6 +2676,7 @@ impl IndexRangeSourceExec {
                         PartialValue::SumDecimal(sum) => sum.map_or(Datum::Null, Datum::Decimal),
                         PartialValue::SumReal(sum) => sum.map_or(Datum::Null, Datum::Real),
                         PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
+                        PartialValue::ExtremeCount { count, .. } => Datum::Int(count),
                     })
                     .collect::<Vec<_>>()])
             }
@@ -2656,6 +2708,12 @@ impl IndexRangeSourceExec {
                         is_max: bool,
                         collation: tidb_datatype::Collation,
                     },
+                    ExtremeCount {
+                        value: Option<Datum>,
+                        count: i64,
+                        is_max: bool,
+                        collation: tidb_datatype::Collation,
+                    },
                 }
                 let new_values = || {
                     functions
@@ -2683,6 +2741,22 @@ impl IndexRangeSourceExec {
                                     function.input.as_ref(),
                                 ),
                             },
+                            PushdownAggregateKind::MinCount => PartialValue::ExtremeCount {
+                                value: None,
+                                count: 0,
+                                is_max: false,
+                                collation: crate::remote_scan::extreme_collation(
+                                    function.input.as_ref(),
+                                ),
+                            },
+                            PushdownAggregateKind::MaxCount => PartialValue::ExtremeCount {
+                                value: None,
+                                count: 0,
+                                is_max: true,
+                                collation: crate::remote_scan::extreme_collation(
+                                    function.input.as_ref(),
+                                ),
+                            },
                         })
                         .collect::<Vec<_>>()
                 };
@@ -2696,6 +2770,7 @@ impl IndexRangeSourceExec {
                             }
                             PartialValue::SumReal(sum) => sum.map_or(Datum::Null, Datum::Real),
                             PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
+                            PartialValue::ExtremeCount { count, .. } => Datum::Int(count),
                         })
                         .chain(groups)
                         .collect::<Vec<_>>()
@@ -2743,14 +2818,16 @@ impl IndexRangeSourceExec {
                                 (PartialValue::Count(count), Some(_)) => *count += 1,
                                 (PartialValue::SumDecimal(_), None)
                                 | (PartialValue::SumReal(_), None)
-                                | (PartialValue::Extreme { .. }, None) => {
+                                | (PartialValue::Extreme { .. }, None)
+                                | (PartialValue::ExtremeCount { .. }, None) => {
                                     return Err(ExecError::unsupported(
                                         "only COUNT may omit an index partial aggregate input",
                                     ));
                                 }
                                 (PartialValue::SumDecimal(_), Some(Datum::Null))
                                 | (PartialValue::SumReal(_), Some(Datum::Null))
-                                | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
+                                | (PartialValue::Extreme { .. }, Some(Datum::Null))
+                                | (PartialValue::ExtremeCount { .. }, Some(Datum::Null)) => {}
                                 (PartialValue::SumDecimal(sum), Some(input)) => {
                                     let addend = match input {
                                         Datum::Int(value) => Decimal::from_int(value),
@@ -2792,6 +2869,33 @@ impl IndexRangeSourceExec {
                                         *value = Some(candidate);
                                     }
                                 }
+                                (
+                                    PartialValue::ExtremeCount {
+                                        value,
+                                        count,
+                                        is_max,
+                                        collation,
+                                    },
+                                    Some(candidate),
+                                ) => match value.as_ref() {
+                                    None => {
+                                        *value = Some(candidate);
+                                        *count = 1;
+                                    }
+                                    Some(current) => {
+                                        let ordering = tidb_expr::compare_datums_with_collation(
+                                            &candidate, current, *collation,
+                                        )?;
+                                        if (*is_max && ordering == std::cmp::Ordering::Greater)
+                                            || (!*is_max && ordering == std::cmp::Ordering::Less)
+                                        {
+                                            *value = Some(candidate);
+                                            *count = 1;
+                                        } else if ordering == std::cmp::Ordering::Equal {
+                                            *count += 1;
+                                        }
+                                    }
+                                },
                             }
                         }
                         Ok(())

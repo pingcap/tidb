@@ -181,7 +181,9 @@ fn go_partial_result_bytes(func: &AggFunc) -> usize {
         AggKind::Count => 8,
         AggKind::FinalCount => 16,
         AggKind::Sum => 48,
-        AggKind::FirstRow | AggKind::Min | AggKind::Max => 48,
+        AggKind::FirstRow | AggKind::Min | AggKind::Max | AggKind::MinCount | AggKind::MaxCount => {
+            48
+        }
         AggKind::Avg => 48,
         AggKind::GroupConcat { .. } => 40,
         AggKind::Bit(_) => 8,

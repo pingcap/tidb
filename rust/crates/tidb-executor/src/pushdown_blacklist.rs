@@ -110,6 +110,8 @@ pub(crate) fn aggregate_admits(
         PushdownAggregateKind::Sum => "sum",
         PushdownAggregateKind::Min => "min",
         PushdownAggregateKind::Max => "max",
+        PushdownAggregateKind::MinCount => "min_count",
+        PushdownAggregateKind::MaxCount => "max_count",
     };
     let admits_name = |name: &str| is_push_down_enabled(blacklist, name, PushDownStore::TiKv);
     let admits_arg = |input: Option<&Expression>| {

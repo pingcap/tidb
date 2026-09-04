@@ -109,6 +109,10 @@ enum ExprType {
   // also numbers Avg (3003), First (3006) and GroupConcat (3007).
   Count = 3001;
   Sum = 3002;
+  // Go tipb `ExprType_MaxCount` / `ExprType_MinCount`: the aggregate
+  // partials that retain an extreme value and its tie count.
+  MinCount = 3022;
+  MaxCount = 3023;
   Min = 3004;
   Max = 3005;
   ScalarFunc = 10000;

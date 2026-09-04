@@ -35,6 +35,8 @@ pub(crate) fn aggregate_kind(
         "FIRST_ROW" | "FIRSTROW" => AggKind::FirstRow,
         "MIN" => AggKind::Min,
         "MAX" => AggKind::Max,
+        "MIN_COUNT" => AggKind::MinCount,
+        "MAX_COUNT" => AggKind::MaxCount,
         "AVG" => AggKind::Avg,
         "GROUP_CONCAT" => AggKind::GroupConcat {
             separator: separator.ok_or_else(|| {
@@ -167,5 +169,22 @@ fn constant_eval_int(value: &Datum) -> Option<i64> {
         Datum::String(_) | Datum::Bytes(_) => Some(value.to_i64().map_or(0, |result| result.value)),
         Datum::Real(number) | Datum::Float32(number) => Some(number.to_bits() as i64),
         _ => Some(0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_min_count_names_build_the_matching_runtime_kind() {
+        assert_eq!(
+            aggregate_kind("MAX_COUNT", &[], None).unwrap(),
+            AggKind::MaxCount
+        );
+        assert_eq!(
+            aggregate_kind("MIN_COUNT", &[], None).unwrap(),
+            AggKind::MinCount
+        );
     }
 }

@@ -769,6 +769,8 @@ fn pushed_partial_aggregation(
             AggKind::Sum => &[PushdownAggregateKind::Sum],
             AggKind::Min => &[PushdownAggregateKind::Min],
             AggKind::Max => &[PushdownAggregateKind::Max],
+            AggKind::MinCount => &[PushdownAggregateKind::MinCount],
+            AggKind::MaxCount => &[PushdownAggregateKind::MaxCount],
             AggKind::Avg => &[PushdownAggregateKind::Count, PushdownAggregateKind::Sum],
             _ => return Ok(None),
         };

@@ -940,6 +940,8 @@ fn lower_aggregate_function(
         PushdownAggregateKind::Sum => ExprType::Sum,
         PushdownAggregateKind::Min => ExprType::Min,
         PushdownAggregateKind::Max => ExprType::Max,
+        PushdownAggregateKind::MinCount => ExprType::MinCount,
+        PushdownAggregateKind::MaxCount => ExprType::MaxCount,
     };
     Some(Expr {
         tp: Some(tp as i32),
@@ -981,4 +983,45 @@ pub fn requests_extra_handle(request: &PushdownScanRequest) -> bool {
         .handle_index
         .and_then(|index| request.columns.get(index))
         .is_some_and(|column| column.id == EXTRA_HANDLE_COLUMN_ID)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::FieldTypeCode;
+    use tidb_expr::column::Column;
+    use tidb_expr::expression::Expression;
+
+    #[test]
+    fn max_min_count_uses_the_go_tipb_aggregate_enums() {
+        let mut column = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+        column.index = 0;
+        let input = Expression::Column(column);
+        let columns = [ScanColumnInfo {
+            column_id: 1,
+            tp: 8,
+            collation: 63,
+            column_len: 20,
+            ..ScanColumnInfo::default()
+        }];
+
+        let max = lower_aggregate_function(
+            PushdownAggregateKind::MaxCount,
+            Some(&input),
+            &FieldType::new(FieldTypeCode::LongLong),
+            &columns,
+        )
+        .expect("MAX_COUNT lowers to a tipb aggregate expression");
+        let min = lower_aggregate_function(
+            PushdownAggregateKind::MinCount,
+            Some(&input),
+            &FieldType::new(FieldTypeCode::LongLong),
+            &columns,
+        )
+        .expect("MIN_COUNT lowers to a tipb aggregate expression");
+        assert_eq!(max.tp, Some(ExprType::MaxCount as i32));
+        assert_eq!(min.tp, Some(ExprType::MinCount as i32));
+        assert_eq!(ExprType::from_i32(3023), Some(ExprType::MaxCount));
+        assert_eq!(ExprType::from_i32(3022), Some(ExprType::MinCount));
+    }
 }

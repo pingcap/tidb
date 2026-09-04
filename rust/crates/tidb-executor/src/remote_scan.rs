@@ -113,6 +113,10 @@ pub enum PushdownAggregateKind {
     Min,
     /// `MAX(expr)`.
     Max,
+    /// `MIN_COUNT(expr)`: count rows tied at the minimum argument.
+    MinCount,
+    /// `MAX_COUNT(expr)`: count rows tied at the maximum argument.
+    MaxCount,
 }
 
 /// A pushed aggregate function and the scan-row expression it reads.

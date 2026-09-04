@@ -64,6 +64,16 @@ For each bounded behavior cluster:
   Live `tidb-executor` hash-aggregation dispatch, tipb expression enums,
   row-based final mode, DISTINCT/window state, and SQL integration remain
   explicit cross-crate boundaries in `receipts/expression_aggregation_audit.md`.
+- 2026-09-05 (`pkg/executor/aggfuncs` max/min-count live executor path):
+  completed the dependency-closed runtime wiring beyond the standalone
+  accumulator. `tidb-executor` now constructs `MinCount`/`MaxCount` hash
+  aggregators, serializes and merges their pair state across spill rounds,
+  routes physical partial aggregation, and computes matching local index/table
+  partials. `tidb-exec` lowers the new TiKV aggregate kinds to Go's tipb enum
+  values (`MinCount = 3022`, `MaxCount = 3023`), with blacklist coverage. The
+  focused executor and cop-scan regressions pass; row-based final mode,
+  DISTINCT/window sliding state, aggregate protobuf adapter harness, and SQL
+  integration remain explicit boundaries in `receipts/expression_aggregation_audit.md`.
 - 2026-09-05 (`pkg/executor/sortexec` repeated TopN worker spill rounds):
   aligned Rust with Go's post-spill fetch loop. Workers now drain their
   bounded heaps once per shared spill generation while input continues, then

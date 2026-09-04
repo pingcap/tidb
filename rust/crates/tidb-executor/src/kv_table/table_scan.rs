@@ -3667,6 +3667,12 @@ impl TableScanExec {
                         is_max: bool,
                         collation: tidb_datatype::Collation,
                     },
+                    ExtremeCount {
+                        value: Option<Datum>,
+                        count: i64,
+                        is_max: bool,
+                        collation: tidb_datatype::Collation,
+                    },
                 }
 
                 let input_types = self.partial_input_types.clone().ok_or_else(|| {
@@ -3695,6 +3701,22 @@ impl TableScanExec {
                         },
                         PushdownAggregateKind::Max => PartialValue::Extreme {
                             value: None,
+                            is_max: true,
+                            collation: crate::remote_scan::extreme_collation(
+                                function.input.as_ref(),
+                            ),
+                        },
+                        PushdownAggregateKind::MinCount => PartialValue::ExtremeCount {
+                            value: None,
+                            count: 0,
+                            is_max: false,
+                            collation: crate::remote_scan::extreme_collation(
+                                function.input.as_ref(),
+                            ),
+                        },
+                        PushdownAggregateKind::MaxCount => PartialValue::ExtremeCount {
+                            value: None,
+                            count: 0,
                             is_max: true,
                             collation: crate::remote_scan::extreme_collation(
                                 function.input.as_ref(),
@@ -3729,14 +3751,16 @@ impl TableScanExec {
                             (PartialValue::Count(count), Some(_)) => *count += 1,
                             (PartialValue::SumDecimal(_), None)
                             | (PartialValue::SumReal(_), None)
-                            | (PartialValue::Extreme { .. }, None) => {
+                            | (PartialValue::Extreme { .. }, None)
+                            | (PartialValue::ExtremeCount { .. }, None) => {
                                 return Err(ExecError::unsupported(
                                     "only COUNT may omit a global partial aggregate input",
                                 ));
                             }
                             (PartialValue::SumDecimal(_), Some(Datum::Null))
                             | (PartialValue::SumReal(_), Some(Datum::Null))
-                            | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
+                            | (PartialValue::Extreme { .. }, Some(Datum::Null))
+                            | (PartialValue::ExtremeCount { .. }, Some(Datum::Null)) => {}
                             (PartialValue::SumDecimal(sum), Some(input)) => {
                                 let addend = match input {
                                     Datum::Int(value) => Decimal::from_int(value),
@@ -3778,6 +3802,33 @@ impl TableScanExec {
                                     *value = Some(candidate);
                                 }
                             }
+                            (
+                                PartialValue::ExtremeCount {
+                                    value,
+                                    count,
+                                    is_max,
+                                    collation,
+                                },
+                                Some(candidate),
+                            ) => match value.as_ref() {
+                                None => {
+                                    *value = Some(candidate);
+                                    *count = 1;
+                                }
+                                Some(current) => {
+                                    let ordering = tidb_expr::compare_datums_with_collation(
+                                        &candidate, current, *collation,
+                                    )?;
+                                    if (*is_max && ordering == std::cmp::Ordering::Greater)
+                                        || (!*is_max && ordering == std::cmp::Ordering::Less)
+                                    {
+                                        *value = Some(candidate);
+                                        *count = 1;
+                                    } else if ordering == std::cmp::Ordering::Equal {
+                                        *count += 1;
+                                    }
+                                }
+                            },
                         }
                     }
                 }
@@ -3788,6 +3839,7 @@ impl TableScanExec {
                         PartialValue::SumDecimal(sum) => sum.map_or(Datum::Null, Datum::Decimal),
                         PartialValue::SumReal(sum) => sum.map_or(Datum::Null, Datum::Real),
                         PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
+                        PartialValue::ExtremeCount { count, .. } => Datum::Int(count),
                     })
                     .collect()])
             }
@@ -3818,6 +3870,12 @@ impl TableScanExec {
                         is_max: bool,
                         collation: tidb_datatype::Collation,
                     },
+                    ExtremeCount {
+                        value: Option<Datum>,
+                        count: i64,
+                        is_max: bool,
+                        collation: tidb_datatype::Collation,
+                    },
                 }
 
                 let new_values = || {
@@ -3840,6 +3898,22 @@ impl TableScanExec {
                                     function.input.as_ref(),
                                 ),
                             },
+                            PushdownAggregateKind::MinCount => PartialValue::ExtremeCount {
+                                value: None,
+                                count: 0,
+                                is_max: false,
+                                collation: crate::remote_scan::extreme_collation(
+                                    function.input.as_ref(),
+                                ),
+                            },
+                            PushdownAggregateKind::MaxCount => PartialValue::ExtremeCount {
+                                value: None,
+                                count: 0,
+                                is_max: true,
+                                collation: crate::remote_scan::extreme_collation(
+                                    function.input.as_ref(),
+                                ),
+                            },
                         })
                         .collect::<Vec<_>>()
                 };
@@ -3850,6 +3924,7 @@ impl TableScanExec {
                             PartialValue::Count(count) => Datum::Int(count),
                             PartialValue::Sum(sum) => sum.into_datum(),
                             PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
+                            PartialValue::ExtremeCount { count, .. } => Datum::Int(count),
                         })
                         .chain(groups)
                         .collect::<Vec<_>>()
@@ -3875,56 +3950,85 @@ impl TableScanExec {
                     }
                     Ok((key, groups))
                 };
-                let update = |values: &mut [PartialValue],
-                              row: &[Datum]|
-                 -> Result<(), ExecError> {
-                    for (function, value) in functions.iter().zip(values.iter_mut()) {
-                        let input = function
-                            .input
-                            .as_ref()
-                            .map(|expression| {
-                                crate::generated_column::eval_over_row(
-                                    expression,
-                                    &input_types,
-                                    row,
-                                    &context,
-                                )
-                                .map_err(ExecError::Eval)
-                            })
-                            .transpose()?;
-                        match (value, input) {
-                            (PartialValue::Count(count), None) => *count += 1,
-                            (PartialValue::Count(_), Some(Datum::Null)) => {}
-                            (PartialValue::Count(count), Some(_)) => *count += 1,
-                            (PartialValue::Sum(_), None) | (PartialValue::Extreme { .. }, None) => {
-                                return Err(ExecError::unsupported(
-                                    "only COUNT may omit a partial aggregate input",
-                                ));
-                            }
-                            (PartialValue::Sum(_), Some(Datum::Null))
-                            | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
-                            (PartialValue::Sum(sum), Some(input)) => sum.accumulate(&input)?,
-                            (
-                                PartialValue::Extreme {
-                                    value,
-                                    is_max,
-                                    collation,
-                                },
-                                Some(candidate),
-                            ) => {
-                                let replace = value.as_ref().is_none_or(|current| {
-                                    crate::remote_scan::extreme_replaces(
-                                        &candidate, current, *is_max, *collation,
+                let update =
+                    |values: &mut [PartialValue], row: &[Datum]| -> Result<(), ExecError> {
+                        for (function, value) in functions.iter().zip(values.iter_mut()) {
+                            let input = function
+                                .input
+                                .as_ref()
+                                .map(|expression| {
+                                    crate::generated_column::eval_over_row(
+                                        expression,
+                                        &input_types,
+                                        row,
+                                        &context,
                                     )
-                                });
-                                if replace {
-                                    *value = Some(candidate);
+                                    .map_err(ExecError::Eval)
+                                })
+                                .transpose()?;
+                            match (value, input) {
+                                (PartialValue::Count(count), None) => *count += 1,
+                                (PartialValue::Count(_), Some(Datum::Null)) => {}
+                                (PartialValue::Count(count), Some(_)) => *count += 1,
+                                (PartialValue::Sum(_), None)
+                                | (PartialValue::Extreme { .. }, None)
+                                | (PartialValue::ExtremeCount { .. }, None) => {
+                                    return Err(ExecError::unsupported(
+                                        "only COUNT may omit a partial aggregate input",
+                                    ));
                                 }
+                                (PartialValue::Sum(_), Some(Datum::Null))
+                                | (PartialValue::Extreme { .. }, Some(Datum::Null))
+                                | (PartialValue::ExtremeCount { .. }, Some(Datum::Null)) => {}
+                                (PartialValue::Sum(sum), Some(input)) => sum.accumulate(&input)?,
+                                (
+                                    PartialValue::Extreme {
+                                        value,
+                                        is_max,
+                                        collation,
+                                    },
+                                    Some(candidate),
+                                ) => {
+                                    let replace = value.as_ref().is_none_or(|current| {
+                                        crate::remote_scan::extreme_replaces(
+                                            &candidate, current, *is_max, *collation,
+                                        )
+                                    });
+                                    if replace {
+                                        *value = Some(candidate);
+                                    }
+                                }
+                                (
+                                    PartialValue::ExtremeCount {
+                                        value,
+                                        count,
+                                        is_max,
+                                        collation,
+                                    },
+                                    Some(candidate),
+                                ) => match value.as_ref() {
+                                    None => {
+                                        *value = Some(candidate);
+                                        *count = 1;
+                                    }
+                                    Some(current) => {
+                                        let ordering = tidb_expr::compare_datums_with_collation(
+                                            &candidate, current, *collation,
+                                        )?;
+                                        if (*is_max && ordering == std::cmp::Ordering::Greater)
+                                            || (!*is_max && ordering == std::cmp::Ordering::Less)
+                                        {
+                                            *value = Some(candidate);
+                                            *count = 1;
+                                        } else if ordering == std::cmp::Ordering::Equal {
+                                            *count += 1;
+                                        }
+                                    }
+                                },
                             }
                         }
-                    }
-                    Ok(())
-                };
+                        Ok(())
+                    };
 
                 if !streamed {
                     let mut grouped = BTreeMap::<Vec<u8>, (Vec<Datum>, Vec<PartialValue>)>::new();

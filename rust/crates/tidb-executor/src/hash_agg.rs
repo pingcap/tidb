@@ -135,6 +135,10 @@ pub enum AggKind {
     Min,
     /// `MAX(expr)`.
     Max,
+    /// `MIN_COUNT`: count rows tied at the minimum argument.
+    MinCount,
+    /// `MAX_COUNT`: count rows tied at the maximum argument.
+    MaxCount,
     /// `AVG(expr)`.
     Avg,
     /// `GROUP_CONCAT([DISTINCT] arg [ORDER BY ...] [SEPARATOR sep])`, whose
@@ -339,6 +343,14 @@ enum Partial {
     /// `MIN`/`MAX`: the extreme seen so far, `None` while every input was NULL.
     MaxMin {
         value: Option<Datum>,
+        is_max: bool,
+    },
+    /// `MIN_COUNT`/`MAX_COUNT`: the selected extreme plus the number of rows
+    /// tied at that extreme. The value is retained for partial merges while
+    /// finalization returns only the count.
+    MaxMinCount {
+        value: Option<Datum>,
+        count: i64,
         is_max: bool,
     },
     /// `AVG` over integer/decimal inputs: Go's exact decimal sum plus count.
@@ -888,6 +900,16 @@ impl Partial {
                 value: None,
                 is_max: true,
             },
+            AggKind::MinCount => Partial::MaxMinCount {
+                value: None,
+                count: 0,
+                is_max: false,
+            },
+            AggKind::MaxCount => Partial::MaxMinCount {
+                value: None,
+                count: 0,
+                is_max: true,
+            },
             // As with SUM, the domain is chosen from the first non-NULL input:
             // Go picks it from the inferred return type, which is DECIMAL for
             // integer/decimal arguments and DOUBLE for real ones.
@@ -1277,6 +1299,37 @@ impl Partial {
                     }
                 }
             },
+            (Partial::MaxMinCount { .. }, None) => {
+                return Err(ExecError::unsupported(
+                    "MIN_COUNT/MAX_COUNT requires an argument",
+                ));
+            }
+            (Partial::MaxMinCount { .. }, Some(Datum::Null)) => {}
+            (
+                Partial::MaxMinCount {
+                    value,
+                    count,
+                    is_max,
+                },
+                Some(input),
+            ) => match value {
+                None => {
+                    *value = Some(input);
+                    *count = 1;
+                }
+                Some(current) => {
+                    let ordering =
+                        tidb_expr::compare_datums_with_collation(&input, current, collation)?;
+                    if (*is_max && ordering == Ordering::Greater)
+                        || (!*is_max && ordering == Ordering::Less)
+                    {
+                        *current = input;
+                        *count = 1;
+                    } else if ordering == Ordering::Equal {
+                        *count += 1;
+                    }
+                }
+            },
             (
                 Partial::AvgDecimal { .. }
                 | Partial::AvgDecimalFast { .. }
@@ -1493,6 +1546,7 @@ impl Partial {
             Partial::SumReal(Some(v)) => Datum::Real(*v),
             Partial::FirstRow(v) => v.clone().unwrap_or(Datum::Null),
             Partial::MaxMin { value, .. } => value.clone().unwrap_or(Datum::Null),
+            Partial::MaxMinCount { count, .. } => Datum::Int(*count),
             // Go divides the exact sum by the count with the session's
             // div_precision_increment, the same rule the `/` operator follows.
             Partial::AvgDecimal { count: 0, .. } | Partial::AvgReal { count: 0, .. } => Datum::Null,
@@ -2997,6 +3051,30 @@ mod tests {
             StatementMemory::default(),
         );
         assert_eq!(run(exec), vec![vec![Datum::Int(2)]]);
+    }
+
+    #[test]
+    fn max_min_count_hash_agg_returns_extreme_tie_counts() {
+        let rows = [
+            (0, Some(0)),
+            (0, Some(0)),
+            (0, Some(1)),
+            (0, Some(4)),
+            (0, Some(4)),
+            (0, Some(4)),
+            (0, None),
+        ];
+        let max = AggFunc::new(AggKind::MaxCount, Some(col(1)));
+        let min = AggFunc::new(AggKind::MinCount, Some(col(1)));
+        let exec = HashAggExec::new(
+            out_meta(2),
+            vec![],
+            vec![max, min],
+            source(&rows),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert_eq!(run(exec), vec![vec![Datum::Int(3), Datum::Int(2)]]);
     }
 
     #[test]

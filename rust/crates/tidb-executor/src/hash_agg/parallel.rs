@@ -455,6 +455,11 @@ fn write_partial(writer: &mut SpillWriter, partial: &Partial) -> Result<(), Exec
             writer.u8(6);
             writer.optional_datum(value.as_ref())?;
         }
+        Partial::MaxMinCount { value, count, .. } => {
+            writer.u8(17);
+            writer.optional_datum(value.as_ref())?;
+            writer.i64(*count);
+        }
         Partial::AvgDecimal { sum, count } => {
             writer.u8(7);
             writer.datum(&Datum::Decimal(sum.clone()))?;
@@ -591,6 +596,16 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
         },
         (AggKind::Max, 6) => Partial::MaxMin {
             value: reader.optional_datum()?,
+            is_max: true,
+        },
+        (AggKind::MinCount, 17) => Partial::MaxMinCount {
+            value: reader.optional_datum()?,
+            count: reader.i64()?,
+            is_max: false,
+        },
+        (AggKind::MaxCount, 17) => Partial::MaxMinCount {
+            value: reader.optional_datum()?,
+            count: reader.i64()?,
             is_max: true,
         },
         (AggKind::Avg, 7) => Partial::AvgDecimal {
@@ -1569,6 +1584,36 @@ fn merge_state(dst: &mut AggState, mut src: AggState) -> Result<(), ExecError> {
                     || (!*is_max && ordering == Ordering::Less)
                 {
                     *current = value;
+                }
+            }
+        },
+        (
+            Partial::MaxMinCount {
+                value: dst_value,
+                count: dst_count,
+                is_max,
+            },
+            Partial::MaxMinCount {
+                value: src_value,
+                count: src_count,
+                ..
+            },
+        ) => match (dst_value.as_mut(), src_value) {
+            (_, None) => {}
+            (None, Some(value)) => {
+                *dst_value = Some(value);
+                *dst_count = src_count;
+            }
+            (Some(current), Some(value)) => {
+                let ordering =
+                    tidb_expr::compare_datums_with_collation(&value, current, dst.collation)?;
+                if (*is_max && ordering == Ordering::Greater)
+                    || (!*is_max && ordering == Ordering::Less)
+                {
+                    *current = value;
+                    *dst_count = src_count;
+                } else if ordering == Ordering::Equal {
+                    *dst_count = dst_count.wrapping_add(src_count);
                 }
             }
         },
