@@ -855,12 +855,44 @@ func (w *worker) deleteCreateMaterializedViewRefreshAlert(jobCtx *jobContext, mv
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	_, err := w.sess.Execute(ctx, buildDeleteMViewRefreshAlertSQL(mviewID), "mview-refresh-alert-delete")
-	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshAlertErr", func(val failpoint.Value) { err = errors.New(val.(string)) })
+	var err error
+	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshAlertErr", func(val failpoint.Value) {
+		err = errors.New(val.(string))
+	})
+	if err == nil {
+		_, err = w.sess.Execute(ctx, buildDeleteMViewRefreshAlertSQL(mviewID), "mview-refresh-alert-delete")
+	}
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil
 	}
 	return errors.Trace(err)
+}
+
+func hasMaterializedViewDependsOnBaseTable(baseTableInfo *model.TableInfo) bool {
+	return baseTableInfo.MaterializedViewBase != nil && len(baseTableInfo.MaterializedViewBase.MViewIDs) > 0
+}
+
+func errDropMaterializedViewLogDependent(schemaName, baseTableName string) error {
+	return errors.Errorf("cannot drop materialized view log on %s.%s: dependent materialized views exist", schemaName, baseTableName)
+}
+
+func checkDropMaterializedViewLogHasNoDependentMVs(jobCtx *jobContext, job *model.Job, droppingTable *model.TableInfo) error {
+	if droppingTable.MaterializedViewLog == nil {
+		return nil
+	}
+	baseTableID := droppingTable.MaterializedViewLog.BaseTableID
+	baseTblInfo, err := getTableInfo(jobCtx.metaMut, baseTableID, job.SchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	if hasMaterializedViewDependsOnBaseTable(baseTblInfo) {
+		job.State = model.JobStateCancelled
+		return errDropMaterializedViewLogDependent(job.SchemaName, baseTblInfo.Name.O)
+	}
+	return nil
 }
 
 func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, droppingTable *model.TableInfo) ([]schemaIDAndTableInfo, error) {
