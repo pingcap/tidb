@@ -324,3 +324,5 @@
 - 下轮恢复点: (1) hook 白名单后续: mpp_version(需先移植 kv MppVersion 表)/runtime_filter_type|mode/tiflash_hashagg_preaggregation_mode/init_connect(SQL 解析); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - runtime_filter type/mode 白名单批: type=逗号分隔 IN/MIN_MAX 大小写不敏感(拒绝消息照 Go 原文含 "sepreated" 拼写错误); mode=精确 OFF/LOCAL(大小写敏感)。两条 run_validation 臂 + 回归。session lib 1280 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) hook 白名单后续: mpp_version(需 kv MppVersion 表)/init_connect(SQL 解析)/tiflash_hashagg_preaggregation_mode; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- init_connect 批: run_validation 臂落地—值必须可解析为 SQL(Go sysvar.go:704, 会话模式在本边界以缺省模式代替并注释), 失败=ErrWrongTypeForVar 1232, 空值=零语句通过(同 Go ParseSQL(""))。回归 3 断言。session lib 1283 通过/281 预存(失败集与既有一致), fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) hook 白名单后续: mpp_version(需 kv MppVersion 表)/tiflash_hashagg_preaggregation_mode(核实 Go master 无此变量, 已剔除); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。

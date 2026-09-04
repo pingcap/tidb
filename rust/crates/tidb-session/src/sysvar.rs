@@ -990,6 +990,17 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        // Go's init_connect Validation (`sysvar.go:704`): the value must
+        // parse as SQL (Go parses with the session's SQL mode; this
+        // boundary has no mode, so the stock mode stands in). A parse
+        // failure is `ErrWrongTypeForVar` (1232); an empty value parses as
+        // zero statements and passes, as in Go.
+        if self.name == "init_connect" {
+            if !validated.value.is_empty() && tidb_parser::parse(&validated.value).is_err() {
+                return Err(ValidationError::WrongType);
+            }
+            return Ok(validated);
+        }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
         // else is `ErrWrongTypeForVar` (1232).
@@ -1820,6 +1831,29 @@ mod tests {
             }
             other => panic!("expected a refused error, got {other:?}"),
         }
+    }
+
+    /// Go's init_connect Validation (`sysvar.go:704`): the value must parse
+    /// as SQL; a parse failure is `ErrWrongTypeForVar` (1232) and the empty
+    /// value passes (zero statements).
+    #[test]
+    fn init_connect_value_must_parse_as_sql_like_go() {
+        let sv = get_sys_var("init_connect").unwrap();
+        assert_eq!(
+            sv.validate("SET autocommit = 1").unwrap().value,
+            "SET autocommit = 1"
+        );
+        assert_eq!(
+            sv.validate(""),
+            Ok(Validated {
+                value: String::new(),
+                truncated: false
+            })
+        );
+        assert_eq!(
+            sv.validate("THIS IS NOT SQL ~~~"),
+            Err(ValidationError::WrongType)
+        );
     }
 
     fn bool_validation() {
