@@ -290,3 +290,5 @@
 - F3 起点: rust/crates/tidb-planner/src/read_only_scan/errors.rs — ReadOnlyScanError/UnsupportedReadOnlyFeature(23 变体)无 MySQL code 字段, 经 SqlQueryError::unknown 成 1105; Go 等价拒绝=ErrNotSupportedYet 1235/42000。修法=加 code 字段+variant→errno 映射+SqlQueryError 构造点接线。
 - F3 核实为确认开放(拓扑已全程追踪): ReadOnlyScanError/PreparedPlanError 无 code → RealTiKvReadError::Plan Display 展平 → server 侧 SqlQueryError::unknown(1105/HY000); SqlQueryError 本身(code/state/message)完全可承载。修法已写入 audit doc: planner 加 mysql_code() 访问器(Parse→1064/42000, Unsupported→1235/42000, UnknownTable→1146/42S02, UnknownColumn→1054/42S22, 不变量→1105/HY000) + seam 改用。下轮直接按此执行。
 - 下轮恢复点: (1) F3 按上述设计执行; (2) F2 ~59 unknown 站点(需 live 证据, 记录); (3) F4 后续逐站点 Go errno 对比。
+- F3 第一步完成: ReadOnlyScanError/PreparedPlanError 的 mysql_code() 访问器落地(逐变体 Go errno: Parse 1064/42000, Unsupported/UnsupportedPredicate 1235/42000, UnknownTable 1146/42S02, UnknownColumn 1054/42S22, 内部不变量 1105/HY000, prepared 语法拒绝 1235/42000), 2 个逐变体回归全绿。planner 911/0, fmt/clippy/diff-check/make lint PASS。
+- 残余: server seam(~25 处 unknown 展平点与 F2 共享)采纳 accessor 需先定位 read 管道实际可达站点(live 证据)。
