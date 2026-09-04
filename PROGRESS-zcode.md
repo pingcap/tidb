@@ -345,3 +345,5 @@
 - hint 面核实(只读): parse_stmt_hints/重复警告/RemoveDuplicatedHints 去重均已在位, 无需新批。
 - 树健康基线(六 crate): session 1302 通过/281 预存(环境 spill 类, A/B 已证与批次无关); vardef 45/0; planner 911/0; codec 46/0; distsql 28/0; datatype 410/0。
 - 下轮恢复点: (1) hook 余项 30 分类中"needs work"已清 5(mem_arbitrator 4+gogc), 余 5(tiflash_pipeline_model/fair_locking=惰性已记录, schema_cache_size/index_join_v2 已落地, tx_read_ts 空操作)→工单实际清空; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) 选新面: tidb-privilege 或 tidb-domain。
+- privilege privs 面首审: 四张 scope 清单(32/19/13/4)元素与顺序全匹配(命名差异为枚举别名); GrantOption 不入 ALL_* 双侧一致。收据 rust/docs/privilege-privs-parity-audit.md。
+- 下轮恢复点: (1) privilege 动态权限/password expiry/SET-ROLE 行为面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
