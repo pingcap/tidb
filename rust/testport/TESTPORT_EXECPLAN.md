@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` transaction isolation): reconciled
+  `TestTxnIsolation` with the existing Go-aligned validation and session hook.
+  Added a focused regression proving `SET GLOBAL
+  tidb_skip_isolation_level_check=ON` does not change the writer's session,
+  while a subsequently seeded session inherits the relaxed check and stores
+  `SERIALIZABLE` with warning 8048. The receipt now records the aliases,
+  normalization, refusal, warning, and inheritance coverage as live.
 - 2026-09-05 (`pkg/sessionctx/variable` timezone typed state): aligned
   `tidb-session` with Go's `TestTimeZone`. The validated session zone is now
   resolved once into statement-facing typed state (including fixed-offset

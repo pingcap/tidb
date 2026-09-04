@@ -814,6 +814,49 @@ fn an_accepted_isolation_level_still_stores_and_reads_back() {
     assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
 }
 
+/// Go `TestTxnIsolation`: a GLOBAL skip switch does not mutate the current
+/// session, but a connection seeded after that GLOBAL write inherits it. The
+/// inherited session accepts the unsupported level with the same 8048 warning
+/// that Go's `checkIsolationLevel` appends after the relaxed validation path.
+#[test]
+fn global_isolation_skip_waits_for_the_next_session() {
+    let (mut current, _peer, globals) = two_sessions_sharing_globals();
+
+    let error = current
+        .run("SET SESSION transaction_isolation = 'on'")
+        .unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1231);
+
+    current
+        .run("SET GLOBAL tidb_skip_isolation_level_check = ON")
+        .unwrap();
+    // The GLOBAL write is cluster state only; the writer's session copy stays
+    // OFF until a new session explicitly changes it.
+    let error = current
+        .run("SET SESSION transaction_isolation = 'SERIALIZABLE'")
+        .unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 8048);
+
+    let mut inherited = Session::new();
+    inherited.attach_globals(globals).unwrap();
+    inherited
+        .run("SET SESSION transaction_isolation = 'SERIALIZABLE'")
+        .unwrap();
+    assert_eq!(
+        row_text(inherited.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "8048",
+            "The isolation level 'SERIALIZABLE' is not supported. Set \
+             tidb_skip_isolation_level_check=1 to skip this error"
+        ]]
+    );
+    assert_eq!(
+        scalar_text(&mut inherited, "SELECT @@transaction_isolation"),
+        Some("SERIALIZABLE".to_owned())
+    );
+}
+
 /// Go's `max_allowed_packet` `Validation`: a SESSION write is `ErrReadOnly`
 /// (1621) even though the variable has session scope for READING.
 #[test]
