@@ -217,29 +217,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// TODO: Consider batching or chunking the refresh and purge cleanup
-		// statements when dropping a database with many materialized views.
-		for _, tblInfo := range tables {
-			if tblInfo.MaterializedView != nil {
-				if err = w.deleteCreateMaterializedViewRefreshInfo(jobCtx, tblInfo.ID); err != nil {
-					return ver, errors.Trace(err)
-				}
-				if err = w.deleteCreateMaterializedViewRefreshAlert(jobCtx, tblInfo.ID); err != nil {
-					logutil.DDLLogger().Warn(
-						"drop schema: failed to delete materialized view refresh alert",
-						zap.String("schemaName", job.SchemaName),
-						zap.String("tableName", tblInfo.Name.O),
-						zap.Int64("mviewID", tblInfo.ID),
-						zap.Error(err),
-					)
-				}
-			}
-			if tblInfo.MaterializedViewLog != nil {
-				if err = w.deleteMaterializedViewLogPurgeInfo(jobCtx, tblInfo.ID); err != nil {
-					return ver, errors.Trace(err)
-				}
-			}
-		}
 
 		// Best-effort cleanup - log errors but continue with DROP DATABASE
 		if err := batchDeleteTableAffinityGroups(jobCtx, tables); err != nil {
@@ -262,6 +239,30 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		// we only drop meta key of database, but not drop tables' meta keys.
 		if err = metaMut.DropDatabase(dbInfo.ID); err != nil {
 			break
+		}
+
+		mviewIDs := make([]int64, 0)
+		mlogIDs := make([]int64, 0)
+		for _, tblInfo := range tables {
+			if tblInfo.MaterializedView != nil {
+				mviewIDs = append(mviewIDs, tblInfo.ID)
+			}
+			if tblInfo.MaterializedViewLog != nil {
+				mlogIDs = append(mlogIDs, tblInfo.ID)
+			}
+		}
+		if err = w.deleteCreateMaterializedViewRefreshInfos(jobCtx, mviewIDs); err != nil {
+			return ver, newRollbackTxnError(errors.Trace(err))
+		}
+		if err = w.deleteCreateMaterializedViewRefreshAlerts(jobCtx, mviewIDs); err != nil {
+			logutil.DDLLogger().Warn(
+				"drop schema: failed to delete materialized view refresh alerts",
+				zap.String("schemaName", job.SchemaName),
+				zap.Error(err),
+			)
+		}
+		if err = w.deleteMaterializedViewLogPurgeInfos(jobCtx, mlogIDs); err != nil {
+			return ver, newRollbackTxnError(errors.Trace(err))
 		}
 
 		// Split tables into multiple jobs to avoid too big records in the notifier.
