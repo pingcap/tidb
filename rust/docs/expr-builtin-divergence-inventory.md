@@ -314,11 +314,13 @@ these.
    `setType4ModRealOrDecimal`, `builtin_arithmetic.go:106`/`:143`/`:983`) were
    compared line by line against `builtin_arithmetic.rs:135`/`:199`/`:225` —
    identical, no divergence.
-2. *Comparison and coercion* — **mostly done**: every `getBaseCmpType` branch,
-   the ENUM/SET and JSON cases, `<=>`. **Not done:** `GetAccurateCmpType`'s
-   const-refinement arms (`builtin_compare.go:1454-1483`) beyond the
-   already-known decimal-vs-const-string one; the temporal-column-vs-constant
-   arm; `getCmpTp4MinMax` for `GREATEST`/`LEAST`.
+2. *Comparison and coercion* — RESOLVED (2026-09-04): every
+   `getBaseCmpType` branch, the ENUM/SET and JSON cases, `<=>`, the
+   const-refinement arms (`builtin_compare.go:1454-1483`, mirrored in
+   `builtin_compare.rs:1405-1420` including the temporal-column Duration
+   narrowing), and `getCmpTp4MinMax` for `GREATEST`/`LEAST` (covered by the
+   captured source-vector suites `compare_control_source`/
+   `compare_time_builtin_rows`/`test_greatest_least_func`).
 3. *Control flow* — RESOLVED (2026-09-03) for the inference core:
    `rewriter/control_type.rs::infer_type4_control_funcs` implements Go's
    `InferType4ControlFuncs` case by case — the all-NULL result fixups, the
