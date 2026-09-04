@@ -45,9 +45,10 @@ go_test(
     ],
     embed = [":cache"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//pkg/config",
+        "//pkg/meta/model",
         "//pkg/statistics",
         "//pkg/statistics/handle/cache/internal",
         "//pkg/statistics/handle/cache/internal/testutil",
