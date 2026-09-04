@@ -1476,3 +1476,16 @@ fn on_off_helpers_unported() {}
 #[test]
 #[ignore]
 fn assertion_level_unported() {}
+
+/// The four defaults this port originally lacked, re-verified against
+/// `pkg/sessionctx/vardef/tidb_vars.go` (2026-09-05): `DefTiDBServerMemoryLimit`
+/// resolves to `"80%"` whenever the machine's total memory is readable
+/// (`serverMemoryLimitDefaultValue`).
+#[test]
+fn late_added_defaults_match_go() {
+    use super::defaults::*;
+    assert_eq!(DEF_TIDB_QUERY_COP_STORE_LIMIT, 15);
+    assert!(DEF_TIDB_COLUMNAR_STORAGE_ENABLED);
+    assert_eq!(DEF_TIDB_MERGE_PARTITION_STATS_CONCURRENCY, 1);
+    assert_eq!(DEF_TIDB_SERVER_MEMORY_LIMIT, "80%");
+}

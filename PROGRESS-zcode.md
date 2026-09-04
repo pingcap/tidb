@@ -299,3 +299,4 @@
 - 文档清扫结论: parser-lexer 12 项全闭环; expr-builtin A-G 全 FIXED; types-datatype D1/D2/时区全闭环; chunk A-1..A-5/B-1/B-2 全闭环; error-code F1/F4/F5/F6/F7/F9 闭环, F2/F3 残余被 live 证据阻塞; distsql 1.1/2.1 闭环, Rank3 response_channel 已正确, 唯一 DEFERRED=read-only tier 警告汇(无 SHOW WARNINGS 面)。队列实质清空。
 - 树健康基线(当前 HEAD): planner 911/0, codec 46/0, distsql 28/0, datatype 410/0。队列实质清空, 剩余项均被 live-cluster 证据阻塞(F2/F3-seam/分区裁剪对照)或低价值(F4 逐站点发明 code)。
 - 下轮恢复点: (1) 若有 live cluster, 优先 F2/F3-seam 定位可达站点; (2) 否则按用户 goal 遍历下一 Go package 做 parity walk(无既有 audit 文档的面, 如 tidb-session/tidb-statistics 表面)。
+- vardef 机械重审计批: 脚本 diff Go Def* 常量(395) vs Rust defaults.rs(400 引用值) — 值级 400 项全部一致; 缺 4 个默认(QUERY_COP_STORE_LIMIT=15/COLUMNAR_STORAGE_ENABLED=true/MERGE_PARTITION_STATS_CONCURRENCY=1/SERVER_MEMORY_LIMIT="80%")已补齐+late_added_defaults_match_go 回归。9 个 Rust-only 扩展(MView/TxnFile/OpenAI/FullOuterJoin/SharedLockUpgrade)属 fork 自有/并发会话活跃区, 不碰已记录。vardef 44+3+3 全绿, fmt/clippy/diff-check/make lint PASS。

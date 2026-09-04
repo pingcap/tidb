@@ -901,3 +901,12 @@ mod tests {
         assert_eq!(DEF_TIDB_GC_MAX_WAIT_TIME, 24 * 60 * 60);
     }
 }
+/// Go `DefTiDBQueryCopStoreLimit` (= `15`).
+pub const DEF_TIDB_QUERY_COP_STORE_LIMIT: i64 = 15;
+/// Go `DefTiDBColumnarStorageEnabled` (= `true`).
+pub const DEF_TIDB_COLUMNAR_STORAGE_ENABLED: bool = true;
+/// Go `DefTiDBMergePartitionStatsConcurrency` (= `1`).
+pub const DEF_TIDB_MERGE_PARTITION_STATS_CONCURRENCY: i64 = 1;
+/// Go `DefTiDBServerMemoryLimit` (= `serverMemoryLimitDefaultValue()`):
+/// `"80%"` when the machine's total memory is readable, `"0"` otherwise.
+pub const DEF_TIDB_SERVER_MEMORY_LIMIT: &str = "80%";
