@@ -283,10 +283,8 @@ fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) 
         _ => return EvalError::IntOverflow,
     };
     // A faithful operand list needs each argument rendered the way Go's
-    // `StringWithCtx` renders it. Constants carry everything needed; a COLUMN
-    // would print its qualified SQL name (`test.y.a`), which this layer does
-    // not know, so a non-constant operand keeps the bare overflow error
-    // rather than emitting a wrong message.
+    // `StringWithCtx` renders it. Constants carry their value, while a
+    // resolved COLUMN carries Go's `OrigName` (the qualified SQL name).
     fn render(expression: &Expression) -> Option<String> {
         match expression {
             Expression::Constant(constant) => match &constant.value {
@@ -300,6 +298,12 @@ fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) 
                 Datum::Null => Some("NULL".to_owned()),
                 _ => None,
             },
+            Expression::Column(column) if !column.orig_name.is_empty() => {
+                Some(column.orig_name.clone())
+            }
+            Expression::CorrelatedColumn(column) if !column.column.orig_name.is_empty() => {
+                Some(column.column.orig_name.clone())
+            }
             _ => None,
         }
     }

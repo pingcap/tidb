@@ -315,12 +315,34 @@ fn test_decimal_err_overflow() {
 // ---------------------------------------------------------------------
 
 #[test]
-#[ignore = "go-parity-gap: integer overflow renders its message only from CONSTANT operands (scalar_function.rs render()); a Column operand keeps the bare IntOverflow, so neither OrigName display nor the no-'Column#' guarantee is observable"]
 fn test_arithmetic_overflow_error_message_with_column_name() {
     // Go regressed on https://github.com/pingcap/tidb/issues/17993:
     // MinInt64 * (-1) over a column named `test.t.col1` must render the
     // column name inside "BIGINT value is out of range in '(...)'" instead
     // of "Column#1". Reproduce by evaluating mul(col, constant) over a row.
+    let mut column = Column::new(0, int_ft());
+    column.orig_name = "test.t.col1".to_owned();
+    let function = ScalarFunction::new(
+        CiString::new("mul"),
+        int_ft(),
+        vec![
+            Expression::Column(column),
+            const_typed(Datum::Int(-1), int_ft()),
+        ],
+    );
+    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[int_ft()], 1);
+    chunk.append_datum(0, &Datum::Int(i64::MIN));
+
+    let error = function
+        .eval(&NoColumns, chunk.get_row(0))
+        .expect_err("MinInt64 * -1 must overflow");
+    assert_eq!(
+        error,
+        EvalError::DataOutOfRange {
+            value: "BIGINT",
+            expression: "(test.t.col1 * -1)",
+        }
+    );
 }
 
 // ---------------------------------------------------------------------

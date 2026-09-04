@@ -7916,3 +7916,11 @@ risks without claiming repository-wide parity.
   unsigned upper bound. Finite and infinity conversion behavior is unchanged;
   the focused fail-before/pass-after regression and Ready owner validation are
   recorded in `receipts/types_float_to_uint_nan.md`.
+- 2026-09-05 (`pkg/expression` integer overflow column names): Rust
+  `tidb-expr::scalar_function::arithmetic_overflow_error` now renders a
+  resolved column's qualified `OrigName` (and the embedded name of a
+  correlated column) in Go's 1690 out-of-range message. The active regression
+  evaluates `test.t.col1 * -1` over a `MinInt64` row and asserts
+  `BIGINT value is out of range in '(test.t.col1 * -1)'`; the complete
+  208-artifact Go inventory, fail-before/pass-after evidence, and Ready owner
+  validation are recorded in `receipts/expression_overflow_column_name.md`.
