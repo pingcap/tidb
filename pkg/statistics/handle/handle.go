@@ -15,6 +15,7 @@
 package handle
 
 import (
+<<<<<<< HEAD
 	"math"
 	"time"
 
@@ -22,6 +23,19 @@ import (
 	ddlUtil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+=======
+	"context"
+	"sync"
+	"time"
+
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
@@ -32,8 +46,14 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+<<<<<<< HEAD
 	"github.com/tiancaiamao/gp"
 	atomic2 "go.uber.org/atomic"
+=======
+	"github.com/pingcap/tidb/pkg/util/filter"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 	"go.uber.org/zap"
 )
 
@@ -45,6 +65,8 @@ const (
 )
 
 // Handle can update stats info periodically.
+//
+//nolint:fieldalignment
 type Handle struct {
 	pool util.SessionPool
 
@@ -84,6 +106,7 @@ type Handle struct {
 	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
 	autoAnalyzeProcIDGetter func() uint64
 
+<<<<<<< HEAD
 	InitStatsDone chan struct{}
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
@@ -97,6 +120,15 @@ type Handle struct {
 	StatsLoad StatsLoad
 
 	lease atomic2.Duration
+=======
+	// StatsCache ...
+	types.StatsCache
+
+	// systemDBIDCache caches the database IDs that are confirmed as system schemas to avoid repeated session usage.
+	systemDBIDCache sync.Map
+
+	InitStatsDone chan struct{}
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 }
 
 // Clear the statsCache, only for test.
@@ -106,6 +138,21 @@ func (h *Handle) Clear() {
 		<-h.ddlEventCh
 	}
 	h.ResetSessionStatsList()
+	h.resetSystemDBIDCache()
+}
+
+func (h *Handle) resetSystemDBIDCache() {
+	h.systemDBIDCache.Clear()
+}
+
+// GetSystemDBIDCacheLenForTest gets the length of systemDBIDCache, only for test.
+func (h *Handle) GetSystemDBIDCacheLenForTest() int {
+	length := 0
+	h.systemDBIDCache.Range(func(_, _ any) bool {
+		length++
+		return true
+	})
+	return length
 }
 
 // NewHandle creates a Handle for update stats.
@@ -166,18 +213,127 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 		tbl.PhysicalID = pid
 		return tbl
 	}
+<<<<<<< HEAD
 	tbl, ok := h.Get(pid)
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo, false)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
 			h.UpdateStatsCache(util.CacheUpdate{
+=======
+
+	tbl, ok := h.Get(physicalTableID)
+	if ok {
+		return tbl, true
+	}
+	if tblInfo == nil {
+		return nil, false
+	}
+
+	tbl = statistics.PseudoTable(tblInfo, false, true)
+	tbl.PhysicalID = physicalTableID
+
+	// TODO: Determine whether we really need to cache pseudo table stats for non-partitioned tables.
+	// If the memory overhead is manageable, we can remove this optimization.
+	shouldCachePseudo := tblInfo.GetPartitionInfo() == nil || h.Len() < 64
+	if !shouldCachePseudo {
+		return tbl, true
+	}
+
+	// NOTE: Sessions borrowed from the pool cannot fetch schema metadata for local temporary tables,
+	// so skip caching their statistics.
+	// Also skip global temporary tables for consistency.
+	isTempTable := tblInfo.TempTableType != model.TempTableNone
+	if isTempTable {
+		return tbl, true
+	}
+
+	// In some test cases, we may need to skip the system table check.
+	if intest.InTest {
+		// The failpoint to skip system table check, for testing only.
+		skipSystemTableCheck := false
+		failpoint.Inject("SkipSystemTableCheck", func(val failpoint.Value) {
+			skip, ok := val.(bool)
+			if ok && skip {
+				skipSystemTableCheck = true
+			}
+		})
+
+		// In some test environments, the session pool may be nil.
+		// In such cases, we cannot determine if it's a system table, so we skip the check.
+		if se, ok := h.SPool().(*syssession.AdvancedSessionPool); ok && se == nil {
+			skipSystemTableCheck = true
+		}
+		if skipSystemTableCheck {
+			h.UpdateStatsCache(types.CacheUpdate{
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 				Updated: []*statistics.Table{tbl},
 			})
+			return tbl, true
 		}
+<<<<<<< HEAD
 		return tbl
 	}
 	return tbl
+=======
+	}
+
+	isSystemTable, err := h.isSystemTable(physicalTableID, tblInfo)
+	if err != nil {
+		dbID := tblInfo.DBID
+		statslogutil.StatsErrVerboseSampleLogger().Warn("Check system table failed", zap.Int64("tableID", physicalTableID), zap.Int64("dbID", dbID), zap.Error(err))
+		return tbl, true
+	}
+
+	if isSystemTable {
+		return tbl, true
+	}
+
+	h.UpdateStatsCache(types.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
+	return tbl, true
+}
+
+// isSystemTable determines whether the table should be treated as a system table.
+// NOTE: You might worry that this slows down Get. It runs only once per non-partitioned table, or once per partition when the cache holds fewer than 64 entries, so the impact is negligible.
+// Stats healthy metrics almost never show pseudo tables, because once a DDL event is processed or the table is updated, real statistics are loaded into the cache.
+// We also cache the database IDs of system schemas to avoid repeated session usage.
+func (h *Handle) isSystemTable(physicalTableID int64, tblInfo *model.TableInfo) (bool, error) {
+	intest.Assert(tblInfo != nil, "tblInfo should not be nil for tableID %d", physicalTableID)
+	dbID := tblInfo.DBID
+	intest.Assert(dbID > 0, "invalid dbID %d for tableID %d", dbID, physicalTableID)
+	if autoid.IsMemSchemaID(dbID) {
+		return true, nil
+	}
+
+	if _, ok := h.systemDBIDCache.Load(dbID); ok {
+		return true, nil
+	}
+
+	isSystemTable := false
+	err := h.SPool().WithSession(func(session *syssession.Session) error {
+		return session.WithSessionContext(func(sctx sessionctx.Context) error {
+			is := sctx.GetLatestInfoSchema()
+			db, ok := is.SchemaByID(dbID)
+			// 1 is used for some unit tests where the database is not created but directly injected.
+			intest.Assert(ok || dbID == 1, "cannot find db for table %d, dbID %d", physicalTableID, dbID)
+			if ok && filter.IsSystemSchema(db.Name.L) {
+				isSystemTable = true
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		intest.Assert(err == nil, "unexpected error: %v, tableID %d, dbID %d", err, physicalTableID, dbID)
+		return false, err
+	}
+	if isSystemTable {
+		h.systemDBIDCache.Store(dbID, struct{}{})
+	}
+
+	return isSystemTable, nil
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 }
 
 // FlushStats flushes the cached stats update into store.
@@ -197,6 +353,7 @@ func (h *Handle) FlushStats() {
 func (h *Handle) Close() {
 	h.gpool.Close()
 	h.StatsCache.Close()
+<<<<<<< HEAD
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
@@ -226,4 +383,9 @@ func (h *Handle) SysProcTracker() sessionctx.SysProcTracker {
 // AutoAnalyzeProcID generates an analyze ID.
 func (h *Handle) AutoAnalyzeProcID() uint64 {
 	return h.autoAnalyzeProcIDGetter()
+=======
+	h.StatsUsage.Close()
+	h.StatsAnalyze.Close()
+	h.resetSystemDBIDCache()
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 }

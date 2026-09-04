@@ -39,11 +39,24 @@ go_test(
     srcs = ["bench_test.go"],
     embed = [":cache"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 3,
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
     deps = [
         "//pkg/config",
         "//pkg/statistics",
+        "//pkg/statistics/handle/cache/internal",
         "//pkg/statistics/handle/cache/internal/testutil",
+<<<<<<< HEAD
         "//pkg/statistics/handle/util",
         "//pkg/util/benchdaily",
+=======
+        "//pkg/statistics/handle/metrics",
+        "//pkg/statistics/handle/types",
+        "//pkg/util/benchdaily",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
+        "@com_github_stretchr_testify//require",
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
     ],
 )
