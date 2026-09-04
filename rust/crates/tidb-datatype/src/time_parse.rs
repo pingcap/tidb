@@ -568,7 +568,14 @@ pub fn parse_time<TZ: TimeZone>(
         });
     }
     let fsp = check_fsp(fsp).map_err(TimeError::InvalidFsp)?;
-    let (core, truncated) = parse_datetime_core(input, fsp, is_float, timezone)?;
+    let (core, truncated) = parse_datetime_core(
+        input,
+        fsp,
+        is_float,
+        allow_zero_in_date,
+        allow_invalid_date,
+        timezone,
+    )?;
     let time = Time::new(core, kind, fsp)?;
     time.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
     Ok(ParsedTime { time, truncated })
@@ -596,6 +603,8 @@ fn parse_datetime_core<TZ: TimeZone>(
     input: &str,
     fsp: i64,
     is_float: bool,
+    allow_zero_in_date: bool,
+    allow_invalid_date: bool,
     timezone: &TZ,
 ) -> Result<(CoreTime, bool), TimeError> {
     let (mut parts, mut fraction, mut timezone_suffix, mut truncated) = split_datetime(input);
@@ -627,8 +636,14 @@ fn parse_datetime_core<TZ: TimeZone>(
             let number = parts[0]
                 .parse::<i64>()
                 .map_err(|_| TimeError::InvalidDate)?;
-            let numeric =
-                parse_time_from_num(number, TimeType::DateTime, fsp, true, false, timezone)?;
+            let numeric = parse_time_from_num(
+                number,
+                TimeType::DateTime,
+                fsp,
+                allow_zero_in_date,
+                allow_invalid_date,
+                timezone,
+            )?;
             let core = numeric.time.core_time();
             fields = [
                 core.year(),
@@ -1898,6 +1913,33 @@ mod tests {
                 "{input}"
             );
         }
+    }
+
+    #[test]
+    fn float_string_numeric_path_preserves_allow_invalid_date() {
+        // Go's ParseTimeFromFloatString routes its numeric branch through
+        // ParseTimeFromNum, whose Check(ctx) honors ALLOW_INVALID_DATES.
+        assert!(parse_time(
+            "20200231",
+            TimeType::DateTime,
+            0,
+            true,
+            true,
+            false,
+            &chrono_tz::UTC,
+        )
+        .is_err());
+        let relaxed = parse_time(
+            "20200231",
+            TimeType::DateTime,
+            0,
+            true,
+            true,
+            true,
+            &chrono_tz::UTC,
+        )
+        .unwrap();
+        assert_eq!(relaxed.time.to_string(), "2020-02-31 00:00:00");
     }
 
     #[test]

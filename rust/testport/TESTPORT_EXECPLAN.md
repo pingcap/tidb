@@ -185,6 +185,14 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   and the known external JSON-schema fixture failure are recorded in
   `receipts/types_str_to_date_exhaustion.md`.
 
+- 2026-09-04 (`pkg/types` float-string datetime, finding T12): aligned the
+  numeric branch of `parse_datetime_core` with Go's
+  `ParseTimeFromFloatString` context flags. `allow_zero_in_date` and
+  `allow_invalid_date` now flow into `parse_time_from_num`, so
+  `ALLOW_INVALID_DATES` preserves `2020-02-31` while strict mode rejects it.
+  The focused regression, complete temporal inventory, and Ready results are
+  recorded in `receipts/types_float_string_invalid_date.md`.
+
 - 2026-09-04 (`pkg/expression` decimal `DIV`, findings A/B): aligned the Rust
   decimal `IntDiv` value path with Go's post-`DecimalDiv` `ToInt`/`ToUint`
   conversion. `Decimal::div_rem_unbounded` preserves quotients above

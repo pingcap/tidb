@@ -123,3 +123,13 @@ ignored. Owner compilation, formatting, and whitespace checks passed. Strict
 clippy remains blocked by unrelated `tidb-mysql` `map-or-identity` and
 generated `tidb-proto` diagnostics. Full commands and boundaries are recorded
 in `rust/testport/receipts/types_str_to_date_exhaustion.md`.
+
+## `pkg/types` float-string invalid-date batch
+
+The focused numeric float-string regression and existing source vectors passed.
+The serialized `tidb-datatype` owner profile passed with 394 unit tests and 63
+generated/source integration tests; benchmark targets compiled. Owner
+compilation, formatting, and whitespace checks passed. Strict clippy remains
+blocked by the unrelated `tidb-mysql/src/consts.rs:117-120`
+`map-or-identity` diagnostics. Full commands and remaining temporal boundaries
+are recorded in `rust/testport/receipts/types_float_string_invalid_date.md`.

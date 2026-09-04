@@ -479,17 +479,19 @@ Distinguishing inputs (divergent in both directions):
 `STR_TO_DATE('2013+5','%Y%.%c')` → Go NULL, Rust `2013-05-00`.
 `STR_TO_DATE('2013¿5','%Y%.%c')` → Go `2013-05-00`, Rust error.
 
-## T12 (rank 3) — float-string path hardcodes `allow_invalid_date = false`
+## T12 (rank 3) — float-string path hardcodes `allow_invalid_date = false` (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:1050` — `ParseDatetimeFromNum(ctx, numOfTime)`, whose
   `t.Check(ctx)` uses the session flags.
-- Rust: `rust/crates/tidb-datatype/src/time_parse.rs:561` —
-  `parse_time_from_num(number, DateTime, fsp, true, false, timezone)`, literals
-  rather than the caller's flags.
+- Rust: `rust/crates/tidb-datatype/src/time_parse.rs:571-620` now threads the
+  caller's `allow_zero_in_date` and `allow_invalid_date` through
+  `parse_datetime_core` into the numeric `parse_time_from_num` branch. The
+  focused source-derived regression and Ready evidence are recorded in
+  `rust/testport/receipts/types_float_string_invalid_date.md`.
 
 Distinguishing input: `sql_mode='ALLOW_INVALID_DATES'`,
-`ParseTimeFromFloatString('20200231', DATETIME, 0)` → Go `2020-02-31`, Rust
-`Err(InvalidDate)`.
+`ParseTimeFromFloatString('20200231', DATETIME, 0)` → Go and Rust
+`2020-02-31`.
 
 ## T13 (rank 3) — DATETIME maximum precision now follows `MaxDatetime` (FIXED 2026-09-04)
 

@@ -2,7 +2,7 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types`/`pkg/expression` `STR_TO_DATE` exhaustion parity batch (finding T10)
+- Work unit: `pkg/types` float-string invalid-date parity batch (finding T12)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
@@ -50,4 +50,10 @@
   tests. Strict clippy remains blocked by unrelated `tidb-mysql` and generated
   `tidb-proto` diagnostics. Receipt:
   `rust/testport/receipts/types_str_to_date_exhaustion.md`.
+- Current batch: Rust's float-string numeric datetime path now forwards Go's
+  `allow_invalid_date` context into `parse_time_from_num`. The focused
+  regression and serialized datatype owner profile pass with 394 unit and 63
+  integration/source tests; strict clippy remains blocked by unrelated
+  `tidb-mysql` diagnostics. Receipt:
+  `rust/testport/receipts/types_float_string_invalid_date.md`.
 - Next action: continue with the next executable package boundary.
