@@ -135,3 +135,30 @@ func TestFTSMatchAgainstMismatchedAnalyzerKeepsScan(t *testing.T) {
 	require.False(t, usesFTSMVIndex(tk, query))
 	tk.MustQuery(query).Check([][]any{{"1"}})
 }
+
+// TestFTSMatchAgainstNgramUsesMVIndex covers the other analyzer. The ngram
+// parser sizes its grams from the min_token_size argument, and that size is
+// also the element width the index needs.
+func TestFTSMatchAgainstNgramUsesMVIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_local_match_against=ON")
+	// ngram_token_size is global-only and defaults to 2, which is the size the
+	// index below is built with.
+	tk.MustExec(`create table articles (
+		id int primary key,
+		body varchar(255),
+		fulltext index idx_body_ft(body) with parser ngram,
+		key idx_body_mv ((cast(fts_tokenize(body, 'NGRAM', 2, 84, 1) as char(2) array)))
+	)`)
+	for i := range 1000 {
+		tk.MustExec(fmt.Sprintf("insert into articles values (%d, 'common filler text number %d')", i, i))
+	}
+	tk.MustExec("insert into articles values (1001, 'zq alone here')")
+	tk.MustExec("analyze table articles")
+
+	query := "select id from articles where match(body) against('+zq' in boolean mode)"
+	require.True(t, usesFTSMVIndex(tk, query))
+	tk.MustQuery(query).Check([][]any{{"1001"}})
+}
