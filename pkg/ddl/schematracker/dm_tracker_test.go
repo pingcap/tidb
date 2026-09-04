@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
@@ -31,9 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -698,4 +701,72 @@ PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
 
 	sql = "ALTER TABLE test.employees11 DROP PARTITION pEast;"
 	execAlter(t, tracker, sql)
+}
+
+func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next date_add(now(), interval 1 hour)"))
+	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))
+	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+
+	stmt := parseStmt("create materialized view log on test.t (a) purge start with now() next now()")
+	stmt.Purge.Next = nil
+	err = tracker.CreateMaterializedViewLog(sctx, stmt)
+	require.Truef(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "err %v", err)
+	require.ErrorContains(t, err, "PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+}
+
+func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+	execCreate(t, tracker, "create table test.mv (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a)")))
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.`$mlog$t` (a)"))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "$mlog$t", "BASE TABLE").Error(), err.Error())
+
+	mvInfo := mustTableByName(t, tracker, "test", "mv")
+	mvInfo.MaterializedView = &model.MaterializedViewInfo{}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), mvInfo))
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.mv (a)"))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
+}
+
+func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	baseName := strings.Repeat("t", mysql.MaxTableNameLength)
+	execCreate(t, tracker, fmt.Sprintf("create table test.`%s` (a int)", baseName))
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(fmt.Sprintf("create materialized view log on test.`%s` (a)", baseName), "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, stmt.(*ast.CreateMaterializedViewLogStmt)))
+
+	mlogName := model.MaterializedViewLogTableName(ast.NewCIStr(baseName))
+	require.Equal(t, mysql.MaxTableNameLength, len([]rune(mlogName.O)))
+	mlogInfo := mustTableByName(t, tracker, "test", mlogName.O)
+	require.NotNil(t, mlogInfo.MaterializedViewLog)
 }

@@ -383,6 +383,10 @@ func JobNeedGC(job *model.Job) bool {
 			model.ActionReorganizePartition, model.ActionRemovePartitioning,
 			model.ActionAlterTablePartitioning:
 			return true
+		case model.ActionCreateMaterializedView:
+			// CREATE MATERIALIZED VIEW may create a physical table before the initial
+			// build fails; only rollback cleanup needs delete-range GC.
+			return job.IsRollbackDone() && job.TableID != 0
 		case model.ActionDropIndex:
 			args, err := model.GetFinishedModifyIndexArgs(job)
 			if err != nil {
@@ -514,10 +518,11 @@ func (w *ReorgContext) attachTopProfilingInfo(jobQuery string) {
 
 // DDLBackfillers contains the DDL need backfill step.
 var DDLBackfillers = map[model.ActionType]string{
-	model.ActionAddIndex:            "add_index",
-	model.ActionModifyColumn:        "modify_column",
-	model.ActionDropIndex:           "drop_index",
-	model.ActionReorganizePartition: "reorganize_partition",
+	model.ActionAddIndex:               "add_index",
+	model.ActionModifyColumn:           "modify_column",
+	model.ActionDropIndex:              "drop_index",
+	model.ActionReorganizePartition:    "reorganize_partition",
+	model.ActionCreateMaterializedView: "create_materialized_view",
 }
 
 func getDDLRequestSource(jobType model.ActionType) string {
@@ -977,6 +982,10 @@ func (w *worker) runOneJobStep(
 		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
 	case model.ActionCreateTable:
 		ver, err = w.onCreateTable(jobCtx, job)
+	case model.ActionCreateMaterializedViewLog:
+		ver, err = w.onCreateMaterializedViewLog(jobCtx, job)
+	case model.ActionCreateMaterializedView:
+		ver, err = w.onCreateMaterializedView(jobCtx, job)
 	case model.ActionCreateTables:
 		ver, err = w.onCreateTables(jobCtx, job)
 	case model.ActionRepairTable:
