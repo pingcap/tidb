@@ -796,6 +796,24 @@ impl Session {
                 "The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a \
                  future release; changing it is discouraged.",
             ))
+        } else if name.eq_ignore_ascii_case("default_collation_for_utf8mb4") {
+            // Go appends this deprecation warning only when its validation
+            // succeeds.  Unlike the always-warning compatibility variables,
+            // an unknown or non-utf8mb4 collation must not leave a warning on
+            // the failed statement.
+            sysvar::get_sys_var(name)
+                .and_then(|definition| {
+                    definition
+                        .validate_in_scope(value, sysvar::SCOPE_SESSION)
+                        .ok()
+                })
+                .map(|_| {
+                    (
+                        1681,
+                        "Updating 'default_collation_for_utf8mb4' is deprecated. It will be made \
+                         read-only in a future release.",
+                    )
+                })
         } else {
             None
         };

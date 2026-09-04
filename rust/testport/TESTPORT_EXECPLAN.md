@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` default utf8mb4 collation): aligned
+  `tidb-session` with Go's registry validation and deprecation warning. Valid
+  names now canonicalize and emit warning 1681; non-utf8mb4 collations fail
+  with the registered 3721 diagnostic without leaking a warning. The focused
+  source-derived regression is live and b010 records the row as ported.
 - 2026-09-05 (`pkg/sessionctx/variable` collation-server validation): aligned
   `tidb-session` with Go's `checkCollation` and `CollationServer.SetSession`
   hook.  `collation_server` now canonicalizes registry names, rejects unknown

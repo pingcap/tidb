@@ -543,6 +543,35 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go's `default_collation_for_utf8mb4` validation first resolves the
+        // name through the same registry, then admits only the three default
+        // utf8mb4 collations retained for compatibility.  The latter refusal
+        // is the registered TiDB error 3721 rather than a generic variable
+        // error, so preserve its catalogued message and code here.
+        if self.name == "default_collation_for_utf8mb4" {
+            let collation =
+                tidb_datatype::get_collation_by_name(&validated.value).map_err(|_| {
+                    ValidationError::SqlError(SqlError::new(
+                        tidb_error::mysql::errcode::ErrUnknownCollation,
+                        &[FormatArg::from(original)],
+                    ))
+                })?;
+            if !matches!(
+                collation.name.as_str(),
+                "utf8mb4_bin" | "utf8mb4_general_ci" | "utf8mb4_0900_ai_ci"
+            ) {
+                return Err(ValidationError::SqlError(SqlError::new_f(
+                    tidb_error::tidb::errcode::ErrInvalidDefaultUTF8MB4Collation,
+                    tidb_error::tidb::errname::ErrInvalidDefaultUTF8MB4Collation.raw,
+                    &[],
+                    &[FormatArg::from(collation.name.as_str())],
+                )));
+            }
+            return Ok(Validated {
+                value: collation.name,
+                truncated: validated.truncated,
+            });
+        }
         // Go keeps this compatibility variable in the integer range [1, 2],
         // then its variable-specific validation closure rejects 1 because the
         // planner no longer has an Analyze v1 path.

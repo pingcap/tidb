@@ -58,6 +58,54 @@ fn collation_server_normalizes_rejects_and_updates_charset() {
     );
 }
 
+/// Go `pkg/sessionctx/variable/sysvar_test.go::TestDefaultCollationForUTF8MB4`:
+/// accepted names normalize and warn with 1681, while a non-utf8mb4
+/// collation is rejected with the registered 3721 error.
+#[test]
+fn default_collation_for_utf8mb4_normalizes_warns_and_rejects_other_charsets() {
+    let mut session = Session::new();
+
+    session
+        .run("SET default_collation_for_utf8mb4 = 'utf8mb4_BIN'")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(
+        one(&mut session, "SELECT @@default_collation_for_utf8mb4"),
+        "utf8mb4_bin"
+    );
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][1], "1681");
+    assert_eq!(
+        warnings[0][2],
+        "Updating 'default_collation_for_utf8mb4' is deprecated. It will be made read-only in a future release."
+    );
+
+    session
+        .run("SET default_collation_for_utf8mb4 = 'utf8mb4_GENeral_CI'")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(
+        one(&mut session, "SELECT @@default_collation_for_utf8mb4"),
+        "utf8mb4_general_ci"
+    );
+    assert_eq!(warnings.len(), 1);
+
+    let error = session
+        .run("SET default_collation_for_utf8mb4 = 'LATIN1_bin'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 3721);
+    assert_eq!(
+        error.message,
+        "Invalid default collation latin1_bin: utf8mb4_0900_ai_ci or utf8mb4_general_ci or utf8mb4_bin expected"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@default_collation_for_utf8mb4"),
+        "utf8mb4_general_ci"
+    );
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.
