@@ -353,3 +353,5 @@
 - 下轮恢复点: (1) privilege 余项: SET-ROLE/角色图; (2) DST 微差异修复(需 registry 时区, 排队); (3) F2/F3-seam live 阻塞; (4) F4 低优先级。
 - privilege 第四遍: 角色图核实(BFS 传递闭包/激活直接性/身份顺序/dynamic 授予覆盖与 REVOKE ALL 全删语义均对齐)。SET-ROLE 语句面为唯一未审切片。
 - 下轮恢复点: (1) SET-ROLE 语句语义面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- privilege 审计正式关闭: SET ROLE 五种 selection/3530 门/拒绝保留旧集/bypass 与 SET DEFAULT ROLE 授权门均在位(无需代码改动), 推后续提交。
+- 下轮恢复点: (1) 下一无文档面候选: tidb-domain/tidb-config 深层; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 微差异(需 registry 时区, 排队)。

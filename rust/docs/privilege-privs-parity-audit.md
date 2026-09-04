@@ -62,3 +62,15 @@ order (self first, then roles) is preserved by
 subtle rules verbatim: re-granting overwrites `with_grant_option`, and
 `REVOKE ALL ON *.*` deletes every dynamic privilege row. SET-ROLE
 statement semantics remain the one unexamined slice.
+
+## SET ROLE (2026-09-05, final pass) — AUDIT CLOSED
+
+`set_role_stmt` (`account.rs:725`) ports Go's `executeSetRole` family
+completely: all five selections (NONE, ALL, DEFAULT, ALL EXCEPT, named
+list), the 3530 `ErrRoleNotGranted` gate for a role the account does not
+hold, duplicate-tolerance through a set-keyed check, the rejected-set-
+leaves-previous-state rule, and the privilege-bypass fast path —
+captured-verified per the in-file notes. `set_default_role_stmt` carries
+the authorization gate (self needs nothing; others need UPDATE on
+mysql.default_roles or global CREATE USER) and the CURRENT_USER
+resolution order. The privilege audit is closed with no open items.
