@@ -36,7 +36,7 @@ use crate::rewriter::result_type::builtin_return_type;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::{CiString, QueryStmt, SelectField, Stmt};
 use tidb_datatype::{
-    Collation, FieldType, FieldTypeCode as C, FieldTypeFlags, MySqlDuration, Time,
+    Collation, FieldType, FieldTypeCode as C, FieldTypeFlags, MySqlDuration, SessionTimeZone, Time,
 };
 
 // ---------------------------------------------------------------------------
@@ -225,17 +225,61 @@ fn call(name: &str, vals: &[Datum]) -> Datum {
 /// Go `pkg/expression/builtin_math_test.go:543 TestCRC32`, GBK half: with
 /// `character_set_connection=gbk`, the string constants reach CRC32 as
 /// GBK-encoded bytes (`一` = D2 BB, `一二三` = D2 BB B6 FE C8 FD), so their
-/// hash inputs differ from any UTF-8 literal this tier can spell. The Rust
-/// value domain cannot represent a session-re-encoded string constant yet;
-/// the UTF-8 half of this table is pinned by
-/// `tests::math::crc32_matches_go_utf8_source_vectors`.
+/// hash inputs differ from any UTF-8 literal.  The connection-aware rewrite
+/// applies the same `to_binary` boundary before evaluating CRC32.
 #[test]
-#[ignore = "go-parity-gap: session character_set_connection re-encoding of string \
-            constants (GBK bytes) has no representation in the Rust value domains"]
 fn crc32_gbk_charset_connection_rows() {
-    // Expected once supported, straight from the Go table:
-    //   crc32('一二三') over gbk == 3_461_331_449
-    //   crc32('一')    over gbk == 2_925_846_374
+    struct GbkSession;
+
+    impl crate::rewriter::ColumnResolver for GbkSession {
+        fn resolve(&self, _: &[String]) -> Option<(usize, FieldType, i64)> {
+            None
+        }
+
+        fn time_zone(&self) -> SessionTimeZone {
+            SessionTimeZone::utc()
+        }
+
+        fn connection_charset_info(&self) -> (&str, &str) {
+            ("gbk", "gbk_bin")
+        }
+    }
+
+    impl Columns for GbkSession {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn connection_charset_info(&self) -> (&str, &str) {
+            ("gbk", "gbk_bin")
+        }
+    }
+
+    let eval = |sql: &str| {
+        let statement = tidb_parser::parse(&format!("SELECT {sql}")).expect("parse");
+        let Stmt::Query(query) = statement else {
+            panic!("expected query")
+        };
+        let QueryStmt::Select(select) = query.into_inner() else {
+            panic!("expected SELECT")
+        };
+        let SelectField::Expr { expr, .. } = &select.fields[0] else {
+            panic!("expected expression")
+        };
+        let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GbkSession).expect("rewrite");
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        rewritten.eval(&GbkSession, chunk.get_row(0))
+    };
+
+    assert_eq!(
+        eval("crc32('一二三')").expect("CRC32 evaluates"),
+        Datum::UInt(3_461_331_449)
+    );
+    assert_eq!(
+        eval("crc32('一')").expect("CRC32 evaluates"),
+        Datum::UInt(2_925_846_374)
+    );
 }
 
 /// Go `pkg/expression/builtin_math_test.go:578 TestConv`: the complete

@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` CRC32 session charset): aligned CRC32 with Go's
+  byte-oriented `EvalString` path and activated the GBK connection-charset
+  rows. The live rewrite now hashes `to_binary`'s raw GBK bytes, including
+  values that are not valid UTF-8. Focused and Ready evidence is recorded in
+  `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (`tidb-expr` MD5/PASSWORD session charset): activated the
   Go-derived GBK constant-conversion rows through a connection-aware resolver.
   Valid GBK strings now exercise the normal `to_binary` boundary before

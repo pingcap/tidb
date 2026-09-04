@@ -28,7 +28,7 @@ use std::cmp::Ordering;
 
 use tidb_ast::Expr;
 
-use crate::coerce::coerce_str;
+use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::{finite_float, to_f64, to_f64_with_mysql_string};
 use crate::{Columns, Datum, EvalError, MysqlRng};
 
@@ -240,11 +240,16 @@ fn to_radix_upper(mut value: u64, radix: u32) -> String {
 /// `CRC32(str)`: the IEEE CRC-32 checksum (polynomial `0xEDB88320`) as an
 /// unsigned integer; `NULL` propagates.
 pub(crate) fn crc32(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let Some(s) = coerce_str(&vals[0])? else {
+    // Go's `builtinCRC32Sig.evalInt` hashes the byte sequence returned by
+    // `EvalString`; it does not require the bytes to be valid UTF-8.  This is
+    // observable for a non-legacy connection charset: the rewriter's
+    // `to_binary` wrapper hands CRC32 GBK bytes such as `D2 BB`, which must be
+    // hashed directly rather than rejected by a UTF-8 conversion.
+    let Some(bytes) = coerce_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
     let mut crc: u32 = 0xFFFF_FFFF;
-    for &byte in s.as_bytes() {
+    for byte in bytes {
         crc ^= u32::from(byte);
         for _ in 0..8 {
             let mask = (crc & 1).wrapping_neg();

@@ -2,14 +2,14 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `tidb-expr` MD5/PASSWORD session-charset parity batch
+- Work unit: `tidb-expr` CRC32 session-charset parity batch
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: focused MD5/PASSWORD session-charset regression passes.
+- Validation: focused CRC32 GBK session-charset regression passes.
   Ready reports 409 datatype unit and 64 source/integration passes; expression
-  reports 1,163 passes, one known loopback HTTP JSON-schema fixture failure,
-  and 113 ignored; executor reports 1,058 passes and 121 existing
+  reports 1,165 passes, one known loopback HTTP JSON-schema fixture failure,
+  and 112 ignored; executor reports 1,058 passes and 121 existing
   planner/storage/fixture failures. All three owner checks plus formatting and diff checks
   pass. Strict datatype clippy remains blocked only by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
@@ -137,11 +137,15 @@
   existing `Columns::date_modes()`/`time_fn::date` path preserves zero fields
   when disabled and returns NULL plus warning 1292 when enabled. Focused and
   Ready evidence is in `rust/testport/receipts/types_explain_format_audit.md`.
-- Current batch: Rust MD5/PASSWORD now have executable Go-derived GBK
+- Prior batch: Rust MD5/PASSWORD now have executable Go-derived GBK
   connection-charset rows through a resolver-backed rewrite. Valid strings
   are encoded at the ordinary `to_binary` boundary before hashing, and the
   unrepresentable `ㅂ123` rows return the same conversion error. Focused and
   Ready evidence is in `rust/testport/receipts/types_explain_format_audit.md`.
-- Next action: run the final Ready profile, commit and push this MD5/PASSWORD
-  batch, then continue with the next executable Rust package boundary. Direct
+- Current batch: Rust CRC32 now hashes raw `EvalString` bytes, matching Go for
+  non-UTF-8 connection charsets. The Go-derived GBK rows are active through a
+  resolver-backed rewrite and focused/Ready evidence is recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
+- Next action: run the final Ready profile, commit and push this CRC32 batch,
+  then continue with the next executable Rust package boundary. Direct
   datatype comparison warning publication remains a bounded API follow-up.

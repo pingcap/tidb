@@ -230,6 +230,10 @@
   `to_binary` boundary before hashing, and unrepresentable `ㅂ123` values
   surface the same conversion error. Focused and Ready evidence is recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
+- 2026-09-04: aligned CRC32's evaluator with Go's raw-byte `EvalString`
+  contract and activated the GBK connection-charset rows through the ordinary
+  `to_binary` rewrite. Focused and Ready evidence is recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 - parser #5 (RESERVED_KEYWORDS 缺 DATABASE/DATABASES/DISTINCT) 核实已被并发会话修复 — RESERVED_KEYWORDS 当前含全部 236 条含这三个关键词。审计项 5 关闭。
 
 - 与远端同步确认：planner crate 内 .first()?/.get(1)? 模式已清零（系统性扫描确认）。四包聚合 1591+/0。

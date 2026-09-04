@@ -1352,6 +1352,62 @@ git diff --check
 # both passed
 ```
 
+## Rust-only parity follow-up: CRC32 session charset
+
+Go's `TestCRC32` (`pkg/expression/builtin_math_test.go:543-575`) changes
+`character_set_connection` before constructing each constant. CRC32 hashes the
+raw bytes returned by `EvalString`, so the GBK rows use `D2 BB B6 FE C8 FD`
+for `一二三` and `D2 BB` for `一`, producing 3,461,331,449 and 2,925,846,374.
+
+Rust previously routed CRC32 through the UTF-8-only `coerce_str` helper. The
+production evaluator now uses `coerce_str_bytes`, preserving Go's byte
+contract for the `to_binary` result. The formerly ignored GBK source test is
+active and builds `CRC32` through `rewrite_expr_resolved` with a GBK session,
+so the regression covers both the connection-charset wrapper and the raw-byte
+hash implementation.
+
+Focused validation:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib crc32_gbk_charset_connection_rows -- --nocapture
+# passed: 1 test (GBK CRC32 rows through the connection-aware rewrite)
+
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib crc32_matches_go_utf8_source_vectors -- --nocapture
+# passed: 1 test (existing UTF-8 CRC32 source vectors)
+```
+
+Ready validation for this batch:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,165 passed, 1 known loopback HTTP JSON-schema fixture failed, 112 ignored
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,058 passed, 121 existing planner/storage/fixture failures, 0 ignored
+
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match
