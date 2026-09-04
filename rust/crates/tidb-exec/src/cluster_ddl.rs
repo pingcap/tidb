@@ -3548,6 +3548,40 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
 /// the cancelled job to history without touching schema metadata. The plan
 /// carries only the terminal row moves; the error carries Go's refusal text
 /// for the statement waiting on the job.
+/// Go's build-failure shape for the initial build: the job moves to
+/// `Rollingback` — non-terminal, the error recorded with the step's warning
+/// — and the NEXT tick runs `rollbackCreateMaterializedView`.
+fn rolling_back_step(
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    error: &DdlPlanError,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    active.job.state = JobState::ROLLINGBACK;
+    let mut mutations = Vec::new();
+    job_table
+        .append_update(active, true, &mut mutations)
+        .map_err(|encode_error| DdlPlanError::Encode(encode_error.to_string()))?;
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id: active.job.id,
+            mutations,
+            schema_version: 0,
+            diff: SchemaDiff::default(),
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: Some(error.to_string()),
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: false,
+    })
+}
+
 fn cancelled_step(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     job_table: &crate::ddl_job_table::DdlJobTable,
@@ -4099,23 +4133,46 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
         SchemaState::WRITE_REORGANIZATION => {
             // Go `runReorgJob(buildCreateMaterializedViewData)`: the initial
             // build moves the base rows in through import-into or
-            // insert-select at the build read TS. That data-movement engine
-            // is not ported, so the tick cannot run the build itself; the
-            // caller supplies the finished build's read TS (Go's
-            // `job.SnapshotVer`) and this step records the post-build state.
-            let Some(outcome) = build else {
-                // The caller can generate the exact build SQL via
-                // `tidb_executor::ddl::build_create_materialized_view_insert_sql`
-                // or `build_create_materialized_view_import_sql`, execute it
-                // through a real store session, and feed the resulting read TS
-                // back as `MviewBuildOutcome { read_ts }`.
-                return Err(DdlPlanError::Encode(
-                    "create materialized view: the initial-build data movement \
-                     (import-into / insert-select at the build read TS) requires \
-                     the reorg infra this tier does not have yet; supply the \
-                     finished build's read TS once the build has run"
-                        .to_owned(),
-                ));
+            // insert-select at the build read TS. With no caller-supplied
+            // outcome the tick runs the pure-tier build itself
+            // ([`crate::mview_build_engine`]): the definition SELECT executes
+            // over the snapshot's base rows and every view row lands as a
+            // mutation in THIS transaction, making the build and its
+            // completion atomic. Go commits the two separately — which is
+            // exactly why its phase probes for residual rows on a fresh
+            // tick; the engine keeps that probe for Go fidelity.
+            //
+            // A caller that executed the build out of band instead supplies
+            // the finished build's read TS (Go's `job.SnapshotVer`) and this
+            // step records the post-build state without touching rows.
+            let built = match build {
+                None => {
+                    match crate::mview_build_engine::derive_materialized_view_build(
+                        snapshot,
+                        &database.info.name.original().to_owned(),
+                        db_id,
+                        &table_shared.read().clone_like_go(),
+                        &bases,
+                        start_ts,
+                    ) {
+                        Ok(plan) => Some(plan),
+                        // Go: `job.State = JobStateRollingback` and the
+                        // error rides with the job; the NEXT tick runs
+                        // `rollbackCreateMaterializedView`. The transition
+                        // itself persists here as a non-terminal step.
+                        Err(error) => {
+                            return rolling_back_step(&mut active, &job_table, &error);
+                        }
+                    }
+                }
+                Some(_) => None,
+            };
+            let outcome = match (&built, build) {
+                (Some(plan), _) => MviewBuildOutcome {
+                    read_ts: plan.read_ts,
+                },
+                (None, Some(outcome)) => outcome,
+                (None, None) => unreachable!("the match above leaves exactly one arm"),
             };
 
             // Go `upsertCreateMaterializedViewRefreshInfo`: the refresh
@@ -4146,8 +4203,13 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             .into_parts();
             let last_success = chrono::Utc::now().timestamp();
 
-            let existing_refresh_row = refresh_table.find(snapshot, view_id)?;
+            // The build's row mutations lead the transaction: Go commits the
+            // data movement before the completion bookkeeping.
             let mut mutations = Vec::new();
+            if let Some(plan) = &built {
+                mutations.extend(plan.mutations.iter().cloned());
+            }
+            let existing_refresh_row = refresh_table.find(snapshot, view_id)?;
             refresh_table.append_upsert(
                 view_id,
                 outcome.read_ts,

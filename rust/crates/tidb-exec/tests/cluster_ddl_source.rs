@@ -32,7 +32,7 @@ use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback,
     plan_ddl, plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
     plan_persisted_materialized_view_create_job_step,
-    plan_persisted_materialized_view_log_job_step, MviewBuildOutcome,
+    plan_persisted_materialized_view_log_job_step,
     prepare_check_constraint_job_submission, prepare_materialized_view_job_submission,
     AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate,
 };
@@ -6179,59 +6179,62 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     assert_eq!(active.job.state, JobState::RUNNING);
     assert_eq!(active.job.schema_state, SchemaState::WRITE_REORGANIZATION);
 
-    // Phase 2 without the finished build's read TS is the recorded seam: the
-    // tick refuses and leaves the job exactly where Go's own
-    // ErrWaitReorgTimeout tick would.
-    let error = plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_605, None)
-        .expect_err("the build phase is the recorded seam");
-    assert!(matches!(error, DdlPlanError::Encode(ref message)
-        if message.contains("initial-build data movement")));
-
-    // Simulate the data build: write test rows into the view table (the real
-    // caller would execute the REPLACE INTO ... SELECT through a session).
-    let catalog_build = load_cluster_catalog(&mut store).expect("catalog loads");
-    let build_db = catalog_build
-        .databases
-        .iter()
-        .find(|db| db.info.name.original() == "u6")
-        .expect("u6 exists");
-    let view_meta = build_db
-        .tables
-        .iter()
-        .find(|t| t.name.original() == "mv")
-        .expect("the view exists after phase 1")
-        .clone_like_go();
-    let build_rows: Vec<Vec<tidb_datatype::Datum>> = vec![
-        vec![tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(1)],
-        vec![tidb_datatype::Datum::Int(2), tidb_datatype::Datum::Int(1)],
-    ];
-    for row in &build_rows {
+    // The base carries the rows the build reads, stored as the record bytes
+    // a real cluster writes: an Int-handle table keeps `id` in the key.
+    let base_info = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        let database = catalog
+            .databases
+            .iter()
+            .find(|db| db.info.name.original() == "u6")
+            .expect("u6 exists");
+        database
+            .tables
+            .iter()
+            .find(|t| t.id == base_id)
+            .expect("the base table exists")
+            .clone_like_go()
+    };
+    for (id, k) in [(1, 10), (2, 10), (3, 20)] {
         let mut values = tidb_exec::system_row_write::RowValues::new();
-        for (offset, datum) in row.iter().enumerate() {
-            let col = view_info_columns(&view_meta, offset);
-            values.insert(col, datum.clone());
-        }
-        let mutations = tidb_exec::system_row_write::store_clustered_row(
-            &view_meta,
-            None,
-            &values,
-        )
-        .expect("the build row encodes");
+        values.insert(view_info_columns(&base_info, 0), Datum::Int(id));
+        values.insert(view_info_columns(&base_info, 1), Datum::Int(k));
+        let mutations = store_clustered_row(&base_info, None, &values)
+            .expect("the base row encodes");
         apply_mutations(&mut store, &mutations);
     }
 
-    // With the finished build's read TS, the completion transaction records
-    // the refresh row, marks the view Ready, and finishes the job.
-    let step = plan_persisted_materialized_view_create_job_step(
-        &mut store,
-        view_job_id,
-        1_605,
-        Some(MviewBuildOutcome { read_ts: 1_605 }),
-    )
-    .expect("the completion step plans");
-    assert!(step.terminal, "the build completion finishes the job");
+    // Phase 2 with no caller-supplied outcome runs the pure-tier build
+    // itself: the definition SELECT executes over the base rows just seeded
+    // and the aggregated view rows land in the completion transaction —
+    // one tick, terminal, job DONE.
+    let step =
+        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_605, None)
+            .expect("the build phase plans, builds, and completes");
+    assert!(step.terminal, "the built job finishes in one tick");
     apply_mutations(&mut store, &step.write.mutations);
     let view_id = step.write.created_id.expect("the view id");
+
+    // The build actually MOVED the rows: the view answers the aggregation
+    // the definition computes over the seeded base rows.
+    let view_info = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
+        let database = catalog
+            .databases
+            .iter()
+            .find(|db| db.info.name.original() == "u6")
+            .expect("u6 exists");
+        database
+            .tables
+            .iter()
+            .find(|t| t.id == view_id)
+            .expect("the view exists")
+            .clone_like_go()
+    };
+    assert_eq!(
+        read_view_rows(&mut store, &view_info),
+        vec![vec![Datum::Int(1), Datum::Int(1)], vec![Datum::Int(2), Datum::Int(1)], vec![Datum::Int(3), Datum::Int(1)]],
+    );
 
     // The completed job is DONE in history with every affected table.
     let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
@@ -6412,6 +6415,157 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     assert_eq!(finished.state, JobState::ROLLBACK_DONE);
 }
 
+/// Go refuses to build over rows a crashed prior attempt left in the view
+/// (`hasCreateMaterializedViewBuildRows` + the ErrInvalidDDLJob it raises):
+/// the job moves to Rollingback and the NEXT tick drops the phase-1 view.
+#[test]
+fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
+    use tidb_executor::StmtContext;
+
+    let enabled = StmtContext::for_query().with_enable_mview(true);
+    let lower = |sql: &str, schema: &str| {
+        let parsed = tidb_parser::parse(sql).expect("MV DDL parses");
+        lower_ddl_with_context(&parsed, schema, &enabled)
+            .expect("MV DDL admission outcome")
+            .expect("MV DDL lowers to a statement")
+    };
+    let mut store = bootstrapped();
+
+    let create = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE mv_base (id INT PRIMARY KEY AUTO_INCREMENT, k INT)",
+            "u6",
+        ),
+        1_700,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+    let mut log_spec = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON mv_base (id, k)", "u6"),
+        1_701,
+        false,
+        0,
+    )
+    .expect("log submission preflight succeeds")
+    .expect("the log create owns a job spec");
+    {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        let (mutations, cleanup) = plan_insert_attempt(
+            &mut store,
+            &catalog,
+            std::slice::from_mut(&mut log_spec),
+            &mut |_| Option::<fn()>::None,
+        )
+        .expect("the log insertion plans");
+        apply_mutations(&mut store, &mutations);
+        drop(cleanup);
+    }
+    let log_step = plan_persisted_materialized_view_log_job_step(&mut store, log_spec.job.id, 1_702)
+        .expect("the log worker step plans");
+    apply_mutations(&mut store, &log_step.write.mutations);
+
+    let mut spec = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower(
+            "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(1) FROM mv_base GROUP BY id)",
+            "u6",
+        ),
+        1_703,
+        false,
+        0,
+    )
+    .expect("view submission preflight succeeds")
+    .expect("the view create owns a job spec");
+    let view_job_id = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        let (mutations, cleanup) = plan_insert_attempt(
+            &mut store,
+            &catalog,
+            std::slice::from_mut(&mut spec),
+            &mut |_| Option::<fn()>::None,
+        )
+        .expect("the view insertion plans");
+        apply_mutations(&mut store, &mutations);
+        drop(cleanup);
+        spec.job.id
+    };
+    let phase_one =
+        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_704, None)
+            .expect("phase 1 plans");
+    apply_mutations(&mut store, &phase_one.write.mutations);
+
+    // Rows a crashed prior attempt left behind: the view's record range is
+    // not empty when the build phase next ticks.
+    let view_id = phase_one.write.created_id.expect("phase 1 created the view");
+    let residual_view = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        let database = catalog
+            .databases
+            .iter()
+            .find(|db| db.info.name.original() == "u6")
+            .expect("u6 exists");
+        database
+            .tables
+            .iter()
+            .find(|t| t.id == view_id)
+            .expect("the view exists")
+            .clone_like_go()
+    };
+    let mut values = tidb_exec::system_row_write::RowValues::new();
+    values.insert(view_info_columns(&residual_view, 0), Datum::Int(7));
+    values.insert(view_info_columns(&residual_view, 1), Datum::Int(1));
+    let mutations = store_clustered_row(&residual_view, None, &values)
+        .expect("the residual row encodes");
+    apply_mutations(&mut store, &mutations);
+
+    // The build tick refuses, moves the job to Rollingback, and stays
+    // non-terminal — Go's own error text rides the step's warning.
+    let step =
+        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_705, None)
+            .expect("the refused tick plans the Rollingback transition");
+    assert!(!step.terminal, "Rollingback is not terminal");
+    assert!(
+        step.write
+            .warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("residual build rows")),
+        "Go's residual error text rides the step: {:?}",
+        step.write.warning
+    );
+    apply_mutations(&mut store, &step.write.mutations);
+
+    // The next tick runs the rollback: the phase-1 view drops and the job
+    // ends ROLLBACK_DONE.
+    let rollback =
+        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_706, None)
+            .expect("the rollback tick plans");
+    assert!(rollback.terminal, "the rollback ends the job");
+    apply_mutations(&mut store, &rollback.write.mutations);
+    let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
+    let database = catalog
+        .databases
+        .iter()
+        .find(|db| db.info.name.original() == "u6")
+        .expect("u6 survives");
+    assert!(
+        !database.tables.iter().any(|table| table.id == view_id),
+        "the rollback drops the phase-1 view"
+    );
+    let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
+    let finished = history
+        .load(&mut store)
+        .expect("SQL history scans")
+        .into_iter()
+        .find(|job| job.id == view_job_id)
+        .expect("the rolled-back job is in history");
+    assert_eq!(finished.state, JobState::ROLLBACK_DONE);
+}
+
 /// Looks up the column ID at the given offset in the table.
 fn view_info_columns(table: &tidb_model::TableInfo, offset: usize) -> i64 {
     table
@@ -6420,6 +6574,82 @@ fn view_info_columns(table: &tidb_model::TableInfo, offset: usize) -> i64 {
         .nth(offset)
         .map(|c| c.read().id)
         .expect("column exists at offset")
+}
+
+/// Reads a view's stored rows back through the driver: the same pre-load-
+/// and-SELECT shape the build engine uses, so the assertion exercises the
+/// real decode path rather than re-reading the test's own encodings.
+fn read_view_rows(
+    store: &mut MetaStore,
+    view: &tidb_model::TableInfo,
+) -> Vec<Vec<tidb_datatype::Datum>> {
+    use tidb_executor::storage::{MemTableStorage, TableStorage};
+    use tidb_executor::{Catalog, KvColumn, KvTable};
+    let mut kv_columns: Vec<KvColumn> = Vec::new();
+    for column in view.columns.iter_deref() {
+        let column = column.read();
+        kv_columns.push(KvColumn {
+            name: column.name.original().to_owned(),
+            id: column.id,
+            field_type: column.field_type.clone(),
+            column_info_version: column.version,
+            default_value: None,
+            origin_default: None,
+            comment: column.comment.clone(),
+            generated: None,
+        });
+    }
+    let mut storage = MemTableStorage::new();
+    let (start, end) = tidb_codec::table_key::get_table_handle_key_range(view.id);
+    for (key, stored) in store
+        .scan_range(&start, &end)
+        .expect("the view record range scans")
+    {
+        storage
+            .set(tidb_txnkv::Key::from_bytes(key), stored)
+            .expect("the row preloads");
+    }
+    let mut kv_table = KvTable::with_storage(view.id, kv_columns, Box::new(storage));
+    kv_table.set_name(view.name.original());
+    if view.pk_is_handle {
+        let offset = view
+            .columns
+            .iter_deref()
+            .position(|column| {
+                column.read().field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY != 0
+            })
+            .expect("the PK column exists");
+        kv_table.set_pk_handle_offset(offset);
+    } else if view.is_common_handle {
+        let mut offsets = Vec::new();
+        let primary = view
+            .indices
+            .iter_deref()
+            .find(|index| index.read().primary)
+            .expect("the view has its PRIMARY index");
+        for part in primary.read().columns.iter_deref() {
+            let name = part.read().name.lowercase().to_owned();
+            offsets.push(
+                view.columns
+                    .iter_deref()
+                    .position(|column| column.read().name.lowercase() == name.as_str())
+                    .expect("the key column exists"),
+            );
+        }
+        kv_table.set_common_handle_offsets(offsets);
+        kv_table.set_common_handle_version(view.common_handle_version);
+    }
+    let mut catalog = Catalog::default();
+    catalog.create_database("u6");
+    catalog
+        .register_kv_in("u6", view.name.original(), kv_table)
+        .expect("the view registers");
+    let context = tidb_executor::StmtContext::for_query();
+    let sql = format!("SELECT * FROM {} ORDER BY 1", view.name.original());
+    let (_, rows) =
+        tidb_executor::run_select_meta_in(&sql, &catalog, "u6", &context)
+            .expect("the view rows read");
+    rows
 }
 
 /// Looks up the column ID at the given offset in the table.
