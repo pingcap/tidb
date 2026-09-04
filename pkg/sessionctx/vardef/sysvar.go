@@ -308,6 +308,8 @@ const (
 	TxnIsolationOneShot = "tx_isolation_one_shot"
 	// MaxExecutionTime is the name of the 'max_execution_time' system variable.
 	MaxExecutionTime = "max_execution_time"
+	// TiDBEnableMaxExecutionTimeForDML is the name of the 'tidb_enable_max_execution_time_for_dml' system variable.
+	TiDBEnableMaxExecutionTimeForDML = "tidb_enable_max_execution_time_for_dml"
 	// TiDBMaxKeysRead is the name of the 'tidb_max_keys_read' system variable.
 	TiDBMaxKeysRead = "tidb_max_keys_read"
 	// TiKVClientReadTimeout is the name of the 'tikv_client_read_timeout' system variable.
