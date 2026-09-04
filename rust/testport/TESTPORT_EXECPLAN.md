@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor/sortexec` TopN spill cancellation polling): aligned
+  `SpilledRun::write` with Go's `topNSpillHelper.spillHeap` SQL-killer polling.
+  The Rust writer now checks the statement killer every 100 original heap
+  positions, including the output-time suffix index, and relies on the disk
+  container's drop cleanup for cancelled partial runs. The focused
+  fail-before/pass-after regression and Ready checks are recorded in
+  `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-05 (`pkg/executor/sortexec` repeated TopN worker spill rounds):
   aligned Rust with Go's post-spill fetch loop. Workers now drain their
   bounded heaps once per shared spill generation while input continues, then

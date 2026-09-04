@@ -64,6 +64,7 @@ use tidb_util::memory::{
 use tidb_util::spill_storage::SpillStorage;
 
 use crate::executor::ExecError;
+use crate::mem_quota::StatementMemory;
 use crate::sort::{eval_sort_key, SortByItem};
 
 /// Go `spillChunkSize` for the TopN's `tmpSpillChunk`: rows per chunk written
@@ -195,16 +196,25 @@ impl SpilledRun {
         field_types: &[FieldType],
         chunks: &[Chunk],
         row_ptrs: &[(usize, usize)],
+        row_index_start: usize,
         spill_chunk_size: usize,
         parent: &Arc<disk::Tracker>,
         spill_storage: Arc<SpillStorage>,
+        memory: &StatementMemory,
     ) -> Result<SpilledRun, ExecError> {
         let disk_tracker = disk::new_tracker(LABEL_FOR_ROW_CONTAINER, -1);
         disk_tracker.attach_to(parent);
         let mut in_disk = DataInDiskByChunks::new(field_types.to_vec(), "", spill_storage);
         in_disk.disk_tracker().attach_to(&disk_tracker);
         let mut tmp = Chunk::new_with_capacity(field_types, spill_chunk_size);
-        for &(chunk_index, row_index) in row_ptrs {
+        for (relative_index, &(chunk_index, row_index)) in row_ptrs.iter().enumerate() {
+            // Go's `topNSpillHelper.spillHeap` polls `SQLKiller` every 100
+            // heap positions, before appending that position's row. Keep the
+            // original heap index for the output-time suffix path, whose
+            // slice starts after rows already emitted to the caller.
+            if (row_index_start + relative_index) % 100 == 0 {
+                memory.check()?;
+            }
             tmp.append_row(chunks[chunk_index].get_row(row_index));
             if tmp.num_rows() >= spill_chunk_size {
                 in_disk.add(&tmp).map_err(spill_error)?;

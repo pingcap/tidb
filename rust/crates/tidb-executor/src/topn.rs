@@ -189,9 +189,11 @@ fn spill_parallel_worker_heap(
             field_types,
             heap.chunks(),
             heap.row_ptrs(),
+            0,
             spill_chunk_size,
             disk_tracker,
             memory.spill_storage(),
+            memory,
         )?);
     }
     heap.clear();
@@ -692,9 +694,11 @@ where
                 &field_types,
                 self.heap.chunks(),
                 self.heap.row_ptrs(),
+                self.heap.idx(),
                 self.spill_chunk_size,
                 &self.disk_tracker,
                 self.memory.spill_storage(),
+                &self.memory,
             )?;
             self.runs.push(run);
             self.spilled_runs += 1;
@@ -718,9 +722,11 @@ where
                 &field_types,
                 self.heap.chunks(),
                 &remaining,
+                start,
                 self.spill_chunk_size,
                 &self.disk_tracker,
                 self.memory.spill_storage(),
+                &self.memory,
             )?;
             self.runs.push(run);
             self.spilled_runs += 1;
@@ -1633,6 +1639,7 @@ mod spill_tests {
     use crate::mem_quota::OomAction;
     use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
     use tidb_expr::NoColumns;
+    use tidb_util::sqlkiller::KillSignal;
 
     fn topn(
         rows: &[Vec<Option<i64>>],
@@ -2029,6 +2036,38 @@ mod spill_tests {
         assert_eq!(output, (8..64).collect::<Vec<_>>());
         exec.close().unwrap();
         assert!(spill_files_in(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Go's `topNSpillHelper.spillHeap` polls `SQLKiller.HandleSignal` every
+    /// 100 retained rows while serializing a run. A cancellation raised after
+    /// the heap was selected must therefore abort the write and leave no
+    /// partial spill file behind.
+    #[test]
+    fn topn_spill_honors_query_kill_during_run_write() {
+        let dir = scratch_temp_dir("topn-spill-kill");
+        let rows = shuffled_rows(256);
+        let memory = StatementMemory::new(1 << 30, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir));
+        let mut exec = topn(&rows, &[(0, false)], 0, 128, memory);
+        exec.set_spill_chunk_size_for_test(16);
+        exec.open().unwrap();
+        assert!(exec.run_one_segment().unwrap());
+
+        exec.memory
+            .sql_killer()
+            .send_kill_signal(KillSignal::QueryInterrupted);
+        let result = exec.spill_heap();
+        assert!(
+            matches!(result, Err(ExecError::Killed(_))),
+            "a killed spill must return an executor cancellation error: {result:?}"
+        );
+
+        exec.close().unwrap();
+        assert!(
+            spill_files_in(&dir).is_empty(),
+            "a cancelled spill must remove its partial run"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the ten focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the eleven focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -513,3 +513,38 @@ changed.
 The full executor suite, concurrent quota-trigger stress with live worker
 interleavings, spill integration under live TiKV, and native TiKV behavior were
 not run.
+
+## TopN spill cancellation polling alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this eleventh
+Rust-only fix. Go's `topNSpillHelper.spillHeap` calls
+`SQLKiller.HandleSignal` every 100 heap positions while serializing a sorted
+run, before appending that row. Rust's `SpilledRun::write` previously copied
+every row without consulting the statement killer, so a query cancelled during
+a large spill still completed the file write and returned success. The Rust
+writer now receives the statement memory handle, polls at Go's 100-position
+cadence, and preserves the original heap index for the output-time suffix path.
+`DataInDiskByChunks`'s existing `Drop` cleanup removes a partial run when the
+poll returns `ExecError::Killed`.
+
+The focused regression is
+`topn::spill_tests::topn_spill_honors_query_kill_during_run_write`. Before the
+production change it failed with `a killed spill must return an executor
+cancellation error: Ok(())`; after the change it passes and verifies that the
+cancelled spill leaves no file after `close`. Rust ownership remains within
+`topn.rs` and `topn_spill.rs`; no Go, Bazel, generated, fixture, or platform
+artifact changed.
+
+## TopN spill cancellation polling Ready validation
+
+- Pre-fix `LC_ALL=C LANG=C cargo +1.97 test --manifest-path rust/Cargo.toml -p tidb-executor --lib topn::spill_tests::topn_spill_honors_query_kill_during_run_write -- --exact --nocapture` failed with `a killed spill must return an executor cancellation error: Ok(())` (after the repository-required Rust 1.97 toolchain and temporary vendored-OpenSSL host workaround were applied).
+- The same focused command passed after the fix with `LC_ALL=C LANG=C` and a temporary vendored-OpenSSL feature toggle; the manifest was reverted immediately after the run.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The focused regression was run on Rust 1.97 because the workspace declares
+that minimum compiler; the default Rust 1.95 invocation was rejected before
+compilation. The full executor suite, cancellation stress with concurrent
+workers, spill integration under live TiKV, and native TiKV behavior were not
+run.
