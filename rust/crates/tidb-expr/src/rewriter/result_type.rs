@@ -357,6 +357,144 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
     Some((name, ft))
 }
 
+/// Go `adjustRetFtForCastString` (`builtin_cast.go`): a `CAST(... AS CHAR)`
+/// target with an unspecified width takes the width of the value the cast
+/// produces, per the argument's family (and `CAST(json AS CHAR)` widens the
+/// code to `TypeLongBlob`). Fixed `TypeString` targets return untouched, so
+/// the caller gates on `VarString` — Go's own early return.
+pub(crate) fn adjust_ret_ft_for_cast_string(ret_ft: &mut FieldType, arg_ft: &FieldType) {
+    use tidb_datatype::FieldTypeFlags;
+    const MAX_TINY_BLOB_SIZE: i64 = 255;
+    const CAST_BLOB_FLEN: i64 = 65_535 * 4;
+    const CAST_MEDIUM_BLOB_FLEN: i64 = 16_777_215 * 4;
+    const MAX_LONG_BLOB_SIZE: i64 = 4_294_967_295;
+    const UNSPECIFIED: i64 = tidb_datatype::UNSPECIFIED_LENGTH;
+
+    // Go: `if retFt.GetType() == mysql.TypeString { return }` — only variable
+    // length string types are estimated; every estimation arm also requires
+    // `originalFlen == UnspecifiedLength`.
+    if ret_ft.code() != FieldTypeCode::VarString || ret_ft.flen() != UNSPECIFIED {
+        return;
+    }
+    if arg_ft.code() == FieldTypeCode::Null {
+        return;
+    }
+    match arg_ft.eval_type() {
+        tidb_datatype::EvalType::Int => {
+            let flen = match arg_ft.code() {
+                // issue 44786: sizing an int by its type width, not its
+                // declared flen, so `CHAR(1)` cannot truncate `-1`.
+                FieldTypeCode::Tiny => {
+                    if arg_ft.has_flag(FieldTypeFlags::UNSIGNED) {
+                        3
+                    } else {
+                        4
+                    }
+                }
+                FieldTypeCode::Short => {
+                    if arg_ft.has_flag(FieldTypeFlags::UNSIGNED) {
+                        5
+                    } else {
+                        6
+                    }
+                }
+                FieldTypeCode::Int24 => {
+                    if arg_ft.has_flag(FieldTypeFlags::UNSIGNED) {
+                        8
+                    } else {
+                        9
+                    }
+                }
+                FieldTypeCode::Long => {
+                    if arg_ft.has_flag(FieldTypeFlags::UNSIGNED) {
+                        10
+                    } else {
+                        11
+                    }
+                }
+                // BIGINT is 20 either way: both range endpoints print 20
+                // characters.
+                FieldTypeCode::LongLong => 20,
+                FieldTypeCode::Year => 4,
+                FieldTypeCode::Bit => arg_ft.flen(),
+                // Go asserts Enum/Set never reach here (their
+                // EnumSetAsIntFlag path is removed upstream of the call)
+                // and leaves the target untouched otherwise.
+                _ => return,
+            };
+            ret_ft.set_flen(flen);
+        }
+        tidb_datatype::EvalType::Real => {
+            // TiDB formats float/double in `f` notation, so the width covers
+            // the smallest denormal: 87 for float, 370 for double.
+            let flen = match arg_ft.code() {
+                FieldTypeCode::Float => 87,
+                FieldTypeCode::Double => 370,
+                _ => return,
+            };
+            ret_ft.set_flen(flen);
+        }
+        tidb_datatype::EvalType::Decimal => {
+            let precision = arg_ft.flen();
+            let scale = arg_ft.decimal();
+            if precision == UNSPECIFIED || scale == UNSPECIFIED {
+                return;
+            }
+            let mut ret = precision;
+            if scale > 0 {
+                ret += 1;
+            }
+            if !arg_ft.has_flag(FieldTypeFlags::UNSIGNED) && precision > 0 {
+                ret += 1; // for negative sign
+            }
+            if ret == 0 {
+                ret = 1;
+            }
+            ret_ft.set_flen(ret);
+        }
+        tidb_datatype::EvalType::Datetime | tidb_datatype::EvalType::Timestamp => {
+            let mut flen = if arg_ft.code() == FieldTypeCode::Date {
+                10 // MaxDateWidth
+            } else {
+                19 // MaxDatetimeWidthNoFsp
+            };
+            if arg_ft.decimal() > 0 {
+                flen += 1 + arg_ft.decimal();
+            }
+            ret_ft.set_flen(flen);
+        }
+        tidb_datatype::EvalType::Duration => {
+            let mut flen = 10; // MaxDurationWidthNoFsp
+            if arg_ft.decimal() > 0 {
+                flen += 1 + arg_ft.decimal();
+            }
+            ret_ft.set_flen(flen);
+        }
+        tidb_datatype::EvalType::Json => {
+            ret_ft.set_flen(MAX_LONG_BLOB_SIZE);
+            ret_ft.set_code(FieldTypeCode::LongBlob);
+        }
+        tidb_datatype::EvalType::VectorFloat32 => {}
+        tidb_datatype::EvalType::String => {
+            let flen = match arg_ft.code() {
+                FieldTypeCode::String | FieldTypeCode::Varchar | FieldTypeCode::VarString => {
+                    if arg_ft.flen() > 0 {
+                        arg_ft.flen()
+                    } else {
+                        return;
+                    }
+                }
+                FieldTypeCode::TinyBlob => MAX_TINY_BLOB_SIZE,
+                FieldTypeCode::Blob => CAST_BLOB_FLEN,
+                FieldTypeCode::MediumBlob => CAST_MEDIUM_BLOB_FLEN,
+                FieldTypeCode::LongBlob => MAX_LONG_BLOB_SIZE,
+                _ => return,
+            };
+            ret_ft.set_flen(flen);
+        }
+    }
+}
+
 /// Go `types.DefaultTypeForValue` for a `*MyDecimal`: the printed length plus
 /// one for the decimal point, and the literal's own fractional digits.
 pub(super) fn decimal_literal_type(value: &tidb_datatype::Decimal) -> FieldType {

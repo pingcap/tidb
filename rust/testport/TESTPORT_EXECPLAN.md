@@ -280,6 +280,21 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `[try again later]`; the focused code/state/message regression and Ready
   results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
 
+- 2026-09-04 (`CAST(... AS CHAR)` width production): ported Go's
+  `adjustRetFtForCastString` table (`builtin_cast.go`) into
+  `rewriter::result_type::adjust_ret_ft_for_cast_string`, applied by
+  `build_cast_function` for `VarString` CHAR targets with unspecified flen:
+  per-type int widths (3/4, 5/6, 8/9, 10/11, 20, Year 4, Bit source flen),
+  Real 87/370, `decimalPrecisionToLength`, temporal 10/19 `+1+decimal`,
+  JSON → 4294967295 with the code widening to LongBlob, and the string
+  family inherit/blob sizes. Fixed `TypeString` targets stay untouched
+  (Go's early return), so `BINARY(N)` is unaffected. The CHAR
+  charset-coercibility seam (`isExplicitCharset` → coercibility/repertoire)
+  remains the recorded boundary. One fail-before regression (pre-fix the
+  unsized target kept flen -1); full tidb-expr sweep green except the
+  documented network flake. Receipt:
+  `receipts/cast_char_width_estimation.md`.
+
 - 2026-09-04 (`pkg/parser` `@@instance.` scanner prefix, finding #12):
   removed the Rust-only `instance.` entry from `scan_at`'s scope-prefix list —
   Go's `startWithAt` (lexer.go:671) matches exactly `global.`/`session.`/

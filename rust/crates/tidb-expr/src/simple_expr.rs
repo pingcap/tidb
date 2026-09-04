@@ -532,6 +532,14 @@ pub(crate) fn build_cast_function(
     {
         target.del_flags(FieldTypeFlags::NOT_NULL);
     }
+    // Go `castAsStringFunctionClass.getFunction` → `adjustRetFtForCastString`:
+    // an unspecified-width CHAR target takes the produced value's width (and
+    // a JSON source widens the code to LongBlob).
+    if target.code() == FieldTypeCode::VarString {
+        if let Some(arg_ft) = expr.static_type() {
+            crate::rewriter::adjust_ret_ft_for_cast_string(&mut target, arg_ft);
+        }
+    }
     let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
     let name = match target.code() {
         FieldTypeCode::Year => "cast_year",
@@ -1055,6 +1063,188 @@ mod tests {
         let nonnull_type = nonnull_cast.ret_type.as_ref().expect("cast type");
         assert!(nonnull_type.has_flag(FieldTypeFlags::NOT_NULL));
         assert!(target.has_flag(FieldTypeFlags::NOT_NULL));
+    }
+
+    /// Go `adjustRetFtForCastString` (`builtin_cast.go`): an
+    /// unspecified-width `CAST(... AS CHAR)` target takes the width of the
+    /// value the cast produces, per the argument's family; a JSON source
+    /// also widens the code to LongBlob.
+    #[test]
+    fn cast_as_char_estimates_unspecified_widths_like_go() {
+        let cases: Vec<(&str, FieldType, i64, FieldTypeCode)> = vec![
+            (
+                "a_int",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::LongLong);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                20,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_uint24",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Int24);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL | FieldTypeFlags::UNSIGNED);
+                    ft
+                },
+                8,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_short",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Short);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                6,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_year",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Year);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                4,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_double",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Double);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                370,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_float",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Float);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                87,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_decimal",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
+                    ft.set_flen(10);
+                    ft.set_decimal(2);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                12,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_datetime",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Datetime);
+                    ft.set_decimal(3);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                23,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_date",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Date);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                10,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_duration",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Duration);
+                    ft.set_decimal(2);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                13,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_json",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Json);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                4_294_967_295,
+                FieldTypeCode::LongBlob,
+            ),
+            (
+                "a_varchar",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::VarString);
+                    ft.set_flen(7);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                7,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_tinyblob",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::TinyBlob);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                255,
+                FieldTypeCode::VarString,
+            ),
+            (
+                "a_blob",
+                {
+                    let mut ft = FieldType::new(FieldTypeCode::Blob);
+                    ft.add_flags(FieldTypeFlags::NOT_NULL);
+                    ft
+                },
+                262_140,
+                FieldTypeCode::VarString,
+            ),
+        ];
+
+        for (name, field_type, want_flen, want_code) in cases {
+            let table = vec![TestColumnInfo {
+                name: CiString::new(name),
+                id: 1,
+                offset: 0,
+                field_type,
+                hidden: false,
+                virtual_generated: None,
+            }];
+            let ids = SimplePlanColumnIdAllocator::new(0);
+            // `CAST(x AS CHAR)` with no length: TypeVarString, unspecified
+            // flen — exactly what Go's CastType rule builds.
+            let char_target = FieldType::new(FieldTypeCode::VarString);
+            let options = BuildOptions::new()
+                .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
+                .expect("table options")
+                .with_cast_expr_to(char_target);
+            let built = parse_simple_expr(&NoResolver, name, &options)
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            let Expression::ScalarFunction(cast) = built else {
+                panic!("{name}: expected a cast function")
+            };
+            let ret_type = cast.ret_type.as_ref().expect("cast type");
+            assert_eq!(ret_type.flen(), want_flen, "{name}");
+            assert_eq!(ret_type.code(), want_code, "{name}");
+        }
     }
 
     /// Go `ParseSimpleExpr`'s empty-string guard.
