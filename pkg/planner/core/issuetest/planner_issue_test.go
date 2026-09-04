@@ -980,6 +980,47 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
+
+	// issue-69547-view-definition-no-schema-prefix-for-from-aliases
+	// Column references expanded from `alias.*` must not be qualified with the
+	// schema name, otherwise the SELECT text stored in the view definition is
+	// not replayable (`db`.`cte_alias`.`col` fails with Unknown column).
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("drop database if exists db_a_cte_replay")
+		tk.MustExec("drop database if exists db_b_cte_replay")
+		tk.MustExec("create database db_a_cte_replay")
+		tk.MustExec("create database db_b_cte_replay")
+		tk.MustExec("create table db_a_cte_replay.tmp_table1 (id decimal(18,0) not null, row_1 varchar(255) default null, primary key (id))")
+		tk.MustExec("insert into db_a_cte_replay.tmp_table1 values (1, 'x')")
+
+		// CTE referenced through an alias.
+		tk.MustExec("create view db_a_cte_replay.view_test_v1 as (with rs1 as (select otn.* from db_a_cte_replay.tmp_table1 otn) select ojt.* from rs1 ojt)")
+		viewDef := tk.MustQuery("show create view db_a_cte_replay.view_test_v1").Rows()[0][1].(string)
+		require.Equal(t, "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `view_test_v1` (`id`, `row_1`) AS "+
+			"(WITH `rs1` AS (SELECT `otn`.`id` AS `id`,`otn`.`row_1` AS `row_1` FROM `db_a_cte_replay`.`tmp_table1` AS `otn`) "+
+			"SELECT `ojt`.`id` AS `id`,`ojt`.`row_1` AS `row_1` FROM `rs1` AS `ojt`)", viewDef)
+		tk.MustQuery("select * from db_a_cte_replay.view_test_v1").Check(testkit.Rows("1 x"))
+		// The emitted DDL must be replayable in another schema.
+		tk.MustExec("use db_b_cte_replay")
+		tk.MustExec(viewDef)
+		tk.MustQuery("select * from db_b_cte_replay.view_test_v1").Check(testkit.Rows("1 x"))
+		tk.MustExec("use test")
+
+		// A plain table alias must not be schema-qualified either, while an
+		// unaliased table keeps the fully qualified column reference.
+		tk.MustExec("create view db_a_cte_replay.view_test_v2 as select otn.* from db_a_cte_replay.tmp_table1 otn")
+		require.Equal(t, "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `view_test_v2` (`id`, `row_1`) AS "+
+			"SELECT `otn`.`id` AS `id`,`otn`.`row_1` AS `row_1` FROM `db_a_cte_replay`.`tmp_table1` AS `otn`",
+			tk.MustQuery("show create view db_a_cte_replay.view_test_v2").Rows()[0][1].(string))
+		tk.MustExec("create view db_a_cte_replay.view_test_v3 as select tmp_table1.* from db_a_cte_replay.tmp_table1")
+		require.Equal(t, "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `view_test_v3` (`id`, `row_1`) AS "+
+			"SELECT `db_a_cte_replay`.`tmp_table1`.`id` AS `id`,`db_a_cte_replay`.`tmp_table1`.`row_1` AS `row_1` FROM `db_a_cte_replay`.`tmp_table1`",
+			tk.MustQuery("show create view db_a_cte_replay.view_test_v3").Rows()[0][1].(string))
+
+		tk.MustExec("drop database if exists db_a_cte_replay")
+		tk.MustExec("drop database if exists db_b_cte_replay")
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
