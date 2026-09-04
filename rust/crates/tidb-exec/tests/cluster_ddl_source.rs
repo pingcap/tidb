@@ -31,6 +31,7 @@ use tidb_exec::cluster_catalog::{
 use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback,
     plan_ddl, plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
+    plan_persisted_materialized_view_create_job_step,
     plan_persisted_materialized_view_log_job_step,
     prepare_check_constraint_job_submission, prepare_materialized_view_job_submission,
     AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate,
@@ -120,6 +121,7 @@ pub(crate) fn bootstrapped() -> MetaStore {
         "tidb_ddl_history",
         "tidb_mdl_info",
         "tidb_mlog_purge_info",
+        "tidb_mview_refresh_info",
     ] {
         let system_table = tidb_metadef::DDL_TABLE_VERSION_TABLES
             .iter()
@@ -5901,6 +5903,241 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
         .expect("SQL history scans")
         .into_iter()
         .find(|job| job.id == rollback_job_id)
+        .expect("the rolled-back job is in history");
+    assert_eq!(finished.state, JobState::ROLLBACK_DONE);
+}
+
+
+/// Go `onCreateMaterializedView` (master `94a9cbedab`), phase 1: the owner
+/// step checks every base, lands the view table PUBLIC, records the view in
+/// each base's `MViewIDs`, prewrites the refresh-info row, and transitions
+/// the queued job to `Running`/`StateWriteReorganization` as a non-terminal
+/// step. The initial-build phase is the recorded seam; the rollback
+/// transition undoes everything phase 1 committed.
+#[test]
+fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
+    use tidb_executor::StmtContext;
+
+    let enabled = StmtContext::for_query().with_enable_mview(true);
+    let lower = |sql: &str, schema: &str| {
+        let parsed = tidb_parser::parse(sql).expect("MV DDL parses");
+        lower_ddl_with_context(&parsed, schema, &enabled)
+            .expect("MV DDL admission outcome")
+            .expect("MV DDL lowers to a statement")
+    };
+    let mut store = bootstrapped();
+
+    // Base table + its log (batch 14/15 machinery).
+    let create = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE mv_base (id INT PRIMARY KEY AUTO_INCREMENT, k INT)",
+            "u6",
+        ),
+        1_600,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+    let base_id = create.created_id.expect("base table id");
+    let mut log_submit = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON mv_base (id, k)", "u6"),
+        1_601,
+        false,
+        0,
+    )
+    .expect("log submission preflight succeeds")
+    .expect("the log create owns a job spec");
+    let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+    let (mutations, cleanup) = plan_insert_attempt(
+        &mut store,
+        &catalog,
+        std::slice::from_mut(&mut log_submit),
+        &mut |_| Option::<fn()>::None,
+    )
+    .expect("the log insertion plans");
+    apply_mutations(&mut store, &mutations);
+    drop(cleanup);
+    let log_job_id = log_submit.job.id;
+    let log_step = plan_persisted_materialized_view_log_job_step(&mut store, log_job_id, 1_602, None)
+        .expect("the log worker step plans");
+    apply_mutations(&mut store, &log_step.write.mutations);
+    let mlog_id = log_step.write.created_id.expect("the log worker created the mlog");
+
+    // Submit the view create (batch 16 machinery).
+    let mut spec = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower(
+            "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(1) FROM mv_base GROUP BY id)",
+            "u6",
+        ),
+        1_603,
+        false,
+        0,
+    )
+    .expect("view submission preflight succeeds")
+    .expect("the view create owns a job spec");
+    let view_job_id = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        let (mutations, cleanup) = plan_insert_attempt(
+            &mut store,
+            &catalog,
+            std::slice::from_mut(&mut spec),
+            &mut |_| Option::<fn()>::None,
+        )
+        .expect("the view insertion plans");
+        apply_mutations(&mut store, &mutations);
+        drop(cleanup);
+        spec.job.id
+    };
+
+    // Phase 1: the catalog gains the view, the base its back-reference, and
+    // the job its WriteReorganization transition — non-terminal.
+    let step =
+        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_604)
+            .expect("phase 1 plans");
+    assert!(!step.terminal, "phase 1 hands the job to the build phase");
+    assert_eq!(
+        step.write.diff.action_type,
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW
+    );
+    let view_id = step.write.created_id.expect("phase 1 created the view");
+    apply_mutations(&mut store, &step.write.mutations);
+
+    let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.original() == "u6")
+        .expect("u6 survives");
+    let view = database
+        .tables
+        .iter()
+        .find(|table| table.id == view_id)
+        .expect("the view table exists after phase 1");
+    assert_eq!(view.name.original(), "mv");
+    assert_eq!(view.state, SchemaState::PUBLIC);
+    let view_meta = view
+        .materialized_view
+        .as_ref()
+        .expect("the view metadata is set")
+        .read();
+    assert_eq!(
+        view_meta.base_table_ids.iter().copied().collect::<Vec<_>>(),
+        vec![base_id]
+    );
+    let base = database
+        .tables
+        .iter()
+        .find(|table| table.id == base_id)
+        .expect("the base survives");
+    let base_meta = base
+        .materialized_view_base
+        .as_ref()
+        .expect("the base gains its view reference")
+        .read();
+    assert_eq!(base_meta.mlog_id, mlog_id);
+    assert_eq!(
+        base_meta.mview_ids.iter().copied().collect::<Vec<_>>(),
+        vec![view_id]
+    );
+    drop(base_meta);
+
+    // The refresh-info prewrite row records the phase's read TSO.
+    let refresh_table = tidb_exec::mview_refresh_info_table::MviewRefreshInfoTable::locate(&catalog)
+        .expect("the refresh table exists");
+    let row = refresh_table
+        .find(&mut store, view_id)
+        .expect("the refresh table scans")
+        .expect("phase 1 prewrote the refresh row");
+    assert_eq!(row.last_success_read_tso, Some(1_604));
+    assert_eq!(row.next_refresh_unix_seconds, None);
+
+    // The job is still queued, now Running at WriteReorganization.
+    let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+    let job_table = DdlJobTable::locate(&catalog).expect("the job table exists");
+    let active = job_table
+        .load(&mut store)
+        .expect("the queue scans")
+        .into_iter()
+        .find(|active| active.job.id == view_job_id)
+        .expect("the view job stays queued for its build phase");
+    assert_eq!(active.job.state, JobState::RUNNING);
+    assert_eq!(active.job.schema_state, SchemaState::WRITE_REORGANIZATION);
+
+    // Phase 2 is the recorded seam: the data build refuses, leaving the job
+    // exactly where Go's own ErrWaitReorgTimeout tick would.
+    let error = plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_605)
+        .expect_err("the build phase is the recorded seam");
+    assert!(matches!(error, DdlPlanError::Encode(ref message)
+        if message.contains("initial-build data movement")));
+
+    // Rollback: persist Go's Rollingback transition, then the step drops the
+    // view, clears the base's view reference, deletes the refresh row, and
+    // ends ROLLBACK_DONE.
+    let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+    let job_table = DdlJobTable::locate(&catalog).expect("the job table exists");
+    let mut active = job_table
+        .load(&mut store)
+        .expect("the queue scans")
+        .into_iter()
+        .find(|active| active.job.id == view_job_id)
+        .expect("the view job is still queued");
+    active.job.state = JobState::ROLLINGBACK;
+    let mut rewrite = Vec::new();
+    job_table
+        .append_update(&mut active, false, &mut rewrite)
+        .expect("the queued row updates");
+    apply_mutations(&mut store, &rewrite);
+
+    let step = plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_606)
+        .expect("the rollback step plans");
+    assert!(step.terminal);
+    apply_mutations(&mut store, &step.write.mutations);
+
+    let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.original() == "u6")
+        .expect("u6 survives");
+    assert!(
+        !database.tables.iter().any(|table| table.id == view_id),
+        "the rollback drops the created view"
+    );
+    let base = database
+        .tables
+        .iter()
+        .find(|table| table.id == base_id)
+        .expect("the base survives");
+    let base_meta = base
+        .materialized_view_base
+        .as_ref()
+        .expect("the base keeps its log reference")
+        .read();
+    assert_eq!(base_meta.mlog_id, mlog_id);
+    assert!(
+        base_meta.mview_ids.is_empty(),
+        "the rollback removes the view from the base"
+    );
+    let refresh_table = tidb_exec::mview_refresh_info_table::MviewRefreshInfoTable::locate(&catalog)
+        .expect("the refresh table exists");
+    assert!(
+        refresh_table
+            .find(&mut store, view_id)
+            .expect("the refresh table scans")
+            .is_none(),
+        "the rollback deletes the refresh row"
+    );
+    let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
+    let finished = history
+        .load(&mut store)
+        .expect("SQL history scans")
+        .into_iter()
+        .find(|job| job.id == view_job_id)
         .expect("the rolled-back job is in history");
     assert_eq!(finished.state, JobState::ROLLBACK_DONE);
 }

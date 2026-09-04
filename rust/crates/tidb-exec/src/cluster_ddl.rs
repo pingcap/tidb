@@ -2562,6 +2562,12 @@ impl From<crate::mlog_purge_info_table::MlogPurgeInfoTableError> for DdlPlanErro
     }
 }
 
+impl From<crate::mview_refresh_info_table::MviewRefreshInfoTableError> for DdlPlanError {
+    fn from(error: crate::mview_refresh_info_table::MviewRefreshInfoTableError) -> Self {
+        DdlPlanError::Encode(error.to_string())
+    }
+}
+
 /// What one planned catalog change will publish.
 #[derive(Clone, Debug)]
 pub enum DdlPlan {
@@ -3614,6 +3620,519 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
 
     if let Some(row) = purge_table.find(snapshot, active.job.table_id)? {
         purge_table.append_delete(&row, &mut mutations)?;
+    }
+
+    active.job.state = JobState::ROLLBACK_DONE;
+    active.job.schema_state = SchemaState::NONE;
+    let schema_version = catalog.schema_version + 1;
+    active.job.last_schema_version = schema_version;
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_version_kv_key(),
+        value::encode_int_value(schema_version),
+    )?);
+    let diff = SchemaDiff {
+        version: schema_version,
+        action_type: active.job.type_,
+        schema_id: db_id,
+        table_id: active.job.table_id,
+        ..SchemaDiff::default()
+    };
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_diff_kv_key(schema_version),
+        value::serialize_schema_diff(&diff)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+
+    active
+        .job
+        .binlog_info
+        .as_ref()
+        .expect("submitted jobs always carry BinlogInfo")
+        .write()
+        .finished_ts = start_ts;
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id: active.job.id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
+    })
+}
+
+/// Plans pinned Go `onCreateMaterializedView` (master `94a9cbedab`), the
+/// view create's two-phase worker, over the persisted active row:
+///
+/// * `StateNone` — Go's first arm: the per-base re-checks
+///   (`onCreateMaterializedViewBaseCheck`), the view `TableInfo` landing
+///   PUBLIC through `createTable`, each base gaining the view ID in its
+///   `MaterializedViewBase.MViewIDs` (`updateMaterializedViewBaseInfoOnCreate`),
+///   the schema-version bump with the create-table event, the
+///   `mysql.tidb_mview_refresh_info` prewrite row, and the transition to
+///   `StateWriteReorganization`/`Running` as a NON-terminal step;
+/// * `StateWriteReorganization` — the initial build. Go moves the base
+///   table's rows into the view through import-into or insert-select at the
+///   build read TS (`buildCreateMaterializedViewData`); that data-movement
+///   engine is not ported, so this planner refuses with a retryable error
+///   and leaves the queued job exactly where Go's own
+///   `ErrWaitReorgTimeout` tick would — still `Running` at
+///   `StateWriteReorganization`, resumable by a later owner;
+/// * `Rollingback` — `rollbackCreateMaterializedView`: the created view (if
+///   the phase committed) drops with its auto-ID allocators, every base's
+///   `MViewIDs` loses the view (Go's `updateMaterializedViewBaseInfoOnDrop`
+///   view arm, dropping the now-empty metadata), the refresh-info row is
+///   deleted, and the job ends `RollbackDone`/`StateNone`.
+///
+/// The active row is the operation authority; a process may disappear after
+/// any committed phase and a later owner can call this function with the
+/// same job ID.
+pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    use crate::mview_refresh_info_table::MviewRefreshInfoTable;
+
+    const REFRESH_INFO_MISSING: &str = "create materialized view: required system table mysql.tidb_mview_refresh_info does not exist";
+
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_CREATE_MATERIALIZED_VIEW {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} is not a create materialized view job"
+        )));
+    }
+
+    // Go decodes and validates the typed arguments first.
+    let Some(args) = tidb_model::get_create_materialized_view_args(&mut active.job)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+    else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view: invalid job args",
+        );
+    };
+    let table_shared = args.read().table_info.get().ok_or_else(|| {
+        DdlPlanError::Encode("create materialized view: invalid job args".to_owned())
+    })?;
+    let Some(view_meta_shared) = table_shared.read().materialized_view.clone() else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view: invalid job args",
+        );
+    };
+    let base_table_ids: Vec<i64> = view_meta_shared
+        .read()
+        .base_table_ids
+        .iter()
+        .copied()
+        .collect();
+    if base_table_ids.is_empty() {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view: invalid job args",
+        );
+    }
+    let mut seen = std::collections::HashSet::with_capacity(base_table_ids.len());
+    for id in &base_table_ids {
+        if *id == 0 {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: invalid base table id",
+            );
+        }
+        if !seen.insert(*id) {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: duplicate base table id",
+            );
+        }
+    }
+
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let db_id = database.info.id;
+
+    let refresh_table = MviewRefreshInfoTable::locate(&catalog).map_err(|_| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrInvalidDDLJob,
+            REFRESH_INFO_MISSING,
+        ))
+    })?;
+
+    if active.job.state == JobState::ROLLINGBACK {
+        return plan_rollback_materialized_view_create_step(
+            &catalog,
+            &job_table,
+            active,
+            &refresh_table,
+            snapshot,
+            start_ts,
+        );
+    }
+
+    // Go `onCreateMaterializedViewBaseCheck` per base, plus the log-side
+    // metadata and public-state checks.
+    let mut bases = Vec::with_capacity(base_table_ids.len());
+    for base_table_id in &base_table_ids {
+        let Some(base) = database
+            .tables
+            .iter()
+            .find(|table| table.id == *base_table_id)
+        else {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                &format!(
+                    "Table '{}.{}' doesn't exist",
+                    database.info.name.original(),
+                    base_table_id
+                ),
+            );
+        };
+        if base.is_view()
+            || base.is_sequence()
+            || base.temp_table_type != tidb_model::TempTableType::NONE
+        {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                &format!(
+                    "'{}.{}' is not BASE TABLE",
+                    database.info.name.original(),
+                    base.name.original()
+                ),
+            );
+        }
+        if base.partition.is_some() {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "CREATE MATERIALIZED VIEW on partition table",
+            );
+        }
+        if base.state != SchemaState::PUBLIC {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                &format!(
+                    "table {} is not in public, but {}",
+                    base.name.original(),
+                    base.state
+                ),
+            );
+        }
+        let mlog_id = base
+            .materialized_view_base
+            .as_ref()
+            .map(|handle| handle.read().mlog_id)
+            .unwrap_or_default();
+        if mlog_id == 0 {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: base table has no materialized view log",
+            );
+        }
+        let Some(mlog) = database.tables.iter().find(|table| table.id == mlog_id) else {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: invalid materialized view log metadata",
+            );
+        };
+        let mlog_ok = mlog
+            .materialized_view_log
+            .as_ref()
+            .map(|handle| handle.read().base_table_id == base.id)
+            .unwrap_or(false);
+        if !mlog_ok {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                "create materialized view: invalid materialized view log metadata",
+            );
+        }
+        if mlog.state != SchemaState::PUBLIC {
+            return cancelled_step(
+                &mut active,
+                &job_table,
+                &format!(
+                    "table {} is not in public, but {}",
+                    mlog.name.original(),
+                    mlog.state
+                ),
+            );
+        }
+        bases.push(base.clone_like_go());
+    }
+
+    match active.job.schema_state {
+        SchemaState::NONE => {
+            // Go `createTable`: the submitted view TableInfo lands PUBLIC at
+            // this transaction's timestamp.
+            let mut view_info = table_shared.read().clone_like_go();
+            view_info.state = SchemaState::PUBLIC;
+            view_info.update_ts = start_ts;
+            let view_id = view_info.id;
+
+            // Go `updateMaterializedViewBaseInfoOnCreate`'s view arm: every
+            // base's `MViewIDs` gains the view (duplicates are skipped).
+            let mut updated_bases = Vec::with_capacity(bases.len());
+            for base in &bases {
+                let mut base_info = base.clone_like_go();
+                if base_info.materialized_view_base.is_none() {
+                    base_info.materialized_view_base = Some(GoShared::new(
+                        tidb_model::MaterializedViewBaseInfo::default(),
+                    ));
+                }
+                let handle = base_info.materialized_view_base.as_ref().expect("just set");
+                let mut meta = handle.write();
+                let mut ids: Vec<i64> = meta.mview_ids.iter().copied().collect();
+                if ids.contains(&view_id) {
+                    continue;
+                }
+                ids.push(view_id);
+                meta.mview_ids = GoValueSlice::from(ids);
+                drop(meta);
+                updated_bases.push(base_info);
+            }
+
+            let mut mutations = Vec::new();
+            mutations.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, view_id),
+                value::serialize_table_info(&view_info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            for base_info in &updated_bases {
+                mutations.push(OptimisticMutation::meta_put(
+                    key::table_kv_key(db_id, base_info.id),
+                    value::serialize_table_info(base_info)
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                )?);
+            }
+
+            let schema_version = catalog.schema_version + 1;
+            let diff = SchemaDiff {
+                version: schema_version,
+                action_type: active.job.type_,
+                schema_id: db_id,
+                table_id: view_id,
+                ..SchemaDiff::default()
+            };
+            mutations.push(OptimisticMutation::meta_put(
+                key::schema_version_kv_key(),
+                value::encode_int_value(schema_version),
+            )?);
+            mutations.push(OptimisticMutation::meta_put(
+                key::schema_diff_kv_key(schema_version),
+                value::serialize_schema_diff(&diff)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            active.job.last_schema_version = schema_version;
+
+            // Go `asyncNotifyEvent(notifier.NewCreateTableEvent(mviewTableInfo))`.
+            append_schema_change_mutations(
+                snapshot,
+                &catalog,
+                active.job.id,
+                &[(
+                    -1,
+                    SchemaChangeEvent::create_table(view_info.clone_like_go()),
+                )],
+                &mut mutations,
+            )?;
+
+            // Go `prewriteCreateMaterializedViewRefreshInfo`: the phase's own
+            // `(view_id, read_ts = start_ts, NULL, NULL)` row in the
+            // should_update = false shape.
+            let existing_refresh_row = refresh_table.find(snapshot, view_id)?;
+            refresh_table.append_upsert(
+                view_id,
+                start_ts,
+                None,
+                None,
+                false,
+                existing_refresh_row.as_ref(),
+                &mut mutations,
+            )?;
+
+            // Go `job.SchemaState = StateWriteReorganization; job.State =
+            // JobStateRunning` — the build phase owns the rest.
+            active.job.schema_state = SchemaState::WRITE_REORGANIZATION;
+            active.job.state = JobState::RUNNING;
+            active.job.table_id = view_id;
+            job_table
+                .append_update(&mut active, true, &mut mutations)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+            let mdl_info_update = mdl_info_update(&catalog, view_id)?;
+            Ok(PersistedDdlJobStep {
+                write: DdlWrite {
+                    ddl_job_id,
+                    mutations,
+                    schema_version,
+                    diff,
+                    created_id: Some(view_id),
+                    backfill: Vec::new(),
+                    auto_pre_split: false,
+                    exchange_partition_validation: None,
+                    check_constraint_validation: None,
+                    mdl_info_update: Some(mdl_info_update),
+                    exchange_partition_label_swap: None,
+                    warning: None,
+                    placement_bundles: Vec::new(),
+                    placement_rollback_bundles: Vec::new(),
+                },
+                terminal: false,
+            })
+        }
+        SchemaState::WRITE_REORGANIZATION => {
+            // Go `runReorgJob(buildCreateMaterializedViewData)`: the initial
+            // build moves the base rows in through import-into or
+            // insert-select at the build read TS. That data-movement engine
+            // is not ported, so this tick refuses and leaves the queued job
+            // exactly where Go's own `ErrWaitReorgTimeout` tick would —
+            // `Running` at `StateWriteReorganization`, resumable.
+            Err(DdlPlanError::Encode(
+                "create materialized view: the initial-build data movement \
+                 (import-into / insert-select at the build read TS) requires \
+                 the reorg infra this tier does not have yet; the job stays \
+                 Running at StateWriteReorganization"
+                    .to_owned(),
+            ))
+        }
+        state => Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrInvalidDDLState,
+            format!("invalid create materialized view schema state {state:?}"),
+        ))),
+    }
+}
+
+/// Plans pinned Go `rollbackCreateMaterializedView` for the view create: the
+/// created view (if the phase committed) drops with its auto-ID allocators,
+/// every base loses the view from `MViewIDs` (empty metadata is removed),
+/// the refresh-info row is deleted, and the job ends
+/// `RollbackDone`/`StateNone`.
+fn plan_rollback_materialized_view_create_step<S: MetaSnapshot>(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
+    refresh_table: &crate::mview_refresh_info_table::MviewRefreshInfoTable,
+    snapshot: &mut S,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let db_id = database.info.id;
+
+    let actual = database
+        .tables
+        .iter()
+        .find(|table| table.id == active.job.table_id);
+    let mut mutations = Vec::new();
+    if let Some(dropping) = actual {
+        let dropping = dropping.clone_like_go();
+        mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+            db_id,
+            dropping.id,
+        ))?);
+        for allocator in [
+            key::auto_table_id_kv_key(db_id, dropping.id),
+            key::auto_increment_id_kv_key(db_id, dropping.id),
+            key::auto_random_table_id_kv_key(db_id, dropping.id),
+        ] {
+            if snapshot.get(&allocator)?.is_some() {
+                mutations.push(OptimisticMutation::meta_delete(allocator)?);
+            }
+        }
+        // Go `updateMaterializedViewBaseInfoOnDrop`'s view arm: every base's
+        // `MViewIDs` loses the view; metadata with neither a log nor any
+        // view is removed outright.
+        if let Some(view_meta) = dropping.materialized_view.as_ref() {
+            for base_table_id in view_meta.read().base_table_ids.iter().copied() {
+                if let Some(base) = database
+                    .tables
+                    .iter()
+                    .find(|table| table.id == base_table_id)
+                {
+                    let mut base_info = base.clone_like_go();
+                    let emptied = base_info
+                        .materialized_view_base
+                        .as_ref()
+                        .map(|handle| {
+                            let mut meta = handle.write();
+                            let kept: Vec<i64> = meta
+                                .mview_ids
+                                .iter()
+                                .copied()
+                                .filter(|id| *id != dropping.id)
+                                .collect();
+                            meta.mview_ids = kept.into();
+                            meta.mlog_id == 0 && meta.mview_ids.is_empty()
+                        })
+                        .unwrap_or(false);
+                    if emptied {
+                        base_info.materialized_view_base = None;
+                    }
+                    mutations.push(OptimisticMutation::meta_put(
+                        key::table_kv_key(db_id, base_info.id),
+                        value::serialize_table_info(&base_info)
+                            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                    )?);
+                }
+            }
+        }
+    }
+
+    if let Some(row) = refresh_table.find(snapshot, active.job.table_id)? {
+        refresh_table.append_delete(&row, &mut mutations)?;
     }
 
     active.job.state = JobState::ROLLBACK_DONE;

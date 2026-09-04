@@ -42,6 +42,28 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04 (batch 17, `pkg/ddl` MV view-create worker phase 1): implemented
+  Go master `94a9cbedab`'s `onCreateMaterializedView` `StateNone` arm and
+  `rollbackCreateMaterializedView` as
+  `plan_persisted_materialized_view_create_job_step` over the batch-16
+  submitted view job — argument validation cancelling on nil/empty/zero/
+  duplicate base IDs, the per-base execution-time re-checks
+  (`onCreateMaterializedViewBaseCheck` + log metadata/public state), the
+  view `TableInfo` landing PUBLIC through `createTable`, every base's
+  `MViewIDs` gaining the view (`updateMaterializedViewBaseInfoOnCreate`),
+  the schema-version bump with the create-table event, the
+  `mysql.tidb_mview_refresh_info` prewrite row via the new
+  `mview_refresh_info_table` storage, and the non-terminal transition to
+  `Running`/`StateWriteReorganization`. The `StateWriteReorganization` data
+  build (import-into / insert-select at the build read TS) stays the
+  recorded seam: the tick refuses retryably and leaves the queued job where
+  Go's own `ErrWaitReorgTimeout` tick would. The rollback path drops the
+  created view with its auto-ID allocators, clears every base's view
+  reference (dropping empty metadata), deletes the refresh row, and ends
+  `RollbackDone`. One regression drives submit to phase 1 to the seam to
+  rollback; failure sets unchanged (exec 7, executor 165 + 1 pre-existing
+  metadef mismatch). Receipt: `receipts/ddl_mview_create_worker.md`.
+
 - 2026-09-04 (batch 16, `pkg/ddl` MV view-create submission): implemented
   Go master `94a9cbedab`'s `CreateMaterializedView` submission body — the
   restricted-SQL column-type derivation (`SELECT * FROM (<canonical>) AS

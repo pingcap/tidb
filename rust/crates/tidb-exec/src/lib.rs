@@ -102,6 +102,7 @@ pub mod ddl_systable;
 mod deadlock_recording;
 pub mod delete_rows_col_multiply;
 pub mod mlog_purge_info_table;
+pub mod mview_refresh_info_table;
 pub use deadlock_recording::configure_deadlock_history;
 pub mod distsql_recordset;
 pub mod effective_auth_plugin;
