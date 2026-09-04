@@ -71,6 +71,9 @@ pub static MEMORY_USAGE_ALARM_KEEP_RECORD_NUM: AtomicI64 =
 pub static PLAN_REPLAYER_FILE_RETENTION_TIME: AtomicI64 =
     AtomicI64::new(defaults::DEF_TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME);
 
+/// Go `vardef.EnableTTLJob`, the process-wide switch used by the TTL worker.
+pub static ENABLE_TTL_JOB: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_TTL_JOB_ENABLE);
+
 const OOM_ACTION_CANCEL: u8 = 0;
 const OOM_ACTION_LOG: u8 = 1;
 

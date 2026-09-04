@@ -31,6 +31,44 @@ fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
     (first, second, globals)
 }
 
+#[test]
+fn ttl_job_enable_global_hook_updates_the_process_switch() {
+    struct RestoreTtlJobEnable(bool);
+    impl Drop for RestoreTtlJobEnable {
+        fn drop(&mut self) {
+            tidb_vardef::ENABLE_TTL_JOB.store(self.0, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let _restore =
+        RestoreTtlJobEnable(tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
+    let globals = vars::GlobalSysvars::new();
+
+    globals
+        .set(
+            tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE,
+            "OFF".to_owned(),
+        )
+        .unwrap();
+    assert!(!tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        globals
+            .get(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE)
+            .unwrap(),
+        "OFF"
+    );
+
+    globals
+        .set(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE, "ON".to_owned())
+        .unwrap();
+    assert!(tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
+
+    globals
+        .reset(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE)
+        .unwrap();
+    assert!(tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst));
+}
+
 // Transcreated from pinned Go `pkg/util/workloadrepo.TestSettingSQLVariables`.
 #[test]
 fn test_setting_sql_variables() {

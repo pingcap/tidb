@@ -176,30 +176,6 @@ fn tidb_max_keys_read_unported() {}
 #[ignore]
 fn get_max_keys_read_unported() {}
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiFlashMaxBytes`.
-// go-parity-gap: TypeInt validation/clamping on SessionVars TiFlash fields not ported
-#[test]
-#[ignore]
-fn tiflash_max_bytes_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiFlashMemQuotaQueryPerNode`.
-// go-parity-gap: TypeInt validation/clamping on SessionVars not ported
-#[test]
-#[ignore]
-fn tiflash_mem_quota_query_per_node_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiFlashQuerySpillRatio`.
-// go-parity-gap: TypeFloat percentage-range validation on SessionVars not ported
-#[test]
-#[ignore]
-fn tiflash_query_spill_ratio_unported() {}
-
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBTTLJobEnableSetGlobalUpdatesLocalWithoutExternalWorkload`.
-// go-parity-gap: EnableTTLJob atomic + UpdateExternalWorkloadTTLJobEnable hook plumbing not ported
-#[test]
-#[ignore]
-fn ttl_job_enable_set_global_updates_local_without_external_workload_unported() {}
-
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiFlashHashJoinVersion`.
 // go-parity-gap: SysVar Validation case-insensitive enum check not ported
 #[test]

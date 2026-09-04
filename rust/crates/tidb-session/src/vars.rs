@@ -234,6 +234,18 @@ impl GlobalSysvars {
             }
             .to_owned());
         }
+        if self.publishes_runtime_settings
+            && def.name == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE
+        {
+            return Ok(
+                if tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst) {
+                    "ON"
+                } else {
+                    "OFF"
+                }
+                .to_owned(),
+            );
+        }
         let snapshot = Arc::clone(
             &*self
                 .resolved
@@ -451,6 +463,9 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT) {
             self.publish_require_secure_transport();
         }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE) {
+            self.publish_ttl_job_enable();
+        }
         self.publish_embedding_settings();
         self.refresh_resolved();
     }
@@ -568,6 +583,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
             self.publish_require_secure_transport();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
+            self.publish_ttl_job_enable();
+        }
         self.refresh_resolved();
         if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
             self.publish_redaction_mode();
@@ -580,6 +598,24 @@ impl GlobalSysvars {
         }
         self.publish_memory_arbitration_setting(&key);
         Ok(validated.truncated)
+    }
+
+    /// Publishes Go's `vardef.EnableTTLJob` process-wide switch from the
+    /// live GLOBAL table. Scratch registries deliberately skip this hook and
+    /// publish it only when their committed image replaces the live table.
+    fn publish_ttl_job_enable(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        let enabled = self
+            .values
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .get(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE)
+            .map_or(tidb_vardef::defaults::DEF_TIDB_TTL_JOB_ENABLE, |value| {
+                value.eq_ignore_ascii_case("ON") || value == "1"
+            });
+        tidb_vardef::ENABLE_TTL_JOB.store(enabled, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// The length floor the `validate_password` coupling requires right now:
@@ -630,6 +666,9 @@ impl GlobalSysvars {
         self.publish_embedding_settings();
         if key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT {
             self.publish_require_secure_transport();
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
+            self.publish_ttl_job_enable();
         }
         self.refresh_resolved();
         if !def.has_global_scope() {
@@ -685,6 +724,7 @@ impl GlobalSysvars {
         let mut loaded_redaction_mode = false;
         let mut loaded_memory_arbitration = false;
         let mut loaded_require_secure_transport = false;
+        let mut loaded_ttl_job_enable = false;
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
             if let Some(def) = get_sys_var(&key) {
@@ -694,6 +734,7 @@ impl GlobalSysvars {
                 loaded_memory_arbitration |= Self::is_memory_arbitration_setting(&key);
                 loaded_require_secure_transport |=
                     key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT;
+                loaded_ttl_job_enable |= key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE;
                 self.store(def)
                     .lock()
                     .expect("global sysvar lock poisoned")
@@ -711,6 +752,9 @@ impl GlobalSysvars {
         }
         if loaded_require_secure_transport {
             self.publish_require_secure_transport();
+        }
+        if loaded_ttl_job_enable {
+            self.publish_ttl_job_enable();
         }
         self.publish_embedding_settings();
         self.refresh_resolved();
@@ -754,6 +798,7 @@ impl GlobalSysvars {
             std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
         self.refresh_resolved();
         self.publish_require_secure_transport();
+        self.publish_ttl_job_enable();
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();

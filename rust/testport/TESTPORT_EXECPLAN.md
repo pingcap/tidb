@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` TTL job global hook): added the
+  process-wide `EnableTTLJob` atomic and wired GLOBAL writes, resets, cluster
+  loads, and committed-image replacement to the same getter/setter authority
+  Go's TTL worker uses. Removed the now-stale empty TiFlash/TTL gap tests and
+  added a focused regression; external-workload notification remains a
+  documented partial boundary.
 - 2026-09-05 (`pkg/sessionctx/variable` TiFlash session hooks): added typed
   SessionVars state for the three external-spill thresholds, per-node memory
   quota, and query spill ratio. Session writes, statement restore, GLOBAL
