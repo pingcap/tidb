@@ -328,6 +328,28 @@ fn trace_event_global_sysvar_controls_the_flight_recorder() {
     assert!(tidb_util::traceevent::get_flight_recorder().is_none());
 }
 
+/// Transcreated from the real sysvar portion of Go `TestMockAPI`: the
+/// default-authentication-plugin enum rejects unknown names and accepts a
+/// supported plugin through the GLOBAL setter.
+#[test]
+fn default_authentication_plugin_global_validation_matches_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    let error = session
+        .run("SET GLOBAL default_authentication_plugin = 'invalidvalue'")
+        .expect_err("unknown authentication plugins must be rejected");
+    assert_eq!(error.to_mysql_error().code, 1231);
+    session
+        .run("SET GLOBAL default_authentication_plugin = 'mysql_native_password'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.default_authentication_plugin"
+        ),
+        Some("mysql_native_password".to_owned())
+    );
+}
+
 #[test]
 fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     let globals = vars::GlobalSysvars::new();

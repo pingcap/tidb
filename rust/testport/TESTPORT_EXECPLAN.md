@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` mock accessor auth-plugin path):
+  covered the real GLOBAL `default_authentication_plugin` enum rejection and
+  accepted value path from `TestMockAPI`. The Go test's helper-only
+  `GetTiDBTableValue("tikv_gc_life_time")` lookup remains outside Rust's
+  production sysvar owner and is recorded as partial.
 - 2026-09-05 (`pkg/sessionctx/variable` trace-event global hook): connected
   `SET GLOBAL tidb_trace_event` to the existing Rust flight-recorder runtime,
   including JSON trigger compilation, replacement, and empty-value close.
