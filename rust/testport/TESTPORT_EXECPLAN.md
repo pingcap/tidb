@@ -293,6 +293,18 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `[try again later]`; the focused code/state/message regression and Ready
   results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
 
+- 2026-09-04 (identifier lowercasing, plan finding #196 parser surface):
+  replaced the five identifier-facing `str::to_lowercase` sites (digester
+  literal `digest.rs`, user/role `@host`, `ADMIN ALTER DDL JOBS` option
+  name) with `tidb_mysql::to_lowercase` — the `strings.ToLower` simple-case
+  port CiString already uses. Go lowercases all of these with
+  `strings.ToLower` (digester.go:227, parser.y:12219/12223/12257/12261/
+  12577); the full mapping turned a trailing capital sigma into final sigma
+  (U+03C2), so non-ASCII identifier digests diverged from Go byte-for-byte.
+  A fail-before regression pins `SELECT * FROM ΟΔΟΣ` digesting to the
+  simple-mapped `οδοσ`. Lexer + parser sweep 925/925. Receipt:
+  `receipts/identifier_simple_case_mapping.md`.
+
 - 2026-09-04 (`CAST(... AS CHAR)` width production): ported Go's
   `adjustRetFtForCastString` table (`builtin_cast.go`) into
   `rewriter::result_type::adjust_ret_ft_for_cast_string`, applied by

@@ -46,7 +46,7 @@ pub(super) fn parse(parser: &mut Parser) -> PResult<Option<AdminAlterDdlJobsStmt
         }
         let value = parse_signed_literal(parser)?;
         options.push(AdminAlterDdlJobOption {
-            name: parser.table_name_token_text(option_token).to_lowercase(),
+            name: tidb_mysql::to_lowercase(&parser.table_name_token_text(option_token)),
             value,
         });
         if parser.is_op(",") {

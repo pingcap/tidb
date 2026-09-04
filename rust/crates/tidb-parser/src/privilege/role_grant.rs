@@ -92,7 +92,7 @@ impl Parser {
             _ => return Err(self.err_here("expected a role name")),
         };
         let host = if self.peek().kind == TokenKind::UserVar {
-            self.bumped_at_name().to_lowercase()
+            tidb_mysql::to_lowercase(&self.bumped_at_name())
         } else {
             "%".to_string()
         };

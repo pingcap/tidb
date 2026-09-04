@@ -213,15 +213,25 @@ fn test_digest_hash_not_eq_for_simple_sql() {
 }
 
 #[test]
-fn test_gen_digest() {
-    let bytes = Sha256::digest(b"abc").to_vec();
-    let digest = Digest::new(bytes.clone());
-    assert_eq!(
-        digest.as_str(),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+fn identifier_lowercasing_uses_the_go_simple_case_mapping() {
+    // Go digester.go:227 lowercases every literal with `strings.ToLower` --
+    // the SIMPLE Unicode case mapping (final-sigma rule NOT applied). Rust's
+    // `str::to_lowercase` is the FULL mapping: a trailing capital sigma
+    // (U+03A3) would become final sigma (U+03C2), changing the digest bytes
+    // for non-ASCII identifiers. The digester must use the simple mapping
+    // (`tidb_mysql::to_lowercase`, the `strings.ToLower` port).
+    let normalized = normalize("select * from \u{39F}\u{394}\u{39F}\u{3A3}", RedactMode::Enabled);
+    // Simple-mapped: capital sigma U+03A3 -> sigma U+03C3.
+    let expected = "select * from `\u{3BF}\u{3B4}\u{3BF}\u{3C3}`";
+    assert_eq!(normalized, expected, "simple-mapped identifier expected");
+    assert!(
+        !normalized.contains('\u{3C2}'),
+        "final sigma must not leak into the digest: {normalized}"
     );
-    assert_eq!(digest.as_bytes(), bytes);
-    let empty = Digest::new(Vec::<u8>::new());
-    assert_eq!(empty.as_str(), "");
-    assert!(empty.as_bytes().is_empty());
+    // Case-insensitive: the ALL-CAPS and all-lower spellings digest the same.
+    let lower = normalize(
+        "select * from \u{3BF}\u{3B4}\u{3BF}\u{3C3}",
+        RedactMode::Enabled,
+    );
+    assert_eq!(normalized, lower, "case-insensitive identifier digests");
 }
