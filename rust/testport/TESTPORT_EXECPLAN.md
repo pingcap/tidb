@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (T9, `pkg/types` `StrToDate` zero-in-date validation): aligned
+  `Time.StrToDate` with Go's `FlagIgnoreZeroInDate` by adding an explicit
+  parser argument and forwarding it to `Time::validate`. Default vector and
+  benchmark callers remain permissive; strict callers can now reject zero
+  month/day values. The focused regression and owner Ready evidence are in
+  `receipts/types_str_to_date_zero_in_date.md`.
 - 2026-09-04 (T8, `pkg/types` numeric zero-date conversion): aligned Go
   `ParseTimeFromNum(0)` with `FlagIgnoreZeroDateErr`. Rust now returns a
   `TimeError::ZeroDate` beside the zero fallback when strict flags clear the

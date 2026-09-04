@@ -454,16 +454,19 @@ temporal conversion error; default statement flags still store zero silently.
 Focused parser and datum-conversion regressions plus the owner Ready profile
 are recorded in `rust/testport/receipts/types_parse_time_from_num_zero.md`.
 
-## T9 (rank 3) — `str_to_date` hardcodes `allow_zero_in_date = true`
+## T9 (rank 3) — `str_to_date` hardcodes `allow_zero_in_date = true` (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:2938-2963` — `t.Check(typeCtx)` consults
   `ctx.Flags().IgnoreZeroInDate()`.
-- Rust: `rust/crates/tidb-datatype/src/str_to_date.rs:75` —
-  `result.validate(true, allow_invalid_date, timezone)`; `Time::str_to_date`
-  (`:53-58`) has no such parameter.
+- Rust: `rust/crates/tidb-datatype/src/str_to_date.rs` now accepts an explicit
+  `allow_zero_in_date` parameter and forwards it to `Time::validate`; the
+  benchmark and source-vector helper preserve the default read-path value.
 
 Distinguishing input: `sql_mode='NO_ZERO_IN_DATE'`,
 `STR_TO_DATE('2013-05','%Y-%m')` → Go NULL, Rust `2013-05-00`.
+The focused datatype regression `str_to_date_zero_in_date_flag_is_not_hardcoded`
+now covers both refusal and acceptance, with the owner Ready evidence in
+`rust/testport/receipts/types_str_to_date_zero_in_date.md`.
 
 ## T10 (rank 3) — `ctx[token] = 0` on date exhaustion not ported (FIXED 2026-09-04)
 

@@ -161,3 +161,13 @@ Strict datatype clippy remains blocked by the unrelated
 `tidb-mysql/src/consts.rs:117-120` `map_or_identity` diagnostics. Full commands,
 inventory, and remaining boundaries are recorded in
 `rust/testport/receipts/types_parse_time_from_num_zero.md`.
+
+## `pkg/types` `StrToDate` zero-in-date batch
+
+The focused datatype regression passed. `Time::str_to_date` now forwards an
+explicit zero-in-date allowance to `Time::validate`, so partial formats reject
+zero month/day values when the Go flag is clear and preserve them when it is
+set. Owner compilation, formatting, and whitespace checks passed; the standard
+expression and executor profile blockers remain unchanged. Full commands,
+inventory, and boundary notes are recorded in
+`rust/testport/receipts/types_str_to_date_zero_in_date.md`.

@@ -54,6 +54,7 @@ impl Time {
     pub fn str_to_date<TZ: TimeZone>(
         date: &str,
         format: &str,
+        allow_zero_in_date: bool,
         allow_invalid_date: bool,
         timezone: &TZ,
     ) -> Result<(Self, bool), TimeError> {
@@ -73,7 +74,7 @@ impl Time {
             TimeType::DateTime,
             0,
         )?;
-        result.validate(true, allow_invalid_date, timezone)?;
+        result.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
         Ok((result, warning))
     }
 }
@@ -447,7 +448,7 @@ mod tests {
     use super::*;
 
     fn parse(input: &str, format: &str, allow_invalid: bool) -> Result<CoreTime, TimeError> {
-        Time::str_to_date(input, format, allow_invalid, &chrono_tz::UTC)
+        Time::str_to_date(input, format, true, allow_invalid, &chrono_tz::UTC)
             .map(|(time, _)| time.core_time())
     }
 
@@ -749,6 +750,19 @@ mod tests {
             Ok(CoreTime::from_date(0, 0, 0, 11, 30, 45, 0))
         );
         assert!(parse("", "%p", true).is_err());
+    }
+
+    /// Go `Time.StrToDate` forwards `FlagIgnoreZeroInDate` to `Time.Check`.
+    /// A partial format therefore keeps its zero month/day only when the
+    /// caller explicitly allows zero-in-date values.
+    #[test]
+    fn str_to_date_zero_in_date_flag_is_not_hardcoded() {
+        let refused = Time::str_to_date("2013-05", "%Y-%m", false, false, &chrono_tz::UTC);
+        assert_eq!(refused, Err(TimeError::ZeroInDate));
+
+        let accepted = Time::str_to_date("2013-05", "%Y-%m", true, false, &chrono_tz::UTC)
+            .expect("IgnoreZeroInDate keeps the partial date");
+        assert_eq!(accepted.0.to_string(), "2013-05-00 00:00:00");
     }
 
     #[test]

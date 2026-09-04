@@ -124,7 +124,7 @@ fn main() {
     ] {
         measure(&format!("BenchmarkStrToDate/{name}"), || {
             black_box(
-                Time::str_to_date(black_box(input), black_box(format), false, &timezone)
+                Time::str_to_date(black_box(input), black_box(format), true, false, &timezone)
                     .expect("static STR_TO_DATE input"),
             );
         });

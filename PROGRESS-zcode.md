@@ -103,6 +103,13 @@
   the accepted zero. Focused parser/conversion regressions and owner Ready
   results are recorded in
   `rust/testport/receipts/types_parse_time_from_num_zero.md`.
+
+- 2026-09-04: aligned `Time.StrToDate` zero-in-date validation with Go's
+  `FlagIgnoreZeroInDate`. Partial formats now reject zero month/day values
+  when the flag is clear and preserve them when enabled; source-vector and
+  benchmark callers retain the default permissive path. Focused regression and
+  owner Ready results are recorded in
+  `rust/testport/receipts/types_str_to_date_zero_in_date.md`.
 ## chunk A-1 范围确认（下批实现）
 ## chunk A-1 范围确认（下批实现；树当前全绿 1128/0 expr lib，A-1 实现需新上下文完整验证）
 
