@@ -79,6 +79,12 @@ pub static ENABLE_TTL_JOB: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_TTL_J
 pub static SCHEMA_CACHE_SIZE: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64);
 
+/// Go `vardef.CircuitBreakerPDMetadataErrorRateThresholdRatio`, stored as
+/// the IEEE-754 bit pattern for lock-free process-wide reads by the PD
+/// circuit breaker.
+pub static CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO: AtomicU64 =
+    AtomicU64::new(defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO.to_bits());
+
 const OOM_ACTION_CANCEL: u8 = 0;
 const OOM_ACTION_LOG: u8 = 1;
 
@@ -94,6 +100,20 @@ pub fn memory_usage_alarm_ratio() -> f64 {
 /// Stores Go `vardef.MemoryUsageAlarmRatio`.
 pub fn set_memory_usage_alarm_ratio(value: f64) {
     MEMORY_USAGE_ALARM_RATIO.store(value.to_bits(), Ordering::SeqCst);
+}
+
+/// Loads Go's PD metadata circuit-breaker error-rate threshold ratio.
+#[must_use]
+pub fn circuit_breaker_pd_metadata_error_rate_threshold_ratio() -> f64 {
+    f64::from_bits(
+        CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO.load(Ordering::SeqCst),
+    )
+}
+
+/// Stores Go's PD metadata circuit-breaker error-rate threshold ratio after
+/// sysvar validation.
+pub fn set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(value: f64) {
+    CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO.store(value.to_bits(), Ordering::SeqCst);
 }
 
 /// Loads Go `vardef.GetPlanReplayerFileRetentionTime` as nanoseconds.

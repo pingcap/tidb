@@ -86,6 +86,12 @@ For each bounded behavior cluster:
   startup, cluster-load, reset, and committed-image paths, with focused
   suffix/floor/default regressions and the optional cache-resize callback
   retained as an explicit boundary.
+- 2026-09-05 (`pkg/sessionctx/variable` circuit-breaker/window hooks): added
+  the process-wide PD metadata error-rate ratio publication with Go's [0, 1]
+  clamp/warning behavior, plus typed `SessionVars.EnableWindowFunction`
+  updates for ON/0/1 session writes. Focused regressions cover the SQL
+  readback and typed products; optional PD callback and absent planner consumer
+  remain explicit boundaries.
 - 2026-09-05 (`pkg/sessionctx/variable` TTL schedule-window inventory): wired
   GLOBAL TypeTime writes through the issuing session's timezone so short
   `HH:MM` values retain the same numeric offset as Go's `ParseInLocation`;

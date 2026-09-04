@@ -505,6 +505,11 @@ impl GlobalSysvars {
         let stats_cache_mem_quota = effective(tidb_vardef::tidb_vars::TIDB_STATS_CACHE_MEM_QUOTA)
             .parse::<i64>()
             .expect("validated statistics cache quota is an integer");
+        let circuit_breaker_pd_metadata_error_rate_threshold_ratio = effective(
+            tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO,
+        )
+        .parse::<f64>()
+        .unwrap_or(tidb_vardef::defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO);
         let mut publish = self
             .resolved
             .write()
@@ -531,6 +536,9 @@ impl GlobalSysvars {
             );
             tidb_vardef::STATS_CACHE_MEM_QUOTA
                 .store(stats_cache_mem_quota, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(
+                circuit_breaker_pd_metadata_error_rate_threshold_ratio,
+            );
         }
     }
 
@@ -1279,6 +1287,9 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.EnableSharedLockUpgrade`, maintained by the
     /// `tidb_enable_shared_lock_upgrade` sysvar's `SetSession` hook.
     enable_shared_lock_upgrade: bool,
+    /// Go's typed `SessionVars.EnableWindowFunction`, maintained by the
+    /// `tidb_enable_window_function` sysvar's `SetSession` hook.
+    enable_window_function: bool,
     /// Go's typed `SessionVars.TiFlashMaxBytesBeforeExternalJoin`, maintained
     /// by the corresponding TiFlash threshold `SetSession` hook.
     ti_flash_max_bytes_before_ext_join: i64,
@@ -1386,6 +1397,7 @@ impl Default for SessionVars {
             multi_statement_mode: 0,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
+            enable_window_function: tidb_vardef::defaults::DEF_ENABLE_WINDOW_FUNCTION,
             ti_flash_max_bytes_before_ext_join:
                 tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN,
             ti_flash_max_bytes_before_ext_agg:
@@ -1466,6 +1478,7 @@ impl SessionVars {
         let multi_statement_mode = Self::multi_statement_mode_from_systems(&systems);
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
+        let enable_window_function = Self::enable_window_function_from_systems(&systems);
         let ti_flash_max_bytes_before_ext_join =
             Self::ti_flash_max_bytes_before_ext_join_from_systems(&systems);
         let ti_flash_max_bytes_before_ext_agg =
@@ -1495,6 +1508,7 @@ impl SessionVars {
         self.multi_statement_mode = multi_statement_mode;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
+        self.enable_window_function = enable_window_function;
         self.ti_flash_max_bytes_before_ext_join = ti_flash_max_bytes_before_ext_join;
         self.ti_flash_max_bytes_before_ext_agg = ti_flash_max_bytes_before_ext_agg;
         self.ti_flash_max_bytes_before_ext_sort = ti_flash_max_bytes_before_ext_sort;
@@ -1583,6 +1597,14 @@ impl SessionVars {
                 tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
                 |value| value == "ON",
             )
+    }
+
+    fn enable_window_function_from_systems(systems: &HashMap<String, String>) -> bool {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION)
+            .map_or(tidb_vardef::defaults::DEF_ENABLE_WINDOW_FUNCTION, |value| {
+                value.eq_ignore_ascii_case("ON") || value == "1"
+            })
     }
 
     fn ti_flash_max_bytes_before_ext_join_from_systems(systems: &HashMap<String, String>) -> i64 {
@@ -1735,6 +1757,13 @@ impl SessionVars {
     #[must_use]
     pub const fn shared_lock_upgrade_enabled(&self) -> bool {
         self.enable_shared_lock_upgrade
+    }
+
+    /// Go `SessionVars.EnableWindowFunction`, updated by the normalized
+    /// `tidb_enable_window_function` bool sysvar.
+    #[must_use]
+    pub const fn window_function_enabled(&self) -> bool {
+        self.enable_window_function
     }
 
     /// Go `SessionVars.TiFlashMaxBytesBeforeExternalJoin`.
@@ -1909,6 +1938,7 @@ impl SessionVars {
         let mut restores_multi_statement_mode = false;
         let mut restores_prepared_plan_cache = false;
         let mut restores_shared_lock_upgrade = false;
+        let mut restores_window_function = false;
         let mut restores_ti_flash_max_bytes_before_ext_join = false;
         let mut restores_ti_flash_max_bytes_before_ext_agg = false;
         let mut restores_ti_flash_max_bytes_before_ext_sort = false;
@@ -1929,6 +1959,8 @@ impl SessionVars {
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
             restores_shared_lock_upgrade |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE;
+            restores_window_function |=
+                key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION;
             restores_ti_flash_max_bytes_before_ext_join |=
                 key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN;
             restores_ti_flash_max_bytes_before_ext_agg |=
@@ -1985,6 +2017,9 @@ impl SessionVars {
         }
         if restores_shared_lock_upgrade {
             self.enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&self.systems);
+        }
+        if restores_window_function {
+            self.enable_window_function = Self::enable_window_function_from_systems(&self.systems);
         }
         if restores_ti_flash_max_bytes_before_ext_join {
             self.ti_flash_max_bytes_before_ext_join =
@@ -2170,6 +2205,9 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE {
             self.enable_shared_lock_upgrade = validated.value == "ON";
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION {
+            self.enable_window_function = validated.value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN {
             self.ti_flash_max_bytes_before_ext_join = validated

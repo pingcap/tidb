@@ -930,6 +930,104 @@ fn schema_cache_size_global_hook_publishes_bytes() {
     );
 }
 
+/// Go `TestTiDBCircuitBreakerPDMetadataErrorRateThresholdRatio`: GLOBAL
+/// writes clamp the ratio to [0, 1], report warning 1292 for out-of-range
+/// inputs, and publish the validated float to the process-wide circuit
+/// breaker state consumed by PD metadata requests.
+#[test]
+fn circuit_breaker_pd_metadata_ratio_global_hook_publishes_float() {
+    struct RestoreRatio(f64);
+    impl Drop for RestoreRatio {
+        fn drop(&mut self) {
+            tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(self.0);
+        }
+    }
+
+    let _restore = RestoreRatio(
+        tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio(),
+    );
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_cb_pd_metadata_error_rate_threshold_ratio = -1")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '-1'"
+                .to_owned()
+        ]]
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_cb_pd_metadata_error_rate_threshold_ratio"
+        ),
+        Some("0".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio(),
+        0.0
+    );
+
+    session
+        .run("SET GLOBAL tidb_cb_pd_metadata_error_rate_threshold_ratio = 1.1")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '1.1'"
+                .to_owned()
+        ]]
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_cb_pd_metadata_error_rate_threshold_ratio"
+        ),
+        Some("1".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio(),
+        1.0
+    );
+
+    session
+        .run("SET GLOBAL tidb_cb_pd_metadata_error_rate_threshold_ratio = 0.9")
+        .unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+    assert_eq!(
+        tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio(),
+        0.9
+    );
+}
+
+/// Go `TestEnableWindowFunction`: the session bool is initialized from the
+/// default and updated by the SetSession hook for ON/0/1 spellings while the
+/// normalized SQL value remains available to SHOW/@@ reads.
+#[test]
+fn enable_window_function_session_hook_updates_typed_state() {
+    let mut session = Session::new();
+    assert!(session.vars().window_function_enabled());
+
+    session.run("SET tidb_enable_window_function = ON").unwrap();
+    assert!(session.vars().window_function_enabled());
+
+    session.run("SET tidb_enable_window_function = 0").unwrap();
+    assert!(!session.vars().window_function_enabled());
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tidb_enable_window_function"),
+        Some("0".to_owned())
+    );
+
+    session.run("SET tidb_enable_window_function = 1").unwrap();
+    assert!(session.vars().window_function_enabled());
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.
