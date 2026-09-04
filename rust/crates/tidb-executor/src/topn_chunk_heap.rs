@@ -60,8 +60,9 @@
 //! * Keys are MATERIALIZED. Go's planner guarantees a TopN's by-items are plain
 //!   child columns, so `keyColumnsCompare` re-reads the chunk cell. The
 //!   executor rejects arbitrary by-item expressions like Go's
-//!   `buildKeyColumns`; each supported stored row carries its evaluated key
-//!   for spill merges. `process_chk` therefore takes the row keys alongside
+//!   `buildKeyColumns`; each supported stored row carries its evaluated column
+//!   keys (constants are positional placeholders) for spill merges.
+//!   `process_chk` therefore takes the row keys alongside
 //!   the chunk -- the executor evaluates them, because only it holds the eval
 //!   context.
 //! * `TestKillSignalInTopN` is NOT ported: it is a Go test helper exported from

@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the eight focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the nine focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -440,3 +440,40 @@ host-only vendored-OpenSSL toggle was reverted to `openssl = "0.10"` and has
 no diff. The full executor suite, concurrent external-memory trigger under a
 live SQL session, spill integration under live TiKV, and native TiKV behavior
 were not run.
+
+## Sort/TopN constant by-item evaluation alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this ninth
+Rust-only fix. Go's `SortExec.buildKeyColumns` and
+`TopNExec.initBeforeLoadingChunks` accept constant by-items but omit them from
+the materialized comparison key; constants therefore never run through the row
+evaluation context and cannot affect ordering. Rust's merge-key path previously
+called `Constant::eval`, so a deferred constant could fail with the
+Rust-specific unsupported evaluation error (and an ordinary constant could
+participate in ordering). `eval_sort_key` now emits a positional `NULL`
+placeholder for constants, `less_by_items` skips those slots, and TopN delegates
+to the shared helper. Column keys retain the existing evaluation and ordering
+behavior.
+
+The focused regression is
+`sort::tests::sort_does_not_evaluate_constant_by_item_like_go`. Before the
+production change it failed with `left: [Int(2)] right: [Null]`, proving that
+the deferred constant was evaluated by the old Rust path; after the change it
+passes and also proves the placeholder compares equal to another constant
+slot. Rust ownership is unchanged: `sort.rs` owns the helper and regression,
+`topn.rs` uses the shared helper, and `topn_chunk_heap.rs` records the
+materialized-key contract. No Go, Bazel, generated, fixture, or platform
+artifact changed.
+
+## Sort/TopN constant by-item Ready validation
+
+- Pre-fix `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib sort::tests::sort_does_not_evaluate_constant_by_item_like_go -- --exact --nocapture` failed with `left: [Int(2)] right: [Null]`.
+- The same focused command passed after the production change (with a temporary host-only `openssl` vendored feature toggle; reverted immediately after the run).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The Cargo manifest was restored to its original `openssl = "0.10"` line and
+has no diff. The full executor suite, planner materialization coverage,
+concurrent constant evaluation under live SQL, spill integration under live
+TiKV, and native TiKV behavior were not run.

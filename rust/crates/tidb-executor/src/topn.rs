@@ -60,8 +60,9 @@
 //!   are plain child columns (`buildKeyColumns` unwraps `*expression.Column`),
 //!   so Go compares by re-reading the chunk cell. The executor rejects other
 //!   expressions with Go's `Get unexpected expression` error; each supported
-//!   stored row still carries its evaluated column/constant key for spill
-//!   merges, and the tracker reports that memory honestly.
+//!   stored row carries its evaluated column keys for spill merges; constants
+//!   are positional placeholders because Go omits them, and the tracker
+//!   reports that memory honestly.
 //! * **The final sort is stable** where Go's `slices.SortFunc` is not; only
 //!   the order of exactly-tying rows can differ, which Go does not guarantee.
 //! * **No `RankInfo`.** Go's prefix-key RankTopN truncation for already
@@ -351,11 +352,7 @@ where
 
     /// Evaluates the by-item keys for one row.
     fn eval_key(&self, row: tidb_chunk::row::Row<'_>) -> Result<Vec<Datum>, ExecError> {
-        let mut key = Vec::with_capacity(self.by_items.len());
-        for item in &self.by_items {
-            key.push(item.expr.eval(&self.ctx, row)?);
-        }
-        Ok(key)
+        eval_sort_key(&self.by_items, &self.ctx, row)
     }
 
     /// The by-item keys of every row of `chunk`.

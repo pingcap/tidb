@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor/sortexec` constant by-item evaluation): aligned
+  Rust with Go's omission of constant `ByItems` from materialized sort keys.
+  Deferred constants are no longer evaluated during sort/TopN key handling;
+  positional placeholders preserve key-vector shape while comparison skips
+  them. The focused fail-before/pass-after regression and Ready checks are
+  recorded in `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-05 (`pkg/executor/sortexec` output-time TopN spill): restored Go's
   ten-row spill-flag polling while an in-memory TopN emits results. Rust now
   spills only the un-emitted suffix and resumes through the run without

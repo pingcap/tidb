@@ -276,9 +276,14 @@ pub fn eval_sort_key<C: Columns>(
     let mut key = Vec::with_capacity(by_items.len());
     for item in by_items {
         match &item.expr {
-            Expression::Column(_) | Expression::Constant(_) => {
+            Expression::Column(_) => {
                 key.push(item.expr.eval(ctx, row)?);
             }
+            // Go's `buildKeyColumns` omits constants, so even a deferred
+            // constant is never evaluated while sorting or merging rows.
+            // Keep a positional placeholder for callers that zip keys with
+            // by-items; `less_by_items` skips this slot below.
+            Expression::Constant(_) => key.push(Datum::Null),
             _ => return Err(ExecError::unsupported("Get unexpected expression")),
         }
     }
@@ -309,6 +314,11 @@ pub fn less_by_items(
     b: &[Datum],
 ) -> Result<Ordering, ExecError> {
     for (i, item) in by_items.iter().enumerate() {
+        if matches!(&item.expr, Expression::Constant(_)) {
+            // Go's `buildKeyColumns` excludes constants, so they cannot affect
+            // ordering and must not be evaluated (deferred constants included).
+            continue;
+        }
         let mut cmp = tidb_expr::compare_datums_with_collation(
             &a[i],
             &b[i],
@@ -1327,6 +1337,29 @@ mod tests {
             "unexpected error: {error:?}"
         );
         e.close().unwrap();
+    }
+
+    /// Go's `buildKeyColumns` accepts constants but excludes them from the
+    /// comparison keys, so a deferred constant must never be evaluated while
+    /// sorting. Its key slot stays positional and compares equal.
+    #[test]
+    fn sort_does_not_evaluate_constant_by_item_like_go() {
+        let mut constant = Constant::new(Datum::Int(7), long());
+        constant.deferred_expr = Some(Box::new(scalar_plus_col_expr(0)));
+        let by = [SortByItem {
+            expr: Expression::Constant(constant),
+            desc: false,
+        }];
+        let fields = vec![long()];
+        let mut chunk = Chunk::new_with_capacity(&fields, 1);
+        chunk.append_int64(0, 1);
+
+        let key = eval_sort_key(&by, &NoColumns, chunk.get_row(0)).unwrap();
+        assert_eq!(key, vec![Datum::Null]);
+        assert_eq!(
+            less_by_items(&by, &[Datum::Null], &[Datum::Int(9)]).unwrap(),
+            Ordering::Equal
+        );
     }
 
     #[test]
