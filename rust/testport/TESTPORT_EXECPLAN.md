@@ -51,6 +51,14 @@ For each bounded behavior cluster:
   recorded in `receipts/types_explain_format_audit.md`; the remaining
   comparison-context findings stay explicit follow-ups.
 
+- 2026-09-04: aligned the Rust `tidb-datatype` comparison owner for the
+  complete Go-master `pkg/types` non-UTF-8 numeric-byte boundary. Raw bytes
+  now follow Go's ASCII prefix scan through a lossy view, so invalid UTF-8
+  yields the source zero-prefix ordering instead of a Rust-only refusal. The
+  focused fail-before regression and the package Ready validation are recorded
+  in `receipts/types_explain_format_audit.md`; warning-sink/context semantics
+  remain explicit D4/D5 follow-ups.
+
 - 2026-09-04: aligned the Rust `tidb-datatype` owner for the complete
   Go-master `pkg/types` float-to-decimal conversion boundary. `Datum::to_decimal`
   now routes REAL and FLOAT32 through Go's shortest `%g` formatting and the

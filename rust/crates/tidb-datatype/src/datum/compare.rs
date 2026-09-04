@@ -243,7 +243,14 @@ impl Datum {
 }
 
 fn numeric_bytes_to_float(bytes: &[u8]) -> Result<f64, DatumValueError> {
-    Ok(str_to_float(std::str::from_utf8(bytes)?, false).value)
+    // Go's `string` values are byte sequences, and `getValidFloatPrefix`
+    // stops at the first non-ASCII byte while retaining the accepted prefix.
+    // A lossy view is safe here: every byte that can participate in the
+    // numeric prefix is ASCII, while an invalid sequence becomes a non-ASCII
+    // replacement character and therefore triggers the same zero/truncation
+    // result instead of a Rust-only UTF-8 refusal.
+    let text = String::from_utf8_lossy(bytes);
+    Ok(str_to_float(&text, false).value)
 }
 
 fn compare_duration_bytes(bytes: &[u8], value: MySqlDuration) -> Result<Ordering, DatumValueError> {
@@ -499,6 +506,19 @@ mod tests {
                 std::cmp::Ordering::Equal
             );
         }
+    }
+
+    /// Go's `StrToFloat` scans the raw string bytes and keeps the zero prefix
+    /// when the first byte is not numeric. Invalid UTF-8 in a `Bytes` datum
+    /// therefore compares as numeric zero (with a source truncation event),
+    /// rather than becoming a Rust UTF-8 conversion error.
+    #[test]
+    fn non_utf8_numeric_bytes_keep_go_zero_prefix_ordering() {
+        let invalid = Datum::new_bytes(vec![0xff]);
+        assert_eq!(
+            invalid.compare(&Datum::Int(0), Collation::Binary).unwrap(),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]

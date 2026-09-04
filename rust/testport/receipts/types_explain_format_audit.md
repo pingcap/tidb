@@ -146,6 +146,26 @@ follow-ups because they require a broader warning and timezone context API.
 Because this follow-up changes only Rust production/tests plus its receipt and
 plan, it does not add a new Go/Bazel preparation requirement.
 
+## Rust-only parity follow-up: non-UTF-8 numeric comparison bytes
+
+The complete `pkg/types` inventory above also owns `Datum.Compare`. Go's
+`compareFloat64` sends `KindBytes` and `KindString` through `StrToFloat`, whose
+prefix scanner works on the raw string bytes. A value beginning with an
+invalid byte therefore keeps the zero numeric prefix and produces an ordering
+(plus the source truncation event for a context that can publish it). Rust's
+comparison helper previously required `std::str::from_utf8`, turning the same
+`Datum::Bytes([0xff])` versus integer zero comparison into a Rust-only
+`InvalidUtf8` error.
+
+The Rust owner now uses a lossy UTF-8 view only at this numeric comparison
+boundary. Numeric prefixes are ASCII, so valid source digits are unchanged;
+invalid sequences become a non-ASCII replacement and stop the same prefix
+scan. The focused regression
+`datum::compare::tests::non_utf8_numeric_bytes_keep_go_zero_prefix_ordering`
+failed before the change with `InvalidUtf8` and passes after it, returning
+`Ordering::Equal` like Go's zero prefix. This deliberately does not claim the
+separate comparison warning-sink/context API (D4/D5).
+
 ## Validation
 
 Profile: Ready for this bounded production change.
@@ -167,6 +187,14 @@ For the binary-literal follow-up specifically:
 - `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,114 tests; 130 documented source-carrier gaps ignored).
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` and `git diff --check` — passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed.
+
+For the non-UTF-8 comparison follow-up specifically:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib non_utf8_numeric_bytes_keep_go_zero_prefix_ordering -- --nocapture` — pre-fix failed with `InvalidUtf8`; after the fix, 1 focused test passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib compare::tests -- --test-threads=1` — passed (6 comparison tests).
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (374 tests).
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib builtin_compare -- --test-threads=1` — passed (13 tests; 2 documented vectorized gaps ignored).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
 
 `make bazel_prepare` is required by the new top-level Go regression and was
 attempted; the local toolchain blocks it before metadata generation.
