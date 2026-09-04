@@ -20,7 +20,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tidb_protocol::{
     CompressionAlgorithm, PacketIoReader, PacketIoWriter, PacketReader, PacketWriter, COM_PING,
-    COM_QUERY, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET,
+    COM_QUERY, COM_QUIT, COM_REFRESH, DEFAULT_MAX_ALLOWED_PACKET,
 };
 use tidb_server::handshake::CLIENT_ZSTD_COMPRESSION_ALGORITHM;
 use tidb_server::{
@@ -231,6 +231,34 @@ fn live_commands_prefer_zlib_when_both_compression_bits_are_set() {
         CompressionAlgorithm::Zlib,
         CLIENT_COMPRESS | CLIENT_ZSTD_COMPRESSION_ALGORITHM,
     );
+}
+
+#[test]
+fn com_refresh_privileges_keeps_go_two_ok_response_shape() {
+    let (address, worker) = start_server();
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, 0, 0);
+
+    // Go's `handleRefresh(0x01)` runs `FLUSH PRIVILEGES` through
+    // `handleQuery` (which writes one OK) and then writes its own OK as the
+    // command response. Clients therefore see two consecutive OK packets;
+    // consuming only one leaves the second packet queued for the next
+    // command and desynchronizes the connection.
+    write_raw_packet(&mut client, 0, &[COM_REFRESH, 0x01]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0, "flush query OK");
+    assert_eq!(reader.read_packet().unwrap()[0], 0, "refresh command OK");
+
+    // Other refresh targets are Go's successful no-op and emit only the
+    // command-level OK.
+    write_raw_packet(&mut client, 0, &[COM_REFRESH, 0x02]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0, "refresh no-op OK");
+
+    write_raw_packet(&mut client, 0, &[COM_QUIT]);
+    let report = worker.join().unwrap().unwrap();
+    assert_eq!(report.queries, 1, "FLUSH PRIVILEGES runs one SQL query");
 }
 
 #[test]

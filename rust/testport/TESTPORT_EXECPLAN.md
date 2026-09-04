@@ -7829,3 +7829,11 @@ risks without claiming repository-wide parity.
   inventory and Ready commands are recorded in
   `receipts/server_internal_column_metadata_charset.md`. Character-set result
   transcoding and the remaining command owners stay separate boundaries.
+- 2026-09-05 (`pkg/server` `COM_REFRESH` command routing): Rust
+  `tidb-protocol` now decodes and exports `COM_REFRESH` (`0x07`), and
+  `tidb-server` runs `FLUSH PRIVILEGES` for subcommand `0x01` before emitting
+  the command's second OK, matching Go's two-OK dispatch vector; other refresh
+  targets remain successful no-ops. A loopback TCP regression consumes both
+  responses and then sends `COM_QUIT` to prove command synchronization. The
+  complete protocol/server inventory, fail-before compile evidence, and Ready
+  commands are recorded in `receipts/server_refresh_command.md`.

@@ -1323,6 +1323,61 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 );
                 crate::connection_writers::write_payload(&mut output, 1, line.as_bytes())?;
             }
+            Command::Refresh(data) => {
+                // Go `handleRefresh` (`pkg/server/conn.go:2875-2882`) treats
+                // refresh targets other than 0x01 as no-ops.  `0x01` first
+                // runs `FLUSH PRIVILEGES` through the ordinary SQL path,
+                // which writes one OK, and then writes the command's own OK
+                // as well.  Keep both packets: clients expect the second
+                // response and consume it before sending their next command.
+                let Some(subcommand) = data.first().copied() else {
+                    write_error(
+                        &mut output,
+                        1,
+                        ER_UNKNOWN_ERROR,
+                        *b"HY000",
+                        "malform packet error",
+                        protocol_41,
+                    )?;
+                    continue;
+                };
+                let mut next_sequence = 1;
+                if subcommand == 0x01 {
+                    match engine.execute_write("FLUSH PRIVILEGES") {
+                        Ok(Some(outcome)) => {
+                            write_affected_rows_ok(
+                                &mut output,
+                                1,
+                                outcome.affected_rows,
+                                outcome.last_insert_id,
+                                engine.wire_status(),
+                                engine.warning_count(),
+                                protocol_41,
+                            )?;
+                            record_client_warnings(&output, &engine);
+                            queries += 1;
+                            next_sequence = 2;
+                        }
+                        // Query-only sessions have no privilege cache to
+                        // refresh; the command remains Go's successful
+                        // no-op and still gets its trailing command OK.
+                        Ok(None) => {}
+                        Err(error) => {
+                            write_query_error(&mut output, &error, protocol_41)?;
+                            record_client_warnings(&output, &engine);
+                            continue;
+                        }
+                    }
+                }
+                write_ok(
+                    &mut output,
+                    next_sequence,
+                    engine.wire_status(),
+                    engine.warning_count(),
+                    protocol_41,
+                )?;
+                record_client_warnings(&output, &engine);
+            }
             Command::Ping => write_ok(
                 &mut output,
                 1,
