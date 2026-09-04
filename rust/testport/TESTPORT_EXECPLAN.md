@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` global-index version selection): verified the
+  existing `tidb-exec::cluster_ddl::set_global_index_version` against Go's
+  `setGlobalIndexVersion` shape matrix. A focused regression now covers the
+  capability gate, non-unique indexes, unique nullable indexes, unique
+  NOT-NULL indexes, clustered tables, and the legacy fallback; the b105
+  receipt no longer records this helper as an untranscreated gap.
 - 2026-09-05 (`pkg/ddl` continuous key-range merge): transcreated Go
   `mergeContinuousKeyRanges` and its `keyRangeMayExclude` wrapper in
   `tidb-executor::ddl`. Excluded ranges now terminate a run while kept ranges

@@ -10325,3 +10325,90 @@ pub fn prepare_materialized_view_job_submission<S: MetaSnapshot>(
     let [spec] = specs;
     Ok(Some(spec))
 }
+
+#[cfg(test)]
+mod global_index_version_tests {
+    use super::*;
+
+    #[test]
+    fn set_global_index_version_matches_go_shape_rules() {
+        let previous = tidb_model::index::get_global_index_v1_supported();
+        tidb_model::index::set_global_index_v1_supported(true);
+
+        let nullable_column = tidb_model::column::ColumnInfo {
+            id: 1,
+            offset: 0,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            state: SchemaState::PUBLIC,
+            ..Default::default()
+        };
+        let mut not_null_type = FieldType::new(FieldTypeCode::LongLong);
+        not_null_type.add_flags(FieldTypeFlags::NOT_NULL);
+        let not_null_column = tidb_model::column::ColumnInfo {
+            id: 1,
+            offset: 0,
+            field_type: not_null_type,
+            state: SchemaState::PUBLIC,
+            ..Default::default()
+        };
+        let table = |column| TableInfo {
+            columns: vec![column].into(),
+            ..TableInfo::default()
+        };
+        let index = |unique| IndexInfo {
+            global: true,
+            unique,
+            columns: vec![IndexColumn {
+                offset: 0,
+                ..IndexColumn::default()
+            }]
+            .into(),
+            ..IndexInfo::default()
+        };
+
+        // Go assigns V1 to non-unique global indexes even when their columns
+        // are NOT NULL, and to unique global indexes whenever a nullable key
+        // can contain multiple NULL values across partitions.
+        let mut non_unique = index(false);
+        set_global_index_version(&table(not_null_column.clone()), &mut non_unique);
+        assert_eq!(
+            non_unique.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_V1
+        );
+        let mut unique_nullable = index(true);
+        set_global_index_version(&table(nullable_column.clone()), &mut unique_nullable);
+        assert_eq!(
+            unique_nullable.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_V1
+        );
+
+        // A unique global index over only NOT NULL columns needs no partition
+        // component, and clustered tables use the legacy key format.
+        let mut unique_not_null = index(true);
+        set_global_index_version(&table(not_null_column.clone()), &mut unique_not_null);
+        assert_eq!(
+            unique_not_null.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY
+        );
+        let mut clustered = index(false);
+        let clustered_table = TableInfo {
+            columns: vec![not_null_column].into(),
+            pk_is_handle: true,
+            ..TableInfo::default()
+        };
+        set_global_index_version(&clustered_table, &mut clustered);
+        assert_eq!(
+            clustered.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY
+        );
+
+        tidb_model::index::set_global_index_v1_supported(false);
+        let mut unsupported = index(false);
+        set_global_index_version(&table(nullable_column), &mut unsupported);
+        assert_eq!(
+            unsupported.global_index_version,
+            tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY
+        );
+        tidb_model::index::set_global_index_v1_supported(previous);
+    }
+}
