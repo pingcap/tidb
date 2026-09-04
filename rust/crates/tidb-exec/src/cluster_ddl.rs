@@ -3194,11 +3194,9 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
 /// `mysql.tidb_mlog_purge_info` schedule row, the schema-version bump with
 /// its create-table event, and the job's terminal state.
 ///
-/// `schedule` carries the outcome of Go's
-/// `deriveCreateMaterializedViewLogNextUnixSeconds`, which evaluates the
-/// log's purge schedule through the owner's session; it is only consulted
-/// when the log metadata actually names a schedule. A log with no schedule
-/// derives `(None, true)` without a session, exactly as Go does.
+/// The log's purge schedule derives through the driver's FROM-less SELECT
+/// under the recorded SQL mode and schedule zone (Go evaluates the same
+/// expressions through the owner session's internal SQL).
 ///
 /// The active row is the operation authority; a process may disappear after
 /// any committed phase and a later owner can call this function with the
@@ -3207,7 +3205,6 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
     start_ts: u64,
-    schedule: Option<crate::mlog_purge_info_table::MlogPurgeDerived>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     use crate::mlog_purge_info_table::{MlogPurgeDerived, MlogPurgeInfoTable};
 
@@ -3381,22 +3378,20 @@ pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
     }
 
     // Go `upsertCreateMaterializedViewLogPurgeInfo`: the schedule derivation
-    // runs on the owner's session; without a schedule it is `(None, true)`
-    // with no session at all.
+    // evaluates the log's expressions through the owner's SQL — here the
+    // driver's FROM-less SELECT under the recorded SQL mode and schedule
+    // zone; a log without a schedule derives `(None, true)` with no
+    // evaluation at all.
     let log_meta = log_meta_shared.read();
-    let derived =
-        if log_meta.purge_start_with.trim().is_empty() && log_meta.purge_next.trim().is_empty() {
-            MlogPurgeDerived::unscheduled()
-        } else {
-            let Some(derived) = schedule else {
-                return Err(DdlPlanError::Encode(
-                "create materialized view log: the purge schedule requires the session-eval seam \
-                 to derive NEXT_PURGE_UNIX_SECONDS before this step can be planned"
-                    .to_owned(),
-            ));
-            };
-            derived
-        };
+    // The derivation installs the log's recorded SQL mode and schedule zone
+    // on the evaluation context; the statement-level state is irrelevant.
+    let derived = MlogPurgeDerived::derive(&log_meta, &tidb_executor::StmtContext::for_query())
+        .map_err(|error| {
+            DdlPlanError::Admission(DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrInvalidDDLJob,
+                format!("create materialized view log: {error}"),
+            ))
+        })?;
     let existing_purge_row = purge_table.find(snapshot, mlog_id)?;
     let mut mutations = Vec::new();
     purge_table.append_upsert(

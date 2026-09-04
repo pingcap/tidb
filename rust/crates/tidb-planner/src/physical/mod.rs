@@ -1067,7 +1067,12 @@ pub fn find_best_task_4_logical_table_dual(
         p.base.base.query_block_offset(),
     );
     base.base.set_stats(p.base.base.stats_info().cloned());
-    base.base.set_schema(p.base.base.schema().cloned());
+    // Go's TableDual always carries a non-nil (possibly empty) schema once
+    // the logical build derives one; the Rust logical dual's `None` means
+    // the same empty schema, and projection elimination derefs the child's
+    // schema, so the physical copy materialises the empty default.
+    base.base
+        .set_schema(Some(p.base.base.schema().cloned().unwrap_or_default()));
     base.base
         .set_output_names(p.base.base.output_names().to_vec());
     let dual = PhysicalPlan::TableDual(PhysicalTableDual {

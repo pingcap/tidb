@@ -262,3 +262,195 @@ impl MlogPurgeDerived {
         }
     }
 }
+
+impl MlogPurgeDerived {
+    /// Go `deriveCreateMaterializedViewLogNextUnixSeconds`, evaluated the
+    /// same way the DDL owner evaluates it — through SQL — but here via the
+    /// driver's FROM-less SELECT over an empty catalog: the schedule
+    /// expressions are constant for the log create's admitted grammar, so
+    /// `SELECT NOW(6)` and `SELECT <expr>` carry the whole derivation,
+    /// evaluated under the log's recorded SQL mode and schedule zone
+    /// (Go's `setCreateMaterializedViewScheduleEvalSession`).
+    ///
+    /// Go's decision tree (`deriveCreateMaterializedScheduleNextUnixSeconds`):
+    /// both expressions empty yields `(None, true)` with no evaluation; a
+    /// START WITH in the future by more than ten seconds wins over NEXT;
+    /// otherwise NEXT decides; any NULL evaluation logs and degrades to the
+    /// `INSERT IGNORE` shape `(None, true)`.
+    pub fn derive(
+        log_meta: &tidb_model::MaterializedViewLogInfo,
+        context: &tidb_executor::StmtContext,
+    ) -> Result<Self, String> {
+        use tidb_datatype::SessionTimeZone;
+
+        let start_expr = log_meta.purge_start_with.trim();
+        let next_expr = log_meta.purge_next.trim();
+        if start_expr.is_empty() && next_expr.is_empty() {
+            return Ok(Self::unscheduled());
+        }
+
+        // Go `setCreateMaterializedViewScheduleEvalSession` + `GetLocation`:
+        // the expressions evaluate under the recorded SQL mode and schedule
+        // zone.
+        let zone = log_meta
+            .purge_schedule_time_zone
+            .get_location()
+            .map_err(|error| format!("purge schedule zone: {error}"))?
+            .read()
+            .clone();
+        let session_zone = match &zone {
+            tidb_model::ResolvedTimeZone::Local => SessionTimeZone::Local,
+            tidb_model::ResolvedTimeZone::Named(zone) => SessionTimeZone::Named(*zone),
+            tidb_model::ResolvedTimeZone::Fixed { offset_seconds, .. } => SessionTimeZone::Fixed {
+                name: log_meta.purge_schedule_time_zone.name.to_utf8_lossy_go(),
+                offset_secs: i32::try_from(*offset_seconds)
+                    .map_err(|_| "purge schedule zone offset overflows i32".to_owned())?,
+            },
+        };
+        // Go's owner session carries a live clock, so `NOW(6)` reads the
+        // tick's wall time through the lazy statement clock.
+        let eval_context = context
+            .clone()
+            .with_lazy_clock(None, session_zone)
+            .with_ddl_sql_mode(i64::try_from(log_meta.definition_sql_mode).unwrap_or_default());
+        let empty_catalog = tidb_executor::Catalog::default();
+        let evaluate = |expr: &str| -> Result<Option<ScheduleEvaluation>, String> {
+            let sql = format!("SELECT {expr}");
+            let (columns, rows) = tidb_executor::run_select_meta_in(
+                &sql,
+                &empty_catalog,
+                tidb_executor::DEFAULT_DATABASE,
+                &eval_context,
+            )
+            .map_err(|error| error.to_string())?;
+            if columns.len() != 1 {
+                return Err(format!(
+                    "the schedule expression must evaluate to one column, got {}",
+                    columns.len()
+                ));
+            }
+            let Some(row) = rows.first() else {
+                return Err("the schedule expression evaluated to no row".to_owned());
+            };
+            Ok(match &row[0] {
+                tidb_datatype::Datum::Null => None,
+                tidb_datatype::Datum::Time(time) => Some(ScheduleEvaluation {
+                    time: *time,
+                    is_datetime: columns[0].1.code() == tidb_datatype::FieldTypeCode::Datetime,
+                }),
+                other => {
+                    return Err(format!(
+                        "the schedule expression must return DATETIME/TIMESTAMP, got {other:?}"
+                    ))
+                }
+            })
+        };
+
+        // Go `loadCreateMaterializedViewScheduleNow`.
+        let now = evaluate("NOW(6)")?
+            .ok_or("SELECT NOW(6) evaluated to NULL")?
+            .time;
+
+        let to_unix = |time: &ScheduleEvaluation| -> Result<i64, String> {
+            let core = time.time.core_time();
+            let unix = match &zone {
+                tidb_model::ResolvedTimeZone::Local => core
+                    .to_datetime(&chrono::Local)
+                    .map(|datetime| datetime.timestamp()),
+                tidb_model::ResolvedTimeZone::Named(zone) => {
+                    core.to_datetime(zone).map(|datetime| datetime.timestamp())
+                }
+                tidb_model::ResolvedTimeZone::Fixed { offset_seconds, .. } => {
+                    let offset =
+                        chrono::FixedOffset::east_opt(i32::try_from(*offset_seconds).unwrap_or(0))
+                            .ok_or("invalid schedule time zone offset")?;
+                    core.to_datetime(&offset)
+                        .map(|datetime| datetime.timestamp())
+                }
+            };
+            unix.map_err(|error| error.to_string())
+        };
+
+        // Go: the near-now threshold is now + 10s in the schedule zone.
+        let threshold = {
+            let threshold_core = now.core_time().add_duration(10_000_000_000);
+            tidb_datatype::Time::new(threshold_core, now.kind(), i64::from(now.fsp()))
+                .map_err(|error| format!("near-now threshold: {error}"))?
+        };
+
+        if !start_expr.is_empty() {
+            let Some(start_at) = evaluate(start_expr)? else {
+                tidb_executor::ddl::mview_schedule_expr::log_create_materialized_view_log_next_unix_seconds_update_null(
+                    "", "", "START WITH", start_expr, next_expr,
+                );
+                return Ok(Self {
+                    next_unix_seconds: None,
+                    should_update: true,
+                });
+            };
+            let decide = |time: &ScheduleEvaluation| {
+                to_unix(time).map(|next_unix_seconds| Self {
+                    next_unix_seconds: Some(next_unix_seconds),
+                    should_update: true,
+                })
+            };
+            if next_expr.is_empty() {
+                return decide(&start_at);
+            }
+            if start_at.time.compare(threshold) == std::cmp::Ordering::Less {
+                let Some(next_at) = evaluate(next_expr)? else {
+                    tidb_executor::ddl::mview_schedule_expr::log_create_materialized_view_log_next_unix_seconds_update_null(
+                        "", "", "NEXT", start_expr, next_expr,
+                    );
+                    return Ok(Self {
+                        next_unix_seconds: None,
+                        should_update: true,
+                    });
+                };
+                return decide(&next_at);
+            }
+            return decide(&start_at);
+        }
+
+        let Some(next_at) = evaluate(next_expr)? else {
+            tidb_executor::ddl::mview_schedule_expr::log_create_materialized_view_log_next_unix_seconds_update_null(
+                "", "", "NEXT", start_expr, next_expr,
+            );
+            return Ok(Self {
+                next_unix_seconds: None,
+                should_update: true,
+            });
+        };
+        let core = next_at.time.core_time();
+        let unix = match &zone {
+            tidb_model::ResolvedTimeZone::Local => core
+                .to_datetime(&chrono::Local)
+                .map(|datetime| datetime.timestamp()),
+            tidb_model::ResolvedTimeZone::Named(zone) => {
+                core.to_datetime(zone).map(|datetime| datetime.timestamp())
+            }
+            tidb_model::ResolvedTimeZone::Fixed { offset_seconds, .. } => {
+                let offset =
+                    chrono::FixedOffset::east_opt(i32::try_from(*offset_seconds).unwrap_or(0))
+                        .ok_or("invalid schedule time zone offset")?;
+                core.to_datetime(&offset)
+                    .map(|datetime| datetime.timestamp())
+            }
+        };
+        unix.map(|next_unix_seconds| Self {
+            next_unix_seconds: Some(next_unix_seconds),
+            should_update: true,
+        })
+        .map_err(|error| error.to_string())
+    }
+}
+
+/// One evaluated schedule expression: the native time plus whether the
+/// expression's type was DATETIME (Go's `evalCreateMaterializedView
+/// ScheduleExprToDatetime` converts to `TypeDatetime`; the persisted
+/// deadline does not depend on that conversion, only on the value).
+struct ScheduleEvaluation {
+    time: tidb_datatype::Time,
+    #[allow(dead_code)]
+    is_datetime: bool,
+}

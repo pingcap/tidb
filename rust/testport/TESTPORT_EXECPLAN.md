@@ -42,36 +42,24 @@ For each bounded behavior cluster:
 
 ## Progress
 
-- 2026-09-04: aligned the Rust `pkg/kv` write-conflict error boundary with Go
-  master's complete `pkg/kv` inventory (30 artifacts, 5,319 Go lines) and the
-  `tidb-executor` owner (290 artifacts, 195,724 Rust lines). The live 9007
-  `TxnErrorKind::WriteConflict` path now appends Go's compatibility marker
-  `[try again later]`; the focused code/state/message regression and Ready
-  results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
+- 2026-09-04 (batch 18, `pkg/ddl` MV purge-schedule derivation): implemented
+  Go master `94a9cbedab`'s `deriveCreateMaterializedViewLogNextUnixSeconds`
+  as `MlogPurgeDerived::derive` — Go's near-now decision tree (START WITH
+  beyond ten seconds wins, otherwise NEXT; NULL evaluations degrade to the
+  INSERT IGNORE shape with the Go log message) evaluated through the
+  driver's FROM-less `SELECT NOW(6)` / `SELECT <expr>` under the log's
+  recorded SQL mode and schedule zone, closing the batch-15 session-eval
+  seam in the pure planner (the worker step now derives internally). The
+  derivation exposed a pre-existing planner panic — FROM-less projections
+  with non-foldable expressions hit
+  `eliminate_physical_projection`'s child-schema expect because the
+  physical `TableDual` copied the logical dual's `None` schema;
+  `find_best_task_4_logical_table_dual` now materialises the empty default,
+  matching Go's non-nil schema invariant. One regression derives a
+  scheduled log's deadline into the purge row; the failure set is the
+  exact base set. Receipt: `receipts/ddl_mview_purge_derivation.md`.
 
-- 2026-09-04: aligned Rust `tidb-datatype` `JSON_MERGE_PRESERVE` with Go's
-  adjacent-object grouping from the complete `pkg/types` JSON inventory.
-  `merge_binary_nodes` now groups object runs, recursively merges duplicate
-  keys, and flattens one array layer; the interrupted-object regression is
-  pinned in `receipts/json_merge_preserve.md`.
-
-- 2026-09-04: aligned the Rust `tidb-datatype` JSON text formatter with Go
-  master's complete `pkg/types` JSON inventory (60 Go artifacts, 28,545 Go
-  lines; 104 Rust artifacts, 51,114 Rust lines). Scalar values and object keys
-  now escape U+2028/U+2029 as Go's `jsonMarshalStringTo`; a focused scalar/
-  object regression and the existing quote-string corpus pin the exact bytes.
-  Details and Ready results are in `receipts/json_u2028_escape.md`.
-
-- 2026-09-04: aligned the Rust `tidb-datatype` cast-restoration owner for
-  Go-master `FieldType.RestoreAsCastType`'s explicit empty-charset clause.
-  `restore_as_cast_type(true)` now emits `CHAR CHARSET ` when the source
-  charset spelling is empty, matching Go's literal predicate; the
-  `explicitCharset = false` path remains unchanged. The focused regression
-  failed before the one-line production fix and passes after it. The adjacent
-  `SetElems(nil)` audit entry was rechecked and closed as stale because
-  `GoSharedSlice` already preserves JSON `null` versus `[]`. Inventory,
-  fail-before evidence, and Ready validation are recorded in
-  `receipts/types_explain_format_audit.md`.
+22e85fc7e6 (rust: align pkg/ddl mview purge-schedule derivation with Go master)
 
 - 2026-09-04 (batch 17, `pkg/ddl` MV view-create worker phase 1): implemented
   Go master `94a9cbedab`'s `onCreateMaterializedView` `StateNone` arm and

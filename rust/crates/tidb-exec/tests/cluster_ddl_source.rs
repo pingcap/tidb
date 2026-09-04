@@ -5729,7 +5729,7 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
     assert_ne!(job_id, 0);
 
     // The owner step creates everything Go's single phase creates.
-    let step = plan_persisted_materialized_view_log_job_step(&mut store, job_id, 1_502, None)
+    let step = plan_persisted_materialized_view_log_job_step(&mut store, job_id, 1_502)
         .expect("the worker step plans");
     assert!(step.terminal, "the create-log job finishes in one phase");
     assert_eq!(step.write.schema_version, base_schema_version + 1);
@@ -5878,7 +5878,6 @@ fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
         &mut store,
         rollback_job_id,
         1_505,
-        None,
     )
     .expect("the rollback step plans");
     assert!(step.terminal);
@@ -5962,7 +5961,7 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     apply_mutations(&mut store, &mutations);
     drop(cleanup);
     let log_job_id = log_submit.job.id;
-    let log_step = plan_persisted_materialized_view_log_job_step(&mut store, log_job_id, 1_602, None)
+    let log_step = plan_persisted_materialized_view_log_job_step(&mut store, log_job_id, 1_602)
         .expect("the log worker step plans");
     apply_mutations(&mut store, &log_step.write.mutations);
     let mlog_id = log_step.write.created_id.expect("the log worker created the mlog");
@@ -6140,6 +6139,86 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         .find(|job| job.id == view_job_id)
         .expect("the rolled-back job is in history");
     assert_eq!(finished.state, JobState::ROLLBACK_DONE);
+}
+
+/// Go `deriveCreateMaterializedViewLogNextUnixSeconds` (master
+/// `94a9cbedab`): a log WITH a purge schedule derives its deadline by
+/// evaluating the schedule expression under the recorded schedule zone
+/// through the owner's SQL — here the driver's FROM-less SELECT — and the
+/// worker step records the derived unix seconds in the purge row.
+#[test]
+fn persisted_materialized_view_log_step_derives_the_purge_schedule() {
+    use tidb_executor::StmtContext;
+
+    let enabled = StmtContext::for_query().with_enable_mview(true);
+    let lower = |sql: &str, schema: &str| {
+        let parsed = tidb_parser::parse(sql).expect("MV DDL parses");
+        lower_ddl_with_context(&parsed, schema, &enabled)
+            .expect("MV DDL admission outcome")
+            .expect("MV DDL lowers to a statement")
+    };
+    let mut store = bootstrapped();
+
+    let create = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE sched_base (id INT PRIMARY KEY AUTO_INCREMENT)",
+            "u6",
+        ),
+        1_700,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+
+    let mut spec = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower(
+            "CREATE MATERIALIZED VIEW LOG ON sched_base (id) PURGE NEXT CAST('2030-01-02 10:00:00' AS DATETIME)",
+            "u6",
+        ),
+        1_701,
+        false,
+        0,
+    )
+    .expect("submission preflight succeeds")
+    .expect("the scheduled log create owns a job spec");
+    let job_id = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        let (mutations, cleanup) = plan_insert_attempt(
+            &mut store,
+            &catalog,
+            std::slice::from_mut(&mut spec),
+            &mut |_| Option::<fn()>::None,
+        )
+        .expect("the insertion attempt plans");
+        apply_mutations(&mut store, &mutations);
+        drop(cleanup);
+        spec.job.id
+    };
+
+    // The derivation evaluates CAST('2030-01-02 10:00:00' AS DATETIME) under
+    // the log's schedule zone (this context's zone is UTC) and persists the
+    // unix seconds.
+    let step = plan_persisted_materialized_view_log_job_step(&mut store, job_id, 1_702)
+        .expect("the worker step plans with the derived schedule");
+    apply_mutations(&mut store, &step.write.mutations);
+    let mlog_id = step.write.created_id.expect("the mlog id");
+
+    let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
+    let purge_table = tidb_exec::mlog_purge_info_table::MlogPurgeInfoTable::locate(&catalog)
+        .expect("the purge table exists");
+    let row = purge_table
+        .find(&mut store, mlog_id)
+        .expect("the purge table scans")
+        .expect("the step recorded the schedule row");
+    assert_eq!(
+        row.next_purge_unix_seconds,
+        Some(1_893_578_400),
+        "2030-01-02 10:00:00 UTC"
+    );
 }
 
 /// Go `validateCreateMaterializedViewQuery`'s clause refusals (master
