@@ -320,3 +320,5 @@
 - hook 覆盖状态: 75 个 Validation 条目中 validate_password 簇(5)+read_consistency 已移植; 32 个名字在 Rust 校验代码已有分派; 余 ~43 个名字全树有出现但多为常量/读侧引用, SET 校验臂的逐个对照仍开放(已提取 mpp_version/mpp_dml_type 等部分钩子体: dml_type 非 next-gen 下无白名单=无需移植)。
 - 下轮恢复点: (1) 余下白名单臂逐个落地(mpp_version 动态版本集/mpp_exchange_compression_mode/runtime_filter_type|mode/tiflash_hashagg_preaggregation_mode/collation_database/character_set_database/init_connect SQL 解析校验); (2) F2/F3-seam live 阻塞。
 - database charset/collation 批: collation_database 并入 checkCollation 臂; character_set_database 新臂(空值 1231/未知 1115/存规范名, Go varsutil.go:76)。session lib 1265 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
+- mpp_exchange_compression_mode 白名单批: run_validation 臂(ToExchangeCompressionMode 复用 vardef modes 模块, 拒绝信息列选项 NONE/FAST/HIGH_COMPRESSION/UNSPECIFIED, 裸 errors.Errorf→1105=Refused 变体) + 大小写回归。session lib 1267 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) hook 白名单后续: mpp_version(需先移植 kv MppVersion 表)/runtime_filter_type|mode/tiflash_hashagg_preaggregation_mode/init_connect(SQL 解析); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。

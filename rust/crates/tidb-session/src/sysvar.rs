@@ -871,6 +871,19 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go's mpp_exchange_compression_mode Validation (`sysvar.go:3308`):
+        // the mode name must parse (`ToExchangeCompressionMode`); a miss is
+        // refused with the option list spelled out in the message (a bare
+        // errors.Errorf, so it reports as 1105).
+        if self.name == tidb_vardef::tidb_vars::MPP_EXCHANGE_COMPRESSION_MODE {
+            if tidb_vardef::modes::to_exchange_compression_mode(&validated.value).is_none() {
+                return Err(ValidationError::Refused(format!(
+                    "incorrect value: `{original}`. mpp_exchange_compression_mode options: NONE, FAST, HIGH_COMPRESSION, UNSPECIFIED",
+                    original = original
+                )));
+            }
+            return Ok(validated);
+        }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
         // else is `ErrWrongTypeForVar` (1232).
@@ -1557,6 +1570,31 @@ mod tests {
         assert_eq!(sv.validate("WEAK").unwrap().value, "WEAK");
         assert_eq!(sv.validate("bogus"), Err(ValidationError::WrongType));
         assert_eq!(sv.validate(""), Err(ValidationError::WrongType));
+    }
+
+    /// Go's mpp_exchange_compression_mode Validation (`sysvar.go:3308`):
+    /// the four mode names pass (case-insensitively, stored as typed) and
+    /// anything else is refused with the option list, reporting as 1105.
+    #[test]
+    fn mpp_exchange_compression_mode_whitelist_matches_go() {
+        let sv = get_sys_var("mpp_exchange_compression_mode").unwrap();
+        assert_eq!(sv.validate("UNSPECIFIED").unwrap().value, "UNSPECIFIED");
+        assert_eq!(sv.validate("fast").unwrap().value, "fast");
+        assert_eq!(
+            sv.validate("HIGH_COMPRESSION").unwrap().value,
+            "HIGH_COMPRESSION"
+        );
+        let refused = sv.validate("bogus");
+        match refused {
+            Err(ValidationError::Refused(message)) => {
+                assert!(message.contains("incorrect value: `bogus`"), "{message}");
+                assert!(
+                    message.contains("NONE, FAST, HIGH_COMPRESSION, UNSPECIFIED"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected a refused error, got {other:?}"),
+        }
     }
 
     fn bool_validation() {
