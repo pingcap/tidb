@@ -1222,10 +1222,6 @@ func hasVisiblePublicIndexWithPrefixCoveringGroupByColumns(
 	return mviewutil.HasIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols, excludedIndexName, true)
 }
 
-func buildDeleteMViewRefreshAlertSQL(mviewID int64) string {
-	return sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?", mviewID)
-}
-
 func restoreNodeToCanonicalSQL(node ast.Node) (string, error) {
 	var sb strings.Builder
 	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreStringWithoutCharset, &sb)

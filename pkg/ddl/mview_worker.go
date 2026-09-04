@@ -35,6 +35,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const materializedViewInfoDeleteBatchSize = 1000
+
 func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetCreateMaterializedViewLogArgs(job)
 	if err != nil {
@@ -827,20 +829,43 @@ func execCreateMaterializedViewLogPurgeInfoUpsert(ctx context.Context, ddlSess *
 }
 
 func (w *worker) deleteMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogID int64) error {
+	return w.deleteMaterializedViewLogPurgeInfos(jobCtx, []int64{mlogID})
+}
+
+func (w *worker) deleteMaterializedViewLogPurgeInfos(jobCtx *jobContext, mlogIDs []int64) error {
+	if len(mlogIDs) == 0 {
+		return nil
+	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	_, err := w.sess.Execute(ctx, sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?", mlogID), "mlog-purge-info-delete")
-	failpoint.Inject("mockDeleteMaterializedViewLogPurgeInfoTableNotExists", func(val failpoint.Value) {
-		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
+	for start := 0; start < len(mlogIDs); start += materializedViewInfoDeleteBatchSize {
+		end := min(start+materializedViewInfoDeleteBatchSize, len(mlogIDs))
+		batch := mlogIDs[start:end]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
 		}
-	})
-	if infoschema.ErrTableNotExists.Equal(err) {
-		return nil
+		_, err := w.sess.Execute(ctx,
+			sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
+			"mlog-purge-info-delete")
+		failpoint.Inject("mockDeleteMaterializedViewLogPurgeInfoTableNotExists", func(val failpoint.Value) {
+			if val.(bool) {
+				err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
+			}
+		})
+		failpoint.Inject("mockDeleteMaterializedViewLogPurgeInfoErr", func(val failpoint.Value) {
+			err = errors.New(val.(string))
+		})
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 func execCreateMaterializedViewRefreshInfoUpsert(ctx context.Context, ddlSess *sess.Session, mviewID int64, readTS uint64, lastSuccess, next *int64, shouldUpdate bool) error {
@@ -885,38 +910,81 @@ VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE LAST_SUCCESS_READ_TSO = VALUES(LAST_
 }
 
 func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64) error {
+	return w.deleteCreateMaterializedViewRefreshInfos(jobCtx, []int64{mviewID})
+}
+
+func (w *worker) deleteCreateMaterializedViewRefreshInfos(jobCtx *jobContext, mviewIDs []int64) error {
+	if len(mviewIDs) == 0 {
+		return nil
+	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	_, err := w.sess.Execute(ctx, sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?", mviewID), "mview-refresh-info-delete")
-	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
-		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
+	for start := 0; start < len(mviewIDs); start += materializedViewInfoDeleteBatchSize {
+		end := min(start+materializedViewInfoDeleteBatchSize, len(mviewIDs))
+		batch := mviewIDs[start:end]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
 		}
-	})
-	if infoschema.ErrTableNotExists.Equal(err) {
-		return nil
+		_, err := w.sess.Execute(ctx,
+			sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
+			"mview-refresh-info-delete")
+		failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
+			if val.(bool) {
+				err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
+			}
+		})
+		failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoErr", func(val failpoint.Value) {
+			err = errors.New(val.(string))
+		})
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 func (w *worker) deleteCreateMaterializedViewRefreshAlert(jobCtx *jobContext, mviewID int64) error {
+	return w.deleteCreateMaterializedViewRefreshAlerts(jobCtx, []int64{mviewID})
+}
+
+func (w *worker) deleteCreateMaterializedViewRefreshAlerts(jobCtx *jobContext, mviewIDs []int64) error {
+	if len(mviewIDs) == 0 {
+		return nil
+	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	var err error
-	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshAlertErr", func(val failpoint.Value) {
-		err = errors.New(val.(string))
-	})
-	if err == nil {
-		_, err = w.sess.Execute(ctx, buildDeleteMViewRefreshAlertSQL(mviewID), "mview-refresh-alert-delete")
+	for start := 0; start < len(mviewIDs); start += materializedViewInfoDeleteBatchSize {
+		end := min(start+materializedViewInfoDeleteBatchSize, len(mviewIDs))
+		batch := mviewIDs[start:end]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		var err error
+		failpoint.Inject("mockDeleteCreateMaterializedViewRefreshAlertErr", func(val failpoint.Value) {
+			err = errors.New(val.(string))
+		})
+		if err == nil {
+			_, err = w.sess.Execute(ctx,
+				sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
+				"mview-refresh-alert-delete")
+		}
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	if infoschema.ErrTableNotExists.Equal(err) {
-		return nil
-	}
-	return errors.Trace(err)
+	return nil
 }
 
 func hasMaterializedViewDependsOnBaseTable(baseTableInfo *model.TableInfo) bool {
