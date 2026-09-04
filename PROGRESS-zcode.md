@@ -294,3 +294,8 @@
 - 残余: server seam(~25 处 unknown 展平点与 F2 共享)采纳 accessor 需先定位 read 管道实际可达站点(live 证据)。
 - F3 第一步推送 `67958fd5b7d`(rebase 于远端新提交之上)。本会话累计推送: c4f20f9c7ef, ca8b39ec1f0, 24649548b64(journal), 67958fd5b7d。
 - 下轮恢复点: (1) F3 残余=server seam 采纳(需定位可达站点); (2) F2 ~59 unknown(需 live 证据); (3) F4 后续逐站点 Go errno 对比(~40 显式 1105); (4) 重读三份 divergence/audit 文档找新开放项。
+- F4 后续评估(记录): with_code(GENERIC) 站点多属"本节点不提供而 Go 不拒绝"形状, Go 无对应 errno, 发明 code 违反 correctness-first; 其中 Go 确有对应错误的站点(ATTRIBUTES 校验/auto_random 基数等)逐站点对照需 Go 侧 grep 佐证, 排低优先级。
+- F3 残余评估(记录): ReadOnlyScanError/PreparedPlanError 在 server 语句路径尚无生产消费者(prepare_configured_point_read 仅测试调用), 即 read-only 第二管道未接线=无可达 seam; accessor 已就位待管道接线时一行采纳。
+- 文档清扫结论: parser-lexer 12 项全闭环; expr-builtin A-G 全 FIXED; types-datatype D1/D2/时区全闭环; chunk A-1..A-5/B-1/B-2 全闭环; error-code F1/F4/F5/F6/F7/F9 闭环, F2/F3 残余被 live 证据阻塞; distsql 1.1/2.1 闭环, Rank3 response_channel 已正确, 唯一 DEFERRED=read-only tier 警告汇(无 SHOW WARNINGS 面)。队列实质清空。
+- 树健康基线(当前 HEAD): planner 911/0, codec 46/0, distsql 28/0, datatype 410/0。队列实质清空, 剩余项均被 live-cluster 证据阻塞(F2/F3-seam/分区裁剪对照)或低价值(F4 逐站点发明 code)。
+- 下轮恢复点: (1) 若有 live cluster, 优先 F2/F3-seam 定位可达站点; (2) 否则按用户 goal 遍历下一 Go package 做 parity walk(无既有 audit 文档的面, 如 tidb-session/tidb-statistics 表面)。
