@@ -358,8 +358,18 @@ these.
    `ELT`/`FIELD`/`MAKE_SET`, and `EXPORT_SET` are implemented with
    Go-pinned regressions (string_fn.rs, string_packet.rs,
    func.rs `TestInsertBinarySig` port covering INSERT's packet overflow).
-   Still open: `CHAR` vs `VARCHAR` padding on comparison/read-back (a
-   storage-and-type surface, not an eval-builtin).
+   The formerly open `CHAR` vs `VARCHAR` padding item is CLOSED
+   (2026-09-05) as implemented and pinned: the collation layer trims
+   trailing spaces exactly for Go's `binPaddingCollator` set
+   (`ascii_bin`/`latin1_bin`/`utf8_bin`/`utf8mb4_bin`) and compares raw
+   for `binary`/`utf8mb4_0900_bin`, byte-for-byte like Go's
+   `truncateTailingSpace` (spaces only, not tabs), across compare, key,
+   and immutable-key paths (`tidb-datatype/src/collation.rs`), and the
+   Go `TestUTF8CollatorCompare` vector table — including `a` = `a `
+   equal and `a\t` distinct — pins it (`collation_tests.rs`). What
+   remains open about `CHAR(n)` lives in the write-time flen handling
+   (`ProduceStrWithSpecifiedTp`), which belongs to the *Cast* family
+   below, not to an eval builtin.
 5. *Cast* — **partly done:** to/from signed and unsigned across int, decimal and
    real. **Not done:** the flen/flag each `CAST` *produces* (the whole
    `builtin_cast.go` `getFunction` family), `CAST` to and from `CHAR(n)`,
