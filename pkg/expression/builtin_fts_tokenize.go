@@ -148,6 +148,21 @@ func ftsTokenizeConfigFromArgs(ctx EvalContext, args []Expression) (fulltext.Ana
 	if err != nil {
 		return fulltext.AnalyzerConfig{}, err
 	}
+	config := ftsTokenizeConfigFromLiterals(parserType, minTokenSize, maxTokenSize, enableStopword)
+	if _, err := fulltext.GetAnalyzer(config); err != nil {
+		return fulltext.AnalyzerConfig{}, err
+	}
+	return config, nil
+}
+
+// ftsTokenizeConfigFromLiterals assembles the analyzer configuration the
+// argument literals describe. Evaluation and schema reading both go through it,
+// so the config an index is built with cannot drift from the one recovered
+// when a query consults that index.
+func ftsTokenizeConfigFromLiterals(
+	parserType model.FullTextParserType,
+	minTokenSize, maxTokenSize, enableStopword int,
+) fulltext.AnalyzerConfig {
 	config := fulltext.AnalyzerConfig{
 		ParserType:             parserType,
 		InnodbFtMinTokenSize:   minTokenSize,
@@ -160,10 +175,7 @@ func ftsTokenizeConfigFromArgs(ctx EvalContext, args []Expression) (fulltext.Ana
 		// argument that only one parser reads.
 		config.NgramTokenSize = minTokenSize
 	}
-	if _, err := fulltext.GetAnalyzer(config); err != nil {
-		return fulltext.AnalyzerConfig{}, err
-	}
-	return config, nil
+	return config
 }
 
 // FTSTokenizeAnalyzerConfig returns the analyzer configuration frozen into an
@@ -259,6 +271,11 @@ func BuildFTSTokenizeExpr(colExpr ast.ExprNode, config fulltext.AnalyzerConfig) 
 type FTSTokenizeIndexOrigin struct {
 	ColumnName pmodel.CIStr
 	ParserType model.FullTextParserType
+	// AnalyzerConfig is the configuration frozen into the index expression.
+	// It is the index's analyzer snapshot, and so the one a query consulting
+	// this index must compile with - session variables describe what a NEW
+	// index would be built with, not this one.
+	AnalyzerConfig fulltext.AnalyzerConfig
 }
 
 // ParseFTSTokenizeIndexExpr recognises the generated-column expression that a
@@ -301,7 +318,66 @@ func ParseFTSTokenizeIndexExpr(exprStr string) (FTSTokenizeIndexOrigin, bool) {
 	if parserType == model.FullTextParserTypeInvalid {
 		return FTSTokenizeIndexOrigin{}, false
 	}
-	return FTSTokenizeIndexOrigin{ColumnName: colExpr.Name.Name, ParserType: parserType}, true
+	minTokenSize, ok := ftsTokenizeIntLiteral(call.Args[2])
+	if !ok {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	maxTokenSize, ok := ftsTokenizeIntLiteral(call.Args[3])
+	if !ok {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	enableStopword, ok := ftsTokenizeIntLiteral(call.Args[4])
+	if !ok {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	return FTSTokenizeIndexOrigin{
+		ColumnName: colExpr.Name.Name,
+		ParserType: parserType,
+		AnalyzerConfig: ftsTokenizeConfigFromLiterals(
+			parserType, minTokenSize, maxTokenSize, enableStopword),
+	}, true
+}
+
+// FTSTokenizeIndexOriginFromIndex reports whether idxInfo was declared as a
+// FULLTEXT index and materialised as a multi-valued index over a hidden
+// tokenized column, and if so recovers what it was declared with.
+//
+// The Tp check is what distinguishes it from an expression index a user wrote
+// over FTS_TOKENIZE themselves: only the FULLTEXT rewrite records that type.
+// The expression is still parsed, both to recover the column name and as a
+// consistency check on the marker.
+func FTSTokenizeIndexOriginFromIndex(
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+) (FTSTokenizeIndexOrigin, bool) {
+	if idxInfo == nil || idxInfo.Tp != pmodel.IndexTypeFulltext ||
+		idxInfo.FullTextInfo != nil || !idxInfo.MVIndex || len(idxInfo.Columns) != 1 {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	offset := idxInfo.Columns[0].Offset
+	if offset < 0 || offset >= len(tblInfo.Columns) {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	col := tblInfo.Columns[offset]
+	if !col.Hidden {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	return ParseFTSTokenizeIndexExpr(col.GeneratedExprString)
+}
+
+func ftsTokenizeIntLiteral(node ast.ExprNode) (int, bool) {
+	valueExpr, ok := node.(ast.ValueExpr)
+	if !ok {
+		return 0, false
+	}
+	switch v := valueExpr.GetValue().(type) {
+	case int64:
+		return int(v), true
+	case uint64:
+		return int(v), true
+	default:
+		return 0, false
+	}
 }
 
 func ftsTokenizeStringLiteral(node ast.ExprNode) (string, bool) {

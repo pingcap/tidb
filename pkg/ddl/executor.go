@@ -4896,6 +4896,20 @@ func (e *executor) createFullTextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		return errors.Trace(err)
 	}
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	if fullTextIndexIsMVBacked(indexPartSpecifications) {
+		// Materialise the index as a multi-valued index over the tokenized
+		// column and continue down the ordinary index path. IndexKeyTypeNone
+		// keeps it non-unique; the rewritten specification carries an
+		// expression, so createIndex builds the hidden generated column for it
+		// as it would for any other expression index.
+		mvSpecs, err := buildFullTextMVIndexSpec(
+			metaBuildCtx.GetFullTextAnalyzer(), indexPartSpecifications, indexOption, t.Meta())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return e.createIndex(ctx, ti, ast.IndexKeyTypeNone, indexName, mvSpecs,
+			fullTextMVIndexOption(indexOption), ifNotExists)
+	}
 	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
 	if err != nil || indexName.L == "" {
 		return errors.Trace(err)

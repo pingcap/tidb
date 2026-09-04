@@ -1332,6 +1332,22 @@ func BuildTableInfo(
 	}
 
 	for _, constr := range constraints {
+		// Rewrite an inline FULLTEXT index into a multi-valued index over the
+		// tokenized column before hidden columns are built, so the generated
+		// column it needs is created along with every other expression index.
+		// This mirrors the ALTER TABLE / CREATE INDEX path, and is what lets
+		// the FULLTEXT KEY that SHOW CREATE TABLE prints be pasted back.
+		if constr.Tp == ast.ConstraintFulltext && fullTextIndexIsMVBacked(constr.Keys) {
+			mvSpecs, err := buildFullTextMVIndexSpec(
+				ctx.GetFullTextAnalyzer(), constr.Keys, constr.Option, tbInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			constr.Keys = mvSpecs
+			constr.Tp = ast.ConstraintIndex
+			constr.Option = fullTextMVIndexOption(constr.Option)
+		}
+
 		var hiddenCols []*model.ColumnInfo
 		if constr.Tp != ast.ConstraintVector {
 			// Build hidden columns if necessary.
