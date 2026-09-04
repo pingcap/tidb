@@ -8,13 +8,13 @@ Rust one.
 | Go | `pkg/server/conn.go`, `pkg/server/conn_stmt.go`, `pkg/server/driver_tidb.go`, `pkg/server/internal/packetio.go`, `pkg/server/internal/column/{column,convert}.go`, `pkg/format/textrow/result_encoder.go`, `pkg/parser/mysql/{const,charset,state}.go` |
 | Rust | `rust/crates/tidb-protocol/src/*`, `rust/crates/tidb-mysql/src/charset.rs`, `rust/crates/tidb-error/src/mysql/state.rs`, `rust/crates/tidb-exec/src/result_metadata.rs`, `rust/crates/tidb-server/src/{handshake,mysql_connection,resultset_writer}.rs` |
 
-**Nothing here was executed.** This machine cannot run a freshly built binary
-(`syspolicyd` is wedged; every new executable hangs at `_dyld_start`), so no
-client was ever pointed at a Rust node. Every claim below is source-derived,
-with the Go file:line, the Rust file:line, and the client action that produces
-different bytes. Line numbers on the Rust side are as of commit `b05550e670`.
+Every claim below is source-derived, with the Go file:line, the Rust file:line,
+and the client action that produces different bytes. Focused Rust regressions
+have now executed for the fixed command/error/capability/metadata seams; this
+machine still has no live MySQL client or Rust node packet capture. Line
+numbers on the Rust side are refreshed only where a batch touched the entry.
 
-Counts: **12 divergences** (2 rank-1, 3 rank-2, 5 rank-3, 2 rank-4) and
+Counts: **10 divergences** (2 rank-1, 1 rank-2, 5 rank-3, 2 rank-4) and
 **11 verified-equal areas**.
 
 ---
@@ -97,15 +97,17 @@ Not a small fix: the status word has to come from the session
 
 ## Rank 2 — the client silently misinterprets data
 
-### D3. The column-definition charset id is the column's collation id, not its charset's default collation id
+### D3. The column-definition charset id is the column's collation id, not its charset's default collation id (FIXED 2026-09-05)
 
 - Go: `pkg/server/internal/column/convert.go:31` sets
   `Charset: uint16(mysql.CharsetNameToID(fld.Column.GetCharset()))` — the id is
   derived from the **charset name**, so it is always that charset's default
   collation (`pkg/parser/mysql/charset.go:19-34`).
-- Rust: `rust/crates/tidb-exec/src/result_metadata.rs:214` sets
-  `charset: collation_id(field.field_type.collation)` — the column's **actual**
-  collation id.
+- Rust now derives the protocol field from the owning `Charset` using the
+  source `CharsetNameToID` defaults (`utf8mb4` → 46, `gbk` → 28, and so on),
+  independent of the new-collation compatibility switch. The selected column
+  collation remains available to execution and length calculations; it no
+  longer leaks into the wire charset number.
 
 Distinguishing case: `CREATE TABLE t (c VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci); SELECT c FROM t;`
 Go puts `46` (`utf8mb4_bin`) in the column definition's two charset bytes;
@@ -358,10 +360,7 @@ These were compared field by field and match. Do not re-audit them.
 
 ---
 
-## Fixed in this pass
-
-Both were single wrong constants, `cargo check` and `cargo clippy` clean, and
-`cargo fmt --all --check` clean (commit `b05550e670`):
+## Fixed in current Rust batches
 
 - `COM_STMT_PREPARE` now drops one trailing NUL like `COM_QUERY`. Go trims it
   for both (`conn.go:1543-1546` and `:1571-1574`, issue 39132); Rust trimmed it
@@ -373,6 +372,9 @@ Both were single wrong constants, `cargo check` and `cargo clippy` clean, and
 - Genuinely unknown command bytes now keep Go's generic `ErrUnknown` identity
   (1105/HY000 and `command %d not supported now`) instead of being flattened
   into the known-command `ErrUnknownCom` (1047/08S01) refusal.
+- Result metadata now emits the charset's default collation ID, as Go's
+  `CharsetNameToID` does, even when the column uses a non-default collation;
+  the focused `tidb-exec` regression covers `utf8mb4_general_ci` → 46.
 
 ## Known gaps that are not divergences in the compared files
 
@@ -384,12 +386,9 @@ Both were single wrong constants, `cargo check` and `cargo clippy` clean, and
 - `parse_binary_params`' `bound_params` argument (`binary_params.rs:169-200`)
   is the long-data seam D1 needs; no caller supplies it.
 
-## Not verified because nothing can execute here
+## Validation boundary
 
-Everything. Specifically: no packet capture was taken, no client
-(`mysql`, `sysbench`, go-sql-driver, Connector/J) was connected, and none of
-the Rust unit tests in `tidb-protocol` were run — including the two assertions
-added to `command.rs`'s `dispatch_command_vectors_preserve_source_payloads`.
-The evidence is `cargo check` + `cargo clippy` (both exit 0) plus source
-reading and machine diffs of the static tables. Each finding above names the
-client action that would confirm it against a running node in one round trip.
+No live packet capture was taken and no client (`mysql`, `sysbench`,
+go-sql-driver, or Connector/J) was connected. The fixed seams do have focused
+Rust unit evidence in their package receipts; the remaining divergence claims
+are source-derived and still need a running-node/client round trip.

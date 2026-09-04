@@ -93,3 +93,14 @@ fn conversion_applies_decimal_charset_and_default_length_rules() {
         "mysql.GetDefaultFieldLengthAndDecimal(TypeNull) returns zero"
     );
 }
+
+#[test]
+fn conversion_uses_charset_default_collation_for_nondefault_column_collation() {
+    let mut input = field(FieldTypeCode::Varchar);
+    input.field_type.flen = Some(10);
+    input.field_type.collation = Collation::Utf8Mb4GeneralCi;
+
+    // Go's ConvertColumnInfo calls CharsetNameToID("utf8mb4"), so the wire
+    // charset number remains utf8mb4_bin (46), not the column collation (45).
+    assert_eq!(convert_result_field(&input).charset, 46);
+}

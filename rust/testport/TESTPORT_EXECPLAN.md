@@ -7781,3 +7781,11 @@ risks without claiming repository-wide parity.
   complete package inventory are recorded in
   `receipts/server_capability_transactions.md`; `CLIENT_FOUND_ROWS` remains an
   explicit executor/session follow-up.
+- 2026-09-05 (`pkg/server/internal/column` result metadata charset): Rust
+  `tidb-exec::convert_result_field` now emits the owning charset's default
+  collation ID, matching Go `mysql.CharsetNameToID`, instead of leaking a
+  column's non-default collation into the wire metadata. The focused
+  `utf8mb4_general_ci` regression fails before the change and passes after it;
+  inventory and Ready commands are recorded in
+  `receipts/server_internal_column_metadata_charset.md`. Character-set result
+  transcoding and the remaining command owners stay separate boundaries.
