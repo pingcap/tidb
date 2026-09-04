@@ -57,6 +57,14 @@ For each bounded behavior cluster:
   differential harness remain explicit cross-layer boundaries. The complete
   208-artifact `pkg/expression` inventory and owner/validation evidence are
   recorded in `receipts/b067.md`.
+- 2026-09-05 (`pkg/planner/core/operator/physicalop` max/min-count split
+  schema): aligned `tidb-planner::final_mode_agg` with Go's
+  `BuildFinalModeAggregation` `NeedValue` arm. `MAX_COUNT`/`MIN_COUNT` partial
+  extrema columns now preserve the first argument's type, charset, and
+  collation instead of reusing the count-shaped aggregate return type. The
+  formerly ignored Go-derived schema regression is active and passes; the
+  aggregate evaluator pair-state and tipb conversion remain explicit
+  cross-crate boundaries in `receipts/b091.md`.
 - 2026-09-05 (`pkg/executor/sortexec` constant by-item evaluation): aligned
   Rust with Go's omission of constant `ByItems` from materialized sort keys.
   Deferred constants are no longer evaluated during sort/TopN key handling;

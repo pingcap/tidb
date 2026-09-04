@@ -18,8 +18,7 @@
 //!
 //! * `plan_test.go:534 TestBuildFinalModeAggregation` — RUNS for real.
 //! * `plan_test.go:682 TestBuildFinalModeAggregationMaxMinCountSchema` —
-//!   honest `#[ignore]` gap port (the `max_count`/`min_count` aggregate
-//!   family is not transcreated on the Rust side).
+//!   runs against the real split and checks the two-column partial state.
 
 use tidb_datatype::FieldType;
 use tidb_datatype::FieldTypeCode;
@@ -234,22 +233,50 @@ fn build_final_mode_aggregation_splits_modes_across_cop_and_mpp_matrix() {
     check_result(&mixed, &group_by_items);
 }
 
-/// GO PARITY GAP port of `pkg/planner/core/plan_test.go:682
+/// GO PORT of `pkg/planner/core/plan_test.go:682
 /// TestBuildFinalModeAggregationMaxMinCountSchema`.
 ///
-/// go-parity-gap: the `max_count` aggregate family is not transcreated —
-/// Go's `ast.AggFuncMaxCount = "max_count"` (pkg/parser/ast/functions.go:837)
-/// has no entry in `tidb_expr::aggregation::names`, `need_value`
-/// (tidb-expr/src/aggregation/mod.rs:333) excludes it, and the split's
-/// `NeedValue` arm keeps the ARGUMENT type for the partial value column
-/// (base_physical_agg.go:803-809: "max_count/min_count partial result
-/// contains [count, extrema value]"). Go pins, for a `max_count(varchar
-/// utf8mb4_general_ci NOT NULL-stripped)` split under (cop, non-MPP):
-/// partial schema exactly `[TypeLonglong, TypeString utf8mb4_general_ci]`
-/// and final args typed `[Longlong, String utf8mb4_general_ci]`. Running
-/// that descriptor through the Rust split would take the un-gated value
-/// arm and produce the wrong schema, so the test is documented, not
-/// approximated.
+/// Go pins, for a `max_count(varchar utf8mb4_general_ci NOT NULL-stripped)`
+/// split under (cop, non-MPP): partial schema exactly
+/// `[TypeLonglong, TypeString utf8mb4_general_ci]` and final args typed
+/// `[Longlong, String utf8mb4_general_ci]`.
 #[test]
-#[ignore = "go-parity-gap: max_count/min_count aggregate family untranscreated (names/need_value/split value-type arm base_physical_agg.go:803-809)"]
-fn build_final_mode_aggregation_max_min_count_schema_two_column_partial() {}
+fn build_final_mode_aggregation_max_min_count_schema_two_column_partial() {
+    let mut arg_type = FieldType::new(FieldTypeCode::String);
+    arg_type.set_charset_name("utf8mb4");
+    arg_type.set_collation_name("utf8mb4_general_ci");
+    arg_type.set_flags(arg_type.flags() & !tidb_datatype::FieldTypeFlags::NOT_NULL);
+    let arg_col = Column::new(1, arg_type);
+    let desc = agg_func(names::MAX_COUNT, &arg_col, false);
+    let original = AggInfo {
+        schema: original_schema(std::slice::from_ref(&desc)),
+        agg_funcs: vec![desc],
+        group_by_items: Vec::new(),
+    };
+
+    let alloc = ColumnIdAllocator::new();
+    let split = build_final_mode_aggregation(&ctx(), &alloc, &original, true, false)
+        .expect("max_count should split for a cop task");
+
+    assert_eq!(split.partial.schema.columns.len(), 2);
+    assert_eq!(
+        split.partial.schema.columns[0].ret_type.as_ref().unwrap().code(),
+        FieldTypeCode::LongLong
+    );
+    let value_type = split.partial.schema.columns[1].ret_type.as_ref().unwrap();
+    assert_eq!(value_type.code(), FieldTypeCode::String);
+    assert_eq!(value_type.collation_name(), "utf8mb4_general_ci");
+    assert_eq!(split.final_agg.agg_funcs[0].base.args.len(), 2);
+    assert_eq!(
+        split.final_agg.agg_funcs[0].base.args[0]
+            .static_type()
+            .unwrap()
+            .code(),
+        FieldTypeCode::LongLong
+    );
+    let final_value_type = split.final_agg.agg_funcs[0].base.args[1]
+        .static_type()
+        .unwrap();
+    assert_eq!(final_value_type.code(), FieldTypeCode::String);
+    assert_eq!(final_value_type.collation_name(), "utf8mb4_general_ci");
+}

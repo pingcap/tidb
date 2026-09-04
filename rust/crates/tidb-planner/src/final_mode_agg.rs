@@ -388,13 +388,34 @@ pub fn build_final_mode_aggregation(
                 partial_cursor += 1;
             }
             if need_value(&final_name) {
-                partial.schema.append([Column::new(
-                    alloc.alloc(),
-                    original.schema.columns[i]
-                        .ret_type
-                        .clone()
-                        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
-                )]);
+                // Go's max_count/min_count partial state is [count,
+                // extrema value].  The extrema column must retain the
+                // original argument type (including charset/collation), not
+                // the aggregate's count-shaped return type; the final
+                // descriptor compares this column as the same value type.
+                let value_ret_type =
+                    if matches!(final_name.as_str(), names::MAX_COUNT | names::MIN_COUNT) {
+                        agg_func
+                            .base
+                            .args
+                            .first()
+                            .and_then(Expression::static_type)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                original.schema.columns[i]
+                                    .ret_type
+                                    .clone()
+                                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+                            })
+                    } else {
+                        original.schema.columns[i]
+                            .ret_type
+                            .clone()
+                            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+                    };
+                partial
+                    .schema
+                    .append([Column::new(alloc.alloc(), value_ret_type)]);
                 args.push(Expression::Column(
                     partial.schema.columns[partial_cursor].clone(),
                 ));
