@@ -32,7 +32,7 @@ use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback,
     plan_ddl, plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
     plan_persisted_materialized_view_create_job_step,
-    plan_persisted_materialized_view_log_job_step,
+    plan_persisted_materialized_view_log_job_step, MviewBuildOutcome,
     prepare_check_constraint_job_submission, prepare_materialized_view_job_submission,
     AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate,
 };
@@ -6053,7 +6053,7 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     // Phase 1: the catalog gains the view, the base its back-reference, and
     // the job its WriteReorganization transition — non-terminal.
     let step =
-        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_604)
+        plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_604, None)
             .expect("phase 1 plans");
     assert!(!step.terminal, "phase 1 hands the job to the build phase");
     assert_eq!(
@@ -6124,16 +6124,135 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
     assert_eq!(active.job.state, JobState::RUNNING);
     assert_eq!(active.job.schema_state, SchemaState::WRITE_REORGANIZATION);
 
-    // Phase 2 is the recorded seam: the data build refuses, leaving the job
-    // exactly where Go's own ErrWaitReorgTimeout tick would.
-    let error = plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_605)
+    // Phase 2 without the finished build's read TS is the recorded seam: the
+    // tick refuses and leaves the job exactly where Go's own
+    // ErrWaitReorgTimeout tick would.
+    let error = plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_605, None)
         .expect_err("the build phase is the recorded seam");
     assert!(matches!(error, DdlPlanError::Encode(ref message)
         if message.contains("initial-build data movement")));
 
-    // Rollback: persist Go's Rollingback transition, then the step drops the
-    // view, clears the base's view reference, deletes the refresh row, and
-    // ends ROLLBACK_DONE.
+    // With the finished build's read TS, the completion transaction records
+    // the refresh row, marks the view Ready, and finishes the job.
+    let step = plan_persisted_materialized_view_create_job_step(
+        &mut store,
+        view_job_id,
+        1_605,
+        Some(MviewBuildOutcome { read_ts: 1_605 }),
+    )
+    .expect("the completion step plans");
+    assert!(step.terminal, "the build completion finishes the job");
+    apply_mutations(&mut store, &step.write.mutations);
+    let view_id = step.write.created_id.expect("the view id");
+
+    // The completed job is DONE in history with every affected table.
+    let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
+    let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
+    let finished = history
+        .load(&mut store)
+        .expect("SQL history scans")
+        .into_iter()
+        .find(|job| job.id == view_job_id)
+        .expect("the finished job is in history");
+    assert_eq!(finished.state, JobState::DONE);
+    let finished_tables: Vec<_> = finished
+        .binlog_info
+        .as_ref()
+        .expect("history keeps BinlogInfo")
+        .read()
+        .multiple_table_infos
+        .iter_handles()
+        .into_iter()
+        .flatten()
+        .map(|table| table.read().name.original().to_owned())
+        .collect();
+    assert_eq!(
+        finished_tables,
+        vec!["mv_base".to_owned(), "mv".to_owned()]
+    );
+
+    // Rollback: a second view on another base with its own log, whose build
+    // never ran -- persist Go's Rollingback transition after phase 1, then
+    // the step drops the phase-1 view, clears the base's view reference,
+    // deletes the refresh row, and ends ROLLBACK_DONE.
+    let second = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE second_base (id INT PRIMARY KEY AUTO_INCREMENT)",
+            "u6",
+        ),
+        1_607,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(second) = second else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &second);
+    let mut log_spec = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON second_base (id)", "u6"),
+        1_608,
+        false,
+        0,
+    )
+    .expect("log submission preflight succeeds")
+    .expect("the second log create owns a job spec");
+    let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+    let (mutations, cleanup) = plan_insert_attempt(
+        &mut store,
+        &catalog,
+        std::slice::from_mut(&mut log_spec),
+        &mut |_| Option::<fn()>::None,
+    )
+    .expect("the log insertion plans");
+    apply_mutations(&mut store, &mutations);
+    drop(cleanup);
+    let log_step = plan_persisted_materialized_view_log_job_step(
+        &mut store,
+        log_spec.job.id,
+        1_609,
+    )
+    .expect("the second log worker step plans");
+    apply_mutations(&mut store, &log_step.write.mutations);
+
+    let mut view_spec = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower(
+            "CREATE MATERIALIZED VIEW mv2 (id, c) AS (SELECT id, COUNT(1) FROM second_base GROUP BY id)",
+            "u6",
+        ),
+        1_610,
+        false,
+        0,
+    )
+    .expect("view submission preflight succeeds")
+    .expect("the second view create owns a job spec");
+    let view_job_id = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        let (mutations, cleanup) = plan_insert_attempt(
+            &mut store,
+            &catalog,
+            std::slice::from_mut(&mut view_spec),
+            &mut |_| Option::<fn()>::None,
+        )
+        .expect("the view insertion plans");
+        apply_mutations(&mut store, &mutations);
+        drop(cleanup);
+        view_spec.job.id
+    };
+
+    // Phase 1 only.
+    let step = plan_persisted_materialized_view_create_job_step(
+        &mut store,
+        view_job_id,
+        1_611,
+        None,
+    )
+    .expect("phase 1 plans");
+    assert!(!step.terminal);
+    apply_mutations(&mut store, &step.write.mutations);
+
+    // Persist Rollingback, then the step undoes phase 1.
     let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
     let job_table = DdlJobTable::locate(&catalog).expect("the job table exists");
     let mut active = job_table
@@ -6149,8 +6268,13 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         .expect("the queued row updates");
     apply_mutations(&mut store, &rewrite);
 
-    let step = plan_persisted_materialized_view_create_job_step(&mut store, view_job_id, 1_606)
-        .expect("the rollback step plans");
+    let step = plan_persisted_materialized_view_create_job_step(
+        &mut store,
+        view_job_id,
+        1_613,
+        None,
+    )
+    .expect("the rollback step plans");
     assert!(step.terminal);
     apply_mutations(&mut store, &step.write.mutations);
 
@@ -6161,20 +6285,22 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         .find(|database| database.info.name.original() == "u6")
         .expect("u6 survives");
     assert!(
-        !database.tables.iter().any(|table| table.id == view_id),
+        !database
+            .tables
+            .iter()
+            .any(|table| table.name.original() == "mv2"),
         "the rollback drops the created view"
     );
-    let base = database
+    let second_base = database
         .tables
         .iter()
-        .find(|table| table.id == base_id)
-        .expect("the base survives");
-    let base_meta = base
+        .find(|table| table.name.original() == "second_base")
+        .expect("the second base survives");
+    let base_meta = second_base
         .materialized_view_base
         .as_ref()
-        .expect("the base keeps its log reference")
+        .expect("the second base keeps its log reference")
         .read();
-    assert_eq!(base_meta.mlog_id, mlog_id);
     assert!(
         base_meta.mview_ids.is_empty(),
         "the rollback removes the view from the base"
@@ -6183,7 +6309,7 @@ fn persisted_materialized_view_create_step_runs_phase_one_and_rolls_back() {
         .expect("the refresh table exists");
     assert!(
         refresh_table
-            .find(&mut store, view_id)
+            .find(&mut store, view_job_id)
             .expect("the refresh table scans")
             .is_none(),
         "the rollback deletes the refresh row"

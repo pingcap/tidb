@@ -3682,6 +3682,35 @@ fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
     })
 }
 
+/// The view name for schedule-derivation log fields.
+fn view_info_name(table_shared: &GoShared<TableInfo>) -> String {
+    table_shared.read().name.original().to_owned()
+}
+
+/// The view table's ID.
+fn view_info_id(table_shared: &GoShared<TableInfo>) -> i64 {
+    table_shared.read().id
+}
+
+/// Go's post-build result for the view create's `StateWriteReorganization`
+/// phase: the read TS the data build ran at (Go `job.SnapshotVer`).
+///
+/// The data-movement execution itself (import-into / insert-select at that
+/// read TS) is the standing reorg-infra seam; a caller that has executed the
+/// build hands its outcome here for the completion transaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MviewBuildOutcome {
+    /// The snapshot the build read the base rows at.
+    pub read_ts: u64,
+}
+
+impl crate::mview_schedule_derive::ScheduleDecision {
+    /// Go's `(next, shouldUpdate)` tuple shape.
+    pub fn into_parts(self) -> (Option<i64>, bool) {
+        (self.next_unix_seconds, self.should_update)
+    }
+}
+
 /// Plans pinned Go `onCreateMaterializedView` (master `94a9cbedab`), the
 /// view create's two-phase worker, over the persisted active row:
 ///
@@ -3712,6 +3741,7 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     ddl_job_id: i64,
     start_ts: u64,
+    build: Option<MviewBuildOutcome>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     use crate::mview_refresh_info_table::MviewRefreshInfoTable;
 
@@ -4029,16 +4059,155 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             // Go `runReorgJob(buildCreateMaterializedViewData)`: the initial
             // build moves the base rows in through import-into or
             // insert-select at the build read TS. That data-movement engine
-            // is not ported, so this tick refuses and leaves the queued job
-            // exactly where Go's own `ErrWaitReorgTimeout` tick would —
-            // `Running` at `StateWriteReorganization`, resumable.
-            Err(DdlPlanError::Encode(
-                "create materialized view: the initial-build data movement \
-                 (import-into / insert-select at the build read TS) requires \
-                 the reorg infra this tier does not have yet; the job stays \
-                 Running at StateWriteReorganization"
-                    .to_owned(),
-            ))
+            // is not ported, so the tick cannot run the build itself; the
+            // caller supplies the finished build's read TS (Go's
+            // `job.SnapshotVer`) and this step records the post-build state.
+            let Some(outcome) = build else {
+                return Err(DdlPlanError::Encode(
+                    "create materialized view: the initial-build data movement \
+                     (import-into / insert-select at the build read TS) requires \
+                     the reorg infra this tier does not have yet; supply the \
+                     finished build's read TS once the build has run"
+                        .to_owned(),
+                ));
+            };
+
+            // Go `upsertCreateMaterializedViewRefreshInfo`: the refresh
+            // deadline derives from the view's own REFRESH schedule through
+            // the shared decision tree, and the build's success time is the
+            // owner's wall clock.
+            let view_meta = view_meta_shared.read();
+            let view_table_shared = table_shared.clone();
+            let view_id = view_info_id(&view_table_shared);
+            let (next_refresh, should_update) = {
+                let zone = view_meta
+                    .refresh_schedule_time_zone
+                    .get_location()
+                    .map_err(|error| DdlPlanError::Encode(format!("refresh schedule zone: {error}")))?
+                    .read()
+                    .clone();
+                crate::mview_schedule_derive::derive_schedule_decision(
+                    &view_meta.refresh_start_with,
+                    &view_meta.refresh_next,
+                    &zone,
+                    view_meta.definition_sql_mode,
+                    &tidb_executor::StmtContext::for_query(),
+                    "",
+                    &view_info_name(&view_table_shared),
+                    &tidb_executor::ddl::mview_schedule_expr::log_create_materialized_view_next_unix_seconds_update_null,
+                )
+                .map_err(DdlPlanError::Encode)?
+            }
+            .into_parts();
+            let last_success = chrono::Utc::now().timestamp();
+
+            let existing_refresh_row = refresh_table.find(snapshot, view_id)?;
+            let mut mutations = Vec::new();
+            refresh_table.append_upsert(
+                view_id,
+                outcome.read_ts,
+                Some(last_success),
+                next_refresh,
+                should_update,
+                existing_refresh_row.as_ref(),
+                &mut mutations,
+            )?;
+
+            // Go `InitBuildState = StateReady` + `updateTable`.
+            let mut view_info = table_shared.read().clone_like_go();
+            view_info.update_ts = start_ts;
+            if let Some(meta) = view_info.materialized_view.as_ref() {
+                meta.write().init_build_state = tidb_model::MViewInitBuildState::INIT_BUILD_READY;
+            }
+            mutations.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, view_info.id),
+                value::serialize_table_info(&view_info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+
+            let schema_version = catalog.schema_version + 1;
+            let diff = SchemaDiff {
+                version: schema_version,
+                action_type: active.job.type_,
+                schema_id: db_id,
+                table_id: view_info.id,
+                ..SchemaDiff::default()
+            };
+            mutations.push(OptimisticMutation::meta_put(
+                key::schema_version_kv_key(),
+                value::encode_int_value(schema_version),
+            )?);
+            mutations.push(OptimisticMutation::meta_put(
+                key::schema_diff_kv_key(schema_version),
+                value::serialize_schema_diff(&diff)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            active.job.last_schema_version = schema_version;
+
+            // Go `FinishMultipleTableJob(Done, Public, ver, [bases.., mview])`.
+            let mut finished_tables: Vec<tidb_model::TableInfo> =
+                bases.iter().map(|base| base.clone_like_go()).collect();
+            finished_tables.push(view_info.clone_like_go());
+            let finished = GoSharedPointerSlice::from_handles(
+                finished_tables
+                    .into_iter()
+                    .map(|table| Some(GoShared::new(table)))
+                    .collect(),
+            );
+            active.job.finish_multiple_table_job(
+                JobState::DONE,
+                SchemaState::PUBLIC,
+                schema_version,
+                &finished,
+            );
+            active
+                .job
+                .binlog_info
+                .as_ref()
+                .expect("submitted jobs always carry BinlogInfo")
+                .write()
+                .finished_ts = start_ts;
+            active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+            let encoded = active
+                .job
+                .encode(true)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+                let _ = history_table.append_insert_ignore(
+                    snapshot,
+                    &active.job,
+                    &encoded,
+                    &mut mutations,
+                );
+            }
+            mutations.push(OptimisticMutation::meta_put(
+                key::ddl_job_history_kv_key(active.job.id),
+                encoded,
+            )?);
+            job_table
+                .append_delete(&active, &mut mutations)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+            let mdl_info_update = mdl_info_update(&catalog, view_info.id)?;
+            Ok(PersistedDdlJobStep {
+                write: DdlWrite {
+                    ddl_job_id,
+                    mutations,
+                    schema_version,
+                    diff,
+                    created_id: Some(view_info.id),
+                    backfill: Vec::new(),
+                    auto_pre_split: false,
+                    exchange_partition_validation: None,
+                    check_constraint_validation: None,
+                    mdl_info_update: Some(mdl_info_update),
+                    exchange_partition_label_swap: None,
+                    warning: None,
+                    placement_bundles: Vec::new(),
+                    placement_rollback_bundles: Vec::new(),
+                },
+                terminal: true,
+            })
         }
         state => Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
             tidb_error::tidb::errcode::ErrInvalidDDLState,
