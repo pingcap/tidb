@@ -1074,13 +1074,11 @@ fn auto_analyze_concurrency_requires_enabled_scheduler() {
         .unwrap();
     tidb_vardef::RUN_AUTO_ANALYZE.store(true, std::sync::atomic::Ordering::SeqCst);
     tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(false, std::sync::atomic::Ordering::SeqCst);
-    let error = session
-        .run("SET GLOBAL tidb_auto_analyze_concurrency = 10")
+    let error = sysvar::get_sys_var(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY)
+        .expect("auto-analyze concurrency is registered")
+        .validate_in_scope("10", sysvar::SCOPE_GLOBAL)
         .expect_err("disabled priority queue must reject concurrency changes");
-    assert!(error
-        .to_mysql_error()
-        .message
-        .contains("tidb_enable_auto_analyze_priority_queue=false"));
+    assert!(matches!(error, sysvar::ValidationError::Refused(message) if message.contains("tidb_enable_auto_analyze_priority_queue=false")));
 
     tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(true, std::sync::atomic::Ordering::SeqCst);
     session
