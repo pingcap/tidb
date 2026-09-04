@@ -121,6 +121,12 @@ For each bounded behavior cluster:
   string/temporal datums retain their compact string parser. Focused source
   regressions, inventory, and Ready evidence are recorded in
   `receipts/expression_collation_audit.md`.
+- 2026-09-04: aligned Rust `tidb-expr` `TIMESTAMPADD` zero-date handling with
+  Go's pre-arithmetic `Time.GoTime` conversion. A zero or month/day-zero third
+  argument now returns NULL before day/month arithmetic, while valid packed
+  integer dates continue through the existing add-unit logic. Focused source
+  regression, inventory, and Ready evidence are recorded in
+  `receipts/expression_collation_audit.md`.
 - 2026-09-04 (batch 22, `pkg/ddl` MV remaining pure surface): implemented
   Go master `94a9cbedab`'s `MViewExecutionSessionVarsFromJob` (tidb-session,
   per-field fallback to the captured defaults over the job's system-variable
@@ -5738,6 +5744,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   date-only fractions retain Go's hour interpretation.
   Date/Author: 2026-09-04, Codex.
 
+- Decision: reject `TIMESTAMPADD` bases that cannot pass Go's `Time.GoTime`
+  conversion before invoking `addUnitToTime`. Check `GoDateTime::in_range`
+  immediately after parsing, so zero or month/day-zero values cannot be
+  normalized by the signed day-number helper into a non-zero date. Keep the
+  existing result-range and unit-overflow checks unchanged. Date/Author:
+  2026-09-04, Codex.
+
 - Decision: reuse `tidb_datatype::parse_time_from_num` for delimiter-free
   12/14-digit datetime strings and map its validated fields into the local
   `GoDateTime`, preserving Go's packed numeric normalization and two-digit-year
@@ -6393,6 +6406,12 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   and DECIMAL zero-date fractions must survive parsing. Reusing the shared
   float-string parser resolves both without changing the string signature;
   the string branch now also covers the date-only hour suffix.
+
+- The source `TIMESTAMPADD(DAY, 28768, 0)` row exposed a second boundary: the
+  Rust signed day-number arithmetic can turn a zero date into year 78, whereas
+  Go rejects the zero `CoreTime` while converting the evaluated DATETIME to a
+  `time.Time`. The pre-add range guard preserves that rejection without
+  changing valid packed-date arithmetic.
 
 - The prior ADDTIME/SUBTIME gap was two independent source rules: integer
   arguments are cast to ETString before `ParseTimeWithString` (which accepts

@@ -455,10 +455,10 @@ fn maketime_integer_second_master_rows_overflow_garbage_and_null_arguments() {
 /// QUARTER overflow-over-year case, both issued month-clamp sweeps (#41052
 /// forward, #54908 backward), and the range-exit rows whose empty Go strings
 /// are NULL results here. The `{MICROSECOND,1,950501}`-style integer-date
-/// inputs remain an explicit TIMESTAMPADD source-type gap, and the `10000*365
-/// +/- 1` MONTH amounts are additionally rejected outright by this evaluator's
-/// unit dispatcher rather than answering NULL (recorded as a gap in the batch
-/// receipt, not approximated).
+/// inputs are covered by the focused numeric-date regression below, and the
+/// `10000*365 +/- 1` MONTH amounts are additionally rejected outright by this
+/// evaluator's unit dispatcher rather than answering NULL (recorded as a gap
+/// in the batch receipt, not approximated).
 #[test]
 fn timestamp_add_delimited_rows_match_master() {
     let cases = [
@@ -638,6 +638,19 @@ fn timestamp_add_delimited_rows_match_master() {
     ] {
         assert_eq!(e(sql), "NULL", "{sql}");
     }
+}
+
+/// Numeric third-argument rows from Go's `TestTimestampAdd`. The evaluator
+/// receives the packed integer through the value-tier adapter, so this keeps
+/// the `ParseTimeFromNum` contract executable instead of leaving it in the
+/// documentary comment on the larger delimited table.
+#[test]
+fn timestamp_add_numeric_date_arguments_match_master() {
+    assert_eq!(
+        e("timestampadd(MICROSECOND, 1, 950501)"),
+        "STR:1995-05-01 00:00:00.000001"
+    );
+    assert_eq!(e("timestampadd(DAY, 28768, 0)"), "NULL");
 }
 
 /// GO PORT of `builtin_time_test.go:3035 TestPeriodAdd`'s failing row and

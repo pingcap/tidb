@@ -495,6 +495,15 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
         cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
         return Ok(Datum::Null);
     };
+    // Go converts the third argument through `Time.GoTime` before calling
+    // `addUnitToTime`. Zero dates and month/day-zero values therefore fail
+    // before arithmetic (for example `TIMESTAMPADD(DAY, 28768, 0)` is NULL),
+    // even though the signed day-number helper could otherwise produce a
+    // seemingly valid year-78 result.
+    if !base.in_range() {
+        cols.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
+        return Ok(Datum::Null);
+    }
     let unit = unit.to_ascii_uppercase();
     let Some(result) = add_unit_to_time(&unit, base, amount) else {
         return Err(EvalError::Unsupported("TIMESTAMPADD unit"));

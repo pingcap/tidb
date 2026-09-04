@@ -996,6 +996,38 @@ The date-only compact STRING fraction (`TIMESTAMP('20240315.5')`) is covered
 by the companion datetime regression (`05:00:00.0`), preserving Go's hour
 interpretation alongside the numeric parser's fractional-second result.
 
+## Rust follow-up: `TIMESTAMPADD` zero-date input rejection
+
+This focused fix remains inside the complete `pkg/expression` inventory above
+at Go `origin/master` `3bd6b6d4d632b16ee5db7fbbefbf21b1e57527b2`. The Go
+`TestTimestampAdd` integer-date rows and Rust `time_fn::timestamp_add` path
+were reread before editing; no Go, generated, fixture, platform, or Bazel
+artifact changed.
+
+Go evaluates `TIMESTAMPADD`'s third argument as a DATETIME and calls
+`Time.GoTime` before `addUnitToTime`. A zero date therefore fails conversion
+and returns NULL before any day/month arithmetic. Rust parsed `0` into the
+zero `GoDateTime`, then applied its signed day-number helper, producing the
+misleading valid-looking `0078-10-06` for
+`TIMESTAMPADD(DAY, 28768, 0)`. The evaluator now performs the same pre-add
+`in_range` check, returning NULL with the existing 1292 warning path while
+leaving valid packed dates (for example `950501`) unchanged.
+
+Focused fail-before/pass-after evidence:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_time_calendars_source::timestamp_add_numeric_date_arguments_match_master \
+  -- --exact --nocapture
+# pre-fix: failed (`timestampadd(DAY, 28768, 0)` returned `0078-10-06`)
+# after fix: 1 passed (`950501` microsecond row and zero-date NULL row)
+```
+
+The remaining large `TIMESTAMPADD` month-overflow and exact warning-message
+rows stay documented in the source carrier; this guard only closes the
+third-argument zero-date conversion boundary.
+
 ## Rust follow-up: `FORMAT` precision and `WEIGHT_STRING` truncation warnings
 
 This batch stays inside the complete `pkg/expression` inventory at Go
