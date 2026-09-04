@@ -2103,6 +2103,19 @@ fn test_from_unixtime_utc_fixed() {
     assert_eq!(call(vec![Datum::Int(32_536_771_200)]), Ok("<null>".into()));
 }
 
+/// Go converts a real argument through `MyDecimal.FromFloat64`, whose
+/// shortest `%g` spelling preserves the seventh fractional digit before the
+/// signature rounds to FSP 6. Fixed-nine-decimal rendering can move a value
+/// just below the half-up boundary and return a different microsecond.
+#[test]
+fn test_from_unixtime_real_uses_go_shortest_decimal_before_rounding() {
+    let utc = UtcClockCtx::new(0);
+    let result = time_fn::dispatch("FROM_UNIXTIME", &[Datum::Real(1_451_606_400.0363455)], &utc)
+        .unwrap()
+        .unwrap();
+    assert_eq!(got_text(&result), "2016-01-01 00:00:00.036346");
+}
+
 /// Go `pkg/expression/builtin_time_test.go:1685 TestCurrentDate` /
 /// `:1698 TestCurrentTime` / `:1738 TestUTCTime`. The dynamic GreaterOrEqual
 /// clock assertions become exact-value pins over the fixed UTC instant while

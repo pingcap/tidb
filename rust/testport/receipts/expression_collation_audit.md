@@ -853,3 +853,72 @@ git diff --check
 PATH=... GOPATH=... TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
+
+## Rust follow-up: `FROM_UNIXTIME` real-input rounding
+
+The same complete `pkg/expression` inventory at Go `origin/master`
+`fc7788ff517c3407dc7e000be989ab23e6648211` remains the package boundary:
+208 tracked artifacts and 146,291 Go lines (137 direct-root artifacts, 68
+production files, 60 tests, seven generated sources, `BUILD.bazel`, `OWNERS`,
+and eight nested package/build/test boundaries). The Rust `tidb-expr` owner
+remains 176 tracked artifacts and 107,196 lines, including production modules,
+source-derived tests, fixtures/support, benchmarks, Cargo metadata, and
+aggregate test inputs. The Go `evalFromUnixTime` path, `Constant.EvalDecimal`
+conversion, and the complete `TestFromUnixTime` table were reread before this
+edit. No Go, generated, fixture, platform, or Bazel file changed.
+
+Go converts `KindFloat64` (and `KindFloat32`) through
+`MyDecimal.FromFloat64`, which uses `strconv.FormatFloat(value, 'g', -1, 64)`;
+the resulting decimal retains the shortest significant digits before
+`evalFromUnixTime` rounds the complete value at FSP 6. Rust's
+`unix_arg_nanos` previously formatted real values with fixed nine decimals,
+which can move a value across a half-up microsecond boundary. The evaluator
+now uses the shared `Decimal::from_f64` Go-shortest formatter for both real
+datum kinds, preserving the existing FSP and range handling.
+
+The focused regression uses `1451606400.0363455`: Go's shortest decimal
+rounds to `2016-01-01 00:00:00.036346`, while the pre-fix Rust fixed-nine
+spelling returned `.036345`. The test failed before the production change and
+passes after it; the existing integral/decimal/format source vectors remain
+green.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_string_time_source::test_from_unixtime_real_uses_go_shortest_decimal_before_rounding \
+  -- --exact --nocapture
+# pre-fix: failed (.036345 instead of .036346); after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_string_time_source::test_from_unixtime_utc_fixed \
+  -- --exact --nocapture
+# passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib time_fn::session_tz::tests::from_unixtime_goeval_vectors \
+  -- --exact --nocapture
+# passed
+```
+
+Ready validation for this `FROM_UNIXTIME` package batch:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+# passed (existing warnings only)
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib -- --test-threads=1
+# passed: 1,126; failed: 0; ignored: 127
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+
+PATH=... GOPATH=... TMPDIR=/tmp/tidb-codex make lint
+# passed
+```

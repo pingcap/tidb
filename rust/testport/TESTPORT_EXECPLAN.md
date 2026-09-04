@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-expr` `FROM_UNIXTIME` real-input path
+  with Go `pkg/expression/builtin_time.go` at `origin/master`
+  `fc7788ff...`. Real and float32 datum arguments now pass through the shared
+  Go-shortest `Decimal::from_f64` conversion before FSP-6 half-up rounding;
+  the focused boundary regression, complete package inventory, and existing
+  source vectors are recorded in `receipts/expression_collation_audit.md`.
+
 - 2026-09-04: aligned the Rust `tidb-expr` `FROM_BASE64` evaluator with Go
   `pkg/expression/builtin_string.go` at `origin/master` `fc7788ff...`. The
   context-aware entry now estimates decoded size from the original input
@@ -5552,6 +5559,12 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 ## Decision Log
 
+- Decision: reuse `tidb_datatype::Decimal::from_f64` for `FROM_UNIXTIME`
+  real and float32 arguments instead of formatting with a fixed precision.
+  That helper is already pinned to Go's `strconv.FormatFloat(..., 'g', -1,
+  64)` spelling, while `evalFromUnixTime` retains the source FSP-6 rounding,
+  range, and timezone rules. Date/Author: 2026-09-04, Codex.
+
 - Decision: route `FROM_BASE64` through a context-aware evaluator arm before
   the existing values-only dispatch table. Compute Go's estimated decoded
   length from the unstripped input and guard multiplication with the Go `int`
@@ -6162,6 +6175,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Codex.
 
 ## Surprises & Discoveries
+
+- A fixed nine-decimal rendering of a real Unix timestamp is not equivalent to
+  Go's shortest `%g` conversion: `1451606400.0363455` becomes
+  `.036345482` in the fixed spelling and rounds down, while Go retains
+  `.0363455` and rounds up to `.036346`. The datatype crate already carried
+  the exact shortest-float formatter, so the expression fix only had to route
+  both real datum kinds through it.
 
 - Go's `FROM_BASE64` packet check intentionally measures the 94-byte source
   string before removing its tabs, newline, carriage return, and spaces, so

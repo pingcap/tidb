@@ -82,8 +82,10 @@ fn format_local(local: NaiveDateTime, fsp: usize) -> String {
 
 /// The unix-seconds argument as `(total_nanoseconds, fsp)`; `None` is NULL.
 /// Go derives fsp from the argument TYPE: int 0, decimal its capped scale,
-/// real/string `MaxFsp`; the nanoseconds keep the full written fraction so
-/// rounding at fsp happens on the complete value, as in `evalFromUnixTime`.
+/// real/string `MaxFsp`; real values first pass through
+/// `MyDecimal.FromFloat64`'s shortest `%g` spelling. The nanoseconds keep the
+/// full written fraction so rounding at fsp happens on the complete value, as
+/// in `evalFromUnixTime`.
 fn unix_arg_nanos(value: &Datum) -> Result<Option<(i128, usize)>, EvalError> {
     let (text, fsp) = match value {
         Datum::Null => return Ok(None),
@@ -94,7 +96,12 @@ fn unix_arg_nanos(value: &Datum) -> Result<Option<(i128, usize)>, EvalError> {
             let scale = text.split_once('.').map_or(0, |(_, f)| f.len()).min(6);
             (text, scale)
         }
-        Datum::Real(v) => (format!("{v:.9}"), 6),
+        Datum::Real(v) | Datum::Float32(v) => {
+            let Some(decimal) = Decimal::from_f64(*v) else {
+                return Ok(None);
+            };
+            (decimal.to_string(), 6)
+        }
         other => {
             let Some(text) = coerce_str(other)? else {
                 return Ok(None);
