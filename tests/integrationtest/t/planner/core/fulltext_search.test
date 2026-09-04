@@ -316,6 +316,71 @@ set @@tidb_opt_enable_alternative_logical_plans=OFF;
 select id, title from articles where match(title) against('+MySQL' in boolean mode);
 set @@tidb_opt_enable_alternative_logical_plans=ON;
 
+# Local no-score MATCH ... AGAINST evaluation
+# (tidb_enable_local_match_against). These run the analyzer and boolean query
+# matcher inside TiDB instead of approximating the search with ILIKE, so they
+# cover the semantics the LIKE fallback cannot express.
+set @@tidb_enable_local_match_against=ON;
+
+# Test 43: Required and prohibited terms.
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+
+# Test 44: Word boundaries. 'Optimizing' must not satisfy a search for 'Optimiz'
+# even though it contains it as a substring — the case the ILIKE fallback gets
+# wrong.
+select id, title from articles where match(title) against('+Optimiz' in boolean mode);
+select id, title from articles where match(title) against('+Optimizing' in boolean mode);
+
+# Test 45: Prefix search, rejected by the LIKE fallback in Test 5 above.
+select id, title from articles where match(title) against('Optim*' in boolean mode);
+
+# Test 46: Exact phrase, rejected by the LIKE fallback in Test 6 above. The
+# phrase must match only where the words are adjacent.
+select id, title from articles where match(title, body) against('"MySQL tutorial"' in boolean mode);
+select id, title from articles where match(title, body) against('"tutorial MySQL"' in boolean mode);
+
+# Test 47: Multi-column MATCH treats the columns as one document.
+select id, title from articles where match(title, body) against('+PostgreSQL' in boolean mode);
+
+# Test 48: Optional terms.
+select id, title from articles where match(title) against('tutorial security' in boolean mode);
+
+# Test 49: A term below innodb_ft_min_token_size is dropped by the analyzer, so
+# a query made only of such terms matches nothing.
+select id, title from articles where match(title) against('+vs' in boolean mode);
+
+# Test 50: NULL search returns NULL, so no row passes the filter.
+select id, title from articles where match(title) against(NULL in boolean mode);
+
+# Test 51: NULL columns contribute no tokens rather than making the predicate
+# NULL, so a prohibited term still admits rows whose column is NULL.
+insert into articles values (6, 'Indexing Basics', NULL);
+select id, title from articles where match(title, body) against('+Indexing -PostgreSQL' in boolean mode);
+delete from articles where id = 6;
+
+# Test 52: Natural-language mode is not served locally; it needs a relevance
+# score. With alternative logical plans on it is rescued by the LIKE fallback.
+select id, title from articles where match(title) against('MySQL tutorial');
+
+# Test 53: Scoring contexts keep the native builtin and still error, so a 0/1
+# local result is never substituted where a float score is expected.
+-- error 1235
+select id, match(title) against('+MySQL' in boolean mode) as score from articles;
+-- error 1235
+select id, title from articles order by match(title) against('+MySQL' in boolean mode) desc;
+
+# Test 54: The local path is chosen independently of alternative logical plans.
+set @@tidb_opt_enable_alternative_logical_plans=OFF;
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+set @@tidb_opt_enable_alternative_logical_plans=ON;
+
+# Test 55: Turning the switch off restores the previous behaviour, so Boolean
+# mode again depends on the LIKE fallback and prefix search again errors.
+set @@tidb_enable_local_match_against=OFF;
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+-- error 1235
+select id, title from articles where match(title) against('Optim*' in boolean mode);
+
 # Cleanup
 set @@tidb_opt_enable_alternative_logical_plans=OFF;
 drop table if exists articles;
