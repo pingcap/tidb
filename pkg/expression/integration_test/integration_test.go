@@ -1557,7 +1557,7 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("7480000000000000705f728000000000000001"))
+		Check(testkit.Rows("7480000000000000715f728000000000000001"))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
