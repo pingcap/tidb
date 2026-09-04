@@ -1065,6 +1065,8 @@ pub struct SessionVars {
     ti_flash_mem_quota_query_per_node: i64,
     /// Go's typed `SessionVars.TiFlashQuerySpillRatio`.
     ti_flash_query_spill_ratio: f64,
+    /// Go's typed `SessionVars.PessimisticTransactionFairLocking`.
+    pessimistic_transaction_fair_locking: bool,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
     /// PARSES out of the raw text -- chiefly the optimizer's cost environment
     /// -- and re-derive only when a `SET`
@@ -1162,6 +1164,7 @@ impl Default for SessionVars {
             ti_flash_mem_quota_query_per_node:
                 tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
             ti_flash_query_spill_ratio: tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO,
+            pessimistic_transaction_fair_locking: false,
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
@@ -1239,6 +1242,8 @@ impl SessionVars {
         let ti_flash_mem_quota_query_per_node =
             Self::ti_flash_mem_quota_query_per_node_from_systems(&systems);
         let ti_flash_query_spill_ratio = Self::ti_flash_query_spill_ratio_from_systems(&systems);
+        let pessimistic_transaction_fair_locking =
+            Self::pessimistic_transaction_fair_locking_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
@@ -1260,6 +1265,7 @@ impl SessionVars {
         self.ti_flash_max_bytes_before_ext_sort = ti_flash_max_bytes_before_ext_sort;
         self.ti_flash_mem_quota_query_per_node = ti_flash_mem_quota_query_per_node;
         self.ti_flash_query_spill_ratio = ti_flash_query_spill_ratio;
+        self.pessimistic_transaction_fair_locking = pessimistic_transaction_fair_locking;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
@@ -1377,6 +1383,14 @@ impl SessionVars {
             .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO)
     }
 
+    fn pessimistic_transaction_fair_locking_from_systems(
+        systems: &HashMap<String, String>,
+    ) -> bool {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING)
+            .is_some_and(|value| value.eq_ignore_ascii_case("ON") || value == "1")
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -1479,6 +1493,12 @@ impl SessionVars {
     #[must_use]
     pub const fn ti_flash_query_spill_ratio(&self) -> f64 {
         self.ti_flash_query_spill_ratio
+    }
+
+    /// Go `SessionVars.PessimisticTransactionFairLocking`.
+    #[must_use]
+    pub const fn pessimistic_transaction_fair_locking_enabled(&self) -> bool {
+        self.pessimistic_transaction_fair_locking
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -1610,6 +1630,7 @@ impl SessionVars {
         let mut restores_ti_flash_max_bytes_before_ext_sort = false;
         let mut restores_ti_flash_mem_quota_query_per_node = false;
         let mut restores_ti_flash_query_spill_ratio = false;
+        let mut restores_pessimistic_transaction_fair_locking = false;
         for (key, previous) in snapshot {
             restores_sql_mode |= key == "sql_mode";
             restores_max_allowed_packet |= key == "max_allowed_packet";
@@ -1632,6 +1653,8 @@ impl SessionVars {
                 key == tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE;
             restores_ti_flash_query_spill_ratio |=
                 key == tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO;
+            restores_pessimistic_transaction_fair_locking |=
+                key == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING;
             match previous {
                 Some(value) => {
                     self.session_resolved
@@ -1694,6 +1717,10 @@ impl SessionVars {
         if restores_ti_flash_query_spill_ratio {
             self.ti_flash_query_spill_ratio =
                 Self::ti_flash_query_spill_ratio_from_systems(&self.systems);
+        }
+        if restores_pessimistic_transaction_fair_locking {
+            self.pessimistic_transaction_fair_locking =
+                Self::pessimistic_transaction_fair_locking_from_systems(&self.systems);
         }
         self.refresh_optimizer_fix_control();
     }
@@ -1870,6 +1897,9 @@ impl SessionVars {
                 .value
                 .parse::<f64>()
                 .expect("TiFlash spill ratio validation stores a decimal fraction");
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING {
+            self.pessimistic_transaction_fair_locking = validated.value == "ON";
         }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
@@ -2608,6 +2638,40 @@ mod tests {
                 .unwrap(),
             "0.85"
         );
+    }
+
+    #[test]
+    fn pessimistic_fair_locking_uses_go_typed_session_hook() {
+        let mut vars = SessionVars::new();
+        assert!(!vars.pessimistic_transaction_fair_locking_enabled());
+
+        vars.set_system(
+            tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
+            "OFF".to_owned(),
+        )
+        .unwrap();
+        assert!(!vars.pessimistic_transaction_fair_locking_enabled());
+
+        if tidb_config::kerneltype::is_next_gen() {
+            let error = vars
+                .set_system(
+                    tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
+                    "ON".to_owned(),
+                )
+                .expect_err("nextgen rejects fair-locking ON");
+            let VarError::SqlError(error) = error else {
+                panic!("nextgen fair-locking refusal should retain MySQL error 1235");
+            };
+            assert_eq!(error.code, 1235);
+            assert!(!vars.pessimistic_transaction_fair_locking_enabled());
+        } else {
+            vars.set_system(
+                tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
+                "ON".to_owned(),
+            )
+            .unwrap();
+            assert!(vars.pessimistic_transaction_fair_locking_enabled());
+        }
     }
 
     #[test]

@@ -592,6 +592,21 @@ impl SysVarDef {
         if self.name == "secure_auth" && validated.value == "OFF" {
             return Err(ValidationError::WrongValue);
         }
+        // Go's nextgen-only `TestTiDBPessimisticTransactionFairLocking`
+        // exercises the variable-specific Validation closure: ON is rejected
+        // with ErrNotSupportedInNextGen (1235) and the normalized fallback is
+        // OFF. Classic builds retain the ordinary boolean behavior.
+        if self.name == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING
+            && tidb_config::kerneltype::is_next_gen()
+            && validated.value == "ON"
+        {
+            return Err(ValidationError::SqlError(SqlError::new_f(
+                tidb_error::mysql::errcode::ErrNotSupportedYet,
+                "%s is not supported in the next generation of TiDB",
+                &[],
+                &[FormatArg::from(self.name)],
+            )));
+        }
         // Go's `tiflash_query_spill_ratio` keeps the generic float range
         // [0, 1], then narrows it in its variable-specific Validation closure
         // to [0, 0.85]. Values below zero have already been clamped to 0 by

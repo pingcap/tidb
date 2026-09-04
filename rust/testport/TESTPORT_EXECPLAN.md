@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` pessimistic fair-locking hook): added
+  typed `SessionVars` state for `tidb_pessimistic_transaction_fair_locking`
+  and wired the Go next-generation validation branch, including the 1235
+  refusal and canonical OFF behavior. Added a focused setter/restore
+  regression; the receipt remains partial because this Rust harness does not
+  run Go's external next-gen build-tag fixture end-to-end.
 - 2026-09-05 (`pkg/sessionctx/variable` TTL job global hook): added the
   process-wide `EnableTTLJob` atomic and wired GLOBAL writes, resets, cluster
   loads, and committed-image replacement to the same getter/setter authority
