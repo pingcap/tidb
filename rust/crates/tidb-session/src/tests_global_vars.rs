@@ -798,6 +798,42 @@ fn async_global_stats_switch_warns_on_every_assignment() {
     assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
 }
 
+/// Go `TestTiDBOptTxnAutoRetry`: OFF is a deprecated compatibility spelling
+/// that warns and remains ON for both SESSION and GLOBAL assignments.
+#[test]
+fn disable_txn_auto_retry_off_warns_and_stays_on() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    let expected = vec![vec![
+        "Warning".to_owned(),
+        "1287".to_owned(),
+        "'OFF' is deprecated and will be removed in a future release. Please use ON instead"
+            .to_owned(),
+    ]];
+
+    session
+        .run("SET SESSION tidb_disable_txn_auto_retry = OFF")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+    assert_eq!(
+        row_text(session.run("SHOW VARIABLES LIKE 'tidb_disable_txn_auto_retry'")),
+        vec![vec![
+            "tidb_disable_txn_auto_retry".to_owned(),
+            "ON".to_owned()
+        ]]
+    );
+    session
+        .run("SET GLOBAL tidb_disable_txn_auto_retry = OFF")
+        .unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+    assert_eq!(
+        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_disable_txn_auto_retry'")),
+        vec![vec![
+            "tidb_disable_txn_auto_retry".to_owned(),
+            "ON".to_owned()
+        ]]
+    );
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.

@@ -225,12 +225,6 @@ fn foreign_key_check_in_shared_lock_default_off() {
     assert!(!DEF_TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK);
 }
 
-/// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBOptTxnAutoRetry`.
-// go-parity-gap: SysVar.Validate deprecation-warning path (ErrErrDeprecatedTipNoWrittenToLog via vars.StmtCtx warnings) not ported to this crate
-#[test]
-#[ignore]
-fn tidb_opt_txn_auto_retry_unported() {}
-
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBLowResTSOUpdateInterval`.
 ///
 /// Partial port: the declared default (2000ms) that anchors the Go test's

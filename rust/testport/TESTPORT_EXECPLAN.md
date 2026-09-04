@@ -73,6 +73,10 @@ For each bounded behavior cluster:
   three stale vardef embedding shims now covered by the session-owned
   endpoint normalizer, GLOBAL configuration-version hook, and API-key
   masking/version tests.
+- 2026-09-05 (`pkg/sessionctx/variable` deprecated retry switch): wired
+  `tidb_disable_txn_auto_retry` so deprecated OFF assignments warn with 1287
+  and remain canonically ON for both SESSION and GLOBAL SQL writes; added a
+  focused regression and removed its stale vardef shim.
 - 2026-09-05 (`pkg/sessionctx/variable` TTL schedule-window inventory): wired
   GLOBAL TypeTime writes through the issuing session's timezone so short
   `HH:MM` values retain the same numeric offset as Go's `ParseInLocation`;

@@ -805,6 +805,13 @@ impl Session {
                 "The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a \
                  future release; changing it is discouraged.",
             ))
+        } else if name.eq_ignore_ascii_case("tidb_disable_txn_auto_retry")
+            && normalized == "OFF"
+        {
+            Some((
+                1287,
+                "'OFF' is deprecated and will be removed in a future release. Please use ON instead",
+            ))
         } else if name.eq_ignore_ascii_case("default_collation_for_utf8mb4") {
             // Go appends this deprecation warning only when its validation
             // succeeds.  Unlike the always-warning compatibility variables,

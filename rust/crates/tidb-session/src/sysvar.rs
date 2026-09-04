@@ -728,6 +728,15 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go's `tidb_disable_txn_auto_retry` is retained only as a
+        // compatibility alias: assigning OFF emits warning 1287 but stores
+        // ON, because automatic retry can no longer be disabled.
+        if self.name == "tidb_disable_txn_auto_retry" && validated.value == "OFF" {
+            return Ok(Validated {
+                value: "ON".to_owned(),
+                truncated: validated.truncated,
+            });
+        }
         // Go's TTL schedule-window globals parse a short `HH:MM` value in
         // UTC, then store/display the full-day form with an explicit `+0000`
         // offset. Keep an already-expanded value canonical and reject invalid
