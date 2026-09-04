@@ -67,6 +67,27 @@ For each bounded behavior cluster:
   scheduled log's deadline into the purge row; the failure set is the
   exact base set. Receipt: `receipts/ddl_mview_purge_derivation.md`.
 
+- 2026-09-04 (`pkg/util/chunk` clamped decimal read-back, A-1 follow-up):
+  closed the observable gap `c59b2bd60e`'s lossy bridge left — its
+  `FromString`-tail `resultFrac = digitsFrac` leaked hidden fraction words
+  past a value's visible scale on chunk read-backs of clamped cells. The
+  lossy fallback now pins `resultFrac = min(visible scale, kept fraction)`
+  (the exact path's and Go producers' convention; the client-visible decimal
+  digit count is the `resultFrac` count on both engines), widening
+  `MyDecimal::set_result_frac` from test-only to `pub(crate)` with its
+  invariant intact. Fail-before regression on the hidden-word product
+  (resultFrac 72 vs visible 71), integer-overflow byte-equality oracles
+  against Go's `MyDecimal.FromString`, the Go-master all-zero sign
+  normalization pin (`mydecimal.go:531-543`), and the chunk read-back
+  integration pin; the two-crate sweep's 40-name failure set is identical to
+  the base control run. Receipt: `receipts/chunk_a1_readback_parity.md`.
+
+- 2026-09-04: aligned Rust `tidb-datatype` `JSON_MERGE_PRESERVE` with Go's
+  adjacent-object grouping from the complete `pkg/types` JSON inventory.
+  `merge_binary_nodes` now groups object runs, recursively merges duplicate
+  keys, and flattens one array layer; the interrupted-object regression is
+  pinned in `receipts/json_merge_preserve.md`.
+
 22e85fc7e6 (rust: align pkg/ddl mview purge-schedule derivation with Go master)
 
 - 2026-09-04 (batch 17, `pkg/ddl` MV view-create worker phase 1): implemented

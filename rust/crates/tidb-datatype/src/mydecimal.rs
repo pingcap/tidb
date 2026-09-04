@@ -1398,7 +1398,9 @@ impl MyDecimal {
         self.result_frac
     }
 
-    #[cfg(test)]
+    /// Pins `resultFrac` for a boundary-clamped cell: Go producers stamp it
+    /// from the target/visible scale (never above `digitsFrac`), while
+    /// `FromString` stamps `digitsFrac` itself.
     pub(crate) fn set_result_frac(&mut self, result_frac: i8) {
         debug_assert!(result_frac >= 0 && result_frac <= self.digits_frac);
         self.result_frac = result_frac;

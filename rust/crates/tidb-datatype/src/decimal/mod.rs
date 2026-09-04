@@ -343,7 +343,16 @@ impl Decimal {
         if self.negative {
             text.insert(0, '-');
         }
-        MyDecimal::from_string(text.as_bytes()).0
+        let mut value = MyDecimal::from_string(text.as_bytes()).0;
+        // Go's `ToString` renders the clamped cell's `digitsFrac`, while a
+        // Rust chunk read-back (`Decimal::from_my_decimal`) renders
+        // `resultFrac`. Pin `resultFrac` to the kept fraction — never above
+        // this value's own visible scale — so the datum text a client sees
+        // matches Go's `ToString` of the same clamped cell. The exact path
+        // above already carries this convention (`resultFrac = scale`).
+        let kept = value.digits_frac().max(0) as u32;
+        value.set_result_frac(self.scale.min(kept) as i8);
+        value
     }
 
     /// Parses the signed decimal strings accepted by datatype conversion.

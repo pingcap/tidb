@@ -634,6 +634,114 @@ fn my_decimal_bridge_inlines_common_coefficients_and_preserves_wide_values() {
     );
 }
 
+/// An integer part wider than the nine-word buffer takes Go `FromString`'s
+/// `ErrOverflow` clamp: `digitsInt = 81`, `digitsFrac = 0`, and the digit-fill
+/// loop consumes the LOW 81 integer digits (`pkg/types/mydecimal.go:447-453`,
+/// `:460-472` at master `d152e4b78d`). The lossy bridge cell must be
+/// byte-equal to the `MyDecimal` Go's own `FromString` builds from the same
+/// text (Go's parser applies exactly this clamp when it lexes such a
+/// literal).
+#[test]
+fn chunk_bridge_lossy_clamps_integer_overflow_like_go_from_string() {
+    for text in [
+        "9".repeat(100),
+        format!("{}9", "9".repeat(81)),
+        format!("1{}.5", "0".repeat(85)),
+    ] {
+        let value = Decimal::from_literal(&text);
+        let lossy = value.to_chunk_my_decimal_lossy();
+        let (go_cell, go_error) = MyDecimal::from_string(text.as_bytes());
+        assert_eq!(
+            go_error,
+            Some(crate::mydecimal::DecimalError::Overflow),
+            "{text}"
+        );
+        assert_eq!(
+            lossy.to_raw_bytes(),
+            go_cell.to_raw_bytes(),
+            "{text}: cell must equal Go's FromString clamp (digitsInt=81, digitsFrac=0)"
+        );
+    }
+
+    // The sign survives the clamp (a negative datum, not a magnitude).
+    let negative = Decimal::from_literal(&format!("-{}", "7".repeat(90)));
+    let lossy = negative.to_chunk_my_decimal_lossy();
+    assert_eq!(
+        String::from_utf8(lossy.to_string_bytes()).unwrap(),
+        format!("-{}", "7".repeat(81))
+    );
+}
+
+/// Fraction digits beyond the nine-word budget take Go `FromString`'s
+/// `ErrTruncated` clamp: `digitsInt` is kept and `digitsFrac` becomes
+/// `(9 - wordsInt) * 9`, consuming the LEADING kept fraction digits
+/// (`pkg/types/mydecimal.go:447-453`, `:481-493`). `resultFrac` pins the
+/// kept fraction (never above the visible scale) so the datum read-back
+/// renders Go's `ToString` text instead of dropping the fraction.
+#[test]
+fn chunk_bridge_lossy_clamps_excess_fraction_like_go_from_string() {
+    // 1 integer digit (1 word) -> 8 fraction words = 72 kept digits.
+    let fraction = "3".repeat(101);
+    let text = format!("2.{fraction}");
+    let value = Decimal::from_literal(&text);
+    let lossy = value.to_chunk_my_decimal_lossy();
+    let (go_cell, go_error) = MyDecimal::from_string(text.as_bytes());
+    assert_eq!(go_error, Some(crate::mydecimal::DecimalError::Truncated));
+    assert_eq!(
+        lossy.to_raw_bytes(),
+        go_cell.to_raw_bytes(),
+        "cell must equal Go's FromString clamp (digitsInt=1, digitsFrac=72)"
+    );
+    assert_eq!(
+        String::from_utf8(lossy.to_string_bytes()).unwrap(),
+        format!("2.{}", "3".repeat(72)),
+        "displayed text must equal Go's ToString of its clamped cell"
+    );
+    assert_eq!(lossy.result_frac(), 72);
+    assert_eq!(
+        Decimal::from_my_decimal(&lossy).to_string(),
+        format!("2.{}", "3".repeat(72))
+    );
+
+    // A hidden-word storage scale above the visible scale (built exactly the
+    // way an aggregate keeps hidden division words: `true_div` retains whole
+    // base-1e9 words, `mul` carries both storage scales) clamps the hidden
+    // digits while the visible fraction survives in `resultFrac`.
+    let left = Decimal::from_literal("8")
+        .true_div(&Decimal::from_literal("7"), 7)
+        .unwrap();
+    assert_eq!((left.scale(), left.storage_scale()), (7, 9));
+    let right = Decimal::from_literal(&format!("1.{}", "2".repeat(64)));
+    let product = left.mul(&right);
+    assert_eq!(product.scale(), 71);
+    let lossy = product.to_chunk_my_decimal_lossy();
+    assert_eq!(lossy.result_frac(), 71);
+    // The cell clamps to eight fraction words, but the visible scale rides in
+    // `resultFrac`, so the datum read-back is the exact product text.
+    assert_eq!(
+        Decimal::from_my_decimal(&lossy).to_string(),
+        product.to_string()
+    );
+}
+
+/// A clamped value whose kept digits are all zero renders `0`: Go master's
+/// `FromString` normalizes the sign away when every word is zero
+/// (`mydecimal.go:531-542`, `if allZero { d.negative = false }`), and the
+/// leading-zero strip collapses the 81-digit buffer.
+#[test]
+fn chunk_bridge_lossy_zero_clamp_renders_like_go_to_string() {
+    // 10^81: integer part needs 82 digits, low 81 kept digits are all zero.
+    let value = Decimal::from_literal(&format!("1{}", "0".repeat(81)));
+    let lossy = value.to_chunk_my_decimal_lossy();
+    assert_eq!(String::from_utf8(lossy.to_string_bytes()).unwrap(), "0");
+    let negative = Decimal::from_literal(&format!("-1{}", "0".repeat(81)));
+    let lossy = negative.to_chunk_my_decimal_lossy();
+    let (go_cell, go_error) = MyDecimal::from_string(format!("-1{}", "0".repeat(81)).as_bytes());
+    assert_eq!(go_error, Some(crate::mydecimal::DecimalError::Overflow));
+    assert_eq!(lossy.to_raw_bytes(), go_cell.to_raw_bytes());
+    assert_eq!(String::from_utf8(lossy.to_string_bytes()).unwrap(), "0");
+}
+
 use crate::decimal::{decimal_bin_size, DecimalCodecError, DecimalCodecWarning};
 
 /// Parses a signed decimal literal for the codec tests: `from_literal` takes

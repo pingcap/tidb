@@ -78,6 +78,13 @@ result, then `Chunk::append_datum`, `MutRow::from_datums`, `SetValue`, and
 `SetDatum` copy the resulting 40-byte cell without introducing a new panic.
 The focused regression covers a value with ten fractional base-1e9 words and
 checks all four datum-to-cell entry points against Go's parsed cell.
+Follow-up (2026-09-04, `receipts/chunk_a1_readback_parity.md`): the clamped
+cell's `resultFrac` is now pinned to `min(visible scale, kept fraction)` —
+`FromString`'s own `resultFrac = digitsFrac` tail leaked hidden words past a
+value's visible scale on chunk read-backs, diverging from the exact path's
+and Go producers' visible-scale convention; the integer-overflow clamp and
+the all-zero sign normalization (`mydecimal.go:531-543`) are pinned
+byte-equal to Go's `FromString` output.
 
 **A-2 (rank 3 — wire/decode strictness).**
 `rust/crates/tidb-codec/src/column.rs:807-821` rejects an offset table whose
@@ -276,6 +283,9 @@ public parameter is outside "small and certain".
   is the missing case.
 * A-1's reachability (whether `tidb_datatype::Decimal` can hold a value
   `MyDecimal` rejects) was not checked.
+  RESOLVED (2026-09-04): it can and does (`from_literal`, exact `mul`); the
+  boundary now clamps like Go — see A-1, `testport/receipts/chunk_a1_datum.md`,
+  and `testport/receipts/chunk_a1_readback_parity.md`.
 * `tidb-stats/src/builder.rs`, TopN/global-stats merging, and index row
   counting beyond the equality path were not compared.
 * Collation handling inside `Histogram::locate_bucket` was compared

@@ -1346,6 +1346,39 @@ mod tests {
         assert_eq!(from_datums.to_row().get_my_decimal(0), expected);
     }
 
+    /// The datum a client reads back must render Go's `ToString` text for the
+    /// clamped cell. Go's `ToString` prints the cell's `digitsFrac` (72 kept
+    /// fraction digits here), so the read-back — which renders `resultFrac` —
+    /// must carry that kept fraction, and an integer-overflow cell must be
+    /// byte-equal to Go's own `MyDecimal.FromString` output for the same
+    /// over-wide literal.
+    #[test]
+    fn decimal_datum_read_back_matches_go_to_string_after_clamp() {
+        use tidb_datatype::{Decimal, FieldTypeCode, MyDecimal};
+        let ft = FieldType::new(FieldTypeCode::NewDecimal);
+        let mut chunk = Chunk::new(std::slice::from_ref(&ft), 2, 8);
+
+        // Fraction overflow: the read-back keeps the visible scale, not the
+        // hidden kept words.
+        let text = format!("2.{}", "3".repeat(101));
+        chunk.append_datum(0, &Datum::Decimal(Decimal::from_literal(&text)));
+        match chunk.get_row(0).get_datum(0, &ft) {
+            Datum::Decimal(d) => assert_eq!(d.to_string(), format!("2.{}", "3".repeat(72))),
+            other => panic!("expected a decimal datum, got {other:?}"),
+        }
+
+        // Integer overflow: the cell is the LOW 81 integer digits, byte-equal
+        // to Go's FromString clamp of the same literal.
+        let text = "9".repeat(100);
+        chunk.append_datum(0, &Datum::Decimal(Decimal::from_literal(&text)));
+        let (go_cell, go_error) = MyDecimal::from_string(text.as_bytes());
+        assert_eq!(go_error, Some(tidb_datatype::DecimalError::Overflow));
+        assert_eq!(
+            chunk.get_row(1).get_my_decimal(0).to_raw_bytes(),
+            go_cell.to_raw_bytes()
+        );
+    }
+
     #[test]
     fn decimal_datum_append_preserves_hidden_fraction_words() {
         use tidb_datatype::{Decimal, FieldTypeCode};
