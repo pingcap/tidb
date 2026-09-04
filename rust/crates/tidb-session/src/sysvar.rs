@@ -1136,6 +1136,64 @@ impl SysVarDef {
             // until that table is ported the value passes unvalidated here.
             return Ok(validated);
         }
+        // Go's tidb_opt_index_join_build_v2 (`sysvar.go:2874`): the
+        // planner always uses the v2 path, so a falsy set is refused with
+        // the always-enabled message (bare error, 1105) and a truthy set
+        // normalizes to ON.
+        if self.name == "tidb_opt_index_join_build_v2" {
+            let on = matches!(
+                validated.value.to_ascii_lowercase().as_str(),
+                "on" | "1" | "true"
+            );
+            if !on {
+                return Err(ValidationError::Refused(
+                    "tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off"
+                        .to_owned(),
+                ));
+            }
+            return Ok(Validated {
+                value: "ON".to_owned(),
+                truncated: validated.truncated,
+            });
+        }
+        // Go's tidb_schema_cache_size Validation (`sysvar.go:3772` via
+        // `parseSchemaCacheSize`, `varsutil.go:537`): a byte-size string or
+        // plain integer passes through its parsed spelling, sizes below the
+        // 64MB floor clamp up to "64MB", sizes above i64::MAX clamp down,
+        // and anything unparseable is ErrTruncatedWrongValue (1292). Go
+        // additionally appends a 1365 warning on both clamps; this
+        // boundary has no warning sink, so only the value is adjusted.
+        if self.name == "tidb_schema_cache_size" {
+            const LOWER_BOUND: u64 = 64 << 20;
+            if let Some((bytes, spelled)) = crate::varsutil::parse_byte_size(&validated.value) {
+                if bytes > 0 && bytes < LOWER_BOUND {
+                    return Ok(Validated {
+                        value: "64MB".to_owned(),
+                        truncated: true,
+                    });
+                }
+                if bytes > i64::MAX as u64 {
+                    return Ok(Validated {
+                        value: (i64::MAX as u64).to_string(),
+                        truncated: true,
+                    });
+                }
+                if spelled != validated.value {
+                    return Ok(Validated {
+                        value: spelled,
+                        truncated: validated.truncated,
+                    });
+                }
+                return Ok(validated);
+            }
+            return Err(ValidationError::SqlError(SqlError::new(
+                tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+                &[
+                    FormatArg::from("tidb_schema_cache_size"),
+                    FormatArg::from(original),
+                ],
+            )));
+        }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
         // else is `ErrWrongTypeForVar` (1232).
@@ -2216,5 +2274,34 @@ fn runtime_filter_validations_match_go() {
     assert!(matches!(
         rf_mode.validate("local"),
         Err(ValidationError::Refused(_))
+    ));
+}
+
+/// Go's index-join-v2 always-on rule (`sysvar.go:2874`) and the schema
+/// cache size parse-and-clamp (`varsutil.go:537`): falsy sets are refused
+/// with the always-enabled message, sizes below 64MB clamp up, sizes above
+/// i64::MAX clamp down, and unparseable values are 1292.
+#[test]
+fn index_join_v2_and_schema_cache_size_match_go() {
+    let v2 = get_sys_var("tidb_opt_index_join_build_v2").unwrap();
+    assert_eq!(v2.validate("ON").unwrap().value, "ON");
+    assert_eq!(v2.validate("1").unwrap().value, "ON");
+    match v2.validate("OFF") {
+        Err(ValidationError::Refused(message)) => {
+            assert!(
+                message.contains("always enabled and cannot be turned off"),
+                "{message}"
+            );
+        }
+        other => panic!("expected a refused error, got {other:?}"),
+    }
+
+    let scs = get_sys_var("tidb_schema_cache_size").unwrap();
+    assert_eq!(scs.validate("64MB").unwrap().value, "64MB");
+    assert_eq!(scs.validate("1MB").unwrap().value, "64MB");
+    assert_eq!(scs.validate("134217728").unwrap().value, "134217728");
+    assert!(matches!(
+        scs.validate("not-a-size"),
+        Err(ValidationError::SqlError(_))
     ));
 }

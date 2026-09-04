@@ -336,3 +336,5 @@
 - 下轮恢复点: (1) 工单余项: gogc_tuner_threshold/max/min、tiflash_pipeline_model、schema_cache_size、opt_index_join_build_v2、pessimistic_txn_fair_locking、tx_read_ts; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - gogc_tuner_threshold 批: 钩子在 Go 于类型归一化前消费原始值(tidbOptFloat64 非法值静默回退默认 0.6; 最短浮点文本存储; 范围守卫为 && 矛盾条件死代码+tuner 运行态比较未启动时为 0 不拒绝)—Rust 在 validate_in_scope 归一化前拦截实现, 3 断言回归(bogus→"0.6"/-5 透传)。tx_read_ts 钩子为空操作已核实关闭。session lib 1297 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) 工单余项: tiflash_pipeline_model/schema_cache_size(opt_index_join_build_v2、pessimistic_txn_fair_locking 待读钩子体); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- index_join_v2 + schema_cache_size 批: 前者 falsy 拒绝(always-enabled 消息 1105)+truthy 规范化为 ON; 后者字节解析+64MB 下限钳/MaxInt64 上限钳(Go 的 1365 警告本边界无 sink, 值钳位保留并注释)+不可解析 1292。回归双场景。session lib 1299 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) 工单余项: tiflash_pipeline_model/pessimistic_txn_fair_locking(条目位置待查); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
