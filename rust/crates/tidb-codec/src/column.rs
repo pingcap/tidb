@@ -435,22 +435,12 @@ pub fn decode_column_datums(
                             message: message.to_string(),
                         }
                     })?;
-                    let text =
-                        String::from_utf8(my_decimal.to_string_bytes()).map_err(|error| {
-                            TypedColumnError::InvalidTypedPayload {
-                                field_type: code,
-                                row,
-                                message: error.to_string(),
-                            }
-                        })?;
-                    let (decimal, parse_error) = Decimal::parse_mysql(&text);
-                    if let Some(parse_error) = parse_error {
-                        return Err(TypedColumnError::InvalidTypedPayload {
-                            field_type: code,
-                            row,
-                            message: format!("{parse_error:?}"),
-                        });
-                    }
+                    // Go carries the decoded `MyDecimal` struct directly
+                    // (`Row.GetDatum`/`GetDecimal`), so the value keeps its
+                    // `resultFrac` visible scale over the word buffer's
+                    // retained `digitsFrac`; a `ToString`/`FromString` text
+                    // round-trip would pin the visible scale to `digitsFrac`.
+                    let decimal = Decimal::from_my_decimal(&my_decimal);
                     Ok(Datum::new_decimal(decimal))
                 })
                 .collect()
@@ -841,7 +831,7 @@ fn take<'a>(
 
 #[cfg(test)]
 mod tests {
-    use tidb_datatype::{Collation, Decimal, MySqlDuration, MysqlEnum, MysqlSet};
+    use tidb_datatype::{Collation, Decimal, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet};
 
     use super::*;
 
@@ -904,6 +894,49 @@ mod tests {
         let (expected, error) = Decimal::parse_mysql("123.456");
         assert!(error.is_none());
         assert_eq!(datums, vec![Datum::new_decimal(expected), Datum::Null]);
+    }
+
+    /// Go chunk cells copy the 40-byte `MyDecimal` verbatim
+    /// (`chunk.AppendMyDecimal`), so a stored cell's `resultFrac` travels
+    /// independently of the word buffer's `digitsFrac`: `DecimalDiv` retains
+    /// extra quotient digits in `wordBuf` while `resultFrac` follows its own
+    /// formula (`pkg/types/mydecimal.go` `DecimalDiv`), and Go's decimal
+    /// `String` renders exactly `resultFrac` digits (`pkg/types/mydecimal.go`
+    /// `String`). The decoded datum must carry `resultFrac` as its visible
+    /// scale while the hidden word-buffer digits stay available for later
+    /// arithmetic — Go carries the struct directly, it never round-trips the
+    /// value through `ToString` text, which would pin the visible scale to
+    /// `digitsFrac`.
+    #[test]
+    fn decimal_decode_keeps_the_cell_result_frac_as_the_visible_scale() {
+        let (parsed, error) = MyDecimal::from_string(b"1.234567");
+        assert!(error.is_none());
+        assert_eq!(parsed.digits_frac(), 6);
+        // Patch the `resultFrac` byte (third field of Go's 40-byte struct
+        // layout) into what a division-produced cell carries: visible scale 2
+        // over six stored fraction digits.
+        let mut cell = parsed.to_raw_bytes();
+        cell[2] = 2;
+        let cell_decimal = MyDecimal::from_raw_bytes(cell).expect("patched cell");
+        assert_eq!(cell_decimal.result_frac(), 2);
+        assert_eq!(cell_decimal.digits_frac(), 6);
+        let data: &'static [u8] =
+            Box::leak(cell_decimal.to_raw_bytes().to_vec().into_boxed_slice());
+        let column = RawColumn {
+            length: 1,
+            null_count: 0,
+            null_bitmap: None,
+            offsets: None,
+            data,
+        };
+        let datums = decode_column_datums(&column, FieldType::new(FieldTypeCode::NewDecimal))
+            .expect("decimal decode");
+        let [Datum::Decimal(decimal)] = &datums[..] else {
+            panic!("expected one decimal datum, got {datums:?}");
+        };
+        assert_eq!(decimal.scale(), 2);
+        assert_eq!(decimal.to_string(), "1.23");
+        assert_eq!(decimal.coefficient_digits(), "1234567");
     }
 
     #[test]

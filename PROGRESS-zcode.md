@@ -245,3 +245,11 @@
 - 下批候选：chunk A-1 直接转换（需读两型结构后实现 ~150 行）、parser #11 charset-aware scanner（结构性）、Time::round_frac TZ（签名变更跨两 crate）。
 
 - 本会话累计交付 31 个提交到 hparser-integration（全部四包全绿验证），覆盖 planner/parser/datatype/codec/expr 五个 crate 的 Go 对照修复。**快赢批次已全部消化**，剩余均为结构性/设计门槛项：chunk A-1（datum 决策）、parser #11 charset-aware scanner（结构性）、Time::round_frac TZ（签名变更）、CHAR/VARCHAR padding（storage 面）、~175 站点 error-code 重构（跨 crate）。
+
+## 环境变更(2026-09-05 会话恢复)
+- 本机 homebrew 已被卸载(/opt/homebrew 不存在, brew 命令缺失)。旧行话里 `OPENSSL_DIR=$(brew --prefix openssl)` 的导出已失效——设置 OPENSSL_DIR 反而会让 openssl-sys 走系统路径分支而失败。
+- 正确做法: 不要设置 OPENSSL_DIR/DYLD_FALLBACK_LIBRARY_PATH。tikv-client-rs 的 `openssl = {version="0.10", features=["vendored"]}`(主 worktree 有未提交的同款补丁; parity worktree 我也加了同样的**未提交**本地补丁, 不要 commit 该文件)会源码编译 OpenSSL 到 target, 一次约几分钟, 之后正常。
+- 验证: `cargo test -p tidb-planner --lib` = 908 passed / 0 failed(当前 FETCH_HEAD 同步点)。早前 /tmp/wt_lib13.txt 的 5 个失败为过期树状态, 非当前远端。
+- Go 工具链同样从 PATH 消失; 但 ~/.cache/codex-go1.25.10/go(1.25.12, 与 go.mod 匹配)和 codex-gopath-1.25.10 仍在。make lint 用:
+  `PATH=~/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=~/.cache/codex-gopath-1.25.10 make lint`
+- chunk lib 35 失败/executor lib 122 失败为**预存环境失败**(macOS 临时目录 spill NotFound 等), stash 对照证明与本批 codec 修复无关(有/无修复均同数失败); codec/datatype/planner/distsql 全绿。
