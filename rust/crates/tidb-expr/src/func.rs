@@ -21,9 +21,9 @@ use crate::eval_in;
 use crate::row::row_compare;
 use crate::string_fn::{
     ascii, bin, bit_count, bit_length, case_convert, char_func_with_context, concat_with_context,
-    concat_ws_with_context, elt, export_set, field, format_num, from_base64, hex, locate,
-    locate_collation, make_set, oct, ord, quote, replace, reverse, str_insert, str_take, strcmp,
-    substring, substring_index, unhex,
+    concat_ws_with_context, elt, export_set, field, format_num, from_base64,
+    from_base64_with_packet_limit, hex, locate, locate_collation, make_set, oct, ord, quote,
+    replace, reverse, str_insert, str_take, strcmp, substring, substring_index, unhex,
 };
 use crate::string_packet::{pad, repeat, space, to_base64};
 use crate::time_fn::calendar::{date_add, date_diff, date_format, date_part, from_days, time_part};
@@ -440,6 +440,14 @@ pub(crate) fn eval_func_values_in(
     vals: &[Datum],
     cols: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
+    // Go's `builtinFromBase64Sig` checks the estimated decoded length against
+    // `max_allowed_packet` before decoding and routes an over-limit result
+    // through the statement warning policy. Keep this context-sensitive arm
+    // ahead of the values-only table so AST and chunk evaluation agree.
+    if name == "FROM_BASE64" {
+        return Some(from_base64_with_packet_limit(vals, Some(cols)));
+    }
+
     // The session-state builtins: pure functions of their argument VALUES
     // plus the session, which `cols` supplies. They live here rather than in
     // `eval_func_values` (values alone) so the row path and the chunk path

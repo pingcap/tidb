@@ -784,3 +784,72 @@ The compatibility risk is limited to the documented negative week-year
 sentinel. The formatter now allocates the same short-lived decimal string for
 negative years that it already allocates for positive year formatting; no
 execution or storage path changes.
+
+## Rust follow-up: `FROM_BASE64` packet limit
+
+The rolling Go authority remains `origin/master` at
+`fc7788ff517c3407dc7e000be989ab23e6648211`. Before editing, the complete
+`pkg/expression` tree was re-inventoried: 208 tracked artifacts, 146,291 lines
+(137 direct-root artifacts, 68 production files, 60 tests, seven generated
+sources, `BUILD.bazel`, and `OWNERS`, plus eight nested package/build/test
+boundaries). The Rust `tidb-expr` owner was also rechecked at 176 tracked
+artifacts and 107,196 lines, including production modules, source-derived
+tests, fixtures/support, benchmarks, Cargo metadata, and aggregate test build
+inputs. The relevant Go `builtinFromBase64Sig` row/vector implementations and
+`TestFromBase64Sig` table were read in full. No Go, generated, fixture,
+platform, or Bazel file changed.
+
+Go estimates the decoded length from the original input byte length before
+removing spaces/tabs and CR/LF, returns NULL silently if the `int`-sized
+estimate overflows, and routes an estimate above `maxAllowedPacket` through
+`handleAllowedPacketOverflowed` (NULL plus warning 1301 at warning level, or a
+statement error at error level). Rust's `FROM_BASE64` value helper previously
+had no context and always decoded the value, so the packet-boundary rows were
+an unimplemented Rust-only acceptance. The new context-aware entry point
+performs the source estimate and calls `Columns::handle_allowed_packet_overflowed`
+before the shared decoder; AST and chunk evaluation now use the same policy,
+while the value-only helper remains available for pure source vectors.
+
+The focused regression `tests::builtin_string_time_source::test_from_base64_sig`
+covers the Go packet table (`3`, `2`, `70`, and `69` byte limits), including the
+long input's embedded whitespace and the exact 1301 warning text. With the
+context arm removed, the test failed before the fix because the packet-2 row
+returned `Bytes([97, 98, 99])` instead of NULL; after the fix it passes all four
+rows. The previously ignored `DAYOFMONTH` zero-date and `%x` week-year carrier
+rows are now active as well: existing context and formatter fixes make those
+source assertions executable, and their stale gap-ledger entries were removed
+from `receipts/b071.md`.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_string_time_source::test_from_base64_sig \
+  -- --exact --nocapture
+# pre-fix: failed (packet=2 returned decoded bytes); after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib from_base64 -- --nocapture --test-threads=1
+# passed: 4 tests (value vectors plus packet-boundary carrier)
+```
+
+Ready validation for this package batch:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+# passed (existing warnings only)
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib -- --test-threads=1
+# passed: 1,125; failed: 0; ignored: 127
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+
+PATH=... GOPATH=... TMPDIR=/tmp/tidb-codex make lint
+# passed
+```

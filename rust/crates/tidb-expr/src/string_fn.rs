@@ -1228,12 +1228,34 @@ pub(crate) fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// whose decoder also ignores CR/LF.  The result is binary string data, so
 /// invalid UTF-8 is preserved rather than replaced or turned into NULL.
 pub(crate) fn from_base64(vals: &[Datum]) -> Result<Datum, EvalError> {
+    from_base64_with_packet_limit(vals, None)
+}
+
+/// Evaluates `FROM_BASE64` with Go's signature-level packet bound. The Go
+/// builtin checks the decoded-size estimate before stripping spaces/tabs and
+/// invoking the decoder; keeping that check in the context-aware entry point
+/// lets both the AST and chunk evaluators share the same warning/NULL policy
+/// while the value-only helper remains useful for datatype-style tests.
+pub(crate) fn from_base64_with_packet_limit(
+    vals: &[Datum],
+    ctx: Option<&dyn crate::Columns>,
+) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("FROM_BASE64 arity"));
     }
     let Some(input) = coerce_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
+    if let Some(ctx) = ctx {
+        if input.len() > (isize::MAX as usize) / 3 {
+            return Ok(Datum::Null);
+        }
+        let estimated_len = input.len() * 3 / 4;
+        if estimated_len as u64 > ctx.max_allowed_packet() {
+            ctx.handle_allowed_packet_overflowed("from_base64")?;
+            return Ok(Datum::Null);
+        }
+    }
     let cleaned: Vec<u8> = input
         .into_iter()
         .filter(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))

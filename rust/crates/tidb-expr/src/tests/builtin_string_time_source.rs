@@ -625,11 +625,49 @@ fn test_from_base64() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: FROM_BASE64's signature-level maxAllowedPacket bound and its errWarnAllowedPacketOverflowed path are not modeled anywhere in this crate's FROM_BASE64 dispatch (string_fn::from_base64 takes no context), so the two NULL rows built around packet sizes 2 and 69 cannot be exercised"]
 fn test_from_base64_sig() {
     // Go pkg/expression/builtin_string_test.go:2295 builds
     // builtinFromBase64Sig{base, maxAllowPacket} over packets {3, 2, 70, 69}
     // and pins the two packet-exceeded rows as NULL plus one 1301 warning.
+    let long_input = concat!(
+        "QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\n",
+        "YWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="
+    );
+    let decoded = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".to_vec();
+    for (input, max_packet, expected) in [
+        ("YWJj", 3_u64, Some(b"abc".to_vec())),
+        ("YWJj", 2_u64, None),
+        (long_input, 70_u64, Some(decoded.clone())),
+        (long_input, 69_u64, None),
+    ] {
+        let ctx = PacketWarnCtx::new(max_packet);
+        let result = crate::func::eval_func_values_in(
+            "FROM_BASE64",
+            &[Datum::new_string(input.to_owned())],
+            &ctx,
+        )
+        .expect("FROM_BASE64 must dispatch")
+        .expect("packet handling should return a value or NULL");
+        match expected {
+            Some(expected) => {
+                assert_eq!(result, Datum::new_bytes(expected), "packet={max_packet}");
+                assert!(ctx.drain().is_empty(), "packet={max_packet}");
+            }
+            None => {
+                assert_eq!(result, Datum::Null, "packet={max_packet}");
+                assert_eq!(
+                    ctx.drain(),
+                    vec![(
+                        1301,
+                        format!(
+                            "Result of from_base64() was larger than max_allowed_packet ({max_packet}) - truncated"
+                        )
+                    )],
+                    "packet={max_packet}"
+                );
+            }
+        }
+    }
 }
 
 /// Go `pkg/expression/builtin_string_test.go:2396 TestOrd`. UTF-8mb4 rows run
@@ -1692,20 +1730,57 @@ fn test_time_values_and_result_type() {
 /// `time_fn::tests::{month_and_monthname_source_vectors,
 /// dayname_source_vectors, calendar_part_source_vectors}` — see the receipt.
 ///
-/// The one observable divergence left over from those carriers is
-/// DAYOFMONTH's zero-date arm, which under IgnoreZeroInDate answers 0 rather
-/// than NULL.
+/// Go's IgnoreZeroInDate mode keeps zero-date fields observable to
+/// `DAYOFMONTH`, which returns the stored day component (`0`) rather than
+/// converting the value to NULL.
 #[test]
-#[ignore = "go-parity-gap: DAYOFMONTH('0000-00-00') == 0 requires IgnoreZeroInDate-mode plumbing on this evaluator's value tier (carriers pin the NULL branch of that mode split)"]
-fn test_day_of_month_zero_date_rows() {}
+fn test_day_of_month_zero_date_rows() {
+    struct IgnoreZeroDateCtx;
 
-/// One `%x`-token divergence row inside Go's third TestDateFormat case:
-/// against '0000-01-01', master's quirk prints 4294967295 for `%x` where
-/// this evaluator formats -001; every other token (`%v -> 52` included) is
+    impl Columns for IgnoreZeroDateCtx {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn date_modes(&self) -> tidb_datatype::DateModes {
+            tidb_datatype::DateModes {
+                no_zero_date: false,
+                no_zero_in_date: true,
+                allow_invalid_dates: false,
+            }
+        }
+    }
+
+    let ctx = IgnoreZeroDateCtx;
+    for input in [
+        "0000-00-00",
+        "2018-00-00",
+        "2017-00-00 12:12:12",
+        "0000-00-00 12:12:12",
+    ] {
+        assert_eq!(
+            chunk_e_with(&format!("dayofmonth('{input}')"), &ctx),
+            "INT:0",
+            "DAYOFMONTH({input:?}) under IgnoreZeroInDate"
+        );
+    }
+}
+
+/// One `%x`-token row inside Go's third TestDateFormat case: against
+/// `0000-01-01`, the source's negative week-year conversion prints the
+/// uint32 sentinel `4294967295`; every other token (`%v -> 52` included) is
 /// carried exactly by `time_fn::tests::date_format_source_vectors`.
 #[test]
-#[ignore = "go-parity-gap: DATE_FORMAT's %x week-year on the zero date prints MaxUint32 in master's formatTable vs this evaluator's zero-based rendering"]
-fn test_date_format_zero_year_x_token() {}
+fn test_date_format_zero_year_x_token() {
+    assert_eq!(
+        crate::time_fn::calendar::date_format(
+            &Datum::new_string("0000-01-01"),
+            &Datum::new_string("%x"),
+        )
+        .unwrap(),
+        Datum::new_string("4294967295")
+    );
+}
 
 /// Go `pkg/expression/builtin_time_test.go:828 TestNowAndUTCTimestamp`
 /// (clock half). Master cannot use constants for clock functions, so it pins

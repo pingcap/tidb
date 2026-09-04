@@ -42,6 +42,16 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-expr` `FROM_BASE64` evaluator with Go
+  `pkg/expression/builtin_string.go` at `origin/master` `fc7788ff...`. The
+  context-aware entry now estimates decoded size from the original input
+  length (before whitespace stripping), applies Go's `int` overflow bound and
+  `maxAllowedPacket` warning/error path, and keeps the value-only helper for
+  callers without statement context. The complete `pkg/expression` inventory,
+  fail-before/pass-after regression, and stale zero-date/%x test activation
+  are recorded in `receipts/expression_collation_audit.md`; the package batch
+  is validated before commit.
+
 - 2026-09-04: aligned the Rust `tidb-datatype` signed subtraction owner with
   Go `pkg/types/overflow.go` at `origin/master` `fc7788ff...`. Go's
   `SubInt64` negates `MinInt64` before its guard, so positive-minus-
@@ -5542,6 +5552,12 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 ## Decision Log
 
+- Decision: route `FROM_BASE64` through a context-aware evaluator arm before
+  the existing values-only dispatch table. Compute Go's estimated decoded
+  length from the unstripped input and guard multiplication with the Go `int`
+  limit (`isize::MAX / 3`), while retaining the context-free helper for direct
+  value calls. Date/Author: 2026-09-04, Codex.
+
 - Decision: mirror Go's `SubInt64` guard and wrapping subtraction exactly,
   including the `MinInt64` negation edge. Rust's checked subtraction was a
   Rust-only refusal for positive-minus-`MinInt64`; `wrapping_neg` and
@@ -6146,6 +6162,14 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Codex.
 
 ## Surprises & Discoveries
+
+- Go's `FROM_BASE64` packet check intentionally measures the 94-byte source
+  string before removing its tabs, newline, carriage return, and spaces, so
+  its estimate is exactly 70 bytes. Rust previously decoded regardless of
+  packet size because its helper had no context. The ignored DAYOFMONTH
+  IgnoreZeroInDate and `%x` zero-year sentinel rows were already fixed by
+  existing runtime behavior, so they were activated and removed from the
+  stale-gap ledger in this package receipt.
 
 - Go's signed subtraction guard intentionally leaves positive-minus-
   `MinInt64` unchecked because `-b` wraps before comparison. The final Go
