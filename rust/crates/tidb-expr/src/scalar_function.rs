@@ -1690,8 +1690,88 @@ impl ScalarFunction {
         // its loop, but that is the non-vectorized fallback; the warnings a
         // client sees are the vectorized path's.
         if name == "in" && self.args.len() >= 2 {
-            let collation = self.derived_collation();
             let first_eval_type = self.args[0].static_type().map(FieldType::eval_type);
+            // Go's inFunctionClass gives EVERY argument the first argument's
+            // eval type before selecting a signature. The temporal and JSON
+            // signatures compare their typed values directly; sending two
+            // duration values through the generic comparison ladder would
+            // instead reinterpret them in numeric context. Keep these typed
+            // families on their own path and preserve Go's three-valued
+            // membership result.
+            if matches!(
+                first_eval_type,
+                Some(
+                    EvalType::Datetime | EvalType::Timestamp | EvalType::Duration | EvalType::Json
+                )
+            ) {
+                let mut values: Vec<Datum> = self
+                    .args
+                    .iter()
+                    .map(|argument| argument.eval(ctx, row))
+                    .collect::<Result<_, _>>()?;
+                for (index, value) in values.iter_mut().enumerate() {
+                    let source = self.args[index].static_type();
+                    *value = match first_eval_type.expect("matched above") {
+                        EvalType::Datetime | EvalType::Timestamp => {
+                            crate::cast::cast_arg_as_datetime(value, source, ctx)?
+                        }
+                        EvalType::Duration => {
+                            crate::cast::cast_arg_as_duration(value, source, ctx)?
+                        }
+                        // Go leaves the first JSON argument's parse flag
+                        // intact, but calls DisableParseJSONFlag4Expr on
+                        // every list member. Keep those two cast modes
+                        // distinct: the first is a JSON document, while a
+                        // string list member is a JSON string value (`'1'`
+                        // becomes `"1"`, not the number 1).
+                        EvalType::Json if index == 0 => {
+                            crate::builtin_ext::cast_as_json_typed(value, source)?
+                        }
+                        EvalType::Json => {
+                            crate::builtin_ext::cast_as_json_value_typed(value, source)?
+                        }
+                        _ => unreachable!("typed IN family was matched above"),
+                    };
+                }
+                let first = &values[0];
+                if first.is_null() {
+                    return Ok(Datum::Null);
+                }
+                let mut found_null = false;
+                for candidate in &values[1..] {
+                    if candidate.is_null() {
+                        found_null = true;
+                        continue;
+                    }
+                    let equal = match first_eval_type.expect("matched above") {
+                        EvalType::Datetime | EvalType::Timestamp => matches!(
+                            (first, candidate),
+                            (Datum::Time(left), Datum::Time(right))
+                                if left.compare(*right).is_eq()
+                        ),
+                        EvalType::Duration => matches!(
+                            (first, candidate),
+                            (Datum::Duration(left), Datum::Duration(right))
+                                if left.compare(*right).is_eq()
+                        ),
+                        EvalType::Json => matches!(
+                            (first, candidate),
+                            (Datum::Json(left), Datum::Json(right))
+                                if tidb_datatype::compare_binary_json(left, right).is_eq()
+                        ),
+                        _ => unreachable!("typed IN family was matched above"),
+                    };
+                    if equal {
+                        return Ok(Datum::Int(1));
+                    }
+                }
+                return Ok(if found_null {
+                    Datum::Null
+                } else {
+                    Datum::Int(0)
+                });
+            }
+            let collation = self.derived_collation();
             let cast_candidate =
                 |value: Datum, expression: &Expression| -> Result<Datum, EvalError> {
                     match first_eval_type {

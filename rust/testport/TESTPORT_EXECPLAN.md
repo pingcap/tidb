@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` typed IN signatures): completed the generated
+  `builtin_other_vec_generated_test.go` temporal, duration, and JSON arms.
+  Rust's rewritten `ScalarFunction` now follows Go's first-argument eval-type
+  selection, casts each list member into DATETIME/TIMESTAMP, DURATION, or JSON
+  (including the JSON list-member ParseToJSONFlag distinction), compares the
+  native typed values, and preserves three-valued NULL membership. The former
+  ignored regression is active in
+  `tests::in_func_decimal_collation_source::generated_in_harness_temporal_duration_json_arms`;
+  remaining IN cache/performance differences are not claimed as value gaps.
 - 2026-09-04 (`tidb-expr` TIDB_BOUNDED_STALENESS): activated the previously
   ignored Go `TestTiDBBoundedStaleness` carrier. Rust now applies the
   ETDatetime argument casts, rejects invalid-zero endpoints through the

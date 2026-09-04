@@ -176,10 +176,68 @@ fn generated_in_harness_int_string_decimal_arms_agree_across_tiers() {
     assert_eq!(e("10 not in (9, -9, 0)"), "INT:1");
 }
 
-/// go-parity-gap: the DATETIME/TIMESTAMP, DURATION, and JSON arms of
-/// `vecBuiltinOtherGeneratedCases` need typed temporal/json IN signatures
-/// (Go's `builtinInDurationSig` / `builtinInJSONSig`); this evaluator has no
-/// such tier to drive.
+/// GO PORT of the DATETIME/TIMESTAMP, DURATION, and JSON arms of
+/// `vecBuiltinOtherGeneratedCases`.
+///
+/// Go's `inFunctionClass` casts every argument to the first argument's eval
+/// type, then dispatches to `builtinInTimeSig`, `builtinInDurationSig`, or
+/// `builtinInJSONSig`. The rewritten Rust evaluator now keeps those typed
+/// signatures on the same path: temporal values compare by `Time`, duration
+/// values by `MySqlDuration`, and JSON values by binary-JSON ordering, all
+/// with the source's three-valued NULL result.
 #[test]
-#[ignore = "go-parity-gap: temporal and JSON IN signatures have no Rust evaluation tier"]
-fn generated_in_harness_temporal_json_arms_gap() {}
+fn generated_in_harness_temporal_duration_json_arms() {
+    // DATETIME / TIMESTAMP signatures compare the temporal core, not the
+    // formatted string or numeric context. The matching value is the second
+    // list member; a NULL-only miss preserves the Go hasNull result.
+    for sql in [
+        "cast('2019-11-02 22:00:05' as datetime) in (cast('2019-11-02 22:00:04' as datetime), cast('2019-11-02 22:00:05' as datetime))",
+        "cast('2019-11-02 22:00:05' as datetime) in (cast('2019-11-02 22:00:04' as datetime), NULL)",
+    ] {
+        let want = if sql.ends_with("datetime))") {
+            "INT:1"
+        } else {
+            "NULL"
+        };
+        assert_eq!(chunk_e(sql), want, "{sql}");
+    }
+    // A string list member is cast to the first DATETIME argument's domain
+    // before comparison, just as `newBaseBuiltinFuncWithTp` does in Go.
+    assert_eq!(
+        chunk_e(
+            "cast('2019-11-02 22:00:05' as datetime) in ('2019-11-02 22:00:05', '2019-11-02 22:00:04')"
+        ),
+        "INT:1"
+    );
+
+    // DURATION is the regression that the generic comparison ladder could
+    // lose: it must compare the actual elapsed duration, not its numeric
+    // fallback. The non-match plus NULL row exercises Go's hasNull bit.
+    assert_eq!(
+        chunk_e("cast('00:00:01' as time) in (cast('00:00:02' as time), cast('00:00:01' as time))"),
+        "INT:1"
+    );
+    assert_eq!(
+        chunk_e("cast('00:00:01' as time) in (cast('00:00:02' as time), NULL)"),
+        "NULL"
+    );
+
+    // JSON membership uses CompareBinaryJSON's type precedence and structural
+    // equality. Objects with the same members in a different key order are
+    // equal, while a different scalar plus NULL remains NULL.
+    assert_eq!(
+        chunk_e(
+            r#"cast('{"key":1,"other":[2]}' as json) in (cast('{"other":[2],"key":1}' as json), cast('{"key":2}' as json))"#
+        ),
+        "INT:1"
+    );
+    assert_eq!(
+        chunk_e("cast('1' as json) in (cast('2' as json), NULL)"),
+        "NULL"
+    );
+    // The JSON signature disables ParseToJSONFlag on list expressions. A
+    // plain string therefore remains a JSON string value, not a parsed JSON
+    // number; this distinguishes the typed signature from generic JSON
+    // comparison, which would parse both documents and incorrectly match.
+    assert_eq!(chunk_e("cast('1' as json) in ('1', '2')"), "INT:0");
+}

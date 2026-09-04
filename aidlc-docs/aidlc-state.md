@@ -15,6 +15,14 @@
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
+- Current batch: Rust's rewritten `IN()` path now follows Go's first-argument
+  eval-type selection for DATETIME/TIMESTAMP, DURATION, and JSON signatures.
+  Each list member is cast into the selected domain (with JSON's disabled
+  ParseToJSONFlag preserved for list expressions), native typed values are
+  compared directly, and `hasNull` three-valued membership is retained. The
+  former generated temporal/duration/JSON gap regression is active in
+  `in_func_decimal_collation_source`; focused and Ready evidence will be
+  recorded in `rust/testport/receipts/b070.md`.
 - Commit/push: JSON merge batch `71ffce262e` is pushed to
   `hparser-integration`.
 - Commit/push: `pkg/kv` retry-marker batch is validated and the receipt is
