@@ -301,3 +301,4 @@
 - 下轮恢复点: (1) 若有 live cluster, 优先 F2/F3-seam 定位可达站点; (2) 否则按用户 goal 遍历下一 Go package 做 parity walk(无既有 audit 文档的面, 如 tidb-session/tidb-statistics 表面)。
 - vardef 机械重审计批: 脚本 diff Go Def* 常量(395) vs Rust defaults.rs(400 引用值) — 值级 400 项全部一致; 缺 4 个默认(QUERY_COP_STORE_LIMIT=15/COLUMNAR_STORAGE_ENABLED=true/MERGE_PARTITION_STATS_CONCURRENCY=1/SERVER_MEMORY_LIMIT="80%")已补齐+late_added_defaults_match_go 回归。9 个 Rust-only 扩展(MView/TxnFile/OpenAI/FullOuterJoin/SharedLockUpgrade)属 fork 自有/并发会话活跃区, 不碰已记录。vardef 44+3+3 全绿, fmt/clippy/diff-check/make lint PASS。
 - vardef 名字表补齐(第二小批): TIDB_QUERY_COP_STORE_LIMIT / TIDB_COLUMNAR_STORAGE_ENABLED 两个名字常量补入 tidb_vars.rs(脚本提取表原有缺口); vardef 全套 44+3+3 全绿 fmt/diff-check PASS。
+- vardef 审计收据写入 rust/docs/vardef-defaults-parity-audit.md; 两个推送: 12577ef915d(4 默认值)+c07080636c8(2 名字常量)。注册表一致性核实: Go registry 亦无该两 SysVar 条目, Rust catalog 缺席=正确。
