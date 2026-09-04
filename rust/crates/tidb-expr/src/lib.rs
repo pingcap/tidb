@@ -438,6 +438,44 @@ pub fn eval(expr: &Expr) -> Result<Datum, EvalError> {
     eval_in(expr, &NoColumns)
 }
 
+/// Mirrors Go `expression.IsValidCurrentTimestampExpr` from
+/// `pkg/expression/helper.go`.
+///
+/// The predicate is used while validating a temporal column's DEFAULT AST,
+/// before the expression is lowered into an executable evaluator. Go accepts
+/// only a `CURRENT_TIMESTAMP` function call: a bare call is valid when the
+/// destination has no fractional-second precision, while an explicit first
+/// integer argument is valid only when it exactly matches the destination
+/// field type's decimal/FSP metadata. Additional arguments are intentionally
+/// ignored here, matching Go's direct `Args[0]` read; malformed first
+/// arguments simply fail the predicate.
+#[must_use]
+pub fn is_valid_current_timestamp_expr(
+    expr: &Expr,
+    field_type: Option<&tidb_datatype::FieldType>,
+) -> bool {
+    let Expr::Func { name, args, .. } = expr else {
+        return false;
+    };
+    if !name.eq_ignore_ascii_case("CURRENT_TIMESTAMP") {
+        return false;
+    }
+
+    match args.first() {
+        None => field_type.is_none_or(|field_type| field_type.decimal() <= 0),
+        Some(Expr::Int(digits)) => {
+            let Some(field_type) = field_type else {
+                return false;
+            };
+            let Ok(fsp) = digits.parse::<i64>() else {
+                return false;
+            };
+            fsp == field_type.decimal()
+        }
+        Some(_) => false,
+    }
+}
+
 /// Evaluates one already-built expression against the caller's statement
 /// context and the single virtual row used for a column-free expression.
 ///

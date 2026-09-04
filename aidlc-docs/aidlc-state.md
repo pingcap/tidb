@@ -196,3 +196,7 @@
 - Next action: continue with the next executable Rust package boundary.
   Direct datatype comparison warning publication remains a bounded API
   follow-up.
+- Current batch: Rust now exposes `is_valid_current_timestamp_expr`, matching
+  Go's `IsValidCurrentTimestampExpr` AST/FSP predicate, including its
+  first-argument-only behavior. The focused helper regression is active and
+  Ready evidence is recorded in `rust/testport/receipts/b075.md`.

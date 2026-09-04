@@ -47,6 +47,12 @@ For each bounded behavior cluster:
   regression fails when the sort threshold is reached but the trigger remains
   below quota, and passes after the guard is restored; the package inventory and
   Ready evidence are recorded in `receipts/executor_root_distsql_indexjoin.md`.
+- 2026-09-04 (`tidb-expr` IsValidCurrentTimestampExpr): implemented the
+  missing AST-level `is_valid_current_timestamp_expr` helper with Go's
+  bare-vs-explicit FSP matching and first-argument-only behavior. The former
+  ignored `helper_test.go::TestIsCurrentTimestampExpr` carrier is active;
+  `GetTimeValue` remains the adjacent build-context gap. Focused and Ready
+  evidence is recorded in `receipts/b075.md`.
 - 2026-09-04 (`pkg/executor/sortexec` parallel spill threshold): aligned
   Rust's `ParallelSortSpillAction` with Go's inclusive
   `sortTracker.BytesConsumed() >= quota/10` guard. The focused action-level

@@ -192,11 +192,70 @@ fn test_timestamp_sysvar_renders_fixed_now_literal_rows() {
 fn test_get_time_value_build_context_helper() {}
 
 /// Go `pkg/expression/helper_test.go:127 TestIsCurrentTimestampExpr`.
-///
-/// go-parity-gap: `expression.IsValidCurrentTimestampExpr(exprNode ast.ExprNode,
-/// fieldType *types.FieldType)` (`helper.go:44`) validates the DEFAULT-value
-/// AST shape and its fsp against the column type; the Rust AST layer has no
-/// such predicate to drive.
 #[test]
-#[ignore = "go-parity-gap: helper.go IsValidCurrentTimestampExpr has no Rust carrier"]
-fn test_is_current_timestamp_expr_predicate() {}
+fn test_is_current_timestamp_expr_predicate() {
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    let current_timestamp = |args: Vec<tidb_ast::Expr>| tidb_ast::Expr::Func {
+        name: "CURRENT_TIMESTAMP".to_owned(),
+        args,
+        origin_position: 0,
+    };
+    let int = |value: &str| tidb_ast::Expr::Int(value.to_owned());
+
+    // helper_test.go:136-139: non-function values fail, while a bare
+    // CURRENT_TIMESTAMP is valid without a destination FSP.
+    assert!(!is_valid_current_timestamp_expr(
+        &tidb_ast::Expr::String("abc".to_owned()),
+        None,
+    ));
+    assert!(is_valid_current_timestamp_expr(
+        &current_timestamp(vec![]),
+        None
+    ));
+    // Go treats the negative unspecified-decimal sentinel like FSP 0 for a
+    // bare call (`GetDecimal() > 0` is the only precision test).
+    let unspecified = FieldType::new(FieldTypeCode::Timestamp).with_decimal(-1);
+    assert!(is_valid_current_timestamp_expr(
+        &current_timestamp(vec![]),
+        Some(&unspecified),
+    ));
+
+    let fsp3 = FieldType::new(FieldTypeCode::Timestamp).with_decimal(3);
+    assert!(is_valid_current_timestamp_expr(
+        &current_timestamp(vec![int("3")]),
+        Some(&fsp3),
+    ));
+    assert!(!is_valid_current_timestamp_expr(
+        &current_timestamp(vec![int("1")]),
+        Some(&fsp3),
+    ));
+    assert!(!is_valid_current_timestamp_expr(
+        &current_timestamp(vec![]),
+        Some(&fsp3),
+    ));
+
+    let fsp0 = FieldType::new(FieldTypeCode::Timestamp);
+    assert!(!is_valid_current_timestamp_expr(
+        &current_timestamp(vec![int("2")]),
+        Some(&fsp0),
+    ));
+    assert!(!is_valid_current_timestamp_expr(
+        &current_timestamp(vec![int("2")]),
+        None,
+    ));
+
+    // The Go helper reads only Args[0], so a matching first argument remains
+    // valid even if a malformed extra argument is present.
+    assert!(is_valid_current_timestamp_expr(
+        &current_timestamp(vec![int("3"), tidb_ast::Expr::String("ignored".to_owned())]),
+        Some(&fsp3),
+    ));
+    assert!(!is_valid_current_timestamp_expr(
+        &current_timestamp(vec![tidb_ast::Expr::Unary(
+            tidb_ast::UnaryOp::Minus,
+            Box::new(int("1")),
+        )]),
+        Some(&fsp3),
+    ));
+}
