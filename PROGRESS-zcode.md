@@ -186,4 +186,10 @@
   regressions are recorded in
   `rust/testport/receipts/types_explain_format_audit.md`; live expression
   warning/context publication remains the open D5 caller follow-up.
+- 2026-09-04: Rust live temporal comparisons now read `Columns` date modes and
+  session timezone, rejecting invalid dates in strict mode and publishing 1292
+  through the warning sink. Focused evaluator regressions and the Ready
+  profile are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`; direct datatype
+  callers still own publication of returned comparison diagnostics.
 - parser #5 (RESERVED_KEYWORDS 缺 DATABASE/DATABASES/DISTINCT) 核实已被并发会话修复 — RESERVED_KEYWORDS 当前含全部 236 条含这三个关键词。审计项 5 关闭。

@@ -2,17 +2,18 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` comparison context seam parity batch (finding D5)
+- Work unit: `tidb-expr` live temporal comparison context parity batch (finding D5)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: the focused context-aware comparison regressions pass. The
+- Validation: the focused live temporal-comparison regressions pass. The
   datatype owner reports 409 unit and 64 source/integration passes; expression
-  reports 1,147 passes, one known loopback HTTP JSON-schema fixture failure,
-  and 121 ignored; executor reports 1,052 passes and 121 existing
-  planner/storage/fixture failures. The context seam preserves Go's date flags
-  and timezone while leaving warning publication to its live caller. Strict
-  datatype clippy remains blocked only by the unrelated
+  reports 1,150 passes, one known loopback HTTP JSON-schema fixture failure,
+  and 121 ignored; executor reports 1,058 passes and 121 existing
+  planner/storage/fixture failures. The live evaluator now reads statement
+  date modes/timezone and publishes 1292 through `Columns`; direct datatype
+  callers still consume the paired diagnostic explicitly. Strict datatype
+  clippy remains blocked only by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
@@ -111,6 +112,6 @@
   preserve Go's leading-word carry heuristic and nine-word overflow boundary.
   The focused 81-digit regression and Ready counts are recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
-- Next action: run the D5 Ready profile, commit and push the context seam, then
-  continue with the next executable Rust package boundary. The live
-  expression warning/context wiring remains an explicit follow-up.
+- Next action: run the D5 caller-integration Ready profile, commit and push it,
+  then continue with the next executable Rust package boundary. Direct
+  dependency-leaf warning publication remains a bounded API follow-up.

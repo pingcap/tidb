@@ -1129,9 +1129,14 @@ fn time_compare_ordering(
             ))
         }
     };
-    // The session zone only matters for a Timestamp reading, which this
-    // comparison does not shift; UTC keeps the parse deterministic.
-    match time.compare_string(&text, true, true, &chrono_tz::Tz::UTC) {
+    let modes = ctx.date_modes();
+    let timezone = ctx.time_zone();
+    match time.compare_string(
+        &text,
+        !modes.no_zero_in_date,
+        modes.allow_invalid_dates,
+        &timezone,
+    ) {
         Ok(ordering) => Ok(Some(ordering)),
         Err(_) => {
             ctx.append_warning(1292, &format!("Incorrect datetime value: '{text}'"));
@@ -1410,6 +1415,144 @@ mod tests {
         fn taken(&self) -> Vec<(u16, String)> {
             self.0.take()
         }
+    }
+
+    struct TemporalContext {
+        modes: tidb_datatype::DateModes,
+        zone: tidb_datatype::SessionTimeZone,
+        warnings: std::cell::RefCell<Vec<(u16, String)>>,
+    }
+
+    impl TemporalContext {
+        fn new(modes: tidb_datatype::DateModes, zone: tidb_datatype::SessionTimeZone) -> Self {
+            Self {
+                modes,
+                zone,
+                warnings: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+
+        fn warnings(&self) -> Vec<(u16, String)> {
+            self.warnings.borrow().clone()
+        }
+    }
+
+    impl crate::Columns for TemporalContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+
+        fn date_modes(&self) -> tidb_datatype::DateModes {
+            self.modes
+        }
+
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            self.zone.clone()
+        }
+    }
+
+    #[test]
+    fn time_comparison_uses_statement_date_modes_and_warning_sink() {
+        let zone = tidb_datatype::SessionTimeZone::utc();
+        let left = Datum::new_time(
+            tidb_datatype::parse_datetime("2020-02-28", &zone, true, true)
+                .unwrap()
+                .time,
+        );
+        let right = Datum::new_string("2020-02-31");
+        let strict = TemporalContext::new(
+            tidb_datatype::DateModes {
+                no_zero_date: true,
+                no_zero_in_date: true,
+                allow_invalid_dates: false,
+            },
+            zone.clone(),
+        );
+
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Lt,
+                left.clone(),
+                right.clone(),
+                4,
+                DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
+                &strict,
+            ),
+            Ok(Datum::Null)
+        );
+        assert_eq!(
+            strict.warnings(),
+            vec![(1292, "Incorrect datetime value: '2020-02-31'".to_owned())]
+        );
+
+        let relaxed = TemporalContext::new(
+            tidb_datatype::DateModes {
+                no_zero_date: true,
+                no_zero_in_date: true,
+                allow_invalid_dates: true,
+            },
+            zone,
+        );
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Lt,
+                left,
+                right,
+                4,
+                DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
+                &relaxed,
+            ),
+            Ok(Datum::Int(1))
+        );
+        assert!(relaxed.warnings().is_empty());
+    }
+
+    #[test]
+    fn time_comparison_uses_statement_timezone_for_offset_text() {
+        let utc = tidb_datatype::SessionTimeZone::utc();
+        let plus_two = tidb_datatype::SessionTimeZone::Fixed {
+            name: "+02:00".to_owned(),
+            offset_secs: 2 * 60 * 60,
+        };
+        let left = Datum::new_time(
+            tidb_datatype::parse_datetime("2020-01-01 00:00:00", &utc, true, false)
+                .unwrap()
+                .time,
+        );
+        let right = Datum::new_string("2020-01-01 00:00:00+01:00");
+        let utc_ctx = TemporalContext::new(tidb_datatype::DateModes::default(), utc);
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Gt,
+                left.clone(),
+                right.clone(),
+                4,
+                DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
+                &utc_ctx,
+            ),
+            Ok(Datum::Int(1))
+        );
+
+        let plus_two_ctx = TemporalContext::new(tidb_datatype::DateModes::default(), plus_two);
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Gt,
+                left,
+                right,
+                4,
+                DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
+                &plus_two_ctx,
+            ),
+            Ok(Datum::Int(0))
+        );
     }
 
     fn truncated(text: &str) -> (u16, String) {

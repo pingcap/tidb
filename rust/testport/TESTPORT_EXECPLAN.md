@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (D5 caller integration, `tidb-expr` temporal comparisons):
+  replaced the live `time_compare_ordering` UTC/permissive constants with
+  `Columns::date_modes()` and `Columns::time_zone()`, preserving strict
+  invalid-date rejection, `ALLOW_INVALID_DATES` acceptance, and 1292 warning
+  publication. Focused expression regressions and the Ready profile are
+  recorded in `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (D5, `pkg/types` comparison context seam): added
   `Datum::compare_with_context`, which forwards statement zero-in-date and
   invalid-date flags plus an explicit session timezone through temporal string

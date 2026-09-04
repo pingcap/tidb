@@ -31,9 +31,9 @@ the bottom.
 
 The highest-impact open item is now:
 
-- **D5** — the datatype comparison seam now accepts statement date flags and
-  timezone, but the live expression evaluator still owns warning publication
-  and has a separate context-wiring follow-up.
+- **D5** — the datatype comparison seam and live expression evaluator now
+  carry statement date flags/timezone; direct dependency-leaf callers still
+  own publication of the returned comparison diagnostic.
 
 M6 and M10 are fixed in the Rust owner: the decimal add/sub boundary now
 preserves Go's leading-word overflow heuristic, and the fixed-word parser
@@ -248,19 +248,23 @@ the statement layer without losing the zero-value ordering. Focused
 regressions cover `2020-02-31` under strict versus `ALLOW_INVALID_DATES`, and a
 `+01:00` offset whose result changes between UTC and `+02:00` session zones.
 
+The live `tidb-expr::ops::time_compare_ordering` caller now reads
+`Columns::date_modes()` and `Columns::time_zone()` and publishes 1292 through
+the existing warning sink. Its focused regressions cover the same invalid-date
+accept/refuse split and timezone-offset ordering through `eval_binary_full`.
+
 The context-free `compare` wrapper remains deliberately source-compatible for
 dependency-leaf callers and uses its documented UTC/default policy. Warning
-publication is still caller-owned: `compare_with_context` returns the
-diagnostic rather than inventing a `TerrorError` code, and the live
-`tidb-expr::ops::time_compare_ordering` path still has to replace its
-hard-coded flags/UTC and publish 1292 through its `Columns` sink. Until that
-caller wiring lands, D5 remains open even though the datatype context seam is
-no longer hard-coded.
+publication for the datatype seam is still caller-owned:
+`compare_with_context` returns the diagnostic rather than inventing a
+`TerrorError` code. Thus the live expression path is aligned, while direct
+dependency-leaf users that need statement warning policy must consume the
+paired API explicitly; D5 remains partially open at that boundary.
 
-Consequence of the remaining live gap: a comparison that MySQL accompanies
-with `Warning 1292 Truncated incorrect DOUBLE value: 'abc'` can still produce
-no warning in the expression path. This is exactly the class the integration
-replay cannot see (28 of 4,906 statements observe warnings).
+The remaining direct-API distinction is exactly the class the integration
+replay cannot see (28 of 4,906 statements observe warnings): a comparison that
+MySQL accompanies with `Warning 1292 Truncated incorrect DOUBLE value: 'abc'`
+still requires its caller to publish the returned diagnostic.
 
 ## D6 (rank 2, FIXED) — `Datum::to_decimal` for a float source discards `FromString`'s error
 

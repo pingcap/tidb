@@ -790,10 +790,10 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # passed: 409 unit tests; 64 source/integration tests
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
   -p tidb-expr --all-targets -- --test-threads=1
-# 1,147 passed, 1 known loopback HTTP JSON-schema fixture failed, 121 ignored
+# 1,150 passed, 1 known loopback HTTP JSON-schema fixture failed, 121 ignored
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
   -p tidb-executor --all-targets -- --test-threads=1
-# 1,052 passed, 121 existing planner/storage/fixture failures, 0 ignored
+# 1,058 passed, 121 existing planner/storage/fixture failures, 0 ignored
 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
   -p tidb-datatype --all-targets
 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
@@ -806,9 +806,68 @@ git diff --check
 # both passed
 ```
 
-The live `tidb-expr::ops::time_compare_ordering` caller still needs to wire
-its `Columns` date modes/timezone and 1292 warning sink to this seam; that
-remaining caller integration is intentionally still counted as open D5.
+The live `tidb-expr::ops::time_compare_ordering` caller is covered by the
+following D5 caller-integration batch, which wires its `Columns` date modes,
+timezone, and 1292 warning sink.
+
+## Rust-only parity fix: live temporal comparison uses statement context
+
+The expression evaluator's temporal comparison path had independently pinned
+`allow_zero_in_date = true`, `allow_invalid_date = true`, and UTC, even after
+the datatype seam gained an explicit context API. It now reads
+`Columns::date_modes()` and `Columns::time_zone()`, rejects invalid dates in
+strict mode, accepts them under `ALLOW_INVALID_DATES`, and publishes the
+existing 1292 diagnostic through the resolver warning sink.
+
+Focused regressions:
+
+- `ops::tests::time_comparison_uses_statement_date_modes_and_warning_sink`
+  proves strict `2020-02-31` returns NULL plus the exact warning while the
+  relaxed mode returns the calendar ordering without a warning.
+- `ops::tests::time_comparison_uses_statement_timezone_for_offset_text`
+  proves a `+01:00` offset orders differently under UTC and `+02:00`.
+
+Ready validation (commands run from the dedicated worktree):
+
+```text
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+# passed
+OPENSSL_DIR=/opt/homebrew/opt/openssl@3 \
+DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/opt/openssl@3/lib \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib time_comparison_uses_statement -- --nocapture
+# passed: 2 focused tests
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+OPENSSL_DIR=/opt/homebrew/opt/openssl@3 \
+DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/opt/openssl@3/lib \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,147 passed, 1 known loopback HTTP JSON-schema fixture failed, 121 ignored
+OPENSSL_DIR=/opt/homebrew/opt/openssl@3 \
+DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/opt/openssl@3/lib \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,052 passed, 121 existing planner/storage/fixture failures, 0 ignored
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+OPENSSL_DIR=/opt/homebrew/opt/openssl@3 \
+DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/opt/openssl@3/lib \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+OPENSSL_DIR=/opt/homebrew/opt/openssl@3 \
+DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/opt/openssl@3/lib \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
+The complete owner Ready profile above retains the known single loopback
+JSON-schema fixture failure and executor planner/storage baseline failures.
 
 ## Rust-only parity fix: decimal add/sub leading-word overflow heuristic
 
