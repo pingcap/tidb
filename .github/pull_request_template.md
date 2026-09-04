@@ -49,11 +49,11 @@ Documentation
 
 ### Release note
 
-<!-- Select this option for changes visible to TiDB users or operators, such as compatibility changes, improvements, bug fixes, or new features. Leave this option unselected for internal changes with no user-facing impact, such as debug changes, flaky test fixes, code refactoring, or internal configurations that are not exposed to users. -->
+<!-- Select this option for changes that affect TiDB users or operators, such as compatibility changes, improvements, bug fixes, or new features. Leave this option unselected for internal changes with no user-facing impact, such as debugging changes, flaky test fixes, code refactoring, or internal configuration changes that are not exposed to users. -->
 
 - [ ] Needs to be included in the user-facing release notes
 
-If selected, write a release note below following [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html) (**recommended**, to capture the intended user-facing impact), or leave it as `None` (in which case the release note bot will automatically generate one when preparing the release notes file).
+If selected, either write a release note below following [Release Notes Language Style Guide](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/release-notes-style-guide.html) (**recommended**, to capture the intended user-facing impact), or leave it as None to let the release note bot automatically generate one when preparing the release notes file.
 
 ```release-note
 None
