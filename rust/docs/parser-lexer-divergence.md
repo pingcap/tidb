@@ -487,14 +487,25 @@ which today it does not: the session parses through
 entry. Adding the field alone would be a claim with no reachable
 behavior behind it.
 
-#### 12. `@@instance.x` is split differently
+#### 12. `@@instance.x` is split differently — FIXED (2026-09-04)
 
 `pkg/parser/lexer.go:624` recognizes exactly `{"global.", "session.",
-"local."}`; `tidb-lexer/src/lib.rs:525` adds `"instance."`. Go falls
+"local."}`; `tidb-lexer/src/lib.rs:525` added `"instance."`. Go falls
 through to `scanIdentifierOrString`, whose `isUserVarChar` includes `.`,
 so it still yields one `doubleAtIdentifier` spanning the whole text —
 which is why this is filed at rank 3 rather than rank 2. Any Rust code
 that keys on the split prefix rather than the whole span will disagree.
+
+FIXED (2026-09-04): the Rust scanner no longer treats `instance.` as a
+prefix, mirroring Go exactly. The plain `@@instance.x` token is unchanged
+(the identifier run folds the dot), the grammar-level split already lives
+in the parser's `parse_variable` (`INSTANCE` → `SysVarScope::Instance`),
+and the two cases the old prefix leaked are pinned: `SET @@instance."x" = 1`
+is a syntax error (Go lexes `@@instance.` plus a separate string token;
+Rust previously accepted it as one variable), and `SELECT @@instance.`
+parses with the instance scope and an empty name (Go's `SystemVariable`
+grammar action; Rust previously returned an `Invalid` token). Receipt:
+`testport/receipts/parser_instance_scope_prefix.md`.
 
 ## Fixes made in this branch
 

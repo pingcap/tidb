@@ -556,8 +556,15 @@ impl<'a> Lexer<'a> {
         self.r.inc(); // '@'
         if self.r.peek() == b'@' {
             self.r.inc();
-            // optional global./session./local./instance. prefix
-            for pfx in ["global.", "session.", "local.", "instance."] {
+            // Optional global./session./local. prefix — Go's `startWithAt`
+            // (lexer.go:671) matches exactly these three. `@@instance.` is
+            // deliberately NOT a scanner prefix there: `.` is a user-var
+            // char, so the identifier run folds it into the same single
+            // token, and the grammar splits `@@instance.` from the literal
+            // instead (parser.y SystemVariable/VariableAssignment actions).
+            // A quoted body after `@@instance.` therefore lexes as separate
+            // tokens in Go — mirror that here.
+            for pfx in ["global.", "session.", "local."] {
                 if self.r.starts_with_ci(pfx) {
                     self.r.inc_n(pfx.len());
                     break;

@@ -650,3 +650,49 @@ fn multi_stmt_string_does_not_split_on_embedded_semicolon() {
     );
     assert_eq!(decoded_string("'foo;bar'"), b"foo;bar".to_vec());
 }
+
+/// Go `startWithAt` (lexer.go:671) matches exactly `global.`/`session.`/
+/// `local.` as `@@` scope prefixes. `@@instance.` is NOT one: `.` is a
+/// user-var char, so Go's identifier run folds `instance.` (and any dotted
+/// name after it) into the same single `doubleAtIdentifier` token, and the
+/// grammar splits `@@instance.` from the literal. A quoted body after
+/// `@@instance.` therefore lexes as separate tokens in Go, and a bare
+/// `@@instance.` is a valid variable token — not an invalid one.
+#[test]
+fn instance_scope_is_not_a_scanner_prefix() {
+    // The plain dotted name folds into one token on both sides.
+    let vars: Vec<_> = tokens("select @@instance.sql_mode")
+        .into_iter()
+        .filter(|token| token.kind == TokenKind::UserVar)
+        .map(|token| token.text)
+        .collect();
+    assert_eq!(vars, vec!["@@instance.sql_mode".to_string()]);
+
+    // Bare `@@instance.`: a valid variable token carrying the whole text,
+    // exactly like Go's `s.r.data(&pos)` over the identifier run.
+    let toks = tokens("select @@instance. ");
+    let kinds: Vec<_> = toks.iter().map(|token| token.kind).collect();
+    assert!(kinds.contains(&TokenKind::UserVar), "{toks:?}");
+    let vars: Vec<_> = toks
+        .iter()
+        .filter(|token| token.kind == TokenKind::UserVar)
+        .map(|token| token.text.as_str())
+        .collect();
+    assert_eq!(vars, vec!["@@instance."]);
+
+    // A quoted body after `@@instance.` starts a NEW string token in Go,
+    // because the scanner never treats `instance.` as a scope prefix there.
+    let toks = tokens(r#"select @@instance."x""#);
+    let vars: Vec<_> = toks
+        .iter()
+        .filter(|token| token.kind == TokenKind::UserVar)
+        .map(|token| token.text.as_str())
+        .collect();
+    assert_eq!(vars, vec!["@@instance."]);
+    let strings: Vec<_> = toks
+        .iter()
+        .filter(|token| token.kind == TokenKind::Str)
+        .map(|token| token.text.as_str())
+        .collect();
+    assert_eq!(strings, vec![r#""x""#]);
+}

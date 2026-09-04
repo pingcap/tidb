@@ -102,6 +102,20 @@ For each bounded behavior cluster:
   `[try again later]`; the focused code/state/message regression and Ready
   results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
 
+- 2026-09-04 (`pkg/parser` `@@instance.` scanner prefix, finding #12):
+  removed the Rust-only `instance.` entry from `scan_at`'s scope-prefix list —
+  Go's `startWithAt` (lexer.go:671) matches exactly `global.`/`session.`/
+  `local.`, and its identifier run folds `@@instance.` into the same single
+  variable token with the grammar splitting the scope from the literal
+  (parser.y SystemVariable/VariableAssignment actions). The old prefix leak
+  accepted `SET @@instance."x" = 1` as a variable named `x` (Go: syntax
+  error) and rejected bare `@@instance.` (Go: parses as an instance-scoped
+  variable with an empty name); both shapes are now pinned fail-before at
+  the token and statement levels, and the plain `@@instance.x` span is
+  byte-identical before and after. Lexer + parser sweep: 925 run, 925
+  passed. Receipt: `receipts/parser_instance_scope_prefix.md`; finding #12
+  closed in `rust/docs/parser-lexer-divergence.md`.
+
 - 2026-09-04: aligned Rust `tidb-datatype` `JSON_MERGE_PRESERVE` with Go's
   adjacent-object grouping from the complete `pkg/types` JSON inventory.
   `merge_binary_nodes` now groups object runs, recursively merges duplicate
