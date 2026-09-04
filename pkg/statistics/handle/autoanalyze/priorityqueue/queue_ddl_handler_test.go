@@ -546,11 +546,16 @@ func TestExchangeTablePartition(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tableInfo2.ID, job.GetTableID())
 
+	for len(h.DDLEventCh()) > 0 {
+		<-h.DDLEventCh()
+	}
+
 	// Exchange table partition.
 	testKit.MustExec("alter table t1 exchange partition p0 with table t2")
 
 	// Find the exchange table partition event.
-	exchangeTablePartitionEvent := statstestutil.FindEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
+	exchangeTablePartitionEvent := statstestutil.FindEventWithTimeout(h.DDLEventCh(), model.ActionExchangeTablePartition, 5)
+	require.NotNil(t, exchangeTablePartitionEvent)
 
 	// Handle the exchange table partition event.
 	err = statstestutil.HandleDDLEventWithTxn(h, exchangeTablePartitionEvent)
