@@ -918,7 +918,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     };
-    let capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
+    let mut capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
         Ok(capabilities) => capabilities,
         Err(_error) => {
             write_error(
@@ -2225,17 +2225,49 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     Err(error) => write_query_error(&mut output, &error, protocol_41)?,
                 }
             }
-            Command::FieldList(_)
-            | Command::SetOption(_)
-            | Command::ResetConnection
-            | Command::Unknown { .. } => write_error(
-                &mut output,
-                1,
-                ER_UNKNOWN_COM_ERROR,
-                ER_UNKNOWN_COM_ERROR_STATE,
-                "command is not supported by the read-only Rust SQL node",
-                protocol_41,
-            )?,
+            Command::SetOption(data) => {
+                // Go `handleSetOption` (conn_stmt.go:651-672): the two-byte
+                // option word toggles CLIENT_MULTI_STATEMENTS (0 = on, 1 =
+                // off) and the reply is an EOF packet carrying the live
+                // status -- never an ERR. JDBC sends this during connection
+                // setup with `allowMultiQueries=true`; answering ERR there
+                // fails the whole connection.
+                if data.len() < 2 {
+                    return Err(MysqlConnectionError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "malform packet error",
+                    )));
+                }
+                match u16::from_le_bytes([data[0], data[1]]) {
+                    0 => capabilities |= CLIENT_MULTI_STATEMENTS,
+                    1 => capabilities &= !CLIENT_MULTI_STATEMENTS,
+                    _ => {
+                        return Err(MysqlConnectionError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "malform packet error",
+                        )));
+                    }
+                }
+                write_eof_or_ok(
+                    &mut output,
+                    1,
+                    framing.result_set(
+                        engine.wire_status(),
+                        engine.warning_count(),
+                        result_encoder,
+                    ),
+                )?;
+            }
+            Command::FieldList(_) | Command::ResetConnection | Command::Unknown { .. } => {
+                write_error(
+                    &mut output,
+                    1,
+                    ER_UNKNOWN_COM_ERROR,
+                    ER_UNKNOWN_COM_ERROR_STATE,
+                    "command is not supported by the read-only Rust SQL node",
+                    protocol_41,
+                )?
+            }
         }
     }
 }

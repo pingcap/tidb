@@ -418,6 +418,16 @@ impl ClusterDdl for MockDdl {
                         .to_owned(),
                 ))
             }
+            // The materialized-view submissions are cluster jobs this mock
+            // cannot model (their worker batches own the real submission
+            // path); refuse like the other unmodeled schema changes.
+            DdlStatement::CreateMaterializedView { .. }
+            | DdlStatement::CreateMaterializedViewLog { .. } => {
+                return Err(SqlQueryError::unknown(
+                    "the mock catalog writer cannot model a materialized view submission"
+                        .to_owned(),
+                ))
+            }
             // A PLACEMENT POLICY is a schema object of its own, not a change
             // to a database or table this mock models. `cluster_ddl_source`
             // owns those plans, as it does the column and truncate changes
