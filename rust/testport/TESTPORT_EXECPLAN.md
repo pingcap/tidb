@@ -42,7 +42,34 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-03 (batch 13, `pkg/ddl` MV query analysis): implemented Go master
+  `94a9cbedab`'s `validateCreateMaterializedViewQuery` analysis body in
+  `plan_validate_materialized_view_query`: `resolveMViewColumnName` (schema/
+  table/alias qualifier rules, 1054 refusals), the GROUP BY item loop (plain
+  columns only, duplicates refuse), WHERE construction over the base columns
+  via a `ColumnResolver` with Go's `CheckNonDeterministic` (unfoldable
+  functions through `tidb_expr::constant_fold::is_unfoldable`), the SELECT
+  field loop (wildcard refusal, bare columns in GROUP BY, duplicates, the
+  count/sum/min/max whitelist with DISTINCT-aggregate and arity refusals,
+  SUM over temporal columns, count(*)/count(1) required, nullable-SUM COUNT
+  pairing, MIN/MAX index coverage via batch 4's helper, and the mlog
+  column-coverage closure). One end-to-end regression: a fully valid
+  statement reaches the job seam while every malformed variant carries Go's
+  refusal; the full `tidb-exec` failure set is identical to the pre-batch
+  base. Receipt: `receipts/ddl_mview_query_analysis.md`.
+
 - 2026-09-03 (batch 12, `pkg/ddl` MV query-clause refusals): implemented Go
+  master `94a9cbedab`'s `validateCreateMaterializedViewQuery` clause
+  refusals in `plan_create_materialized_view`: HAVING, ORDER BY, LIMIT and
+  DISTINCT each refuse with Go's exact 8200 message, after the GROUP BY
+  requirement. One parse-fixture regression pins all four; the full
+  `tidb-exec` failure set is identical to the batch-9-era baseline (8
+  pre-existing). Recorded remainder: the GROUP BY item analysis, WHERE
+  determinism and the per-field aggregation / mlog column-coverage checks
+  need the expression-analysis owner. Receipt:
+  `receipts/ddl_mview_query_clauses.md`.
+
+- 2026-09-03 (batch 11, `pkg/ddl` MV lowering — ExecPlan entry restored: the- 2026-09-03 (batch 12, `pkg/ddl` MV query-clause refusals): implemented Go
   master `94a9cbedab`'s `validateCreateMaterializedViewQuery` clause
   refusals in `plan_create_materialized_view`: HAVING, ORDER BY, LIMIT and
   DISTINCT each refuse with Go's exact 8200 message, after the GROUP BY

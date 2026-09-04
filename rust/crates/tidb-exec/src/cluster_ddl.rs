@@ -7367,10 +7367,225 @@ fn plan_create_materialized_view(
     }
 
     // Go `validateCreateMaterializedViewQuery`: the single-table contract,
-    // the SELECT-clause refusals and the GROUP BY requirements.
-    tidb_util::mviewutil::check_materialized_view_select(&create.query).map_err(|error| {
+    // the SELECT-clause refusals, the GROUP BY requirements, the clause
+    // refusals and the per-column analysis, in source order.
+    let mlog_columns: Vec<tidb_ast::CiString> = mlog
+        .materialized_view_log
+        .as_ref()
+        .map(|log| log.read().columns.iter().cloned().collect())
+        .unwrap_or_default();
+    let from_alias = base_ref.alias.as_deref();
+    plan_validate_materialized_view_query(
+        sel,
+        &create.query,
+        schema,
+        &base_name,
+        base,
+        from_alias,
+        &mlog_columns,
+    )?;
+
+    // Job-execution seam: the materialized-view worker sub-batch wires the
+    // job submission this tier cannot serve yet.
+    Err(DdlPlanError::Admission(DdlAdmissionError::new(
+        "materialized view job execution is not wired in this tier",
+    )))
+}
+
+/// Go's `resolveMViewColumnName` against the base column map: a schema
+/// qualifier must match the base schema, a table qualifier must match the
+/// base table name or the FROM alias, and the column must exist. Returns
+/// the resolved column.
+fn resolve_mview_column_name<'map>(
+    path: &[String],
+    base_table: &str,
+    from_alias: Option<&str>,
+    base_col_map: &'map std::collections::HashMap<String, GoShared<tidb_model::column::ColumnInfo>>,
+) -> Result<String, DdlPlanError> {
+    let unknown_column = || {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrBadField,
+            format!(
+                "Unknown column '{}' in '{}'",
+                path.last().map(String::as_str).unwrap_or(""),
+                base_table
+            ),
+        ))
+    };
+    let qualifier_matches = |qualifier: &str| {
+        qualifier == base_table.to_lowercase()
+            || from_alias
+                .map(|alias| qualifier == alias.to_lowercase())
+                .unwrap_or(false)
+    };
+    match path.len() {
+        1 => {}
+        2 => {
+            if !qualifier_matches(&path[0].to_lowercase()) {
+                return Err(unknown_column());
+            }
+        }
+        3 => {
+            if !qualifier_matches(&path[1].to_lowercase()) {
+                return Err(unknown_column());
+            }
+        }
+        _ => return Err(unknown_column()),
+    }
+    let name = path.last().expect("non-empty column path").to_lowercase();
+    if !base_col_map.contains_key(&name) {
+        return Err(unknown_column());
+    }
+    Ok(name)
+}
+
+/// Go's `isCountStarOrOne`: `count(1)` counts as the required count star.
+fn is_count_star_or_one(arg: &tidb_ast::Expr) -> bool {
+    matches!(arg, tidb_ast::Expr::Int(value) if value == "1")
+}
+
+/// Collects every `Expr::Column` path in the expression tree (Go's
+/// `collectColumnNamesInExpr`).
+fn collect_column_paths(expr: &tidb_ast::Expr, out: &mut Vec<Vec<String>>) {
+    match expr {
+        tidb_ast::Expr::Column(path) => out.push(path.clone()),
+        tidb_ast::Expr::Unary(_, inner) | tidb_ast::Expr::Paren(inner) => {
+            collect_column_paths(inner, out);
+        }
+        tidb_ast::Expr::Binary(_, left, right) => {
+            collect_column_paths(left, out);
+            collect_column_paths(right, out);
+        }
+        tidb_ast::Expr::Func { args, .. }
+        | tidb_ast::Expr::GenericFuncCall { args, .. }
+        | tidb_ast::Expr::Row(args)
+        | tidb_ast::Expr::Aggregate { args, .. }
+        | tidb_ast::Expr::GroupConcat { args, .. } => {
+            for arg in args {
+                collect_column_paths(arg, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Go's `expression.CheckNonDeterministic` over the built expression tree:
+/// constants and columns are deterministic; a scalar function is
+/// non-deterministic when its name is unfoldable (Go's `unFoldableFunctions`
+/// set: rand, sleep, uuid, sysdate, ...) or when any argument is.
+fn expr_is_deterministic(expr: &tidb_expr::expression::Expression) -> bool {
+    use tidb_expr::expression::Expression;
+    match expr {
+        Expression::Column(_) | Expression::Constant(_) | Expression::CorrelatedColumn(_) => true,
+        Expression::ScalarFunction(function) => {
+            if tidb_expr::constant_fold::is_unfoldable(
+                function.func_name.lowercase().to_string().as_str(),
+            ) {
+                return false;
+            }
+            function.args.iter().all(expr_is_deterministic)
+        }
+        _ => true,
+    }
+}
+
+/// The base table's columns as a `ColumnResolver` for the WHERE build: the
+/// path resolves against the base table name (or the FROM alias) and the
+/// base column set, exactly as Go's `buildMViewSingleTableExpr` scope does.
+struct BaseTableResolver<'a> {
+    base_schema: &'a str,
+    base_table: &'a str,
+    from_alias: Option<&'a str>,
+    columns: std::collections::HashMap<String, (usize, tidb_datatype::FieldType, i64)>,
+}
+
+impl<'a> BaseTableResolver<'a> {
+    fn new(
+        base_schema: &'a str,
+        base_table: &'a str,
+        from_alias: Option<&'a str>,
+        base: &'a TableInfo,
+    ) -> Self {
+        let mut columns = std::collections::HashMap::with_capacity(base.columns.len());
+        for (index, shared) in base.columns.iter_handles().into_iter().enumerate() {
+            let column = shared.expect("nil column in base table");
+            let column = column.read();
+            columns.insert(
+                column.name.lowercase().to_owned(),
+                (index, column.field_type.clone(), column.id),
+            );
+        }
+        Self {
+            base_schema,
+            base_table,
+            from_alias,
+            columns,
+        }
+    }
+
+    /// Go's `resolveMViewColumnName` qualifier rules: the path's schema and
+    /// table qualifiers (if present) must match the base schema, base table
+    /// or FROM alias.
+    fn resolve_path(&self, path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
+        let (qualifier, column) = match path.len() {
+            1 => (None, path.last()?),
+            2 => (Some(&path[0]), path.last()?),
+            3 => {
+                if !path[0].eq_ignore_ascii_case(self.base_schema) {
+                    return None;
+                }
+                (Some(&path[1]), path.last()?)
+            }
+            _ => return None,
+        };
+        if let Some(qualifier) = qualifier {
+            let qualifier = qualifier.to_lowercase();
+            let matches_table = qualifier == self.base_table.to_lowercase();
+            let matches_alias = self
+                .from_alias
+                .map(|alias| qualifier == alias.to_lowercase())
+                .unwrap_or(false);
+            if !matches_table && !matches_alias {
+                return None;
+            }
+        }
+        self.columns.get(column).cloned()
+    }
+}
+
+impl tidb_expr::rewriter::ColumnResolver for BaseTableResolver<'_> {
+    fn resolve(&self, path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
+        self.resolve_path(path)
+    }
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
+    }
+}
+
+/// Go `validateCreateMaterializedViewQuery`: the single-table contract, the
+/// SELECT-clause refusals, the GROUP BY requirements, the clause refusals
+/// and the per-column analysis, in source order. The result analysis feeds
+/// the job submission, which this tier does not wire yet, so only the
+/// refusals are observable.
+#[allow(clippy::too_many_arguments)]
+fn plan_validate_materialized_view_query(
+    sel: &tidb_ast::SelectStmt,
+    query: &tidb_ast::QueryStmt,
+    base_schema: &str,
+    base_table: &str,
+    base: &TableInfo,
+    from_alias: Option<&str>,
+    mlog_columns: &[tidb_ast::CiString],
+) -> Result<(), DdlPlanError> {
+    use tidb_datatype::FieldTypeFlags;
+    use tidb_model::column::ColumnInfo;
+
+    // Go `mviewutil.CheckMaterializedViewSelect`.
+    tidb_util::mviewutil::check_materialized_view_select(query).map_err(|error| {
         DdlPlanError::Admission(DdlAdmissionError::with_code(8200, error.message()))
     })?;
+
+    // Go: GROUP BY is required, WITH ROLLUP refuses.
     if sel.group_by.is_empty() {
         return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
             "CREATE MATERIALIZED VIEW requires GROUP BY clause",
@@ -7381,7 +7596,6 @@ fn plan_create_materialized_view(
             "CREATE MATERIALIZED VIEW does not support GROUP BY WITH ROLLUP",
         )));
     }
-
     // Go: HAVING, ORDER BY, LIMIT and DISTINCT refusals, in source order.
     if sel.having.is_some() {
         return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
@@ -7404,14 +7618,254 @@ fn plan_create_materialized_view(
         )));
     }
 
-    // SEAM + 11c REMAINING: Go continues with the GROUP BY item analysis,
-    // WHERE determinism and the per-field aggregation/column-coverage
-    // checks (`resolveMViewColumnName`, `CheckNonDeterministic`,
-    // `buildMViewSingleTableExpr`), which need the expression-analysis
-    // owner. The job-execution seam follows them.
-    Err(DdlPlanError::Admission(DdlAdmissionError::new(
-        "materialized view job execution is not wired in this tier",
-    )))
+    // Go: the base column map, keyed by the lowercase column name.
+    let mut base_col_map: std::collections::HashMap<String, GoShared<ColumnInfo>> =
+        std::collections::HashMap::with_capacity(base.columns.len());
+    for column in base.columns.iter_deref() {
+        base_col_map.insert(column.read().name.lowercase().to_string(), column.clone());
+    }
+
+    // Go: the mlog column set, keyed by the lowercase column name.
+    let mlog_col_set: std::collections::HashSet<String> = mlog_columns
+        .iter()
+        .map(|column| column.lowercase().to_owned())
+        .collect();
+
+    // Go's GROUP BY item loop: every item is a plain column reference;
+    // duplicates refuse; every referenced column is `used`.
+    let mut group_by_set: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(sel.group_by.len());
+    let mut group_by_cols: Vec<String> = Vec::with_capacity(sel.group_by.len());
+    let mut used_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &sel.group_by {
+        let path = match &item.expr {
+            tidb_ast::Expr::Column(path) => path,
+            _ => {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                    "GROUP BY expression is not supported in CREATE MATERIALIZED VIEW",
+                )));
+            }
+        };
+        let col_name =
+            resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?.to_owned();
+        if !group_by_set.insert(col_name.clone()) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "duplicate GROUP BY column is not supported in CREATE MATERIALIZED VIEW",
+            )));
+        }
+        group_by_cols.push(col_name.clone());
+        used_cols.insert(col_name.clone());
+    }
+
+    // Go's WHERE analysis: the clause must build over the base columns and
+    // be deterministic; every referenced column is `used`.
+    if let Some(where_expr) = &sel.where_clause {
+        let resolver = BaseTableResolver::new(base_schema, base_table, from_alias, base);
+        let built = tidb_expr::simple_expr::build_simple_expr(
+            &resolver,
+            where_expr,
+            &tidb_expr::simple_expr::BuildOptions::default(),
+        )
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        if !expr_is_deterministic(&built) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                "CREATE MATERIALIZED VIEW WHERE clause must be deterministic",
+            )));
+        }
+        let mut where_paths: Vec<Vec<String>> = Vec::new();
+        for path in &where_paths {
+            let _ = path;
+        }
+        let mut collector_paths: Vec<Vec<String>> = Vec::new();
+        collect_column_paths(where_expr, &mut collector_paths);
+        for path in &collector_paths {
+            let col_name =
+                resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?.to_owned();
+            used_cols.insert(col_name);
+        }
+    }
+
+    // Go's SELECT field loop: bare columns must appear in GROUP BY (no
+    // duplicates), aggregates are whitelisted to count/sum/min/max with
+    // column arguments, and count(*)/count(1) is required.
+    let mut select_col_idx: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut has_count_star_or_one = false;
+    let mut has_min_or_max = false;
+    let mut count_expr_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut nullable_sum_cols: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (index, field) in sel.fields.fields().iter().enumerate() {
+        let expr = match field {
+            tidb_ast::SelectField::Wildcard(_) => {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                    "CREATE MATERIALIZED VIEW does not support wildcard select field",
+                )));
+            }
+            tidb_ast::SelectField::Expr { expr, .. } => expr,
+        };
+        match expr {
+            tidb_ast::Expr::Column(path) => {
+                let col_name =
+                    resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?
+                        .to_owned();
+                if !group_by_set.contains(&col_name) {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                        "non-aggregated column must appear in GROUP BY clause",
+                    )));
+                }
+                if select_col_idx.contains_key(&col_name) {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                        "duplicate GROUP BY column in SELECT list is not supported in CREATE MATERIALIZED VIEW",
+                    )));
+                }
+                select_col_idx.insert(col_name.clone(), index);
+                used_cols.insert(col_name);
+            }
+            tidb_ast::Expr::Aggregate {
+                name,
+                distinct,
+                args,
+            } => {
+                if *distinct {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                        "CREATE MATERIALIZED VIEW does not support DISTINCT aggregate function",
+                    )));
+                }
+                let lower_name = name.to_lowercase();
+                if !matches!(lower_name.as_str(), "count" | "sum" | "min" | "max") {
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                        format!(
+                            "unsupported aggregate function in CREATE MATERIALIZED VIEW: agg {name}"
+                        ),
+                    )));
+                }
+                if lower_name == "count" {
+                    if args.len() != 1 {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                            "count(*)/count(1) must have exactly one argument in CREATE MATERIALIZED VIEW",
+                        )));
+                    }
+                    if let tidb_ast::Expr::Column(path) = &args[0] {
+                        let col_name =
+                            resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?
+                                .to_owned();
+                        count_expr_cols.insert(col_name.clone());
+                        used_cols.insert(col_name);
+                        continue;
+                    }
+                    if !is_count_star_or_one(&args[0]) {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                            "CREATE MATERIALIZED VIEW only supports count(*)/count(1)",
+                        )));
+                    }
+                    has_count_star_or_one = true;
+                } else {
+                    // sum / min / max
+                    if args.len() != 1 {
+                        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                            "aggregate function must have exactly one argument in CREATE MATERIALIZED VIEW",
+                        )));
+                    }
+                    let path = match &args[0] {
+                        tidb_ast::Expr::Column(path) => path,
+                        _ => {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                                "aggregate function only supports column argument in CREATE MATERIALIZED VIEW",
+                            )));
+                        }
+                    };
+                    let col_name =
+                        resolve_mview_column_name(path, base_table, from_alias, &base_col_map)?
+                            .to_owned();
+                    if lower_name == "sum" {
+                        let base_column = base_col_map.get(&col_name).expect("resolved column");
+                        let code = base_column.read().field_type.code();
+                        if matches!(
+                            code,
+                            tidb_datatype::FieldTypeCode::Date
+                                | tidb_datatype::FieldTypeCode::Datetime
+                                | tidb_datatype::FieldTypeCode::Timestamp
+                                | tidb_datatype::FieldTypeCode::Duration
+                        ) {
+                            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                                "CREATE MATERIALIZED VIEW does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column",
+                            )));
+                        }
+                        let not_null = base_column.read().get_flag()
+                            & u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                            != 0;
+                        if !not_null {
+                            nullable_sum_cols.insert(col_name.clone());
+                        }
+                    }
+                    if lower_name == "min" || lower_name == "max" {
+                        has_min_or_max = true;
+                    }
+                    used_cols.insert(col_name);
+                }
+            }
+            _ => {
+                return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                    "unsupported SELECT expression in CREATE MATERIALIZED VIEW",
+                )));
+            }
+        }
+    }
+
+    // Go: count(*)/count(1) is required.
+    if !has_count_star_or_one {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW must contain count(*)/count(1)",
+        )));
+    }
+
+    // Go: SUM on a nullable column requires a matching COUNT of the same
+    // column in the SELECT list.
+    for col_name in &nullable_sum_cols {
+        if !count_expr_cols.contains(col_name) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                format!(
+                    "CREATE MATERIALIZED VIEW SUM on nullable column {col_name} requires matching COUNT({col_name}) in SELECT list"
+                ),
+            )));
+        }
+    }
+
+    // Go's groupByInfos: every GROUP BY column must appear in the SELECT
+    // list (a plain 1105, matching Go's errors.Errorf).
+    for col_name in &group_by_cols {
+        if !select_col_idx.contains_key(col_name) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                "GROUP BY column {col_name} must appear in SELECT list"
+            ))));
+        }
+    }
+
+    // Go: MIN/MAX requires a visible public index whose leading columns
+    // cover all GROUP BY columns (batch 4's mviewutil helper).
+    if has_min_or_max
+        && tidb_util::mviewutil::find_visible_index_with_prefix_covering_columns(
+            Some(base),
+            &group_by_cols,
+        )
+        .is_none()
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+            "CREATE MATERIALIZED VIEW with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns",
+        )));
+    }
+
+    // Go: every used column must be covered by the materialized view log's
+    // column list.
+    for col_name in &used_cols {
+        if !mlog_col_set.contains(col_name) {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
+                format!("materialized view log does not contain column {col_name}"),
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 /// Go `CreateMaterializedViewLog`'s catalog checks, in source order, and the

@@ -245,7 +245,7 @@ pub(crate) fn folded_value(expr: &Expression) -> Option<Datum> {
 /// Go `unFoldableFunctions` (`pkg/expression/function_traits.go`): the
 /// functions whose result is not a property of their arguments -- a clock, a
 /// counter, a random source, a session variable, or a side effect.
-fn is_unfoldable(name: &str) -> bool {
+pub fn is_unfoldable(name: &str) -> bool {
     // Go's `GetVar` is one name; this rewriter encodes the signature the
     // session's current value picked into the name (`getvar_int`,
     // `getvar_string`, ...), so a bare `"getvar"` arm below would never match

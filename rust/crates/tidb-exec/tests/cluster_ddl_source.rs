@@ -5297,6 +5297,7 @@ fn materialized_view_lowering_follows_go_admission_order() {
     mlog.name = tidb_ast::CiString::new("$mlog$mv_base");
     let mut mlog_meta = tidb_model::MaterializedViewLogInfo::default();
     mlog_meta.base_table_id = base_id;
+    mlog_meta.columns = vec![tidb_ast::CiString::new("id"), tidb_ast::CiString::new("k")].into();
     mlog.materialized_view_log = Some(GoShared::new(mlog_meta));
     store.put(
         key::table_kv_key(112, 9_001),
@@ -5368,7 +5369,7 @@ fn materialized_view_lowering_follows_go_admission_order() {
         &mut store,
         &lower_with(
             &enabled,
-            "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(k) FROM mv_base GROUP BY id)",
+            "CREATE MATERIALIZED VIEW mv (id, c) AS (SELECT id, COUNT(1) FROM mv_base GROUP BY id)",
             "u6",
         ),
         1_311,
