@@ -2279,12 +2279,19 @@ mod composite_extract_tests {
             .unwrap(),
             Datum::Int(102_034_567_00)
         );
-        // MINUTE_MICROSECOND over `02:03.4567` — DIAGNOSED DIVERGENCE: Go's
-        // `ParseDurationValue` splits `mm:ss.ffffff` (two groups) and yields
-        // 203456700, while `parse_signed_duration_hms` demands an `HH:`
-        // prefix and returns NULL. Queued for its own batch (the fix must
-        // mirror Go's group-count-based field distribution, not a special
-        // case).
+        // MINUTE_MICROSECOND over `02:03.4567`: Go's `ParseDurationValue`
+        // distributes TWO groups onto (mi, sec), yielding 203456700
+        // (`pkg/types/time.go`).
+        // ALSO pinned: HOUR_MICROSECOND over the same two-group shape
+        // (h=0 implied), and the seconds-only single-group form.
+        assert_eq!(
+            extract_composite(
+                "MINUTE_MICROSECOND",
+                &[Datum::new_string("02:03.4567".to_string())],
+            )
+            .unwrap(),
+            Datum::Int(20_345_670_0)
+        );
         // SECOND_MICROSECOND.
         assert_eq!(
             extract_composite(
@@ -2293,6 +2300,15 @@ mod composite_extract_tests {
             )
             .unwrap(),
             Datum::Int(3_456_700)
+        );
+        // The two-group shape also serves HOUR_MICROSECOND (h=0 implied).
+        assert_eq!(
+            extract_composite(
+                "HOUR_MICROSECOND",
+                &[Datum::new_string("02:03.4567".to_string())],
+            )
+            .unwrap(),
+            Datum::Int(20_345_670_0)
         );
         // A negative duration applies its sign to the WHOLE composite result.
         let dur = Datum::new_string("-01:02:03.4567".to_string());
