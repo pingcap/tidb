@@ -34,7 +34,9 @@ use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
 use crate::hash_equaler::{new_hash_equaler, Hasher};
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
-use crate::plan_base::PossiblePropertiesInfo;
+use crate::plan_base::{
+    hash_possible_properties, possible_properties_equal, PossiblePropertiesInfo,
+};
 use crate::stats_info::StatsInfo;
 
 /// Go `ast.AggFuncFirstRow`.
@@ -545,7 +547,7 @@ impl LogicalAggregation {
             let mut item = item.clone();
             hasher.hash_bytes(item.hash_code());
         }
-        hasher.hash_bool(self.possible_properties.has_tiflash);
+        hash_possible_properties(&mut hasher, &self.possible_properties);
         hasher.sum64()
     }
 
@@ -565,6 +567,7 @@ impl LogicalAggregation {
                 .zip(&other.agg_funcs)
                 .all(|(left, right)| left.equals(right))
             && schema_producer::expression_lists_equal(&self.group_by_items, &other.group_by_items)
+            && possible_properties_equal(&self.possible_properties, &other.possible_properties)
     }
 }
 

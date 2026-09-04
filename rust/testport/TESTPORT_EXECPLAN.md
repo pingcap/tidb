@@ -72,6 +72,11 @@ For each bounded behavior cluster:
   requires a public full-text index on each referenced column, with exact Go
   truth-table regressions active. TiFlash/session index-resolution cases remain
   explicit boundaries in `receipts/b087.md`.
+- 2026-09-05 (`pkg/planner/core` aggregation identity properties): aligned
+  `LogicalAggregation::hash64`/`equals` with Go's nested
+  `PossiblePropertiesInfo.Orders` identity while excluding runtime
+  `HasTiFlash`; the source-derived property mutation regression is active in
+  `receipts/b090.md`.
 - 2026-09-05 (`pkg/executor/sortexec` constant by-item evaluation): aligned
   Rust with Go's omission of constant `ByItems` from materialized sort keys.
   Deferred constants are no longer evaluated during sort/TopN key handling;

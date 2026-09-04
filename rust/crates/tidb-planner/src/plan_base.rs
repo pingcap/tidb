@@ -490,6 +490,48 @@ pub struct PossiblePropertiesInfo {
     pub has_tiflash: bool,
 }
 
+/// Hash the identity portion of Go `PossiblePropertiesInfo`.
+///
+/// `HasTiFlash` is deliberately runtime-only and is excluded from Go's
+/// generated `Hash64`/`Equals`; only the nested order lists participate. Rust
+/// cannot represent Go's nil-vs-empty slice distinction, so the owned vector
+/// is encoded as a present list and each column uses the same identity triple
+/// used by the planner schema hash.
+pub(crate) fn hash_possible_properties(
+    hasher: &mut impl crate::hash_equaler::Hasher,
+    properties: &PossiblePropertiesInfo,
+) {
+    use crate::hash_equaler::NOT_NIL_FLAG;
+
+    hasher.hash_byte(NOT_NIL_FLAG);
+    hasher.hash_int(properties.orders.len() as i64);
+    for order in &properties.orders {
+        hasher.hash_int(order.len() as i64);
+        for column in order {
+            hasher.hash_int64(column.id);
+            hasher.hash_int64(column.unique_id);
+            hasher.hash_int64(column.index);
+        }
+    }
+}
+
+/// Go `PossiblePropertiesInfo.Equals` over the representable Rust shape.
+/// `HasTiFlash` is intentionally ignored because it is not plan identity.
+#[must_use]
+pub(crate) fn possible_properties_equal(
+    left: &PossiblePropertiesInfo,
+    right: &PossiblePropertiesInfo,
+) -> bool {
+    left.orders.len() == right.orders.len()
+        && left.orders.iter().zip(&right.orders).all(|(left, right)| {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| left.equals(right))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

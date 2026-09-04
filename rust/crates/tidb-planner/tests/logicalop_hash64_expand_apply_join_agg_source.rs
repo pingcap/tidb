@@ -367,9 +367,8 @@ fn logical_apply_hash64_equals_tracks_correlated_columns_and_no_decorrelate_flag
 /// col)+group-by-[col]+possible-orders-[[col]] match (:828-831); emptying
 /// `GroupByItems` to a non-nil empty slice flips hash AND equality (:833-837).
 ///
-/// The POSSIBLE-PROPERTIES arms (:839-855) live in the ignored companion
-/// below: they hinge on how `PossiblePropertiesInfo` enters the digest, and
-/// the Rust body folds the OPPOSITE half of that struct.
+/// The POSSIBLE-PROPERTIES arms (:839-855) are covered by the focused
+/// companion below, including Go's exclusion of the runtime TiFlash bit.
 #[test]
 fn aggregation_hash64_equals_tracks_group_by_items() {
     let agg_desc = || AggFuncDesc {
@@ -413,24 +412,39 @@ fn aggregation_hash64_equals_tracks_group_by_items() {
     assert!(p1.equals(None, &p2, None));
 }
 
-/// GO PARITY GAP port of
+/// GO PORT of
 /// `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:839-855`
 /// (the `PossibleProperties` tail of `TestLogicalAggregationHash64Equals`).
 ///
-/// go-parity-gap: Go folds `PossiblePropertiesInfo.Orders` (nested order
-/// lists, `plan_base.go:400-408`) into the digest and DELIBERATELY EXCLUDES
-/// `HasTiFlash` (field comment `plan_base.go:387`) — hence Orders->[[]] must
-/// flip (:844-846) while Orders->[[col]] WITH HasTiFlash:true must hash EQUAL
-/// (:854-855). The Rust `LogicalAggregation::hash64`
-/// (`src/logical/aggregation.rs`, `PossibleProperties` section) folds ONLY
-/// `has_tiflash` and NO orders — the inverted choice — so neither assertion
-/// can pass against it as written:
-///     // Orders -> [[]]: Go hash flips, Rust digest would stay put.
-///     // Orders -> [[col]], HasTiFlash=true: Go hashes EQUAL, Rust would flip.
-///
-/// WHAT WOULD CLOSE IT: transcription-correcting the operator's hash body to
-/// fold `possible_properties.orders` (nested lists of column identities) and
-/// drop `has_tiflash` — a production-code change outside this batch.
 #[test]
-#[ignore]
-fn aggregation_possible_properties_orders_belong_to_the_identity_excluding_has_tiflash() {}
+fn aggregation_possible_properties_orders_belong_to_the_identity_excluding_has_tiflash() {
+    let agg_desc = || AggFuncDesc {
+        base: BaseFuncDesc {
+            name: "avg".to_owned(),
+            args: vec![col_expr(10, 0)],
+            ret_type: FieldType::new(FieldTypeCode::LongLong),
+        },
+        mode: AggFunctionMode::Complete,
+        has_distinct: true,
+        order_by_items: Vec::new(),
+        grouping_id: 0,
+    };
+    let build = |orders: Vec<Vec<Column>>, has_tiflash| LogicalAggregation {
+        base: BaseLogicalPlan::default(),
+        agg_funcs: vec![agg_desc()],
+        group_by_items: vec![col_expr(20, 0)],
+        possible_properties: PossiblePropertiesInfo {
+            orders,
+            has_tiflash,
+        },
+        ..LogicalAggregation::default()
+    };
+    let with_column = build(vec![vec![column(20, 0)]], false);
+    let empty_order = build(vec![Vec::new()], false);
+    assert_ne!(with_column.hash64(None), empty_order.hash64(None));
+    assert!(!with_column.equals(None, &empty_order, None));
+
+    let tiflash = build(vec![vec![column(20, 0)]], true);
+    assert_eq!(with_column.hash64(None), tiflash.hash64(None));
+    assert!(with_column.equals(None, &tiflash, None));
+}
