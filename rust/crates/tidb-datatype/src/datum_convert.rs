@@ -206,7 +206,11 @@ impl Datum {
                     numeric_outcome(convert_int_to_int(parsed.value, lower, upper, target));
                 Converted {
                     value: bounded.value,
-                    event: prefer_event(parsed.event, bounded.event),
+                    // Go's signed path keeps StrToInt's parse/truncation
+                    // error when the subsequent range clamp also reports an
+                    // overflow. The unsigned path intentionally uses the
+                    // opposite precedence below.
+                    event: prefer_event(bounded.event, parsed.event),
                 }
             }
             Self::Bytes(value) => {
@@ -219,7 +223,7 @@ impl Datum {
                     numeric_outcome(convert_int_to_int(parsed.value, lower, upper, target));
                 Converted {
                     value: bounded.value,
-                    event: prefer_event(parsed.event, bounded.event),
+                    event: prefer_event(bounded.event, parsed.event),
                 }
             }
             // Go rounds the temporal value itself before rendering it as a
@@ -1422,6 +1426,37 @@ mod tests {
                 .value,
             Datum::new_decimal(Decimal::from_signed_literal("12.35"))
         );
+    }
+
+    /// Go's signed string conversion keeps the parse/truncation error when a
+    /// narrower integer target also reports a range clamp; unsigned conversion
+    /// deliberately retains the opposite precedence.
+    #[test]
+    fn signed_string_conversion_prefers_source_truncation_over_clamp() {
+        let signed_tiny = FieldType::new(FieldTypeCode::Tiny);
+        let unsigned_tiny =
+            FieldType::new(FieldTypeCode::Tiny).with_added_flags(FieldTypeFlags::UNSIGNED);
+
+        for input in [
+            Datum::new_string("999abc"),
+            Datum::new_bytes(b"999abc".to_vec()),
+        ] {
+            let signed = input
+                .clone()
+                .convert_to(&signed_tiny, crate::DEFAULT_STATEMENT_FLAGS)
+                .unwrap();
+            assert_eq!(signed.value, Datum::Int(127));
+            assert_eq!(signed.event, Some(ScalarConversionEvent::Truncated));
+
+            let unsigned = input
+                .convert_to(&unsigned_tiny, crate::DEFAULT_STATEMENT_FLAGS)
+                .unwrap();
+            assert_eq!(unsigned.value, Datum::UInt(255));
+            assert!(matches!(
+                unsigned.event,
+                Some(ScalarConversionEvent::Overflow(_))
+            ));
+        }
     }
 
     /// Go `pkg/types/convert_test.go::TestGetValidIntPrefix` keeps the

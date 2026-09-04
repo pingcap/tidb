@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned signed string/bytes integer conversion in the Rust
+  `tidb-datatype` owner for complete Go-master `pkg/types`. Narrow signed
+  targets now preserve Go's original parse/truncation error when range
+  clamping also reports overflow; unsigned precedence remains unchanged. The
+  focused fail-before regression and source inventory are recorded in
+  `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04: aligned the Rust `tidb-datatype` decimal value parser for the
   complete Go-master `pkg/types` clamped-exponent boundary. A bad exponent now
   clears the intermediate value but continues through Go's signed bound checks,

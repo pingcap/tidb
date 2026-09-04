@@ -232,6 +232,33 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # passed: 1 test (including the existing BadNumber fixture)
 ```
 
+## Rust-only parity follow-up: signed conversion error precedence
+
+The complete 61-artifact `pkg/types` inventory also owns
+`Datum.ConvertTo`'s integer conversion paths. Go keeps `StrToInt`'s parse
+error on the signed string/bytes path when `ConvertIntToInt` reports a second
+range error (`pkg/types/datum.go:2002-2008`); the unsigned path intentionally
+keeps the clamp error (`pkg/types/datum.go:1329-1335`). Rust used one
+`prefer_event(parsed, bounded)` ordering for both paths, so converting
+`"999abc"` to signed `TINYINT` surfaced an overflow event for `999` instead
+of the source truncation event for the original text.
+
+The Rust `tidb-datatype` owner now reverses precedence only for signed
+string/bytes conversion, leaving unsigned behavior unchanged. The focused
+regression `datum_convert::tests::signed_string_conversion_prefers_source_truncation_over_clamp`
+covers both source byte carriers and both signed/unsigned target policies:
+signed conversion clamps to 127 with `ScalarConversionEvent::Truncated`,
+while unsigned conversion remains 255 with an overflow event. Before the
+production change the signed assertion failed with `Overflow { value: "999" }`.
+No Go, generated, or Bazel file changed.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib signed_string_conversion_prefers_source_truncation_over_clamp -- --nocapture
+# pre-fix: failed (`Overflow` instead of `Truncated`); after fix: 1 passed
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.
