@@ -325,7 +325,10 @@ impl AggFunctionMode {
 /// count in its partial state.
 #[must_use]
 pub fn need_count(name: &str) -> bool {
-    name == names::COUNT || name == names::AVG
+    name == names::COUNT
+        || name == names::AVG
+        || name == names::MAX_COUNT
+        || name == names::MIN_COUNT
 }
 
 /// Go `NeedValue` (`aggregation.go:202`): whether the aggregate records a
@@ -340,6 +343,8 @@ pub fn need_value(name: &str) -> bool {
             | names::FIRST_ROW
             | names::MAX
             | names::MIN
+            | names::MAX_COUNT
+            | names::MIN_COUNT
             | names::GROUP_CONCAT
             | names::BIT_OR
             | names::BIT_AND
@@ -388,6 +393,8 @@ pub fn check_agg_push_flash(agg_func: &AggFuncDesc) -> bool {
         names::COUNT
         | names::MIN
         | names::MAX
+        | names::MAX_COUNT
+        | names::MIN_COUNT
         | names::FIRST_ROW
         | names::APPROX_COUNT_DISTINCT => true,
         // TiFlash has no CastJsonAsReal / CastJsonAsString.
@@ -413,6 +420,15 @@ pub fn check_agg_push_down(
     blacklist: &HashMap<String, u32>,
 ) -> bool {
     if !agg_func.order_by_items.is_empty() && agg_func.name() != names::GROUP_CONCAT {
+        return false;
+    }
+    if matches!(agg_func.name(), names::MAX_COUNT | names::MIN_COUNT)
+        && (store != PushDownStore::TiFlash
+            || agg_func.args().len() != 1
+            || agg_func.mode == AggFunctionMode::Dedup)
+    {
+        // TiFlash supports max_count/min_count only in one-stage aggregation;
+        // the two-stage [count, extreme] row shape is not a pushdown contract.
         return false;
     }
     if agg_func.name() == names::APPROX_PERCENTILE {

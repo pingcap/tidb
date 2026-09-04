@@ -1,15 +1,15 @@
-# `pkg/expression/aggregation` — Go-master parity boundary receipt
+# `pkg/expression/aggregation` — Go-master parity receipt
 
-Status: audited as a complete Go package, but not claimed as a package-complete
-Rust transcreation. The Go `max_count`/`min_count` family is a cross-package
-feature: parser names and grammar, expression descriptors, aggregate runtime,
-hash aggregation, planner routing, protobuf projection, and KV pushdown all
-change together. Rust currently owns these seams in different crates and does
-not have a dependency-closed implementation to which a leaf-only edit could be
-applied safely.
+Status: audited as a complete Go package with a bounded Rust descriptor parity
+slice. The Go `max_count`/`min_count` family is a cross-package feature: parser
+names and grammar, expression descriptors, aggregate runtime, hash aggregation,
+planner routing, protobuf projection, and KV pushdown all change together. This
+batch closes the dependency-closed descriptor/type-inference/pushdown portion
+in `tidb-expr`; evaluator runtime and aggregate protobuf projection remain
+explicit boundaries in their owning crates.
 
 Comparison source: Go `origin/master` at commit
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The relevant Go
+`f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (2026-09-04). The relevant Go
 feature was introduced by `5d6fdbe6f5` (`max_count`/`min_count` aggregate
 support); the package inventory below was read at the current master tree.
 
@@ -64,13 +64,13 @@ owners are `tidb-exec/src/aggregate/runtime/{mod,max_min}.rs` and
 are in `tidb-parser/src/expr/window.rs`; protobuf aggregate expression types
 are projected by `tidb-proto`; planner and KV pushdown consume the descriptor.
 
-The Rust owner currently has no `MAX_COUNT`/`MIN_COUNT` names, no descriptor
-type-inference/pushdown arms, no pair state in either aggregate runtime, and no
-protobuf `ExprType_MaxCount`/`ExprType_MinCount` projection. Adding only names
-or type inference would make SQL descriptors advertise an evaluator and
-serialization path that still cannot execute. Conversely, adding only the
-runtime pair state would leave parser, planner, and protobuf behavior
-inconsistent.
+Before this batch, the Rust owner had no `MAX_COUNT`/`MIN_COUNT` names or
+descriptor type-inference/pushdown arms. The batch adds those exact Go arms,
+including count-shaped return/default metadata, one-stage TiFlash-only
+pushdown, original extreme-value typing across `Split`, outer-join count
+defaults, and NOT NULL behavior. The pair state remains outside `tidb-expr`
+in the aggregate runtime owners, and protobuf `ExprType_MaxCount` /
+`ExprType_MinCount` remains absent from `tidb-proto`.
 
 The existing source-parity tests therefore remain explicit, actionable gaps:
 
@@ -79,33 +79,38 @@ The existing source-parity tests therefore remain explicit, actionable gaps:
 - `test_max_min_count` — ignored because the evaluator pair state is outside
   the `tidb-expr` seed and is absent from the executor runtime owners.
 - `test_check_agg_push_down_max_min_count` and
-  `test_base_func_infer_max_min_count_ret_type` — ignored because the names and
-  descriptor arms are absent.
+  `test_base_func_infer_max_min_count_ret_type` are now active in the source
+  carrier; the focused descriptor tests also live in `aggregation/tests.rs`.
 
-No Rust-only behavior was removed and no speculative partial pipeline was
-added. The correct next implementation unit is the dependency-closed feature
-across the parser, expression, executor, planner, KV, and tipb owners, with
-focused tests at each seam; it is not a safe single-package patch.
+No Rust-only behavior was removed. The descriptor changes are deliberately
+bounded: they do not advertise a runtime or PB path that is not present. The
+next implementation unit is the dependency-closed evaluator/PB feature across
+the parser, executor, planner, KV, and tipb owners, with focused tests at each
+seam.
 
 ## Validation
 
-Profile: WIP for a continuing boundary audit; no production fix was made, so a
-package-complete Ready claim is intentionally not made.
+Profile: Ready for the bounded descriptor slice; package-complete parity is not
+claimed while evaluator/PB owners remain unported.
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/expression/aggregation -count=1` — package tests passed.
-- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --lib aggregation -- --test-threads=1` — Rust aggregation owner tests passed; the four max/min-count source tests remain ignored for the documented dependency gaps.
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr max_min_count -- --nocapture` — 6 active descriptor regressions passed; the evaluator and PB source carriers remain ignored for their documented owner gaps.
 - `rustup run nightly-2026-08-22 rustfmt --edition 2021 --check rust/crates/tidb-expr/src/aggregation/base_func.rs rust/crates/tidb-expr/src/aggregation/descriptor.rs rust/crates/tidb-expr/src/aggregation/mod.rs` — passed.
 - `git diff --check` — passed.
-
-No Go or Bazel file changed, so `make bazel_prepare` is not required.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed.
+- `git diff --check` — passed.
+- `make lint` with the pinned Go toolchain — passed with existing warnings.
 
 ## Risks and unverified surfaces
 
 - Correctness risk is concentrated in the pair accumulator's complete/partial/
-  final state contract and its interaction with DISTINCT and NULL extrema.
+  final state contract and its interaction with DISTINCT and NULL extrema,
+  which this descriptor slice intentionally does not implement.
 - Compatibility risk spans parser canonicalization, planner one-store routing,
   tipb expression enums, and KV checker behavior; a leaf-only implementation
   could expose SQL that cannot be planned or executed.
-- Performance is unchanged because this audit added no production path.
+- Performance impact is limited to descriptor matching; no evaluator loop or
+  serialization path was added.
 - The end-to-end max/min-count feature remains unverified until all listed Rust
   owners are implemented as one dependency-closed batch.

@@ -13,6 +13,14 @@
   planner/storage/fixture failures. All three owner checks plus formatting and diff checks
   pass. Strict datatype clippy remains blocked only by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
+- Current batch: Rust `tidb-expr` aggregation descriptors now recognize Go's
+  `MAX_COUNT`/`MIN_COUNT` family. Count-shaped return/default metadata,
+  `NeedCount`/`NeedValue`, the one-stage TiFlash-only pushdown gate, outer-join
+  count defaults, NOT NULL preservation, and original extreme-value typing in
+  `AggFuncDesc::Split` are active with focused regressions. Aggregate evaluator
+  pair state and tipb aggregate conversion remain explicit cross-crate gaps.
+  Receipt: `rust/testport/receipts/expression_aggregation_audit.md` and
+  `rust/testport/receipts/b066.md`.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
 - Current batch: Rust's vendored `LockContext` now carries Go's

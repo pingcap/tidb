@@ -192,6 +192,7 @@ impl BaseFuncDesc {
     pub fn type_infer(&mut self, ctx: &impl Columns) -> Result<(), AggDescError> {
         match self.name.as_str() {
             names::COUNT => self.type_infer_4_count(),
+            names::MAX_COUNT | names::MIN_COUNT => self.type_infer_4_count(),
             // Go `typeInfer4ApproxCountDistinct` delegates verbatim.
             names::APPROX_COUNT_DISTINCT => self.type_infer_4_count(),
             names::APPROX_PERCENTILE => self.type_infer_4_approx_percentile()?,
@@ -651,7 +652,9 @@ impl BaseFuncDesc {
     #[must_use]
     pub fn get_default_value(&self) -> Datum {
         match self.name.as_str() {
-            names::COUNT | names::BIT_OR | names::BIT_XOR => Datum::new_int(0),
+            names::COUNT | names::MAX_COUNT | names::MIN_COUNT | names::BIT_OR | names::BIT_XOR => {
+                Datum::new_int(0)
+            }
             names::APPROX_COUNT_DISTINCT => {
                 if self.ret_type.code() == FieldTypeCode::String {
                     Datum::Null
@@ -729,6 +732,8 @@ impl BaseFuncDesc {
 /// change the answer.
 pub(super) const NO_NEED_CAST_AGG_FUNCS: &[&str] = &[
     names::COUNT,
+    names::MAX_COUNT,
+    names::MIN_COUNT,
     names::APPROX_COUNT_DISTINCT,
     names::APPROX_PERCENTILE,
     names::MAX,

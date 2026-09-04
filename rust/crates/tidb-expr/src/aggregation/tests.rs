@@ -396,13 +396,133 @@ fn tiflash_refuses_a_duration_argument_and_a_json_sum() {
 
 #[test]
 fn count_returns_a_not_null_bigint() {
-    for name in [names::COUNT, names::APPROX_COUNT_DISTINCT] {
+    for name in [
+        names::COUNT,
+        names::MAX_COUNT,
+        names::MIN_COUNT,
+        names::APPROX_COUNT_DISTINCT,
+    ] {
         let d = desc(name, vec![col(0, FieldTypeCode::Varchar)]);
         assert_eq!(d.ret_type().code(), FieldTypeCode::LongLong);
         assert_eq!(d.ret_type().flen(), 21);
         assert_eq!(d.ret_type().decimal(), 0);
         assert_ne!(d.ret_type().flags() & FieldTypeFlags::NOT_NULL, 0);
         assert_eq!(d.ret_type().charset_name(), "binary");
+    }
+}
+
+// ---------------------------------------------------------------------
+// Go aggregation/aggregation_test.go::TestCheckAggPushDownMaxMinCount and
+// base_func_test.go::TestBaseFunc_InferMaxMinCountRetType.
+// ---------------------------------------------------------------------
+
+#[test]
+fn max_min_count_descriptors_match_count_shape_and_partial_contract() {
+    for name in [names::MAX_COUNT, names::MIN_COUNT] {
+        for code in [FieldTypeCode::Double, FieldTypeCode::Bit] {
+            let d = desc(name, vec![col(0, code)]);
+            assert_eq!(
+                d.ret_type().code(),
+                FieldTypeCode::LongLong,
+                "{name} {code:?}"
+            );
+            assert_eq!(d.ret_type().flen(), 21);
+            assert_eq!(d.ret_type().decimal(), 0);
+            assert_ne!(d.ret_type().flags() & FieldTypeFlags::NOT_NULL, 0);
+            assert_eq!(d.base.get_default_value(), Datum::new_int(0));
+            assert!(need_count(name));
+            assert!(need_value(name));
+
+            let mut nullable = d.clone();
+            nullable
+                .update_not_null_flag_4_ret_type(false, false)
+                .unwrap();
+            assert_ne!(
+                nullable.ret_type().flags() & FieldTypeFlags::NOT_NULL,
+                0,
+                "{name} must stay NOT NULL"
+            );
+        }
+    }
+}
+
+#[test]
+fn max_min_count_pushdown_is_tiflash_only_and_one_stage() {
+    let blacklist = std::collections::HashMap::new();
+    for name in [names::MAX_COUNT, names::MIN_COUNT] {
+        let mut d = desc(name, vec![col(0, FieldTypeCode::LongLong)]);
+        assert!(check_agg_push_down(
+            &d,
+            crate::infer_pushdown::PushDownStore::TiFlash,
+            &blacklist
+        ));
+        assert!(!check_agg_push_down(
+            &d,
+            crate::infer_pushdown::PushDownStore::TiKv,
+            &blacklist
+        ));
+
+        d.mode = AggFunctionMode::Partial1;
+        assert!(check_agg_push_down(
+            &d,
+            crate::infer_pushdown::PushDownStore::TiFlash,
+            &blacklist
+        ));
+        d.mode = AggFunctionMode::Final;
+        assert!(check_agg_push_down(
+            &d,
+            crate::infer_pushdown::PushDownStore::TiFlash,
+            &blacklist
+        ));
+        d.mode = AggFunctionMode::Dedup;
+        assert!(!check_agg_push_down(
+            &d,
+            crate::infer_pushdown::PushDownStore::TiFlash,
+            &blacklist
+        ));
+
+        let mut two_stage = desc(
+            name,
+            vec![
+                col(1, FieldTypeCode::LongLong),
+                col(0, FieldTypeCode::LongLong),
+            ],
+        );
+        two_stage.mode = AggFunctionMode::Final;
+        assert!(!check_agg_push_down(
+            &two_stage,
+            crate::infer_pushdown::PushDownStore::TiFlash,
+            &blacklist
+        ));
+    }
+}
+
+#[test]
+fn max_min_count_split_keeps_the_original_extreme_value_type() {
+    for name in [names::MAX_COUNT, names::MIN_COUNT] {
+        let d = desc(name, vec![col(0, FieldTypeCode::Double)]);
+        let (_, final_desc) = d.split(&[4]);
+        assert_eq!(final_desc.mode, AggFunctionMode::Final);
+        assert_eq!(final_desc.args().len(), 1);
+        assert_eq!(final_desc.args()[0].as_column().unwrap().index, 4);
+        assert_eq!(
+            type_of(&final_desc.args()[0]).code(),
+            FieldTypeCode::Double,
+            "{name} final merge compares the original value type"
+        );
+    }
+}
+
+#[test]
+fn max_min_count_outer_join_null_input_uses_count_default() {
+    let schema = crate::schema::Schema::new(Vec::new());
+    for name in [names::MAX_COUNT, names::MIN_COUNT] {
+        let d = desc(name, vec![int_const(95)]);
+        let (value, can_be_null) = d
+            .eval_null_value_in_outer_join(&NoColumns, &schema)
+            .unwrap();
+        assert_eq!(value, Datum::new_int(1), "{name} follows count semantics");
+        assert!(can_be_null);
     }
 }
 

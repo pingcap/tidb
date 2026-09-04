@@ -35,6 +35,10 @@ pub const FIRST_ROW: &str = "firstrow";
 pub const MAX: &str = "max";
 /// Go `ast.AggFuncMin`.
 pub const MIN: &str = "min";
+/// Go `ast.AggFuncMaxCount`.
+pub const MAX_COUNT: &str = "max_count";
+/// Go `ast.AggFuncMinCount`.
+pub const MIN_COUNT: &str = "min_count";
 /// Go `ast.AggFuncGroupConcat`.
 pub const GROUP_CONCAT: &str = "group_concat";
 /// Go `ast.AggFuncBitOr`.

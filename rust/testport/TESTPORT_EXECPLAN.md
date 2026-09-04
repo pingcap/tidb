@@ -47,6 +47,17 @@ For each bounded behavior cluster:
   positional placeholders preserve key-vector shape while comparison skips
   them. The focused fail-before/pass-after regression and Ready checks are
   recorded in `receipts/executor_root_distsql_indexjoin.md`.
+- 2026-09-05 (`pkg/expression/aggregation` max_count/min_count descriptor):
+  restored Go's aggregate descriptor semantics for the new `MAX_COUNT` and
+  `MIN_COUNT` family. Rust now recognizes both names, infers the count-shaped
+  binary BIGINT return/default metadata, includes them in `NeedCount`/
+  `NeedValue`, applies the one-stage TiFlash-only pushdown gate, preserves the
+  original extreme-value type through `AggFuncDesc::Split`, and returns the
+  count default for outer-join null input. The two former source-carrier gap
+  tests are active and focused descriptor regressions pass. Aggregate evaluator
+  pair state and tipb aggregate conversion remain explicit cross-crate gaps;
+  details and the complete 25-artifact Go inventory are recorded in
+  `receipts/expression_aggregation_audit.md` and `receipts/b066.md`.
 - 2026-09-05 (`pkg/executor/sortexec` output-time TopN spill): restored Go's
   ten-row spill-flag polling while an in-memory TopN emits results. Rust now
   spills only the un-emitted suffix and resumes through the run without

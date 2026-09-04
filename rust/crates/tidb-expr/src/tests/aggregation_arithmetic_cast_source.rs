@@ -25,6 +25,9 @@
 use std::cell::RefCell;
 
 use super::*;
+use crate::aggregation::{names, AggFuncDesc, AggFunctionMode};
+use crate::column::Column;
+use crate::context::NoColumns;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
@@ -453,7 +456,7 @@ fn test_agg_func_sum_int_to_pb() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: agg_to_pb.go (AggFuncToPBExpr) is deliberately unported, and max_count/min_count names are absent from the Rust descriptor's name table"]
+#[ignore = "go-parity-gap: agg_to_pb.go (AggFuncToPBExpr) is deliberately unported; tidb-proto lacks aggregate ExprType members"]
 fn test_agg_func_max_min_count_to_pb() {
     // Go asserts max_count/min_count lower to tipb.ExprType_MaxCount /
     // ExprType_MinCount on TiFlash.
@@ -532,11 +535,33 @@ fn test_distinct() {
 // ---------------------------------------------------------------------
 
 #[test]
-#[ignore = "go-parity-gap: max_count/min_count names, their typeInfer arm and their CheckAggPushDown arms are absent from the Rust aggregation descriptor"]
 fn test_check_agg_push_down_max_min_count() {
-    // CompleteMode max/min-count push to TiFlash but not TiKV;
-    // Partial1Mode/FinalMode push to TiFlash; DedupMode never pushes; a
-    // two-column final-mode form refuses TiFlash.
+    let blacklist = std::collections::HashMap::new();
+    for name in [names::MAX_COUNT, names::MIN_COUNT] {
+        let mut desc = AggFuncDesc::new(
+            &NoColumns,
+            name,
+            vec![Expression::Column(Column::new(0, int_ft()))],
+            false,
+        )
+        .unwrap();
+        assert!(crate::aggregation::check_agg_push_down(
+            &desc,
+            crate::infer_pushdown::PushDownStore::TiFlash,
+            &blacklist
+        ));
+        assert!(!crate::aggregation::check_agg_push_down(
+            &desc,
+            crate::infer_pushdown::PushDownStore::TiKv,
+            &blacklist
+        ));
+        desc.mode = AggFunctionMode::Dedup;
+        assert!(!crate::aggregation::check_agg_push_down(
+            &desc,
+            crate::infer_pushdown::PushDownStore::TiFlash,
+            &blacklist
+        ));
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -544,10 +569,23 @@ fn test_check_agg_push_down_max_min_count() {
 // ---------------------------------------------------------------------
 
 #[test]
-#[ignore = "go-parity-gap: max_count/min_count names and their TypeInfer arm (base_func.go:131) are absent from the Rust aggregation descriptor"]
 fn test_base_func_infer_max_min_count_ret_type() {
-    // For Double and Bit inputs, max_count/min_count infer an exact
-    // flen-21 NOT NULL binary LongLong return type.
+    for input in [C::Double, C::Bit] {
+        for name in [names::MAX_COUNT, names::MIN_COUNT] {
+            let desc = AggFuncDesc::new(
+                &NoColumns,
+                name,
+                vec![Expression::Column(Column::new(0, FieldType::new(input)))],
+                false,
+            )
+            .unwrap();
+            assert_eq!(desc.ret_type().code(), C::LongLong);
+            assert_eq!(desc.ret_type().flen(), 21);
+            assert_eq!(desc.ret_type().decimal(), 0);
+            assert_ne!(desc.ret_type().flags() & FieldTypeFlags::NOT_NULL, 0);
+            assert_eq!(desc.base.get_default_value(), Datum::new_int(0));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
