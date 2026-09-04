@@ -509,6 +509,17 @@ pub(crate) fn eval_func_values(
         let res = crate::cast::to_i64_signed_with_warnings(value, ctx).ok()?;
         return Some(Ok(Datum::UInt(if res < 0 { 0 } else { res as u64 })));
     }
+    // Go `builtinCastDecimalAsRealSig.evalReal`
+    // (`builtin_cast.go:1650-1661`): a DECIMAL source with an in-union
+    // unsigned target clamps a negative to Real(0).
+    if name == "cast_decimal_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let res = crate::cast::to_f64_for_cast(value);
+        return Some(Ok(Datum::Real(if res < 0.0 { 0.0 } else { res })));
+    }
     if name == "cast_real_in_union" {
         // Go `builtinCastRealAsRealSig.evalReal`
         // (`builtin_cast.go:1346-1352`): an in-union unsigned-target cast
@@ -907,6 +918,25 @@ mod tests {
         let ctx = PacketLimit::default();
         let result = eval_func_values("cast_real_in_union", &[Datum::Real(-2.5)], &ctx);
         assert_eq!(result.unwrap().unwrap(), Datum::Real(0.0));
+    }
+
+    /// Go `builtinCastDecimalAsRealSig.evalReal`
+    /// (`builtin_cast.go:1650-1661`): a DECIMAL source with an in-union
+    /// unsigned target clamps a negative to Real(0).
+    #[test]
+    fn cast_decimal_in_union_clamps_negatives_to_zero() {
+        let ctx = PacketLimit::default();
+        let decimal = Datum::Decimal(tidb_datatype::Decimal::from_literal("-2.5"));
+        let result = eval_func_values("cast_decimal_in_union", &[decimal], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Real(0.0));
+    }
+
+    #[test]
+    fn cast_decimal_in_union_keeps_positives() {
+        let ctx = PacketLimit::default();
+        let decimal = Datum::Decimal(tidb_datatype::Decimal::from_literal("2.5"));
+        let result = eval_func_values("cast_decimal_in_union", &[decimal], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Real(2.5));
     }
 
     #[test]

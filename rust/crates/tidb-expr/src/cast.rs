@@ -971,7 +971,7 @@ fn str_to_real_for_cast(v: &Datum, ctx: &dyn crate::Columns) -> Result<f64, Eval
     Ok(converted.value)
 }
 
-fn to_f64_for_cast(v: &Datum) -> f64 {
+pub(crate) fn to_f64_for_cast(v: &Datum) -> f64 {
     match v {
         Datum::Int(i) => *i as f64,
         Datum::UInt(i) => *i as f64,
