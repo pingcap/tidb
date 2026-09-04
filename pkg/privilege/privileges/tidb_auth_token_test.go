@@ -205,12 +205,12 @@ func init() {
 		jwkArray = append(jwkArray, jwk)
 	}
 
+	tempDir, err := os.MkdirTemp("", "tidb-jwks-test")
+	if err != nil {
+		log.Fatal("Fail to create temp dir")
+	}
 	for i := range path {
-		path[i] = fmt.Sprintf("%s%cjwks%d.json", os.TempDir(), os.PathSeparator, i)
-		file, err := os.Create(path[i])
-		if err != nil {
-			log.Fatal("Fail to create temp file")
-		}
+		path[i] = fmt.Sprintf("%s%cjwks%d.json", tempDir, os.PathSeparator, i)
 		jwks := jwkRepo.NewSet()
 		var rawJSON []byte
 		if i == 2 {
@@ -223,10 +223,8 @@ func init() {
 		if rawJSON, err = json.MarshalIndent(jwks, "", "  "); err != nil {
 			log.Fatal("Error when marshaler json")
 		}
-		if n, err := file.Write(rawJSON); err != nil {
+		if err := os.WriteFile(path[i], rawJSON, 0600); err != nil {
 			log.Fatal("Error when writing json")
-		} else if n != len(rawJSON) {
-			log.Fatal("Lack byte when writing json")
 		}
 	}
 }
