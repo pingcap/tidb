@@ -24,10 +24,9 @@
 //! columns), that local indexes stay at 0, that `UPDATE INDEXES` global↔local
 //! flips reset the version, and that truncate/drop/reorganize clean only the
 //! affected partition's global entries. The version constants themselves
-//! (`pkg/meta/model/index.go:54-:68`: LEGACY=0, V1=1, V2=2) are NOT
-//! transcreated — `tidb_model` carries only the raw `global_index_version:
-// u8` field, always 0 (measured) — and a GLOBAL index cannot be created at
-//! all on this tier, so every test here is a `#[ignore]` gap port.
+//! (`pkg/meta/model/index.go:54-:68`: LEGACY=0, V1=1, V2=2) are transcreated
+//! in `tidb-model`; the end-to-end GLOBAL-index lifecycle remains deferred
+//! because a GLOBAL index cannot be created at all on this tier.
 
 use tidb_executor::{run_create_table_on, Catalog};
 
@@ -84,13 +83,11 @@ fn global_index_version_v1_is_the_default_for_new_global_indexes() {
 /// Go `global_index_version_test.go:266::TestGlobalIndexVersionConstants`:
 /// `model.GlobalIndexVersionLegacy == 0`, `GlobalIndexVersionV1 == 1`,
 /// `GlobalIndexVersionV2 == 2` (`pkg/meta/model/index.go:54-:68`).
-// go-parity-gap: the constants are not transcreated; tidb-model carries
-// only `IndexInfo::global_index_version: u8` with no named levels, so there
-// is no symbol to assert on.
 #[test]
-#[ignore]
 fn global_index_version_constants_are_numbered_legacy_v1_v2() {
-    // Nothing to reference on this tier: no constant exists.
+    assert_eq!(tidb_model::index::GLOBAL_INDEX_VERSION_LEGACY, 0);
+    assert_eq!(tidb_model::index::GLOBAL_INDEX_VERSION_V1, 1);
+    assert_eq!(tidb_model::index::GLOBAL_INDEX_VERSION_V2, 2);
 }
 
 /// Go `global_index_version_test.go:276::TestGlobalIndexTruncateAndDropPartition`:
