@@ -319,3 +319,4 @@
 - hook 审计第二片: tidb_read_consistency 白名单(strict/weak 大小写不敏感, 其余 ErrWrongTypeForVar 1232, Go session.go:702)落地 run_validation + read_consistency_whitelist 回归。session lib 1260 通过/279 预存失败(噪声内), fmt/clippy/diff-check/make lint PASS。
 - hook 覆盖状态: 75 个 Validation 条目中 validate_password 簇(5)+read_consistency 已移植; 32 个名字在 Rust 校验代码已有分派; 余 ~43 个名字全树有出现但多为常量/读侧引用, SET 校验臂的逐个对照仍开放(已提取 mpp_version/mpp_dml_type 等部分钩子体: dml_type 非 next-gen 下无白名单=无需移植)。
 - 下轮恢复点: (1) 余下白名单臂逐个落地(mpp_version 动态版本集/mpp_exchange_compression_mode/runtime_filter_type|mode/tiflash_hashagg_preaggregation_mode/collation_database/character_set_database/init_connect SQL 解析校验); (2) F2/F3-seam live 阻塞。
+- database charset/collation 批: collation_database 并入 checkCollation 臂; character_set_database 新臂(空值 1231/未知 1115/存规范名, Go varsutil.go:76)。session lib 1265 通过/280 预存, fmt/clippy/diff-check/make lint PASS。

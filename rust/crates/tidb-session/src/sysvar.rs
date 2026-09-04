@@ -597,7 +597,10 @@ impl SysVarDef {
         // spelling, and returns `ErrUnknownCollation` (1273) for a missing
         // entry.  The registry lookup is case-insensitive and also knows the
         // UTF8MB3 aliases, matching `collate.GetCollationByName`.
-        if self.name == "collation_server" {
+        // Go routes both `collation_server` and `collation_database` through
+        // `checkCollation` (`varsutil.go:57`): resolve the name case-insensitively,
+        // store the canonical spelling, refuse a miss with 1273.
+        if matches!(self.name, "collation_server" | "collation_database") {
             let collation =
                 tidb_datatype::get_collation_by_name(&validated.value).map_err(|_| {
                     ValidationError::SqlError(SqlError::new(
@@ -834,6 +837,25 @@ impl SysVarDef {
                 }
             }
             return Ok(validated);
+        }
+        // Go's `checkCharacterSet` (`varsutil.go:76`): an empty value is
+        // `ErrWrongValueForVar` (1231) with NULL, an unknown name is
+        // `ErrUnknownCharacterSet` (1115), and a hit stores the canonical
+        // charset name.
+        if self.name == "character_set_database" {
+            if validated.value.is_empty() {
+                return Err(ValidationError::WrongValue);
+            }
+            let charset = tidb_datatype::Charset::from_name(&validated.value).ok_or_else(|| {
+                ValidationError::SqlError(SqlError::new(
+                    tidb_error::mysql::errcode::ErrUnknownCharacterSet,
+                    &[FormatArg::from(original)],
+                ))
+            })?;
+            return Ok(Validated {
+                value: charset.name().to_owned(),
+                truncated: validated.truncated,
+            });
         }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
@@ -1463,4 +1485,29 @@ mod tests {
         assert_eq!(get_sys_var("max_allowed_packet").unwrap().value, "67108864");
         assert!(get_sys_var("version").unwrap().value.starts_with("8.0.11"));
     }
+}
+
+/// Go routes `character_set_database` and `collation_database` through
+/// `checkCharacterSet` (`varsutil.go:76`) and `checkCollation`
+/// (`varsutil.go:57`): canonical-name resolution with 1115/1273 refusals,
+/// and the empty charset value is `ErrWrongValueForVar` (1231).
+#[test]
+fn database_charset_and_collation_set_validation_matches_go() {
+    let cs = get_sys_var("character_set_database").unwrap();
+    assert_eq!(cs.validate("UTF8MB4").unwrap().value, "utf8mb4");
+    assert!(matches!(
+        cs.validate("bogus_charset"),
+        Err(ValidationError::SqlError(_))
+    ));
+    assert_eq!(cs.validate(""), Err(ValidationError::WrongValue));
+
+    let coll = get_sys_var("collation_database").unwrap();
+    assert_eq!(
+        coll.validate("UTF8MB4_GENERAL_CI").unwrap().value,
+        "utf8mb4_general_ci"
+    );
+    assert!(matches!(
+        coll.validate("bogus_collation"),
+        Err(ValidationError::SqlError(_))
+    ));
 }
