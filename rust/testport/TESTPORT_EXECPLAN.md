@@ -130,6 +130,15 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   passed. Receipt: `receipts/parser_instance_scope_prefix.md`; finding #12
   closed in `rust/docs/parser-lexer-divergence.md`.
 
+- 2026-09-04 (`pkg/types` DATETIME maximum precision, finding T13):
+  aligned `tidb-datatype::Time::validate` with Go's complete
+  `checkDateRange` ceiling. The exact `9999-12-31 23:59:59.999999` value is
+  accepted, while a synthetic packed microsecond above `999999` at that exact
+  second is rejected; earlier dates retain Go's lexicographic acceptance. The
+  complete 60-artifact `pkg/types` / 104-artifact `tidb-datatype` inventory,
+  focused regression, serialized owner profile, and Ready results are in
+  `receipts/types_time_validate_max_datetime.md`.
+
 - 2026-09-04: aligned Rust `tidb-datatype` `JSON_MERGE_PRESERVE` with Go's
   adjacent-object grouping from the complete `pkg/types` JSON inventory.
   `merge_binary_nodes` now groups object runs, recursively merges duplicate
@@ -6712,6 +6721,13 @@ The `pkg/util/dbterror` precedence batch is bounded and executable:
 the parser/MySQL catalogue as fallback. The focused placeholder/message
 regressions and all-target owner profile pass; details are in
 `receipts/dbterror_registered_std_precedence.md`.
+
+The DATETIME maximum-precision batch is bounded and executable:
+`Time::validate` now rejects a packed microsecond above `999999` only at Go's
+`MaxDatetime` ceiling while preserving earlier-date ordering. Its focused
+regression and complete datatype owner profile are recorded in
+`receipts/types_time_validate_max_datetime.md`; the analogous TIMESTAMP
+ceiling and other temporal context boundaries remain open.
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state

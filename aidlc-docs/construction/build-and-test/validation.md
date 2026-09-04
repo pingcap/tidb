@@ -67,3 +67,13 @@ Owner compilation, formatting, whitespace, and strict clippy all passed for
 the crate. The TiDB/`errno` catalogue is now preferred for overlapping codes,
 matching Go's `ErrClass.NewStd`; full details are in
 `rust/testport/receipts/dbterror_registered_std_precedence.md`.
+
+## `pkg/types` DATETIME maximum-precision batch
+
+The focused maximum-bound regression and serialized `tidb-datatype` owner
+profile passed. `Time::validate` now rejects only the exact Go
+`MaxDatetime`-ceiling precision escape; owner compilation, formatting, and
+whitespace checks passed. Strict clippy remains blocked by the unrelated
+`tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics. Full
+commands and remaining temporal boundaries are recorded in
+`rust/testport/receipts/types_time_validate_max_datetime.md`.

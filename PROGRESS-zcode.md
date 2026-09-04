@@ -44,3 +44,11 @@
   regressions; the complete owner inventory and Ready profile are recorded in
   `rust/testport/receipts/dbterror_registered_std_precedence.md`; pushed as
   commit `3c1119e3b6` to `hparser-integration`.
+
+- 2026-09-04: aligned the Rust `tidb-datatype` DATETIME validation ceiling
+  with Go's complete `checkDateRange` comparison. The exact
+  `9999-12-31 23:59:59.999999` maximum remains valid, while a packed
+  microsecond above `999999` at that exact second is rejected and earlier dates
+  retain Go's ordering. The complete owner inventory, focused regression, and
+  Ready profile are recorded in
+  `rust/testport/receipts/types_time_validate_max_datetime.md`.

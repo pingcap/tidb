@@ -689,6 +689,23 @@ impl Time {
         if day > maximum_day {
             return Err(TimeError::InvalidDate);
         }
+        // Go's `checkDateRange` compares the complete CoreTime against
+        // `MaxDatetime` (`9999-12-31 23:59:59.999999`), not just the year and
+        // month fields.  The packed microsecond field can represent values
+        // through 1,048,575, so the exact upper-bound second needs the same
+        // final precision check.  Earlier dates remain valid even when their
+        // synthetic microsecond field is above one million, matching Go's
+        // lexicographic `compareTime` ordering.
+        if year == 9999
+            && month == 12
+            && day == 31
+            && self.core.hour() == 23
+            && self.core.minute() == 59
+            && self.core.second() == 59
+            && self.core.microsecond() > 999_999
+        {
+            return Err(TimeError::InvalidDate);
+        }
         self.validate_clock()
     }
 
@@ -1754,6 +1771,39 @@ mod tests {
             Err(TimeError::ZeroInDate)
         );
         assert!(zero_in_date.validate(true, false, &chrono_tz::UTC).is_ok());
+    }
+
+    /// Go `checkDateRange` rejects only a DATETIME beyond `MaxDatetime`.
+    /// Earlier dates still compare below the ceiling even with a synthetic
+    /// packed microsecond value above one million.
+    #[test]
+    fn test_validate_datetime_max_precision_boundary() {
+        let at_max = Time::new(
+            CoreTime::from_date(9999, 12, 31, 23, 59, 59, 999_999),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert!(at_max.validate(false, false, &chrono_tz::UTC).is_ok());
+
+        let beyond_max = Time::new(
+            CoreTime::from_date(9999, 12, 31, 23, 59, 59, 1_000_000),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert_eq!(
+            beyond_max.validate(false, false, &chrono_tz::UTC),
+            Err(TimeError::InvalidDate)
+        );
+
+        let earlier_date = Time::new(
+            CoreTime::from_date(2020, 1, 1, 0, 0, 0, 1_000_000),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert!(earlier_date.validate(false, false, &chrono_tz::UTC).is_ok());
     }
 
     /// Complete translation of `pkg/types/time_test.go::TestCheckTimestamp`.

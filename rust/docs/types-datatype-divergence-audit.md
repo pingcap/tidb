@@ -482,13 +482,22 @@ Distinguishing input: `sql_mode='ALLOW_INVALID_DATES'`,
 `ParseTimeFromFloatString('20200231', DATETIME, 0)` → Go `2020-02-31`, Rust
 `Err(InvalidDate)`.
 
-## T13–T16 (rank 4 / structural)
+## T13 (rank 3) — DATETIME maximum precision now follows `MaxDatetime` (FIXED 2026-09-04)
 
-- **T13** `Time::validate` (`mysql_time.rs:646-648`) replaces Go's
-  `compareTime(t, MaxDatetime) > 0` (`time.go:2167-2177`) with
-  `year > 9999 || month > 12`, so a microsecond in `1_000_000..1_048_575`
-  escapes: `from_date_checked(9999,12,31,23,59,59,1_000_000)` → Go
-  `ErrWrongValue`, Rust `Ok`.
+Go's `checkDateRange` compares the complete `CoreTime` against
+`MaxDatetime = 9999-12-31 23:59:59.999999`. Rust's packed microsecond field is
+20 bits wide, so values from `1_000_000` through `1_048_575` can be constructed
+synthetically. `Time::validate` now rejects those values only at the exact
+`9999-12-31 23:59:59` ceiling while preserving Go's lexicographic acceptance
+of earlier dates. The regression is
+`mysql_time::tests::test_validate_datetime_max_precision_boundary`; the full
+inventory and Ready results are in
+`rust/testport/receipts/types_time_validate_max_datetime.md`.
+
+The TIMESTAMP ceiling and the other structural rows below remain separate.
+
+## T14–T16 (rank 4 / structural)
+
 - **T14** Go's DST-adjusted `Convert` returns `Time{FromGoTime(tAdj)}`
   (`time.go:467`), whose low 4 bits are zero, so the result's type reverts to
   DATETIME and fsp to 0. Rust `convert_kind` (`mysql_time.rs:355-362`) keeps
