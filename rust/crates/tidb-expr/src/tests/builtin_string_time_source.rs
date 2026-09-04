@@ -1759,13 +1759,110 @@ fn test_date_delimiter_table() {
 }
 
 /// Go's TestDate zero-value half rides the statement's IgnoreZeroInDate flag;
-/// this batch pins those mode-dependent rows through an explicit SQL-mode ctx
-/// where the value tier exposes them. Rows with month/day zero KEEP zero only
-/// when no_zero_date is off — recorded here as gap since the seed context has
-/// no knob that leaves KindMysqlTime observable.
+/// this batch pins those mode-dependent rows through an explicit SQL-mode ctx.
 #[test]
-#[ignore = "go-parity-gap: DATE()'s zero-date SQL-mode arms (IgnoreZeroInDate / NoZeroDate) need statement-flag plumbing this evaluator does not expose"]
-fn test_date_zero_value_mode_rows() {}
+fn test_date_zero_value_mode_rows() {
+    struct DateModeCtx {
+        modes: tidb_datatype::DateModes,
+        warnings: RefCell<Vec<(u16, String)>>,
+    }
+
+    impl Columns for DateModeCtx {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn date_modes(&self) -> tidb_datatype::DateModes {
+            self.modes
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    let relaxed = DateModeCtx {
+        modes: tidb_datatype::DateModes {
+            no_zero_date: false,
+            no_zero_in_date: false,
+            allow_invalid_dates: false,
+        },
+        warnings: RefCell::new(Vec::new()),
+    };
+    let no_zero_date = DateModeCtx {
+        modes: tidb_datatype::DateModes {
+            no_zero_date: true,
+            no_zero_in_date: false,
+            allow_invalid_dates: false,
+        },
+        warnings: RefCell::new(Vec::new()),
+    };
+    let no_zero_in_date = DateModeCtx {
+        modes: tidb_datatype::DateModes {
+            no_zero_date: false,
+            no_zero_in_date: true,
+            allow_invalid_dates: false,
+        },
+        warnings: RefCell::new(Vec::new()),
+    };
+
+    // Go's IgnoreZeroInDate arm preserves zero calendar fields through DATE.
+    for input in [
+        "0000-00-00",
+        "0000-00-00 00:00:00",
+        "2007-00-03",
+        "2007-02-00",
+    ] {
+        assert_eq!(
+            chunk_e_with(&format!("date('{input}')"), &relaxed),
+            format!(
+                "STR:{}",
+                if input.len() > 10 {
+                    &input[..10]
+                } else {
+                    input
+                }
+            ),
+            "DATE({input:?}) with zero-date modes disabled"
+        );
+    }
+
+    // NO_ZERO_DATE rejects the all-zero date.
+    for input in ["0000-00-00", "0000-00-00 00:00:00"] {
+        assert_eq!(
+            chunk_e_with(&format!("date('{input}')"), &no_zero_date),
+            "NULL",
+            "DATE({input:?}) with zero-date modes enabled"
+        );
+    }
+    // NO_ZERO_IN_DATE rejects otherwise valid dates carrying a zero month or
+    // day, while the all-zero date is governed by NO_ZERO_DATE above.
+    for input in ["2007-00-03", "2007-02-00"] {
+        assert_eq!(
+            chunk_e_with(&format!("date('{input}')"), &no_zero_in_date),
+            "NULL",
+            "DATE({input:?}) with no-zero-in-date enabled"
+        );
+    }
+    assert!(
+        no_zero_date
+            .warnings
+            .borrow()
+            .iter()
+            .all(|(code, _)| *code == 1292),
+        "NO_ZERO_DATE should report temporal truncation as warning"
+    );
+    assert_eq!(no_zero_date.warnings.borrow().len(), 2);
+    assert!(
+        no_zero_in_date
+            .warnings
+            .borrow()
+            .iter()
+            .all(|(code, _)| *code == 1292),
+        "NO_ZERO_IN_DATE should report temporal truncation as warning"
+    );
+    assert_eq!(no_zero_in_date.warnings.borrow().len(), 2);
+}
 
 /// Go `pkg/expression/builtin_time_test.go:650 TestClock`. HOUR, MINUTE,
 /// SECOND, MICROSECOND and TIME over fractional durations plus a datetime

@@ -1243,6 +1243,61 @@ git diff --check
 # both passed
 ```
 
+## Rust-only parity follow-up: DATE zero-date SQL modes
+
+Go's `TestDate` (`pkg/expression/builtin_time_test.go:214-370`) evaluates
+zero-date component rows after mutating the statement SQL mode: deleting
+`NO_ZERO_DATE` preserves all-zero calendar fields for the component family,
+while `NO_ZERO_DATE` makes an all-zero value NULL. The DATE signature itself
+(`pkg/expression/builtin_time.go:302-320`) additionally rejects partial zero
+dates when `NO_ZERO_IN_DATE` is present and routes the rejection through
+`HandleTruncate` (1292).
+
+Rust already carries the same three mode bits through `Columns::date_modes()`.
+The formerly ignored source-derived test now evaluates the live `DATE()` cast
+with separate relaxed, `NO_ZERO_DATE`, and `NO_ZERO_IN_DATE` contexts. It
+asserts that disabled modes preserve `0000-00-00`, `2007-00-03`, and
+`2007-02-00`, and that each enabled mode returns SQL NULL while publishing
+Go's 1292 warning. No cache-only or direct-signature shortcut is involved.
+
+Focused validation:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib test_date_zero_value_mode_rows -- --nocapture
+# passed: 1 test (relaxed, NO_ZERO_DATE, and NO_ZERO_IN_DATE DATE() rows)
+```
+
+Ready validation for this batch:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,162 passed, 1 known loopback HTTP JSON-schema fixture failed, 114 ignored
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,058 passed, 121 existing planner/storage/fixture failures, 0 ignored
+
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

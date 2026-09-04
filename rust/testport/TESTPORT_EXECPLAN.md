@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` DATE zero-date SQL modes): activated the Go-derived
+  zero-date rows through explicit `NO_ZERO_DATE` and `NO_ZERO_IN_DATE`
+  statement contexts. The live `DATE()` cast now has regression coverage for
+  preserving zero components when the modes are disabled, returning SQL NULL
+  with Go's 1292 warning when each mode rejects its corresponding shape.
+  Focused and Ready evidence is recorded in
+  `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (`tidb-expr` TO_BASE64 session charset): activated the Go-derived
   GBK connection-charset rows. A connection-aware resolver now stamps string
   literals with the session charset, allowing the ordinary `to_binary` boundary

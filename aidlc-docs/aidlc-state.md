@@ -2,14 +2,14 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `tidb-expr` TO_BASE64 session-charset parity batch
+- Work unit: `tidb-expr` DATE zero-date SQL-mode parity batch
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: focused GBK session-charset TO_BASE64 regression passes.
+- Validation: focused DATE zero-date SQL-mode regression passes.
   Ready reports 409 datatype unit and 64 source/integration passes; expression
-  reports 1,161 passes, one known loopback HTTP JSON-schema fixture failure,
-  and 115 ignored; executor reports 1,058 passes and 121 existing
+  reports 1,162 passes, one known loopback HTTP JSON-schema fixture failure,
+  and 114 ignored; executor reports 1,058 passes and 121 existing
   planner/storage/fixture failures. All three owner checks plus formatting and diff checks
   pass. Strict datatype clippy remains blocked only by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
@@ -128,10 +128,15 @@
   `HandleBinaryLiteral`/`from_binary` path, preserving the valid decoded prefix
   and publishing warning 3854 for invalid octets. Focused evidence is in
   `rust/testport/receipts/types_explain_format_audit.md`.
-- Current batch: Rust TO_BASE64 connection-aware rewriting now stamps literals
+- Prior batch: Rust TO_BASE64 connection-aware rewriting now stamps literals
   with the session charset, so GBK strings pass through the existing `to_binary`
   boundary before encoding. Focused evidence is in
   `rust/testport/receipts/types_explain_format_audit.md`.
-- Next action: run the Ready profile, commit and push this TO_BASE64 batch, then
-  continue with the next executable Rust package boundary. Direct
+- Current batch: Rust `DATE()` now has executable Go-derived zero-date SQL-mode
+  coverage through explicit `NO_ZERO_DATE` and `NO_ZERO_IN_DATE` contexts. The
+  existing `Columns::date_modes()`/`time_fn::date` path preserves zero fields
+  when disabled and returns NULL plus warning 1292 when enabled. Focused and
+  Ready evidence is in `rust/testport/receipts/types_explain_format_audit.md`.
+- Next action: run the final Ready profile, commit and push this DATE batch,
+  then continue with the next executable Rust package boundary. Direct
   datatype comparison warning publication remains a bounded API follow-up.
