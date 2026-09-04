@@ -520,6 +520,20 @@ pub(crate) fn eval_func_values(
         let res = crate::cast::to_f64_for_cast(value);
         return Some(Ok(Datum::Real(if res < 0.0 { 0.0 } else { res })));
     }
+    // Go `castAsRealToIntSig.evalReal` (`builtin_cast.go:1370-1380`): a
+    // real source with an in-union unsigned int target CLAMPS a negative
+    // to 0 instead of the unsigned wrap.
+    if name == "cast_real_int_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let f = match value {
+            Datum::Real(x) => *x,
+            other => crate::cast::to_f64_for_cast(other),
+        };
+        return Some(Ok(Datum::Int(if f < 0.0 { 0 } else { f as i64 })));
+    }
     if name == "cast_real_in_union" {
         // Go `builtinCastRealAsRealSig.evalReal`
         // (`builtin_cast.go:1346-1352`): an in-union unsigned-target cast
@@ -1022,5 +1036,26 @@ mod tests {
                 "Result of insert() was larger than max_allowed_packet (3) - truncated".to_owned(),
             )]
         );
+    }
+}
+
+#[cfg(test)]
+mod cast_real_int_in_union_tests {
+    use super::*;
+
+    /// Go `castAsRealToIntSig` (`builtin_cast.go:1370-1380`): a real source
+    /// with an in-union unsigned int target clamps a negative to 0.
+    #[test]
+    fn cast_real_int_in_union_clamps_negatives_to_zero() {
+        let ctx = crate::context::NoColumns;
+        let result = eval_func_values("cast_real_int_in_union", &[Datum::Real(-2.5)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Int(0));
+    }
+
+    #[test]
+    fn cast_real_int_in_union_keeps_non_negatives() {
+        let ctx = crate::context::NoColumns;
+        let result = eval_func_values("cast_real_int_in_union", &[Datum::Real(7.5)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::Int(7));
     }
 }
