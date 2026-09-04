@@ -401,15 +401,21 @@ Distinguishing inputs:
 - `'2017-00-05 23:59:59.9999999'` fsp 6 → Go `ErrWrongValue`; Rust returns a
   value (a 2016-12 date out of `calc_daynr`).
 
-## T6 (rank 1) — `Duration.RoundFrac` halfway direction is wrong for negatives
+## T6 (rank 1) — `Duration.RoundFrac` halfway direction is wrong for negatives (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:1536-1555` rounds through `gotime.Time.Round`, whose
   documented halfway rule is round **up** (toward +∞), not away from zero.
-- Rust: `rust/crates/tidb-datatype/src/duration.rs:912-931` —
-  `if value >= 0 {(v+half)/unit} else {(v-half)/unit}`, away from zero.
+- Rust: `rust/crates/tidb-datatype/src/duration.rs:912-947` now uses
+  sign-aware nearest-value arithmetic: non-halfway values past the midpoint
+  round away from zero, while an exact negative tie rounds toward zero. The
+  focused source-derived regression is
+  `duration_tests::round_duration_fsp_matches_source_round_rows`; the complete
+  owner profile and validation evidence are in
+  `rust/testport/receipts/types_duration_round_ties.md`.
 
 Distinguishing input: `TIME '-00:00:00.0015'` (nanoseconds `-1_500_000`),
-fsp 6 → 3 → Go `-00:00:00.001`, Rust `-00:00:00.002`.
+fsp 6 → 3 → Go and Rust `-00:00:00.001`. A value past the tie,
+`-1_501_000ns`, rounds to `-2ms` on both sides.
 
 ## T7 (rank 2) — no `ErrTimestampInDSTTransition` path in the string parser
 

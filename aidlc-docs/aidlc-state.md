@@ -2,7 +2,7 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` raw `ToPackedUint` parity batch
+- Work unit: `pkg/types` duration rounding parity batch (finding T6)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
@@ -35,4 +35,11 @@
   bit-pack and accepts synthetic fields without revalidation. Focused and
   serialized owner results are recorded in
   `rust/testport/receipts/types_time_packed_raw.md`.
+- Current batch: Rust `round_duration_fsp` now mirrors Go's
+  `Duration.RoundFrac`/`time.Time.Round` tie direction. Exact negative
+  half-way values round toward zero, while values past the midpoint round away
+  from zero. Focused regressions and the serialized `tidb-datatype` owner
+  profile pass; strict clippy remains blocked by the unrelated
+  `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics. Receipt:
+  `rust/testport/receipts/types_duration_round_ties.md`.
 - Next action: continue with the next executable package boundary.

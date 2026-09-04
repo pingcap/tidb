@@ -172,6 +172,14 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   bits as Go. The focused regression, complete temporal inventory, and Ready
   results are recorded in `receipts/types_time_packed_raw.md`.
 
+- 2026-09-04 (`pkg/types` duration rounding, finding T6): aligned
+  `round_duration_fsp` with Go's `Duration.RoundFrac` delegation to
+  `time.Time.Round`. Rust now rounds nearest values with exact negative ties
+  toward positive infinity (toward zero), while values past the midpoint still
+  round away from zero. The focused exact-tie/past-tie regression, complete
+  temporal inventory, and Ready results are recorded in
+  `receipts/types_duration_round_ties.md`.
+
 - 2026-09-04 (`pkg/expression` decimal `DIV`, findings A/B): aligned the Rust
   decimal `IntDiv` value path with Go's post-`DecimalDiv` `ToInt`/`ToUint`
   conversion. `Decimal::div_rem_unbounded` preserves quotients above

@@ -100,3 +100,14 @@ blocked by the unrelated `tidb-mysql/src/consts.rs:117-120`
 `map-or-identity` diagnostics and generated workspace diagnostics. Full
 commands and remaining temporal boundaries are recorded in
 `rust/testport/receipts/types_time_packed_raw.md`.
+
+## `pkg/types` duration `RoundFrac` tie-direction batch
+
+The focused exact-negative-tie and past-tie regressions passed, as did the
+existing duration-method and temporal codec regressions. The serialized
+`tidb-datatype` owner profile passed with 392 unit tests and 63 generated/source
+integration tests; benchmark targets compiled. Owner compilation, formatting,
+and whitespace checks passed. Strict clippy remains blocked by the unrelated
+`tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics. Full commands,
+inventory, and remaining temporal boundaries are recorded in
+`rust/testport/receipts/types_duration_round_ties.md`.

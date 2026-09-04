@@ -1025,7 +1025,8 @@ fn format_duration(seconds: f64, fsp: usize) -> String {
     // Go reaches this text through `fmt.Sprintf("%v", second)` followed by
     // `ParseDuration`, whose fraction rounding works on the DECIMAL DIGITS
     // and carries half-up at the requested precision
-    // (`Duration.RoundFrac`: Go's time.Round is half-away-from-zero).
+    // (`Duration.RoundFrac`: Go's time.Round rounds nearest values and sends
+    // exact ties toward positive infinity).
     // Doing the arithmetic in f64 first re-derives 30.0000005 as
     // ...4999996µs and loses the digit -- so round off the SHORTEST decimal
     // rendering instead.

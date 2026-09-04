@@ -69,6 +69,13 @@
   packed bits instead of a Rust-only range error; strict validation remains
   on parse/conversion paths. Focused codec regressions and the complete owner
   profile are recorded in `rust/testport/receipts/types_time_packed_raw.md`.
+
+- 2026-09-04: aligned `tidb-datatype::round_duration_fsp` with Go's
+  `Duration.RoundFrac`/`time.Time.Round` behavior. Exact negative half-way
+  values now round toward zero (positive infinity), while values past the
+  midpoint still round away from zero. Focused tie regressions and the complete
+  owner profile are recorded in
+  `rust/testport/receipts/types_duration_round_ties.md`.
 ## chunk A-1 范围确认（下批实现）
 
 现场：column.rs:430-450 解码路径 `MyDecimal::from_raw_bytes(raw)` → `to_string_bytes()` 文本 → `Decimal::parse_mysql(&text)`。忠实修复 = tidb-datatype 提供 MyDecimal→Decimal 直接转换（绕过文本往返），替换二次解析。前置：读两型结构（mydecimal.rs 的 words/digits 表示 vs decimal/mod.rs 的表示）决定转换实现面。回归：预置 Go FromBin 字节向量往返钉住。
