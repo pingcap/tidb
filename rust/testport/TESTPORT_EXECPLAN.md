@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor/sortexec` parallel worker cancellation polling):
+  aligned Rust's persistent parallel sort workers with Go's SQL-killer
+  checkpoints. Worker batch comparators now poll the statement killer every
+  20,000 comparisons, and local K-way merges poll every 100 emitted rows; the
+  two focused fail-before/pass-after regressions, existing parallel-sort tests,
+  and Ready checks are recorded in
+  `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-05 (`pkg/executor/sortexec` TopN spill cancellation polling): aligned
   `SpilledRun::write` with Go's `topNSpillHelper.spillHeap` SQL-killer polling.
   The Rust writer now checks the statement killer every 100 original heap

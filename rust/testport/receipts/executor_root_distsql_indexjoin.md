@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the eleven focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the twelve focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -548,3 +548,42 @@ that minimum compiler; the default Rust 1.95 invocation was rejected before
 compilation. The full executor suite, cancellation stress with concurrent
 workers, spill integration under live TiKV, and native TiKV behavior were not
 run.
+
+## Parallel sort worker cancellation polling alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this twelfth
+Rust-only fix. Go's `parallelSortWorker.keyColumnsLess` checks the SQL killer
+after every 20,000 row comparisons, while
+`multiWayMergeLocalSortedRows` checks it every 100 emitted rows. Rust's
+parallel worker now carries the statement memory handle through local batch
+sorting and in-memory K-way merging. Its comparator checkpoint records the
+first cancellation error while allowing the standard sort operation to unwind,
+and its merge loop checks before emitting each 100-row boundary. Serial sort
+paths retain their existing behavior because Go applies these checkpoints only
+to parallel workers.
+
+The focused regressions are
+`sort::tests::parallel_worker_honors_query_kill_during_batch_sort` and
+`sort::tests::parallel_worker_honors_query_kill_during_local_merge`. Before
+the production changes, the batch-sort test returned `Ok([...])` despite a
+pending query kill, and the local-merge test likewise returned a complete
+`Ok([...])` result. After the changes both tests return
+`ExecError::Killed`. Rust ownership remains within `sort.rs` and
+`sort_partition.rs`; no Go, Bazel, generated, fixture, or platform artifact
+changed.
+
+## Parallel sort worker cancellation polling Ready validation
+
+- Pre-fix `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib sort::tests::parallel_worker_honors_query_kill_during_local_merge -- --exact --nocapture` failed with `a killed worker merge must return an executor cancellation error: Ok([...])`.
+- Pre-fix `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib sort::tests::parallel_worker_honors_query_kill_during_batch_sort -- --exact --nocapture` failed with `a killed worker batch sort must return an executor cancellation error: Ok([...])`.
+- Post-fix focused cancellation tests passed with the temporary host-only vendored-OpenSSL feature toggle; the manifest was reverted immediately after the run.
+- Existing parallel-sort regressions passed: `parallel_worker_merges_multiple_batches_without_copying_chunks`, `parallel_sort_workers_share_input_and_heap_merge_their_runs`, and `parallel_sort_spills_worker_rounds_and_final_batches`.
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --all-targets` passed with the same temporary vendored-OpenSSL toggle; the manifest was reverted immediately after the run.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The full executor suite, concurrent cancellation stress across all worker
+lanes, spill integration under live TiKV, and native TiKV behavior were not
+run. The default Rust 1.95 toolchain remains below the workspace's Rust 1.97
+minimum; the pinned nightly toolchain was used for the Ready checks.

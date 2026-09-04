@@ -50,12 +50,16 @@ use tidb_util::memory::{
 use tidb_util::spill_storage::SpillStorage;
 
 use crate::executor::ExecError;
+use crate::mem_quota::StatementMemory;
 use crate::sort::{compare_rows, eval_sort_key, SortByItem};
 use tidb_chunk::compare::ColumnCompareFunc;
 use tidb_chunk::ColumnRead;
 
 /// Go `spillChunkSize`: rows per chunk written to the spill file.
 pub const SPILL_CHUNK_SIZE: usize = 1024;
+/// Go `SignalCheckpointForSort`: comparator calls between SQL-killer polls in
+/// a parallel worker.
+const SIGNAL_CHECKPOINT_FOR_SORT: u64 = 20_000;
 
 /// Go `sortPartitionSpillDiskAction`: the `ActionOnExceed` a spilling sort
 /// registers on the session tracker.
@@ -264,6 +268,29 @@ impl SortPartition {
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
     ) -> Result<(), ExecError> {
+        self.sort_impl(by_items, compare_funcs, ctx, None)
+    }
+
+    /// Parallel-worker variant of [`Self::sort`] that mirrors Go's
+    /// `parallelSortWorker.keyColumnsLess` signal checkpoint while the sort
+    /// comparator is running.
+    pub(crate) fn sort_with_memory<C: Columns>(
+        &mut self,
+        by_items: &[SortByItem],
+        compare_funcs: &[Option<ColumnCompareFunc>],
+        ctx: &C,
+        memory: &StatementMemory,
+    ) -> Result<(), ExecError> {
+        self.sort_impl(by_items, compare_funcs, ctx, Some(memory))
+    }
+
+    fn sort_impl<C: Columns>(
+        &mut self,
+        by_items: &[SortByItem],
+        compare_funcs: &[Option<ColumnCompareFunc>],
+        ctx: &C,
+        memory: Option<&StatementMemory>,
+    ) -> Result<(), ExecError> {
         if self.sorted {
             return Ok(());
         }
@@ -285,8 +312,21 @@ impl SortPartition {
             })
             .collect();
         let mut sort_err: Option<ExecError> = None;
+        let mut compare_count = 0u64;
         self.rows
             .sort_unstable_by(|&(left_chunk, left_row), &(right_chunk, right_row)| {
+                if let Some(memory) = memory {
+                    if compare_count >= SIGNAL_CHECKPOINT_FOR_SORT {
+                        if let Err(error) = memory.check() {
+                            if sort_err.is_none() {
+                                sort_err = Some(error);
+                            }
+                            return Ordering::Equal;
+                        }
+                        compare_count = 0;
+                    }
+                    compare_count += 1;
+                }
                 let result = (|| {
                     for (index, item) in by_items.iter().enumerate() {
                         let ordering = match (&compare_funcs[index], &column_views[index]) {
@@ -363,6 +403,7 @@ impl SortPartition {
         by_items: &[SortByItem],
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
+        memory: &StatementMemory,
     ) -> Result<Option<Self>, ExecError> {
         if partitions.is_empty() {
             return Ok(None);
@@ -424,7 +465,16 @@ impl SortPartition {
                 .map(|partition| partition.rows.len())
                 .sum(),
         );
+        let mut loop_count = 0usize;
         while !heads.is_empty() {
+            // Go's `parallelSortWorker.multiWayMergeLocalSortedRows` polls
+            // `SQLKiller.HandleSignal` every 100 emitted rows. Check before
+            // producing the corresponding row so a pending cancellation
+            // cannot be hidden by a completed local merge.
+            if loop_count % 100 == 0 {
+                memory.check()?;
+            }
+            loop_count += 1;
             let head = heads[0];
             order.push((head.partition_id, head.row));
             let next_row = head.row + 1;

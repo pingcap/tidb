@@ -79,6 +79,7 @@ struct ParallelSortWorker<C: Columns> {
     by_items: Vec<SortByItem>,
     compare_funcs: Vec<Option<ColumnCompareFunc>>,
     ctx: C,
+    memory: StatementMemory,
     batches: Vec<SortPartition>,
     current: SortPartition,
     max_sorted_rows: usize,
@@ -96,6 +97,7 @@ where
         by_items: Vec<SortByItem>,
         ctx: C,
         max_chunk_size: usize,
+        memory: StatementMemory,
     ) -> Self {
         // The fetcher charges the sort tracker before dispatch, exactly as Go
         // does. Worker partitions therefore account below a detached tracker
@@ -116,6 +118,7 @@ where
             by_items,
             compare_funcs,
             ctx,
+            memory,
             batches: Vec::new(),
             current,
             max_sorted_rows: max_chunk_size.saturating_mul(30).max(1),
@@ -137,8 +140,12 @@ where
         if self.current.num_rows() == 0 {
             return Ok(());
         }
-        self.current
-            .sort(&self.by_items, &self.compare_funcs, &self.ctx)?;
+        self.current.sort_with_memory(
+            &self.by_items,
+            &self.compare_funcs,
+            &self.ctx,
+            &self.memory,
+        )?;
         let next = self.fresh_partition();
         self.batches
             .push(std::mem::replace(&mut self.current, next));
@@ -168,6 +175,7 @@ where
             &self.by_items,
             &self.compare_funcs,
             &self.ctx,
+            &self.memory,
         )
     }
 
@@ -604,6 +612,7 @@ where
                     self.by_items.clone(),
                     self.ctx.clone(),
                     self.meta.max_chunk_size(),
+                    self.memory.clone(),
                 ))))
             })
             .collect::<Vec<_>>();
@@ -927,6 +936,7 @@ mod tests {
     use tidb_expr::expression::Expression;
     use tidb_expr::scalar_function::ScalarFunction;
     use tidb_expr::NoColumns;
+    use tidb_util::sqlkiller::KillSignal;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
@@ -1572,6 +1582,7 @@ mod tests {
             asc(),
             NoColumns,
             2,
+            memory.clone(),
         );
         for batch in 0..3i64 {
             let mut chunk = Chunk::new_with_capacity(&fields, 32);
@@ -1595,6 +1606,79 @@ mod tests {
                 .map(|row| output.get_row(row).get_int64(0))
                 .collect::<Vec<_>>(),
             (0..96).collect::<Vec<_>>()
+        );
+    }
+
+    /// Go's `parallelSortWorker.multiWayMergeLocalSortedRows` polls the query
+    /// killer every 100 emitted rows. A cancellation already pending when the
+    /// local merge starts must abort the worker result instead of returning a
+    /// complete sorted slice.
+    #[test]
+    fn parallel_worker_honors_query_kill_during_local_merge() {
+        let fields = vec![long()];
+        let memory = StatementMemory::default();
+        let mut worker = ParallelSortWorker::new(
+            fields.clone(),
+            memory.spill_storage(),
+            SPILL_CHUNK_SIZE,
+            asc(),
+            NoColumns,
+            2,
+            memory.clone(),
+        );
+        for batch in 0..3i64 {
+            let mut chunk = Chunk::new_with_capacity(&fields, 32);
+            for row in 0..32i64 {
+                chunk.append_int64(0, 95 - (batch * 32 + row));
+            }
+            let rows = i64::try_from(chunk.num_rows()).unwrap();
+            let memory_usage = chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows;
+            worker.add_chunk(chunk, memory_usage).unwrap();
+        }
+
+        memory
+            .sql_killer()
+            .send_kill_signal(KillSignal::QueryInterrupted);
+        let result = worker.sort_local_rows();
+        assert!(
+            matches!(result, Err(ExecError::Killed(_))),
+            "a killed worker merge must return an executor cancellation error: {result:?}"
+        );
+    }
+
+    /// Go's `parallelSortWorker.keyColumnsLess` also polls after 20,000 row
+    /// comparisons while sorting a batch. A single large batch bypasses the
+    /// local merge, isolating that comparator checkpoint.
+    #[test]
+    fn parallel_worker_honors_query_kill_during_batch_sort() {
+        let fields = vec![long()];
+        let memory = StatementMemory::default();
+        let batch_size = 8192usize;
+        let mut worker = ParallelSortWorker::new(
+            fields.clone(),
+            memory.spill_storage(),
+            SPILL_CHUNK_SIZE,
+            asc(),
+            NoColumns,
+            batch_size,
+            memory.clone(),
+        );
+        let mut chunk = Chunk::new_with_capacity(&fields, batch_size);
+        for row in 0..batch_size {
+            let value = ((row * 7919) % batch_size) as i64;
+            chunk.append_int64(0, value);
+        }
+        let rows = i64::try_from(chunk.num_rows()).unwrap();
+        let memory_usage = chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows;
+        worker.add_chunk(chunk, memory_usage).unwrap();
+
+        memory
+            .sql_killer()
+            .send_kill_signal(KillSignal::QueryInterrupted);
+        let result = worker.sort_local_rows();
+        assert!(
+            matches!(result, Err(ExecError::Killed(_))),
+            "a killed worker batch sort must return an executor cancellation error: {result:?}"
         );
     }
 
