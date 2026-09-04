@@ -42,9 +42,10 @@ pub(crate) mod result_type;
 pub use control_type::{infer_type4_control_funcs, set_numeric_len_from_args};
 use fold_mode::FoldModeResolver;
 pub(crate) use result_type::adjust_ret_ft_for_cast_string;
+pub(crate) use result_type::builtin_return_type;
 pub use result_type::go_result_type_code;
 use result_type::{
-    binary_literal_type, builtin_return_type, cast_target, decimal_literal_type, int_literal_type,
+    binary_literal_type, cast_target, decimal_literal_type, int_literal_type,
     returns_binary_string, set_binary_charset, validate_cast_type, validate_name_const_args,
 };
 

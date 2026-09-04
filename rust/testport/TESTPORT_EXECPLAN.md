@@ -349,6 +349,20 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `[try again later]`; the focused code/state/message regression and Ready
   results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
 
+- 2026-09-04 (hybrid-type cast push, `builtin_cast.go:2898`): ported
+  `TryPushCastIntoControlFunctionForHybridType` — a numeric-target cast over
+  IF/CASE/ELT pushes INTO the branches when one is a hybrid type (Enum/Set,
+  Bit excluded), rebuilding the control function over cast-wrapped branches
+  with the re-inferred numeric ret type. `IF(1, e, 'a')` cast to SIGNED over
+  an enum column now answers the ordinal 2 instead of the enum name flowing
+  through the string result. The wrap is Go's
+  `WrapWithCastAsInt`/`WrapWithCastAsReal` shape; the enum
+  `ENUM_SET_AS_INT` stamp is unnecessary because the built cast node
+  evaluates the ordinal via `cast_arg_as_int`'s hybrid short-circuit.
+  Fail-before shape+value regression over an enum chunk row; full
+  tidb-expr sweep green except the documented network flake. Receipt:
+  `receipts/cast_hybrid_push.md`.
+
 - 2026-09-04 (parser coded diagnostics): aligned two grammar refusals with
   Go's coded terrors. `CAST(1 AS FLOAT(54))` now raises
   `[expression:1426]Too-big precision 54 specified for 'CAST'. Maximum is

@@ -517,8 +517,76 @@ pub fn build_simple_expr(
 /// eval type with a wider class -- keep their own cast, exactly as Go's
 /// per-type `castAs*` selection does. The result type is the caller's own
 /// `target`, so its flen/decimal/charset drive evaluation.
-pub(crate) fn build_cast_function(
+
+/// Go `WrapWithCastAsInt`/`WrapWithCastAsReal` as the hybrid push uses them
+/// (`builtin_cast.go:2909-2923`): the wrapped branch becomes
+/// ETInt/ETReal-typed so the rebuilt control function infers a numeric
+/// result. The enum `ENUM_SET_AS_INT` stamp is unnecessary in this shape:
+/// the built cast node evaluates the ordinal through `cast_arg_as_int`'s
+/// hybrid short-circuit.
+/// (builtin_cast.go:2909-2923): the wrapped branch becomes ETInt/ETReal-typed
+/// so the rebuilt control function infers a numeric result. The enum
+/// `ENUM_SET_AS_INT` stamp is unnecessary in this shape: the built cast node
+/// evaluates the ordinal through `cast_arg_as_int`'s hybrid short-circuit.
+fn wrap_cast_for_hybrid_push(
     expr: Expression,
+    real: bool,
+    target_unsigned: bool,
+) -> Result<Expression, EvalError> {
+    if let Some(ft) = expr.static_type() {
+        let wanted = if real {
+            tidb_datatype::EvalType::Real
+        } else {
+            tidb_datatype::EvalType::Int
+        };
+        if ft.eval_type() == wanted {
+            return Ok(expr);
+        }
+    }
+    let source_flen = expr.static_type().map_or(0, FieldType::flen);
+    let not_null = expr
+        .static_type()
+        .is_some_and(|ft| ft.has_flag(FieldTypeFlags::NOT_NULL));
+    let source_unsigned = expr
+        .static_type()
+        .is_some_and(|ft| ft.has_flag(FieldTypeFlags::UNSIGNED));
+    let mut tp = if real {
+        // Go WrapWithCastAsReal: Double + MaxRealWidth + unspecified decimal,
+        // flags inheriting UnsignedFlag|NotNullFlag from the source.
+        let mut tp = FieldType::new(FieldTypeCode::Double);
+        tp.set_flen(22);
+        tp.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+        tp
+    } else {
+        // Go WrapWithCastAsInt: LongLong + source flen + decimal 0, flags
+        // inheriting NotNullFlag from the source and UnsignedFlag from the
+        // TARGET.
+        let mut tp = FieldType::new(FieldTypeCode::LongLong);
+        tp.set_flen(source_flen);
+        tp.set_decimal(0);
+        tp
+    };
+    tp.set_charset_name("binary");
+    tp.set_collation_name("binary");
+    tp.add_flags(FieldTypeFlags::BINARY);
+    let mut inherited = if not_null {
+        FieldTypeFlags::NOT_NULL
+    } else {
+        0
+    };
+    if real {
+        if source_unsigned {
+            inherited |= FieldTypeFlags::UNSIGNED;
+        }
+    } else if target_unsigned {
+        inherited |= FieldTypeFlags::UNSIGNED;
+    }
+    tp.add_flags(inherited);
+    build_cast_function(expr, tp, false)
+}
+
+pub(crate) fn build_cast_function(
+    mut expr: Expression,
     mut target: FieldType,
     in_union: bool,
 ) -> Result<Expression, EvalError> {
@@ -538,6 +606,81 @@ pub(crate) fn build_cast_function(
     if target.code() == FieldTypeCode::VarString {
         if let Some(arg_ft) = expr.static_type() {
             crate::rewriter::adjust_ret_ft_for_cast_string(&mut target, arg_ft);
+        }
+    }
+    // Go `TryPushCastIntoControlFunctionForHybridType` (builtin_cast.go:2898):
+    // a numeric-target cast over IF/CASE/ELT pushes INTO the branches when a
+    // branch is a hybrid type (Enum/Set — Bit excluded, issue 24725): the
+    // control function rebuilds over cast-wrapped branches so a branch's enum
+    // ORDINAL flows forward, where the unpushed shape would route the enum
+    // NAME through the string result and answer 0 for arithmetic.
+    if matches!(
+        target.eval_type(),
+        tidb_datatype::EvalType::Int | tidb_datatype::EvalType::Real
+    ) {
+        if let Expression::ScalarFunction(control) = &expr {
+            let name = control.func_name.lowercase();
+            if matches!(name, "if" | "case_when" | "elt") {
+                let is_hybrid = |e: &Expression| {
+                    e.static_type()
+                        .is_some_and(|ft| ft.is_hybrid() && ft.code() != FieldTypeCode::Bit)
+                };
+                let len = control.args.len();
+                let branch_indexes: Vec<usize> = match name {
+                    "if" => vec![1, 2],
+                    "case_when" => {
+                        let mut indexes: Vec<usize> = (1..len).step_by(2).collect();
+                        if len % 2 == 1 {
+                            indexes.push(len - 1);
+                        }
+                        indexes
+                    }
+                    _ => (1..len).collect(),
+                };
+                if branch_indexes.iter().any(|&i| is_hybrid(&control.args[i])) {
+                    let unsigned_flag = target.flags() & FieldTypeFlags::UNSIGNED != 0;
+                    let real = target.eval_type() == tidb_datatype::EvalType::Real;
+                    let mut args = control.args.clone();
+                    let mut pushed = true;
+                    for &i in &branch_indexes {
+                        match wrap_cast_for_hybrid_push(args[i].clone(), real, unsigned_flag) {
+                            Ok(wrapped) => args[i] = wrapped,
+                            Err(_) => {
+                                pushed = false;
+                                break;
+                            }
+                        }
+                    }
+                    if pushed {
+                        // Go rebuilds the control function over the wrapped
+                        // args and adopts the rebuilt signature's ret type;
+                        // the OUTER cast still wraps the rebuilt node.
+                        let inferred = if name == "case_when" {
+                            let branches: Vec<Expression> = args
+                                .iter()
+                                .skip(1)
+                                .step_by(2)
+                                .chain((args.len() % 2 == 1).then(|| args.last()).flatten())
+                                .cloned()
+                                .collect();
+                            crate::rewriter::builtin_return_type("case_when", &branches)
+                        } else if name == "elt" {
+                            crate::rewriter::builtin_return_type("elt", &args)
+                        } else {
+                            crate::rewriter::infer_type4_control_funcs("if", &args)
+                        };
+                        if let Some(ret_type) = inferred {
+                            expr = Expression::ScalarFunction(ScalarFunction::new(
+                                control.func_name.clone(),
+                                ret_type,
+                                args,
+                            ));
+                        }
+                        // Inference failure keeps the unpushed node, which is
+                        // Go's own `return expr` on error.
+                    }
+                }
+            }
         }
     }
     let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
@@ -1257,6 +1400,74 @@ mod tests {
             assert_eq!(ret_type.flen(), want_flen, "{name}");
             assert_eq!(ret_type.code(), want_code, "{name}");
         }
+    }
+
+    /// Go `TryPushCastIntoControlFunctionForHybridType`
+    /// (builtin_cast.go:2898): `CAST(IF(1, e, 'a') AS SIGNED)` over
+    /// `e enum('x','y','z')` pushes the cast INTO the branches, so the
+    /// rebuilt IF carries cast-wrapped branches and the enum's ORDINAL (2)
+    /// is the answer instead of the enum NAME flowing through the string
+    /// result. The chunk row must carry the enum datum: the built column
+    /// node reads its cell from the ROW by offset.
+    #[test]
+    fn cast_over_if_pushes_into_hybrid_branches_like_go() {
+        let enum_field = {
+            let mut ft = FieldType::new(FieldTypeCode::Enum);
+            ft.set_collation_name("utf8mb4_bin");
+            ft
+        };
+        let table = vec![TestColumnInfo {
+            name: CiString::new("e"),
+            id: 1,
+            offset: 0,
+            field_type: enum_field.clone(),
+            hidden: false,
+            virtual_generated: None,
+        }];
+        let ids = SimplePlanColumnIdAllocator::new(0);
+        let options = BuildOptions::new()
+            .with_table_info(&NoResolver, &ids, "", &CiString::new("t"), &table)
+            .expect("table options")
+            .with_cast_expr_to({
+                let mut target = FieldType::new(FieldTypeCode::LongLong);
+                target.add_flags(FieldTypeFlags::NOT_NULL);
+                target
+            });
+        let built = parse_simple_expr(&NoResolver, "if(1, e, 'a')", &options).expect("builds");
+
+        // Shape: the outer cast wraps a REBUILT IF whose hybrid branch is a
+        // cast node (LongLong) rather than the raw leaf.
+        let Expression::ScalarFunction(outer) = &built else {
+            panic!("expected a cast function")
+        };
+        assert_eq!(outer.func_name.lowercase(), "cast_signed");
+        let Expression::ScalarFunction(inner_if) = &outer.args[0] else {
+            panic!("expected the IF inside the cast")
+        };
+        assert_eq!(inner_if.func_name.lowercase(), "if");
+        assert!(
+            inner_if.args[1]
+                .static_type()
+                .is_some_and(|ft| ft.code() == FieldTypeCode::LongLong),
+            "the hybrid branch is cast-wrapped: {:?}",
+            inner_if.args[1]
+        );
+
+        // Value: the chunk row carries the enum cell; the ordinal 2 of 'y'
+        // is the answer.
+        let mut chunk = tidb_chunk::chunk::Chunk::new(std::slice::from_ref(&enum_field), 1, 1);
+        chunk.append_datum(
+            0,
+            &crate::Datum::Enum(
+                tidb_datatype::MysqlEnum::new("y", 2),
+                tidb_datatype::Collation::Utf8Mb4Bin,
+            ),
+        );
+        let row = chunk.get_row(0);
+        let value = built
+            .eval(&NoColumns, row)
+            .expect("the pushed shape evaluates");
+        assert_eq!(value, crate::Datum::Int(2));
     }
 
     /// Go `ParseSimpleExpr`'s empty-string guard.
