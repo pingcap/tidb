@@ -91,9 +91,9 @@ pub use evalctx::{
     EvalCtxOption, SessionVarsSnapshot, StaticConvertibleEvalContext, StaticSessionVars,
 };
 pub use exprctx::{
-    make_expr_context_static, with_block_encryption_mode, with_charset, with_column_id_allocator,
-    with_connection_id, with_default_collation_for_utf8mb4, with_eval_ctx,
-    with_group_concat_max_len, with_new_collation_enabled, with_noop_funcs_mode,
+    ctx_with_handle_truncate_err_level, make_expr_context_static, with_block_encryption_mode,
+    with_charset, with_column_id_allocator, with_connection_id, with_default_collation_for_utf8mb4,
+    with_eval_ctx, with_group_concat_max_len, with_new_collation_enabled, with_noop_funcs_mode,
     with_plan_cache_tracker, with_rng, with_sysdate_is_now, with_windowing_use_high_precision,
     ExprContext, ExprCtxOption, StaticConvertibleExprContext,
 };

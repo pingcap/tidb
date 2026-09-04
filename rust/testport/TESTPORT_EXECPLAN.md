@@ -47,6 +47,14 @@ For each bounded behavior cluster:
   regression fails at the exact boundary before the fix and passes after it;
   the nested package inventory and Ready evidence are recorded in
   `receipts/executor_root_distsql_indexjoin.md`.
+- 2026-09-04 (`tidb-expr` truncate-level context wrapper): transcreated
+  `exprctx.CtxWithHandleTruncateErrLevel` for the static expression context.
+  The wrapper changes only `TruncateAsWarning`/`IgnoreTruncateErr` and the
+  `ErrGroupTruncate` level, preserves all other evaluation state, leaves the
+  original context untouched, and keeps the no-op evaluation-context identity.
+  The Go-derived three-level regression is active in
+  `tests::context_override_values_source`; the live generated-column resolver
+  remains a higher-layer boundary because it has no context override hook.
 - 2026-09-04 (`tidb-expr` VALUES constructor/runtime): activated the Go
   `TestValues` and shared `TestNewValuesFunc` behavior. `ScalarFunction` now
   carries the immutable VALUES offset, `Columns::current_insert_value` exposes

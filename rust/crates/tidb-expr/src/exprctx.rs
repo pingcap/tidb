@@ -17,12 +17,11 @@
 //! `ParamValues`/`EmptyParamValues` contract.
 //!
 //! This is a seed, not a completed package. `context.go`'s `EvalContext` and
-//! `BuildContext` umbrella interfaces and the `CtxWithHandleTruncateErrLevel`
-//! override built on them are NOT here: `EvalContext` requires
-//! `variable.UserVarsReader` from `pkg/sessionctx/variable`, which this
-//! workspace models only partially, so modeling the interfaces now would pin
-//! a shape the session port has not settled. What is here is closed and
-//! carries its own upstream tests.
+//! `BuildContext` umbrella interfaces remain outside this crate because
+//! `EvalContext` requires `variable.UserVarsReader` from
+//! `pkg/sessionctx/variable`; the static `exprstatic` package nevertheless
+//! carries the executable `CtxWithHandleTruncateErrLevel` wrapper used by the
+//! upstream test, without pretending to provide the entire umbrella trait.
 //!
 //! The optional-property machinery is how an `EvalContext` advertises which
 //! optional providers it carries: each property has a key, the keys index a

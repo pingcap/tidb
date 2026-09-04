@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+use tidb_error::errctx::{ErrGroup, Level};
 use tidb_util::context::PlanCacheTracker;
 use tidb_util::mathutil::MysqlRng;
 use tidb_vardef::defaults::{
@@ -30,10 +31,10 @@ use tidb_vardef::tidb_vars::{TIDB_ENABLE_NOOP_FUNCS, TIDB_SYSDATE_IS_NOW};
 
 use super::evalctx::{
     make_eval_context_static, new_session_vars_with_system_variables, tidb_opt_on_off_warn,
-    EvalContext, EvalCtxError, SessionVarsSnapshot, StaticConvertibleEvalContext,
-    BLOCK_ENCRYPTION_MODE, CHARACTER_SET_CONNECTION, COLLATION_CONNECTION,
-    DEFAULT_COLLATION_FOR_UTF8MB4, GROUP_CONCAT_MAX_LEN, OFF_INT, ON_INT, WARN_INT,
-    WINDOWING_USE_HIGH_PRECISION,
+    with_err_level_map, with_type_flags, EvalContext, EvalCtxError, SessionVarsSnapshot,
+    StaticConvertibleEvalContext, BLOCK_ENCRYPTION_MODE, CHARACTER_SET_CONNECTION,
+    COLLATION_CONNECTION, DEFAULT_COLLATION_FOR_UTF8MB4, GROUP_CONCAT_MAX_LEN, OFF_INT, ON_INT,
+    WARN_INT, WINDOWING_USE_HIGH_PRECISION,
 };
 use crate::exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
 
@@ -165,6 +166,33 @@ pub fn with_new_collation_enabled(enabled: bool) -> ExprCtxOption {
 /// not rely on the session.
 pub struct ExprContext {
     state: ExprCtxState,
+}
+
+/// Go `exprctx.CtxWithHandleTruncateErrLevel`: return an expression-building
+/// context whose type flags and truncate error-group level both represent the
+/// requested handling policy. All other evaluation state is shared with the
+/// input context, including warning storage, location, current time, and
+/// connection metadata. Rust's context is an owned value, so the no-op case
+/// returns a value clone that retains the exact original evaluation-context
+/// allocation; callers that need identity can compare `Arc::ptr_eq` on
+/// [`ExprContext::get_eval_ctx`].
+#[must_use]
+pub fn ctx_with_handle_truncate_err_level(ctx: &ExprContext, level: Level) -> ExprContext {
+    let eval_ctx = ctx.get_eval_ctx();
+    let original_flags = eval_ctx.type_flags();
+    let flags = original_flags
+        .with_truncate_as_warning(level == Level::Warn)
+        .with_ignore_truncate_err(level == Level::Ignore);
+    let original_levels = eval_ctx.err_level_map();
+    if flags == original_flags && original_levels.get(ErrGroup::Truncate) == level {
+        return ctx.apply([]);
+    }
+
+    let overridden = eval_ctx.apply([
+        with_type_flags(flags),
+        with_err_level_map(original_levels.with_level(ErrGroup::Truncate, level)),
+    ]);
+    ctx.apply([with_eval_ctx(Arc::new(overridden))])
 }
 
 impl fmt::Debug for ExprContext {

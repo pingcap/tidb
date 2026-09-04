@@ -15,6 +15,13 @@
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
+- Current batch: Rust's static expression context now transcreates Go's
+  `CtxWithHandleTruncateErrLevel`: it updates the truncate conversion flags
+  and `ErrGroupTruncate` level together, preserves all other state, leaves the
+  original context untouched, and retains the no-op evaluation-context
+  allocation. Focused evidence is active in
+  `context_override_values_source`; the live generated-column resolver remains
+  a higher-layer boundary.
 - Current batch: Rust's `VALUES()` constructor/runtime now carries the Go
   offset and reads the current insert row through a `Columns` session seam.
   Empty rows and NULL slots return NULL, offset bounds preserve the source

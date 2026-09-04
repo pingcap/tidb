@@ -1055,9 +1055,10 @@ pub fn column_infos_to_columns_and_names_with_collate<C: ColumnInfoSource>(
         };
         // boundary: Go wraps `ctx` with `CtxWithHandleTruncateErrLevel(
         // errctx.LevelIgnore)` on the first virtual column so a generated
-        // expression's truncation does not warn twice. This crate's
-        // `ColumnResolver` has no truncate-level knob, so the warning
-        // suppression has no counterpart; the built expression is the same.
+        // expression's truncation does not warn twice. The static expression
+        // context now carries that wrapper; this live `ColumnResolver` path
+        // still has no truncate-level knob, so its warning suppression remains
+        // a higher-layer boundary while the built expression is the same.
         let node = parse_select_field_expr(generated)?;
         let options = BuildOptions::new()
             .with_input_schema_and_names(mock_schema.clone(), names.clone())
