@@ -409,21 +409,29 @@ func isNDVClose(lhs, rhs float64) bool {
 //
 //	Estimation(t1.b=1) / NDV(t1.a)
 //
-// Constant index columns like b are skipped below because their selectivity is
-// already included in CountAfterAccess; only column-to-column join keys like a
-// contribute to joinKeyNDV.
+// Constant non-join index columns like b are skipped below because their selectivity is
+// already included in CountAfterAccess. For runtime join keys, only one full-length
+// column with initialized column stats is stable enough for skyline pruning. If that
+// key's selectivity is already included in CountAfterAccess, we only use the stats as
+// a stability check and don't divide by its NDV again.
 func indexJoinPathCountAfterAccess4Compare(
 	indexJoinInfo *indexJoinPathInfo,
 	path *util.AccessPath,
 	idxOff2KeyOff []int,
 	usedColsLen int,
-) float64 {
+) (float64, bool) {
 	if path.CountAfterAccess <= 0 ||
 		indexJoinInfo.innerTableStats == nil ||
-		indexJoinInfo.innerTableStats.StatsVersion == statistics.PseudoVersion {
-		return path.CountAfterAccess
+		indexJoinInfo.innerTableStats.StatsVersion == statistics.PseudoVersion ||
+		indexJoinInfo.innerTableStats.HistColl == nil {
+		return path.CountAfterAccess, false
 	}
-	usedColIDs := make([]int64, 0, usedColsLen)
+	var (
+		joinKeyColID   int64
+		joinKeyFound   bool
+		needNDVAdjust  bool
+		joinKeyColSeen int
+	)
 	for idxOff, keyOff := range idxOff2KeyOff {
 		if idxOff >= usedColsLen {
 			break
@@ -431,20 +439,28 @@ func indexJoinPathCountAfterAccess4Compare(
 		if keyOff < 0 {
 			continue
 		}
-		if idxOff < len(path.ConstCols) && path.ConstCols[idxOff] {
-			continue
-		}
 		if idxOff >= len(path.FullIdxCols) || path.FullIdxCols[idxOff] == nil ||
 			idxOff >= len(path.FullIdxColLens) || path.FullIdxColLens[idxOff] != types.UnspecifiedLength {
-			continue
+			return path.CountAfterAccess, false
 		}
-		usedColIDs = append(usedColIDs, path.FullIdxCols[idxOff].UniqueID)
+		joinKeyColID = path.FullIdxCols[idxOff].UniqueID
+		joinKeyFound = true
+		joinKeyColSeen++
+		if !(idxOff < len(path.ConstCols) && path.ConstCols[idxOff]) {
+			needNDVAdjust = true
+		}
 	}
-	joinKeyNDV := getColsNDVLowerBoundFromHistColl(usedColIDs, indexJoinInfo.innerTableStats.HistColl)
-	if joinKeyNDV <= 1 {
-		return path.CountAfterAccess
+	if !joinKeyFound || joinKeyColSeen > 1 {
+		return path.CountAfterAccess, false
 	}
-	return path.CountAfterAccess / float64(joinKeyNDV)
+	colStats := indexJoinInfo.innerTableStats.HistColl.GetCol(joinKeyColID)
+	if colStats == nil || !colStats.IsStatsInitialized() || colStats.NDV <= 0 {
+		return path.CountAfterAccess, false
+	}
+	if !needNDVAdjust || colStats.NDV == 1 {
+		return path.CountAfterAccess, true
+	}
+	return path.CountAfterAccess / float64(colStats.NDV), true
 }
 
 // indexJoinPathConstructResult constructs the index join path result.
@@ -473,10 +489,10 @@ func indexJoinPathConstructResult(
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
-	countAfterAccess4IndexJoin := indexJoinPathCountAfterAccess4Compare(indexJoinInfo, path, idxOff2KeyOff, usedColsLen)
+	countAfterAccess4IndexJoin, countAfterAccess4IndexJoinOK := indexJoinPathCountAfterAccess4Compare(indexJoinInfo, path, idxOff2KeyOff, usedColsLen)
 	return &indexJoinPathResult{
 		chosenPath:     path,
-		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen, countAfterAccess4IndexJoin),
+		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen, countAfterAccess4IndexJoin, countAfterAccess4IndexJoinOK),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		eqUsedColsNDV:  innerNDV,
 		lastColIsRange: lastColIsRange,
