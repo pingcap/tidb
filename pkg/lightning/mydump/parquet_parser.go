@@ -55,8 +55,6 @@ var (
 	readBatchSize = 128
 )
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser.go
-=======
 func validateParquetLogicalType(logicalType schema.LogicalType, physicalType parquet.Type, typeLength int) error {
 	switch logicalType.(type) {
 	case schema.ListLogicalType, schema.MapLogicalType, schema.IntervalLogicalType,
@@ -72,14 +70,6 @@ func validateParquetLogicalType(logicalType schema.LogicalType, physicalType par
 	}
 	return nil
 }
-
-// FileMeta contains some analyzed metadata for a parquet file.
-type FileMeta struct {
-	allocator memory.Allocator
-	Loc       *time.Location
-}
-
->>>>>>> 2cddafd320d (dumpformat: store parquet LogicalType instead of legacy converted type (#70548)):pkg/dumpformat/parquetfile/parser.go
 func estimateRowSize(row []types.Datum) int {
 	length := 0
 	for _, v := range row {
