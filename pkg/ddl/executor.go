@@ -4389,6 +4389,7 @@ func (e *executor) dropTableObject(
 	objects []*ast.TableName,
 	ifExists bool,
 	tableObjectType objectType,
+	allowMaterializedViewRelated bool,
 ) error {
 	var (
 		notExistTables []string
@@ -4455,6 +4456,11 @@ func (e *executor) dropTableObject(
 			if !tableInfo.Meta().IsBaseTable() {
 				notExistTables = append(notExistTables, fullti.String())
 				continue
+			}
+			if !allowMaterializedViewRelated {
+				if err := checkTableMaterializedViewConstraints(tableInfo.Meta(), "DROP TABLE"); err != nil {
+					return errors.Trace(err)
+				}
 			}
 
 			tempTableType := tableInfo.Meta().TempTableType
@@ -4576,12 +4582,28 @@ func adminCheckTableBeforeDrop(sessPool *sess.Pool, fullti ast.Ident) error {
 
 // DropTable will proceed even if some table in the list does not exists.
 func (e *executor) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject)
+	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject, false)
 }
 
 // DropView will proceed even if some view in the list does not exists.
 func (e *executor) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject)
+	return e.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject, false)
+}
+
+func checkTableMaterializedViewConstraints(tblInfo *model.TableInfo, op string) error {
+	if tblInfo.MaterializedViewLog != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view log table", op))
+	}
+	if tblInfo.MaterializedView != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
+	}
+	if tblInfo.MaterializedViewBase != nil && len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on base table with materialized view dependencies", op))
+	}
+	if tblInfo.MaterializedViewBase != nil && tblInfo.MaterializedViewBase.MLogID != 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on base table with materialized view log", op))
+	}
+	return nil
 }
 
 func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
@@ -6297,7 +6319,7 @@ func (e *executor) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequence
 }
 
 func (e *executor) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
-	return e.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject)
+	return e.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject, false)
 }
 
 func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName ast.CIStr, visibility ast.IndexVisibility) error {
