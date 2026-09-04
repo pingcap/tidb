@@ -7899,3 +7899,9 @@ risks without claiming repository-wide parity.
   fail-before/pass-after regression, complete 60-artifact Go package and
   104-artifact Rust owner inventory are recorded in
   `receipts/datatype_json_fieldtype_receipt.md`.
+- 2026-09-05 (`pkg/types` `ConvertFloatToUint` NaN behavior): Rust
+  `tidb-datatype::convert_float_to_uint` now preserves Go's
+  `big.Float.SetFloat64(NaN)` panic instead of silently saturating NaN to the
+  unsigned upper bound. Finite and infinity conversion behavior is unchanged;
+  the focused fail-before/pass-after regression and Ready owner validation are
+  recorded in `receipts/types_float_to_uint_nan.md`.

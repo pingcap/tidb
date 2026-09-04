@@ -91,7 +91,7 @@ Profile: Ready for this bounded Rust package batch.
 
 - Pre-fix baseline: the regression FAILS against the unfixed parser
   (stashed production edit), passes after.
-- Current full `tidb-datatype` suite: 411 lib + 64 aggregate tests, 0 failed.
+- Current full `tidb-datatype` suite: 412 lib + 64 aggregate tests, 0 failed.
 - `cargo fmt --all -- --check`, workspace `make lint`, `git diff --check`:
   clean (recorded in `TESTPORT_EXECPLAN.md`).
 - Batch 4 focused regression: `cargo +nightly-2026-08-22 test
@@ -100,7 +100,7 @@ Profile: Ready for this bounded Rust package batch.
   --exact --nocapture` — failed before the production edit and passed after.
 - Batch 4 owner checks: the `binary_json` lib subset passed 30 tests, the
   generated aggregate source binary passed 64 tests, the complete datatype
-  lib passed 411 tests, and `go test ./pkg/types -count=1` passed against the
+  lib passed 412 tests, and `go test ./pkg/types -count=1` passed against the
   Go authority.
 
 ## Risks

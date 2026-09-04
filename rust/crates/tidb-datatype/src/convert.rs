@@ -237,9 +237,8 @@ pub fn convert_uint_to_uint(
 
 /// `ConvertFloatToUint`.
 ///
-/// DIVERGENCE, deliberately stricter than the source: Go reaches
-/// `strconv.FormatFloat` on a NaN input and panics. Here a non-finite input
-/// saturates at the upper bound and reports an overflow.
+/// Go's `big.Float.SetFloat64` panics for NaN; infinities remain accepted and
+/// are reported as out-of-range by the subsequent `Uint64` conversion.
 pub fn convert_float_to_uint(
     flags: ConversionFlags,
     value: f64,
@@ -247,6 +246,7 @@ pub fn convert_float_to_uint(
     target: FieldTypeCode,
 ) -> Result<u64, (u64, ScalarConversionError)> {
     let rounded = round_float(value);
+    assert!(!rounded.is_nan(), "Float.SetFloat64(NaN)");
     if rounded < 0.0 {
         if !flags.allow_negative_to_unsigned() {
             return Err((0, overflow(rounded, target)));
@@ -1206,6 +1206,17 @@ mod tests {
             .unwrap_err()
             .0,
             0
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Float.SetFloat64(NaN)")]
+    fn convert_float_to_uint_nan_panics_like_go() {
+        let _ = convert_float_to_uint(
+            ConversionFlags::from_bits(0),
+            f64::NAN,
+            u64::MAX,
+            FieldTypeCode::LongLong,
         );
     }
 
