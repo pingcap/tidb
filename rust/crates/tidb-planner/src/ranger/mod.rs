@@ -178,8 +178,12 @@ pub mod stats_bridge {
         let mapped = ranges
             .iter()
             .filter_map(|ran| {
-                let low_datum = ran.low_val.first()?;
-                let high_datum = ran.high_val.first()?;
+                // Go indexes `ran.LowVal[0]` and `ran.HighVal[0]` directly.
+                let low_datum = ran.low_val.first().expect("range bound missing low value");
+                let high_datum = ran
+                    .high_val
+                    .first()
+                    .expect("range bound missing high value");
                 let low_kind = bound_kind(low_datum);
                 let high_kind = bound_kind(high_datum);
                 let low = datum_to_scalar(low_datum).unwrap_or(0.0);
