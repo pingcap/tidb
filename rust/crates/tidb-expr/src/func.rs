@@ -512,6 +512,30 @@ pub(crate) fn eval_func_values(
     // Go `builtinCastDecimalAsRealSig.evalReal`
     // (`builtin_cast.go:1650-1661`): a DECIMAL source with an in-union
     // unsigned target clamps a negative to Real(0).
+    // Go `castAsRealToDecimalSig` (`builtin_cast.go:1405-1420`): NOT
+    // in-union, or a non-negative value, yields FromFloat64; in-union and
+    // negative yields the ZERO decimal.
+    if name == "cast_real_to_decimal_in_union" {
+        let value = vals.first()?;
+        let f = match value {
+            Datum::Real(x) => *x,
+            Datum::Int(i) => *i as f64,
+            Datum::UInt(u) => *u as f64,
+            _ => return Some(Ok(Datum::Null)),
+        };
+        if f < 0.0 {
+            // in-union + negative → the ZERO decimal.
+            return Some(Ok(Datum::Decimal(
+                tidb_datatype::Decimal::from_f64(0.0)
+                    .unwrap_or_else(|| tidb_datatype::Decimal::parse_mysql("0").0),
+            )));
+        }
+        // Non-negative: FromFloat64.
+        let Some(dec) = tidb_datatype::Decimal::from_f64(f) else {
+            return Some(Ok(Datum::Null));
+        };
+        return Some(Ok(Datum::Decimal(dec)));
+    }
     if name == "cast_decimal_in_union" {
         let value = vals.first()?;
         if value.is_null() {
@@ -1057,5 +1081,31 @@ mod cast_real_int_in_union_tests {
         let ctx = crate::context::NoColumns;
         let result = eval_func_values("cast_real_int_in_union", &[Datum::Real(7.5)], &ctx);
         assert_eq!(result.unwrap().unwrap(), Datum::Int(7));
+    }
+}
+
+#[cfg(test)]
+mod cast_real_to_decimal_in_union_tests {
+    use super::*;
+
+    /// Go `castAsRealToDecimalSig` (`builtin_cast.go:1405-1420`): NOT
+    /// in-union, or a non-negative value, yields FromFloat64; in-union and
+    /// negative yields the ZERO decimal.
+    #[test]
+    fn cast_real_to_decimal_in_union_clamps_negatives_to_zero() {
+        let ctx = crate::context::NoColumns;
+        let result = eval_func_values("cast_real_to_decimal_in_union", &[Datum::Real(-2.5)], &ctx);
+        assert_eq!(
+            result.unwrap().unwrap(),
+            Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0").0)
+        );
+    }
+
+    #[test]
+    fn cast_real_to_decimal_in_union_keeps_non_negatives_like_go() {
+        let ctx = crate::context::NoColumns;
+        let result = eval_func_values("cast_real_to_decimal_in_union", &[Datum::Real(7.5)], &ctx);
+        let expected = tidb_datatype::Decimal::from_f64(7.5).unwrap();
+        assert_eq!(result.unwrap().unwrap(), Datum::Decimal(expected));
     }
 }
