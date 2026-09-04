@@ -609,14 +609,8 @@ fn add_index_with_split_table_respects_region_boundaries() {
 //   * a column named `primary` gets anonymous names `primary_2`, then
 //     `primary_3`, both at CREATE TABLE and on later adds.
 //
-// go-parity-gap (registered separately below): Go's anonymous generator
-// keeps incrementing a suffix when the first-column name is taken
-// (`add index (c1, c2, C3)` -> `c1_2`, then `add index (c1)` -> `c1_4`);
-// this tier instead raises 1061 `Duplicate key name 'c1'`, so those two
-// steps cannot run here. The same generator is what makes Go's
-// `alter table t_primary add index (`primary`)` land as `primary_3`; this
-// tier's ALTER path names it bare `primary` instead, so that Go step is
-// covered by the documentary too.
+// Anonymous names now use the same collision loop as Go's
+// `GetName4AnonymousIndex`, including the reserved `PRIMARY` prefix.
 #[test]
 fn add_anonymous_index_names_and_case_insensitivity_match_go() {
     let mut catalog = Catalog::default();
@@ -723,22 +717,78 @@ fn add_anonymous_index_names_and_case_insensitivity_match_go() {
     assert_eq!(names2, vec!["primary_2", "primary_3"]);
 }
 
-// The two Go steps the ported half above cannot run
-// (pkg/ddl/index_modify_test.go:713-716): with `c1` and `c1_3` taken, Go's
-// anonymous generator keeps suffixing — `add index (c1, c2, C3)` lands as
-// `c1_2` and a further `add index (c1)` as `c1_4` — and all four indexes
-// then drop by name. This tier raises 1061 `Duplicate key name 'c1'` for the
-// first of those statements instead of generating a fresh suffix.
-//
-// go-parity-gap: no auto-suffix generation for anonymous indexes whose first
-// column name is taken.
 #[test]
-#[ignore = "go-parity-gap: anonymous index generation stops at the first-column name (1061) instead of suffixing c1_2/c1_4; ALTER ADD INDEX (`primary`) names it bare 'primary' instead of primary_3"]
 fn add_anonymous_index_generates_the_next_free_suffix() {
-    // Contract (pkg/ddl/index_modify_test.go:713-726): `add index (c1, c2,
-    // C3)` creates `c1_2`, `add index (c1)` creates `c1_4`; four indexes
-    // exist and each drops by name. And (pkg/ddl/index_modify_test.go:739):
-    // `alter table t_primary add index (`primary`)` creates `primary_3`.
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    ddl::run_create_table_in(
+        "create table t_anonymous_suffix (c1 int, c2 int, C3 int)",
+        &mut catalog,
+        "test",
+        ddl::CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+
+    ddl::run_alter_table_in(
+        "alter table t_anonymous_suffix add index (c1)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    // Reserve c1_3 explicitly, leaving c1_2 and c1_4 to the anonymous
+    // generator just as TestAddAnonymousIndex does on the Go side.
+    ddl::run_alter_table_in(
+        "alter table t_anonymous_suffix add index c1_3 (c1)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t_anonymous_suffix add index (c1, c2, C3)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t_anonymous_suffix add index (c1)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+
+    let names = kv_table(&catalog, "test", "t_anonymous_suffix")
+        .indexes()
+        .iter()
+        .map(|index| index.name.to_lowercase())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["c1", "c1_3", "c1_2", "c1_4"]);
+
+    ddl::run_create_table_in(
+        "create table t_primary_suffix (`primary` int, key (`primary`))",
+        &mut catalog,
+        "test",
+        ddl::CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t_primary_suffix add index (`primary`)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    let primary_names = kv_table(&catalog, "test", "t_primary_suffix")
+        .indexes()
+        .iter()
+        .map(|index| index.name.to_lowercase())
+        .collect::<Vec<_>>();
+    assert_eq!(primary_names, vec!["primary_2", "primary_3"]);
 }
 
 // --- TestAddIndexWithPK (pkg/ddl/index_modify_test.go:744) ---

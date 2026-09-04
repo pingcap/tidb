@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` anonymous index naming): aligned Rust `tidb-executor`
+  ALTER ADD INDEX naming with Go's `GetName4AnonymousIndex`. Unnamed indexes
+  now use the first key column (or `expression_index`), reserve the bare
+  `PRIMARY` name, and suffix case-insensitive collisions (`c1_2`, `c1_4`,
+  `primary_3`). The source-derived regression
+  `add_anonymous_index_generates_the_next_free_suffix` is active and covers
+  both ordinary and reserved-name collisions; the package receipt is updated.
 - 2026-09-05 (`pkg/executor/sortexec` TopN zero-count short-circuit): aligned
   Rust's TopN limit handling with Go's `Limit.Count == 0` early return. The
   executor now retains the effective count separately from `offset + count`

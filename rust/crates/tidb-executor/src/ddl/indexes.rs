@@ -30,6 +30,29 @@
 
 use super::{Catalog, DdlStmt, DriverError, KvColumn, KvIndex, Stmt};
 
+/// Go `GetName4AnonymousIndex` (`pkg/ddl/executor.go`): choose a free name
+/// for an index whose statement omitted one. The first key column supplies
+/// the base name; collisions are resolved by trying `_2`, `_3`, ... until the
+/// name is not present on the table. `PRIMARY` is reserved, so a column with
+/// that name starts at `primary_2`.
+pub(crate) fn anonymous_index_name(existing: &[KvIndex], first_column: &str) -> String {
+    let mut suffix = 2;
+    let mut name = if first_column.eq_ignore_ascii_case("primary") {
+        suffix = 3;
+        format!("{first_column}_2")
+    } else {
+        first_column.to_owned()
+    };
+    while existing
+        .iter()
+        .any(|index| index.name.eq_ignore_ascii_case(&name))
+    {
+        name = format!("{first_column}_{suffix}");
+        suffix += 1;
+    }
+    name
+}
+
 /// Runs a `CREATE INDEX`, backfilling the existing rows.
 ///
 /// Captured from TiDB: a duplicate index name is 1061, and a unique index

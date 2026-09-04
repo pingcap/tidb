@@ -1087,15 +1087,23 @@ fn add_index_constraint_action(
     }
     crate::ddl::indexes::reject_partial_index(&index.options)?;
     // Go `GetName4AnonymousIndex`: an unnamed index takes its first key
-    // part's column name, or `expression_index` for an expression part.
-    let index_name = index
-        .name
-        .clone()
-        .unwrap_or_else(|| match index.parts.first() {
-            Some(tidb_ast::IndexPart::Column { name, .. }) => name.clone(),
-            Some(tidb_ast::IndexPart::Expr { .. }) => "expression_index".to_owned(),
-            None => String::new(),
-        });
+    // part's column name, or `expression_index` for an expression part, and
+    // keeps suffixing while that name is already present on the table.
+    let index_name = match index.name.clone() {
+        Some(name) => name,
+        None => {
+            let first_column = match index.parts.first() {
+                Some(tidb_ast::IndexPart::Column { name, .. }) => name.as_str(),
+                Some(tidb_ast::IndexPart::Expr { .. }) => "expression_index",
+                None => "",
+            };
+            let existing = match catalog.table_in(database, table_name) {
+                Some(crate::TableEntry::Kv(table)) => table.indexes(),
+                _ => &[],
+            };
+            super::indexes::anonymous_index_name(existing, first_column)
+        }
+    };
     add_index_to_table(
         catalog,
         database,
