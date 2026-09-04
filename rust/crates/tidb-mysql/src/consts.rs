@@ -114,10 +114,10 @@ fn parse_coreos_semver(raw: &str) -> Option<(i64, i64, i64, &str)> {
     // This deliberately follows coreos/go-semver v0.3.1's Set method rather
     // than the stricter Rust semver crate: split metadata first, then
     // prerelease, accept leading zeroes, and parse all numeric fields as i64.
-    let (without_metadata, metadata) = raw.split_once('+').map_or((raw, ""), |parts| parts);
+    let (without_metadata, metadata) = raw.split_once('+').unwrap_or((raw, ""));
     let (version, prerelease) = without_metadata
         .split_once('-')
-        .map_or((without_metadata, ""), |parts| parts);
+        .unwrap_or((without_metadata, ""));
     if !valid_semver_identifier(prerelease) || !valid_semver_identifier(metadata) {
         return None;
     }
