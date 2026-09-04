@@ -226,14 +226,22 @@ pub(crate) fn add_sub_time(
         return Ok(Datum::Null);
     };
     match kinds[0] {
-        // `...DatetimeAnd*`: the result is a DATETIME whose fsp is the FIRST
-        // argument's. The vectorized arm hands `Time.Add` a
-        // `Duration{Fsp: -1}`, so the duration never raises it.
+        // `...DatetimeAnd*`: Go's row body passes the parsed duration fsp to
+        // `Time.Add`. The vectorized DATETIME+TIME arm instead constructs
+        // `Duration{Fsp: -1}` and therefore keeps the first argument's fsp;
+        // the DATETIME+STRING vector arm keeps the parsed string fsp. Constant
+        // folding takes the row body, so preserve the right-side fractional
+        // digits there and retain that one vectorized distinction.
         TemporalKind::Datetime => {
             let Some(delta) = second_as_duration(&right, kinds[1], cols)? else {
                 return Ok(Datum::Null);
             };
-            datetime_result(&left, GoDuration { fsp: -1, ..delta }, sign)
+            let delta = if !row_path && kinds[1] == TemporalKind::Duration {
+                GoDuration { fsp: -1, ..delta }
+            } else {
+                delta
+            };
+            datetime_result(&left, delta, sign)
         }
         // `...DateAnd*`: `arg0.SetType(TypeDatetime)` first, so a DATE reads
         // as midnight; the result is a STRING and the DATE's own fsp is 0,

@@ -42,6 +42,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-expr` `ADDTIME`/`SUBTIME` typed
+  DATETIME path with Go's row/vector split. Constant-folded (row-path) calls
+  now retain the parsed second operand's fractional precision, while the
+  vectorized DATETIME+TIME arm keeps Go's `Fsp=-1` behavior; the existing
+  issue-56861 carrier now pins DATE/DATETIME FSP and malformed-string NULL
+  rows. Complete package inventory and fail-before/pass-after evidence are
+  recorded in `receipts/expression_collation_audit.md`.
+
 - 2026-09-04: aligned the Rust `tidb-expr` `FORMAT` precision coercion with
   Go's `evalNumDecArgsForFormat` and activated the existing
   `WEIGHT_STRING AS BINARY(n)` warning carrier. Malformed string/byte precision
@@ -5600,6 +5608,12 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 ## Decision Log
 
+- Decision: make `add_sub_time` select the Go `Time.Add` duration FSP by
+  evaluator tier. Preserve `getFsp` for row-path constants and string-second
+  vector calls, but use `Fsp=-1` only for the vectorized DATETIME+TIME arm;
+  this mirrors the generated Go bodies without changing DATE or untyped
+  string dispatch. Date/Author: 2026-09-04, Codex.
+
 - Decision: make `FORMAT` precision conversion accept the statement context
   and delegate string/byte inputs to `to_i64_signed_with_warnings`, rather
   than duplicating prefix parsing and warning rules. Keep integer, decimal,
@@ -6224,6 +6238,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Codex.
 
 ## Surprises & Discoveries
+
+- The ignored issue-56861 carrier mixed two different Go evaluator bodies:
+  the row body calls `Time.Add` with the parsed string FSP, while only the
+  vectorized DATETIME+TIME body forces `Fsp=-1`. Rust had applied the latter
+  universally, silently dropping `.341300` during constant folding; malformed
+  typed string operands already returned NULL once their static kind was
+  honored.
 
 - `WEIGHT_STRING`'s Rust implementation already appended the exact BINARY(n)
   warning; the ignored carrier used only the no-warning `chunk_e` helper, so

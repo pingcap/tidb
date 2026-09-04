@@ -920,6 +920,47 @@ PATH=... GOPATH=... TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
 
+## Rust follow-up: `ADDTIME`/`SUBTIME` typed row-path fractional precision
+
+This batch remains inside the complete `pkg/expression` inventory at Go
+`origin/master` `fc7788ff517c3407dc7e000be989ab23e6648211`: 208 tracked
+artifacts, 146,291 Go lines (68 production files, 60 tests, seven generated
+sources, `BUILD.bazel`, `OWNERS`, and eight nested package/build/test
+boundaries). The Rust `tidb-expr` owner remains 176 tracked artifacts and
+107,196 lines. Before editing, the Go `getBf4TimeAddSub` selector,
+`builtinAdd{Datetime,Date}And{Duration,String}Sig` and matching SUBTIME
+signatures, generated vector bodies, issue-56861 fixture tables, and the Rust
+`add_sub_time`/argument-type seam were reread. No Go, generated, fixture,
+platform, or Bazel file changed.
+
+Go's typed DATETIME row signatures pass the parsed second operand's FSP to
+`Time.Add`, so a constant-folded `ADDTIME(datetime, '12:00:01.341300')`
+returns `...12:00:01.341300`. Only the generated vectorized DATETIME+TIME
+body constructs `Duration{Fsp: -1}` and keeps the first argument's FSP; the
+vectorized DATETIME+STRING body again passes the parsed string FSP. Rust had
+used `Fsp=-1` for every typed DATETIME arm, dropping the fraction during
+constant folding. The fix limits that override to the vectorized
+DATETIME+TIME shape and leaves malformed typed string operands on the Go NULL
+path.
+
+The focused carrier now covers ADDTIME and SUBTIME DATETIME+STRING fractions,
+DATE+STRING fraction formatting, malformed-string NULL, and direct row versus
+vector DATETIME+TIME FSP behavior. It was reproduced failing before the
+conditional FSP fix and passes afterward.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_string_time_source::test_add_sub_time_issue_56861_typed_tables \
+  -- --exact --nocapture
+# pre-fix: failed (DATETIME + '12:00:01.341300' emitted no fraction)
+# after fix: 1 passed
+```
+
+The remaining ignored issue-56861 matrix is explicitly bounded to its full
+fixture sweep; the separate duration-operand string and wide-integer date
+arms remain listed in `b071.md` rather than being partially claimed.
+
 ## Rust follow-up: `FROM_UNIXTIME` real-input rounding
 
 The same complete `pkg/expression` inventory at Go `origin/master`

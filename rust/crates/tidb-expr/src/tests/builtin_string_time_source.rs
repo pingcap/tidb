@@ -2099,21 +2099,102 @@ fn test_sub_time_sig_value_tables() {
     assert_eq!(int_sub(123456, 1), "12:34:55");
 }
 
-/// The four typed halves of Go's issue #56861 tables inside TestAddTimeSig /
-/// TestSubTimeSig (DATE/DATETIME x STRING/DURATION) diverge from master on
-/// two axes under this crate's typed seam, so the whole set rides one gap
-/// rather than a partial port that hides either divergence:
-///
-///   1. Fractional seconds collapse to the LEFT argument's declared FSP
-///      (DATETIME+'12:00:01.341300' answers ...12:00:01 where master keeps
-///      ...341300).
-///   2. An unparseable second operand ('anuverivr') does not answer SQL NULL.
+/// Focused typed halves of Go's issue #56861 tables inside TestAddTimeSig /
+/// TestSubTimeSig (DATE/DATETIME x STRING/DURATION). Constant-folded calls
+/// must preserve the parsed right-operand FSP, while malformed string
+/// operands answer SQL NULL. The full boundary-date matrix remains a separate
+/// receipt item until all of its fixture rows are carried.
 #[test]
-#[ignore = "go-parity-gap: ADDTIME/SUBTIME's typed DATE/DATETIME x STRING/DURATION arms lose the right operand's fractional digits (left-type FSP wins) and accept unparseable duration strings without answering SQL NULL"]
 fn test_add_sub_time_issue_56861_typed_tables() {
-    // Go pkg/expression/builtin_time_test.go addTimeTestForIssue56861 /
-    // subTimeTestForIssue56861: the full DATE(1000|9999|2024) boundary-date
-    // matrices with negated durations and all four NULL positions.
+    let datetime = datetime_of(2024, 11, 1, 0, 0, 0);
+    let got = eval_scalar(
+        "ADDTIME",
+        FieldType::new(FieldTypeCode::Datetime),
+        vec![
+            const_arg_typed(datetime.clone(), FieldType::new(FieldTypeCode::Datetime)),
+            const_arg_typed(
+                Datum::new_string("12:00:01.341300"),
+                FieldType::new(FieldTypeCode::VarString),
+            ),
+        ],
+        &NoColumns,
+    )
+    .unwrap();
+    assert_eq!(got_text(&got), "2024-11-01 12:00:01.341300");
+
+    let got = eval_scalar(
+        "ADDTIME",
+        FieldType::new(FieldTypeCode::Datetime),
+        vec![
+            const_arg_typed(datetime.clone(), FieldType::new(FieldTypeCode::Datetime)),
+            const_arg_typed(
+                Datum::new_string("anuverivr"),
+                FieldType::new(FieldTypeCode::VarString),
+            ),
+        ],
+        &NoColumns,
+    )
+    .unwrap();
+    assert_eq!(got_text(&got), "<null>");
+
+    let got = eval_scalar(
+        "SUBTIME",
+        FieldType::new(FieldTypeCode::Datetime),
+        vec![
+            const_arg_typed(datetime.clone(), FieldType::new(FieldTypeCode::Datetime)),
+            const_arg_typed(
+                Datum::new_string("12:00:01.341300"),
+                FieldType::new(FieldTypeCode::VarString),
+            ),
+        ],
+        &NoColumns,
+    )
+    .unwrap();
+    assert_eq!(got_text(&got), "2024-10-31 11:59:58.658700");
+
+    let got = eval_scalar(
+        "ADDTIME",
+        FieldType::new(FieldTypeCode::String),
+        vec![
+            const_arg_typed(date_of(2024, 11, 1), FieldType::new(FieldTypeCode::Date)),
+            const_arg_typed(
+                Datum::new_string("12:00:01.341300"),
+                FieldType::new(FieldTypeCode::VarString),
+            ),
+        ],
+        &NoColumns,
+    )
+    .unwrap();
+    assert_eq!(got_text(&got), "2024-11-01 12:00:01.341300");
+
+    // The vectorized DATETIME+TIME arm deliberately forces Fsp=-1, while
+    // constant folding follows Go's row body and preserves the duration FSP.
+    let duration =
+        Datum::Duration(MySqlDuration::new(12, 0, 1, 341300, 6).expect("valid duration"));
+    let vector = crate::time_fn::add_sub::add_sub_time(
+        &[datetime.clone(), duration.clone()],
+        [
+            crate::time_fn::add_sub::TemporalKind::Datetime,
+            crate::time_fn::add_sub::TemporalKind::Duration,
+        ],
+        1,
+        false,
+        &NoColumns,
+    )
+    .unwrap();
+    assert_eq!(got_text(&vector), "2024-11-01 12:00:01");
+    let folded = crate::time_fn::add_sub::add_sub_time(
+        &[datetime, duration],
+        [
+            crate::time_fn::add_sub::TemporalKind::Datetime,
+            crate::time_fn::add_sub::TemporalKind::Duration,
+        ],
+        1,
+        true,
+        &NoColumns,
+    )
+    .unwrap();
+    assert_eq!(got_text(&folded), "2024-11-01 12:00:01.341300");
 }
 
 /// Go `pkg/expression/builtin_time_test.go:1610 TestFromUnixTime` under a
