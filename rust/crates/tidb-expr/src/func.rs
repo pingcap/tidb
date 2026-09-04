@@ -491,6 +491,16 @@ pub(crate) fn eval_func_values(
     vals: &[Datum],
     ctx: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
+    // Go `BuildCastFunction4Union`'s in-union cast-to-unsigned CLAMPS a
+    // negative result to 0 (`builtin_cast.go:998`).
+    if name == "cast_unsigned_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let res = crate::cast::to_i64_signed_with_warnings(value, ctx).ok()?;
+        return Some(Ok(Datum::UInt(if res < 0 { 0 } else { res as u64 })));
+    }
     if let Some(result) = crate::math_fn::dispatch_values(name, vals, ctx) {
         return Some(result);
     }

@@ -1362,6 +1362,17 @@ impl ScalarFunction {
         // Go picks one cast signature per target type; the rewriter records
         // that choice in the name, and the width/scale arguments the CHAR,
         // BINARY and DECIMAL casts need come from the result type.
+        // Go `BuildCastFunction4Union`'s in-union cast-to-unsigned CLAMPS a
+        // negative result to 0 instead of the unsigned wrap
+        // (`builtin_cast.go:998`).
+        if name == "cast_unsigned_in_union" {
+            let value = self.args[0].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
+            let res = crate::cast::to_i64_signed_with_warnings(&value, ctx)?;
+            return Ok(Datum::UInt(if res < 0 { 0 } else { res as u64 }));
+        }
         if let Some(target) = name.strip_prefix("cast_") {
             if self.args.len() == 1 {
                 let value = self.args[0].eval(ctx, row)?;

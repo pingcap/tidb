@@ -343,6 +343,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 } else {
                     // `BuildCastFunction4Union` carries Go's `inUnion` flag
                     // through the internal cast name.
+ 5a51eecc03 (rust: clamp in-union cast-to-unsigned negatives to zero like Go)
                     exprs.push(
                         tidb_expr::aggregation::wrap_cast::build_cast_to_in_union(
                             Expression::Column(src_col.clone()),

@@ -2215,3 +2215,27 @@ mod export_set_tests {
         assert_eq!(result.unwrap().unwrap(), d("Y,N,Y,N"));
     }
 }
+
+#[cfg(test)]
+mod cast_in_union_tests {
+    use super::*;
+
+    /// Go `castAsIntSig.evalInt`'s in-union arm
+    /// (`builtin_cast.go:998`): a negative result clamps to 0 for an
+    /// unsigned target instead of the unsigned wrap.
+    #[test]
+    fn cast_unsigned_in_union_clamps_negatives_to_zero() {
+        let ctx = crate::context::NoColumns;
+        let result =
+            crate::func::eval_func_values("cast_unsigned_in_union", &[Datum::Int(-1)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::UInt(0));
+    }
+
+    #[test]
+    fn cast_unsigned_in_union_keeps_non_negatives() {
+        let ctx = crate::context::NoColumns;
+        let result =
+            crate::func::eval_func_values("cast_unsigned_in_union", &[Datum::Int(7)], &ctx);
+        assert_eq!(result.unwrap().unwrap(), Datum::UInt(7));
+    }
+}
