@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` multi-statement mode state): aligned
+  `tidb-session` with Go's `TestTiDBMultiStatementMode` and the connection
+  admission path. The normalized OFF/ON/WARN enum now lives in typed session
+  state, statement splitting uses that state instead of reparsing raw text,
+  and restore/GLOBAL inheritance are covered. Focused regressions cover the
+  Go value matrix and capability/refusal/deferred-warning behavior.
 - 2026-09-05 (`pkg/sessionctx/variable` max-execution-time typed state): aligned
   `tidb-session` with Go's `TestMaxExecutionTime`. The validated
   `max_execution_time` value now lives in typed session state, survives

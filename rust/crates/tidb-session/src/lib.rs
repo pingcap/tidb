@@ -1665,23 +1665,15 @@ impl Session {
             return Ok(vec![sql.to_owned()]);
         }
         if !client_multi_statements {
-            match self
-                .vars()
-                .get_system("tidb_multi_statement_mode")
-                .unwrap_or_default()
-                .to_uppercase()
-                .as_str()
-            {
-                "OFF" => {
+            match self.vars().multi_statement_mode() {
+                0 => {
                     return Err(DriverError::ParseCoded {
                         errno: 8130,
                         message: DISABLED.to_owned(),
                     })
                 }
-                "ON" => {}
-                _ => {
-                    self.deferred_multi_statement_warning = true;
-                }
+                1 => {}
+                _ => self.deferred_multi_statement_warning = true,
             }
         }
         Ok(statements

@@ -902,6 +902,9 @@ pub struct SessionVars {
     /// `max_execution_time` `SetSession` hook and read by statement contexts
     /// as a millisecond deadline (zero means unlimited).
     max_execution_time: u64,
+    /// Go's typed `SessionVars.MultiStatementMode`: OFF=0, ON=1, WARN=2.
+    /// The normalized enum value drives COM_QUERY multi-statement admission.
+    multi_statement_mode: u8,
     /// Go's typed `SessionVars.EnablePreparedPlanCache`, maintained by the
     /// `tidb_enable_prepared_plan_cache` sysvar's `SetSession` hook.
     enable_prepared_plan_cache: bool,
@@ -946,6 +949,7 @@ impl Default for SessionVars {
             max_allowed_packet: 64 << 20,
             max_keys_read: 0,
             max_execution_time: 0,
+            multi_statement_mode: 0,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
             generation: 0,
@@ -1011,6 +1015,7 @@ impl SessionVars {
         let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
         let max_keys_read = Self::max_keys_read_from_systems(&systems);
         let max_execution_time = Self::max_execution_time_from_systems(&systems);
+        let multi_statement_mode = Self::multi_statement_mode_from_systems(&systems);
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
@@ -1024,6 +1029,7 @@ impl SessionVars {
         self.max_allowed_packet = max_allowed_packet;
         self.max_keys_read = max_keys_read;
         self.max_execution_time = max_execution_time;
+        self.multi_statement_mode = multi_statement_mode;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
         self.session_resolved = Self::build_session_image(&self.systems);
@@ -1069,6 +1075,14 @@ impl SessionVars {
             .get("max_execution_time")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(0)
+    }
+
+    fn multi_statement_mode_from_systems(systems: &HashMap<String, String>) -> u8 {
+        match systems.get("tidb_multi_statement_mode").map(String::as_str) {
+            Some("ON") => 1,
+            Some("WARN") => 2,
+            _ => 0,
+        }
     }
 
     fn prepared_plan_cache_from_systems(systems: &HashMap<String, String>) -> bool {
@@ -1126,6 +1140,14 @@ impl SessionVars {
     #[must_use]
     pub const fn max_execution_time(&self) -> u64 {
         self.max_execution_time
+    }
+
+    /// Go `SessionVars.MultiStatementMode`: OFF=0 refuses a multi-statement
+    /// COM_QUERY without the client capability, ON=1 admits it, and WARN=2
+    /// admits it while deferring warning 8130 to the final statement.
+    #[must_use]
+    pub const fn multi_statement_mode(&self) -> u8 {
+        self.multi_statement_mode
     }
 
     /// Go `SessionVars.EnablePreparedPlanCache`, updated when its normalized
@@ -1261,6 +1283,7 @@ impl SessionVars {
         let mut restores_max_allowed_packet = false;
         let mut restores_max_keys_read = false;
         let mut restores_max_execution_time = false;
+        let mut restores_multi_statement_mode = false;
         let mut restores_prepared_plan_cache = false;
         let mut restores_shared_lock_upgrade = false;
         for (key, previous) in snapshot {
@@ -1268,6 +1291,7 @@ impl SessionVars {
             restores_max_allowed_packet |= key == "max_allowed_packet";
             restores_max_keys_read |= key == "tidb_max_keys_read";
             restores_max_execution_time |= key == "max_execution_time";
+            restores_multi_statement_mode |= key == "tidb_multi_statement_mode";
             restores_prepared_plan_cache |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
             restores_shared_lock_upgrade |=
@@ -1299,6 +1323,9 @@ impl SessionVars {
         }
         if restores_max_execution_time {
             self.max_execution_time = Self::max_execution_time_from_systems(&self.systems);
+        }
+        if restores_multi_statement_mode {
+            self.multi_statement_mode = Self::multi_statement_mode_from_systems(&self.systems);
         }
         if restores_prepared_plan_cache {
             self.enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&self.systems);
@@ -1433,6 +1460,9 @@ impl SessionVars {
                 .value
                 .parse::<u64>()
                 .expect("max_execution_time validation stores unsigned decimal milliseconds");
+        }
+        if key == "tidb_multi_statement_mode" {
+            self.multi_statement_mode = Self::multi_statement_mode_from_systems(&self.systems);
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE {
             self.enable_prepared_plan_cache = validated.value == "ON";
@@ -2328,6 +2358,38 @@ mod tests {
         let mut inherited = SessionVars::new();
         inherited.seed_from_globals(globals).unwrap();
         assert_eq!(inherited.max_execution_time(), 250);
+    }
+
+    /// Go `TestTiDBMultiStatementMode`: enum spellings normalize to the
+    /// SessionVars integer mode, statement overlays can restore it, and a
+    /// newly connected session inherits the GLOBAL value.
+    #[test]
+    fn multi_statement_mode_uses_go_typed_state() {
+        let definition = get_sys_var("tidb_multi_statement_mode").unwrap();
+        assert_eq!(definition.validate("on").unwrap().value, "ON");
+        assert_eq!(definition.validate("0").unwrap().value, "OFF");
+        assert_eq!(definition.validate("Warn").unwrap().value, "WARN");
+
+        let mut vars = SessionVars::new();
+        assert_eq!(vars.multi_statement_mode(), 0);
+        vars.set_system("tidb_multi_statement_mode", "ON".to_owned())
+            .unwrap();
+        assert_eq!(vars.multi_statement_mode(), 1);
+
+        let restore = vars.snapshot_system("tidb_multi_statement_mode");
+        vars.set_system("tidb_multi_statement_mode", "WARN".to_owned())
+            .unwrap();
+        assert_eq!(vars.multi_statement_mode(), 2);
+        vars.restore_system(restore);
+        assert_eq!(vars.multi_statement_mode(), 1);
+
+        let globals = GlobalSysvars::new();
+        globals
+            .set("tidb_multi_statement_mode", "WARN".to_owned())
+            .unwrap();
+        let mut inherited = SessionVars::new();
+        inherited.seed_from_globals(globals).unwrap();
+        assert_eq!(inherited.multi_statement_mode(), 2);
     }
 
     #[test]
