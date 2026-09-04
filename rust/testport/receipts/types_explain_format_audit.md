@@ -53,6 +53,66 @@ variants and has no dependency-closed driver-node owner or caller that could
 accept an invented parallel API. They remain an explicit boundary rather than
 a Rust-only carrier.
 
+## Rust-only parity follow-up: float-to-decimal conversion
+
+The same complete 61-artifact `pkg/types` inventory remains the owning package
+for this follow-up. Go's `ConvertDatumToDecimal` passes both `KindFloat64` and
+`KindFloat32` through `MyDecimal.FromFloat64`, preserving the best-effort
+decimal beside an `ErrOverflow`; `GetFloat32` first narrows and widens a
+`KindFloat32` payload. Rust's `Datum::to_decimal` previously called
+`Decimal::from_signed_literal` on the raw payload for both kinds, discarding
+the parse disposition and making a float32 payload look like a double.
+
+The Rust owner now uses the existing Go-compatible shortest-`%g` formatter and
+`Decimal::parse_mysql` event mapping. `Real` preserves the saturated
+81-digit decimal plus `ScalarConversionEvent::Overflow` for `1e308`; `Float32`
+narrows through `f32` before widening and produces the same decimal digits Go
+does for `3.1`. No Go or generated/Bazel file changed.
+
+The focused regression is
+`datum::convert::tests::source_float_to_decimal_preserves_error_and_float32_precision`.
+Fail-before was captured with the test present and the production change
+absent: the unfixed path returned no overflow event for `Datum::Real(1e308)`.
+After the fix:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib source_float_to_decimal_preserves_error_and_float32_precision -- --nocapture
+# passed: 1 test
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib -- --test-threads=1
+# passed: 372 tests
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype -p tidb-expr
+# passed; existing warnings only
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib -- --test-threads=1
+# passed: 1114 tests; 130 source-carrier gaps ignored
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+# passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+
+git diff --check
+# passed
+```
+
+The conversion is still context-free like the source `ToDecimal` API; no
+timezone or session-warning policy is introduced here. Broader SQL warning
+disposition and all non-UTF-8 datum comparison boundaries remain separate
+`pkg/types` follow-ups.
+
 ## Validation
 
 Profile: Ready for this bounded production change.

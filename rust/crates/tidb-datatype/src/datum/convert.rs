@@ -250,10 +250,12 @@ impl Datum {
                 value: Decimal::from_uint(*value),
                 event: None,
             },
-            Self::Real(value) | Self::Float32(value) => Converted {
-                value: Decimal::from_signed_literal(&value.to_string()),
-                event: None,
-            },
+            Self::Real(value) => {
+                crate::convert::decimal_from_text(&crate::format_float_g_shortest(*value))
+            }
+            Self::Float32(value) => crate::convert::decimal_from_text(
+                &crate::format_float_g_shortest(f64::from(*value as f32)),
+            ),
             Self::String(value) => decimal_from_bytes(value.bytes())?,
             Self::Bytes(value) => decimal_from_bytes(value)?,
             Self::Time(value) => Converted {
@@ -387,7 +389,10 @@ fn decimal_to_i64(decimal: Decimal) -> Converted<i64> {
 #[cfg(test)]
 mod tests {
     use super::Datum;
-    use crate::{BinaryJSON, BinaryLiteral, Collation, Decimal, MySqlDuration, TimeType};
+    use crate::{
+        BinaryJSON, BinaryLiteral, Collation, Decimal, MySqlDuration, ScalarConversionEvent,
+        TimeType,
+    };
 
     #[test]
     fn test_to_bool() {
@@ -515,6 +520,24 @@ mod tests {
             malformed.event,
             Some(crate::ScalarConversionEvent::Truncated)
         );
+    }
+
+    /// Go `ConvertDatumToDecimal` keeps `MyDecimal.FromFloat64`'s best-effort
+    /// value and returns its overflow error. A `KindFloat32` is first widened
+    /// from the stored float32 bits (`GetFloat32`), so it must not reuse the
+    /// raw float64 payload as if it were a double.
+    #[test]
+    fn source_float_to_decimal_preserves_error_and_float32_precision() {
+        let overflow = Datum::Real(1e308).to_decimal().unwrap();
+        assert!(matches!(
+            overflow.event,
+            Some(ScalarConversionEvent::Overflow(_))
+        ));
+        assert_eq!(overflow.value.to_string(), "9".repeat(81));
+
+        let float32 = Datum::Float32(3.1).to_decimal().unwrap();
+        assert_eq!(float32.event, None);
+        assert_eq!(float32.value.to_string(), "3.0999999046325684");
     }
 
     #[test]

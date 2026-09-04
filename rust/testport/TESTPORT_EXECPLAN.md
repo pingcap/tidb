@@ -44,6 +44,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-datatype` owner for the complete
+  Go-master `pkg/types` float-to-decimal conversion boundary. `Datum::to_decimal`
+  now routes REAL and FLOAT32 through Go's shortest `%g` formatting and the
+  existing `MyDecimal.FromString`-equivalent parser, preserving the saturated
+  81-digit value plus overflow event for `1e308` and narrowing FLOAT32 payloads
+  before widening. The focused fail-before regression, full 372-test datatype
+  owner suite, dependent `tidb-expr` suite (1114 passed, 130 documented gaps),
+  and Ready gates are recorded in `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04 (batch 14, `pkg/ddl` MV log-create submission): implemented Go
   master `94a9cbedab`'s `CreateMaterializedViewLog` submission and the
   portable prefix of `CreateMaterializedView`. The log create now submits
