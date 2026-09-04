@@ -20,12 +20,11 @@
 //! These Go tests call package-INTERNAL helpers directly
 //! (`findNextNonTouchedPartitionID`, `mergeContinuousKeyRanges`,
 //! `detectAndUpdateJobVersion`, `setGlobalIndexVersion`, the DDL worker
-//! pool). None of those helpers is transcreated in this workspace yet, so
-//! every port here is an `#[ignore]`d documentary: it carries the re-derived
-//! Go contract, citing the Go symbol, and asserts nothing until the helper
-//! lands. Nothing is approximated to make a test pass.
+//! pool). Helpers that have a direct metadata owner are asserted live below;
+//! queue- and cluster-lifecycle helpers remain `#[ignore]`d documentaries.
 
 use tidb_executor::StmtContext;
+use tidb_model::{GoSharedSlice, PartitionDefinition, PartitionInfo};
 
 /// A `StmtContext` exists so this module keeps a crate-level dependency even
 /// when every test in it is an ignored documentary.
@@ -43,16 +42,41 @@ fn module_compiles_against_the_public_api() {
 // 6->0 (not a partition at all), and with Definitions {1,2,3} plus
 // DroppingDefinitions {2,3}, 1->0 (nothing non-touched remains).
 //
-// go-parity-gap: the helper and its `findNextPartitionID` walker are not
-// transcreated anywhere in this workspace.
 #[test]
-#[ignore = "go-parity-gap: findNextNonTouchedPartitionID (pkg/ddl/index.go:3721) is not transcreated"]
 fn find_next_non_touched_partition_id_skips_dropping_definitions() {
-    // Contract (pkg/ddl/index.go:3721-3741): with Definitions 1..5 and
+    // Contract (pkg/ddl/index.go:3744-3765): with Definitions 1..5 and
     // DroppingDefinitions {2,3}, the next non-touched partition after 1, 2
     // and 3 is 4; after 4 it is 5; after 5 it is 0; an unknown id 6 returns
     // 0; and with Definitions {1,2,3} / DroppingDefinitions {2,3}, id 1 has
     // no non-touched successor (0).
+    let defs = |ids: &[i64]| {
+        GoSharedSlice::from_vec(
+            ids.iter()
+                .map(|id| PartitionDefinition {
+                    id: *id,
+                    ..Default::default()
+                })
+                .collect(),
+        )
+    };
+    let partition_info = PartitionInfo {
+        definitions: defs(&[1, 2, 3, 4, 5]),
+        dropping_definitions: defs(&[2, 3]),
+        ..Default::default()
+    };
+    for (current, expected) in [(1, 4), (2, 4), (3, 4), (4, 5), (5, 0), (6, 0)] {
+        assert_eq!(
+            partition_info.find_next_non_touched_partition_id(current),
+            expected,
+            "current partition {current}"
+        );
+    }
+    let no_successor = PartitionInfo {
+        definitions: defs(&[1, 2, 3]),
+        dropping_definitions: defs(&[2, 3]),
+        ..Default::default()
+    };
+    assert_eq!(no_successor.find_next_non_touched_partition_id(1), 0);
 }
 
 // --- TestMergeContinuousKeyRanges (pkg/ddl/ddl_test.go:360) ---

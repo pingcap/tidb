@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` non-touched partition traversal): aligned
+  `tidb-model::PartitionInfo` with Go master `findNextNonTouchedPartitionID`.
+  The metadata helper now walks definitions after the current ID, skips every
+  dropping definition, and returns Go's zero sentinel for unknown/current-last
+  IDs or an exhausted untouched suffix. The source-derived DDL regression is
+  active; queue and cluster-lifecycle helpers remain explicitly documentary.
 - 2026-09-05 (`pkg/ddl` anonymous index naming): aligned Rust `tidb-executor`
   ALTER ADD INDEX naming with Go's `GetName4AnonymousIndex`. Unnamed indexes
   now use the first key column (or `expression_index`), reserve the bare
