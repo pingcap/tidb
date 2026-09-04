@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` CURRENT_RESOURCE_GROUP row-path parity): wired the
+  AST/value evaluator through the same session-state accessor already used by
+  the rewritten ScalarFunction path. Added a direct row/AST regression so a
+  zero-argument call returns the effective group (or NULL without a session)
+  regardless of evaluator entry point. Focused and Ready evidence is recorded
+  in `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (`tidb-expr` CURRENT_RESOURCE_GROUP): added the missing
   session-context accessor and live scalar evaluator for the effective
   statement resource-group name, with a Go-derived value/NULL regression.

@@ -372,6 +372,14 @@ fn eval_session_state(
             }
             Err(e) => Err(e),
         },
+        // `CURRENT_RESOURCE_GROUP()` is a zero-argument session builtin just
+        // like the other information functions.  Keep it in the shared
+        // session-state table so the AST/value evaluator returns the same
+        // effective statement group as the rewritten/chunk evaluator.
+        ("CURRENT_RESOURCE_GROUP", []) => Ok(match cols.current_resource_group() {
+            Some(group) => Datum::new_string(group.into_bytes()),
+            None => Datum::Null,
+        }),
         ("ROW_COUNT" | "LAST_INSERT_ID", _) => Err(EvalError::Unsupported("bad function arity")),
         // The sequence builtins. The first argument is the sequence's name
         // path, substituted for the column reference the parser produced (see

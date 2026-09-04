@@ -1423,12 +1423,17 @@ zero-argument evaluator returns that value (or SQL NULL when the resolver has
 no session value). The regression uses the same session-backed information
 test harness as the neighboring Go ports.
 
+The AST/value evaluator now shares the same session-state implementation via
+`eval_func_values_in`, so a parsed `Expr::Func` cannot diverge into an
+`Unsupported` result. `test_current_resource_group_ast_path` covers both a
+configured group and the no-session NULL result.
+
 Focused validation:
 
 ```text
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
-  -p tidb-expr --lib test_current_resource_group -- --nocapture
-# passed: 1 test (effective resource-group value and no-session NULL)
+  -p tidb-expr --lib test_current_resource_group_ast_path -- --nocapture
+# passed: 1 test (AST/value effective resource-group value and no-session NULL)
 ```
 
 Ready validation for this batch:
@@ -1441,7 +1446,7 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
   -p tidb-expr --all-targets -- --test-threads=1
-# 1,166 passed, 1 known loopback HTTP JSON-schema fixture failed, 111 ignored
+# 1,167 passed, 1 known loopback HTTP JSON-schema fixture failed, 111 ignored
 
 OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \

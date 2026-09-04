@@ -304,6 +304,29 @@ fn test_current_resource_group() {
     );
 }
 
+/// The row/AST evaluator must expose the same session-bound value as the
+/// rewritten ScalarFunction path above.  This catches the prior split where
+/// `CURRENT_RESOURCE_GROUP()` was implemented only in `scalar_function.rs`.
+#[test]
+fn test_current_resource_group_ast_path() {
+    let expression = tidb_ast::Expr::Func {
+        name: "CURRENT_RESOURCE_GROUP".to_owned(),
+        args: Vec::new(),
+        origin_position: 0,
+    };
+
+    let mut ctx = InfoSession::default();
+    ctx.current_resource_group = Some("rg_ast".to_owned());
+    assert_eq!(
+        crate::eval_in(&expression, &ctx),
+        Ok(Datum::new_string(b"rg_ast".to_vec()))
+    );
+    assert_eq!(
+        crate::eval_in(&expression, &InfoSession::default()),
+        Ok(Datum::Null)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // embed-text / inference family
 // ---------------------------------------------------------------------------

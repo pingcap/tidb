@@ -150,7 +150,12 @@
   statement resource-group name through a new `Columns` accessor, matching
   Go's zero-argument information builtin. Focused/Ready evidence is recorded
   in `rust/testport/receipts/types_explain_format_audit.md`.
+- Current batch: the AST/value evaluator now routes
+  `CURRENT_RESOURCE_GROUP()` through the same session-state accessor as the
+  rewritten ScalarFunction path, eliminating the prior row-vs-chunk
+  `Unsupported` split. The focused row-path regression and Ready evidence are
+  recorded in `rust/testport/receipts/types_explain_format_audit.md`.
 - Next action: run the final Ready profile, commit and push this
-  `CURRENT_RESOURCE_GROUP` batch,
-  then continue with the next executable Rust package boundary. Direct
-  datatype comparison warning publication remains a bounded API follow-up.
+  row-path follow-up, then continue with the next executable Rust package
+  boundary. Direct datatype comparison warning publication remains a bounded
+  API follow-up.
