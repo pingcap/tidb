@@ -200,6 +200,38 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # passed: 17 tests
 ```
 
+## Rust-only parity follow-up: clamped exponent error precedence
+
+The same complete `pkg/types` inventory owns the value-layer decimal parser.
+Go's `MyDecimal.FromString` (`pkg/types/mydecimal.go:498-510`) zeroes the
+coefficient when `strToInt` reports a bad exponent, but continues into the
+`MaxInt32/2` and `MinInt32/2` bound checks. A clamped `MaxInt64`/`MinInt64`
+exponent therefore upgrades the result to the source maximum plus
+`ErrOverflow`, or zero plus `ErrTruncated`. Rust's `Decimal::parse_mysql`
+previously returned immediately on `BadNumber`, losing both the bound decision
+and the source error precedence (`rust/crates/tidb-datatype/src/decimal/mod.rs`).
+
+The Rust owner now clears the intermediate value and retains `BadNumber` while
+continuing through the bound checks. The focused regression
+`decimal_tests::parse_mysql_clamped_exponent_keeps_go_error_precedence` covers
+both signs: `1e9223372036854775808` now yields 81 nines plus `Overflow`, while
+`1e-9223372036854775809` yields zero plus `Truncated`. The existing
+`1e18446744073709551620` fixture still remains zero plus `BadNumber`, proving
+that a parser overflow which clamps to zero is not upgraded spuriously. No Go,
+generated, or Bazel file changed.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib parse_mysql_clamped_exponent_keeps_go_error_precedence -- --nocapture
+# pre-fix: failed (zero instead of the 81-digit maximum); after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib decimal_tests::test_from_string_my_decimal -- --nocapture
+# passed: 1 test (including the existing BadNumber fixture)
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.

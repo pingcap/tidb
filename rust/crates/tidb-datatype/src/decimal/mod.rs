@@ -404,7 +404,12 @@ impl Decimal {
             let (exponent, exponent_error) = parse_mysql_exponent(&input[end + 1..]);
             match exponent_error {
                 Some(DecimalParseError::BadNumber) => {
-                    return (Self::from_int(0), Some(DecimalParseError::BadNumber));
+                    // Go zeroes the parsed value for a bad exponent but keeps
+                    // scanning. A clamped i64 exponent can then cross the
+                    // i32 bound below, where ErrOverflow/ErrTruncated takes
+                    // precedence over the intermediate ErrBadNumber.
+                    value = Self::from_int(0);
+                    disposition = Some(DecimalParseError::BadNumber);
                 }
                 Some(DecimalParseError::Truncated) => {
                     disposition = Some(DecimalParseError::Truncated);

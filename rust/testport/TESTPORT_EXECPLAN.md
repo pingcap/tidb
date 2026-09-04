@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-datatype` decimal value parser for the
+  complete Go-master `pkg/types` clamped-exponent boundary. A bad exponent now
+  clears the intermediate value but continues through Go's signed bound checks,
+  preserving max-decimal-plus-overflow and zero-plus-truncation outcomes. The
+  focused fail-before regression and source inventory are recorded in
+  `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04: aligned the Rust `tidb-datatype` fixed-word decimal parser for
   the complete Go-master `pkg/types` Unicode-whitespace boundary. The source
   `MyDecimal.FromString` trims Go `strings.TrimSpace` around exponent and

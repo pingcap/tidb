@@ -1192,6 +1192,19 @@ fn test_shift_my_decimal() {
     }
 }
 
+/// Go continues after a clamped exponent parse so the exponent bound selects
+/// overflow/truncation instead of leaking the intermediate bad-number error.
+#[test]
+fn parse_mysql_clamped_exponent_keeps_go_error_precedence() {
+    let (positive, positive_error) = Decimal::parse_mysql("1e9223372036854775808");
+    assert_eq!(positive.to_string(), "9".repeat(81));
+    assert_eq!(positive_error, Some(DecimalParseError::Overflow));
+
+    let (negative, negative_error) = Decimal::parse_mysql("1e-9223372036854775809");
+    assert_eq!(negative.to_string(), "0");
+    assert_eq!(negative_error, Some(DecimalParseError::Truncated));
+}
+
 /// Exact source `TestFromStringMyDecimal`, including exponent best-effort
 /// parsing and the test-only one-word buffer.
 #[test]
