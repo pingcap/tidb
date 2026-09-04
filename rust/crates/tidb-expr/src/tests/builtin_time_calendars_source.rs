@@ -695,16 +695,20 @@ fn period_invalid_period_reject_the_call() {
         ("PERIOD_DIFF", vec![Datum::Int(12_509), Datum::Int(12_323)]),
     ] {
         let (name, args) = name_args;
-        let outcome = dispatch(name, &args, &NoColumns);
-        assert!(
-            outcome.map(|result| result.is_err()).unwrap_or(false),
-            "{name}({args:?}) must fail"
+        let error = dispatch(name, &args, &NoColumns)
+            .expect("period function must dispatch")
+            .expect_err("invalid period must fail");
+        let expected = match name {
+            "PERIOD_ADD" => "Incorrect arguments to period_add",
+            "PERIOD_DIFF" => "Incorrect arguments to period_diff",
+            _ => unreachable!("period test name"),
+        };
+        assert_eq!(
+            error,
+            EvalError::IncorrectArguments(expected.to_owned()),
+            "{name}({args:?}) must preserve Go's error text"
         );
     }
-    // go-parity-gap: Go's exact message is "[expression:1210]Incorrect
-    // arguments to period_diff"; this evaluator raises
-    // EvalError::Unsupported("invalid PERIOD_DIFF period") --
-    // the rejection matches, the surfaced text does not.
     // The nil blocks of TestPeriodAdd/TestPeriodDiff.
     assert_eq!(
         dispatched("PERIOD_DIFF", &[Datum::Null, Datum::Int(0)], &NoColumns),

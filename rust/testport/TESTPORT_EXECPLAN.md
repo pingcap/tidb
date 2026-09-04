@@ -148,6 +148,12 @@ For each bounded behavior cluster:
   dates remain NULL and partial zero-in-date values return numeric zero as in
   Go. Focused source regressions, the complete package inventory, and Ready
   evidence are recorded in `receipts/expression_collation_audit.md`.
+- 2026-09-04: aligned Rust `tidb-expr` `PERIOD_ADD`/`PERIOD_DIFF` invalid
+  period diagnostics with Go's `ErrWrongArguments` function-specific text.
+  The source-derived invalid-period carrier now asserts the exact
+  `EvalError::IncorrectArguments` values; valid arithmetic and NULL ordering
+  remain unchanged. Ready evidence is recorded in
+  `receipts/expression_collation_audit.md`.
 - 2026-09-04 (batch 22, `pkg/ddl` MV remaining pure surface): implemented
   Go master `94a9cbedab`'s `MViewExecutionSessionVarsFromJob` (tidb-session,
   per-field fallback to the captured defaults over the job's system-variable
@@ -5823,6 +5829,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   all-zero-date NULL check before the partial zero-in-date numeric-zero
   sentinel. Date/Author: 2026-09-04, Codex.
 
+- Decision: map invalid `PERIOD_ADD` and `PERIOD_DIFF` values to
+  `EvalError::IncorrectArguments` with the lower-case function name, matching
+  Go's `errIncorrectArgs.GenWithStackByArgs` message while retaining the
+  evaluator's existing omission of the server error-code prefix. Preserve
+  argument evaluation order and the unsigned month arithmetic. Date/Author:
+  2026-09-04, Codex.
+
 - Decision: reuse `tidb_datatype::parse_time_from_num` for delimiter-free
   12/14-digit datetime strings and map its validated fields into the local
   `GoDateTime`, preserving Go's packed numeric normalization and two-digit-year
@@ -6491,6 +6504,11 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   numeric zero sentinel. Reusing the shared parser was sufficient for packed
   numeric forms and DECIMAL rounding; the explicit all-zero check is required
   before constructing a Chrono date.
+
+- The period arithmetic already rejected invalid values, but used a generic
+  Rust `Unsupported` marker. The source error table makes the function name
+  part of the client-visible `ErrWrongArguments` text, so the parity fix had
+  to change the error variant/message rather than only the rejection result.
 
 - The prior ADDTIME/SUBTIME gap was two independent source rules: integer
   arguments are cast to ETString before `ParseTimeWithString` (which accepts

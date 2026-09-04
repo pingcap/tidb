@@ -1102,6 +1102,54 @@ performance-sensitive loop is introduced. Remaining column/session warning
 observation and unsupported malformed numeric rows stay explicit boundaries
 of this value/chunk carrier.
 
+## Rust follow-up: `PERIOD_ADD`/`PERIOD_DIFF` invalid-period diagnostics
+
+This focused fix remains within the complete `pkg/expression` inventory above
+at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`. The
+`builtin_time.go` and `builtin_time_test.go` blobs are unchanged from the
+previously inventoried source, and the full Go/Rust owner inventories remain
+208 recursive Go artifacts (146,291 lines) and 176 Rust artifacts (107,196
+lines). The invalid-period branches and their source error table were reread
+before editing; no Go, generated, fixture, platform, Bazel, or build artifact
+changed.
+
+Go's `builtinPeriodAddSig` and `builtinPeriodDiffSig` return
+`errIncorrectArgs.GenWithStackByArgs("period_add"/"period_diff")`, rendered
+as `[expression:1210]Incorrect arguments to period_add` or
+`...period_diff`. Rust already rejected the same invalid periods, but used an
+`Unsupported("invalid ... period")` placeholder, which lost the function
+identity and the source-facing diagnostic. Both branches now return
+`EvalError::IncorrectArguments` with the matching text; NULL evaluation order,
+valid period arithmetic, and unsigned wrapping are unchanged.
+
+The existing Go-derived invalid-period carrier now asserts the exact Rust
+error variant/text for all `PERIOD_ADD` and `PERIOD_DIFF` rows. On the pre-fix
+tree it failed on the first row (`Unsupported("invalid PERIOD_ADD period")` vs
+`IncorrectArguments("Incorrect arguments to period_add")`); after the fix all
+rows pass.
+
+Focused fail-before/pass-after evidence:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib \
+  tests::builtin_time_calendars_source::period_invalid_period_reject_the_call \
+  -- --exact --nocapture
+# pre-fix: failed on the Unsupported placeholder/text
+# after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib period_ -- --nocapture --test-threads=1
+# after fix: 3 passed (source diagnostic plus valid/wrapping period vectors)
+```
+
+Ready validation for this package batch is recorded with the commit: owner
+all-target compilation, the serial owner suite (with only the documented
+loopback JSON-schema fixture skipped), formatting/whitespace checks, and
+`make lint` all pass.
+
 ## Rust follow-up: `FORMAT` precision and `WEIGHT_STRING` truncation warnings
 
 This batch stays inside the complete `pkg/expression` inventory at Go

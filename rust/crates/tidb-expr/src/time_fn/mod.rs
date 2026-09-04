@@ -1141,10 +1141,11 @@ fn period_add(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     if !valid_period(period) {
-        // TiDB returns ER_WRONG_ARGUMENTS (1210). EvalError intentionally has
-        // no server error-code payload, so retain the error boundary without
-        // inventing a diagnostic string.
-        return Err(EvalError::Unsupported("invalid PERIOD_ADD period"));
+        // TiDB returns ER_WRONG_ARGUMENTS (1210). EvalError carries the
+        // source-facing message but not the server code prefix.
+        return Err(EvalError::IncorrectArguments(
+            "Incorrect arguments to period_add".to_owned(),
+        ));
     }
     let sum = (period_to_month(period as u64) as i64).wrapping_add(months);
     Ok(Datum::Int(month_to_period(sum as u64) as i64))
@@ -1160,7 +1161,9 @@ fn period_diff(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     if !valid_period(period1) || !valid_period(period2) {
-        return Err(EvalError::Unsupported("invalid PERIOD_DIFF period"));
+        return Err(EvalError::IncorrectArguments(
+            "Incorrect arguments to period_diff".to_owned(),
+        ));
     }
     // Go subtracts the uint64 month totals before converting to int64.
     Ok(Datum::Int(
