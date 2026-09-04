@@ -1249,6 +1249,97 @@ fn opt_selectivity_factor_uses_go_typed_session_hook() {
     assert_eq!(fresh.selectivity_factor(), 1.0);
 }
 
+/// Go `TestTiDBAnalyzeDefaultBucketAndTopNOptions`: GLOBAL writes publish the
+/// validated unsigned values and clamp out-of-range input to each configured
+/// boundary instead of refusing the assignment.
+#[test]
+fn analyze_default_bucket_and_topn_global_hooks_match_go() {
+    struct Restore {
+        buckets: u64,
+        top_n: u64,
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
+                .store(self.buckets, std::sync::atomic::Ordering::SeqCst);
+            tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N
+                .store(self.top_n, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let _restore = Restore {
+        buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
+            .load(std::sync::atomic::Ordering::SeqCst),
+        top_n: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N
+            .load(std::sync::atomic::Ordering::SeqCst),
+    };
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_buckets = 100")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_buckets"),
+        Some("100".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+        100
+    );
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_buckets = 0")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_buckets"),
+        Some("1".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_buckets = 100001")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_buckets"),
+        Some("100000".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+        100_000
+    );
+
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_topn = 50")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_topn"),
+        Some("50".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
+        50
+    );
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_topn = 0")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_topn"),
+        Some("0".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_analyze_default_num_topn = 100001")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_topn"),
+        Some("100000".to_owned())
+    );
+    assert_eq!(
+        tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
+        100_000
+    );
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.

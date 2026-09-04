@@ -110,6 +110,10 @@ For each bounded behavior cluster:
   statistics handoff so pseudo/cardinality fallback estimation receives the
   session value instead of a fixed constant. Focused SQL coverage verifies
   session writes, statement capture, GLOBAL clamping, and inheritance.
+- 2026-09-05 (`pkg/sessionctx/variable` analyze default bucket/TopN hooks):
+  added SQL-level GLOBAL coverage for process-value publication and Go's
+  boundary clamping (`1..100000` buckets and `0..100000` TopN). Broader
+  analyze scheduler consumers remain outside this session owner.
 - 2026-09-05 (`pkg/sessionctx/variable` resource-control hooks): published
   Go's process-wide enable and strict-mode switches on named GLOBAL writes,
   startup/cluster/reset paths, and changed resource-group hint admission to
