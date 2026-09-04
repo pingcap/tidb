@@ -216,7 +216,10 @@
 //!   no collation (matching Go), so no collation-mismatch error can arise
 //!   there even when TiDB's own planner would have rewritten the expression.
 
+use tidb_error::terror::TerrorError;
 use tidb_txnkv::{Key, KeyRange};
+use tidb_util::dbterror::{self, exeerrors};
+use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 
 /// A DDL key range together with the flashback-cluster exclusion marker.
 ///
@@ -263,6 +266,51 @@ pub fn merge_continuous_key_ranges(ranges: &[KeyRangeMayExclude]) -> Vec<KeyRang
         result.push(KeyRange::new(start, end));
     }
     result
+}
+
+/// Reports whether a DDL statement's session has been interrupted, together
+/// with the Go-compatible kill flag.
+///
+/// This is Go `isSessionDone` (`pkg/ddl/executor.go:461`). The failpoint-only
+/// `BatchAddTiFlashSendDone` override belongs to the unported batch wait loop;
+/// this pure helper covers the SQL-killer contract shared by that loop and
+/// other DDL callers.
+#[must_use]
+pub fn is_session_done(killer: &SqlKiller) -> (bool, u32) {
+    let killed = killer
+        .handle_signal()
+        .is_some_and(|error| exeerrors::ERR_QUERY_INTERRUPTED.equal(Some(&error)));
+    if killed {
+        (true, KillSignal::QueryInterrupted.raw())
+    } else {
+        (false, 0)
+    }
+}
+
+/// Converts the DDL wait loop's numeric kill flag into the canonical
+/// interrupted-query error.
+///
+/// This is Go `convertKillFlag` (`pkg/ddl/executor.go:475`): zero is the
+/// failpoint-only abort and therefore succeeds, while any non-zero flag is a
+/// query interruption.
+pub fn convert_kill_flag(killed: u32) -> Result<(), TerrorError> {
+    if killed == 0 {
+        return Ok(());
+    }
+    Err(exeerrors::ERR_QUERY_INTERRUPTED
+        .generate_with_stack(exeerrors::ERR_QUERY_INTERRUPTED.message()))
+}
+
+/// Reports whether a failed system DDL cancellation should be retried.
+///
+/// This is Go `isRetryableDDLCancelErr` (`pkg/ddl/executor.go:7227`). The
+/// three terminal cancellation errors are rejected through terror identity
+/// equality, including wrapped errors; every other error remains retryable.
+#[must_use]
+pub fn is_retryable_ddl_cancel_err(error: &(dyn std::error::Error + 'static)) -> bool {
+    !dbterror::ERR_CANCEL_FINISHED_DDL_JOB.equal(Some(error))
+        && !dbterror::ERR_CANNOT_CANCEL_DDL_JOB.equal(Some(error))
+        && !dbterror::ERR_DDL_JOB_NOT_FOUND.equal(Some(error))
 }
 
 mod alter_metadata;

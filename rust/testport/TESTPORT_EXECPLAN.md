@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` kill-flag helpers): transcreated the pure DDL
+  `isSessionDone`, `convertKillFlag`, and `isRetryableDDLCancelErr` contracts
+  in `tidb-executor::ddl`. Focused regressions cover clean/interrupted killer
+  states, zero/non-zero conversion, wrapped terminal cancellation errors, and
+  retryable failures; the deferred TiFlash wait loop and DDL job queue remain
+  explicitly out of scope.
 - 2026-09-05 (`pkg/ddl` global-index version selection): verified the
   existing `tidb-exec::cluster_ddl::set_global_index_version` against Go's
   `setGlobalIndexVersion` shape matrix. A focused regression now covers the
