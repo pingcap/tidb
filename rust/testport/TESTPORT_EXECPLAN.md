@@ -7751,3 +7751,10 @@ risks without claiming repository-wide parity.
   package inventory are recorded in
   `receipts/server_unknown_command_error.md`; those known-command owners remain
   explicit follow-up boundaries.
+- 2026-09-05 (`pkg/server` transaction handshake capability): the Rust
+  `tidb-server` handshake now advertises Go's `CLIENT_TRANSACTIONS` bit (1<<13),
+  matching the transaction status and command paths already implemented by
+  the session. A focused fail-before/pass-after capability regression and the
+  complete package inventory are recorded in
+  `receipts/server_capability_transactions.md`; `CLIENT_FOUND_ROWS` remains an
+  explicit executor/session follow-up.

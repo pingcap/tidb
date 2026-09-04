@@ -138,13 +138,14 @@ the single byte `0xE9`. Rust advertises the column's own utf8mb4 id and sends
 the two bytes `0xC3 0xA9`; the client, told to expect latin1 by its own
 session setting, renders `Ã©`. Silent mojibake with no error anywhere.
 
-### D5. `CLIENT_TRANSACTIONS` and `CLIENT_FOUND_ROWS` are not advertised
+### D5. `CLIENT_FOUND_ROWS` is not advertised (`CLIENT_TRANSACTIONS` fixed)
 
 - Go: `pkg/server/server.go:116-121` `defaultCapability` includes
   `ClientTransactions` (1<<13) and `ClientFoundRows` (1<<1).
-- Rust: `rust/crates/tidb-server/src/mysql_connection.rs:107-112`
-  `SERVER_CAPABILITIES` is exactly
-  `CLIENT_PROTOCOL_41 | CLIENT_CONNECT_WITH_DB | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH | CLIENT_CONNECT_ATTRS | CLIENT_DEPRECATE_EOF`.
+- Rust: `rust/crates/tidb-server/src/mysql_connection.rs` now advertises
+  `CLIENT_TRANSACTIONS` (1<<13), matching the Go handshake and the transaction
+  status/command implementation. `CLIENT_FOUND_ROWS` (1<<1) remains outside
+  the Rust capability model, so it is still masked during negotiation.
 
 Distinguishing case: a client connecting with `CLIENT_FOUND_ROWS` set (JDBC
 `useAffectedRows=false`, which is the **default**) has the bit masked away by
@@ -152,8 +153,11 @@ Distinguishing case: a client connecting with `CLIENT_FOUND_ROWS` set (JDBC
 `UPDATE t SET c=c WHERE id=1` that matches one row but changes nothing then
 reports `affected_rows=0` where MySQL and Go report 1 — JDBC's
 `executeUpdate()` returns a different number, and code that branches on
-"did the update find the row" takes the wrong branch. `CLIENT_TRANSACTIONS`
-compounds D2: a client is told the server has no transaction support at all.
+"did the update find the row" takes the wrong branch. The transaction
+capability no longer compounds D2: clients can negotiate the transaction
+support that Rust already implements. The `CLIENT_FOUND_ROWS` affected-row
+distinction remains a separate follow-up because the executor still reports
+changed rows rather than matched rows for an unchanged update.
 
 ---
 

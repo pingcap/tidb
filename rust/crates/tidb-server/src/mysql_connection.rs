@@ -45,7 +45,7 @@ use crate::handshake::{
     negotiate_capabilities, parse_response_header, parse_response_with_global_sysvars,
     InitialHandshake, AUTH_NATIVE_PASSWORD, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS,
     CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
-    CLIENT_SSL, CLIENT_ZSTD_COMPRESSION_ALGORITHM, DEFAULT_COLLATION_ID,
+    CLIENT_SSL, CLIENT_TRANSACTIONS, CLIENT_ZSTD_COMPRESSION_ALGORITHM, DEFAULT_COLLATION_ID,
 };
 use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
@@ -203,6 +203,7 @@ const CLIENT_LOCAL_FILES: u32 = 1 << 7;
 const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
     | CLIENT_COMPRESS
     | CLIENT_CONNECT_WITH_DB
+    | CLIENT_TRANSACTIONS
     | CLIENT_SECURE_CONNECTION
     | CLIENT_PLUGIN_AUTH
     | CLIENT_CONNECT_ATTRS
@@ -2595,5 +2596,17 @@ mod unknown_command_tests {
         assert_eq!(error.code, 1105);
         assert_eq!(error.state, *b"HY000");
         assert_eq!(error.message, "command 250 not supported now");
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::{CLIENT_TRANSACTIONS, SERVER_CAPABILITIES};
+
+    #[test]
+    fn server_advertises_go_transaction_capability() {
+        // Go's `defaultCapability` includes ClientTransactions, so a client
+        // must be able to negotiate transaction-aware status and commands.
+        assert_ne!(SERVER_CAPABILITIES & CLIENT_TRANSACTIONS, 0);
     }
 }
