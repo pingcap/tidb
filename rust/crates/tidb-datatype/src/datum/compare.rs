@@ -519,6 +519,13 @@ mod tests {
             invalid.compare(&Datum::Int(0), Collation::Binary).unwrap(),
             std::cmp::Ordering::Equal
         );
+
+        let invalid = Datum::new_bytes(vec![0xff]);
+        let zero = Datum::new_decimal(crate::Decimal::from_int(0));
+        assert_eq!(
+            invalid.compare(&zero, Collation::Binary).unwrap(),
+            std::cmp::Ordering::Equal
+        );
     }
 
     #[test]

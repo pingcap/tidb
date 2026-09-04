@@ -157,14 +157,15 @@ comparison helper previously required `std::str::from_utf8`, turning the same
 `Datum::Bytes([0xff])` versus integer zero comparison into a Rust-only
 `InvalidUtf8` error.
 
-The Rust owner now uses a lossy UTF-8 view only at this numeric comparison
-boundary. Numeric prefixes are ASCII, so valid source digits are unchanged;
-invalid sequences become a non-ASCII replacement and stop the same prefix
-scan. The focused regression
+The Rust owner now uses a lossy UTF-8 view at the numeric comparison and
+decimal-prefix boundaries. Numeric prefixes are ASCII, so valid source digits
+are unchanged; invalid sequences become a non-ASCII replacement and stop the
+same prefix scan. The focused regression
 `datum::compare::tests::non_utf8_numeric_bytes_keep_go_zero_prefix_ordering`
-failed before the change with `InvalidUtf8` and passes after it, returning
-`Ordering::Equal` like Go's zero prefix. This deliberately does not claim the
-separate comparison warning-sink/context API (D4/D5).
+failed before the changes with `InvalidUtf8` and passes after them, returning
+`Ordering::Equal` like Go's zero prefix for both integer and decimal targets.
+This deliberately does not claim the separate comparison warning-sink/context
+API (D4/D5).
 
 ## Validation
 
