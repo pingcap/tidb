@@ -470,6 +470,15 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `receipts/cast_hybrid_push.md` sibling — the vectors live in
   `simple_expr::tests::format_bytes_and_nano_time_follow_the_go_unit_tables`.
 
+- 2026-09-04 (charset-transcode classification parity): entry-by-entry
+  verification of Go's `convertActionMap` (pkg/expression/
+  builtin_convert_charset.go:300-330) against `convert_charset::func_prop` —
+  27 None + 17 BinAware + 37 Auto names and the five-name
+  `isLegacyCharset` set all match, closing the wrong-bytes tier for the
+  implicit charset transcode. The deliberate non-modeling of the
+  builder-level `from_binary` arm and the `CHAR(n) BINARY` flag residue are
+  recorded. Receipt: `receipts/convert_funcs_prop_parity.md`.
+
 - 2026-09-04 (registry arity parity verification): systematic
   accept/reject-arity check across all 283 Go `baseFunctionClass`
   declarations (pkg/expression, every `ast.<Const>` resolved through

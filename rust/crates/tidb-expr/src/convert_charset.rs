@@ -77,6 +77,11 @@ pub fn is_legacy_charset(charset: &str) -> bool {
 
 /// Go `convertActionMap`, inverted into the `convertFuncsMap` lookup.
 ///
+/// Verified 2026-09-04 against Go master
+/// (`builtin_convert_charset.go:301-329`) entry by entry: 27 None, 17
+/// BinAware, and 37 Auto names plus the five-entry `isLegacyCharset` set all
+/// match (see `testport/receipts/convert_funcs_prop_parity.md`).
+///
 /// The names are this crate's own lowered builtin spellings, which is why
 /// `char_length`/`character_length` and the `octet_length` alias appear where
 /// Go lists `ast.CharLength`/`ast.OctetLength`.
