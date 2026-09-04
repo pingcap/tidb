@@ -362,10 +362,13 @@ hangs at `_dyld_start`). Therefore:
 - **No statement in this document was executed against either engine.** Every "TiDB sends X"
   claim is read from Go source — the catalogue files, the state table, and the specific raise
   site cited — not from a capture.
-- `cargo check`, `cargo clippy --all-targets` and `cargo fmt --all --check` were run and are
-  clean (exit 0) for the changed crate. **`cargo test` was not run.** The one test I edited
-  (`driver/errors/exec.rs`, the 1365 assertion, `HY000` → `22012`) is asserted-by-reading,
-  not by running.
+- The focused and serialized all-target `cargo test` profiles for the current
+  `tidb-error` and `tidb-executor` owners were run. The catalogue-precedence
+  owner is green (8 unit + 31 integration tests); the executor owner retains
+  its documented pre-existing planner/remote/spill/fixture failures, with the
+  new retry-marker regression passing. `cargo check`, formatting, and diff
+  checks also pass. Strict clippy is green for `tidb-error` and remains blocked
+  for `tidb-executor` by unrelated dependency/generated-code diagnostics.
 - F2's blast radius (which of the ~59 storage-error sites ordinary SQL reaches) is unmeasured.
 - F1's correct code (8005 vs `ErrResultUndetermined`) is unsettled; it needs a capture.
 
@@ -377,15 +380,11 @@ The method that works is a throwaway `pkg/executor/zz_dump_errors_test.go` over
 The statements it needs to cover, one per open item:
 
 ```sql
--- F5: does NewStd pick errno's text?  expect the '%d character position' wording
-SELECT JSON_EXTRACT('{"a":1}', '$.');
 -- F2: expect 9007 and a message ending '[try again later]'
 --     (two sessions, conflicting UPDATE, commit the second)
 -- F3: expect 1235 / 42000 / "This version of TiDB doesn't yet support '...'"
 -- F8: expect the "in '(9223372036854775807 + 1)'" tail
 SELECT 9223372036854775807 + 1;
--- F6 regression, now fixed: expect 3143 / 42000, and 1365 / 22012
-SELECT 1/0;
 ```
 
 ## Method footnote
