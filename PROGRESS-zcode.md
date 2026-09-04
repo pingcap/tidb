@@ -351,3 +351,5 @@
 - 下轮恢复点: (1) privilege 行为面(SET-ROLE/角色图、password expiry); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - privilege 第三遍: check_password_expired 忠实移植核实(1862/沙箱/lifetime 阶梯全对齐); 记录一个微差异=Go AddDate 日历日 vs Rust 秒算术(DST 边界 ±1h, 修复需 registry 携带时区)。收据已追加。
 - 下轮恢复点: (1) privilege 余项: SET-ROLE/角色图; (2) DST 微差异修复(需 registry 时区, 排队); (3) F2/F3-seam live 阻塞; (4) F4 低优先级。
+- privilege 第四遍: 角色图核实(BFS 传递闭包/激活直接性/身份顺序/dynamic 授予覆盖与 REVOKE ALL 全删语义均对齐)。SET-ROLE 语句面为唯一未审切片。
+- 下轮恢复点: (1) SET-ROLE 语句语义面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。

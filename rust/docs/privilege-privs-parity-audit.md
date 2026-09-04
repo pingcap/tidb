@@ -50,3 +50,15 @@ location, which shifts by up to an hour across DST transitions — while
 Rust compares exact seconds. Observable only when a password's exact
 expiry instant lands inside a DST shift; porting calendar-day arithmetic
 would need the session timezone in the registry.
+
+## Role graph (2026-09-05, fourth pass)
+
+`effective_roles` (`registry_ops.rs:944`) is the BFS transitive closure
+over the granted role edges with a visited set — activation is
+direct-only while inheritance through an activated role is transitive,
+matching Go's `FindAllRole` walk — and `RequestVerification`'s identity
+order (self first, then roles) is preserved by
+`identities_for_check`. The dynamic grant/revoke pair carries Go's
+subtle rules verbatim: re-granting overwrites `with_grant_option`, and
+`REVOKE ALL ON *.*` deletes every dynamic privilege row. SET-ROLE
+statement semantics remain the one unexamined slice.
