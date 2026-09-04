@@ -5,10 +5,9 @@
 
 #![allow(deprecated)]
 
-use sha2::{Digest as _, Sha256};
 use tidb_parser::{
     digest_hash, digest_normalized, normalize, normalize_digest, normalize_digest_for_binding,
-    normalize_for_binding, normalize_keep_hint, Digest, RedactMode,
+    normalize_for_binding, normalize_keep_hint, RedactMode,
 };
 
 #[test]

@@ -421,9 +421,7 @@ impl<'a> Lexer<'a> {
         // allocates here, and anything past the bound is simply not a keyword
         // -- the same negative the old binary search produced.
         let mut upper_buffer = [0u8; KEYWORD_UPPER_MAX];
-        let Some(upper) = uppercased_into(text, &mut upper_buffer) else {
-            return None;
-        };
+        let upper = uppercased_into(text, &mut upper_buffer)?;
 
         // Builtin function keywords normally require an adjacent `(`. Under
         // IGNORE_SPACE, Go scans past whitespace for this one decision without
