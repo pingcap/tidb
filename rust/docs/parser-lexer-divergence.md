@@ -299,16 +299,12 @@ Same for a CTE name (`pkg/parser/select_parser.go:185`): `WITH database AS
 (SELECT 1) SELECT * FROM database` is a Go syntax error and a Rust
 success.
 
-**Not fixed, deliberately.** Adding the three strings is a one-line change
-that is *correct for the alias path and wrong for the expression path*,
-because of #4: Rust reuses one list for both gates.
-`tidb-parser/src/tests/format.rs:84` asserts `database.table.column`
-parses to `` `database`.`table`.`column` `` — which Go also accepts, via
-the expression-prefix fallback, not `IsReserved` — and that test would
-start failing. The coherent fix is #4 and #5 together: move the
-expression-prefix bare-identifier arm onto `is_clause_keyword`, *then* add
-the three keywords. That is a wide-blast-radius change, and this machine
-cannot run `cargo test` to bound it (see "Unverified"). The edit was made,
+**FIXED (2026-09-04).** #4's `is_clause_keyword` gate has been landed, so
+the expression-prefix fallback now uses the 13-word clause list instead of
+`is_reserved`. The three keywords (`DATABASE`, `DATABASES`, `DISTINCT`)
+are now in `RESERVED_KEYWORDS` and correctly rejected as identifiers.
+*Previously this was "not fixed, deliberately" because the coherent fix
+required #4 first — that prerequisite is now satisfied.* The edit was made,
 `cargo check`ed, and reverted rather than shipped blind.
 
 #### 6. `0X41` was a lex error in Rust and a hex literal in Go — FIXED
