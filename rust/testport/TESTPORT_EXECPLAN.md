@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/planner/core` row comparison): activated the Go-derived
+  `TestCompareRow` regression now that Rust's AST-level `ROW(...)` comparison
+  path is live in `tidb-expr`. The registry still excludes standalone `row`
+  from its builtin-name list, matching Go's `GetBuiltinList` skip; this is not
+  a behavior gap for comparison/`IN` operands. The planner source test now
+  covers equality, inequality, lexicographic ordering, and NULL poisoning.
 - 2026-09-05 (`pkg/ddl` non-touched partition traversal): aligned
   `tidb-model::PartitionInfo` with Go master `findNextNonTouchedPartitionID`.
   The metadata helper now walks definitions after the current ID, skips every

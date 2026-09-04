@@ -31,14 +31,13 @@
 //! rendering (`fmt.Sprintf("%v", val.GetValue())`, :84/:92): ints print bare
 //! digits, strings print their contents, SQL NULL prints `<nil>`.
 //!
-//! One Go test needs a surface this tier does not have and stays documentary:
-//! `TestCompareRow` evaluates `row(...)` comparisons, and `row` is explicitly
-//! NOT IMPLEMENTED in this workspace's builtin registry
-//! (`rust/crates/tidb-expr/src/builtin_registry.rs`'s `NOT_IMPLEMENTED` list),
-//! mirroring nothing in the evaluator yet. `TestBuildExpression`'s two
-//! `EvalInt` legs need a chunk-backed row binder (`chunk.MutRowFromValues`),
-//! and `tidb-chunk` is not a `tidb-planner` dependency; those are the
-//! recorded gap items here, each with its own `#[ignore]` test.
+//! `TestCompareRow` uses the evaluator's AST-level row-comparison path. The
+//! function registry intentionally keeps `row` out of its standalone builtin
+//! list (matching Go's `GetBuiltinList` skip), but parsed `ROW(...)` operands
+//! are rewritten and evaluated directly by `tidb-expr::row`. `TestBuildExpression`'s
+//! two `EvalInt` legs still need a chunk-backed row binder
+//! (`chunk.MutRowFromValues`), and `tidb-chunk` is not a `tidb-planner`
+//! dependency; that remains the recorded gap item here.
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, DatumKind, FieldType, FieldTypeCode, FieldTypeFlags};
@@ -401,8 +400,17 @@ fn is_truth_sixteen_three_valued_rows_match_go() {
 /// deciding position poisons the comparison to NULL (:331-337) but a NULL
 /// AFTER it does not (:338-341).
 #[test]
-#[ignore = "go-parity-gap: `row` comparison builtin is on the registry's NOT_IMPLEMENTED list"]
-fn compare_row_lexicographic_null_poisoning_rows() {}
+fn compare_row_lexicographic_null_poisoning_rows() {
+    assert_folds_to("row(1,2,3)=row(1,2,3)", "1");
+    assert_folds_to("row(1,2,3)=row(1+3,2,3)", "0");
+    assert_folds_to("row(1,2,3)<>row(1,2,3)", "0");
+    assert_folds_to("row(1,2,3)<>row(1+3,2,3)", "1");
+    assert_folds_to("row(1+3,2,3)<>row(1+3,2,3)", "0");
+    assert_folds_to("row(1,2,3)<row(1,NULL,3)", "<nil>");
+    assert_folds_to("row(1,2,3)<row(2,NULL,3)", "1");
+    assert_folds_to("row(1,2,3)>=row(0,NULL,3)", "1");
+    assert_folds_to("row(1,2,3)<=row(2,NULL,3)", "1");
+}
 
 /// GO PORT of `pkg/planner/core/expression_test.go:432 TestBuildExpression`.
 ///
