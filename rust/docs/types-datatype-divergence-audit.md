@@ -33,8 +33,6 @@ The highest-impact open items are now:
 
 - **D5** — `Datum::compare` still lacks Go's statement context, so timezone,
   SQL-mode flags, and truncation-warning publication are pinned or dropped.
-- **D4** — malformed temporal/string comparisons still return only `Err`,
-  while Go returns the zero-value ordering beside the parse error.
 - **M10** — fixed 2026-09-04; the fixed-word parser now preserves Go's
   distinct no-digits `TruncatedWrongValue` and exponent `BadNumber` identities.
 
@@ -180,7 +178,7 @@ and Ready evidence are recorded in
 `rust/testport/receipts/types_explain_format_audit.md`; the warning sink and
 session context remain the separate D4/D5 boundary.
 
-## D4 (rank 3) — `Datum::compare` returns `Err` where Go returns an ORDERING *and* an error
+## D4 (rank 3, FIXED 2026-09-04) — `Datum::compare` returns `Err` where Go returns an ORDERING *and* an error
 
 Go's comparison helpers that parse a string return both the comparison result
 and the parse error; the parse failure leaves a zero value that the comparison
@@ -193,13 +191,21 @@ Rust returns `Err` with no ordering, so a lenient caller loses the answer.
   DefaultFsp)` alongside the error, so `dt` is the zero datetime. Same pattern
   at `:878-880` (duration), `:998-1000`, `:871-874` (decimal).
 - Rust: `rust/crates/tidb-datatype/src/datum/compare.rs:144-154` and
-  `:249-260` — `parse_datetime(...).map_err(...)` then `?`.
+  `:249-260` — the strict `compare` wrapper still maps
+  `parse_datetime(...).map_err(...)` through `?`, but the new
+  `Datum::compare_with_error` source-facing seam retains the zero-value
+  ordering beside that error for temporal and duration strings. The same seam
+  reports the truncation event beside the best-effort ordering for numeric and
+  decimal string conversions.
 
 Distinguishing input: `Time('2011-01-01 00:00:00')` compared with
 `String('not a date')`.
 
 - Go: ordering `Greater` (zero datetime sorts first) plus the parse error.
-- Rust: `Err(DatumValueError::Comparison(...))`, no ordering.
+- Rust: `compare_with_error` returns `(Greater, Some(error))`; the legacy
+  `compare` remains strict and returns `Err` for callers that cannot carry a
+  paired result. Focused regressions cover both directions and the numeric
+  prefix event in `receipts/types_explain_format_audit.md`.
 
 ## D5 (rank 2/3) — `Datum::compare` has no context: flags, timezone and warning sink are all hardcoded
 

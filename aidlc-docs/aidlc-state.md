@@ -2,15 +2,15 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` empty-collation predicate parity batch (finding F3)
+- Work unit: `pkg/types` comparison result-shape parity batch (finding D4)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: the focused empty-collation predicate regression and serialized
+- Validation: the focused paired-comparison regressions and serialized
   datatype/expression/executor owner profiles pass or retain their known
-  baseline blockers. Datatype reports 404 unit and 64 source/integration
-  passes; expression reports 1,141 passes, one known loopback HTTP
-  JSON-schema fixture failure, and 122 ignored; executor reports 1,052
+  baseline blockers. Datatype reports 406 unit and 64 source/integration
+  passes; expression reports 1,144 passes, one known loopback HTTP
+  JSON-schema fixture failure, and 121 ignored; executor reports 1,052
   passes and 121 existing planner/storage/fixture failures. Strict
   datatype clippy remains blocked only by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
@@ -103,5 +103,10 @@
   the stored collation spelling, so empty legacy `Collate` values do not inherit
   the cached `Binary` enum. Receipt:
   `rust/testport/receipts/types_explain_format_audit.md`.
+- Current batch: Rust `Datum::compare_with_error` now preserves Go's ordering
+  beside temporal/duration parse errors and numeric/decimal string truncation
+  diagnostics, while the strict `compare` wrapper remains source-compatible.
+  Receipt: `rust/testport/receipts/types_explain_format_audit.md`.
 - Next action: continue with the next executable Rust package boundary after
-  the M10 batch is committed and pushed.
+  this D4 batch; D5 statement-context flags, timezone, and warning publication
+  remain explicit follow-ups.

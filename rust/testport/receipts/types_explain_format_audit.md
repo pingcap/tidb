@@ -706,6 +706,53 @@ The owner compile, format, and diff checks are run before commit; no
 production implementation change was needed because the spelling-authoritative
 predicate was already present.
 
+## Rust-only parity fix: retain comparison ordering beside parse errors
+
+Go's `Datum.Compare` returns an ordering and an error together. In particular,
+`compareString` parses temporal and duration strings into a zero value beside a
+parse failure, then compares that zero value; numeric and decimal string paths
+keep their best-effort prefix/value beside a truncation event. Rust's original
+`Datum::compare` exposed only `Result<Ordering, DatumValueError>`, so a strict
+caller could not recover the source ordering after an error.
+
+`Datum::compare_with_error` now exposes the paired source result while leaving
+the existing strict `compare` wrapper unchanged. Temporal and duration parse
+failures return the ordering against the zero value plus the original error;
+numeric and decimal string conversions return their best-effort ordering plus a
+source-shaped truncation diagnostic. The statement-context warning policy
+remains the separate D5 boundary.
+
+Focused regressions:
+
+- `datum::compare::tests::compare_with_error_keeps_temporal_ordering_beside_parse_error`
+  asserts `Greater`/`Less` in both directions for a valid time versus
+  `"not a date"`, with an error retained beside each ordering.
+- `datum::compare::tests::compare_with_error_keeps_numeric_prefix_ordering_beside_error`
+  asserts `1 == "1abc"` while retaining
+  `Truncated incorrect DOUBLE value: '1abc'`.
+
+Ready validation (commands run from `rust/`):
+
+```text
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --lib datum::compare::tests::compare_with_error_keeps_temporal_ordering_beside_parse_error -- --exact --nocapture
+# passed: 1 test
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --lib datum::compare::tests::compare_with_error_keeps_numeric_prefix_ordering_beside_error -- --exact --nocapture
+# passed: 1 test
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 406 unit tests; 64 source/integration tests
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --all-targets -- --test-threads=1
+# 1,144 passed, 1 known loopback HTTP JSON-schema fixture failed, 121 ignored
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-executor --all-targets -- --test-threads=1
+# 1,052 passed, 121 existing planner/storage/fixture failures, 0 ignored
+cargo +nightly-2026-08-22 check --offline --locked -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --offline --locked -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --offline --locked -p tidb-executor --all-targets
+cargo +nightly-2026-08-22 fmt --all -- --check
+git diff --check
+# checks, format, and diff all passed; the two owner suites retain the
+# documented baseline test failures above
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (D4, `pkg/types` comparison result shape): added
+  `Datum::compare_with_error`, retaining Go's ordering beside temporal and
+  duration parse errors and beside numeric/decimal string truncation events.
+  The strict `compare` wrapper remains available for callers that require an
+  error-only result. Focused bidirectional temporal and numeric regressions,
+  plus the datatype Ready profile, are recorded in
+  `receipts/types_explain_format_audit.md`; statement-context warning policy
+  remains the separate D5 boundary.
 - 2026-09-04 (F3, `pkg/types` empty-collation predicate): reconciled the
   field-type audit with the spelling-authoritative implementation and added a
   legacy JSON regression proving an empty `Collate` remains a character string

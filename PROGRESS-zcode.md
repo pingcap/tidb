@@ -167,3 +167,10 @@
 - 已推送 430bb835594：real→int in-union 钳 0 臂（Go castAsRealToIntSig :1370-1380 语义：负实数钳 0 而非 unsigned wrap）+ 2 回归（pre-fix 失败已验证）。rebase 到远端最新（含另一会话 mview build-sql 提交）后推送。
 
 - 已推送 66122ec76eb（rebase 到远端最新 2a1f4b900fa DST-gap 提交之上）：real→decimal in-union 置零臂 + 2 回归（负数钳 0、正数 FromFloat64 透传）。expr 套件全绿（1127+2/0 在 lib、18+0 集成）。
+
+- 2026-09-04: Rust `Datum::compare_with_error` now retains Go's ordering
+  beside temporal/duration parse errors and numeric/decimal string truncation
+  diagnostics. The strict `Datum::compare` wrapper remains unchanged for
+  error-only callers; focused bidirectional temporal and numeric regressions
+  plus the datatype Ready profile are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.

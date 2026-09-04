@@ -26,7 +26,7 @@ use std::cmp::Ordering;
 use super::{decimal_from_bytes, Datum, DatumValueError};
 use crate::{
     compare_binary_json, parse_datetime, parse_duration, str_to_float, BinaryJSON, BinaryLiteral,
-    Collation, Decimal, MySqlDuration, Time, VectorFloat32,
+    Collation, CoreTime, Decimal, MySqlDuration, Time, TimeType, VectorFloat32,
 };
 
 impl Datum {
@@ -87,6 +87,29 @@ impl Datum {
             Self::Null | Self::MinNotNull | Self::MaxValue => {
                 unreachable!("sentinel comparison returned above")
             }
+        }
+    }
+
+    /// Source `Datum.Compare`'s paired return value: an ordering is retained
+    /// even when parsing the string operand reports an error. Go's temporal,
+    /// duration, and decimal comparison helpers all compare against the
+    /// zero-value receiver produced beside the error; strict Rust callers can
+    /// continue using [`Self::compare`], while warning-policy callers consume
+    /// this method and decide how to publish the error.
+    pub fn compare_with_error(
+        &self,
+        other: &Self,
+        comparer: Collation,
+    ) -> (Ordering, Option<DatumValueError>) {
+        match self.compare(other, comparer) {
+            Ok(ordering) => (
+                ordering,
+                string_comparison_event(self, other).map(DatumValueError::Comparison),
+            ),
+            Err(error) => match temporal_zero_ordering(self, other) {
+                Some(ordering) => (ordering, Some(error)),
+                None => (Ordering::Equal, Some(error)),
+            },
         }
     }
 
@@ -266,6 +289,75 @@ fn compare_time_bytes(bytes: &[u8], value: Time) -> Result<Ordering, DatumValueE
     Ok(parsed.time.compare(value))
 }
 
+/// Returns the source ordering against the zero temporal value when parsing
+/// the string side failed. `Datum.Compare` returns this ordering beside the
+/// parse error, rather than discarding it as a Rust-only `Result` would.
+fn temporal_zero_ordering(left: &Datum, right: &Datum) -> Option<Ordering> {
+    let zero_time = || Time::new(CoreTime::default(), TimeType::DateTime, 0).ok();
+    match (left, right) {
+        (Datum::Time(value), Datum::String(_) | Datum::Bytes(_)) => {
+            Some(value.compare(zero_time()?))
+        }
+        (Datum::String(_) | Datum::Bytes(_), Datum::Time(value)) => {
+            Some(zero_time()?.compare(*value))
+        }
+        (Datum::Duration(value), Datum::String(_) | Datum::Bytes(_)) => {
+            Some(value.nanoseconds().cmp(&0))
+        }
+        (Datum::String(_) | Datum::Bytes(_), Datum::Duration(value)) => {
+            Some(0.cmp(&value.nanoseconds()))
+        }
+        _ => None,
+    }
+}
+
+/// Returns the source truncation diagnostic for a string conversion that the
+/// value-only comparison path deliberately keeps as a best-effort result.
+fn string_comparison_event(left: &Datum, right: &Datum) -> Option<String> {
+    let bytes = match (left, right) {
+        (Datum::String(value), _) => Some(value.bytes()),
+        (Datum::Bytes(value), _) => Some(value.as_slice()),
+        (_, Datum::String(value)) => Some(value.bytes()),
+        (_, Datum::Bytes(value)) => Some(value.as_slice()),
+        _ => None,
+    }?;
+    let is_decimal = matches!(left, Datum::Decimal(_)) || matches!(right, Datum::Decimal(_));
+    if is_decimal {
+        return decimal_from_bytes(bytes)
+            .ok()
+            .and_then(|converted| converted.event)
+            .map(|_| {
+                format!(
+                    "Truncated incorrect DECIMAL value: '{}'",
+                    String::from_utf8_lossy(bytes)
+                )
+            });
+    }
+    let numeric_domain = matches!(
+        (left, right),
+        (
+            Datum::String(_) | Datum::Bytes(_),
+            Datum::Int(_) | Datum::UInt(_)
+        ) | (
+            Datum::String(_) | Datum::Bytes(_),
+            Datum::Real(_) | Datum::Float32(_)
+        ) | (
+            Datum::Int(_) | Datum::UInt(_) | Datum::Real(_) | Datum::Float32(_),
+            Datum::String(_) | Datum::Bytes(_)
+        )
+    );
+    if numeric_domain {
+        let text = String::from_utf8_lossy(bytes);
+        return str_to_float(&text, false).event.map(|_| {
+            format!(
+                "Truncated incorrect DOUBLE value: '{}'",
+                String::from_utf8_lossy(bytes)
+            )
+        });
+    }
+    None
+}
+
 fn float_order(left: f64, right: f64) -> Ordering {
     left.partial_cmp(&right).unwrap_or_else(|| {
         if left.is_nan() {
@@ -316,7 +408,7 @@ mod tests {
     use super::Datum;
     use crate::{
         parse_datetime, parse_enum_value, parse_set_value, BinaryJSON, BinaryLiteral, Collation,
-        Decimal, MySqlDuration,
+        DatumValueError, Decimal, MySqlDuration,
     };
 
     /// Source: `pkg/types/compare_test.go::TestCompare`. Every source row is
@@ -526,6 +618,44 @@ mod tests {
             invalid.compare(&zero, Collation::Binary).unwrap(),
             std::cmp::Ordering::Equal
         );
+    }
+
+    /// Go's temporal comparison keeps the zero DATETIME returned beside a
+    /// parse error. The strict Rust wrapper still reports the error, while
+    /// the paired API exposes the `Greater` ordering to a warning-policy
+    /// caller.
+    #[test]
+    fn compare_with_error_keeps_temporal_ordering_beside_parse_error() {
+        let value = Datum::new_time(
+            parse_datetime("2011-01-01 00:00:00", &chrono_tz::UTC, true, false)
+                .unwrap()
+                .time,
+        );
+        let invalid = Datum::new_string("not a date");
+
+        let (ordering, error) = value.compare_with_error(&invalid, Collation::Binary);
+        assert_eq!(ordering, std::cmp::Ordering::Greater);
+        assert!(matches!(error, Some(DatumValueError::Comparison(_))));
+
+        let (ordering, error) = invalid.compare_with_error(&value, Collation::Binary);
+        assert_eq!(ordering, std::cmp::Ordering::Less);
+        assert!(matches!(error, Some(DatumValueError::Comparison(_))));
+    }
+
+    /// Go's numeric string comparison keeps the best-effort prefix and
+    /// returns its truncation error beside the ordering. Rust's value-only
+    /// path already computes the prefix; this regression pins the paired
+    /// diagnostic channel as well.
+    #[test]
+    fn compare_with_error_keeps_numeric_prefix_ordering_beside_error() {
+        let (ordering, error) =
+            Datum::Int(1).compare_with_error(&Datum::new_string("1abc"), Collation::Binary);
+        assert_eq!(ordering, std::cmp::Ordering::Equal);
+        assert!(matches!(
+            error,
+            Some(DatumValueError::Comparison(message))
+                if message == "Truncated incorrect DOUBLE value: '1abc'"
+        ));
     }
 
     #[test]
