@@ -2036,4 +2036,4 @@ use codec::{
     CODEC_WORD_BUF_LEN, DIGITS_PER_WORD,
 };
 
-pub use codec::{decimal_bin_size, DecimalCodecError, DecimalCodecWarning};
+pub use codec::{decimal_bin_size, DecimalCodecError, DecimalCodecFailure, DecimalCodecWarning};

@@ -63,6 +63,24 @@ pub enum DecimalCodecError {
     BadNumber,
 }
 
+/// Failure state returned by [`Decimal::from_bin_with_failure`].
+///
+/// Go's `MyDecimal.FromBin` mutates its receiver to the zero value before
+/// returning `ErrBadNumber` for a corrupt payload, while still returning the
+/// legal fixed payload length. Keeping those values beside the error lets row
+/// decoders make the same cursor-progress decision without weakening the
+/// existing [`Decimal::from_bin`] API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecimalCodecFailure {
+    /// Go's post-error receiver state (`zeroMyDecimal`).
+    pub value: Decimal,
+    /// Fixed payload bytes consumed/available according to the requested
+    /// precision and scale. Zero means the shape itself was invalid.
+    pub consumed: usize,
+    /// The underlying hard codec error.
+    pub error: DecimalCodecError,
+}
+
 /// Soft codec outcome carried beside a valid result, mirroring Go's non-fatal
 /// `ErrTruncated`/`ErrOverflow` returned from `ToBin`/`FromBin`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -517,8 +535,25 @@ impl Decimal {
         precision: i32,
         frac: i32,
     ) -> Result<(Decimal, usize, Option<DecimalCodecWarning>), DecimalCodecError> {
+        Self::from_bin_with_failure(bin, precision, frac).map_err(|failure| failure.error)
+    }
+
+    /// Decodes a binary decimal while retaining Go's post-error receiver and
+    /// cursor state. For a corrupt payload with a legal shape, the error value
+    /// contains zero and `consumed == DecimalBinSize(precision, frac)`;
+    /// malformed shapes and an empty input report `consumed == 0`.
+    pub fn from_bin_with_failure(
+        bin: &[u8],
+        precision: i32,
+        frac: i32,
+    ) -> Result<(Decimal, usize, Option<DecimalCodecWarning>), DecimalCodecFailure> {
+        let zero = || DecimalCodecFailure {
+            value: Decimal::from_literal("0"),
+            consumed: 0,
+            error: DecimalCodecError::BadNumber,
+        };
         if bin.is_empty() {
-            return Err(DecimalCodecError::BadNumber);
+            return Err(zero());
         }
         let digits_int = precision - frac;
         let words_int = digits_int / DIGITS_PER_WORD as i32;
@@ -536,9 +571,14 @@ impl Decimal {
 
         // Sign lives in the top bit of the first byte (0 => negative).
         let mask: i32 = if bin[0] & 0x80 > 0 { 0 } else { -1 };
-        let bin_size = decimal_bin_size(precision, frac)?;
+        let bin_size = decimal_bin_size(precision, frac)
+            .map_err(|error| DecimalCodecFailure { error, ..zero() })?;
         if bin_size > 40 {
-            return Err(DecimalCodecError::BadNumber);
+            return Err(DecimalCodecFailure {
+                value: Decimal::from_literal("0"),
+                consumed: 0,
+                error: DecimalCodecError::BadNumber,
+            });
         }
 
         // Private copy with the sign bit restored (Go pads to 40 then slices;
@@ -584,7 +624,11 @@ impl Decimal {
             if u64::from(w.word_buf[word_idx] as u32)
                 >= u64::from(CODEC_POWERS10[leading_digits as usize + 1] as u32)
             {
-                return Err(DecimalCodecError::BadNumber);
+                return Err(DecimalCodecFailure {
+                    value: Decimal::from_literal("0"),
+                    consumed: bin_size,
+                    error: DecimalCodecError::BadNumber,
+                });
             }
             if word_idx > 0 || w.word_buf[word_idx] != 0 {
                 word_idx += 1;
@@ -597,7 +641,11 @@ impl Decimal {
         while bin_idx < stop {
             w.word_buf[word_idx] = read_word(&buf[bin_idx..], CODEC_WORD_SIZE) ^ mask;
             if w.word_buf[word_idx] as u32 > CODEC_WORD_MAX as u32 {
-                return Err(DecimalCodecError::BadNumber);
+                return Err(DecimalCodecFailure {
+                    value: Decimal::from_literal("0"),
+                    consumed: bin_size,
+                    error: DecimalCodecError::BadNumber,
+                });
             }
             if word_idx > 0 || w.word_buf[word_idx] != 0 {
                 word_idx += 1;
@@ -611,7 +659,11 @@ impl Decimal {
         while bin_idx < stop {
             w.word_buf[word_idx] = read_word(&buf[bin_idx..], CODEC_WORD_SIZE) ^ mask;
             if w.word_buf[word_idx] as u32 > CODEC_WORD_MAX as u32 {
-                return Err(DecimalCodecError::BadNumber);
+                return Err(DecimalCodecFailure {
+                    value: Decimal::from_literal("0"),
+                    consumed: bin_size,
+                    error: DecimalCodecError::BadNumber,
+                });
             }
             word_idx += 1;
             bin_idx += CODEC_WORD_SIZE;
@@ -623,7 +675,11 @@ impl Decimal {
             w.word_buf[word_idx] =
                 (x ^ mask) * CODEC_POWERS10[DIGITS_PER_WORD - trailing_digits as usize];
             if w.word_buf[word_idx] as u32 > CODEC_WORD_MAX as u32 {
-                return Err(DecimalCodecError::BadNumber);
+                return Err(DecimalCodecFailure {
+                    value: Decimal::from_literal("0"),
+                    consumed: bin_size,
+                    error: DecimalCodecError::BadNumber,
+                });
             }
         }
 

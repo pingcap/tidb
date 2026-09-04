@@ -121,6 +121,11 @@
   cuts scan the full discarded word suffix. Focused decimal regression and
   owner Ready results are recorded in
   `rust/testport/receipts/types_decimal_round_ceiling.md`.
+
+- 2026-09-04: aligned decimal `FromBin` corruption state with Go by exposing
+  the zero receiver and fixed payload size alongside `BadNumber`; the strict
+  wrapper remains compatible. Focused regression and Ready evidence are in
+  `rust/testport/receipts/types_decimal_from_bin_failure.md`.
 ## chunk A-1 范围确认（下批实现）
 ## chunk A-1 范围确认（下批实现；树当前全绿 1128/0 expr lib，A-1 实现需新上下文完整验证）
 

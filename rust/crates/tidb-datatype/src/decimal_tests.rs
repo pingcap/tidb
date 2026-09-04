@@ -1994,6 +1994,33 @@ fn from_bin_preserves_a_non_canonical_negative_zero_like_go() {
     assert_eq!(value.to_bin(2, 2).unwrap().0, [0x7f]);
 }
 
+/// Go's `MyDecimal.FromBin` zeroes the receiver but still reports the fixed
+/// payload length when a legal `(precision, frac)` shape contains an invalid
+/// word. The strict Rust wrapper keeps returning `BadNumber`; callers that
+/// need Go's cursor-progress state use `from_bin_with_failure`.
+#[test]
+fn from_bin_corrupt_word_keeps_go_zero_and_consumed_size() {
+    // DECIMAL(10, 0): one leading digit byte followed by one 1e9 word. The
+    // latter is outside Go's [0, 999999999] word range.
+    let corrupt = [0x80, 0x3b, 0x9a, 0xca, 0x00];
+    let failure = Decimal::from_bin_with_failure(&corrupt, 10, 0)
+        .expect_err("corrupt word must retain Go's failure state");
+    assert_eq!(failure.error, DecimalCodecError::BadNumber);
+    assert_eq!(failure.consumed, 5);
+    assert_eq!(failure.value.to_string(), "0");
+    assert!(!failure.value.is_negative());
+    assert_eq!(
+        Decimal::from_bin(&corrupt, 10, 0),
+        Err(DecimalCodecError::BadNumber)
+    );
+
+    let malformed = Decimal::from_bin_with_failure(&[0x80], -1, 1)
+        .expect_err("illegal shape must not claim payload bytes");
+    assert_eq!(malformed.error, DecimalCodecError::BadNumber);
+    assert_eq!(malformed.consumed, 0);
+    assert_eq!(malformed.value.to_string(), "0");
+}
+
 /// The previous pad-both-sides comparison, kept as the differential
 /// reference for the allocation-free `Ord::cmp`: right-pad both coefficients
 /// to the common storage scale and compare the equal-length digit strings,

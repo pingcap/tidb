@@ -187,3 +187,11 @@ non-word-aligned `ModeCeiling` first-digit inspection and its word-aligned
 full-suffix control. Owner profiles, compilation, formatting, and whitespace
 checks are recorded in `rust/testport/receipts/types_decimal_round_ceiling.md`;
 the standard expression and executor profile blockers remain unrelated.
+
+## `pkg/types` decimal `FromBin` failure-state batch
+
+The focused corrupt-word regression passed. Rust now exposes Go's zero
+receiver and fixed payload consumption beside `BadNumber` for callers that
+need cursor progress, while the strict decoder API remains unchanged. Full
+owner profiles and the baseline blockers are recorded in
+`rust/testport/receipts/types_decimal_from_bin_failure.md`.

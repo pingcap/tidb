@@ -690,18 +690,21 @@ Distinguishing input: `999999999` followed by 72 zeros (81 digits, so
 by 81 nines; Rust the exact sum with no warning. Requires 81 integer digits,
 above `DECIMAL(65)`, so unreachable through ordinary SQL.
 
-## M7 (rank 3) — `from_bin` discards Go's `binSize` on a corrupt payload
+## M7 (rank 3) — `from_bin` discards Go's `binSize` on a corrupt payload (FIXED 2026-09-04)
 
 - Go: `pkg/types/mydecimal.go:1532-1534, 1544-1546, 1557-1559, 1568-1570` —
   each corruption check does `*d = zeroMyDecimal; return binSize,
   ErrBadNumber`, so the caller still gets the consumed length and a usable
   zero.
-- Rust: `rust/crates/tidb-datatype/src/decimal.rs:1974, 1987, 2001, 2013` —
-  `return Err(DecimalCodecError::BadNumber)`; no size, no value.
+- Rust: `Decimal::from_bin_with_failure` now carries Go's zero receiver,
+  fixed payload size, and `BadNumber`; the existing `from_bin` wrapper remains
+  strict and maps the structured failure back to the original error type.
 
 Distinguishing input: any `{precision: 10, frac: 0}` payload whose first full
 word decodes above `999999999`. Go's row decoder can advance the cursor past
-the field; the Rust caller cannot.
+the field; Rust callers can now obtain the same `consumed = 5` alongside the
+zero value and error. Focused regression and Ready evidence are recorded in
+`rust/testport/receipts/types_decimal_from_bin_failure.md`.
 
 ## M8 (rank 3) — `mydecimal.rs` trims ASCII whitespace where Go trims Unicode whitespace
 

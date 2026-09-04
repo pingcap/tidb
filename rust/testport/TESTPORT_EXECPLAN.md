@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (M7, `pkg/types` decimal `FromBin` corrupt payload): added a
+  structured Rust failure outcome carrying Go's zero receiver and legal
+  payload size alongside `BadNumber`, while retaining the strict legacy
+  wrapper. Focused regression and Ready evidence are in
+  `receipts/types_decimal_from_bin_failure.md`.
 - 2026-09-04 (M5, `pkg/types` decimal `ModeCeiling`): aligned the Rust
   value-layer rounder with Go's intentionally split source behavior. Aligned
   cuts inspect all discarded words; non-word-aligned cuts inspect only the

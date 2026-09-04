@@ -154,8 +154,8 @@ pub use datum_convert::{
 };
 pub use datum_eval::{compute_plus, DatumArithmeticError};
 pub use decimal::{
-    decimal_bin_size, Decimal, DecimalCodecError, DecimalCodecWarning, DecimalIntegerWarning,
-    DecimalParseError,
+    decimal_bin_size, Decimal, DecimalCodecError, DecimalCodecFailure, DecimalCodecWarning,
+    DecimalIntegerWarning, DecimalParseError,
 };
 pub use duration::{
     can_fallback_to_datetime, classify_duration_datetime_fallback, parse_duration,
