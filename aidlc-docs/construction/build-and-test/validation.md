@@ -147,3 +147,17 @@ whitespace checks passed. Strict datatype clippy remains blocked by the
 unrelated `tidb-mysql/src/consts.rs:117-120` `map_or_identity` diagnostics.
 Full inventory, commands, and boundaries are recorded in
 `rust/testport/receipts/types_timestamp_dst_gap.md`.
+
+## `pkg/types` numeric zero-date flag batch
+
+The focused parser and datum-conversion regressions passed. Rust
+`parse_time_from_num(0)` now returns a `ZeroDate` error beside the zero
+fallback when `FlagIgnoreZeroDateErr` is clear, while default statement and
+expression callers preserve Go's accepted zero. The serialized owner profiles,
+owner compilation, formatting, and whitespace checks passed. The expression
+profile retains one known external HTTP JSON-schema fixture failure and the
+broad executor profile retains existing planner/storage fixture failures.
+Strict datatype clippy remains blocked by the unrelated
+`tidb-mysql/src/consts.rs:117-120` `map_or_identity` diagnostics. Full commands,
+inventory, and remaining boundaries are recorded in
+`rust/testport/receipts/types_parse_time_from_num_zero.md`.

@@ -847,6 +847,7 @@ pub fn number_to_duration(
                 fsp,
                 false,
                 false,
+                true,
                 &chrono_tz::UTC,
             ) {
                 return parsed.time.to_duration().map(Converted::exact);

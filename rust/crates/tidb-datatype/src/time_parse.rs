@@ -670,6 +670,7 @@ fn parse_datetime_core<TZ: TimeZone>(
                 fsp,
                 allow_zero_in_date,
                 allow_invalid_date,
+                true,
                 timezone,
             )?;
             let core = numeric.time.core_time();
@@ -881,12 +882,16 @@ const fn adjust_two_digit_year(year: i32) -> i32 {
 }
 
 /// Parses TiDB's numeric datetime representation.
+///
+/// `ignore_zero_date_err` is Go `FlagIgnoreZeroDateErr`; the default statement
+/// context sets it, while strict/DDL contexts clear it under `NO_ZERO_DATE`.
 pub fn parse_time_from_num<TZ: TimeZone>(
     number: i64,
     kind: TimeType,
     fsp: i64,
     allow_zero_in_date: bool,
     allow_invalid_date: bool,
+    ignore_zero_date_err: bool,
     timezone: &TZ,
 ) -> Result<ParsedTime, TimeError> {
     parse_time_from_num_with_error(
@@ -895,6 +900,7 @@ pub fn parse_time_from_num<TZ: TimeZone>(
         fsp,
         allow_zero_in_date,
         allow_invalid_date,
+        ignore_zero_date_err,
         timezone,
     )
     .into_result()
@@ -906,6 +912,7 @@ fn parse_time_from_num_with_error<TZ: TimeZone>(
     fsp: i64,
     allow_zero_in_date: bool,
     allow_invalid_date: bool,
+    ignore_zero_date_err: bool,
     timezone: &TZ,
 ) -> TemporalOutcome<ParsedTime> {
     let fallback = ParsedTime {
@@ -916,6 +923,9 @@ fn parse_time_from_num_with_error<TZ: TimeZone>(
     };
     let result = (|| {
         if number == 0 {
+            if !ignore_zero_date_err {
+                return Err(TimeError::ZeroDate);
+            }
             return Ok(fallback);
         }
         let (normalized, _) = normalize_numeric_datetime(number)?;
@@ -1199,6 +1209,7 @@ mod tests {
             TimeType::Timestamp,
             0,
             false,
+            true,
             true,
             &chrono_tz::America::Los_Angeles,
         )
@@ -1932,8 +1943,15 @@ mod tests {
                 (TimeType::Timestamp, timestamp, "0000-00-00 00:00:00"),
                 (TimeType::Date, date, "0000-00-00"),
             ] {
-                let outcome =
-                    parse_time_from_num_with_error(input, kind, 0, false, false, &chrono_tz::UTC);
+                let outcome = parse_time_from_num_with_error(
+                    input,
+                    kind,
+                    0,
+                    false,
+                    false,
+                    true,
+                    &chrono_tz::UTC,
+                );
                 assert_eq!(
                     outcome.error.is_some(),
                     expected.is_none(),
@@ -1946,6 +1964,22 @@ mod tests {
                     "{input} {kind:?}"
                 );
             }
+        }
+    }
+
+    /// Go `pkg/types/time.go::ParseTimeFromNum` refuses an all-zero number
+    /// when `FlagIgnoreZeroDateErr` is clear, but keeps the zero value beside
+    /// that error. Expression callers pass the default flag and retain the
+    /// historical zero result.
+    #[test]
+    fn parse_time_from_num_zero_honors_zero_date_error_flag() {
+        for kind in [TimeType::Date, TimeType::DateTime, TimeType::Timestamp] {
+            let refused = parse_time_from_num(0, kind, 0, true, false, false, &chrono_tz::UTC);
+            assert_eq!(refused, Err(TimeError::ZeroDate), "{kind:?}");
+
+            let accepted = parse_time_from_num(0, kind, 0, true, false, true, &chrono_tz::UTC)
+                .expect("default statement flags ignore all-zero numeric dates");
+            assert!(accepted.time.is_zero(), "{kind:?}");
         }
     }
 

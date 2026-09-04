@@ -2,16 +2,17 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` TIMESTAMP DST-gap parity batch (finding T7)
+- Work unit: `pkg/types` numeric zero-date parity batch (finding T8)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: the focused parser, expression-cast, and executor write-cast
-  regressions, serialized datatype/expression owner profiles, owner
-  compilation, formatting, and diff checks pass. The expression profile keeps
-  one known external HTTP JSON-schema fixture failure. Strict datatype clippy
-  remains blocked only by the unrelated
-  `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
+- Validation: the focused parser and datum-conversion regressions, serialized
+  datatype/expression/executor owner profiles, owner compilation, formatting,
+  and diff checks pass. The expression profile keeps one known external HTTP
+  JSON-schema fixture failure; the broad executor profile keeps its existing
+  planner/storage fixture failures. Strict datatype clippy remains blocked
+  only by the unrelated `tidb-mysql/src/consts.rs:117-120`
+  `map-or-identity` diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
 - Commit/push: JSON merge batch `71ffce262e` is pushed to
@@ -63,5 +64,10 @@
   value with a warning and strict rows return 8179. Focused regressions and
   owner Ready results are recorded in
   `rust/testport/receipts/types_timestamp_dst_gap.md`.
+- Current batch: Rust numeric temporal parsing now honors Go's
+  `FlagIgnoreZeroDateErr` for `ParseTimeFromNum(0)`. Strict datum conversion
+  returns the zero fallback beside a temporal error; default expression paths
+  retain zero. Receipt:
+  `rust/testport/receipts/types_parse_time_from_num_zero.md`.
 - Next action: continue with the next executable package boundary after the
-  T7 batch is committed and pushed.
+  T8 batch is committed and pushed.

@@ -1465,6 +1465,7 @@ fn parse_time_by_source(
             fsp.unwrap_or(0),
             true,
             allow_invalid,
+            true,
             zone,
         )
         .map(|parsed| (parsed.time, false, parsed.dst_adjusted))
@@ -1477,6 +1478,7 @@ fn parse_time_by_source(
                 fsp.unwrap_or(0),
                 true,
                 allow_invalid,
+                true,
                 zone,
             )
             .map(|parsed| (parsed.time, false, parsed.dst_adjusted))

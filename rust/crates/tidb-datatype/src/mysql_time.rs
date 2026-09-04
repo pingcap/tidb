@@ -82,6 +82,8 @@ pub enum TimeError {
     Conversion(TimeConversionError),
     /// A zero month or day is forbidden by the conversion flags.
     ZeroInDate,
+    /// An all-zero numeric date is forbidden by `FlagIgnoreZeroDateErr`.
+    ZeroDate,
     /// Month/day fields do not form an accepted MySQL date.
     InvalidDate,
     /// Hour/minute/second fields exceed MySQL's clock range.
@@ -99,6 +101,7 @@ impl fmt::Display for TimeError {
             Self::OutOfRange(field) => write!(formatter, "time {field} is out of range"),
             Self::Conversion(error) => error.fmt(formatter),
             Self::ZeroInDate => formatter.write_str("zero month or day in date"),
+            Self::ZeroDate => formatter.write_str("zero date"),
             Self::InvalidDate => formatter.write_str("invalid MySQL date"),
             Self::InvalidClock => formatter.write_str("invalid MySQL clock"),
             Self::TimestampOutOfRange => formatter.write_str("timestamp is out of range"),

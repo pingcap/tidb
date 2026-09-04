@@ -438,15 +438,21 @@ returns the same error). Focused parser, expression-cast, and write-cast
 regressions are recorded in
 `rust/testport/receipts/types_timestamp_dst_gap.md`.
 
-## T8 (rank 2) — `ParseTimeFromNum(0)` drops the zero-date error
+## T8 (rank 2) — `ParseTimeFromNum(0)` drops the zero-date error (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:2083-2098` — for `num == 0`, when
   `!ctx.Flags().IgnoreZeroDateErr()` it returns `ErrTruncatedWrongVal`.
-- Rust: `rust/crates/tidb-datatype/src/time_parse.rs:769-774` — unconditional
-  `Ok(zero, truncated: false)`; the flag is not even a parameter.
+- Rust: `rust/crates/tidb-datatype/src/time_parse.rs` now threads an explicit
+  `ignore_zero_date_err` bit through `parse_time_from_num`. The zero branch
+  returns a `TimeError::ZeroDate` when the bit is clear, while preserving the
+  zero fallback in `TemporalOutcome`; datum conversion passes the statement
+  flag, and expression callers retain Go's default-statement behavior.
 
 Distinguishing input: numeric literal `0` into a `DATE` column under
-`NO_ZERO_DATE` + strict mode → Go errors, Rust stores a silent zero.
+`NO_ZERO_DATE` + strict mode → Go and Rust return the zero value beside a
+temporal conversion error; default statement flags still store zero silently.
+Focused parser and datum-conversion regressions plus the owner Ready profile
+are recorded in `rust/testport/receipts/types_parse_time_from_num_zero.md`.
 
 ## T9 (rank 3) — `str_to_date` hardcodes `allow_zero_in_date = true`
 

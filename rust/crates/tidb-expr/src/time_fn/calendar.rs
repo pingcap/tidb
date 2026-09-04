@@ -915,6 +915,7 @@ fn interval_date_text(date: &Datum) -> Result<Option<String>, EvalError> {
         // rejecting here what Go accepts here.
         true,
         false,
+        true,
         &chrono_tz::Tz::UTC,
     ) else {
         return Ok(None);

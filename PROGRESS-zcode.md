@@ -96,6 +96,13 @@
   adjusted value. Focused parser/cast/write regressions and owner Ready
   results are recorded in
   `rust/testport/receipts/types_timestamp_dst_gap.md`.
+
+- 2026-09-04: aligned numeric zero-date parsing with Go's
+  `FlagIgnoreZeroDateErr`. Strict `ParseTimeFromNum(0)` returns the zero
+  fallback beside a temporal error, while default expression conversions keep
+  the accepted zero. Focused parser/conversion regressions and owner Ready
+  results are recorded in
+  `rust/testport/receipts/types_parse_time_from_num_zero.md`.
 ## chunk A-1 范围确认（下批实现）
 ## chunk A-1 范围确认（下批实现；树当前全绿 1128/0 expr lib，A-1 实现需新上下文完整验证）
 

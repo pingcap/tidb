@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (T8, `pkg/types` numeric zero-date conversion): aligned Go
+  `ParseTimeFromNum(0)` with `FlagIgnoreZeroDateErr`. Rust now returns a
+  `TimeError::ZeroDate` beside the zero fallback when strict flags clear the
+  bit, while default expression/internal callers retain zero. Datum temporal
+  conversion threads the statement flag. Focused parser and conversion tests,
+  owner Ready validation, and the remaining known profile blockers are in
+  `receipts/types_parse_time_from_num_zero.md`.
 - 2026-09-04 (`pkg/types` TIMESTAMP DST-gap parsing, finding T7): aligned
   Go's `parseTime`/`adjustTimestampErrForDST` boundary. `ParsedTime` now
   preserves the adjusted value and marker for a nonexistent local wall clock;

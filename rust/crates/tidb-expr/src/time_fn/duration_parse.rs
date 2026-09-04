@@ -557,6 +557,7 @@ fn parse_compact_datetime(value: &str) -> Option<GoDateTime> {
         0,
         true,
         false,
+        true,
         &chrono_tz::Tz::UTC,
     )
     .ok()?;

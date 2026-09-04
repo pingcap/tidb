@@ -407,12 +407,13 @@ impl Datum {
 
     /// Go `Datum.convertToMysqlTime` / `convertToMysqlTimestamp`.
     ///
-    /// The two date flags are read off `flags` rather than hardcoded, because
+    /// The three date flags are read off `flags` rather than hardcoded, because
     /// they are exactly what the SQL mode moves: Go's `Time.Check` takes
-    /// `IgnoreZeroInDate` for `NO_ZERO_IN_DATE` and `IgnoreInvalidDateErr`
-    /// for `ALLOW_INVALID_DATES`, so a `'2024-00-01'` or a `'2024-02-31'`
-    /// either parses into a real value or fails HERE depending on the mode
-    /// the statement runs under.
+    /// `IgnoreZeroDateErr` for `NO_ZERO_DATE`, `IgnoreZeroInDate` for
+    /// `NO_ZERO_IN_DATE`, and `IgnoreInvalidDateErr` for
+    /// `ALLOW_INVALID_DATES`, so an all-zero value, `'2024-00-01'`, or
+    /// `'2024-02-31'` either parses into a real value or fails HERE depending
+    /// on the mode the statement runs under.
     ///
     /// A failure returns [`DatumValueError::IncorrectTemporal`] carrying the
     /// zero value of the target type, which is what Go returns in the datum
@@ -435,6 +436,7 @@ impl Datum {
             target.decimal()
         };
         let zero_in_date = flags.ignore_zero_in_date_err();
+        let ignore_zero_date_err = flags.ignore_zero_date_err();
         let invalid_date = flags.ignore_invalid_date_err();
         // Go's fallback datum: `NewTime(ZeroCoreTime, tp, DefaultFsp)`.
         let zero = Time::new(CoreTime::default(), kind, 0).map_err(conversion_error)?;
@@ -489,18 +491,32 @@ impl Datum {
                 parsed.time
             }
             Self::Int(value) => {
-                let parsed =
-                    parse_time_from_num(*value, kind, fsp, zero_in_date, invalid_date, zone)
-                        .map_err(wrong_value)?;
+                let parsed = parse_time_from_num(
+                    *value,
+                    kind,
+                    fsp,
+                    zero_in_date,
+                    invalid_date,
+                    ignore_zero_date_err,
+                    zone,
+                )
+                .map_err(wrong_value)?;
                 if parsed.dst_adjusted {
                     event = Some(ScalarConversionEvent::TimestampInDSTTransition);
                 }
                 parsed.time
             }
             Self::UInt(value) if *value <= i64::MAX as u64 => {
-                let parsed =
-                    parse_time_from_num(*value as i64, kind, fsp, zero_in_date, invalid_date, zone)
-                        .map_err(wrong_value)?;
+                let parsed = parse_time_from_num(
+                    *value as i64,
+                    kind,
+                    fsp,
+                    zero_in_date,
+                    invalid_date,
+                    ignore_zero_date_err,
+                    zone,
+                )
+                .map_err(wrong_value)?;
                 if parsed.dst_adjusted {
                     event = Some(ScalarConversionEvent::TimestampInDSTTransition);
                 }
@@ -1662,6 +1678,28 @@ mod tests {
                 .unwrap(),
             "12:34:56"
         );
+    }
+
+    /// Go `Datum.ConvertTo` threads `FlagIgnoreZeroDateErr` into
+    /// `ParseTimeFromNum`: strict flags return the zero temporal value beside
+    /// `ErrTruncatedWrongVal`, while default statement flags keep it silently.
+    #[test]
+    fn numeric_zero_temporal_conversion_obeys_zero_date_flag() {
+        let datetime = FieldType::new(FieldTypeCode::Datetime);
+        let strict = Datum::Int(0)
+            .convert_to(&datetime, crate::STRICT_FLAGS)
+            .expect_err("strict numeric zero must be rejected by ParseTimeFromNum");
+        assert_eq!(
+            strict,
+            DatumValueError::IncorrectTemporal(
+                Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap()
+            )
+        );
+
+        let permissive = Datum::Int(0)
+            .convert_to(&datetime, crate::DEFAULT_STATEMENT_FLAGS)
+            .expect("DefaultStmtFlags ignore zero-date errors");
+        assert!(matches!(permissive.value, Datum::Time(time) if time.is_zero()));
     }
 
     /// Source: `pkg/types/datum_test.go::TestConvertToFloat`.
