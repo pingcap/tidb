@@ -18,7 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -128,6 +130,18 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 					NewMetaBuildContextWithSctx(sctx, metabuild.WithSuppressTooLongIndexErr(false)).
 						SuppressTooLongIndexErr(),
 				)
+			},
+		},
+		{
+			field: "fullTextAnalyzer",
+			check: func(ctx *metabuild.Context) {
+				// A FULLTEXT index freezes the analyzer into the schema, so the
+				// settings must be read from the session issuing the statement
+				// rather than during meta building.
+				config, err := fulltext.AnalyzerConfigFromSessionVars(
+					sctx.GetSessionVars(), model.FullTextParserTypeStandardV1)
+				require.NoError(t, err)
+				require.Equal(t, config, ctx.GetFullTextAnalyzer())
 			},
 		},
 		{
