@@ -514,6 +514,47 @@ mod space_tests {
             Err(EvalError::Unsupported("bad SPACE arity"))
         );
     }
+    /// Go `lpadFunctionClass`/`rpadFunctionClass` content semantics: pad to
+    /// the target length and TRUNCATE when the source is longer; the rune
+    /// signature counts CHARACTERS (the binary one counts bytes); a
+    /// negative target length yields NULL.
+    #[test]
+    fn pad_truncates_and_counts_characters_like_go() {
+        let ctx = Packet::new(1_000);
+        let args = |s: &str, len: i64, pad_str: &str| {
+            [
+                Datum::new_string(s.to_string()),
+                Datum::Int(len),
+                Datum::new_string(pad_str.to_string()),
+            ]
+        };
+        // Truncation: the target length wins over the source.
+        assert_eq!(
+            pad(&args("hi", 1, "??"), true, &ctx).unwrap(),
+            Datum::new_string("h".to_string())
+        );
+        assert_eq!(
+            pad(&args("hi", 1, "??"), false, &ctx).unwrap(),
+            Datum::new_string("h".to_string())
+        );
+        // Padding: `??` repeats left/right to the target length.
+        assert_eq!(
+            pad(&args("hi", 5, "??"), true, &ctx).unwrap(),
+            Datum::new_string("???hi".to_string())
+        );
+        assert_eq!(
+            pad(&args("hi", 5, "??"), false, &ctx).unwrap(),
+            Datum::new_string("hi???".to_string())
+        );
+        // The rune signature counts CHARACTERS: `好` is one character even
+        // though it is three bytes.
+        assert_eq!(
+            pad(&args("好", 2, "xy"), true, &ctx).unwrap(),
+            Datum::new_string("x好".to_string())
+        );
+        // A negative target length yields NULL (Go's out-of-range arm).
+        assert_eq!(pad(&args("hi", -1, "??"), true, &ctx).unwrap(), Datum::Null);
+    }
 }
 #[cfg(test)]
 mod to_base64_tests {
