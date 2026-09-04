@@ -854,6 +854,72 @@ PATH=... GOPATH=... TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
 
+## Rust follow-up: `FORMAT` precision and `WEIGHT_STRING` truncation warnings
+
+This batch stays inside the complete `pkg/expression` inventory at Go
+`origin/master` `fc7788ff517c3407dc7e000be989ab23e6648211`: 208 tracked
+artifacts, 146,291 Go lines (68 production files, 60 tests, seven generated
+sources, `BUILD.bazel`, `OWNERS`, and eight nested package/build/test
+boundaries). The Rust `tidb-expr` owner remains 176 tracked artifacts and
+107,196 lines, including production modules, source-derived tests,
+fixtures/support, benchmarks, Cargo metadata, and aggregate test inputs. The
+Go `evalNumDecArgsForFormat`, integer coercion, and `builtinWeightStringSig`
+branches plus their complete test rows were reread before editing. No Go,
+generated, fixture, platform, or Bazel file changed.
+
+`FORMAT`'s second argument is an `ETInt` in Go. Malformed string precision
+therefore goes through `Context.HandleTruncate`, contributing a 1292 warning
+while retaining the parsed prefix; the Rust helper previously parsed the
+prefix silently. It now routes string and byte precision through the shared
+warning-aware signed-integer conversion while preserving all numeric and NULL
+branches. The focused regression pins the exact warning order and text for
+one-warning and two-warning rows, including an empty precision.
+
+`WEIGHT_STRING(... AS BINARY(n))` already had the source warning operation in
+the Rust chunk evaluator, but its documentary test was ignored because the
+default value-only helper had no warning sink. The test now evaluates the
+rewritten scalar with a statement context and pins all three Go cut rows (`ab`
+at 1 byte and `中` at 1/2 bytes), each with one exact 1292 message; the stale
+gap receipt entry is removed.
+
+The `FORMAT` focused test was reproduced failing before the conversion change
+(the malformed precision row emitted zero warnings), then passed after it.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_string_time_source::test_format_precision_side_truncate_warning_counts \
+  -- --exact --nocapture
+# pre-fix: failed (-12332.123444/A emitted 0 instead of 1); after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_string_time_source::test_weight_string_binary_cut_warning \
+  -- --exact --nocapture
+# passed: 1 test covering all three warning rows
+```
+
+Ready validation for the `FORMAT`/`WEIGHT_STRING` package batch:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+# passed (existing warnings only)
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib -- --test-threads=1
+# passed: 1,128; failed: 0; ignored: 125
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+
+PATH=... GOPATH=... TMPDIR=/tmp/tidb-codex make lint
+# passed
+```
+
 ## Rust follow-up: `FROM_UNIXTIME` real-input rounding
 
 The same complete `pkg/expression` inventory at Go `origin/master`

@@ -978,14 +978,48 @@ fn test_weight_string_forms() {
 }
 
 /// The `[1292] Truncated incorrect BINARY(%d)` warning content half of
-/// Go's TestWeightString rows where `test.length < len(strExpr)`: this tier
-/// computes the weight without routing the truncation through the statement
-/// handler, so the exact message text is not observable here.
+/// Go's TestWeightString rows where `test.length < len(strExpr)`. Exercise the
+/// chunk evaluator with a warning-capable statement context so each cut emits
+/// exactly one source-formatted warning.
 #[test]
-#[ignore = "go-parity-gap: WEIGHT_STRING's AS BINARY(n) truncation does not emit a 1292 'Truncated incorrect BINARY(n)' statement warning from this evaluator, so the three flagged rows of TestWeightString cannot be pinned"]
 fn test_weight_string_binary_cut_warning() {
     // Go pkg/expression/builtin_string_test.go:2812-2819 asserts exactly one
-    // Warning-level 1292 per cut row ('ab'@binary(1), 'ab'@1 etc.).
+    // Warning-level 1292 per cut row ('ab'@binary(1), '中'@1 and '中'@2).
+    for (expr, expected, warning) in [
+        (
+            "weight_string('ab' as binary(1))",
+            b"61".as_slice(),
+            "Truncated incorrect BINARY(1) value: 'ab'",
+        ),
+        (
+            "weight_string('中' as binary(1))",
+            b"e4".as_slice(),
+            "Truncated incorrect BINARY(1) value: '中'",
+        ),
+        (
+            "weight_string('中' as binary(2))",
+            b"e4b8".as_slice(),
+            "Truncated incorrect BINARY(2) value: '中'",
+        ),
+    ] {
+        let ctx = PacketWarnCtx::new(64 << 20);
+        let rewritten = chunk_rewrite(expr).expect("WEIGHT_STRING rewrites");
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        let result = rewritten
+            .eval(&ctx, chunk.get_row(0))
+            .expect("WEIGHT_STRING evaluates");
+        let expected = expected
+            .chunks(2)
+            .map(|hex| u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(result, Datum::new_bytes(expected), "{expr}");
+        assert_eq!(
+            ctx.drain(),
+            vec![(1292, warning.to_owned())],
+            "{expr} warning"
+        );
+    }
 }
 
 /// Go `pkg/expression/builtin_string_test.go:2876 TestCIWeightString`. All
@@ -1219,11 +1253,61 @@ fn test_format_values_and_number_side_truncate_warnings() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: FORMAT's PRECISION-side string coercion ('A', '4A', '') never reaches Columns::handle_truncate in format_precision(), so the 1292-warning COUNTS for multi-source rows (expected 1 or 2 per row) cannot be pinned"]
 fn test_format_precision_side_truncate_warning_counts() {
     // Go pkg/expression/builtin_string_test.go rows where warnings come from
-    // or share with the precision argument: {"-12332.123444","A"}, {"-A...","A"}
-    // (2), {".-.12332...","4A"} (2), and {"1",""} (1).
+    // or share with the precision argument: valid numbers with malformed
+    // precision (one warning), malformed numbers plus malformed precision
+    // (two), and an empty precision (one).
+    let rows = [
+        (
+            "-12332.123444",
+            "A",
+            &["Truncated incorrect INTEGER value: 'A'"][..],
+        ),
+        (
+            "-A12332.123444",
+            "A",
+            &[
+                "Truncated incorrect DOUBLE value: '-A12332.123444'",
+                "Truncated incorrect INTEGER value: 'A'",
+            ][..],
+        ),
+        (
+            ".12332.123444",
+            "4A",
+            &[
+                "Truncated incorrect DOUBLE value: '.12332.123444'",
+                "Truncated incorrect INTEGER value: '4A'",
+            ][..],
+        ),
+        ("1", "", &["Truncated incorrect INTEGER value: ''"][..]),
+    ];
+    for (number, precision, expected_messages) in rows {
+        let ctx = PacketWarnCtx::new(64 << 20);
+        let got = eval_scalar(
+            "FORMAT",
+            FieldType::new(FieldTypeCode::VarString),
+            vec![
+                const_arg_typed(
+                    Datum::new_string(number.to_owned()),
+                    FieldType::new(FieldTypeCode::VarString),
+                ),
+                const_arg_typed(
+                    Datum::new_string(precision.to_owned()),
+                    FieldType::new(FieldTypeCode::VarString),
+                ),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert!(!got.is_null(), "FORMAT({number:?}, {precision:?})");
+        let warnings = ctx.drain();
+        let expected = expected_messages
+            .into_iter()
+            .map(|message| (1292, (*message).to_owned()))
+            .collect::<Vec<_>>();
+        assert_eq!(warnings, expected, "{number}/{precision}");
+    }
 }
 
 /// Go `pkg/expression/builtin_string_test.go:2970 TestFormatWithLocale`. The

@@ -42,6 +42,15 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-expr` `FORMAT` precision coercion with
+  Go's `evalNumDecArgsForFormat` and activated the existing
+  `WEIGHT_STRING AS BINARY(n)` warning carrier. Malformed string/byte precision
+  now uses the shared warning-aware integer conversion, preserving the parsed
+  value and emitting Go's 1292 event; the weight-string test now supplies a
+  warning-capable statement context and pins all three cut rows. Complete
+  package inventory and fail-before/pass-after evidence are recorded in
+  `receipts/expression_collation_audit.md`.
+
 - 2026-09-04: aligned the Rust `tidb-expr` `FROM_UNIXTIME` real-input path
   with Go `pkg/expression/builtin_time.go` at `origin/master`
   `fc7788ff...`. Real and float32 datum arguments now pass through the shared
@@ -5568,6 +5577,14 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 ## Decision Log
 
+- Decision: make `FORMAT` precision conversion accept the statement context
+  and delegate string/byte inputs to `to_i64_signed_with_warnings`, rather
+  than duplicating prefix parsing and warning rules. Keep integer, decimal,
+  real, and NULL branches unchanged. Treat `WEIGHT_STRING`'s warning-only
+  carrier as a test-context integration cleanup because its production chunk
+  arm already appends the source 1292 message. Date/Author: 2026-09-04,
+  Codex.
+
 - Decision: reuse `tidb_datatype::Decimal::from_f64` for `FROM_UNIXTIME`
   real and float32 arguments instead of formatting with a fixed precision.
   That helper is already pinned to Go's `strconv.FormatFloat(..., 'g', -1,
@@ -6184,6 +6201,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Codex.
 
 ## Surprises & Discoveries
+
+- `WEIGHT_STRING`'s Rust implementation already appended the exact BINARY(n)
+  warning; the ignored carrier used only the no-warning `chunk_e` helper, so
+  it falsely classified a context-observation gap as missing behavior. In
+  contrast, `FORMAT` precision really bypassed the statement handler, and its
+  malformed precision rows emitted no events until the shared cast helper was
+  routed in.
 
 - A fixed nine-decimal rendering of a real Unix timestamp is not equivalent to
   Go's shortest `%g` conversion: `1451606400.0363455` becomes

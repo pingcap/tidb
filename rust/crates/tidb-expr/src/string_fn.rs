@@ -1592,7 +1592,7 @@ pub(crate) fn format_num_locale(
     let Some(number) = format_number_text(number, ctx)? else {
         return Ok(Datum::Null);
     };
-    let Some(precision) = format_precision(precision)? else {
+    let Some(precision) = format_precision(precision, ctx)? else {
         return Ok(Datum::Null);
     };
     // `evalNumDecArgsForFormat`: `d` is clamped, the number is rounded to it,
@@ -1644,19 +1644,16 @@ fn format_number_text(
     })
 }
 
-fn format_precision(value: &Datum) -> Result<Option<i64>, EvalError> {
+fn format_precision(value: &Datum, ctx: &dyn crate::Columns) -> Result<Option<i64>, EvalError> {
     Ok(match value {
         Datum::Null => None,
         Datum::Int(n) => Some(*n),
         Datum::UInt(n) => Some(*n as i64),
         Datum::Decimal(n) => Some(n.round_to_i64_saturating()),
         Datum::Real(n) => Some(round_float_to_i64_saturating(*n)),
-        Datum::String(s) => Some(s.as_utf8().map(parse_string_i64_saturating).unwrap_or(0)),
-        Datum::Bytes(s) => Some(
-            std::str::from_utf8(s)
-                .map(parse_string_i64_saturating)
-                .unwrap_or(0),
-        ),
+        Datum::String(_) | Datum::Bytes(_) => {
+            Some(crate::cast::to_i64_signed_with_warnings(value, ctx)?)
+        }
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel FORMAT precision"));
         }
@@ -1677,35 +1674,6 @@ fn round_float_to_i64_saturating(value: f64) -> i64 {
         i64::MAX
     } else {
         rounded as i64
-    }
-}
-
-fn parse_string_i64_saturating(value: &str) -> i64 {
-    let value = value.trim_start();
-    let (negative, digits) = match value.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => match value.strip_prefix('+') {
-            Some(rest) => (false, rest),
-            None => (false, value),
-        },
-    };
-    let digits = &digits[..digits.bytes().take_while(u8::is_ascii_digit).count()];
-    if digits.is_empty() {
-        return 0;
-    }
-    let Ok(magnitude) = digits.parse::<u64>() else {
-        return if negative { i64::MIN } else { i64::MAX };
-    };
-    if negative {
-        if magnitude > i64::MAX as u64 {
-            i64::MIN
-        } else {
-            -(magnitude as i64)
-        }
-    } else if magnitude > i64::MAX as u64 {
-        i64::MAX
-    } else {
-        magnitude as i64
     }
 }
 
