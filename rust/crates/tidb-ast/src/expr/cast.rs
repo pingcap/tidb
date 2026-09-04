@@ -152,6 +152,13 @@ pub enum CastType {
     Signed,
     /// `UNSIGNED [INTEGER]`.
     Unsigned,
+    /// Internal `UNSIGNED` cast used while projecting a `UNION` branch.
+    ///
+    /// Go carries this distinction as `baseBuiltinCastFunc.inUnion` rather
+    /// than as a different SQL syntax.  Keeping it in the shared cast enum
+    /// gives the evaluator a typed carrier without making the parser accept
+    /// a user-visible target spelling.
+    UnsignedInUnion,
     /// `CHAR[(len)] [CHARSET name]`. `len` and `charset` are independent —
     /// both may be given together (confirmed by reading real TiDB's own
     /// `FieldType.RestoreAsCastType`, `pkg/parser/types/field_type.go`: an
@@ -288,7 +295,7 @@ pub(crate) fn restore_typed_literal(keyword: &str, expr: &Expr, out: &mut String
 pub(crate) fn restore_cast_type(ty: &CastType, array: bool, out: &mut String) {
     match ty {
         CastType::Signed => out.push_str("SIGNED"),
-        CastType::Unsigned => out.push_str("UNSIGNED"),
+        CastType::Unsigned | CastType::UnsignedInUnion => out.push_str("UNSIGNED"),
         CastType::Char { len, charset } => {
             // See this variant's own doc: `CHARSET BINARY` prints the type
             // keyword itself as `BINARY` (real TiDB's own restore rule, a
@@ -418,6 +425,7 @@ impl crate::Visitable for CastType {
         match self {
             Self::Signed => {}
             Self::Unsigned => {}
+            Self::UnsignedInUnion => {}
             Self::Char { len, charset } => {
                 let _ = len;
                 let _ = charset;

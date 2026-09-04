@@ -69,15 +69,10 @@
 //! # Narrowings, by exact Go symbol
 //!
 //! * `expression.BuildCastFunction4Union(ctx, srcCol, dstType)`. The cast
-//!   itself is [`tidb_expr::aggregation::wrap_cast::build_cast_to`], which is
-//!   Go's `BuildCastFunction`. What the `4Union` spelling adds is
-//!   `inUnion = true` on the built `builtinCastXXXSig`, an EVALUATION flag
-//!   that turns a signed-to-unsigned overflow into `0` instead of an error
-//!   (`expression/builtin_cast.go`'s `inUnion` field). [`tidb_expr`]'s
-//!   `ScalarFunction` has no per-signature state to carry it, so the flag is
-//!   dropped and the cast is the ordinary one. That is a RUNTIME difference on
-//!   an out-of-range value only; the plan SHAPE and every result type are
-//!   identical.
+//!   itself is [`tidb_expr::aggregation::wrap_cast::build_cast_to_in_union`],
+//!   which carries Go's `inUnion = true` bit in the internal function name.
+//!   For a signed ETInt value and an unsigned target, the evaluator clamps a
+//!   negative value to zero exactly as `builtinCastIntAsIntSig` does.
 //! * `types.NameSlice` / `expression.Column.CleanHashCode`. Both are Go
 //!   memory-management details with no observable counterpart.
 //! * `b.ctx.GetSessionVars().StmtCtx`'s warning channel. `setUnionFlen` and
@@ -346,10 +341,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if src_type.equal(&dst_type) {
                     exprs.push(Expression::Column(src_col.clone()));
                 } else {
-                    // boundary: `expression.BuildCastFunction4Union`'s
-                    // `inUnion` flag; see this module's narrowings.
+                    // `BuildCastFunction4Union` carries Go's `inUnion` flag
+                    // through the internal cast name.
                     exprs.push(
-                        tidb_expr::aggregation::wrap_cast::build_cast_to(
+                        tidb_expr::aggregation::wrap_cast::build_cast_to_in_union(
                             Expression::Column(src_col.clone()),
                             dst_type,
                         )

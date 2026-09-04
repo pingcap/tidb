@@ -2024,6 +2024,7 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
     Ok(match target {
         "signed" => CastType::Signed,
         "unsigned" => CastType::Unsigned,
+        "unsigned_in_union" => CastType::UnsignedInUnion,
         "char" => CastType::Char {
             len: len(),
             charset: None,

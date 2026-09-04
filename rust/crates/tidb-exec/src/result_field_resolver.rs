@@ -380,7 +380,7 @@ fn infer_type(
                     Some(0),
                     Collation::Binary,
                 )),
-                CastType::Unsigned => Ok(type_metadata(
+                CastType::Unsigned | CastType::UnsignedInUnion => Ok(type_metadata(
                     FieldTypeCode::LongLong,
                     UNSIGNED_FLAG,
                     None,

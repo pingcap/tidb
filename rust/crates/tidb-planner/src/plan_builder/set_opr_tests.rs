@@ -86,6 +86,13 @@ fn bigint() -> FieldType {
     ft
 }
 
+fn unsigned_bigint(flen: i64) -> FieldType {
+    let mut ft = bigint();
+    ft.set_flen(flen);
+    ft.add_flags(FieldTypeFlags::UNSIGNED);
+    ft
+}
+
 fn varchar(flen: i64) -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::Varchar);
     ft.set_flen(flen);
@@ -95,8 +102,8 @@ fn varchar(flen: i64) -> FieldType {
     ft
 }
 
-/// `CREATE TABLE test.t (a BIGINT, b BIGINT)` and
-/// `CREATE TABLE test.s (a BIGINT, v VARCHAR(10))`.
+/// `CREATE TABLE test.t (a BIGINT, b BIGINT, u BIGINT UNSIGNED)` and
+/// `CREATE TABLE test.s (a BIGINT, v VARCHAR(10), u BIGINT UNSIGNED)`.
 fn catalog() -> TestCatalog {
     TestCatalog {
         current_database: "test".to_owned(),
@@ -106,7 +113,11 @@ fn catalog() -> TestCatalog {
                 table_name: "t".to_owned(),
                 db_name: "test".to_owned(),
                 physical_table_id: 100,
-                columns: vec![column(0, "a", bigint()), column(1, "b", bigint())],
+                columns: vec![
+                    column(0, "a", bigint()),
+                    column(1, "b", bigint()),
+                    column(2, "u", unsigned_bigint(5)),
+                ],
                 ..SourceTable::default()
             },
             SourceTable {
@@ -114,7 +125,11 @@ fn catalog() -> TestCatalog {
                 table_name: "s".to_owned(),
                 db_name: "test".to_owned(),
                 physical_table_id: 101,
-                columns: vec![column(0, "a", bigint()), column(1, "v", varchar(10))],
+                columns: vec![
+                    column(0, "a", bigint()),
+                    column(1, "v", varchar(10)),
+                    column(2, "u", unsigned_bigint(20)),
+                ],
                 ..SourceTable::default()
             },
         ],
@@ -724,13 +739,26 @@ fn test_no_sequence_is_built_unless_mpp_shared_cte_execution_is_on() {
     assert_eq!(children[0].tp(), "CTE");
 }
 
-/// The Rust `buildProjection4Union` re-points type-mismatched children to the
-/// joined type WITHOUT a cast node — the documented narrowing for Go's
-/// `BuildCastFunction4Union` (whose inUnion evaluation flag has no carrier;
-/// see the module doc). This pins that shape so any future change forces the
-/// narrowing doc to be revisited.
+/// A union projection with two unsigned integer branches carries the internal
+/// `inUnion` cast marker when one branch must widen to the joined type.
 #[test]
-fn union_mismatched_children_are_re_typed_in_place_like_the_documented_narrowing() {
+fn union_unsigned_widening_uses_the_in_union_cast_signature() {
+    let plan = build("SELECT u FROM t UNION ALL SELECT u FROM s");
+    let LogicalPlan::UnionAll(union) = &plan else {
+        panic!("expected a UnionAll at the root, got {}", plan.tp());
+    };
+    let LogicalPlan::Projection(first) = &union.base.children()[0] else {
+        panic!("expected a Projection for the first branch");
+    };
+    let [tidb_expr::expression::Expression::ScalarFunction(cast)] = first.exprs.as_slice() else {
+        panic!("the narrow unsigned branch should be widened by a cast");
+    };
+    assert_eq!(cast.func_name.original(), "cast_unsigned_in_union");
+    assert!(cast.get_static_type().is_some_and(FieldType::is_unsigned));
+}
+
+#[test]
+fn union_mismatched_children_are_re_typed_in_place_when_the_cast_is_not_needed() {
     let plan = build("SELECT a FROM t UNION SELECT b FROM t");
     let LogicalPlan::Aggregation(agg) = &plan else {
         panic!("expected an Aggregation at the root, got {}", plan.tp());

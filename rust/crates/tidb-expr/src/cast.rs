@@ -70,6 +70,21 @@ pub(crate) fn eval_cast(
             report_negative_string_unsigned(&v, ctx);
             Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
         }
+        CastType::UnsignedInUnion => {
+            // Every numeric/string `castAsInt` signature has an `inUnion`
+            // negative-to-zero branch in Go. Temporal signatures do not: a
+            // TIME/DATETIME value is first rendered as an integer and then
+            // reinterpreted by the ordinary unsigned path. Check the source
+            // eval family, not just the datum shape, before applying the
+            // branch so string warnings are not emitted for a value Go drops.
+            if union_unsigned_clamps_negative(&v, source) {
+                Ok(Datum::UInt(0))
+            } else {
+                report_int_truncation(&v, ctx)?;
+                report_negative_string_unsigned(&v, ctx);
+                Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
+            }
+        }
         CastType::Char { len, .. } => {
             let text = string_source_text(&v, source)?;
             Ok(Datum::new_string(match len {
@@ -157,6 +172,37 @@ pub(crate) fn eval_cast(
         }
         CastType::Time { fsp } => cast_to_duration(&v, source, ctx, i64::from(fsp.unwrap_or(0))),
         CastType::Json => crate::builtin_ext::cast_as_json(&v),
+    }
+}
+
+fn union_unsigned_clamps_negative(
+    value: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+) -> bool {
+    let source_eval_type = source.map(FieldType::eval_type);
+    match source_eval_type {
+        Some(EvalType::Int) => matches!(value, Datum::Int(number) if *number < 0),
+        Some(EvalType::Real) => {
+            matches!(value, Datum::Real(number) if *number < 0.0)
+                || matches!(value, Datum::Float32(number) if *number < 0.0)
+        }
+        Some(EvalType::Decimal) => {
+            matches!(value, Datum::Decimal(decimal) if decimal.round_to_i64_saturating() < 0)
+        }
+        Some(EvalType::String) | None => match value {
+            Datum::String(text) => text
+                .as_utf8()
+                .is_ok_and(|text| text.trim().len() > 1 && text.trim().starts_with('-')),
+            Datum::Bytes(bytes) => std::str::from_utf8(bytes)
+                .is_ok_and(|text| text.trim().len() > 1 && text.trim().starts_with('-')),
+            Datum::Int(number) => *number < 0,
+            Datum::Real(number) => *number < 0.0,
+            Datum::Float32(number) => *number < 0.0,
+            Datum::Decimal(decimal) => decimal.round_to_i64_saturating() < 0,
+            _ => false,
+        },
+        Some(EvalType::Datetime | EvalType::Timestamp | EvalType::Duration)
+        | Some(EvalType::VectorFloat32 | EvalType::Json) => false,
     }
 }
 

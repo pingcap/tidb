@@ -373,10 +373,11 @@ fn test_vectorized_cast_real_as_time() {
 /// (`pkg/expression/builtin_cast_vec_test.go:248`) constructs
 /// `builtinCastStringAsDecimalSig` with `inUnion=true` plus `UnsignedFlag`
 /// and re-checks 1024 random strings both signs. b066's port batch already
-/// recorded that the base-cast `inUnion` bit is unmodeled anywhere in the
-/// Rust cast dispatches; without it this signature cannot be driven.
+/// records the remaining string-to-DECIMAL `inUnion` seam. The integer cast
+/// carrier is now implemented by `cast_unsigned_in_union`; without a
+/// target-specific decimal carrier this signature still cannot be driven.
 #[test]
-#[ignore = "go-parity-gap: baseBuiltinCastFunc.inUnion flag is not modeled in any Rust cast dispatch"]
+#[ignore = "go-parity-gap: string-to-DECIMAL inUnion signature remains unmodeled; unsigned integer UNION casts are covered"]
 fn vectorized_cast_string_as_decimal_union_gap() {}
 
 /// go-parity-gap: `TestVectorizedBuiltinCastEvalOneVec` /

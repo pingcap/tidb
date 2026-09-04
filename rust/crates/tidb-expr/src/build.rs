@@ -132,9 +132,10 @@ impl BuildContext {
                     ..
                 } if charset.eq_ignore_ascii_case("binary") => binary_string_type(),
                 CastType::Char { .. } => self.character_string_type(),
-                CastType::Signed | CastType::Unsigned | CastType::Year => {
-                    FieldType::new(FieldTypeCode::LongLong)
-                }
+                CastType::Signed
+                | CastType::Unsigned
+                | CastType::UnsignedInUnion
+                | CastType::Year => FieldType::new(FieldTypeCode::LongLong),
                 CastType::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
                 CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
                 CastType::Vector { dimensions } => {

@@ -67,6 +67,23 @@ For each bounded behavior cluster:
   word parser, preserving both tiny exponents and the 81-digit overflow edge.
   The focused fail-before regression, package inventory, and Ready validation
   are recorded in `receipts/types_explain_format_audit.md`.
+- 2026-09-04: aligned Go `BuildCastFunction4Union`'s unsigned integer
+  `inUnion` behavior across `tidb-ast`, `tidb-expr`, and `tidb-planner`.
+  `CastType::UnsignedInUnion` is an internal carrier; ordinary SQL casts still
+  restore and dispatch as `UNSIGNED`. UNION and recursive-CTE projections now
+  build `cast_unsigned_in_union`, whose evaluator clamps negative integer,
+  real, decimal, and string-as-int inputs to zero according to their Go
+  signature while leaving temporal-source casts on the ordinary path. Focused
+  expression/planner regressions and the complete inventory are recorded in
+  `receipts/expression_planner_in_union.md`.
+
+- 2026-09-04 validation: focused expression/planner tests, the planner owner
+  suite (35/35), all-target compilation, formatting, and diff checks passed.
+  The owner all-target run retained one unrelated loopback-PD label-delivery
+  failure; the full `tidb-expr` nextest run retained one unrelated loopback HTTP
+  JSON-schema fixture failure. Strict clippy remains blocked by pre-existing
+  diagnostics in unrelated workspace/generated code; the receipt records the
+  exact commands and outcomes.
 
 - 2026-09-04: aligned the Rust `tidb-datatype` decimal shift owner for the
   complete Go-master `pkg/types` fixed-word boundary. A rounding carry is now
@@ -5383,6 +5400,14 @@ For each bounded behavior cluster:
   parser. Expanding `f64::to_string()` positionally changes fixed nine-word
   overflow/truncation behavior. Date/Author: 2026-09-04, Codex.
 
+- 2026-09-04: encode Go's `inUnion` cast flag in the internal function name
+  `cast_unsigned_in_union`, backed by `CastType::UnsignedInUnion`, instead of
+  adding session state to `ScalarFunction`. This keeps the plan immutable and
+  lets the existing source-type-aware evaluator apply the same clamp rules.
+- 2026-09-04: scope this batch to unsigned integer-target casts, as specified
+  by the next-work-unit queue. Go's string-to-DECIMAL `inUnion` tests remain
+  documented ignored gaps until a target-specific decimal carrier exists.
+
 - Decision: preserve Go's pre-round digit-bound check in Rust decimal shifting
   by inspecting the source digit prefix before accepting a rounding carry.
   Checking only the rounded numeric value would incorrectly retain a carry
@@ -6417,6 +6442,14 @@ For each bounded behavior cluster:
   `rust/testport/receipts/executor_user_attributes.md`.
 
 ## Outcomes & Retrospective
+
+The UNION cast batch is implemented but remains a bounded parity slice rather
+than a package-complete `pkg/expression` or `pkg/planner` claim. Rust now
+preserves the Go `inUnion` marker through AST, expression construction, scalar
+dispatch, ordinary UNION projection, and recursive-CTE projection. The
+fail-before regression was the existing unsigned wrap (`u64::MAX`) for a
+negative signed integer; the post-fix result is zero. The remaining
+string-to-DECIMAL and vectorized harness cases stay explicit documented gaps.
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state

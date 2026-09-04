@@ -865,10 +865,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if target.equal(&source) {
                 exprs.push(tidb_expr::expression::Expression::Column(column.clone()));
             } else {
-                // boundary: `expression.BuildCastFunction4Union`'s `inUnion`
-                // flag; see [`super::set_opr`]'s narrowings.
+                // Recursive CTE projection uses Go's same
+                // `BuildCastFunction4Union` path, including its `inUnion`
+                // evaluation marker.
                 exprs.push(
-                    tidb_expr::aggregation::wrap_cast::build_cast_to(
+                    tidb_expr::aggregation::wrap_cast::build_cast_to_in_union(
                         tidb_expr::expression::Expression::Column(column.clone()),
                         target,
                     )

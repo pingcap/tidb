@@ -220,6 +220,7 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
     let name = match cast_type {
         CastType::Signed => "cast_signed",
         CastType::Unsigned => "cast_unsigned",
+        CastType::UnsignedInUnion => "cast_unsigned_in_union",
         CastType::Char { .. } => "cast_char",
         CastType::Binary { .. } => "cast_binary",
         CastType::Decimal { .. } => "cast_decimal",
@@ -233,7 +234,7 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
     };
     let ft = match cast_type {
         CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
-        CastType::Unsigned => {
+        CastType::Unsigned | CastType::UnsignedInUnion => {
             let mut ft = FieldType::new(FieldTypeCode::LongLong);
             ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
             ft

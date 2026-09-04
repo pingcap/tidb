@@ -548,13 +548,12 @@ pub(crate) fn build_cast_function(
         | FieldTypeCode::Long
         | FieldTypeCode::LongLong
         | FieldTypeCode::Bit => {
-            if in_union {
-                // Go `BuildCastFunction4Union` sets `inUnion = true` on the
-                // signature: a negative result CLAMPS to 0 instead of the
-                // unsigned wrap (`builtin_cast.go:998`).
-                "cast_unsigned_in_union"
-            } else if unsigned {
-                "cast_unsigned"
+            if unsigned {
+                if in_union {
+                    "cast_unsigned_in_union"
+                } else {
+                    "cast_unsigned"
+                }
             } else {
                 "cast_signed"
             }

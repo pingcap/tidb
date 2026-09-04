@@ -1970,7 +1970,7 @@ fn test_cast_as_char_field_type() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: baseBuiltinCastFunc.inUnion is not modeled anywhere in the Rust cast dispatch, so the union-clamped negative-to-zero decimal rows have no observable door"]
+#[ignore = "go-parity-gap: the Rust inUnion carrier now covers unsigned integer casts; this Go row targets string-to-DECIMAL, whose separate inUnion signature remains unmodeled"]
 fn test_cast_string_as_decimal_sig_with_unsigned_flag_in_union() {
     // Go sets inUnion=true + UnsignedFlag and gets "1"→1, "-1"→0.
 }
