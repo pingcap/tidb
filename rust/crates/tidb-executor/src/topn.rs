@@ -102,6 +102,9 @@ pub struct TopNExec<C: Columns> {
     ctx: C,
     /// Go `Limit.Offset`: how many of the ordered rows to drop.
     offset: u64,
+    /// Go `Limit.Count`: a zero count is rewritten to a dual by the planner,
+    /// so `Next` must not drain the child even when `offset` is nonzero.
+    count: u64,
     /// Go `chkHeap.totalLimit` = `Limit.Offset + Limit.Count`, saturated the
     /// way [`crate::limit::LimitExec`] saturates its `end` (Go's planner
     /// clamps the count so the sum cannot wrap).
@@ -389,6 +392,7 @@ where
             column_idxs_used_by_child: None,
             ctx,
             offset,
+            count,
             total_limit: offset + count,
             fetched: false,
             heap: TopNChunkHeap::new(),
@@ -612,8 +616,9 @@ where
     fn fetch_and_select(&mut self) -> Result<(), ExecError> {
         // Go's `AttachChild` turns a zero-count TopN into a dual, so this
         // operator is never asked for zero rows in Go. Answering it without
-        // touching the child keeps the heap's `rowPtrs[0]` in bounds.
-        if self.total_limit == 0 {
+        // touching the child keeps the heap's `rowPtrs[0]` in bounds. Check
+        // the count itself: OFFSET may be nonzero while LIMIT is zero.
+        if self.count == 0 {
             return Ok(());
         }
         validate_by_items(&self.by_items)?;
@@ -1553,12 +1558,34 @@ mod tests {
 
     /// A zero count never reaches the child: Go's `LogicalTopN.AttachChild`
     /// replaces the whole operator with a dual, so the heap's `rowPtrs[0]` is
-    /// never indexed on an empty store.
+    /// never indexed on an empty store. This remains true when OFFSET is
+    /// nonzero; checking only `offset + count == 0` would drain the child.
     #[test]
     fn a_zero_count_returns_nothing_without_draining_the_child() {
-        let rows: Vec<Vec<Option<i64>>> = (0..5).map(|v| vec![Some(v), Some(0)]).collect();
-        let mut exec = topn_over(&rows, 2, 2, &[(0, false)], 0, 0, StatementMemory::default());
+        let rows: Vec<Vec<i64>> = (0..5).map(|v| vec![v, 0]).collect();
+        let emitted = Arc::new(AtomicUsize::new(0));
+        let child = Box::new(CountingSource {
+            meta: ExecutorMeta::new(schema_of(2), 0, 2, 4),
+            rows,
+            cursor: 0,
+            batch: 2,
+            emitted: Arc::clone(&emitted),
+        });
+        let mut exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(2), 1, 2, 4),
+            by(&[(0, false)]),
+            child,
+            NoColumns,
+            7,
+            0,
+            StatementMemory::default(),
+        );
         assert!(drain(&mut exec).is_empty());
+        assert_eq!(
+            emitted.load(SeqCst),
+            0,
+            "LIMIT 0 must not fetch rows even with a nonzero OFFSET"
+        );
     }
 
     #[test]

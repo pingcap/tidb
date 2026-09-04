@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the fourteen focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the fifteen focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -666,3 +666,36 @@ enumeration, live prefix-index execution, spill interaction for RankTopN, and
 native TiKV behavior were not run. The default Rust 1.95 toolchain remains
 below the workspace's Rust 1.97 minimum; the pinned nightly toolchain was used
 for the Ready checks.
+
+## TopN zero-count short-circuit alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this fifteenth
+Rust-only fix. Go's `TopNExec.fetchChunks` closes its result channel before
+touching the child whenever `Limit.Count == 0`; this is true even when
+`Limit.Offset` is nonzero because the planner replaces the operator with a
+dual. Rust previously tested only `offset + count == 0`, so an offset-only
+request drained and accounted child rows before returning an empty result.
+`TopNExec` now retains the effective count and short-circuits on the count
+itself, preserving Go's no-read behavior without changing overflow clamping.
+
+The focused regression is
+`topn::tests::a_zero_count_returns_nothing_without_draining_the_child`. Before
+the production change it failed with `left: 5, right: 0`, proving that the
+child had been consumed for `OFFSET 7 LIMIT 0`; after the change it passes and
+observes zero emitted child rows. Rust ownership remains within `topn.rs`; no
+Go, Bazel, generated, fixture, or platform artifact changed.
+
+## TopN zero-count short-circuit Ready validation
+
+- Pre-fix `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib topn::tests::a_zero_count_returns_nothing_without_draining_the_child -- --nocapture` failed with `LIMIT 0 must not fetch rows even with a nonzero OFFSET` (`left: 5, right: 0`).
+- The same focused command passed after the fix with a temporary host-only vendored-OpenSSL feature toggle; the manifest was reverted immediately to `openssl = "0.10"`.
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --all-targets` passed with the same temporary vendored-OpenSSL toggle; the manifest was reverted immediately after the run.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The complete `tidb-executor` library suite, planner-generated dual plans,
+live SQL execution with offset-only limits, spill interaction, and native
+TiKV behavior were not run. The default Rust 1.95 toolchain remains below the
+workspace's Rust 1.97 minimum; the pinned nightly toolchain was used for the
+focused validation.

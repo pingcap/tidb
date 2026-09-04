@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor/sortexec` TopN zero-count short-circuit): aligned
+  Rust's TopN limit handling with Go's `Limit.Count == 0` early return. The
+  executor now retains the effective count separately from `offset + count`
+  and avoids draining the child for `OFFSET > 0, LIMIT 0`; the focused
+  fail-before/pass-after child-consumption regression and Ready checks are
+  recorded in `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-05 (`pkg/parser` parenthesized temporal intervals): aligned the
   hand-written Rust expression parser with Go master `5bdb1b6bd1`. The
   keyword-form `INTERVAL (expr) UNIT` now wins over the scalar
