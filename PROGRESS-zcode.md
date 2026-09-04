@@ -229,3 +229,5 @@
 
 - 与远端同步确认：planner crate 内 .first()?/.get(1)? 模式已清零（系统性扫描确认）。四包聚合 1591+/0。
 - 下批候选：chunk A-1 直接转换（需读两型结构后实现 ~150 行）、parser #11 charset-aware scanner（结构性）、Time::round_frac TZ（签名变更跨两 crate）。
+
+- 本会话累计交付 31 个提交到 hparser-integration（全部四包全绿验证），覆盖 planner/parser/datatype/codec/expr 五个 crate 的 Go 对照修复。**快赢批次已全部消化**，剩余均为结构性/设计门槛项：chunk A-1（datum 决策）、parser #11 charset-aware scanner（结构性）、Time::round_frac TZ（签名变更）、CHAR/VARCHAR padding（storage 面）、~175 站点 error-code 重构（跨 crate）。
