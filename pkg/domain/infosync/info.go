@@ -950,7 +950,7 @@ func CleanTiFlashProgressCache() {
 }
 
 // CalculateColumnarIndexProgress calculates columnar index progress
-func CalculateColumnarIndexProgress(tableID, indexID int64, tikvStores map[int64]pdhttp.StoreInfo) (float64, error) {
+func CalculateColumnarIndexProgress(tableID, indexID int64, columnarIndexType model.ColumnarIndexType, tikvStores map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -969,15 +969,24 @@ func CalculateColumnarIndexProgress(tableID, indexID int64, tikvStores map[int64
 			}
 			continue
 		}
-		indexReady += columnarStatus.VectorIndexReady
+		switch columnarIndexType {
+		case model.ColumnarIndexTypeFulltext:
+			if !columnarStatus.HasFtsIndexReady {
+				return 0, errors.Errorf("fts-index-ready not found in TiKV columnar_status response from %s (store %d); please check TiKV version", addr, storeStat.Store.ID)
+			}
+			indexReady += columnarStatus.FtsIndexReady
+		default:
+			indexReady += columnarStatus.VectorIndexReady
+		}
 		total += columnarStatus.Total
 	}
 	if total == 0 {
 		return 0, nil
 	}
-	logutil.BgLogger().Debug("CalculateColumnarIndexProgress", zap.Int64("tableID", tableID), zap.Int64("indexID", indexID), zap.Uint("indexReady", indexReady), zap.Uint("total", total), zap.Float64("progress", float64(indexReady)/float64(total)))
+	progress := float64(indexReady) / float64(total)
+	logutil.BgLogger().Debug("CalculateColumnarIndexProgress", zap.Int64("tableID", tableID), zap.Int64("indexID", indexID), zap.String("columnarIndexType", columnarIndexType.SQLName()), zap.Uint("indexReady", indexReady), zap.Uint("total", total), zap.Float64("progress", progress))
 
-	return float64(indexReady) / float64(total), nil
+	return progress, nil
 }
 
 // SetTiFlashGroupConfig is a helper function to set tiflash rule group config

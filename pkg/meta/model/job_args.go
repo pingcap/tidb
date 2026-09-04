@@ -245,6 +245,39 @@ func GetCreateTableArgs(job *Job) (*CreateTableArgs, error) {
 	return getOrDecodeArgs[*CreateTableArgs](&CreateTableArgs{}, job)
 }
 
+// CreateMaterializedViewLogArgs is the arguments for create materialized view log job.
+type CreateMaterializedViewLogArgs struct {
+	TableInfo *TableInfo `json:"table_info,omitempty"`
+}
+
+func (a *CreateMaterializedViewLogArgs) getArgsV1(*Job) []any { return []any{a.TableInfo} }
+func (a *CreateMaterializedViewLogArgs) decodeV1(job *Job) error {
+	a.TableInfo = &TableInfo{}
+	return errors.Trace(job.decodeArgs(a.TableInfo))
+}
+
+// GetCreateMaterializedViewLogArgs decodes CREATE MATERIALIZED VIEW LOG job arguments.
+func GetCreateMaterializedViewLogArgs(job *Job) (*CreateMaterializedViewLogArgs, error) {
+	return getOrDecodeArgs[*CreateMaterializedViewLogArgs](&CreateMaterializedViewLogArgs{}, job)
+}
+
+// CreateMaterializedViewArgs is the arguments for create materialized view job.
+type CreateMaterializedViewArgs struct {
+	TableInfo    *TableInfo `json:"table_info,omitempty"`
+	MLogTableIDs []int64    `json:"mlog_table_ids,omitempty"`
+}
+
+func (a *CreateMaterializedViewArgs) getArgsV1(*Job) []any { return []any{a.TableInfo, a.MLogTableIDs} }
+func (a *CreateMaterializedViewArgs) decodeV1(job *Job) error {
+	a.TableInfo = &TableInfo{}
+	return errors.Trace(job.decodeArgs(a.TableInfo, &a.MLogTableIDs))
+}
+
+// GetCreateMaterializedViewArgs decodes CREATE MATERIALIZED VIEW job arguments.
+func GetCreateMaterializedViewArgs(job *Job) (*CreateMaterializedViewArgs, error) {
+	return getOrDecodeArgs[*CreateMaterializedViewArgs](&CreateMaterializedViewArgs{}, job)
+}
+
 // BatchCreateTableArgs is the arguments for batch create table job.
 type BatchCreateTableArgs struct {
 	Tables []*CreateTableArgs `json:"tables,omitempty"`
@@ -1414,7 +1447,13 @@ type IndexArg struct {
 	IsGlobal bool  `json:"is_global,omitempty"`
 
 	// Only used for job args v2.
-	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
+	// Old DDL owners may ignore AutoPreSplit during rolling upgrades;
+	// this best-effort optimization does not affect correctness.
+	// AutoPreSplit must be separate from SplitOpt. Otherwise, an old DDL owner
+	// ignores the unknown auto field, treats the non-nil empty SplitOpt as a
+	// manual split, and rejects the add-index job.
+	AutoPreSplit bool              `json:"auto_presplit,omitempty"`
+	SplitOpt     *IndexArgSplitOpt `json:"split_opt,omitempty"`
 
 	// ConditionString is used to store the partial index condition string for the index.
 	ConditionString string `json:"condition_string,omitempty"`
