@@ -204,12 +204,11 @@ func (*mockStatsCacheInner) WaitForAsyncUpdates() {
 	panic("not implemented")
 }
 
-// TestUpdateDropsPendingTableUpdate records the current behavior of the LFU cache: a table which is
-// updated right after it was added is dropped, and Get keeps returning the first table, because
-// Ristretto admits new keys asynchronously and rejects a Put of the same key that arrives before
-// the admission finishes. This is the pattern of sync stats loading: the loaded column is written
-// back to a table that the stats cache Update just added.
-func TestUpdateDropsPendingTableUpdate(t *testing.T) {
+// TestUpdateOverwritesPendingTable makes sure that a table which is updated right after it was
+// added to the cache is the one returned by Get, even though the LFU admits new keys asynchronously.
+// This is the pattern of sync stats loading: the loaded column is written back to a table that the
+// stats cache Update just added.
+func TestUpdateOverwritesPendingTable(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -234,6 +233,6 @@ func TestUpdateDropsPendingTableUpdate(t *testing.T) {
 
 	got, ok := sc.Get(tableID)
 	require.True(t, ok)
-	require.Same(t, added, got)
-	require.Nil(t, got.GetCol(2))
+	require.Same(t, updated, got)
+	require.NotNil(t, got.GetCol(2))
 }
