@@ -230,7 +230,7 @@ impl ActionOnExceed for ParallelSortSpillAction {
         if self.need_spill.load(SeqCst) {
             return;
         }
-        if self.sort_tracker.bytes_consumed() >= self.spill_limit {
+        if tracker.check_exceed() && self.sort_tracker.bytes_consumed() >= self.spill_limit {
             self.need_spill.store(true, SeqCst);
             return;
         }
@@ -1175,6 +1175,32 @@ mod tests {
         assert!(
             need_spill.load(SeqCst),
             "the inclusive tenth-of-quota boundary must request a spill"
+        );
+    }
+
+    /// Go's parallel spill action only requests a spill for an over-quota
+    /// trigger. Reaching the sort-owned tenth-of-quota threshold alone must
+    /// leave the action available for a later over-quota callback.
+    #[test]
+    fn parallel_sort_does_not_spill_before_trigger_tracker_exceeds_quota() {
+        let quota = 100_i64;
+        let sort_tracker = Tracker::new(1, -1);
+        sort_tracker.replace_bytes_used(quota / 10);
+        let triggered_tracker = Tracker::new(2, quota);
+        triggered_tracker.replace_bytes_used(quota - 1);
+        let need_spill = Arc::new(AtomicBool::new(false));
+        let action = ParallelSortSpillAction {
+            base: BaseOomAction::default(),
+            need_spill: Arc::clone(&need_spill),
+            sort_tracker,
+            spill_limit: quota / 10,
+        };
+
+        action.action(&triggered_tracker);
+
+        assert!(
+            !need_spill.load(SeqCst),
+            "a non-exceeded trigger tracker must not request a spill"
         );
     }
 

@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`pkg/executor/sortexec` parallel spill trigger guard): aligned
+  Rust's `ParallelSortSpillAction` with Go's requirement that the triggering
+  tracker is over quota before a spill is requested. The focused action-level
+  regression fails when the sort threshold is reached but the trigger remains
+  below quota, and passes after the guard is restored; the package inventory and
+  Ready evidence are recorded in `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-04 (`pkg/executor/sortexec` parallel spill threshold): aligned
   Rust's `ParallelSortSpillAction` with Go's inclusive
   `sortTracker.BytesConsumed() >= quota/10` guard. The focused action-level

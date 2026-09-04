@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the four focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the five focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -291,3 +291,37 @@ All commands passed after the fix; the Cargo manifest was restored to its
 original `openssl = "0.10"` line and has no diff. As with the prior slice, the
 full executor suite, spill integration under live TiKV, and native TiKV
 behavior were not run.
+
+## Parallel sort spill trigger guard alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this third
+Rust-only fix. Go's `parallelSortSpillAction.actionImpl` first requires
+`tracker.CheckExceed()` and then checks the sort-owned tenth-of-quota boundary.
+Rust had restored the inclusive threshold but omitted the trigger check, so a
+sort that had reached its threshold could request a spill during a callback
+that had not actually exceeded the statement quota. The production guard now
+requires both conditions, matching Go's branch order and fallback behavior.
+
+The focused regression is
+`sort::tests::parallel_sort_does_not_spill_before_trigger_tracker_exceeds_quota`.
+Before the production change it failed with `a non-exceeded trigger tracker
+must not request a spill`; after the change it passed. The test holds the sort
+tracker exactly at one tenth of the quota while the callback tracker remains
+one byte below its limit, so it directly proves that the quota gate controls
+the spill request.
+
+Rust ownership is unchanged from the inventory above: `sort.rs` owns the
+parallel action and its compiled test module. No Go, Bazel, generated, fixture,
+or platform artifact changed.
+
+## Parallel spill trigger guard Ready validation
+
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib sort::tests::parallel_sort_does_not_spill_before_trigger_tracker_exceeds_quota -- --exact --nocapture` (with a temporary host-only `openssl` vendored feature toggle; reverted immediately after the run)
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The focused test passed after the fix; the Cargo manifest was restored to its
+original `openssl = "0.10"` line and has no diff. The full executor suite,
+parallel spill integration under live TiKV, and native TiKV behavior were not
+run.
