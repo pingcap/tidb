@@ -759,14 +759,20 @@ func TestParquetVariousTypes(t *testing.T) {
 		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
 
 		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: asiaShanghai})
-		require.Equal(t, schema.TimeUnitMillis, reader.colTypes[0].logicalType.(schema.TimestampLogicalType).TimeUnit())
-		require.Equal(t, schema.TimeUnitMicros, reader.colTypes[1].logicalType.(schema.TimestampLogicalType).TimeUnit())
-		require.Equal(t, schema.TimeUnitMillis, reader.colTypes[2].logicalType.(schema.TimestampLogicalType).TimeUnit())
-		require.Equal(t, schema.TimeUnitMicros, reader.colTypes[3].logicalType.(schema.TimestampLogicalType).TimeUnit())
-		require.True(t, reader.colTypes[0].logicalType.(schema.TimestampLogicalType).IsAdjustedToUTC())
-		require.True(t, reader.colTypes[1].logicalType.(schema.TimestampLogicalType).IsAdjustedToUTC())
-		require.False(t, reader.colTypes[2].logicalType.(schema.TimestampLogicalType).IsAdjustedToUTC())
-		require.False(t, reader.colTypes[3].logicalType.(schema.TimestampLogicalType).IsAdjustedToUTC())
+		timestampLogicalTypes := make([]schema.TimestampLogicalType, len(reader.colTypes))
+		for i, colType := range reader.colTypes {
+			logicalType, ok := colType.logicalType.(schema.TimestampLogicalType)
+			require.True(t, ok)
+			timestampLogicalTypes[i] = logicalType
+		}
+		require.Equal(t, schema.TimeUnitMillis, timestampLogicalTypes[0].TimeUnit())
+		require.Equal(t, schema.TimeUnitMicros, timestampLogicalTypes[1].TimeUnit())
+		require.Equal(t, schema.TimeUnitMillis, timestampLogicalTypes[2].TimeUnit())
+		require.Equal(t, schema.TimeUnitMicros, timestampLogicalTypes[3].TimeUnit())
+		require.True(t, timestampLogicalTypes[0].IsAdjustedToUTC())
+		require.True(t, timestampLogicalTypes[1].IsAdjustedToUTC())
+		require.False(t, timestampLogicalTypes[2].IsAdjustedToUTC())
+		require.False(t, timestampLogicalTypes[3].IsAdjustedToUTC())
 
 		require.NoError(t, reader.ReadRow())
 		row := reader.lastRow.Row
@@ -814,10 +820,16 @@ func TestParquetVariousTypes(t *testing.T) {
 		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
 
 		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: asiaShanghai})
-		require.Equal(t, schema.TimeUnitMillis, reader.colTypes[0].logicalType.(schema.TimeLogicalType).TimeUnit())
-		require.Equal(t, schema.TimeUnitMicros, reader.colTypes[1].logicalType.(schema.TimeLogicalType).TimeUnit())
-		require.False(t, reader.colTypes[0].logicalType.(schema.TimeLogicalType).IsAdjustedToUTC())
-		require.False(t, reader.colTypes[1].logicalType.(schema.TimeLogicalType).IsAdjustedToUTC())
+		timeLogicalTypes := make([]schema.TimeLogicalType, len(reader.colTypes))
+		for i, colType := range reader.colTypes {
+			logicalType, ok := colType.logicalType.(schema.TimeLogicalType)
+			require.True(t, ok)
+			timeLogicalTypes[i] = logicalType
+		}
+		require.Equal(t, schema.TimeUnitMillis, timeLogicalTypes[0].TimeUnit())
+		require.Equal(t, schema.TimeUnitMicros, timeLogicalTypes[1].TimeUnit())
+		require.False(t, timeLogicalTypes[0].IsAdjustedToUTC())
+		require.False(t, timeLogicalTypes[1].IsAdjustedToUTC())
 
 		require.NoError(t, reader.ReadRow())
 		row := reader.lastRow.Row
