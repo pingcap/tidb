@@ -536,6 +536,49 @@ pub(crate) fn eval_func_values(
         };
         return Some(Ok(Datum::Decimal(dec)));
     }
+    // Go `builtinCastIntAsDecimalSig.evalDecimal`
+    // (`builtin_cast.go:1050-1070`): an in-union signed integer source maps a
+    // negative value to the zero decimal before the target shape is applied.
+    if name == "cast_int_to_decimal_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        return Some(Ok(match value {
+            Datum::Int(value) if *value < 0 => {
+                Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0").0)
+            }
+            Datum::Int(value) => Datum::Decimal(tidb_datatype::Decimal::from_int(*value)),
+            Datum::UInt(value) => Datum::Decimal(tidb_datatype::Decimal::from_uint(*value)),
+            _ => return None,
+        }));
+    }
+    // Go `builtinCastStringAsDecimalSig.evalDecimal`
+    // (`builtin_cast.go:1877-1901`): an in-union UNSIGNED target discards a
+    // negative textual value before parsing it, so no truncation warning is
+    // emitted for that branch. Positive text follows the ordinary decimal
+    // prefix parser and keeps its source warning disposition.
+    if name == "cast_string_to_decimal_in_union" {
+        let value = vals.first()?;
+        if value.is_null() {
+            return Some(Ok(Datum::Null));
+        }
+        let text = match value {
+            Datum::String(value) => value.as_utf8().ok()?.to_owned(),
+            Datum::Bytes(value) => std::str::from_utf8(value).ok()?.to_owned(),
+            _ => return None,
+        };
+        let trimmed = text.trim();
+        if trimmed.len() > 1 && trimmed.starts_with('-') {
+            return Some(Ok(Datum::Decimal(
+                tidb_datatype::Decimal::parse_mysql("0").0,
+            )));
+        }
+        crate::cast::report_decimal_input_truncation(value, ctx);
+        return Some(Ok(Datum::Decimal(
+            tidb_datatype::Decimal::parse_mysql(trimmed).0,
+        )));
+    }
     // Go `builtinCastDecimalAsDecimalSig.evalDecimal`
     // (`builtin_cast.go:1538-1551`): an in-union unsigned-target cast of a
     // negative source yields the ZERO decimal (the `res = &MyDecimal{}`
@@ -551,8 +594,7 @@ pub(crate) fn eval_func_values(
                 tidb_datatype::Decimal::parse_mysql("0").0,
             )));
         }
-        let res = crate::cast::to_f64_for_cast(value);
-        return Some(Ok(Datum::Real(if res < 0.0 { 0.0 } else { res })));
+        return Some(Ok(value.clone()));
     }
     // Go `castAsRealToIntSig.evalReal` (`builtin_cast.go:1370-1380`): a
     // real source with an in-union unsigned int target CLAMPS a negative
@@ -581,7 +623,6 @@ pub(crate) fn eval_func_values(
             Datum::Int(i) => *i as f64,
             Datum::UInt(u) => *u as f64,
             Datum::Decimal(dec) => {
-                use std::ops::Neg;
                 let mut text = dec.to_string();
                 if text.starts_with('-') {
                     text.remove(0);
@@ -987,7 +1028,10 @@ mod tests {
         let ctx = PacketLimit::default();
         let decimal = Datum::Decimal(tidb_datatype::Decimal::from_literal("2.5"));
         let result = eval_func_values("cast_decimal_in_union", &[decimal], &ctx);
-        assert_eq!(result.unwrap().unwrap(), Datum::Real(2.5));
+        assert_eq!(
+            result.unwrap().unwrap(),
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("2.5"))
+        );
     }
 
     #[test]

@@ -791,7 +791,7 @@ fn report_negative_string_unsigned(v: &Datum, ctx: &dyn crate::Columns) {
 /// warning emitted by Go's string-to-decimal cast signature. The parsed value
 /// is still retained (including a valid prefix); only a completely invalid or
 /// truncated suffix contributes this statement warning.
-fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Columns) {
+pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Columns) {
     let text = match v {
         Datum::String(value) => value.as_utf8().ok(),
         Datum::Bytes(value) => std::str::from_utf8(value).ok(),

@@ -197,4 +197,11 @@
   constant precision/scale refinement. The formerly ignored REAL
   `123.555` regression is active; focused and Ready evidence are recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
+- 2026-09-04: aligned Rust UNION decimal casts with Go's source-specific
+  `BuildCastFunction4Union` signatures. REAL/integer/DECIMAL negative sources
+  clamp to zero where Go does, negative unsigned text is discarded before
+  parsing without a warning, and positive DECIMAL values retain their type
+  before the merged precision/scale is applied. Focused regressions and Ready
+  evidence are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 - parser #5 (RESERVED_KEYWORDS 缺 DATABASE/DATABASES/DISTINCT) 核实已被并发会话修复 — RESERVED_KEYWORDS 当前含全部 236 条含这三个关键词。审计项 5 关闭。

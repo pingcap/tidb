@@ -2,14 +2,14 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `tidb-expr` unspecified decimal wrapper-scale parity batch
+- Work unit: `tidb-expr` UNION source-specific decimal-cast parity batch
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: focused decimal signature and wrapper-family regressions pass;
-  the formerly ignored REAL-to-DECIMAL fraction test is active. Ready reports
-  409 datatype unit and 64 source/integration passes; expression reports
-  1,151 passes, one known loopback HTTP JSON-schema fixture failure, and 120
+- Validation: focused UNION decimal-signature regressions pass, including the
+  formerly ignored unsigned string-to-decimal source rows. Ready reports 409
+  datatype unit and 64 source/integration passes; expression reports 1,155
+  passes, one known loopback HTTP JSON-schema fixture failure, and 119
   ignored; executor reports 1,058 passes and 121 existing planner/storage/
   fixture failures. All three owner checks plus formatting and diff checks
   pass. Strict datatype clippy remains blocked only by the unrelated
@@ -116,6 +116,11 @@
   constant precision/scale refinement. The REAL `123.555` regression is active
   and its Ready evidence is recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
-- Next action: commit and push the decimal-wrapper batch, then continue with
-  the next executable Rust package boundary. Direct datatype comparison warning
-  publication remains a bounded API follow-up.
+- Current batch: Rust UNION decimal casts now select source-specific Go
+  signatures, clamp negative REAL/integer/DECIMAL sources and negative unsigned
+  text before parsing, preserve positive DECIMAL values, and apply the merged
+  target shape afterward. Focused regressions and the Ready profile are in
+  `rust/testport/receipts/types_explain_format_audit.md`.
+- Next action: commit and push the UNION decimal-cast batch, then continue with
+  the next executable Rust package boundary. Direct datatype comparison
+  warning publication remains a bounded API follow-up.

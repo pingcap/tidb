@@ -541,11 +541,23 @@ pub(crate) fn build_cast_function(
         }
     }
     let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
+    let source_eval_type = expr.static_type().map(FieldType::eval_type);
     let name = match target.code() {
         FieldTypeCode::Year => "cast_year",
         FieldTypeCode::Date | FieldTypeCode::NewDate => "cast_date",
         FieldTypeCode::Datetime | FieldTypeCode::Timestamp => "cast_datetime",
         FieldTypeCode::Duration => "cast_time",
+        FieldTypeCode::NewDecimal if in_union => match source_eval_type {
+            // Go's decimal target has source-specific inUnion signatures.
+            // REAL and integer sources clamp a negative signed value before
+            // ProduceDecWithSpecifiedTp; string/decimal sources take that
+            // branch only when the merged target is UNSIGNED.
+            Some(tidb_datatype::EvalType::Real) => "cast_real_to_decimal_in_union",
+            Some(tidb_datatype::EvalType::Int) if unsigned => "cast_int_to_decimal_in_union",
+            Some(tidb_datatype::EvalType::String) if unsigned => "cast_string_to_decimal_in_union",
+            Some(tidb_datatype::EvalType::Decimal) if unsigned => "cast_decimal_in_union",
+            _ => "cast_decimal",
+        },
         FieldTypeCode::NewDecimal => "cast_decimal",
         FieldTypeCode::Float | FieldTypeCode::Double => {
             if in_union && target.flags() & FieldTypeFlags::UNSIGNED != 0 {

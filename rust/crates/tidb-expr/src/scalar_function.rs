@@ -1373,6 +1373,39 @@ impl ScalarFunction {
             let res = crate::cast::to_i64_signed_with_warnings(&value, ctx)?;
             return Ok(Datum::UInt(if res < 0 { 0 } else { res as u64 }));
         }
+        // Source-specific UNION cast signatures carry behavior that cannot be
+        // recovered from the target type alone (notably negative
+        // string/REAL/DECIMAL-to-DECIMAL conversions).  Route their names
+        // through the shared values dispatcher before the generic `cast_*`
+        // target parser, which intentionally knows only ordinary AST casts.
+        if name.ends_with("_in_union") && self.args.len() == 1 {
+            let value = self.args[0].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
+            if let Some(result) = crate::func::eval_func_values_in(&name, &[value], ctx) {
+                let result = result?;
+                // The values dispatcher models only the source-specific
+                // inUnion decision.  Apply the merged target's DECIMAL
+                // precision/scale afterward, exactly as Go's signature calls
+                // `ProduceDecWithSpecifiedTp` after choosing its source
+                // branch.
+                if self.get_static_type().is_some_and(|field_type| {
+                    field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal
+                }) {
+                    let ret_type = self
+                        .get_static_type()
+                        .ok_or(EvalError::Unsupported("a cast with no result type"))?;
+                    return crate::cast::eval_cast(
+                        &cast_type_of("decimal", ret_type)?,
+                        result,
+                        self.args[0].static_type(),
+                        ctx,
+                    );
+                }
+                return Ok(result);
+            }
+        }
         if let Some(target) = name.strip_prefix("cast_") {
             if self.args.len() == 1 {
                 let value = self.args[0].eval(ctx, row)?;

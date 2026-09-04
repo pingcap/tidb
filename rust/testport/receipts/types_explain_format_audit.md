@@ -988,6 +988,81 @@ git diff --check
 # both passed
 ```
 
+## Rust-only parity follow-up: UNION source-specific decimal casts
+
+The Go `BuildCastFunction4Union` path (`pkg/expression/builtin_cast.go:2570-2573`)
+builds a cast with `inUnion=true`; the decimal function class then chooses a
+source-specific signature (`:263-290`). `builtinCastIntAsDecimalSig` clamps a
+negative signed integer to a zero decimal before
+`ProduceDecWithSpecifiedTp` (`:1050-1070`), the REAL arm does the same for a
+negative real (`:1405-1420`), the DECIMAL arm preserves positive decimal
+precision while zeroing a negative unsigned UNION source (`:1538-1551`), and
+the string arm discards a negative textual value before parsing (`:1864-1901`).
+Rust previously selected the generic `cast_decimal` name from the merged target
+type, so these source-specific UNION semantics were not reachable through the
+normal expression builder.
+
+The Rust `tidb-expr` owner now selects `cast_real_to_decimal_in_union`,
+`cast_int_to_decimal_in_union`, `cast_string_to_decimal_in_union`, or
+`cast_decimal_in_union` from the source eval type and target unsigned flag.
+The values dispatcher implements the Go pre-parse zeroing/clamping rules, and
+the scalar evaluator applies the merged target precision/scale afterward. A
+positive DECIMAL source remains a DECIMAL rather than being narrowed through a
+REAL intermediate. No Go, generated, or Bazel file changed.
+
+Focused regressions:
+
+- `builtin_cast_semantics::union_unsigned_string_decimal_cast_discards_negative_before_parse`
+  proves that an unsigned UNION string target maps `-1.25` to decimal zero
+  without a warning, while positive `1.256` rounds to `1.26`.
+- `tests::aggregation_arithmetic_cast_source::test_cast_string_as_decimal_sig_with_unsigned_flag_in_union`
+  is now active and covers the Go-derived `"1"`/`"-1"` rows, including the
+  no-warning negative branch.
+- `func::tests::cast_decimal_in_union_keeps_positives` pins preservation of a
+  positive DECIMAL value through the source-specific signature.
+- `builtin_cast_semantics::union_signed_integer_decimal_cast_preserves_negative_values`
+  pins Go's signed-target integer branch, which keeps a negative source on the
+  generic decimal path rather than applying the unsigned UNION clamp.
+
+The focused string-signature command passed before the Ready run:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib string_as_decimal_sig_with_unsigned -- --nocapture
+# passed: 1 test
+```
+
+Ready validation for this batch:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,155 passed, 1 known loopback HTTP JSON-schema fixture failed, 119 ignored
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,058 passed, 121 existing planner/storage/fixture failures, 0 ignored
+
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

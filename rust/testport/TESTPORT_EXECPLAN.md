@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` UNION decimal casts): aligned Go's
+  `BuildCastFunction4Union` source-specific signatures. Rust now selects
+  REAL/int/string/DECIMAL-to-DECIMAL UNION arms from the source eval type,
+  clamps negative values as Go does before applying the merged decimal
+  precision/scale, and preserves positive decimal values. Focused regressions
+  and the Ready profile are recorded in
+  `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (D5 follow-up, `tidb-expr` decimal wrapper casts): carried Go's
   unspecified decimal scale through the internal cast dispatch instead of
   rounding it to scale 0, and restored `WrapWithCastAsDecimal`'s strict-

@@ -50,6 +50,13 @@ its actual precision. The executable regression and Ready evidence are in
 `rust/testport/receipts/types_explain_format_audit.md`; this is an expression
 caller fix rather than a new `pkg/types` finding.
 
+The related UNION decimal-cast caller is now source-specific as well. Rust's
+expression builder selects the Go `BuildCastFunction4Union` REAL, integer,
+string, or DECIMAL signature and applies the merged decimal shape after the
+source-specific negative-value rule. Its executable regressions and Ready
+evidence are recorded in the same receipt; this remains an expression-layer
+boundary rather than a new datatype finding.
+
 Multiple fixes have landed in this branch, including the F1/F2 field-type
 predicates and the D/T/M temporal and decimal batches. Their focused
 regressions and Ready outcomes are recorded in the receipts referenced by each

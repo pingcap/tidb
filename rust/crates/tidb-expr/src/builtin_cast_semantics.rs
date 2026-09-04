@@ -101,6 +101,76 @@ mod tests {
     }
 
     #[test]
+    fn union_unsigned_string_decimal_cast_discards_negative_before_parse() {
+        let mut source_type = FieldType::new(FieldTypeCode::VarString);
+        source_type.add_flags(FieldTypeFlags::NOT_NULL);
+        let source = |text: &str| {
+            crate::expression::Expression::Constant(crate::constant::Constant::new(
+                Datum::new_string(text),
+                source_type.clone(),
+            ))
+        };
+        let mut target = FieldType::new(FieldTypeCode::NewDecimal);
+        target.set_flen(10);
+        target.set_decimal(2);
+        target.add_flags(FieldTypeFlags::UNSIGNED);
+
+        let negative =
+            crate::aggregation::wrap_cast::build_cast_to_in_union(source("-1.25"), target.clone())
+                .expect("string UNION decimal cast builds");
+        let crate::expression::Expression::ScalarFunction(negative_fn) = &negative else {
+            panic!("UNION decimal cast should be a scalar function");
+        };
+        assert_eq!(
+            negative_fn.func_name.original(),
+            "cast_string_to_decimal_in_union"
+        );
+        let warnings = WarningContext::default();
+        assert_eq!(
+            negative
+                .eval(&warnings, tidb_chunk::row::Row::empty())
+                .expect("negative string UNION decimal cast evaluates"),
+            Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0").0)
+        );
+        assert!(warnings.0.borrow().is_empty());
+
+        let positive =
+            crate::aggregation::wrap_cast::build_cast_to_in_union(source("1.256"), target)
+                .expect("positive string UNION decimal cast builds");
+        assert_eq!(
+            positive
+                .eval(&WarningContext::default(), tidb_chunk::row::Row::empty())
+                .expect("positive string UNION decimal cast evaluates"),
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("1.26"))
+        );
+    }
+
+    #[test]
+    fn union_signed_integer_decimal_cast_preserves_negative_values() {
+        let source_type = FieldType::new(FieldTypeCode::LongLong);
+        let source = crate::expression::Expression::Constant(crate::constant::Constant::new(
+            Datum::Int(-12),
+            source_type,
+        ));
+        let mut target = FieldType::new(FieldTypeCode::NewDecimal);
+        target.set_flen(10);
+        target.set_decimal(2);
+
+        let wrapped = crate::aggregation::wrap_cast::build_cast_to_in_union(source, target)
+            .expect("signed integer UNION decimal cast builds");
+        let crate::expression::Expression::ScalarFunction(function) = &wrapped else {
+            panic!("UNION decimal cast should be a scalar function");
+        };
+        assert_eq!(function.func_name.original(), "cast_decimal");
+        assert_eq!(
+            wrapped
+                .eval(&WarningContext::default(), tidb_chunk::row::Row::empty())
+                .expect("signed integer UNION decimal cast evaluates"),
+            Datum::Decimal(tidb_datatype::Decimal::from_literal("-12.00"))
+        );
+    }
+
+    #[test]
     fn cast_result_types_keep_json_native_and_temporal_fsp() {
         for (cast, code, decimal) in [
             (tidb_ast::CastType::Date, FieldTypeCode::Date, 0),

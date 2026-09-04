@@ -1980,9 +1980,26 @@ fn test_cast_as_char_field_type() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: the Rust inUnion carrier now covers unsigned integer casts; this Go row targets string-to-DECIMAL, whose separate inUnion signature remains unmodeled"]
 fn test_cast_string_as_decimal_sig_with_unsigned_flag_in_union() {
-    // Go sets inUnion=true + UnsignedFlag and gets "1"→1, "-1"→0.
+    let source_type = FieldType::new(C::VarString);
+    let mut target = FieldType::new(C::NewDecimal);
+    target.set_flen(10);
+    target.set_decimal(0);
+    target.add_flags(FieldTypeFlags::UNSIGNED);
+    for (text, want) in [("1", "1"), ("-1", "0")] {
+        let source = const_typed(Datum::new_string(text.to_owned()), source_type.clone());
+        let wrapped = crate::aggregation::wrap_cast::build_cast_to_in_union(source, target.clone())
+            .expect("string UNION decimal cast builds");
+        let ctx = WarningCtx::default();
+        assert_eq!(
+            wrapped.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
+            Datum::Decimal(Decimal::from_literal(want)),
+            "string UNION decimal cast {text}"
+        );
+        if text.starts_with('-') {
+            assert!(ctx.0.borrow().is_empty());
+        }
+    }
 }
 
 #[test]
