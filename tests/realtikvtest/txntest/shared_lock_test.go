@@ -506,7 +506,13 @@ func TestSharedLockUpgrade(t *testing.T) {
 				requireTxnLockAcquiring(t, upgrader)
 				requireStorageLockWait(t, store, upgraderTxn.StartTS(), blockedKey)
 				holder.MustExec(testCase.releaseSQL)
-				require.NoError(t, <-upgradeDone)
+				var upgradeErr error
+				select {
+				case upgradeErr = <-upgradeDone:
+				case <-time.After(10 * time.Second):
+					require.FailNow(t, "shared lock upgrader did not resume after holder release")
+				}
+				require.NoError(t, upgradeErr)
 				upgrader.MustExec("commit")
 
 				upgrader.MustQuery("select * from parent order by id").Check(testkit.Rows(
