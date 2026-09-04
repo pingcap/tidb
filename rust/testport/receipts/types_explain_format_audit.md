@@ -1,5 +1,10 @@
 # `pkg/types` current-master explain-format delta
 
+The rolling Go-master source was fetched at `origin/master` commit
+`d152e4b78d35cfcb771bfabc289f837c2374d4aa` (2026-09-03). The `pkg/types`
+inventory below is unchanged from the previous fetched commit; this receipt
+records the newer source pin explicitly for this follow-up.
+
 ## Inventory
 
 The complete Go `pkg/types` tree at `origin/master` contains 61 tracked
@@ -282,6 +287,36 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # pre-fix: failed (1 instead of 6); after fix: 1 passed
 ```
 
+## Rust-only parity follow-up: Unicode punctuation in `STR_TO_DATE`
+
+The complete 61-artifact `pkg/types` inventory above remains the owning
+package for this parser boundary. Go's `STR_TO_DATE` `%.'` token calls
+`unicode.IsPunct` (`pkg/types/time.go:3534-3543`), which consumes every Unicode
+code point in general categories `Pc`, `Pd`, `Pe`, `Pf`, `Pi`, `Po`, and `Ps`.
+Rust previously used `char::is_ascii_punctuation`, so it rejected a valid
+Unicode punctuation separator such as U+00BF INVERTED QUESTION MARK and
+incorrectly consumed U+002B PLUS SIGN, which is a math symbol rather than Go
+punctuation.
+
+The Rust `tidb-datatype` owner now classifies the token with the
+`unicode-general-category` table. Go 1.25's source table is Unicode 15.0 while
+the locked dependency is generated from Unicode 16.0; the 13 punctuation code
+points introduced only by Unicode 16.0 are explicitly excluded so the lookup
+matches the fetched Go source exactly. The focused regression
+`str_to_date::tests::punctuation_token_matches_go_unicode_punctuation` covers
+both distinguishing characters and one Unicode-16-only punctuation code point.
+With the old ASCII predicate it failed before the production change (`¿` was
+rejected); after the change it passes and rejects the symbol/newer-table cases
+as Go does. No Go, generated, or Bazel file changed; the Rust workspace lock
+records the direct dependency for the package owner.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib str_to_date::tests::punctuation_token_matches_go_unicode_punctuation -- --exact
+# pre-fix: failed (`¿` returned InvalidDate); after fix: 1 passed
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.
@@ -315,6 +350,14 @@ For the non-UTF-8 comparison follow-up specifically:
 `make bazel_prepare` is required by the new top-level Go regression and was
 attempted; the local toolchain blocks it before metadata generation.
 
+For the Unicode-punctuation follow-up specifically:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib str_to_date::tests::punctuation_token_matches_go_unicode_punctuation -- --exact` — pre-fix failed on U+00BF; after the fix, 1 focused test passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (379 tests).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,114 tests; 130 documented source-carrier gaps ignored).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match
@@ -328,3 +371,10 @@ attempted; the local toolchain blocks it before metadata generation.
 - Full Go root and parser-driver suites pass locally. Bazel metadata generation
   remains unverified because the executable is unavailable; the parser-driver
   API additions in Go master remain outside the Rust owner boundary.
+- Unicode-category compatibility: the punctuation helper is pinned to the
+  fetched Go 1.25 Unicode 15.0 table by excluding the 13 newer punctuation
+  code points present in the Rust dependency's Unicode 16.0 table. If Go's
+  Unicode edition advances, that exclusion list must be re-audited.
+- Performance: `%.'` now performs one table lookup per consumed Unicode scalar
+  instead of the previous ASCII predicate; this is limited to the explicit
+  STR_TO_DATE punctuation token.

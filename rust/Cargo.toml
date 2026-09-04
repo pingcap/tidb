@@ -191,6 +191,9 @@ aes = "0.9"
 # defaults), verified via gorun.
 serde_json = "1"
 serde_yaml = "0.9"
+# Go's `unicode.IsPunct` classifies `%.'` in STR_TO_DATE by Unicode general
+# category, rather than Rust's ASCII-only punctuation helper.
+unicode-general-category = "1.1"
 # `JSON_SCHEMA_VALID` follows TiDB's qri-io validator at draft 2019-09,
 # including its file and HTTP(S) retrieval of external `$ref` schemas.
 jsonschema = { version = "0.49.9", default-features = false, features = ["resolve-file", "resolve-http", "tls-ring"] }

@@ -3344,6 +3344,7 @@ dependencies = [
  "tidb-hack",
  "tidb-kvcache",
  "tidb-mysql",
+ "unicode-general-category",
 ]
 
 [[package]]

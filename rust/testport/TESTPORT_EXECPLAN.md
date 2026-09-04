@@ -42,6 +42,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-datatype` `STR_TO_DATE` owner for the
+  complete Go-master `pkg/types` Unicode punctuation boundary. The `%.'` token
+  now follows Go's `unicode.IsPunct` categories, including non-ASCII
+  punctuation, while excluding the 13 punctuation code points present in the
+  dependency's Unicode 16 table but absent from Go 1.25's Unicode 15 table.
+  The focused fail-before regression, package inventory, and Ready validation
+  are recorded in `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04: aligned `get_fsp` in the Rust `tidb-datatype` owner for the
   complete Go-master `pkg/types` temporal literal boundary. FSP now counts all
   bytes after the source fraction dot (including timezone/trailing bytes) and
@@ -5336,6 +5344,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: use `unicode-general-category` for `STR_TO_DATE`'s `%.'` token and
+  explicitly subtract the 13 punctuation code points introduced in Unicode
+  16.0. The fetched Go 1.25 source uses Unicode 15.0, so Rust's default
+  Unicode table would otherwise accept newer punctuation that Go rejects.
+  Date/Author: 2026-09-04, Codex.
+
 - Decision: keep top-level `pkg/util/logutil` on the existing
   `tidb-util::logutil` owner and record `pkg/util/logutil/consistency` as a
   separate explicitly unclaimed package. The logger owner already carries the
@@ -5852,6 +5866,13 @@ For each bounded behavior cluster:
   Codex.
 
 ## Surprises & Discoveries
+
+- Go 1.25's `unicode.IsPunct` table is Unicode 15.0 while the already-locked
+  Rust `unicode-general-category` dependency is generated from Unicode 16.0.
+  Comparing the generated ranges found no Go-only punctuation and 13
+  Rust-only code points; the Rust `%.'` helper excludes exactly those points
+  to keep the fetched source behavior code-point-for-code-point at the
+  classification boundary.
 
 - The earlier pinned kvcache receipt said Go had no `Peek`, but current
   `origin/master` adds it inside the existing `TestGet` case. Because the

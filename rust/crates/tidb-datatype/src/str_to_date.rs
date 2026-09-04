@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use chrono::TimeZone;
+use unicode_general_category::{get_general_category, GeneralCategory};
 
 use crate::{CoreTime, Time, TimeError, TimeType};
 
@@ -232,9 +233,7 @@ fn parse_token<'a>(
             }
         }
         "%#" => Ok(skip_while(input, char::is_numeric)),
-        "%." => Ok(skip_while(input, |character| {
-            character.is_ascii_punctuation()
-        })),
+        "%." => Ok(skip_while(input, is_go_punctuation)),
         "%@" => Ok(skip_while(input, char::is_alphabetic)),
         _ if input.starts_with(token) => Ok(&input[token.len()..]),
         _ => Err(TimeError::InvalidDate),
@@ -392,6 +391,40 @@ fn skip_while(input: &str, predicate: impl Fn(char) -> bool) -> &str {
         .last()
         .unwrap_or(0);
     &input[consumed..]
+}
+
+fn is_go_punctuation(character: char) -> bool {
+    // Go 1.25's unicode tables are Unicode 15.0. The dependency is generated
+    // from Unicode 16.0, so exclude the 13 punctuation code points introduced
+    // by that newer table until the Go source advances its Unicode edition.
+    if matches!(
+        character,
+        '\u{1b4e}'
+            | '\u{1b4f}'
+            | '\u{1b7f}'
+            | '\u{10d6e}'
+            | '\u{113d4}'
+            | '\u{113d5}'
+            | '\u{113d7}'
+            | '\u{113d8}'
+            | '\u{11be1}'
+            | '\u{16d6d}'
+            | '\u{16d6e}'
+            | '\u{16d6f}'
+            | '\u{1e5ff}'
+    ) {
+        return false;
+    }
+    matches!(
+        get_general_category(character),
+        GeneralCategory::ClosePunctuation
+            | GeneralCategory::ConnectorPunctuation
+            | GeneralCategory::DashPunctuation
+            | GeneralCategory::FinalPunctuation
+            | GeneralCategory::InitialPunctuation
+            | GeneralCategory::OpenPunctuation
+            | GeneralCategory::OtherPunctuation
+    )
 }
 
 #[cfg(test)]
@@ -678,6 +711,16 @@ mod tests {
                 "{input} {format}"
             );
         }
+    }
+
+    #[test]
+    fn punctuation_token_matches_go_unicode_punctuation() {
+        assert_eq!(
+            parse("2013¿5", "%Y%.%c", true),
+            Ok(CoreTime::from_date(2013, 5, 0, 0, 0, 0, 0))
+        );
+        assert!(parse("2013+5", "%Y%.%c", true).is_err());
+        assert!(parse("2013\u{1b4e}5", "%Y%.%c", true).is_err());
     }
 
     #[test]

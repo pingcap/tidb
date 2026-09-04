@@ -23,6 +23,7 @@ tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-mysql = { path = "../tidb-mysql" }
+unicode-general-category.workspace = true
 
 [dev-dependencies]
 sha2 = { workspace = true }
