@@ -167,6 +167,39 @@ failed before the changes with `InvalidUtf8` and passes after them, returning
 This deliberately does not claim the separate comparison warning-sink/context
 API (D4/D5).
 
+## Rust-only parity follow-up: Unicode whitespace in fixed-word decimal parsing
+
+The complete 61-artifact `pkg/types` inventory above remains the owning package
+for this storage/chunk-layout parser. Go's `MyDecimal.FromString` uses
+`strings.TrimSpace` for the exponent text and for trailing non-exponent input
+(`pkg/types/helper.go:134` and `pkg/types/mydecimal.go:527`). Rust's
+`mydecimal.rs` used a byte loop named `trim_ascii_space`, so valid non-ASCII
+Unicode whitespace remained significant even though the source removes it.
+ASCII vertical tab is already covered by Rust's `is_ascii_whitespace`; the
+distinguishing source case is U+00A0 NO-BREAK SPACE.
+
+The Rust owner now trims valid UTF-8 Unicode whitespace at both boundaries while
+preserving malformed bytes as significant input. The byte-preserving decoder
+keeps `MyDecimal`'s raw-input contract and is used by both the exponent parser
+and trailing-suffix check. The focused regression is
+`mydecimal::tests::from_string_trims_unicode_whitespace_like_go`: before the
+helper change, `"1\u{00a0}"` returned `DecimalError::Truncated` and
+`"1e\u{00a0}5"` failed to apply the exponent; after the change they produce
+`1` and `100000`, respectively, with no error. No Go, generated, or Bazel file
+changed.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib from_string_trims_unicode_whitespace_like_go -- --nocapture
+# pre-fix: failed (`Some(Truncated)` for `"1\u{00a0}"`); after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib mydecimal::tests -- --test-threads=1
+# passed: 17 tests
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.

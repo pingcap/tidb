@@ -290,7 +290,7 @@ fn str_to_int(str: &[u8]) -> (i64, Option<DecimalError>) {
     const UINT_CUT_OFF: u64 = MAX_UINT / 10 + 1;
     const INT_CUT_OFF: u64 = (i64::MAX as u64) + 1;
 
-    let trimmed = trim_ascii_space(str);
+    let trimmed = trim_go_space(str);
     if trimmed.is_empty() {
         return (0, Some(DecimalError::Truncated));
     }
@@ -342,18 +342,65 @@ fn str_to_int(str: &[u8]) -> (i64, Option<DecimalError>) {
     (r as i64, err)
 }
 
-/// Go `strings.TrimSpace` restricted to the ASCII spaces `isSpace` accepts,
-/// which is all `FromString` can see before the digits are validated.
-fn trim_ascii_space(str: &[u8]) -> &[u8] {
+/// Go `strings.TrimSpace` over a raw byte string.
+///
+/// Valid UTF-8 whitespace is decoded as a Unicode scalar, while invalid bytes
+/// remain significant just as they do when Go ranges over a string containing
+/// malformed UTF-8. This keeps the parser byte-oriented without dropping
+/// Unicode whitespace that Go accepts.
+fn trim_go_space(bytes: &[u8]) -> &[u8] {
     let mut start = 0;
-    while start < str.len() && str[start].is_ascii_whitespace() {
-        start += 1;
+    let mut end = bytes.len();
+
+    while start < end {
+        let Some(width) = utf8_char_width(bytes[start]) else {
+            break;
+        };
+        if start + width > end {
+            break;
+        }
+        let Ok(text) = std::str::from_utf8(&bytes[start..start + width]) else {
+            break;
+        };
+        let mut chars = text.chars();
+        let Some(ch) = chars.next() else {
+            break;
+        };
+        if chars.next().is_some() || !ch.is_whitespace() {
+            break;
+        }
+        start += width;
     }
-    let mut end = str.len();
-    while end > start && str[end - 1].is_ascii_whitespace() {
-        end -= 1;
+
+    while end > start {
+        let mut char_start = end - 1;
+        while char_start > start && (bytes[char_start] & 0xc0) == 0x80 {
+            char_start -= 1;
+        }
+        let Ok(text) = std::str::from_utf8(&bytes[char_start..end]) else {
+            break;
+        };
+        let mut chars = text.chars();
+        let Some(ch) = chars.next() else {
+            break;
+        };
+        if chars.next().is_some() || !ch.is_whitespace() {
+            break;
+        }
+        end = char_start;
     }
-    &str[start..end]
+
+    &bytes[start..end]
+}
+
+fn utf8_char_width(first: u8) -> Option<usize> {
+    match first {
+        0x00..=0x7f => Some(1),
+        0xc2..=0xdf => Some(2),
+        0xe0..=0xef => Some(3),
+        0xf0..=0xf4 => Some(4),
+        _ => None,
+    }
 }
 
 impl MyDecimal {
@@ -1043,7 +1090,7 @@ impl MyDecimal {
                         err = Some(shift_err);
                     }
                 }
-            } else if !trim_ascii_space(&str[end_idx..]).is_empty() {
+            } else if !trim_go_space(&str[end_idx..]).is_empty() {
                 err = Some(DecimalError::Truncated);
             }
         }
@@ -1857,6 +1904,19 @@ mod tests {
             assert_eq!(d.negative, *negative, "negative for {input:?}");
             assert_eq!(d.result_frac, d.digits_frac, "result_frac for {input:?}");
         }
+    }
+
+    /// Go's `strings.TrimSpace` removes Unicode whitespace around the
+    /// exponent and trailing suffix, while the input remains a byte string.
+    #[test]
+    fn from_string_trims_unicode_whitespace_like_go() {
+        let (trailing, trailing_error) = MyDecimal::from_string("1\u{00a0}".as_bytes());
+        assert_eq!(trailing.to_string_bytes(), b"1");
+        assert_eq!(trailing_error, None);
+
+        let (exponent, exponent_error) = MyDecimal::from_string("1e\u{00a0}5".as_bytes());
+        assert_eq!(exponent.to_string_bytes(), b"100000");
+        assert_eq!(exponent_error, None);
     }
 
     /// Exact source rows from `pkg/types/mydecimal_test.go::TestRemoveTrailingZeros`.

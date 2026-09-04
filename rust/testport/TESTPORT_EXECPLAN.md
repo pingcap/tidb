@@ -42,6 +42,14 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-datatype` fixed-word decimal parser for
+  the complete Go-master `pkg/types` Unicode-whitespace boundary. The source
+  `MyDecimal.FromString` trims Go `strings.TrimSpace` around exponent and
+  trailing text; Rust now decodes valid UTF-8 whitespace at those byte
+  boundaries while preserving malformed bytes. The focused fail-before
+  regression, package inventory, and validation evidence are recorded in
+  `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04: aligned the Rust `tidb-datatype` owner for the complete
   Go-master `pkg/types` binary-literal signed-conversion boundary. Direct
   `Datum::to_i64` now preserves Go's split between bounded `BinaryLiteral`
