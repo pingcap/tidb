@@ -1546,6 +1546,16 @@ impl ScalarFunction {
                         None => Datum::Null,
                     })
                 }
+                // Go `builtinCurrentResourceGroupSig` reports the effective
+                // statement resource group (the hint-selected name when a
+                // resource-group hint is active, otherwise
+                // `StmtCtx.ResourceGroupName`).
+                "current_resource_group" => {
+                    return Ok(match ctx.current_resource_group() {
+                        Some(group) => Datum::new_string(group.into_bytes()),
+                        None => Datum::Null,
+                    })
+                }
                 "user" | "session_user" | "system_user" => {
                     return Ok(match ctx.login_user() {
                         Some(user) => Datum::new_string(user.into_bytes()),

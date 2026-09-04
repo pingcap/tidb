@@ -1408,6 +1408,59 @@ git diff --check
 # both passed
 ```
 
+## Rust-only parity follow-up: CURRENT_RESOURCE_GROUP
+
+Go's `TestCurrentResourceGroup` (`pkg/expression/builtin_info_test.go:99-111`)
+sets `StmtCtx.ResourceGroupName = "rg1"` and evaluates the zero-argument
+`CURRENT_RESOURCE_GROUP()` builtin. The function returns the effective
+statement group (with a statement hint taking precedence in Go) and reports a
+fixed 64-byte string result.
+
+Rust had the parser registration and collation metadata but no session
+accessor or scalar evaluator arm, so the source-derived test was ignored. The
+`Columns` contract now exposes `current_resource_group()`, and the live
+zero-argument evaluator returns that value (or SQL NULL when the resolver has
+no session value). The regression uses the same session-backed information
+test harness as the neighboring Go ports.
+
+Focused validation:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib test_current_resource_group -- --nocapture
+# passed: 1 test (effective resource-group value and no-session NULL)
+```
+
+Ready validation for this batch:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,166 passed, 1 known loopback HTTP JSON-schema fixture failed, 111 ignored
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,057 passed, 122 existing planner/storage/fixture failures, 0 ignored
+
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

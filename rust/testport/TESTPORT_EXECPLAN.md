@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` CURRENT_RESOURCE_GROUP): added the missing
+  session-context accessor and live scalar evaluator for the effective
+  statement resource-group name, with a Go-derived value/NULL regression.
+  Focused and Ready evidence is recorded in
+  `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (`tidb-expr` CRC32 session charset): aligned CRC32 with Go's
   byte-oriented `EvalString` path and activated the GBK connection-charset
   rows. The live rewrite now hashes `to_binary`'s raw GBK bytes, including

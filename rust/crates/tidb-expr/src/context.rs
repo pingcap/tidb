@@ -520,6 +520,13 @@ pub trait Columns {
         None
     }
 
+    /// Go `StmtCtx.ResourceGroupName`, with any statement resource-group
+    /// hint already resolved by the session. `CURRENT_RESOURCE_GROUP()`
+    /// returns this effective name.
+    fn current_resource_group(&self) -> Option<String> {
+        None
+    }
+
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports as an
     /// unsigned `LongLong`. Go treats a missing `SessionVars` as an error
     /// rather than NULL (`builtinConnectionIDSig.evalInt`), but that case is

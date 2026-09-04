@@ -186,6 +186,7 @@ struct InfoSession {
     current_db: Option<String>,
     current_user: Option<String>,
     login_user: Option<String>,
+    current_resource_group: Option<String>,
     found_rows: Option<u64>,
 }
 
@@ -204,6 +205,10 @@ impl Columns for InfoSession {
 
     fn login_user(&self) -> Option<String> {
         self.login_user.clone()
+    }
+
+    fn current_resource_group(&self) -> Option<String> {
+        self.current_resource_group.clone()
     }
 
     fn found_rows(&self) -> Option<u64> {
@@ -283,16 +288,21 @@ fn test_current_user() {
     );
 }
 
-/// go-parity-gap: `TestCurrentResourceGroup`
-/// (`pkg/expression/builtin_info_test.go:99`) reads
-/// `StmtCtx.ResourceGroupName` through `builtinCurrentResourceGroupSig`. The
-/// name is registered for parsing/collation (builtin_registry.rs,
-/// collation_derive.rs), but `Columns` exposes NO resource-group reader and
-/// scalar_function.rs has no eval arm for it, so the runtime behavior has no
-/// carrier in this tier.
+/// GO PORT of `pkg/expression/builtin_info_test.go:99 TestCurrentResourceGroup`:
+/// `CURRENT_RESOURCE_GROUP()` reports the effective statement resource group.
 #[test]
-#[ignore = "go-parity-gap: CURRENT_RESOURCE_GROUP has no Columns accessor nor eval arm in scalar_function.rs"]
-fn test_current_resource_group() {}
+fn test_current_resource_group() {
+    let mut ctx = InfoSession::default();
+    ctx.current_resource_group = Some("rg1".to_owned());
+    assert_eq!(
+        eval_zero_arg("current_resource_group", &ctx),
+        Datum::new_string(b"rg1".to_vec())
+    );
+    assert_eq!(
+        eval_zero_arg("current_resource_group", &InfoSession::default()),
+        Datum::Null
+    );
+}
 
 // ---------------------------------------------------------------------------
 // embed-text / inference family

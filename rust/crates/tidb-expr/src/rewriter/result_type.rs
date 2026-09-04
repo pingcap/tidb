@@ -1525,11 +1525,16 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // `pkg/expression/builtin_info.go` -- every one of them ends in
         // `bf.tp.SetFlen(64)`). `SCHEMA` is an alias of `DATABASE` and
         // `SESSION_USER`/`SYSTEM_USER` of `USER`, sharing the same class and
-        // so the same width. `CURRENT_RESOURCE_GROUP` is deliberately absent:
-        // it has the same flen 64, but no evaluator arm exists for it, so it
-        // stays refused rather than typed-then-unevaluable.
-        "database" | "schema" | "version" | "current_user" | "current_role" | "user"
-        | "session_user" | "system_user" => {
+        // so the same width.
+        "database"
+        | "schema"
+        | "version"
+        | "current_user"
+        | "current_role"
+        | "current_resource_group"
+        | "user"
+        | "session_user"
+        | "system_user" => {
             let mut ft = text();
             ft.set_flen(64);
             ft

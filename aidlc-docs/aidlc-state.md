@@ -2,14 +2,14 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `tidb-expr` CRC32 session-charset parity batch
+- Work unit: `tidb-expr` CURRENT_RESOURCE_GROUP parity batch
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: focused CRC32 GBK session-charset regression passes.
+- Validation: focused CURRENT_RESOURCE_GROUP value/NULL regression passes.
   Ready reports 409 datatype unit and 64 source/integration passes; expression
-  reports 1,165 passes, one known loopback HTTP JSON-schema fixture failure,
-  and 112 ignored; executor reports 1,058 passes and 121 existing
+  reports 1,166 passes, one known loopback HTTP JSON-schema fixture failure,
+  and 111 ignored; executor reports 1,057 passes and 122 existing
   planner/storage/fixture failures. All three owner checks plus formatting and diff checks
   pass. Strict datatype clippy remains blocked only by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
@@ -142,10 +142,15 @@
   are encoded at the ordinary `to_binary` boundary before hashing, and the
   unrepresentable `ㅂ123` rows return the same conversion error. Focused and
   Ready evidence is in `rust/testport/receipts/types_explain_format_audit.md`.
-- Current batch: Rust CRC32 now hashes raw `EvalString` bytes, matching Go for
+- Prior batch: Rust CRC32 now hashes raw `EvalString` bytes, matching Go for
   non-UTF-8 connection charsets. The Go-derived GBK rows are active through a
   resolver-backed rewrite and focused/Ready evidence is recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
-- Next action: run the final Ready profile, commit and push this CRC32 batch,
+- Current batch: Rust `CURRENT_RESOURCE_GROUP()` now reads the effective
+  statement resource-group name through a new `Columns` accessor, matching
+  Go's zero-argument information builtin. Focused/Ready evidence is recorded
+  in `rust/testport/receipts/types_explain_format_audit.md`.
+- Next action: run the final Ready profile, commit and push this
+  `CURRENT_RESOURCE_GROUP` batch,
   then continue with the next executable Rust package boundary. Direct
   datatype comparison warning publication remains a bounded API follow-up.
