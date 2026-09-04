@@ -41,21 +41,25 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+=======
+- 2026-09-04 (batch 19, `pkg/ddl` MV job-envelope metadata): implemented
+  Go master `94a9cbedab`'s `initMaterializedViewReorgMetaFromVariables` +
+  `NewDDLReorgMeta` (the empty warning maps, recorded SQL mode/zone/resource
+  group, current metadata version, `use_new_collate`, and the default
+  reorg worker count / batch size / max write speed; `tidb-model` gains the
+  matching `DDLReorgMeta::new`) and
+  `AddMViewExecutionSessionVarsToJob`'s twelve MV-execution session
+  variables with Go's exact formatting. The view job now carries the
+  reorg metadata and the maintenance variable snapshot the build and later
+  refreshes run under; the values are the default session's (the statement
+  context carries no session-variable image — the standing reduction). The
+  submitted-spec test pins the reorg fields and thirteen job variables.
+  Failure sets unchanged (exec's one new failure is the placement_delivery
+  POST fixture flake, verified failing on the stashed base in the same
+  environment and recovering across runs). Receipt:
+  `receipts/ddl_mview_job_envelope.md`.
 
-- 2026-09-04: aligned Rust `tidb-expr` `DATE_FORMAT` `%X`/`%x` week-year
-  rendering with Go `types.Time.convertDateFormat`: a negative ISO week-year
-  now emits the source's `4294967295` uint32 sentinel instead of `-001`.
-  The focused year-zero regression failed before the formatter change and
-  passes after it; the complete `pkg/expression` and `pkg/types` inventories
-  and Ready checks are recorded in `receipts/expression_collation_audit.md`.
-
-- 2026-09-04: aligned the expression-level Rust `STR_TO_DATE` `%.'` token
-  with Go's Unicode punctuation predicate. The duplicate `tidb-expr`
-  implementation now shares `tidb-datatype`'s source-version classifier,
-  consuming U+00BF while excluding ASCII `+`; the focused regression failed
-  before the change and passes after it. The complete current-master
-  `pkg/expression` inventory and Ready validation are recorded in
-  `receipts/expression_collation_audit.md`.
+d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 - 2026-09-04 (batch 18, `pkg/ddl` MV purge-schedule derivation): implemented
   Go master `94a9cbedab`'s `deriveCreateMaterializedViewLogNextUnixSeconds`

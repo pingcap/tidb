@@ -420,6 +420,29 @@ fn zero_terror_error() -> TerrorError {
 }
 
 impl DDLReorgMeta {
+    /// Go `NewDDLReorgMeta` before the caller applies
+    /// `SetConcurrency`/`SetBatchSize`/`SetMaxWriteSpeed`: the empty warning
+    /// maps Go allocates eagerly, the recorded mode/zone/resource group, and
+    /// the current metadata version. The collation flag takes the runtime
+    /// `new_collation_enabled()` value Go reads from `collate`.
+    #[must_use]
+    pub fn new(
+        sql_mode: u64,
+        location: TimeZoneLocation,
+        resource_group_name: impl Into<GoString>,
+    ) -> Self {
+        Self {
+            sql_mode,
+            warnings: Some(GoShared::new(BTreeMap::new())),
+            warnings_count: Some(GoShared::new(BTreeMap::new())),
+            location: Some(GoShared::new(location)),
+            resource_group_name: resource_group_name.into(),
+            version: CURRENT_REORG_META_VERSION,
+            use_new_collate: Some(GoShared::new(tidb_datatype::new_collation_enabled())),
+            ..Self::default()
+        }
+    }
+
     /// Go `ShallowCopy`: allocates a new outer pointer, shares every map and
     /// pointer field, and copies each atomic value into an independent cell.
     #[must_use]

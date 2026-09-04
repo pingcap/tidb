@@ -9841,9 +9841,12 @@ fn build_create_materialized_view_job(
     ]);
     job.session_vars = Some(GoShared::new(std::collections::BTreeMap::new()));
     job.add_system_var(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION, "");
-    // Go `initMaterializedViewReorgMetaFromVariables` stamps `job.ReorgMeta`
-    // from the session's reorg worker count/batch size; the statement context
-    // carries no such snapshot yet, which the reorg-worker batch owns.
+    // Go `AddMViewExecutionSessionVarsToJob`: the twelve MV-execution
+    // session variables ride the job for the maintenance worker.
+    add_mview_execution_session_vars_to_job(&mut job);
+    // Go `initMaterializedViewReorgMetaFromVariables`: CREATE MATERIALIZED
+    // VIEW submits as reorg DDL, so the job carries the reorg metadata.
+    job.reorg_meta = Some(GoShared::new(init_materialized_view_reorg_meta(context)?));
 
     let args = <tidb_model::CreateMaterializedViewArgs as tidb_model::JobArgs>::into_job_args_value(
         Some(GoShared::new(tidb_model::CreateMaterializedViewArgs {
@@ -9852,6 +9855,100 @@ fn build_create_materialized_view_job(
         })),
     );
     Ok((job, args))
+}
+
+/// Go `initMaterializedViewReorgMetaFromVariables` +
+/// `NewDDLReorgMeta`: the reorg metadata the initial build runs under.
+///
+/// Go reads the session's `tidb_ddl_reorg_worker_count` /
+/// `tidb_ddl_reorg_batch_size` and the global `tidb_ddl_reorg_max_write_speed`;
+/// this statement context carries no session-variable image, so the
+/// default-session values (`4` / `256` / `0`) are what this records — the
+/// same standing limitation as the scatter-region var.
+fn init_materialized_view_reorg_meta(
+    context: &tidb_executor::StmtContext,
+) -> Result<tidb_model::reorg::DDLReorgMeta, DdlPlanError> {
+    use tidb_vardef::defaults::{
+        DEF_TIDB_DDL_REORG_BATCH_SIZE, DEF_TIDB_DDL_REORG_MAX_WRITE_SPEED,
+        DEF_TIDB_DDL_REORG_WORKER_COUNT,
+    };
+    let meta = tidb_model::reorg::DDLReorgMeta::new(
+        u64::try_from(context.ddl_sql_mode()).unwrap_or_default(),
+        get_time_zone(context),
+        context.resource_group_name().to_owned(),
+    );
+    meta.set_concurrency(DEF_TIDB_DDL_REORG_WORKER_COUNT);
+    meta.set_batch_size(DEF_TIDB_DDL_REORG_BATCH_SIZE);
+    meta.set_max_write_speed(DEF_TIDB_DDL_REORG_MAX_WRITE_SPEED);
+    Ok(meta)
+}
+
+/// Go `AddMViewExecutionSessionVarsToJob`: snapshots the twelve MV-execution
+/// session variables into the job so the maintenance worker runs under the
+/// creator's settings. The statement context carries no session-variable
+/// image, so the captured values are the default session's — the same
+/// documented reduction as the scatter-region var.
+fn add_mview_execution_session_vars_to_job(job: &mut Job) {
+    use tidb_vardef::defaults::{
+        DEF_TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, DEF_TIDB_MVIEW_MAINTAIN_IMPORT_THREADS,
+        DEF_TIDB_MVIEW_MAINTAIN_MEM_QUOTA, DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE,
+        DEF_TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+        DEF_TIFLASH_QUERY_SPILL_RATIO,
+    };
+    use tidb_vardef::tidb_vars as vars;
+    let job_vars: &[(&str, String)] = &[
+        (
+            vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA,
+            DEF_TIDB_MVIEW_MAINTAIN_MEM_QUOTA.to_string(),
+        ),
+        // Go `TiDBMViewMaintainIsolationReadEngines` default.
+        (
+            vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES,
+            "tikv,tiflash".to_owned(),
+        ),
+        // Go `DefTiDBMaxTiFlashThreads` and the external-spill trio default
+        // to `-1` (unset).
+        (vars::TIDB_MAX_TIFLASH_THREADS, "-1".to_owned()),
+        (
+            vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN,
+            "-1".to_owned(),
+        ),
+        (
+            vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY,
+            "-1".to_owned(),
+        ),
+        (
+            vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT,
+            "-1".to_owned(),
+        ),
+        (
+            vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+            DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE.to_string(),
+        ),
+        (
+            vars::TIFLASH_QUERY_SPILL_RATIO,
+            format!("{DEF_TIFLASH_QUERY_SPILL_RATIO}"),
+        ),
+        (
+            vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
+            DEF_TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT.to_string(),
+        ),
+        (
+            vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE,
+            DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE.to_string(),
+        ),
+        (
+            vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS,
+            DEF_TIDB_MVIEW_MAINTAIN_IMPORT_THREADS.to_string(),
+        ),
+        (
+            vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA,
+            DEF_TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA.to_owned(),
+        ),
+    ];
+    for (name, value) in job_vars {
+        job.add_system_var(*name, value.as_str());
+    }
 }
 
 /// Go's restricted-SQL derivation over one catalog bridge: the definition is

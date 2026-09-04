@@ -5337,6 +5337,63 @@ fn materialized_view_lowering_follows_go_admission_order() {
     assert_eq!(spec.job.involving_schema_info.len(), 3);
     assert!(!spec.id_allocated, "the view table ID is assigned at insert");
     assert!(spec.job.may_need_reorg(), "the initial build is reorg DDL");
+    // Go `initMaterializedViewReorgMetaFromVariables` + the twelve
+    // MV-execution session vars: the reorg metadata and the maintenance
+    // variable snapshot ride the job envelope.
+    let reorg = spec
+        .job
+        .reorg_meta
+        .as_ref()
+        .expect("the reorg metadata rides the job")
+        .read();
+    assert_eq!(
+        reorg.get_concurrency(tidb_model::reorg::DDLReorgProcessDefaults::new(|| 0, || 0)),
+        4,
+        "Go `SetConcurrency(DefTiDBDDLReorgWorkerCount)`"
+    );
+    assert_eq!(
+        reorg.get_batch_size(tidb_model::reorg::DDLReorgProcessDefaults::new(|| 0, || 0)),
+        256,
+        "Go `SetBatchSize(DefTiDBDDLReorgBatchSize)`"
+    );
+    assert_eq!(reorg.sql_mode, u64::try_from(spec.job.sql_mode).unwrap());
+    assert_eq!(
+        reorg
+            .location
+            .as_ref()
+            .expect("the zone is recorded")
+            .read()
+            .name
+            .to_utf8_lossy_go(),
+        "UTC"
+    );
+    let job_vars = spec
+        .job
+        .session_vars
+        .as_ref()
+        .expect("the envelope carries the session vars")
+        .read()
+        .clone();
+    drop(reorg);
+    assert_eq!(job_vars.len(), 13, "scatter region + the twelve MV vars");
+    assert_eq!(
+        job_vars
+            .get("tidb_mview_maintain_mem_quota")
+            .map(|v| v.to_utf8_lossy_go()),
+        Some("2147483648".into())
+    );
+    assert_eq!(
+        job_vars
+            .get("tidb_max_tiflash_threads")
+            .map(|v| v.to_utf8_lossy_go()),
+        Some("-1".into())
+    );
+    assert_eq!(
+        job_vars
+            .get("tiflash_query_spill_ratio")
+            .map(|v| v.to_utf8_lossy_go()),
+        Some("0.7".into())
+    );
 
     let JobArgsValue::CreateMaterializedView(Some(view_args)) = &spec.args else {
         panic!("the spec carries CreateMaterializedViewArgs")
