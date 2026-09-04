@@ -262,7 +262,8 @@ impl ActionOnExceed for ParallelSortSpillAction {
     }
 }
 
-/// Evaluates every by-item against `row`, producing an owned merge-head key.
+/// Evaluates every supported by-item against `row`, producing an owned
+/// merge-head key.
 ///
 /// The in-memory sort does not call this: like Go, it compares cells in the
 /// retained chunks directly. Owned keys are needed only while merging run
@@ -274,9 +275,27 @@ pub fn eval_sort_key<C: Columns>(
 ) -> Result<Vec<Datum>, ExecError> {
     let mut key = Vec::with_capacity(by_items.len());
     for item in by_items {
-        key.push(item.expr.eval(ctx, row)?);
+        match &item.expr {
+            Expression::Column(_) | Expression::Constant(_) => {
+                key.push(item.expr.eval(ctx, row)?);
+            }
+            _ => return Err(ExecError::unsupported("Get unexpected expression")),
+        }
     }
     Ok(key)
+}
+
+/// Go `SortExec.buildKeyColumns`: only direct child columns and constants are
+/// valid executor sort keys. Planner expressions must be materialized by a
+/// projection before they reach this operator.
+pub(crate) fn validate_by_items(by_items: &[SortByItem]) -> Result<(), ExecError> {
+    if by_items
+        .iter()
+        .any(|item| !matches!(&item.expr, Expression::Column(_) | Expression::Constant(_)))
+    {
+        return Err(ExecError::unsupported("Get unexpected expression"));
+    }
+    Ok(())
 }
 
 /// Go `lessRow`: the first non-equal by-item decides, and `Desc` negates it.
@@ -307,9 +326,9 @@ pub fn less_by_items(
 
 /// Compiles Go `keyCmpFuncs` once for direct-column by-items.
 ///
-/// Go's physical Sort accepts columns and constants. The Rust executor also
-/// accepts scalar expressions, so those retain the evaluated-Datum fallback;
-/// the common physical-column path is allocation-free just like Go's.
+/// Go's physical Sort accepts columns and constants. Constants are handled as
+/// equal keys by `compare_rows`; the common physical-column path is
+/// allocation-free just like Go's.
 fn compile_compare_funcs(by_items: &[SortByItem]) -> Vec<Option<ColumnCompareFunc>> {
     by_items
         .iter()
@@ -357,15 +376,7 @@ pub(crate) fn compare_rows<C: Columns>(
             // A constant has the same value for every input row and cannot
             // affect their order. Go omits it from `keyColumns`.
             (Expression::Constant(_), _) => Ordering::Equal,
-            _ => {
-                let left = item.expr.eval(ctx, left)?;
-                let right = item.expr.eval(ctx, right)?;
-                tidb_expr::compare_datums_with_collation(
-                    &left,
-                    &right,
-                    tidb_expr::collation_derive::collation_of_node(&item.expr),
-                )?
-            }
+            _ => return Err(ExecError::unsupported("Get unexpected expression")),
         };
         if item.desc {
             ordering = ordering.reverse();
@@ -531,6 +542,7 @@ where
     /// Go `fetchChunksUnparallel` + `storeChunk`: drain the child into sorted
     /// runs, spilling whenever the memory action says to.
     fn fetch_and_sort(&mut self) -> Result<(), ExecError> {
+        validate_by_items(&self.by_items)?;
         if self.parallelism > 1 {
             return self.fetch_and_sort_parallel();
         }
@@ -898,8 +910,12 @@ where
 mod tests {
     use super::*;
     use crate::mem_quota::OomAction;
+    use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
+    use tidb_expr::constant::Constant;
+    use tidb_expr::expression::Expression;
+    use tidb_expr::scalar_function::ScalarFunction;
     use tidb_expr::NoColumns;
 
     fn long() -> FieldType {
@@ -1035,6 +1051,17 @@ mod tests {
         let mut c = Column::new(idx as i64 + 1, long());
         c.index = idx as i64;
         Expression::Column(c)
+    }
+
+    fn scalar_plus_col_expr(idx: usize) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            long(),
+            vec![
+                col_expr(idx),
+                Expression::Constant(Constant::new(Datum::Int(1), long())),
+            ],
+        ))
     }
 
     /// Builds a sort over one chunk whose rows are given per column as
@@ -1276,6 +1303,30 @@ mod tests {
             }],
         );
         assert_eq!(collect(&mut e), rows1(&[Some(3), Some(2), Some(1)]));
+    }
+
+    /// Go `SortExec.buildKeyColumns` accepts only columns and constants. A
+    /// scalar by-item must be rejected before the child is drained rather than
+    /// evaluated by a Rust-only fallback comparator.
+    #[test]
+    fn sort_rejects_non_column_by_item_like_go() {
+        let mut e = sort_over(
+            &rows1(&[Some(2), Some(1)]),
+            vec![SortByItem {
+                expr: scalar_plus_col_expr(0),
+                desc: false,
+            }],
+        );
+        e.open().unwrap();
+        let mut req = e.new_chunk();
+        let error = e
+            .next(&mut req)
+            .expect_err("scalar sort keys must be rejected");
+        assert!(
+            matches!(error, ExecError::Unsupported(ref message) if message == "Get unexpected expression"),
+            "unexpected error: {error:?}"
+        );
+        e.close().unwrap();
     }
 
     #[test]

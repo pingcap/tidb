@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor/sortexec` by-item validation): aligned Rust's
+  `SortExec` and `TopNExec` with Go's `buildKeyColumns` contract. Scalar,
+  correlated, and other non-column/non-constant order expressions are now
+  rejected before child consumption, and low-level key helpers fail closed;
+  focused Sort/TopN regressions and Ready evidence are recorded in
+  `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-04 (`pkg/executor/sortexec` TopN spill threshold): aligned Rust's
   `TopNSpillAction` with Go's package-level tenth-of-quota guard. The focused
   action-level regression fails at exactly 10% under the old aggregation

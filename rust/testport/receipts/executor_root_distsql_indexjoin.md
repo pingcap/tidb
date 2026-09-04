@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the six focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the seven focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -359,3 +359,45 @@ platform artifact changed.
 The focused test passed after the fix; the Cargo manifest was restored to its
 original `openssl = "0.10"` line and has no diff. The full executor suite,
 TopN spill integration under live TiKV, and native TiKV behavior were not run.
+
+## Sort/TopN by-item validation alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this fifth
+Rust-only fix. Go's `SortExec.buildKeyColumns` and
+`TopNExec.initBeforeLoadingChunks` accept only direct child columns and
+constants; any scalar, correlated, or other expression returns
+`Get unexpected expression` before the child is drained. Rust previously
+evaluated arbitrary scalar by-items in `eval_sort_key` and `compare_rows`.
+The shared `validate_by_items` gate now rejects those expressions in both
+executors, and the low-level key helpers fail closed as well. Constant keys
+remain no-op ordering keys, while column keys retain the allocation-free
+comparators and spill-merge evaluation.
+
+The focused regressions are
+`sort::tests::sort_rejects_non_column_by_item_like_go` and
+`topn::tests::topn_rejects_non_column_by_item_like_go`. The Sort regression
+failed before the fix because the Rust executor accepted and evaluated the
+scalar key; it passes after the gate. The TopN regression exercises the same
+shared contract on its own initialization path and passes after the fix.
+
+Rust ownership is unchanged from the nested inventory: `sort.rs` owns the
+validation and Sort regression, `topn.rs` owns the TopN call-site and
+regression, and `topn_chunk_heap.rs` records the narrowed materialized-key
+contract. No Go, Bazel, generated, fixture, or platform artifact changed.
+
+## Sort/TopN by-item validation Ready validation
+
+- Pre-fix `sort::tests::sort_rejects_non_column_by_item_like_go` failed with
+  `scalar sort keys must be rejected`, proving the old Rust fallback accepted
+  the scalar key.
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib sort::tests::sort_rejects_non_column_by_item_like_go -- --exact --nocapture`
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib topn::tests::topn_rejects_non_column_by_item_like_go -- --exact --nocapture`
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The focused tests passed after the fix. The Cargo manifest's temporary
+host-only vendored-OpenSSL toggle was reverted to `openssl = "0.10"` and has
+no diff. The full executor suite, SQL planner coverage for expression
+materialization, spill integration under live TiKV, and native TiKV behavior
+were not run.

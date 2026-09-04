@@ -58,10 +58,11 @@
 //!   the values must come from the child (inline projection changes the TopN's
 //!   own schema); the port passes exactly those values.
 //! * Keys are MATERIALIZED. Go's planner guarantees a TopN's by-items are plain
-//!   child columns, so `keyColumnsCompare` re-reads the chunk cell; this tier's
-//!   driver allows arbitrary by-item expressions, so each stored row carries its
-//!   evaluated key. `process_chk` therefore takes the row keys alongside the
-//!   chunk -- the executor evaluates them, because only it holds the eval
+//!   child columns, so `keyColumnsCompare` re-reads the chunk cell. The
+//!   executor rejects arbitrary by-item expressions like Go's
+//!   `buildKeyColumns`; each supported stored row carries its evaluated key
+//!   for spill merges. `process_chk` therefore takes the row keys alongside
+//!   the chunk -- the executor evaluates them, because only it holds the eval
 //!   context.
 //! * `TestKillSignalInTopN` is NOT ported: it is a Go test helper exported from
 //!   the production file so an external test package can reach unexported

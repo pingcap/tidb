@@ -58,11 +58,10 @@
 //!
 //! * **Keys are materialized.** Go's planner guarantees a `TopN`'s by-items
 //!   are plain child columns (`buildKeyColumns` unwraps `*expression.Column`),
-//!   so Go compares by re-reading the chunk cell. This tier's driver hands the
-//!   operator arbitrary by-item EXPRESSIONS, so each stored row carries its
-//!   evaluated key -- the same choice [`crate::sort::SortExec`] makes, and the
-//!   same over-count against the memory quota, which the tracker reports
-//!   honestly.
+//!   so Go compares by re-reading the chunk cell. The executor rejects other
+//!   expressions with Go's `Get unexpected expression` error; each supported
+//!   stored row still carries its evaluated column/constant key for spill
+//!   merges, and the tracker reports that memory honestly.
 //! * **The final sort is stable** where Go's `slices.SortFunc` is not; only
 //!   the order of exactly-tying rows can differ, which Go does not guarantee.
 //! * **No `RankInfo`.** Go's prefix-key RankTopN truncation for already
@@ -82,7 +81,7 @@ use tidb_expr::Columns;
 use tidb_util::memory::{ArcAction, Tracker};
 
 use crate::mem_quota::StatementMemory;
-use crate::sort::{eval_sort_key, less_by_items, SortByItem};
+use crate::sort::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
 use crate::topn_chunk_heap::TopNChunkHeap;
 use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
 
@@ -410,6 +409,7 @@ where
         if self.total_limit == 0 {
             return Ok(());
         }
+        validate_by_items(&self.by_items)?;
 
         loop {
             let exhausted = self.run_one_segment()?;
@@ -817,9 +817,12 @@ mod tests {
     use crate::limit::LimitExec;
     use crate::mem_quota::OomAction;
     use crate::sort::SortExec;
+    use tidb_ast::CiString;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
+    use tidb_expr::constant::Constant;
     use tidb_expr::expression::Expression;
+    use tidb_expr::scalar_function::ScalarFunction;
     use tidb_expr::NoColumns;
 
     fn long() -> FieldType {
@@ -890,6 +893,17 @@ mod tests {
         let mut c = Column::new(idx as i64 + 1, long());
         c.index = idx as i64;
         Expression::Column(c)
+    }
+
+    fn scalar_plus_col_expr(idx: usize) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            long(),
+            vec![
+                col_expr(idx),
+                Expression::Constant(Constant::new(Datum::Int(1), long())),
+            ],
+        ))
     }
 
     pub(super) fn source(
@@ -1161,6 +1175,34 @@ mod tests {
             output.extend((0..req.num_rows()).map(|row| req.get_row(row).get_int64(0)));
         }
         assert_eq!(output, (0..10).collect::<Vec<_>>());
+        exec.close().unwrap();
+    }
+
+    /// Go `TopNExec.initBeforeLoadingChunks` shares `buildKeyColumns` with
+    /// `SortExec`: scalar by-items are rejected before the child is drained.
+    #[test]
+    fn topn_rejects_non_column_by_item_like_go() {
+        let mut exec = TopNExec::new(
+            ExecutorMeta::new(schema_of(1), 1, 4, 32),
+            vec![SortByItem {
+                expr: scalar_plus_col_expr(0),
+                desc: false,
+            }],
+            source(&[vec![Some(2)]], 1, 1),
+            NoColumns,
+            0,
+            1,
+            StatementMemory::default(),
+        );
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        let error = exec
+            .next(&mut req)
+            .expect_err("scalar TopN keys must be rejected");
+        assert!(
+            matches!(error, ExecError::Unsupported(ref message) if message == "Get unexpected expression"),
+            "unexpected error: {error:?}"
+        );
         exec.close().unwrap();
     }
 
