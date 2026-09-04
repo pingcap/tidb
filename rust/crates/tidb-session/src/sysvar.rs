@@ -1537,6 +1537,52 @@ mod tests {
         assert_eq!(sv.validate_in_scope("0", SCOPE_GLOBAL).unwrap().value, "1");
     }
 
+    /// Transcreated from Go `TestDDLWorkers`: both DDL reorg controls clamp
+    /// out-of-range unsigned values to their registered bounds and preserve
+    /// values inside the range.
+    #[test]
+    fn ddl_reorg_worker_and_batch_bounds_match_go() {
+        let workers = get_sys_var("tidb_ddl_reorg_worker_cnt").unwrap();
+        assert_eq!(
+            workers
+                .validate_in_scope("-100", SCOPE_GLOBAL)
+                .unwrap()
+                .value,
+            "1"
+        );
+        assert_eq!(
+            workers
+                .validate_in_scope("1234", SCOPE_GLOBAL)
+                .unwrap()
+                .value,
+            "256"
+        );
+        assert_eq!(
+            workers
+                .validate_in_scope("100", SCOPE_GLOBAL)
+                .unwrap()
+                .value,
+            "100"
+        );
+
+        let batch = get_sys_var("tidb_ddl_reorg_batch_size").unwrap();
+        assert_eq!(
+            batch.validate_in_scope("10", SCOPE_GLOBAL).unwrap().value,
+            "32"
+        );
+        assert_eq!(
+            batch
+                .validate_in_scope("999999", SCOPE_GLOBAL)
+                .unwrap()
+                .value,
+            "10240"
+        );
+        assert_eq!(
+            batch.validate_in_scope("100", SCOPE_GLOBAL).unwrap().value,
+            "100"
+        );
+    }
+
     /// Transcreated from Go `TestSetJobScheduleWindow`: TTL schedule globals
     /// normalize short UTC clock values into the full `HH:MM +0000` form.
     #[test]

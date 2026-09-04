@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` DDL and optimizer globals): added
+  executable Go-derived coverage for DDL reorg worker/batch unsigned bounds
+  and shared GLOBAL round trips for index merge, fast reorg, disk quota,
+  aggregate pushdown, and derive top-N. Reconciled the corresponding b010
+  rows as already-ported; process-wide hooks outside the SQL sysvar accessor
+  remain separate inventory items.
 - 2026-09-05 (`pkg/sessionctx/variable` locale and charset compatibility):
   reconciled `TestLcTimeNamesReadOnly`, `TestLcMessages`, and
   `TestDefaultCharsetAndCollation`. A focused session regression now pins the

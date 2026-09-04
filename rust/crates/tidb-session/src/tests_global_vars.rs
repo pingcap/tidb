@@ -149,6 +149,73 @@ fn distribute_reorg_global_switch_round_trips() {
     );
 }
 
+/// Transcreated from Go `TestIndexMergeSwitcher`, `TestSetTIDBFastDDL`,
+/// `TestSetTIDBDiskQuota`, `TestSetAggPushDownGlobally`, and
+/// `TestSetDeriveTopNGlobally`: these GLOBAL registry entries expose their
+/// Go defaults and retain the validated value in the shared accessor after a
+/// write. Bool reads use the native `1`/`0` domain, while the byte quota stays
+/// an unsigned decimal string.
+#[test]
+fn optimizer_and_ddl_global_switches_round_trip_like_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_index_merge"),
+        Some("1".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_enable_index_merge = OFF")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_index_merge"),
+        Some("0".to_owned())
+    );
+
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_ddl_enable_fast_reorg"),
+        Some("1".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_ddl_enable_fast_reorg = OFF")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_ddl_enable_fast_reorg"),
+        Some("0".to_owned())
+    );
+
+    let gb = 1024_i64 * 1024 * 1024;
+    let pb = gb * 1024 * 1024;
+    let quota = |session: &mut Session| scalar_text(session, "SELECT @@global.tidb_ddl_disk_quota");
+    assert_eq!(quota(&mut session), Some((100 * gb).to_string()));
+    session
+        .run(&format!("SET GLOBAL tidb_ddl_disk_quota = {}", 50 * gb))
+        .unwrap();
+    assert_eq!(quota(&mut session), Some((100 * gb).to_string()));
+    session
+        .run(&format!("SET GLOBAL tidb_ddl_disk_quota = {}", 200 * gb))
+        .unwrap();
+    assert_eq!(quota(&mut session), Some((200 * gb).to_string()));
+    session
+        .run(&format!("SET GLOBAL tidb_ddl_disk_quota = {}", 2 * pb))
+        .unwrap();
+    assert_eq!(quota(&mut session), Some(pb.to_string()));
+
+    for (name, default) in [
+        ("tidb_opt_agg_push_down", "0"),
+        ("tidb_opt_derive_topn", "0"),
+    ] {
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some(default.to_owned())
+        );
+        session.run(&format!("SET GLOBAL {name} = ON")).unwrap();
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@global.{name}")),
+            Some("1".to_owned())
+        );
+    }
+}
+
 #[test]
 fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     let globals = vars::GlobalSysvars::new();
