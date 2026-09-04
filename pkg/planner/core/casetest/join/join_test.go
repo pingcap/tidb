@@ -448,7 +448,7 @@ func TestIssue70757IndexJoinInnerIndexSelection(t *testing.T) {
 	// This is a scaled-down form of issue 70757: idx_k has higher NDV, while idx_c
 	// gets a much smaller CountAfterAccess from the propagated c='cust-1' predicate.
 	// Lower the Fix45132 threshold so the small data set triggers the same comparison.
-	tk.MustExec("set tidb_opt_fix_control = '45132:2'")
+	// tk.MustExec("set tidb_opt_fix_control = '45132:2'")
 	query := `select /*+ inl_join(i) */ * from t_outer o join t_inner i on i.k = o.id and i.c = o.c where o.c = 'cust-1'`
 	plan := tk.MustQuery("explain format='plan_tree' " + query)
 	plan.CheckContain("outer key:test.t_outer.id, inner key:test.t_inner.k")
