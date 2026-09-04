@@ -679,10 +679,11 @@ func (e *executor) getMaterializedViewSchema(ctx sessionctx.Context, tableName *
 	is := e.infoCache.GetLatest()
 	schemaName := tableName.Schema
 	if schemaName.O == "" {
-		if ctx.GetSessionVars().CurrentDB == "" {
+		sessionVars := ctx.GetSessionVars() //nolint:forbidigo
+		if sessionVars.CurrentDB == "" {
 			return is, schemaName, errors.Trace(plannererrors.ErrNoDB)
 		}
-		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		schemaName = ast.NewCIStr(sessionVars.CurrentDB)
 		tableName.Schema = schemaName
 	}
 	if _, ok := is.SchemaByName(schemaName); !ok {

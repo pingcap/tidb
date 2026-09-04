@@ -847,6 +847,7 @@ func (w *worker) deleteMaterializedViewLogPurgeInfos(jobCtx *jobContext, mlogIDs
 		for i, id := range batch {
 			args[i] = id
 		}
+		/* #nosec G202: only the placeholder count is dynamic; IDs are escaped by sqlescape. */
 		_, err := w.sess.Execute(ctx,
 			sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
 			"mlog-purge-info-delete")
@@ -928,6 +929,7 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfos(jobCtx *jobContext, mv
 		for i, id := range batch {
 			args[i] = id
 		}
+		/* #nosec G202: only the placeholder count is dynamic; IDs are escaped by sqlescape. */
 		_, err := w.sess.Execute(ctx,
 			sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
 			"mview-refresh-info-delete")
@@ -973,6 +975,7 @@ func (w *worker) deleteCreateMaterializedViewRefreshAlerts(jobCtx *jobContext, m
 			err = errors.New(val.(string))
 		})
 		if err == nil {
+			/* #nosec G202: only the placeholder count is dynamic; IDs are escaped by sqlescape. */
 			_, err = w.sess.Execute(ctx,
 				sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
 				"mview-refresh-alert-delete")
