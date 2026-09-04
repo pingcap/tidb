@@ -42,11 +42,11 @@ type mockGCSSuite struct {
 
 var (
 	gcsHost = "127.0.0.1"
-	gcsPort = uint16(4443)
+	gcsPort = uint16(0)
 	// for fake gcs server, we must use this endpoint format
 	// NOTE: must end with '/'
-	gcsEndpointFormat = "http://%s:%d/storage/v1/"
-	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
+	gcsEndpointFormat = "%s/storage/v1/"
+	gcsEndpoint       string
 )
 
 func TestImportInto(t *testing.T) {
@@ -66,6 +66,7 @@ func (s *mockGCSSuite) SetupSuite() {
 	}
 	s.server, err = fakestorage.NewServerWithOptions(opt)
 	s.Require().NoError(err)
+	gcsEndpoint = fmt.Sprintf(gcsEndpointFormat, s.server.URL())
 	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
 	s.tk = testkit.NewTestKit(s.T(), s.store)
 
