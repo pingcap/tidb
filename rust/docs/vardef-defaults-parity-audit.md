@@ -48,3 +48,26 @@ lacking Go's `TypeTime` in its type table — Go declares `TypeTime`
 Multi-line entries (those carrying `GetGlobal`/`SetGlobal`/`Validation`
 hooks) are outside this mechanical pass; their behavior parity is the
 per-variable audit surface, not a table diff.
+
+## Validation-hook coverage (2026-09-05, third pass)
+
+Of the 75 Validation-bearing Go sysvar entries, the following have their
+hook behavior ported and regression-pinned in Rust: the
+`validate_password.*` coupling (5), `tidb_read_consistency`,
+`collation_database`, `character_set_database`,
+`mpp_exchange_compression_mode`, `runtime_filter_type/mode` (2),
+`init_connect`, and `mpp_version`. `tidb_dml_type` needs no port (its
+hook is next-gen-only), and `tiflash_hashagg_preaggregation_mode` does
+not exist on this Go master.
+
+The remaining 30 split into: 2 already covered by the generic enum
+validation (`tidb_enable_global_index`, `tidb_replica_read`), 1
+deprecated warn-only (`tidb_enable_new_cost_interface`), 10 with real
+validation logic to port (`tidb_enable_tiflash_pipeline_model`,
+`tidb_gogc_tuner_threshold`, `tidb_mem_arbitrator_mode`,
+`tidb_mem_arbitrator_query_reserved`, `tidb_mem_arbitrator_soft_limit`,
+`tidb_mem_arbitrator_wait_averse`, `tidb_opt_index_join_build_v2`,
+`tidb_pessimistic_txn_fair_locking`, `tidb_schema_cache_size`,
+`tx_read_ts`), and 17 whose entries the block parser could not reach
+(mostly deprecated warn-only shapes; verify individually when
+processed).

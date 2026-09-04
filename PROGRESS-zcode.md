@@ -330,3 +330,5 @@
 - 下轮恢复点: (1) hook 余项逐个; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - hook 审计状态收敛: 30 个待分类余项(tidb_replica_read 已核实由 Enum+possible_values 通用校验完整覆盖=部分余项或同此形态)。分类脚本对多形态 Name: 条目(常量引用/字面量/跨行)的适配未完成, 下一轮先修脚本再批量分类, 产出精确工单后逐变量落地。
 - 下轮恢复点: (1) 修分类脚本 → 30 项三分桶(Enum 通用已覆盖/警告废弃型/需真移植)→ 逐个落地; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- hook 分类器修复并产出精确工单: 10 需真移植/2 Enum 已覆盖/1 废弃警告/17 格式未解析(多为废弃警告型)。写入 vardef 收据。
+- 下轮恢复点: (1) 10 条 NEEDS WORK 逐个落地(mem_arbitrator 4 连+gogc_tuner_threshold+tiflash_pipeline_model+schema_cache_size+opt_index_join_build_v2+pessimistic_txn_fair_locking+tx_read_ts); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
