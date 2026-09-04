@@ -503,7 +503,7 @@ pub fn build_simple_expr(
 
     let expr = rewrite_expr_resolved(node, &resolver)?;
     match &options.target_field_type {
-        Some(target) => Ok(build_cast_function(expr, target.clone())?),
+        Some(target) => Ok(build_cast_function(expr, target.clone(), false)?),
         None => Ok(expr),
     }
 }
@@ -520,6 +520,7 @@ pub fn build_simple_expr(
 pub(crate) fn build_cast_function(
     expr: Expression,
     mut target: FieldType,
+    in_union: bool,
 ) -> Result<Expression, EvalError> {
     // Go's BuildCastFunctionWithCheck mutates only its DeepCopy of the target:
     // a nullable source makes the cast result nullable even when the caller's
@@ -547,7 +548,12 @@ pub(crate) fn build_cast_function(
         | FieldTypeCode::Long
         | FieldTypeCode::LongLong
         | FieldTypeCode::Bit => {
-            if unsigned {
+            if in_union {
+                // Go `BuildCastFunction4Union` sets `inUnion = true` on the
+                // signature: a negative result CLAMPS to 0 instead of the
+                // unsigned wrap (`builtin_cast.go:998`).
+                "cast_unsigned_in_union"
+            } else if unsigned {
                 "cast_unsigned"
             } else {
                 "cast_signed"

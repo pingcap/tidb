@@ -153,7 +153,7 @@ pub fn wrap_with_cast_as_int(
         None => tp.add_flags(source.flags() & FieldTypeFlags::UNSIGNED),
         Some(target) => tp.add_flags(target.flags() & FieldTypeFlags::UNSIGNED),
     }
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsReal` (`builtin_cast.go:2703`).
@@ -171,7 +171,7 @@ pub fn wrap_with_cast_as_real(mut expr: Expression) -> Result<Expression, EvalEr
     tp.set_decimal(UNSPECIFIED_LENGTH);
     set_bin_chs_cln_flag(&mut tp);
     tp.add_flags(source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL));
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `minimalDecimalLenForHoldingInteger` (`builtin_cast.go:2713`).
@@ -206,7 +206,7 @@ pub fn wrap_with_cast_as_decimal(expr: Expression) -> Result<Expression, EvalErr
     }
     set_bin_chs_cln_flag(&mut tp);
     tp.add_flags(source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL));
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsString` (`builtin_cast.go:2769`).
@@ -253,7 +253,7 @@ pub fn wrap_with_cast_as_string(
     }
     tp.set_flen(arg_len);
     tp.set_decimal(UNSPECIFIED_LENGTH);
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsTime` (`builtin_cast.go:2817`).
@@ -299,7 +299,7 @@ pub fn wrap_with_cast_as_time(
         _ => {}
     }
     set_bin_chs_cln_flag(&mut tp);
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsDuration` (`builtin_cast.go:2853`).
@@ -319,7 +319,7 @@ pub fn wrap_with_cast_as_duration(expr: Expression) -> Result<Expression, EvalEr
     if tp.decimal() > 0 {
         tp.set_flen(tp.flen() + 1 + tp.decimal());
     }
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsJSON` (`builtin_cast.go:2873`).
@@ -333,7 +333,7 @@ pub fn wrap_with_cast_as_json(expr: Expression) -> Result<Expression, EvalError>
     tp.set_flen(JSON_CAST_FLEN);
     tp.set_charset_name("utf8mb4");
     tp.set_collation_name("utf8mb4_bin");
-    build_cast_function(expr, tp)
+    build_cast_function(expr, tp, false)
 }
 
 /// Go `WrapWithCastAsVectorFloat32` (`builtin_cast.go:2883`).
@@ -341,14 +341,25 @@ pub fn wrap_with_cast_as_vector_float32(expr: Expression) -> Result<Expression, 
     if type_of(&expr).code() == FieldTypeCode::VectorFloat32 {
         return Ok(expr);
     }
-    build_cast_function(expr, FieldType::new(FieldTypeCode::VectorFloat32))
+    build_cast_function(expr, FieldType::new(FieldTypeCode::VectorFloat32), false)
 }
 
 /// Go `expression.BuildCastFunction(ctx, expr, tp)` for a target the caller
 /// already fully described. Exposed so `typeInfer4GroupConcat` can reproduce
 /// its literal `BuildCastFunction(ctx, a.Args[i], tp)` call.
 pub fn build_cast_to(expr: Expression, target: FieldType) -> Result<Expression, EvalError> {
-    build_cast_function(expr, target)
+    build_cast_function(expr, target, false)
+}
+
+/// Go `BuildCastFunction4Union` (`builtin_cast.go:2568`): the union
+/// derivation's cast, whose `inUnion = true` signature CLAMPS a negative
+/// result to 0 for unsigned targets instead of the unsigned wrap
+/// (`builtin_cast.go:998`).
+pub fn build_cast_to_in_union(
+    expr: Expression,
+    target: FieldType,
+) -> Result<Expression, EvalError> {
+    build_cast_function(expr, target, true)
 }
 
 /// The connection charset/collation pair a `BuildContext` supplies, defaulted
