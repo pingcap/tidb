@@ -315,3 +315,4 @@
 - 下轮恢复点: (1) 多行 Get/Set hook 条目的逐变量行为审计(不同类); (2) F2/F3-seam live 阻塞; (3) F4 逐站点低优先级。
 - validate_password 耦合校验批(session): SET GLOBAL 的耦合钩子落地—length 低于 number+special+2*mixed 时上调为下限; 任一 count 设置后 length 不足则提升(updatePasswordValidationLength 语义)。回归: 5 步耦合场景(pre-fix 失败已证: "8"≠"12")。session lib 1251 通过/281 预存环境失败(A/B 一致+1 flaky 单独复跑两次通过), fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) hook 审计后续 72-4=约 68 个 Validation 条目逐个对照; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- validate_password 耦合批推送 `56c55cafc84`。
