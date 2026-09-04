@@ -652,6 +652,44 @@ pub enum DdlStatement {
         table: String,
         context: DdlStatementContext,
     },
+    /// `ALTER MATERIALIZED VIEW ...` — Go master `94a9cbedab` parses this
+    /// (parser.y:5868) but neither its planner nor its executor handles it:
+    /// `buildDDL` has no case, so it plans as the generic `DDL` plan, and
+    /// `DDLExec.Next` leaves `err` nil. The statement therefore SUCCEEDS as
+    /// a no-op — no job, no catalog change, no privilege check. This
+    /// variant is that no-op, not a refusal: refusing would diverge from
+    /// the pinned master's observable behavior.
+    AlterMaterializedViewNoOp {
+        /// The resolved database name.
+        schema: String,
+        /// The view name as written.
+        view: String,
+    },
+    /// `ALTER MATERIALIZED VIEW LOG ON ...` — the same parser-only,
+    /// succeeds-as-a-no-op shape (parser.y:5904; likewise absent from
+    /// `buildDDL` and `DDLExec.Next`).
+    AlterMaterializedViewLogNoOp {
+        /// The resolved database name.
+        schema: String,
+        /// The base table name as written.
+        table: String,
+    },
+    /// `DROP MATERIALIZED VIEW ...` — likewise parser-only in Go master
+    /// `94a9cbedab`: zero mentions in `buildDDL` or `DDLExec.Next`, so the
+    /// statement succeeds as a no-op (any `IF EXISTS` is absorbed here).
+    DropMaterializedViewNoOp {
+        /// The resolved database name.
+        schema: String,
+        /// The view name as written.
+        view: String,
+    },
+    /// `DROP MATERIALIZED VIEW LOG ON ...` — likewise parser-only, no-op.
+    DropMaterializedViewLogNoOp {
+        /// The resolved database name.
+        schema: String,
+        /// The base table name as written.
+        table: String,
+    },
     /// `ALTER TABLE ... CONVERT TO CHARACTER SET x [COLLATE y]` and
     /// `ALTER TABLE ... CHARACTER SET = x`, Go's
     /// `ActionModifyTableCharsetAndCollate`.
@@ -907,6 +945,36 @@ pub fn lower_ddl_with_context(
         }
         DdlStmt::CreateMaterializedViewLog(create) => {
             lower_create_materialized_view_log(create, default_schema, context).map(Some)
+        }
+        DdlStmt::AlterMaterializedView(alter) => {
+            // Go plans this as the generic DDL plan and no-ops it; see the
+            // `AlterMaterializedViewNoOp` variant for the pinned evidence.
+            let (schema, view) = split_name(&alter.view_name, default_schema, "view")?;
+            Ok(Some(DdlStatement::AlterMaterializedViewNoOp {
+                schema,
+                view,
+            }))
+        }
+        DdlStmt::AlterMaterializedViewLog(alter) => {
+            let (schema, table) = split_name(&alter.table, default_schema, "table")?;
+            Ok(Some(DdlStatement::AlterMaterializedViewLogNoOp {
+                schema,
+                table,
+            }))
+        }
+        DdlStmt::DropMaterializedView(drop) => {
+            let (schema, view) = split_name(&drop.view_name, default_schema, "view")?;
+            Ok(Some(DdlStatement::DropMaterializedViewNoOp {
+                schema,
+                view,
+            }))
+        }
+        DdlStmt::DropMaterializedViewLog(drop) => {
+            let (schema, table) = split_name(&drop.table, default_schema, "table")?;
+            Ok(Some(DdlStatement::DropMaterializedViewLogNoOp {
+                schema,
+                table,
+            }))
         }
         DdlStmt::DropTable(drop) => lower_drop_table(drop, default_schema).map(Some),
         DdlStmt::DropView { if_exists, names } => {
@@ -5508,6 +5576,39 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             return Err(DdlPlanError::Encode(
                 "materialized view log DDL must execute through mysql.tidb_ddl_job".to_owned(),
             ));
+        }
+        DdlStatement::AlterMaterializedViewNoOp { schema, view } => {
+            // Go master 94a9cbedab parses this but neither `buildDDL` nor
+            // `DDLExec.Next` handles it: the plan is the generic `DDL`, the
+            // executor leaves `err` nil, and the statement answers OK with
+            // no job and no catalog change. This plan is exactly that:
+            // success, nothing written.
+            let _ = (schema, view);
+            return Ok(DdlPlan::AlreadySatisfied {
+                detail: "ALTER MATERIALIZED VIEW changes nothing".to_owned(),
+                warning: None,
+            });
+        }
+        DdlStatement::AlterMaterializedViewLogNoOp { schema, table } => {
+            let _ = (schema, table);
+            return Ok(DdlPlan::AlreadySatisfied {
+                detail: "ALTER MATERIALIZED VIEW LOG changes nothing".to_owned(),
+                warning: None,
+            });
+        }
+        DdlStatement::DropMaterializedViewNoOp { schema, view } => {
+            let _ = (schema, view);
+            return Ok(DdlPlan::AlreadySatisfied {
+                detail: "DROP MATERIALIZED VIEW changes nothing".to_owned(),
+                warning: None,
+            });
+        }
+        DdlStatement::DropMaterializedViewLogNoOp { schema, table } => {
+            let _ = (schema, table);
+            return Ok(DdlPlan::AlreadySatisfied {
+                detail: "DROP MATERIALIZED VIEW LOG changes nothing".to_owned(),
+                warning: None,
+            });
         }
         DdlStatement::CreateTableLike {
             schema,

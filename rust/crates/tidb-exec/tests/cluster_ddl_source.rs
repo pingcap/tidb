@@ -37,6 +37,7 @@ use tidb_exec::cluster_ddl::{
     AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate,
 };
 use tidb_exec::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
+use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_with_context;
 use tidb_exec::ddl_job_table::DdlJobTable;
 use tidb_exec::ddl_systable::{SystemTableManager, SystemTableManagerError};
 use tidb_exec::ddl_history_table::DdlHistoryTable;
@@ -6579,6 +6580,40 @@ fn persisted_materialized_view_build_refuses_residual_rows_then_rolls_back() {
         .find(|job| job.id == view_job_id)
         .expect("the rolled-back job is in history");
     assert_eq!(finished.state, JobState::ROLLBACK_DONE);
+}
+
+/// Go master `94a9cbedab` parses `ALTER MATERIALIZED VIEW` and
+/// `ALTER MATERIALIZED VIEW LOG` but neither its planner (`buildDDL` has no
+/// case) nor its executor (`DDLExec.Next` has no case, `err` stays nil)
+/// handles them: both statements SUCCEED as no-ops. The Rust route must
+/// therefore own the statements and plan them as zero-write successes, not
+/// refuse them.
+#[test]
+fn alter_materialized_view_succeeds_as_a_no_op_like_go() {
+    let mut store = bootstrapped();
+    for sql in [
+        "ALTER MATERIALIZED VIEW u6.mv COMMENT 'x'",
+        "ALTER MATERIALIZED VIEW u6.mv REFRESH NEXT now() + INTERVAL 1 HOUR",
+        "ALTER MATERIALIZED VIEW LOG ON u6.mv_base PURGE IMMEDIATE",
+        "ALTER MATERIALIZED VIEW LOG ON u6.mv_base ADD COLUMN (extra)",
+        "DROP MATERIALIZED VIEW u6.mv",
+        "DROP MATERIALIZED VIEW IF EXISTS u6.mv",
+        "DROP MATERIALIZED VIEW LOG ON u6.mv_base",
+        "DROP MATERIALIZED VIEW LOG IF EXISTS ON u6.mv_base",
+    ] {
+        let statement = prepare_cluster_ddl_with_context(
+            sql,
+            "u6",
+            &tidb_executor::StmtContext::for_query(),
+        )
+        .expect("the statement lowers")
+        .unwrap_or_else(|| panic!("the no-op route owns {sql}"));
+        let plan = plan_ddl(&mut store, &statement, 1_801).expect("the no-op plans");
+        let DdlPlan::AlreadySatisfied { warning, .. } = plan else {
+            panic!("{sql} plans as a zero-write success")
+        };
+        assert!(warning.is_none(), "Go appends no warning for the no-op");
+    }
 }
 
 /// Looks up the column ID at the given offset in the table.
