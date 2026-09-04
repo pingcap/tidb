@@ -312,6 +312,23 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `[try again later]`; the focused code/state/message regression and Ready
   results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
 
+- 2026-09-04 (planner identifier keys + NUL-padding gate): extended finding
+  #196 to the planner — `SchemaTableKey`/`TableAliasKey` and the
+  view-recursion, hint-table, alias-collision, and `USING`-column key sites
+  (`schema_table_key.rs`, `plan_builder/from.rs`) now lowercase with the Go
+  simple mapping, matching `ast.CIStr.L` (`ast/model.go:302`,
+  `schema_table_key.go` `.L` keys); tidb-planner gains the `tidb-mysql`
+  dependency. The CHAR-width landing then exposed the evaluator's
+  binary-padding seam: it padded any binary-charset target to its flen where
+  Go's `padZeroForBinaryType` gates on the FIXED `TypeString` code only
+  (`builtin_cast.go:2251`) — `CAST(1 AS BINARY)` in Go is ret flen 20 with
+  the one-byte value `1`. `cast_type_of` now reconstructs the padding length
+  only for `FieldTypeCode::String` targets. Two fail-before regressions
+  (Greek-sigma schema key; the 20-byte padded `CAST(1 AS BINARY)`), and the
+  pre-existing planner pin returned to green. Receipts:
+  `identifier_simple_case_mapping.md` (planner keys section),
+  `cast_char_width_estimation.md` (padding-gate follow-up).
+
 - 2026-09-04 (identifier lowercasing, plan finding #196 parser surface):
   replaced the five identifier-facing `str::to_lowercase` sites (digester
   literal `digest.rs`, user/role `@host`, `ADMIN ALTER DDL JOBS` option

@@ -73,6 +73,25 @@ cargo +nightly-2026-08-22 clippy --offline --locked -p tidb-expr --all-targets
 # no diagnostics in touched code
 ```
 
+## Follow-up: the NUL-padding gate the table exposed (2026-09-04)
+
+Once the adjust sizes an unspecified VarString CHAR target (flen 20 for an
+integer source), the evaluator's binary-padding seam padded the result to 20
+bytes — but Go pads NUL bytes only the FIXED `TypeString` target:
+`padZeroForBinaryType` (`builtin_cast.go:2249-2260`) gates on
+`tp.GetType() == mysql.TypeString && IsBinaryStr(tp)`, and
+`ProduceStrWithSpecifiedTp`'s own zero-pad arm (`pkg/types/datum.go:1300-1304`)
+gates identically. `cast_type_of` reconstructed `CastType::Binary { len }`
+from the result flen whenever the charset was binary, so the adjusted target
+evaluated as BINARY(20). The gate now keys on `FieldTypeCode::String`:
+`BINARY(N)` (whose parser rule switches the code to `TypeString`) still pads,
+a lengthless `BINARY`/`CHAR BINARY` never does. Go anchor check:
+`CAST(1 AS BINARY)` in Go produces the ret flen 20 AND the value `1` — one
+byte. Regression:
+`rewriter::result_type::tests::cast_binary_padding_gates_on_the_fixed_type_string_code`
+(VarString → `b"1"`; String → 20 bytes), plus the pre-existing planner pin
+`cast_ret_type_flags_and_charset_drive_evaluated_result` returning to green.
+
 ## Risk
 
 - Correctness: low; the adjust only fills an unspecified width (and widens

@@ -2040,7 +2040,18 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
             len: len(),
             charset: None,
         },
-        "binary" => CastType::Binary { len: len() },
+        "binary" => {
+            // Go pads NUL bytes only the FIXED TypeString target
+            // (`padZeroForBinaryType`'s `TypeString` gate,
+            // `builtin_cast.go:2251`): a lengthless `BINARY` keeps
+            // TypeVarString, so its adjusted result flen (e.g. 20 for an
+            // integer source) must not turn into BINARY(N) padding here.
+            if ret_type.code() == tidb_datatype::FieldTypeCode::String {
+                CastType::Binary { len: len() }
+            } else {
+                CastType::Binary { len: None }
+            }
+        }
         "decimal" => CastType::Decimal {
             flen: u32::try_from(ret_type.flen()).unwrap_or(0),
             scale: u32::try_from(ret_type.decimal()).unwrap_or(0),

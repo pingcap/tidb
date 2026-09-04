@@ -14,6 +14,56 @@
 
 use super::*;
 
+// `adjustRetFtForCastString` sizes an unspecified CHAR target from the
+// source family (LongLong -> 20), but Go's NUL padding is gated on the
+// FIXED TypeString code (`padZeroForBinaryType`,
+// `builtin_cast.go:2251`): the adjusted VarString target renders "1"
+// unpadded, while a true BINARY(20) target pads to 20 bytes.
+#[test]
+fn cast_binary_padding_gates_on_the_fixed_type_string_code() {
+    fn binary_target(code: FieldTypeCode) -> FieldType {
+        let mut target = FieldType::new(code);
+        target.set_charset_name("binary");
+        target.set_flen(20);
+        target.set_decimal(-1);
+        target
+    }
+
+    let constant = Expression::Constant(Constant::new(Datum::Int(1), {
+        let mut ft = FieldType::new(FieldTypeCode::LongLong);
+        ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+        ft
+    }));
+
+    let adjusted_var_string = ScalarFunction::new(
+        tidb_ast::CiString::new("cast_binary"),
+        binary_target(FieldTypeCode::VarString),
+        vec![constant.clone()],
+    );
+    let int_field = FieldType::new(FieldTypeCode::LongLong);
+    let mut chunk = tidb_chunk::chunk::Chunk::new(std::slice::from_ref(&int_field), 1, 1);
+    chunk.append_int64(0, 0);
+    let row = chunk.get_row(0);
+    let Datum::Bytes(unpadded) = adjusted_var_string
+        .eval(&crate::context::NoColumns, row)
+        .unwrap()
+    else {
+        panic!("expected bytes")
+    };
+    assert_eq!(unpadded, b"1", "the adjusted flen must not NUL-pad");
+
+    let fixed_string = ScalarFunction::new(
+        tidb_ast::CiString::new("cast_binary"),
+        binary_target(FieldTypeCode::String),
+        vec![constant],
+    );
+    let Datum::Bytes(padded) = fixed_string.eval(&crate::context::NoColumns, row).unwrap() else {
+        panic!("expected bytes")
+    };
+    assert_eq!(padded.len(), 20, "BINARY(20) pads with NUL bytes");
+    assert_eq!(&padded[..1], b"1");
+}
+
 #[test]
 fn cast_target_types_follow_go_parser_y_cast_rules() {
     use tidb_datatype::UNSPECIFIED_LENGTH;
