@@ -16,7 +16,7 @@
   fixed-cell prefix/truncation at `Chunk::append_datum` and every `MutRow`
   datum/value entry point without introducing an overflow panic. Receipt:
   `rust/testport/receipts/chunk_a1_datum.md`; pushed as commit
-  `471ece97fd` to `hparser-integration`.
+  `c59b2bd60e` to `hparser-integration`.
 
 - 2026-09-04: aligned Rust `tidb-datatype` JSON text rendering with Go's
   `jsonMarshalStringTo`: scalar values and object keys now escape U+2028/U+2029
@@ -29,4 +29,11 @@
   adjacent-object grouping and one-level array flattening. The interrupted
   object-run regression is recorded in
   `rust/testport/receipts/json_merge_preserve.md`; pushed as commit
-  `4906026d51` to `hparser-integration`.
+  `71ffce262e` to `hparser-integration`.
+
+- 2026-09-04: aligned the Rust `pkg/kv` write-conflict marker with Go's
+  `TxnRetryableMark`. The generic 9007 driver error now appends
+  `[try again later]`, with a focused code/SQLSTATE/message regression and
+  complete `pkg/kv`/`tidb-executor` inventories in
+  `rust/testport/receipts/kv_write_conflict_retry_marker.md`; the batch is
+  included in the final pushed change.

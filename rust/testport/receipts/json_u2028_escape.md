@@ -5,7 +5,7 @@ worktree. Go remains the source oracle; this machine cannot launch a freshly
 built Go server, so the expected bytes are taken directly from
 `pkg/types/json_binary.go`'s `jsonMarshalStringTo` implementation.
 
-Final batch commit: `929dc85d5c` (pushed to `hparser-integration`).
+Final batch commit: `242d294f2c` (pushed to `hparser-integration`).
 
 Comparison source: Go `origin/master` at
 `6331b8787b4203a91aafe49ee1dc801ee497bf98`.

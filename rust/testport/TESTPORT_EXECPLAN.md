@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `pkg/kv` write-conflict error boundary with Go
+  master's complete `pkg/kv` inventory (30 artifacts, 5,319 Go lines) and the
+  `tidb-executor` owner (290 artifacts, 195,724 Rust lines). The live 9007
+  `TxnErrorKind::WriteConflict` path now appends Go's compatibility marker
+  `[try again later]`; the focused code/state/message regression and Ready
+  results are recorded in `receipts/kv_write_conflict_retry_marker.md`.
+
 - 2026-09-04: aligned Rust `tidb-datatype` `JSON_MERGE_PRESERVE` with Go's
   adjacent-object grouping from the complete `pkg/types` JSON inventory.
   `merge_binary_nodes` now groups object runs, recursively merges duplicate
@@ -5461,6 +5468,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- 2026-09-04: preserve Go's `TxnRetryableMark` as one Rust constant and append
+  it in the ordinary `TxnErrorKind::WriteConflict` wire-rendering arm. Do not
+  synthesize absent structured conflict fields or conflate the separate 8005
+  undetermined-commit pipeline; those require a distinct Go comparison and
+  remain documented boundaries.
+
 - 2026-09-04: replace the Rust JSON merge left fold with Go's three-stage shape
   (`MergeBinaryJSON` run grouping, recursive `mergeBinaryObject`, and one-level
   `mergeBinaryArray` flattening). This preserves the existing `JSONNode` model
@@ -6584,6 +6597,12 @@ runs now produce Go's grouped duplicate-key result and array flattening. Its
 focused and owner validation are recorded in
 `receipts/json_merge_preserve.md`; invalid-byte and surrogate rendering remain
 separate follow-ups.
+
+The `pkg/kv` write-conflict batch is bounded and executable: the live generic
+9007 driver error now carries Go's `[try again later]` retry marker, with a
+focused code/SQLSTATE/message regression. Its inventory and Ready outcomes are
+recorded in `receipts/kv_write_conflict_retry_marker.md`; structured conflict
+metadata and the 8005 path remain separate follow-ups.
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state

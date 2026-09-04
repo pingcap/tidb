@@ -8,7 +8,7 @@ the existing Go-captured JSON operation corpus.
 Comparison source: Go `origin/master` at
 `6331b8787b4203a91aafe49ee1dc801ee497bf98`.
 
-Final batch commit: `4906026d51` (pushed to `hparser-integration`).
+Final batch commit: `71ffce262e` (pushed to `hparser-integration`).
 
 ## Inventory completed before editing
 

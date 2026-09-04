@@ -5,7 +5,7 @@ validated against the fetched Go master. This receipt does not claim complete
 transcreation of `pkg/util/chunk`; it closes the decimal datum storage boundary
 and leaves the separately ranked wire/datum-shape items explicit.
 
-Final batch commit: `471ece97fd` (pushed to `hparser-integration`).
+Final batch commit: `c59b2bd60e` (pushed to `hparser-integration`).
 
 Comparison source: Go `origin/master` at
 `6331b8787b4203a91aafe49ee1dc801ee497bf98`.

@@ -47,3 +47,14 @@ generated/integration tests), owner compilation, formatting, and diff checks
 passed. Strict clippy remains blocked by the unrelated
 `tidb-mysql/src/consts.rs:117-120` `map_or_identity` diagnostics. Full command
 and risk details are in `rust/testport/receipts/json_merge_preserve.md`.
+
+## `pkg/kv` write-conflict retry-marker batch
+
+The focused `tidb-executor` regression passed and pins Go's exact 9007
+`Write conflict, please retry the transaction [try again later]` wire message.
+The serialized executor owner profile retained 1,030 passes and 136 existing
+planner/remote/spill/fixture failures; owner compilation, formatting, and
+whitespace checks passed. Strict clippy remains blocked by unrelated
+`tidb-mysql` and generated `tidb-proto` diagnostics. The complete inventory,
+commands, and boundaries are in
+`rust/testport/receipts/kv_write_conflict_retry_marker.md`.

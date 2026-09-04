@@ -128,7 +128,9 @@ wire behaviour.
 ## Ranked findings
 
 Counts: **1 wrong-code class with 5 concrete instances**, **6 wrong SQLSTATEs (fixed)**,
-**3 message defects**, **5 missing codes**. Ranked by consequence.
+**2 remaining message defects**, **5 missing codes**. F7 below was fixed on
+2026-09-04; the count covers the two still-open message findings. Ranked by
+consequence.
 
 ---
 
@@ -278,10 +280,10 @@ belongs to a dedicated unit.
 
 ---
 
-### F7 (rank 3, message) — the write-conflict retry marker is missing
+### F7 (rank 3, message) — FIXED: the write-conflict retry marker was missing
 
-`rust/crates/tidb-executor/src/driver/errors/mod.rs:131` sends 9007 with
-`"Write conflict, please retry the transaction"`.
+Before the fix, `rust/crates/tidb-executor/src/driver/errors/mod.rs:211`
+sent 9007 with only `"Write conflict, please retry the transaction"`.
 
 Go builds the message as
 `mysql.MySQLErrName[mysql.ErrWriteConflict].Raw + " " + TxnRetryableMark`
@@ -292,14 +294,18 @@ Go builds the message as
 const TxnRetryableMark = "[try again later]"   // pkg/kv/error.go:27
 ```
 
-The literal `[try again later]` **does not appear anywhere in the Rust tree**. Go's own
-comment states that this string is a compatibility contract; it is the token a client greps
-to decide whether a failed transaction may be replayed. We also drop every structured field
-(`txnStartTS`, `conflictStartTS`, `conflictCommitTS`, `key`, `reason`), which is what an
-operator uses to identify the contending transaction.
+The literal `[try again later]` is now defined once as `TXN_RETRYABLE_MARK` in
+`tidb-executor/src/driver/errors/mod.rs` and appended by the live
+`TxnErrorKind::WriteConflict` wire-rendering arm. This restores the
+backward-compatible token that clients grep to decide whether a failed
+transaction may be replayed. A focused source regression pins the complete
+9007 message.
 
-The same omission applies to 8005 (`ErrWriteConflictInTiDB`), which Go also suffixes with the
-mark.
+The Rust `TxnErrorKind` currently carries no structured conflict fields
+(`txnStartTS`, `conflictStartTS`, `conflictCommitTS`, `key`, `reason`), and the
+separate 8005 undetermined-commit pipeline remains a documented follow-up. The
+marker fix is therefore bounded to the generic 9007 path and does not claim
+complete write-conflict diagnostic parity.
 
 ---
 

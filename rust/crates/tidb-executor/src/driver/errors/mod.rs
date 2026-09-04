@@ -102,6 +102,9 @@ impl MysqlError {
 const ER_PARSE_ERROR: u16 = 1064;
 /// TiDB `ErrWriteConflict`.
 const ER_WRITE_CONFLICT: u16 = tidb_error::tidb::errcode::ErrWriteConflict;
+/// Go `kv.TxnRetryableMark`, which clients use to identify replayable commits.
+/// `pkg/kv/error.go` warns that this compatibility marker must not change.
+const TXN_RETRYABLE_MARK: &str = "[try again later]";
 /// TiDB `ErrRegionUnavailable`.
 const ER_REGION_UNAVAILABLE: u16 = tidb_error::tidb::errcode::ErrRegionUnavailable;
 /// MySQL `ER_UNKNOWN_SYSTEM_VARIABLE`.
@@ -209,7 +212,7 @@ impl DriverError {
             MysqlError::new(
                 ER_WRITE_CONFLICT,
                 *b"HY000",
-                "Write conflict, please retry the transaction".to_owned(),
+                format!("Write conflict, please retry the transaction {TXN_RETRYABLE_MARK}"),
             )
         }
         DriverError::Txn(crate::TxnErrorKind::AsOf(cause)) => MysqlError::coded(
@@ -1854,5 +1857,16 @@ mod source_tests {
     fn display_matches_the_mysql_diagnostic() {
         let error = DriverError::unsupported("an unsupported source operation");
         assert_eq!(error.to_string(), error.clone().to_mysql_error().message);
+    }
+
+    #[test]
+    fn write_conflict_preserves_go_retryable_marker() {
+        let error = DriverError::Txn(TxnErrorKind::WriteConflict).to_mysql_error();
+        assert_eq!(error.code, ER_WRITE_CONFLICT);
+        assert_eq!(error.state, *b"HY000");
+        assert_eq!(
+            error.message,
+            "Write conflict, please retry the transaction [try again later]"
+        );
     }
 }
