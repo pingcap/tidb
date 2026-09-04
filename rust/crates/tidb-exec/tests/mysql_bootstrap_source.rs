@@ -246,10 +246,22 @@ fn a_bootstrap_spends_exactly_one_schema_version_and_describes_it() {
         tidb_model::action_type::ActionType::ACTION_CREATE_TABLES
     );
     // Every created table is named in the diff, which is what makes a real
-    // TiDB's own reloader pick them all up at this one version.
+    // TiDB's own reloader pick them all up at this one version. The DDL-owned
+    // tables ride the same fresh bootstrap whenever the environment's
+    // `ddl_table_version` has not reached their group, so the count spans
+    // both lists.
+    let ddl_table_count = tidb_metadef::DDL_TABLE_VERSION_TABLES
+        .iter()
+        .filter(|version| environment().ddl_table_version < version.version)
+        .map(|version| version.tables.len())
+        .sum::<usize>();
     let affected = &write.diff.affected_options;
     assert!(affected.is_allocated());
-    assert_eq!(affected.len(), BOOTSTRAP_TABLES.len());
+    assert_eq!(
+        affected.len(),
+        BOOTSTRAP_TABLES.len() + ddl_table_count,
+        "the diff names every mysql.* table the fresh bootstrap created"
+    );
     assert!(affected.iter_handles().all(|affected| affected.is_some()));
     apply(&mut store, &write);
     assert_eq!(store.pairs[&key::schema_version_kv_key()], b"61");

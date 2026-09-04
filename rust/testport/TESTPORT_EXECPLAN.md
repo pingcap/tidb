@@ -42,8 +42,6 @@ For each bounded behavior cluster:
 
 ## Progress
 
-## Progress
-
 - 2026-09-04: aligned the Rust `tidb-datatype` owner for the complete
   Go-master `pkg/types` float-to-decimal conversion boundary. `Datum::to_decimal`
   now routes REAL and FLOAT32 through Go's shortest `%g` formatting and the
@@ -52,6 +50,28 @@ For each bounded behavior cluster:
   before widening. The focused fail-before regression, full 372-test datatype
   owner suite, dependent `tidb-expr` suite (1114 passed, 130 documented gaps),
   and Ready gates are recorded in `receipts/types_explain_format_audit.md`.
+
+- 2026-09-04 (batch 15, `pkg/ddl` MV log-create worker): implemented Go
+  master `94a9cbedab`'s `onCreateMaterializedViewLog` and its rollback as
+  `plan_persisted_materialized_view_log_job_step` over the batch-14
+  submitted job — the execution-time base re-checks (cancelling exactly as
+  Go's `job.State = Cancelled` returns), the `$mlog$` table landing PUBLIC
+  as Go's `createTable` does, the base's `MaterializedViewBase.MLogID`
+  back-reference with its already-has-log refusal, the
+  `mysql.tidb_mlog_purge_info` row via the new `mlog_purge_info_table`
+  storage (Go's INSERT IGNORE / ON DUPLICATE semantics), the schema-version
+  bump with the create-table event, `FinishMultipleTableJob`, and the
+  rollback path that drops the created table with its auto-ID allocators
+  and clears the base. The bootstrap now creates Go master's missing
+  masking-policy and materialized-view `mysql.*` groups at their reserved
+  IDs; the stale bootstrap-count assertion (failing since the notifier
+  batch) is repaired and the bootstrap corpus test now names the six
+  target-only tables whose Go captures await a master checkout. Schedule
+  evaluation for logs WITH a purge clause stays behind the session-eval
+  seam (the step takes the derived value). One regression drives submit to
+  step to terminal and the rollback transition; tidb-exec ends at 7
+  failures (base minus the repaired stale count), executor/session sets
+  byte-identical to base. Receipt: `receipts/ddl_mview_log_worker.md`.
 
 - 2026-09-04 (batch 14, `pkg/ddl` MV log-create submission): implemented Go
   master `94a9cbedab`'s `CreateMaterializedViewLog` submission and the

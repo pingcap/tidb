@@ -62,7 +62,7 @@ use tidb_model::serde_helpers::GoValueSlice;
 use tidb_model::table_info::TableInfo;
 use tidb_model::{
     get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs, GoField, GoShared,
-    GoSharedSlice, HistoryInfo, Job, JobArgsValue, JobState, TraceInfo,
+    GoSharedPointerSlice, GoSharedSlice, HistoryInfo, Job, JobArgsValue, JobState, TraceInfo,
 };
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
@@ -2556,6 +2556,12 @@ impl From<MutationSetError> for DdlPlanError {
     }
 }
 
+impl From<crate::mlog_purge_info_table::MlogPurgeInfoTableError> for DdlPlanError {
+    fn from(error: crate::mlog_purge_info_table::MlogPurgeInfoTableError) -> Self {
+        DdlPlanError::Encode(error.to_string())
+    }
+}
+
 /// What one planned catalog change will publish.
 #[derive(Clone, Debug)]
 pub enum DdlPlan {
@@ -3173,6 +3179,505 @@ pub fn plan_persisted_check_constraint_job_step<S: MetaSnapshot>(
             placement_rollback_bundles: Vec::new(),
         },
         terminal,
+    })
+}
+
+/// Plans pinned Go `onCreateMaterializedViewLog` (master `94a9cbedab`):
+/// the one owner transaction that turns a submitted create-log job into the
+/// created `$mlog$` table, the base table's `MLogID` back-reference, the
+/// `mysql.tidb_mlog_purge_info` schedule row, the schema-version bump with
+/// its create-table event, and the job's terminal state.
+///
+/// `schedule` carries the outcome of Go's
+/// `deriveCreateMaterializedViewLogNextUnixSeconds`, which evaluates the
+/// log's purge schedule through the owner's session; it is only consulted
+/// when the log metadata actually names a schedule. A log with no schedule
+/// derives `(None, true)` without a session, exactly as Go does.
+///
+/// The active row is the operation authority; a process may disappear after
+/// any committed phase and a later owner can call this function with the
+/// same job ID.
+pub fn plan_persisted_materialized_view_log_job_step<S: MetaSnapshot>(
+    snapshot: &mut S,
+    ddl_job_id: i64,
+    start_ts: u64,
+    schedule: Option<crate::mlog_purge_info_table::MlogPurgeDerived>,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    use crate::mlog_purge_info_table::{MlogPurgeDerived, MlogPurgeInfoTable};
+
+    const PURGE_INFO_MISSING: &str = "create materialized view log: required system table mysql.tidb_mlog_purge_info does not exist";
+
+    let catalog = load_cluster_catalog(snapshot)?;
+    let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    let mut active = job_table
+        .load(snapshot)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .into_iter()
+        .find(|active| active.job.id == ddl_job_id)
+        .ok_or_else(|| DdlPlanError::Encode(format!("DDL job {ddl_job_id} does not exist")))?;
+
+    if active.job.type_ != ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG {
+        return Err(DdlPlanError::Encode(format!(
+            "DDL job {ddl_job_id} is not a create materialized view log job"
+        )));
+    }
+
+    // Go decodes and validates the typed arguments first; a decode failure
+    // or missing metadata cancels the job.
+    let Some(args) = tidb_model::get_create_materialized_view_log_args(&mut active.job)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+    else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view log: invalid job args",
+        );
+    };
+    let table_shared = args
+        .read()
+        .table_info
+        .get()
+        .ok_or_else(|| DdlPlanError::Encode("invalid job args".to_owned()))?;
+    let Some(log_meta_shared) = table_shared.read().materialized_view_log.clone() else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view log: invalid job args",
+        );
+    };
+    let base_table_id = log_meta_shared.read().base_table_id;
+    if base_table_id == 0 {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "create materialized view log: invalid base table id",
+        );
+    }
+
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let db_id = database.info.id;
+
+    // The purge-schedule row storage. Go converts a missing system table
+    // into ErrInvalidDDLJob, which rolls the job back; this plan surfaces
+    // the same refusal before any mutation is built.
+    let purge_table = MlogPurgeInfoTable::locate(&catalog).map_err(|_| {
+        DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrInvalidDDLJob,
+            PURGE_INFO_MISSING,
+        ))
+    })?;
+
+    if active.job.state == JobState::ROLLINGBACK {
+        return plan_rollback_materialized_view_log_step(
+            &catalog,
+            &job_table,
+            active,
+            &purge_table,
+            snapshot,
+            start_ts,
+        );
+    }
+
+    // Go's worker-side base-table checks run again at execution time: the
+    // catalog may have moved between submission and ownership.
+    let Some(base) = database
+        .tables
+        .iter()
+        .find(|table| table.id == base_table_id)
+    else {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            &format!(
+                "Table '{}.{}' doesn't exist",
+                database.info.name.original(),
+                log_meta_shared.read().columns.len()
+            ),
+        );
+    };
+    if base.is_view()
+        || base.is_sequence()
+        || base.temp_table_type != tidb_model::TempTableType::NONE
+        || base.materialized_view.is_some()
+        || base.materialized_view_log.is_some()
+    {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            &format!(
+                "'{}.{}' is not BASE TABLE",
+                database.info.name.original(),
+                base.name.original()
+            ),
+        );
+    }
+    if base.partition.is_some() {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            "CREATE MATERIALIZED VIEW LOG on partition table",
+        );
+    }
+    if base.state != SchemaState::PUBLIC {
+        return cancelled_step(
+            &mut active,
+            &job_table,
+            &format!(
+                "table {} is not in public, but {}",
+                base.name.original(),
+                base.state
+            ),
+        );
+    }
+    if base
+        .materialized_view_base
+        .as_ref()
+        .is_some_and(|info| info.read().mlog_id != 0)
+    {
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrTableExists,
+            format!(
+                "Table '{}.{}' already exists",
+                database.info.name.original(),
+                table_shared.read().name.original()
+            ),
+        )));
+    }
+
+    // Go `createTable`: the submitted table info lands PUBLIC at this
+    // transaction's timestamp, then the base gains its MLogID.
+    let mut mlog_info = table_shared.read().clone_like_go();
+    mlog_info.state = SchemaState::PUBLIC;
+    mlog_info.update_ts = start_ts;
+    let mlog_id = mlog_info.id;
+
+    let mut base_info = base.clone_like_go();
+    if base_info.materialized_view_base.is_none() {
+        base_info.materialized_view_base = Some(GoShared::new(
+            tidb_model::MaterializedViewBaseInfo::default(),
+        ));
+    }
+    {
+        let base_handle = base_info.materialized_view_base.as_ref().expect("just set");
+        let mut base_meta = base_handle.write();
+        if base_meta.mlog_id != 0 && base_meta.mlog_id != mlog_id {
+            return Err(DdlPlanError::Admission(DdlAdmissionError::new(format!(
+                "base table {} already has a materialized view log",
+                base_info.name.original()
+            ))));
+        }
+        base_meta.mlog_id = mlog_id;
+    }
+
+    // Go `upsertCreateMaterializedViewLogPurgeInfo`: the schedule derivation
+    // runs on the owner's session; without a schedule it is `(None, true)`
+    // with no session at all.
+    let log_meta = log_meta_shared.read();
+    let derived =
+        if log_meta.purge_start_with.trim().is_empty() && log_meta.purge_next.trim().is_empty() {
+            MlogPurgeDerived::unscheduled()
+        } else {
+            let Some(derived) = schedule else {
+                return Err(DdlPlanError::Encode(
+                "create materialized view log: the purge schedule requires the session-eval seam \
+                 to derive NEXT_PURGE_UNIX_SECONDS before this step can be planned"
+                    .to_owned(),
+            ));
+            };
+            derived
+        };
+    let existing_purge_row = purge_table.find(snapshot, mlog_id)?;
+    let mut mutations = Vec::new();
+    purge_table.append_upsert(
+        mlog_id,
+        derived,
+        existing_purge_row.as_ref(),
+        &mut mutations,
+    )?;
+
+    mutations.push(OptimisticMutation::meta_put(
+        key::table_kv_key(db_id, mlog_id),
+        value::serialize_table_info(&mlog_info)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+    mutations.push(OptimisticMutation::meta_put(
+        key::table_kv_key(db_id, base_info.id),
+        value::serialize_table_info(&base_info)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+
+    let schema_version = catalog.schema_version + 1;
+    let diff = SchemaDiff {
+        version: schema_version,
+        action_type: active.job.type_,
+        schema_id: db_id,
+        table_id: mlog_id,
+        ..SchemaDiff::default()
+    };
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_version_kv_key(),
+        value::encode_int_value(schema_version),
+    )?);
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_diff_kv_key(schema_version),
+        value::serialize_schema_diff(&diff)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+    active.job.last_schema_version = schema_version;
+
+    // Go `asyncNotifyEvent(notifier.NewCreateTableEvent(mlogTableInfo))`.
+    append_schema_change_mutations(
+        snapshot,
+        &catalog,
+        active.job.id,
+        &[(
+            -1,
+            SchemaChangeEvent::create_table(mlog_info.clone_like_go()),
+        )],
+        &mut mutations,
+    )?;
+
+    // Go `FinishMultipleTableJob(Done, Public, ver, [base, mlog])`.
+    let finished = GoSharedPointerSlice::from_handles(vec![
+        Some(GoShared::new(base_info.clone_like_go())),
+        Some(GoShared::new(mlog_info)),
+    ]);
+    active.job.finish_multiple_table_job(
+        JobState::DONE,
+        SchemaState::PUBLIC,
+        schema_version,
+        &finished,
+    );
+    active
+        .job
+        .binlog_info
+        .as_ref()
+        .expect("submitted jobs always carry BinlogInfo")
+        .write()
+        .finished_ts = start_ts;
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    // Go `updateSchemaVersion` hands the base table's readers an MDL marker
+    // in the same transaction, so a session reading the base cannot miss the
+    // metadata revision its snapshot chose.
+    let mdl_info_update = mdl_info_update(&catalog, base_info.id)?;
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: Some(mlog_id),
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: Some(mdl_info_update),
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
+    })
+}
+
+/// Cancels a create-log job whose execution-time checks failed: Go sets
+/// `job.State = Cancelled` and returns, and the terminal handler then moves
+/// the cancelled job to history without touching schema metadata. The plan
+/// carries only the terminal row moves; the error carries Go's refusal text
+/// for the statement waiting on the job.
+fn cancelled_step(
+    active: &mut crate::ddl_job_table::ActiveDdlJob,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    reason: &str,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    active.job.state = JobState::CANCELLED;
+    let mut mutations = Vec::new();
+    active
+        .job
+        .binlog_info
+        .as_ref()
+        .expect("submitted jobs always carry BinlogInfo")
+        .write()
+        .finished_ts = 0;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    Err(DdlPlanError::Encode(reason.to_owned()))
+}
+
+/// Plans pinned Go `rollbackCreateMaterializedViewLog`: the created log
+/// table (if the phase committed) is dropped with its auto-ID accessors, the
+/// base table's `MLogID` is cleared, and the purge-schedule row is removed.
+fn plan_rollback_materialized_view_log_step<S: MetaSnapshot>(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    job_table: &crate::ddl_job_table::DdlJobTable,
+    mut active: crate::ddl_job_table::ActiveDdlJob,
+    purge_table: &crate::mlog_purge_info_table::MlogPurgeInfoTable,
+    snapshot: &mut S,
+    start_ts: u64,
+) -> Result<PersistedDdlJobStep, DdlPlanError> {
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.id == active.job.schema_id)
+        .ok_or_else(|| DdlPlanError::UnknownDatabase(active.job.schema_name.to_string()))?;
+    let db_id = database.info.id;
+
+    // Go reads the ACTUAL table by `job.TableID` and drops whatever is
+    // there; a missing table (nothing committed yet) just skips the drop.
+    let actual = database
+        .tables
+        .iter()
+        .find(|table| table.id == active.job.table_id);
+    let mut mutations = Vec::new();
+    if let Some(dropping) = actual {
+        let dropping = dropping.clone_like_go();
+        mutations.push(OptimisticMutation::meta_delete(key::table_kv_key(
+            db_id,
+            dropping.id,
+        ))?);
+        // Go `GetAutoIDAccessors(dbID, tblID).Del()`, keyed existence check
+        // per allocator exactly as `HDel` behaves.
+        for allocator in [
+            key::auto_table_id_kv_key(db_id, dropping.id),
+            key::auto_increment_id_kv_key(db_id, dropping.id),
+            key::auto_random_table_id_kv_key(db_id, dropping.id),
+        ] {
+            if snapshot.get(&allocator)?.is_some() {
+                mutations.push(OptimisticMutation::meta_delete(allocator)?);
+            }
+        }
+        // Go `updateMaterializedViewBaseInfoOnDrop`'s log arm: clear the
+        // MLogID this job recorded and drop the now-empty base metadata.
+        if let Some(base_table_id) = dropping
+            .materialized_view_log
+            .as_ref()
+            .map(|log| log.read().base_table_id)
+        {
+            if let Some(base) = database
+                .tables
+                .iter()
+                .find(|table| table.id == base_table_id)
+            {
+                let mut base_info = base.clone_like_go();
+                let cleared = base_info
+                    .materialized_view_base
+                    .as_ref()
+                    .map(|handle| {
+                        let mut meta = handle.write();
+                        if meta.mlog_id == dropping.id {
+                            meta.mlog_id = 0;
+                        }
+                        meta.mlog_id == 0 && meta.mview_ids.is_empty()
+                    })
+                    .unwrap_or(false);
+                if cleared {
+                    base_info.materialized_view_base = None;
+                }
+                mutations.push(OptimisticMutation::meta_put(
+                    key::table_kv_key(db_id, base_info.id),
+                    value::serialize_table_info(&base_info)
+                        .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                )?);
+            }
+        }
+    }
+
+    if let Some(row) = purge_table.find(snapshot, active.job.table_id)? {
+        purge_table.append_delete(&row, &mut mutations)?;
+    }
+
+    active.job.state = JobState::ROLLBACK_DONE;
+    active.job.schema_state = SchemaState::NONE;
+    let schema_version = catalog.schema_version + 1;
+    active.job.last_schema_version = schema_version;
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_version_kv_key(),
+        value::encode_int_value(schema_version),
+    )?);
+    let diff = SchemaDiff {
+        version: schema_version,
+        action_type: active.job.type_,
+        schema_id: db_id,
+        table_id: active.job.table_id,
+        ..SchemaDiff::default()
+    };
+    mutations.push(OptimisticMutation::meta_put(
+        key::schema_diff_kv_key(schema_version),
+        value::serialize_schema_diff(&diff)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+    )?);
+
+    active
+        .job
+        .binlog_info
+        .as_ref()
+        .expect("submitted jobs always carry BinlogInfo")
+        .write()
+        .finished_ts = start_ts;
+    active.job.sequence_number = DDL_HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let encoded = active
+        .job
+        .encode(true)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    if let Ok(history_table) = crate::ddl_history_table::DdlHistoryTable::locate(&catalog) {
+        let _ = history_table.append_insert_ignore(snapshot, &active.job, &encoded, &mut mutations);
+    }
+    mutations.push(OptimisticMutation::meta_put(
+        key::ddl_job_history_kv_key(active.job.id),
+        encoded,
+    )?);
+    job_table
+        .append_delete(&active, &mut mutations)
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+
+    Ok(PersistedDdlJobStep {
+        write: DdlWrite {
+            ddl_job_id: active.job.id,
+            mutations,
+            schema_version,
+            diff,
+            created_id: None,
+            backfill: Vec::new(),
+            auto_pre_split: false,
+            exchange_partition_validation: None,
+            check_constraint_validation: None,
+            mdl_info_update: None,
+            exchange_partition_label_swap: None,
+            warning: None,
+            placement_bundles: Vec::new(),
+            placement_rollback_bundles: Vec::new(),
+        },
+        terminal: true,
     })
 }
 

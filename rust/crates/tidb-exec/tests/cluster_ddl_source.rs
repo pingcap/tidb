@@ -31,6 +31,7 @@ use tidb_exec::cluster_catalog::{
 use tidb_exec::cluster_ddl::{
     lower_ddl, lower_ddl_with_context, plan_check_constraint_job_rollingback,
     plan_ddl, plan_ddl_with_collation, plan_persisted_check_constraint_job_step,
+    plan_persisted_materialized_view_log_job_step,
     prepare_check_constraint_job_submission, prepare_materialized_view_job_submission,
     AlterColumnAction, DdlPlan, DdlPlanError, DdlStatement, MdlInfoUpdate,
 };
@@ -118,10 +119,12 @@ pub(crate) fn bootstrapped() -> MetaStore {
         "tidb_ddl_job",
         "tidb_ddl_history",
         "tidb_mdl_info",
+        "tidb_mlog_purge_info",
     ] {
         let system_table = tidb_metadef::DDL_TABLE_VERSION_TABLES
             .iter()
             .flat_map(|version| version.tables)
+            .chain(tidb_metadef::BOOTSTRAP_TABLES.iter())
             .find(|table| table.name == system_table_name)
             .unwrap_or_else(|| panic!("the pinned bootstrap defines {system_table_name}"));
         let parsed = tidb_parser::parse(system_table.create_sql)
@@ -5635,6 +5638,248 @@ fn materialized_view_log_lowering_follows_go_admission_order() {
         .find(|active| active.job.id == spec.job.id)
         .expect("the submitted job row is active");
     assert_eq!(active.job.type_, ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG);
+}
+
+
+/// Go `onCreateMaterializedViewLog` (master `94a9cbedab`): one owner step
+/// turns the submitted job into the created `$mlog$` table, the base's
+/// `MLogID` back-reference, the purge-schedule row, the schema-version bump
+/// with its create-table event, and the terminal history row. The rollback
+/// transition drops the created table and clears the base again.
+#[test]
+fn persisted_materialized_view_log_step_creates_the_log_and_rolls_back() {
+    use tidb_executor::StmtContext;
+
+    let enabled = StmtContext::for_query().with_enable_mview(true);
+    let lower = |sql: &str, schema: &str| {
+        let parsed = tidb_parser::parse(sql).expect("MV LOG DDL parses");
+        lower_ddl_with_context(&parsed, schema, &enabled)
+            .expect("MV LOG DDL admission outcome")
+            .expect("MV LOG DDL lowers to a statement")
+    };
+    let mut store = bootstrapped();
+
+    let create = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE mv_base (id INT PRIMARY KEY AUTO_INCREMENT, k INT)",
+            "u6",
+        ),
+        1_500,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(create) = create else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &create);
+    let base_id = create.created_id.expect("base table id");
+    let base_schema_version = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        catalog.schema_version
+    };
+
+    // Submit the log create (batch 14's planner).
+    let mut spec = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON mv_base (id, k)", "u6"),
+        1_501,
+        false,
+        0,
+    )
+    .expect("submission preflight succeeds")
+    .expect("the log create owns a job spec");
+    let job_id = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        let (mutations, cleanup) = plan_insert_attempt(
+            &mut store,
+            &catalog,
+            std::slice::from_mut(&mut spec),
+            &mut |_| Option::<fn()>::None,
+        )
+        .expect("the insertion attempt plans");
+        apply_mutations(&mut store, &mutations);
+        drop(cleanup);
+        spec.job.id
+    };
+    assert_ne!(job_id, 0);
+
+    // The owner step creates everything Go's single phase creates.
+    let step = plan_persisted_materialized_view_log_job_step(&mut store, job_id, 1_502, None)
+        .expect("the worker step plans");
+    assert!(step.terminal, "the create-log job finishes in one phase");
+    assert_eq!(step.write.schema_version, base_schema_version + 1);
+    assert_eq!(
+        step.write.diff.action_type,
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG
+    );
+    let mlog_id = step.write.created_id.expect("the step created the mlog");
+    apply_mutations(&mut store, &step.write.mutations);
+
+    let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.original() == "u6")
+        .expect("u6 survives");
+    let mlog = database
+        .tables
+        .iter()
+        .find(|table| table.id == mlog_id)
+        .expect("the mlog table exists after the step");
+    assert_eq!(mlog.name.original(), "$mlog$mv_base");
+    assert_eq!(mlog.state, SchemaState::PUBLIC);
+    assert_eq!(
+        mlog.materialized_view_log
+            .as_ref()
+            .expect("the log metadata is set")
+            .read()
+            .base_table_id,
+        base_id
+    );
+    let base = database
+        .tables
+        .iter()
+        .find(|table| table.id == base_id)
+        .expect("the base survives");
+    assert_eq!(
+        base.materialized_view_base
+            .as_ref()
+            .expect("the base gains its log reference")
+            .read()
+            .mlog_id,
+        mlog_id
+    );
+
+    // The purge-schedule row records the log ID with a NULL deadline: the
+    // statement wrote no PURGE clause, which derives (None, true).
+    let purge_table = tidb_exec::mlog_purge_info_table::MlogPurgeInfoTable::locate(&catalog)
+        .expect("the purge table exists");
+    let row = purge_table
+        .find(&mut store, mlog_id)
+        .expect("the purge table scans")
+        .expect("the step recorded the schedule row");
+    assert_eq!(row.next_purge_unix_seconds, None);
+
+    // The job left the active queue and landed in history as DONE, carrying
+    // both affected tables.
+    let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+    let job_table = DdlJobTable::locate(&catalog).expect("the job table exists");
+    assert!(job_table
+        .load(&mut store)
+        .expect("the queue scans")
+        .iter()
+        .all(|active| active.job.id != job_id));
+    let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
+    let history_jobs = history.load(&mut store).expect("SQL history scans");
+    let finished = history_jobs
+        .iter()
+        .find(|job| job.id == job_id)
+        .expect("the finished job is in history");
+    assert_eq!(finished.state, JobState::DONE);
+    let binlog = finished
+        .binlog_info
+        .as_ref()
+        .expect("history keeps BinlogInfo")
+        .read();
+    let finished_tables: Vec<_> = binlog
+        .multiple_table_infos
+        .iter_handles()
+        .into_iter()
+        .flatten()
+        .map(|table| table.read().name.original().to_owned())
+        .collect();
+    assert_eq!(
+        finished_tables,
+        vec!["mv_base".to_owned(), "$mlog$mv_base".to_owned()]
+    );
+
+    // A second base's log create, rolled back before the phase committed:
+    // nothing is dropped, the base keeps no log reference, and the job ends
+    // ROLLBACK_DONE.
+    let fresh = plan_ddl(
+        &mut store,
+        &lower(
+            "CREATE TABLE second_base (id INT PRIMARY KEY AUTO_INCREMENT)",
+            "u6",
+        ),
+        1_503,
+    )
+    .expect("CREATE plans");
+    let DdlPlan::Write(fresh) = fresh else {
+        panic!("CREATE writes metadata")
+    };
+    apply(&mut store, &fresh);
+    let mut spec = prepare_materialized_view_job_submission(
+        &mut store,
+        &lower("CREATE MATERIALIZED VIEW LOG ON second_base (id)", "u6"),
+        1_504,
+        false,
+        0,
+    )
+    .expect("submission preflight succeeds")
+    .expect("the second log create owns a job spec");
+    let rollback_job_id = {
+        let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+        let (mutations, cleanup) = plan_insert_attempt(
+            &mut store,
+            &catalog,
+            std::slice::from_mut(&mut spec),
+            &mut |_| Option::<fn()>::None,
+        )
+        .expect("the insertion attempt plans");
+        apply_mutations(&mut store, &mutations);
+        drop(cleanup);
+        spec.job.id
+    };
+
+    // Go enters the rollback through `job.State = Rollingback`, persisted by
+    // an admin cancel. Rewrite the queued row's state directly.
+    let catalog = load_cluster_catalog(&mut store).expect("catalog loads");
+    let job_table = DdlJobTable::locate(&catalog).expect("the job table exists");
+    let mut active = job_table
+        .load(&mut store)
+        .expect("the queue scans")
+        .into_iter()
+        .find(|active| active.job.id == rollback_job_id)
+        .expect("the second job is active");
+    active.job.state = JobState::ROLLINGBACK;
+    let mut rewrite = Vec::new();
+    job_table
+        .append_update(&mut active, false, &mut rewrite)
+        .expect("the queued row updates");
+    apply_mutations(&mut store, &rewrite);
+
+    let step = plan_persisted_materialized_view_log_job_step(
+        &mut store,
+        rollback_job_id,
+        1_505,
+        None,
+    )
+    .expect("the rollback step plans");
+    assert!(step.terminal);
+    apply_mutations(&mut store, &step.write.mutations);
+
+    let catalog = load_cluster_catalog(&mut store).expect("catalog reloads");
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.original() == "u6")
+        .expect("u6 survives");
+    assert!(
+        !database
+            .tables
+            .iter()
+            .any(|table| table.name.original() == "$mlog$second_base"),
+        "nothing was created, so nothing is dropped"
+    );
+    let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
+    let finished = history
+        .load(&mut store)
+        .expect("SQL history scans")
+        .into_iter()
+        .find(|job| job.id == rollback_job_id)
+        .expect("the rolled-back job is in history");
+    assert_eq!(finished.state, JobState::ROLLBACK_DONE);
 }
 
 /// Go `validateCreateMaterializedViewQuery`'s clause refusals (master

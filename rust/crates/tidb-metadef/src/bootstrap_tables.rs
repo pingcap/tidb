@@ -376,6 +376,41 @@ pub const BOOTSTRAP_TABLES: &[BootstrapTable] = &[
         name: "tidb_workload_values",
         create_sql: CREATE_TI_DBWORKLOAD_VALUES_TABLE,
     },
+    // Go `systemTablesOfMaskingPolicyNextGenVersion`
+    // (meta.MaskingPolicyNextGenBootTableVersion).
+    BootstrapTable {
+        id: TI_DBMASKING_POLICY_TABLE_ID,
+        name: "tidb_masking_policy",
+        create_sql: CREATE_TI_DBMASKING_POLICY_TABLE,
+    },
+    // Go `systemTablesOfMaterializedViewNextGenVersion`
+    // (meta.MaterializedViewNextGenBootTableVersion): the materialized-view
+    // maintenance metadata tables.
+    BootstrapTable {
+        id: TI_DBMVIEW_REFRESH_INFO_TABLE_ID,
+        name: "tidb_mview_refresh_info",
+        create_sql: CREATE_TI_DBMVIEW_REFRESH_INFO_TABLE,
+    },
+    BootstrapTable {
+        id: TI_DBMLOG_PURGE_INFO_TABLE_ID,
+        name: "tidb_mlog_purge_info",
+        create_sql: CREATE_TI_DBMLOG_PURGE_INFO_TABLE,
+    },
+    BootstrapTable {
+        id: TI_DBMVIEW_REFRESH_HIST_TABLE_ID,
+        name: "tidb_mview_refresh_hist",
+        create_sql: CREATE_TI_DBMVIEW_REFRESH_HIST_TABLE,
+    },
+    BootstrapTable {
+        id: TI_DBMVIEW_REFRESH_ALERT_TABLE_ID,
+        name: "tidb_mview_refresh_alert",
+        create_sql: CREATE_TI_DBMVIEW_REFRESH_ALERT_TABLE,
+    },
+    BootstrapTable {
+        id: TI_DBMLOG_PURGE_HIST_TABLE_ID,
+        name: "tidb_mlog_purge_hist",
+        create_sql: CREATE_TI_DBMLOG_PURGE_HIST_TABLE,
+    },
 ];
 
 #[cfg(test)]
