@@ -332,3 +332,5 @@
 - 下轮恢复点: (1) 修分类脚本 → 30 项三分桶(Enum 通用已覆盖/警告废弃型/需真移植)→ 逐个落地; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - hook 分类器修复并产出精确工单: 10 需真移植/2 Enum 已覆盖/1 废弃警告/17 格式未解析(多为废弃警告型)。写入 vardef 收据。
 - 下轮恢复点: (1) 10 条 NEEDS WORK 逐个落地(mem_arbitrator 4 连+gogc_tuner_threshold+tiflash_pipeline_model+schema_cache_size+opt_index_join_build_v2+pessimistic_txn_fair_locking+tx_read_ts); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- mem_arbitrator 簇批(4 变量): mode 小写白名单 disable/standard/priority; wait_averse 精确 0/1/nolimit; query_reserved 0 或 >1 的整数; soft_limit 0/auto 规范化+其余值透传(字节表未移植, 代码中记录)。拒绝均 1105 Refused。session lib 1292 通过/281 预存, fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) 工单余项: gogc_tuner_threshold/max/min、tiflash_pipeline_model、schema_cache_size、opt_index_join_build_v2、pessimistic_txn_fair_locking、tx_read_ts; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。

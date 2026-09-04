@@ -1027,6 +1027,59 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        // The mem-arbitrator Validations (`sysvar.go`, the
+        // tidb_mem_arbitrator_* entries): mode lowercases and whitelists
+        // disable/standard/priority; wait_averse accepts exactly "0", "1"
+        // and "nolimit"; query_reserved accepts "0" or any integer > 1;
+        // soft_limit passes "0" (disable), canonicalizes "auto", and
+        // otherwise needs the byte-size table that is not ported yet --
+        // recorded, not refused here. All refusals are bare errors, 1105.
+        if self.name == "tidb_mem_arbitrator_mode" {
+            let lowered = validated.value.to_ascii_lowercase();
+            if matches!(lowered.as_str(), "disable" | "standard" | "priority") {
+                return Ok(Validated {
+                    value: lowered,
+                    truncated: validated.truncated,
+                });
+            }
+            return Err(ValidationError::Refused(format!(
+                "incorrect value: {original}. tidb_mem_arbitrator_mode options: disable, standard, priority"
+            )));
+        }
+        if self.name == "tidb_mem_arbitrator_wait_averse" {
+            if matches!(validated.value.as_str(), "0" | "1" | "nolimit") {
+                return Ok(validated);
+            }
+            return Err(ValidationError::Refused(
+                "invalid tidb_mem_arbitrator_wait_averse value; only 0, 1 and nolimit are accepted"
+                    .to_owned(),
+            ));
+        }
+        if self.name == "tidb_mem_arbitrator_query_reserved" {
+            if validated.value == "0" {
+                return Ok(validated);
+            }
+            if let Ok(v) = validated.value.parse::<u64>() {
+                if v > 1 {
+                    return Ok(validated);
+                }
+            }
+            return Err(ValidationError::Refused(
+                "invalid tidb_mem_arbitrator_query_reserved value".to_owned(),
+            ));
+        }
+        if self.name == "tidb_mem_arbitrator_soft_limit" && !validated.value.is_empty() {
+            let lowered = validated.value.to_ascii_lowercase();
+            if lowered == "0" || lowered == "auto" {
+                return Ok(Validated {
+                    value: lowered,
+                    truncated: validated.truncated,
+                });
+            }
+            // Other values are byte sizes parsed by Go's SoftLimit table;
+            // until that table is ported the value passes unvalidated here.
+            return Ok(validated);
+        }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
         // else is `ErrWrongTypeForVar` (1232).
@@ -1927,6 +1980,36 @@ mod tests {
             }
             other => panic!("expected a refused error, got {other:?}"),
         }
+    }
+
+    /// The mem-arbitrator whitelist shapes (`sysvar.go`, the
+    /// tidb_mem_arbitrator_* entries).
+    #[test]
+    fn mem_arbitrator_validations_match_go() {
+        let mode = get_sys_var("tidb_mem_arbitrator_mode").unwrap();
+        assert_eq!(mode.validate("STANDARD").unwrap().value, "standard");
+        assert_eq!(mode.validate("disable").unwrap().value, "disable");
+        assert!(matches!(
+            mode.validate("bogus"),
+            Err(ValidationError::Refused(_))
+        ));
+
+        let wait_averse = get_sys_var("tidb_mem_arbitrator_wait_averse").unwrap();
+        for ok in ["0", "1", "nolimit"] {
+            assert_eq!(wait_averse.validate(ok).unwrap().value, ok);
+        }
+        assert!(matches!(
+            wait_averse.validate("2"),
+            Err(ValidationError::Refused(_))
+        ));
+
+        let reserved = get_sys_var("tidb_mem_arbitrator_query_reserved").unwrap();
+        assert_eq!(reserved.validate("0").unwrap().value, "0");
+        assert_eq!(reserved.validate("2").unwrap().value, "2");
+        assert!(matches!(
+            reserved.validate("1"),
+            Err(ValidationError::Refused(_))
+        ));
     }
 
     fn bool_validation() {
