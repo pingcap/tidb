@@ -128,7 +128,7 @@ func TestUserWithSetNames(t *testing.T) {
 }
 
 func TestTransaction(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("begin")
 	ctx := tk.Session()
