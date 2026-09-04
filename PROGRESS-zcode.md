@@ -279,3 +279,6 @@
 - chunk A-3/A-4 核实为**已修复**(吸收树中 row.rs `_ => return` 零触碰契约 = Go 无 default 臂; NewDecimal 臂已 with_declared_shape 按Go SetFrac 规则), divergence 文档已标记 FIXED(verified 2026-09-05)。
 - 下轮恢复点: (1) BINARY(n)/DECIMAL(p,s) 解析器 FieldInfo 宽度面; (2) B-3 命名项(改公开参数名, 属"小而确定"之外, 暂缓); (3) 并发会话新增站点跟随。
 - cast 目标元数据批(executor: result field resolver 对齐 Go parseCastType)进行中: 19 向量 Go 派生回归(pre-fix 失败已证: Signed flags 0≠128), 14 臂修复=Signed/Unsigned flen 22+BinaryFlag、BINARY(n) 指定长度翻 TypeString、DATETIME/TIME fsp 的 +1+fsp flen、YEAR 双 unspecified、DOUBLE 22/unspec、FLOAT 独立 Float(12)、JSON (4194304,0)+utf8mb4 全臂落地、Char/Binary/Decimal/Date/Vector 补 BinaryFlag(ParseToJSONFlag 1<<18 wire 截断不可见已注释)。门禁: resolver 6/6、exec lib 335/0、fmt/clippy/diff-check/make lint PASS。
+- cast 目标元数据批完成并推送 `01056120c85`(rebase 于 bcb8414aa6f 之上)。下轮恢复点: (1) 重读三份 divergence/audit 文档找新开放项; (2) B-3 命名项(暂缓); (3) 并发会话新增站点跟随。
+- F1 关闭: 审计描述的 8005 字面量站点已不存在; 现树 Undetermined 臂 code 1105 + "execution result undetermined" 正是 Go ClassGlobal terror 的 defaultMySQLErrorCode=ErrUnknown 回退(terror.go:266-274), 8005 是 local-latch 写冲突另一错误。文档已标记 CLOSED。
+- 下轮恢复点: (1) error-code audit F2/F3/F4 核实(可能同为过期或已由 error-code 批覆盖); (2) distsql-coprocessor-parity.md Rank1/Rank2 两开放项; (3) expr-builtin inventory A/B(DIV decimal 分歧)两项; (4) B-3 命名(暂缓)。

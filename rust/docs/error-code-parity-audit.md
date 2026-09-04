@@ -134,21 +134,19 @@ Ranked by consequence.
 
 ---
 
-### F1 (rank 1, wrong code) — `[kv:8005]` in the message, `1105` on the wire
+### F1 (rank 1, wrong code) — `[kv:8005]` in the message, `1105` on the wire — CLOSED (2026-09-05, site no longer exists)
 
-`rust/crates/tidb-exec/src/pessimistic_lock_error.rs:120-127` builds an undetermined-commit
-error whose **message text declares `[kv:8005]`** while the **code field is `1105`**. The
-two disagree inside a single error value, so a client that parses the class prefix and a
-client that reads the code number get different answers from the same packet.
-
-Go: `pkg/kv/error.go` defines `ErrWriteConflictInTiDB` as `mysql.ErrWriteConflictInTiDB`
-= **8005**. A commit whose outcome is undetermined is `terror.ErrResultUndetermined`, not
-1105.
-
-This one is unambiguous — the code that the message already names is the code that should be
-in the field. I did not change it because `tidb-exec` is a second, largely test-facing
-pipeline (see above) and the correct choice between 8005 and `ErrResultUndetermined` needs a
-capture to settle.
+The described literal is gone from the absorbed tree: the
+undetermined-commit arm in `pessimistic_lock_error.rs` now sends code
+`1105` with `ERR_RESULT_UNDETERMINED.message()`, self-consistent, and
+that is exactly Go's own wire behavior — `terror.ErrResultUndetermined`
+is a `ClassGlobal` terror with no MySQL code, so `ToSQLError` falls back
+to `defaultMySQLErrorCode = mysql.ErrUnknown` = **1105**
+(`pkg/parser/terror/terror.go:266-274`), with the message "execution
+result undetermined" and state HY000. Go never sends 8005 for this
+outcome; `ErrWriteConflictInTiDB` (8005) is the local-latch write
+conflict, a different error raised elsewhere. No capture was needed —
+the Go source alone settles it.
 
 ---
 
