@@ -16,6 +16,8 @@ package registry
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -27,11 +29,14 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -53,6 +58,17 @@ const (
 
 	// lookupRegistrationSQLTemplate is the SQL template for looking up a registration by its parameters
 	lookupRegistrationSQLTemplate = `
+		SELECT id, status FROM %s.%s
+		WHERE filter_hash = SHA2(%%?, 256)
+		AND route_hash = %%?
+		AND start_ts = %%?
+		AND restored_ts = %%?
+		AND upstream_cluster_id = %%?
+		AND with_sys_table = %%?
+		AND cmd = %%?
+		ORDER BY id DESC
+		FOR UPDATE`
+	legacyLookupRegistrationSQLTemplate = `
 		SELECT id, status FROM %s.%s
 		WHERE filter_hash = MD5(%%?)
 		AND start_ts = %%?
@@ -88,6 +104,12 @@ const (
 	// selectRegistrationsByMaxIDSQLTemplate is the SQL template for selecting registrations by max ID
 	selectRegistrationsByMaxIDSQLTemplate = `
 		SELECT
+		id, filter_strings, source_filter_strings, route_strings, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, status, cmd, filter_hash
+		FROM %s.%s
+		WHERE id < %%?
+		ORDER BY id ASC`
+	legacySelectRegistrationsByMaxIDSQLTemplate = `
+		SELECT
 		id, filter_strings, start_ts, restored_ts, upstream_cluster_id, with_sys_table, status, cmd, filter_hash
 		FROM %s.%s
 		WHERE id < %%?
@@ -95,6 +117,11 @@ const (
 
 	// createNewTaskSQLTemplate is the SQL template for creating a new task
 	createNewTaskSQLTemplate = `
+		INSERT INTO %s.%s
+		(filter_strings, filter_hash, source_filter_strings, route_strings, route_hash, start_ts, restored_ts, upstream_cluster_id,
+		 with_sys_table, status, cmd, task_start_time, last_heartbeat_time)
+		VALUES (%%?, SHA2(%%?, 256), %%?, %%?, %%?, %%?, %%?, %%?, %%?, 'running', %%?, FROM_UNIXTIME(%%?), FROM_UNIXTIME(%%?))`
+	legacyCreateNewTaskSQLTemplate = `
 		INSERT INTO %s.%s
 		(filter_strings, filter_hash, start_ts, restored_ts, upstream_cluster_id,
 		 with_sys_table, status, cmd, task_start_time, last_heartbeat_time)
@@ -108,6 +135,16 @@ const (
 
 	// selectConflictingTaskSQLTemplate is the SQL template for finding tasks with same parameters
 	selectConflictingTaskSQLTemplate = `
+		SELECT id, restored_ts, status, CAST(UNIX_TIMESTAMP(last_heartbeat_time) AS UNSIGNED INTEGER) FROM %s.%s
+		WHERE filter_hash = SHA2(%%?, 256)
+		AND route_hash = %%?
+		AND start_ts = %%?
+		AND upstream_cluster_id = %%?
+		AND with_sys_table = %%?
+		AND cmd = %%?
+		ORDER BY id DESC
+		LIMIT 1`
+	legacySelectConflictingTaskSQLTemplate = `
 		SELECT id, restored_ts, status, CAST(UNIX_TIMESTAMP(last_heartbeat_time) AS UNSIGNED INTEGER) FROM %s.%s
 		WHERE filter_hash = MD5(%%?)
 		AND start_ts = %%?
@@ -160,6 +197,29 @@ const (
 		UPDATE %s.%s
 		SET status = 'paused'
 		WHERE id = %%? AND status IN ('running', 'resetting') AND last_heartbeat_time = FROM_UNIXTIME(%%?)`
+
+	// Old BR binaries do not understand routes. Routed rows expose a wildcard
+	// filter to them so their conflict scan fails conservatively instead of
+	// missing a target namespace occupied by a rename restore.
+	legacyRoutedFilterStrings = "*.*"
+)
+
+var restoreRegistryRouteIndexColumns = []struct {
+	name   string
+	length int
+}{
+	{"filter_hash", types.UnspecifiedLength},
+	{"route_hash", types.UnspecifiedLength},
+	{"start_ts", types.UnspecifiedLength},
+	{"restored_ts", types.UnspecifiedLength},
+	{"upstream_cluster_id", types.UnspecifiedLength},
+	{"with_sys_table", types.UnspecifiedLength},
+	{"cmd", 256},
+}
+
+const (
+	restoreRegistryLegacyIndexName = "unique_registration_params"
+	restoreRegistryRouteIndexName  = "unique_registration_params_v2"
 )
 
 // TaskStatus represents the current state of a restore task
@@ -178,6 +238,10 @@ const (
 type RegistrationInfo struct {
 	// filter patterns
 	FilterStrings []string
+	// RouteStrings contains canonical source-to-target schema/table routes.
+	RouteStrings []string
+	// RouteHash is the stable SHA-256 identity of RouteStrings.
+	RouteHash string
 
 	// time range for restore
 	StartTS    uint64
@@ -207,6 +271,43 @@ type Registry struct {
 	waitIDs []uint64
 
 	tableExists bool
+	// routeSchemaReady is false when a new BR binary connects to a TiDB that
+	// predates restore name routing or is partway through its schema upgrade.
+	// Identity restores keep using legacy SQL in either case.
+	routeSchemaReady bool
+}
+
+func hasRestoreRegistryRouteSchema(tableInfo *model.TableInfo) bool {
+	hasPublicColumn := func(name string) bool {
+		for _, column := range tableInfo.Columns {
+			if column != nil && column.Name.L == name && column.State == model.StatePublic {
+				return true
+			}
+		}
+		return false
+	}
+	for _, name := range []string{"source_filter_strings", "route_strings", "route_hash"} {
+		if !hasPublicColumn(name) {
+			return false
+		}
+	}
+
+	// During v284 both indexes coexist briefly. The legacy index does not
+	// include route_hash and would reject independent routes with the same
+	// source filter, so keep rename disabled until it is fully removed.
+	if tableInfo.FindIndexByName(restoreRegistryLegacyIndexName) != nil {
+		return false
+	}
+	index := tableInfo.FindIndexByName(restoreRegistryRouteIndexName)
+	if index == nil || !index.Unique || !index.IsPublic() || index.Primary || len(index.Columns) != len(restoreRegistryRouteIndexColumns) {
+		return false
+	}
+	for i, expected := range restoreRegistryRouteIndexColumns {
+		if index.Columns[i].Name.L != expected.name || index.Columns[i].Length != expected.length {
+			return false
+		}
+	}
+	return true
 }
 
 // NewRestoreRegistry creates a new registry using TiDB's session
@@ -220,18 +321,20 @@ func NewRestoreRegistry(ctx context.Context, g glue.Glue, dom *domain.Domain) (*
 		return nil, errors.Trace(err)
 	}
 	tableExists := true
-	_, err = dom.InfoSchema().TableByName(ctx, ast.NewCIStr(RestoreRegistryDBName), ast.NewCIStr(RestoreRegistryTableName))
+	tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr(RestoreRegistryDBName), ast.NewCIStr(RestoreRegistryTableName))
 	if err != nil {
 		if !infoschema.ErrTableNotExists.Equal(err) {
 			return nil, errors.Trace(err)
 		}
 		tableExists = false
 	}
+	routeSchemaReady := tableExists && hasRestoreRegistryRouteSchema(tbl.Meta())
 
 	return &Registry{
 		se:               se,
 		heartbeatSession: heartbeatSession,
 		tableExists:      tableExists,
+		routeSchemaReady: routeSchemaReady,
 	}, nil
 }
 
@@ -284,11 +387,69 @@ func (r *Registry) executeInTransaction(ctx context.Context, fn func(context.Con
 	return nil
 }
 
+func normalizeRegistrationRoutes(info *RegistrationInfo) error {
+	if len(info.RouteStrings) == 0 {
+		if info.RouteHash != "" {
+			return errors.Annotate(berrors.ErrInvalidArgument, "restore route hash is set without route rules")
+		}
+		return nil
+	}
+	router, err := nameroute.Parse(info.RouteStrings)
+	if err != nil {
+		return errors.Annotate(err, "invalid restore routes in registry identity")
+	}
+	info.RouteStrings = router.CanonicalRules()
+	fingerprint := router.Fingerprint()
+	expectedHash := hex.EncodeToString(fingerprint[:])
+	if info.RouteHash != "" && info.RouteHash != expectedHash {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"restore route hash %q does not match route rules", info.RouteHash)
+	}
+	info.RouteHash = expectedHash
+	return nil
+}
+
+func marshalRouteStrings(routes []string) (string, error) {
+	if len(routes) == 0 {
+		return "", nil
+	}
+	encoded, err := json.Marshal(routes)
+	if err != nil {
+		return "", errors.Annotate(err, "failed to encode restore routes")
+	}
+	return string(encoded), nil
+}
+
+func unmarshalRouteStrings(encoded string) ([]string, error) {
+	if encoded == "" {
+		return nil, nil
+	}
+	var routes []string
+	if err := json.Unmarshal([]byte(encoded), &routes); err != nil {
+		return nil, errors.Annotate(err, "failed to decode restore routes")
+	}
+	return routes, nil
+}
+
+func (r *Registry) checkRouteColumnCompatibility(info RegistrationInfo) error {
+	if len(info.RouteStrings) > 0 && !r.routeSchemaReady {
+		return errors.Annotate(berrors.ErrInvalidArgument,
+			"restore rename requires a target TiDB whose mysql.tidb_restore_registry route schema is ready")
+	}
+	return nil
+}
+
 // ResumeOrCreateRegistration first looks for an existing registration with the given parameters.
 // If found and paused, it tries to resume it. Otherwise, it creates a new registration.
 // Returns: (taskID, resolvedRestoreTS, error)
 func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info RegistrationInfo,
 	isRestoredTSUserSpecified bool) (uint64, uint64, error) {
+	if err := normalizeRegistrationRoutes(&info); err != nil {
+		return 0, 0, err
+	}
+	if err := r.checkRouteColumnCompatibility(info); err != nil {
+		return 0, 0, err
+	}
 	// resolve which restoredTS to use, handling auto-detection conflicts
 	resolvedRestoreTS, err := r.resolveRestoreTS(ctx, info, isRestoredTSUserSpecified)
 	if err != nil {
@@ -304,9 +465,14 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 	}
 
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
+	routeStrings, err := marshalRouteStrings(info.RouteStrings)
+	if err != nil {
+		return 0, 0, err
+	}
 
 	log.Info("attempting to resume or create registration",
 		zap.String("filter_strings", filterStrings),
+		zap.Strings("route_strings", info.RouteStrings),
 		zap.Uint64("start_ts", info.StartTS),
 		zap.Uint64("restored_ts", info.RestoredTS),
 		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),
@@ -319,9 +485,16 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 	err = r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
 		// first look for an existing task with the same parameters
-		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
-		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
-			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+		lookupTemplate := lookupRegistrationSQLTemplate
+		lookupArgs := []any{filterStrings, info.RouteHash, info.StartTS, info.RestoredTS,
+			info.UpstreamClusterID, info.WithSysTable, info.Cmd}
+		if len(info.RouteStrings) == 0 {
+			lookupTemplate = legacyLookupRegistrationSQLTemplate
+			lookupArgs = []any{filterStrings, info.StartTS, info.RestoredTS,
+				info.UpstreamClusterID, info.WithSysTable, info.Cmd}
+		}
+		lookupSQL := fmt.Sprintf(lookupTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL, lookupArgs...)
 		if err != nil {
 			return errors.Annotate(err, "failed to look up existing task")
 		}
@@ -370,10 +543,16 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 
 		// no existing task found, create a new one
 		currentTime := time.Now().UTC().Unix()
-		insertSQL := fmt.Sprintf(createNewTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
-		_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, insertSQL,
-			filterStrings, filterStrings, info.StartTS, info.RestoredTS,
-			info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime)
+		insertTemplate := createNewTaskSQLTemplate
+		insertArgs := []any{legacyRoutedFilterStrings, filterStrings, filterStrings, routeStrings, info.RouteHash,
+			info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime}
+		if len(info.RouteStrings) == 0 {
+			insertTemplate = legacyCreateNewTaskSQLTemplate
+			insertArgs = []any{filterStrings, filterStrings, info.StartTS, info.RestoredTS,
+				info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime}
+		}
+		insertSQL := fmt.Sprintf(insertTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, insertSQL, insertArgs...)
 		if err != nil {
 			return errors.Annotate(err, "failed to create new registration")
 		}
@@ -492,7 +671,11 @@ func (r *Registry) PauseTask(ctx context.Context, restoreID uint64) error {
 
 // GetRegistrationsByMaxID returns all registrations with IDs smaller than maxID
 func (r *Registry) GetRegistrationsByMaxID(ctx context.Context, maxID uint64) ([]RegistrationInfoWithID, error) {
-	selectSQL := fmt.Sprintf(selectRegistrationsByMaxIDSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	selectTemplate := selectRegistrationsByMaxIDSQLTemplate
+	if !r.routeSchemaReady {
+		selectTemplate = legacySelectRegistrationsByMaxIDSQLTemplate
+	}
+	selectSQL := fmt.Sprintf(selectTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 	registrations := make([]RegistrationInfoWithID, 0)
 
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
@@ -509,22 +692,40 @@ func (r *Registry) GetRegistrationsByMaxID(ctx context.Context, maxID uint64) ([
 	for _, row := range rows {
 		log.Info("found existing restore task", zap.Uint64("restore_id", row.GetUint64(0)),
 			zap.Uint64("max_id", maxID))
-		var (
-			filterStrings     = row.GetString(1)
-			startTS           = row.GetUint64(2)
-			restoredTS        = row.GetUint64(3)
-			upstreamClusterID = row.GetUint64(4)
-			withSysTable      = row.GetInt64(5) != 0 // convert from int64 to bool
-			cmd               = row.GetString(7)
-		)
+		filterStrings := row.GetString(1)
+		var routeStrings []string
+		var routeHash string
+		columnOffset := 0
+		if r.routeSchemaReady {
+			sourceFilterStrings := row.GetString(2)
+			if sourceFilterStrings != "" {
+				filterStrings = sourceFilterStrings
+			}
+			routeStrings, errSQL = unmarshalRouteStrings(row.GetString(3))
+			if errSQL != nil {
+				return nil, errors.Annotatef(errSQL, "invalid routes in restore registration %d", row.GetUint64(0))
+			}
+			routeHash = row.GetString(4)
+			columnOffset = 3
+		}
+		startTS := row.GetUint64(2 + columnOffset)
+		restoredTS := row.GetUint64(3 + columnOffset)
+		upstreamClusterID := row.GetUint64(4 + columnOffset)
+		withSysTable := row.GetInt64(5+columnOffset) != 0 // convert from int64 to bool
+		cmd := row.GetString(7 + columnOffset)
 
 		info := RegistrationInfo{
 			FilterStrings:     strings.Split(filterStrings, FilterSeparator),
+			RouteStrings:      routeStrings,
+			RouteHash:         routeHash,
 			StartTS:           startTS,
 			RestoredTS:        restoredTS,
 			UpstreamClusterID: upstreamClusterID,
 			WithSysTable:      withSysTable,
 			Cmd:               cmd,
+		}
+		if errSQL = normalizeRegistrationRoutes(&info); errSQL != nil {
+			return nil, errors.Annotatef(errSQL, "invalid routes in restore registration %d", row.GetUint64(0))
 		}
 
 		infoWithID := RegistrationInfoWithID{
@@ -546,6 +747,19 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 	dbs []*metautil.Database,
 	tables []*metautil.Table,
 ) error {
+	return r.CheckTablesWithRegisteredTasksAndRoutes(ctx, restoreID, tracker, dbs, tables, nil)
+}
+
+// CheckTablesWithRegisteredTasksAndRoutes checks conflicts in the effective
+// target namespace after applying the current and registered restore routes.
+func (r *Registry) CheckTablesWithRegisteredTasksAndRoutes(
+	ctx context.Context,
+	restoreID uint64,
+	tracker *utils.PiTRIdTracker,
+	dbs []*metautil.Database,
+	tables []*metautil.Table,
+	currentRoutes []string,
+) error {
 	registrations, err := r.GetRegistrationsByMaxID(ctx, restoreID)
 	if err != nil {
 		return errors.Annotatef(err, "failed to query existing registrations")
@@ -566,9 +780,18 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 		}
 
 		f = filter.CaseInsensitive(f)
+		currentRouter, err := nameroute.Parse(currentRoutes)
+		if err != nil {
+			return errors.Annotate(err, "invalid current restore routes")
+		}
+		registeredRouter, err := nameroute.Parse(regInfo.RouteStrings)
+		if err != nil {
+			return errors.Annotatef(err, "invalid routes in restore registration %d", regInfo.restoreID)
+		}
 
 		// check if a table is already being restored
-		if err := r.checkForTableConflicts(tracker, dbs, tables, regInfo, f, restoreID); err != nil {
+		if err := r.checkForTableConflicts(tracker, dbs, tables, regInfo, f,
+			currentRouter, registeredRouter, restoreID); err != nil {
 			return err
 		}
 	}
@@ -588,6 +811,8 @@ func (r *Registry) checkForTableConflicts(
 	tables []*metautil.Table,
 	regInfo RegistrationInfoWithID,
 	f filter.Filter,
+	currentRouter *nameroute.Router,
+	registeredRouter *nameroute.Router,
 	curRestoreID uint64,
 ) error {
 	// function to handle conflict when found
@@ -623,13 +848,27 @@ func (r *Registry) checkForTableConflicts(
 
 	// Use PiTRTableTracker if available for PiTR task
 	if tracker != nil && len(tracker.GetDBNameToTableName()) > 0 {
+		checkedTargetSchemas := make(map[string]struct{})
 		for dbName, tableNames := range tracker.GetDBNameToTableName() {
-			if utils.MatchSchema(f, dbName, regInfo.WithSysTable) {
-				return handleSchemaConflict(dbName)
+			// A log-only PiTR can restore a database that has no selected tables.
+			// In that case the DBInfo metadata still owns the target schema.
+			if len(tableNames) == 0 {
+				targetDB, _, _ := currentRouter.Route(ast.NewCIStr(dbName), ast.CIStr{})
+				if registrationClaimsTarget(registeredRouter, f, targetDB.O, "", regInfo.WithSysTable) {
+					return handleSchemaConflict(targetDB.O)
+				}
+				checkedTargetSchemas[targetDB.L] = struct{}{}
 			}
 			for tableName := range tableNames {
-				if utils.MatchTable(f, dbName, tableName, regInfo.WithSysTable) {
-					return handleTableConflict(dbName, tableName)
+				targetDB, targetTable, _ := currentRouter.Route(ast.NewCIStr(dbName), ast.NewCIStr(tableName))
+				if _, checked := checkedTargetSchemas[targetDB.L]; !checked {
+					if registrationClaimsTarget(registeredRouter, f, targetDB.O, "", regInfo.WithSysTable) {
+						return handleSchemaConflict(targetDB.O)
+					}
+					checkedTargetSchemas[targetDB.L] = struct{}{}
+				}
+				if registrationClaimsTarget(registeredRouter, f, targetDB.O, targetTable.O, regInfo.WithSysTable) {
+					return handleTableConflict(targetDB.O, targetTable.O)
 				}
 			}
 		}
@@ -637,23 +876,67 @@ func (r *Registry) checkForTableConflicts(
 		// for existing point restore task, we need to check database conflicts with snapshot restore.
 		if regInfo.Cmd == "Point Restore" {
 			for _, db := range dbs {
-				if utils.MatchSchema(f, db.Info.Name.O, regInfo.WithSysTable) {
-					return handleSchemaConflict(db.Info.Name.O)
+				targetDB, _, _ := currentRouter.Route(db.Info.Name, ast.CIStr{})
+				if registrationClaimsTarget(registeredRouter, f, targetDB.O, "", regInfo.WithSysTable) {
+					return handleSchemaConflict(targetDB.O)
 				}
 			}
 		}
 		// use tables as this is a snapshot restore task
 		for _, table := range tables {
-			dbName := table.DB.Name.O
-			tableName := table.Info.Name.O
-
-			if utils.MatchTable(f, dbName, tableName, regInfo.WithSysTable) {
-				return handleTableConflict(dbName, tableName)
+			targetDB, targetTable, _ := currentRouter.Route(table.DB.Name, table.Info.Name)
+			if registrationClaimsTarget(registeredRouter, f, targetDB.O, targetTable.O, regInfo.WithSysTable) {
+				return handleTableConflict(targetDB.O, targetTable.O)
 			}
 		}
 	}
 
 	return nil
+}
+
+func registrationClaimsTarget(
+	router *nameroute.Router,
+	f filter.Filter,
+	targetDB string,
+	targetTable string,
+	withSysTable bool,
+) bool {
+	targetDBName := ast.NewCIStr(targetDB)
+	targetTableName := ast.NewCIStr(targetTable)
+	targetMatches := func(sourceDB, sourceTable ast.CIStr) bool {
+		routedDB, routedTable, _ := router.Route(sourceDB, sourceTable)
+		return routedDB.L == targetDBName.L && routedTable.L == targetTableName.L
+	}
+
+	for _, rule := range router.Rules() {
+		if rule.Source.IsTable() {
+			if rule.Target.Schema.L == targetDBName.L &&
+				(targetTable == "" || rule.Target.Table.L == targetTableName.L) &&
+				utils.MatchTable(f, rule.Source.Schema.O, rule.Source.Table.O, withSysTable) {
+				return true
+			}
+			continue
+		}
+		if targetTable == "" {
+			if rule.Target.Schema.L == targetDBName.L &&
+				utils.MatchSchema(f, rule.Source.Schema.O, withSysTable) {
+				return true
+			}
+			continue
+		}
+		if targetMatches(rule.Source.Schema, targetTableName) &&
+			utils.MatchTable(f, rule.Source.Schema.O, targetTable, withSysTable) {
+			return true
+		}
+	}
+
+	if !targetMatches(targetDBName, targetTableName) {
+		return false
+	}
+	if targetTable == "" {
+		return utils.MatchSchema(f, targetDB, withSysTable)
+	}
+	return utils.MatchTable(f, targetDB, targetTable, withSysTable)
 }
 
 // StartHeartbeatManager creates and starts a new heartbeat manager for the given restore ID
@@ -689,9 +972,14 @@ func (r *Registry) resolveRestoreTS(
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 
-	checkSQL := fmt.Sprintf(selectConflictingTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
-	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, checkSQL,
-		filterStrings, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+	checkTemplate := selectConflictingTaskSQLTemplate
+	checkArgs := []any{filterStrings, info.RouteHash, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd}
+	if len(info.RouteStrings) == 0 {
+		checkTemplate = legacySelectConflictingTaskSQLTemplate
+		checkArgs = []any{filterStrings, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd}
+	}
+	checkSQL := fmt.Sprintf(checkTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, checkSQL, checkArgs...)
 	if err != nil {
 		return 0, errors.Annotate(err, "failed to check for existing tasks with same parameters")
 	}
@@ -972,6 +1260,12 @@ func (r *Registry) GlobalOperationAfterSetResettingStatus(
 // Returns the deleted task ID, or 0 if no matching task was found
 func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 	info RegistrationInfo, isRestoredTSUserSpecified bool) (uint64, error) {
+	if err := normalizeRegistrationRoutes(&info); err != nil {
+		return 0, err
+	}
+	if err := r.checkRouteColumnCompatibility(info); err != nil {
+		return 0, err
+	}
 	// resolve which restoredTS to use
 	resolvedRestoreTS, err := r.resolveRestoreTS(ctx, info, isRestoredTSUserSpecified)
 	if err != nil {
@@ -1001,10 +1295,16 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 	err = r.executeInTransaction(ctx, func(ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor,
 		sessionOpts []sqlexec.OptionFuncAlias) error {
 		// find and lock the task that matches the configuration
-		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate,
-			RestoreRegistryDBName, RestoreRegistryTableName)
-		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
-			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+		lookupTemplate := lookupRegistrationSQLTemplate
+		lookupArgs := []any{filterStrings, info.RouteHash, info.StartTS, info.RestoredTS,
+			info.UpstreamClusterID, info.WithSysTable, info.Cmd}
+		if len(info.RouteStrings) == 0 {
+			lookupTemplate = legacyLookupRegistrationSQLTemplate
+			lookupArgs = []any{filterStrings, info.StartTS, info.RestoredTS,
+				info.UpstreamClusterID, info.WithSysTable, info.Cmd}
+		}
+		lookupSQL := fmt.Sprintf(lookupTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL, lookupArgs...)
 		if err != nil {
 			return errors.Annotate(err, "failed to lookup matching task")
 		}

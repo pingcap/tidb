@@ -1432,6 +1432,17 @@ func (fse fakeSQLExecutor) ExecRestrictedSQL(_ context.Context, _ []sqlexec.Opti
 	return nil, nil, errors.Errorf("name: %s, %v", query, args)
 }
 
+type recordingSession struct {
+	glue.Session
+	refreshArgs []*model.RefreshMetaArgs
+}
+
+func (s *recordingSession) RefreshMeta(_ context.Context, args *model.RefreshMetaArgs) error {
+	cloned := *args
+	s.refreshArgs = append(s.refreshArgs, &cloned)
+	return nil
+}
+
 func TestInitSchemasReplaceForDDL(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.ToSlash(t.TempDir())
@@ -1447,7 +1458,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.NoError(t, err)
 		err = stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 1), []byte("123"))
 		require.NoError(t, err)
-		err = client.GetBaseIDMapAndMerge(ctx, false, false, nil, stream.NewTableMappingManager())
+		err = client.GetBaseIDMapAndMerge(ctx, false, false, nil, stream.NewTableMappingManager(), "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "proto: wrong")
 		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 1))
@@ -1459,7 +1470,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		client.SetStorage(ctx, backend, nil)
 		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte("123"))
 		require.NoError(t, err)
-		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager())
+		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "proto: wrong")
 		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 2))
@@ -1474,10 +1485,72 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
-		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager())
+		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no base id map found from saved id or last restored PiTR")
+
+		ids, err := client.GenGlobalIDs(ctx, 1)
+		require.NoError(t, err)
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name: "source_db",
+			DbID: 110,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {
+					Name:         "log_created_table",
+					TableID:      120,
+					TargetDBName: "log_only_target",
+					TargetDBID:   ids[0],
+				},
+			},
+		}
+		manager.DBReplaceMap[30] = &stream.DBReplace{
+			Name:        "LOG_ONLY_TARGET",
+			DbID:        ids[0],
+			TableMap:    map[stream.UpstreamID]*stream.TableReplace{},
+			FilteredOut: true,
+		}
+		require.NoError(t, client.TEST_saveIDMap(ctx, manager, nil))
+		dbInfo, exists := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("log_only_target"))
+		require.True(t, exists)
+		require.NotEqual(t, ids[0], dbInfo.ID)
+		require.Equal(t, dbInfo.ID, manager.DBReplaceMap[10].TableMap[20].TargetDBID)
+		require.Equal(t, dbInfo.ID, manager.DBReplaceMap[30].DbID)
+		require.NoError(t, client.ValidateTableRouteTargetDatabases(ctx, manager))
+
+		tk.MustExec("DROP DATABASE log_only_target")
+		err = client.ValidateTableRouteTargetDatabases(ctx, manager)
+		require.ErrorContains(t, err, "persisted table-route target database log_only_target is missing")
+		_, exists = s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("log_only_target"))
+		require.False(t, exists)
 	}
+
+	t.Run("refresh table metadata in its routed target database", func(t *testing.T) {
+		session := &recordingSession{}
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, nil, session)
+		schemasReplace := &stream.SchemasReplace{
+			DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+				10: {
+					Name: "source_db",
+					DbID: 110,
+					TableMap: map[stream.UpstreamID]*stream.TableReplace{
+						20: {
+							Name:         "target_table",
+							TableID:      120,
+							TargetDBName: "target_db",
+							TargetDBID:   210,
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, client.RefreshMetaForTables(ctx, schemasReplace))
+		require.Len(t, session.refreshArgs, 1)
+		require.Equal(t, int64(210), session.refreshArgs[0].SchemaID)
+		require.Equal(t, int64(120), session.refreshArgs[0].TableID)
+		require.Equal(t, "target_db", session.refreshArgs[0].InvolvedDB)
+	})
 }
 
 func downstreamID(upstreamID int64) int64 {
@@ -1688,6 +1761,75 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 	})
 }
 
+func TestPITRIDMapRouteFingerprintContinuity(t *testing.T) {
+	ctx := context.Background()
+	testCases := []struct {
+		name                 string
+		persistedFingerprint string
+		currentFingerprint   string
+		wantErr              bool
+	}{
+		{
+			name:                 "same rules",
+			persistedFingerprint: "route-target-a",
+			currentFingerprint:   "route-target-a",
+		},
+		{
+			name:                 "legacy no rename",
+			persistedFingerprint: "",
+			currentFingerprint:   "",
+		},
+		{
+			name:                 "rename to none",
+			persistedFingerprint: "route-target-a",
+			currentFingerprint:   "",
+			wantErr:              true,
+		},
+		{
+			name:                 "none to rename",
+			persistedFingerprint: "",
+			currentFingerprint:   "route-target-a",
+			wantErr:              true,
+		},
+		{
+			name:                 "target A to target B",
+			persistedFingerprint: "route-target-a",
+			currentFingerprint:   "route-target-b",
+			wantErr:              true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			dom := domain.NewMockDomain()
+			backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+			require.NoError(t, err)
+
+			previousTaskClient := logclient.TEST_NewLogClient(123, 0, 1, 3, dom, fakeSession{})
+			require.NoError(t, previousTaskClient.SetStorage(ctx, backend, nil))
+			baseManager := &stream.TableMappingManager{DBReplaceMap: getDBMap()}
+			require.NoError(t, previousTaskClient.TEST_saveIDMap(
+				ctx, baseManager, nil, testCase.persistedFingerprint,
+			))
+
+			currentTaskClient := logclient.TEST_NewLogClient(123, 1, 2, 3, dom, fakeSession{})
+			require.NoError(t, currentTaskClient.SetStorage(ctx, backend, nil))
+			mergedManager := stream.NewTableMappingManager()
+			err = currentTaskClient.GetBaseIDMapAndMerge(
+				ctx, false, false, nil, mergedManager, testCase.currentFingerprint,
+			)
+			if testCase.wantErr {
+				require.ErrorContains(t, err, "restore rename rules do not match the previous PiTR ID map")
+				require.Empty(t, mergedManager.DBReplaceMap)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Len(t, mergedManager.DBReplaceMap, len(baseManager.DBReplaceMap))
+		})
+	}
+}
+
 func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
@@ -1745,6 +1887,45 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	}
 }
 
+func TestLogRestoreCheckpointRouteFingerprint(t *testing.T) {
+	ctx := context.Background()
+	newManager := func(t *testing.T) checkpoint.LogMetaManagerT {
+		storage, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
+		manager := checkpoint.NewLogStorageMetaManager(storage, nil, 123, "test", 1)
+		t.Cleanup(manager.Close)
+		return manager
+	}
+	newClient := func(t *testing.T) *logclient.LogClient {
+		client := logclient.TEST_NewLogClient(123, 1, 2, 3, nil, nil)
+		require.NoError(t, client.SetCurrentTS(4))
+		return client
+	}
+	loadOrCreate := func(t *testing.T, client *logclient.LogClient, manager checkpoint.LogMetaManagerT, fingerprint string) error {
+		_, _, _, err := client.LoadOrCreateCheckpointMetadataForLogRestore(
+			ctx, 5, 1, 2, "1.1", "8", nil, manager, 6, fingerprint)
+		return err
+	}
+
+	t.Run("same fingerprint resumes and changed fingerprint is rejected", func(t *testing.T) {
+		manager := newManager(t)
+		client := newClient(t)
+		require.NoError(t, loadOrCreate(t, client, manager, "route-a"))
+		require.NoError(t, loadOrCreate(t, client, manager, "route-a"))
+		require.ErrorContains(t, loadOrCreate(t, client, manager, "route-b"),
+			"restore rename rules do not match the log restore checkpoint")
+	})
+
+	t.Run("legacy empty fingerprint accepts only no rename", func(t *testing.T) {
+		manager := newManager(t)
+		client := newClient(t)
+		require.NoError(t, loadOrCreate(t, client, manager, ""))
+		require.NoError(t, loadOrCreate(t, client, manager, ""))
+		require.ErrorContains(t, loadOrCreate(t, client, manager, "route-a"),
+			"restore rename rules do not match the log restore checkpoint")
+	})
+}
+
 // TestRebaseAutoIncrementIDForSepAutoIncTables is a regression test for
 // https://github.com/pingcap/tidb/issues/69485: after PiTR log replay bumps the
 // persisted auto-increment counter of an AUTO_ID_CACHE=1 table directly in TiKV,
@@ -1794,11 +1975,16 @@ func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
 	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, nil)
 	schemasReplace := &stream.SchemasReplace{
 		DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
-			dbID: {
-				Name: "test",
-				DbID: dbID,
+			dbID + 1000: {
+				Name: "source_db",
+				DbID: dbID + 1000,
 				TableMap: map[stream.UpstreamID]*stream.TableReplace{
-					tableID: {Name: "t", TableID: tableID},
+					tableID: {
+						Name:         "t",
+						TableID:      tableID,
+						TargetDBName: "test",
+						TargetDBID:   dbID,
+					},
 				},
 			},
 		},
@@ -1810,6 +1996,15 @@ func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
 	fixedNext, err := alloc.NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, target+1, fixedNext)
+
+	modeSession, err := gluetidb.New().CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	require.NoError(t, modeSession.AlterTableMode(ctx, dbID, tableID, model.TableModeRestore))
+	client = logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, modeSession)
+	require.NoError(t, client.SetTableModeToNormal(ctx, schemasReplace))
+	restoredTable, exists := s.Mock.Domain.InfoSchema().TableByID(ctx, tableID)
+	require.True(t, exists)
+	require.Equal(t, model.TableModeNormal, restoredTable.Meta().Mode)
 }
 
 type mockLogStrategy struct {
