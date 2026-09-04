@@ -753,6 +753,55 @@ git diff --check
 # documented baseline test failures above
 ```
 
+## Rust-only parity fix: decimal add/sub leading-word overflow heuristic
+
+Go `pkg/types/mydecimal.go:1909-1926` computes the destination integer-word
+count from the wider operand, then increments it when the leading base-1e9
+word can carry (`x > wordMax-1`). The check happens before the remaining words
+are added, so a nine-word value beginning with `999999999` plus a smaller
+operand reports `ErrOverflow` and is overwritten with the nine-word maximum,
+even when the exact sum would otherwise fit. `DecimalSub` reaches the same
+`doAdd` branch for opposite-sign operands.
+
+Rust `Decimal::add_mysql` and opposite-sign `sub_mysql` now use
+`add_leading_word_overflow` in `rust/crates/tidb-datatype/src/decimal/mod.rs`.
+The helper mirrors the leading-word carry and only reports overflow when that
+carry would exceed the fixed nine-word buffer; ordinary `999999999 + 1`
+therefore remains valid. The source-only 81-digit distinguishing input is
+covered by `decimal_tests::add_overflow_uses_go_leading_word_heuristic`.
+
+Ready validation (commands run from the dedicated worktree):
+
+```text
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+# passed
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib add_ -- --nocapture
+# passed: 5 tests (including the complete add source rows and focused regression)
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 407 unit tests; 64 source/integration tests
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,146 passed, 1 known loopback HTTP JSON-schema fixture failed, 121 ignored
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,052 passed, 121 existing planner/storage/fixture failures, 0 ignored
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+git diff --check
+# passed
+```
+
+The M6 behavior is unreachable through ordinary SQL because the distinguishing
+input exceeds `DECIMAL(65)`, but the fixed-word codec remains source-compatible
+for direct callers and row-codec boundaries.
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

@@ -29,12 +29,15 @@ compares rejected-vs-accepted only, never error text, and observes warnings on
 `M*` MyDecimal, `F*` FieldType/Set/Enum. Counts and the unaudited list are at
 the bottom.
 
-The highest-impact open items are now:
+The highest-impact open item is now:
 
 - **D5** — `Datum::compare` still lacks Go's statement context, so timezone,
   SQL-mode flags, and truncation-warning publication are pinned or dropped.
-- **M10** — fixed 2026-09-04; the fixed-word parser now preserves Go's
-  distinct no-digits `TruncatedWrongValue` and exponent `BadNumber` identities.
+
+M6 and M10 are fixed in the Rust owner: the decimal add/sub boundary now
+preserves Go's leading-word overflow heuristic, and the fixed-word parser
+preserves Go's distinct no-digits `TruncatedWrongValue` and exponent
+`BadNumber` identities.
 
 The former F1, D1, and T1/T2 rank-one defects are fixed in this branch; their
 focused regressions and Ready outcomes remain linked in the sections below.
@@ -733,18 +736,25 @@ Practical blast radius: `grep -rn ModeCeiling pkg/` finds only
 caller. The focused Rust regression and owner Ready evidence are recorded in
 `rust/testport/receipts/types_decimal_round_ceiling.md`.
 
-## M6 (rank 1 in-function, unreachable via SQL) — add/sub overflow test is result-based
+## M6 (rank 1 in-function, FIXED 2026-09-04; unreachable via SQL) — add/sub overflow test is result-based
 
 - Go: `pkg/types/mydecimal.go:1909-1926` — `wordsIntTo = max(wordsInt1,
   wordsInt2)`, then `if x > wordMax-1 { wordsIntTo++ }` where `x` is the
   *leading word* of the wider operand. An operand heuristic that over-reports.
-- Rust: `rust/crates/tidb-datatype/src/decimal.rs:467-487` derives `words_int`
-  from the actual result.
+- Rust: `rust/crates/tidb-datatype/src/decimal/mod.rs` now mirrors the source
+  precheck in `add_leading_word_overflow`, including the nine-word capacity
+  test, and applies it to `add_mysql` plus opposite-sign `sub_mysql`.
 
 Distinguishing input: `999999999` followed by 72 zeros (81 digits, so
 `wordBuf[0] == 999999999`) `+ 1` → Go `ErrOverflow` with the result overwritten
-by 81 nines; Rust the exact sum with no warning. Requires 81 integer digits,
-above `DECIMAL(65)`, so unreachable through ordinary SQL.
+by 81 nines; Rust now returns the same warning and max-value shape. Ordinary
+small additions such as `999999999 + 1` remain valid because the extra carry
+still fits in the nine-word buffer. Requires 81 integer digits, above
+`DECIMAL(65)`, so unreachable through ordinary SQL.
+
+The focused regression is
+`decimal_tests::add_overflow_uses_go_leading_word_heuristic`; Ready evidence
+is recorded in `rust/testport/receipts/types_explain_format_audit.md`.
 
 ## M7 (rank 3) — `from_bin` discards Go's `binSize` on a corrupt payload (FIXED 2026-09-04)
 
@@ -1357,8 +1367,8 @@ the exact quotient word); `maxDecimal`/`NewMaxOrMinDec` including
 | MyDecimal (M) | 4 | 1 | 2 | 3 | 10 |
 | FieldType / Set / Enum (F) | 3 | 0 | 0 | 4 | 7 |
 
-(Findings that are rank 1 in-function but unreachable through SQL — M6, M9 —
-are counted at their in-function rank and flagged in place. D7 and F1 are
+(Findings that are rank 1 in-function but unreachable through SQL — fixed M6
+and M9 — are counted at their in-function rank and flagged in place. D7 and F1 are
 counted although they are fixed in this branch.)
 
 **Audited.** `compare.go`, `convert.go`, `truncate.go`, `context.go`,

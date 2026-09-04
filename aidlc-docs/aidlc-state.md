@@ -2,14 +2,14 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` comparison result-shape parity batch (finding D4)
+- Work unit: `pkg/types` decimal add/sub fixed-word boundary parity batch (finding M6)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: the focused paired-comparison regressions and serialized
+- Validation: the focused decimal add-overflow regression and serialized
   datatype/expression/executor owner profiles pass or retain their known
-  baseline blockers. Datatype reports 406 unit and 64 source/integration
-  passes; expression reports 1,144 passes, one known loopback HTTP
+  baseline blockers. Datatype reports 407 unit and 64 source/integration
+  passes; expression reports 1,146 passes, one known loopback HTTP
   JSON-schema fixture failure, and 121 ignored; executor reports 1,052
   passes and 121 existing planner/storage/fixture failures. Strict
   datatype clippy remains blocked only by the unrelated
@@ -107,6 +107,10 @@
   beside temporal/duration parse errors and numeric/decimal string truncation
   diagnostics, while the strict `compare` wrapper remains source-compatible.
   Receipt: `rust/testport/receipts/types_explain_format_audit.md`.
+- Current batch: Rust `Decimal::add_mysql` and opposite-sign `sub_mysql` now
+  preserve Go's leading-word carry heuristic and nine-word overflow boundary.
+  The focused 81-digit regression and Ready counts are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 - Next action: continue with the next executable Rust package boundary after
-  this D4 batch; D5 statement-context flags, timezone, and warning publication
+  this M6 batch; D5 statement-context flags, timezone, and warning publication
   remain explicit follow-ups.

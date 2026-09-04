@@ -150,6 +150,12 @@
   spelling-authoritative `IsBinaryStr`. A legacy JSON field with `Collate:""`
   remains a character string and needs restored data; the focused regression is
   recorded in `rust/testport/receipts/types_explain_format_audit.md`.
+
+- 2026-09-04: aligned decimal add/sub fixed-word overflow with Go's
+  leading base-1e9 word heuristic. A full nine-word `999999999…` operand plus
+  one now returns the Go overflow/max-value pair, while smaller carries remain
+  valid. Focused regression and Ready evidence are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 ## chunk A-1 范围确认（下批实现）
 ## chunk A-1 范围确认（下批实现；树当前全绿 1128/0 expr lib，A-1 实现需新上下文完整验证）
 

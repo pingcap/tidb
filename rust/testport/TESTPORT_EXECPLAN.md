@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (M6, `pkg/types` decimal add/sub fixed-word boundary): aligned
+  Rust `Decimal::add_mysql` and opposite-sign `sub_mysql` with Go's
+  leading-word carry precheck, including the nine-word capacity limit. The
+  81-digit `999999999… + 1` regression now returns Go's overflow/max-value
+  pair while ordinary smaller carries remain valid. Focused and Ready
+  evidence are recorded in `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (D4, `pkg/types` comparison result shape): added
   `Datum::compare_with_error`, retaining Go's ordering beside temporal and
   duration parse errors and beside numeric/decimal string truncation events.

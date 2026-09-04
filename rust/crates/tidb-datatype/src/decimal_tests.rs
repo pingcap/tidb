@@ -1507,6 +1507,25 @@ fn test_add_my_decimal() {
     assert_eq!(actual.to_string(), large_output);
 }
 
+/// Go `doAdd` checks the leading base-1e9 word before adding the remaining
+/// words. A full `999999999` leading word therefore reports overflow even when
+/// the exact 81-digit result would still fit in the nine-word buffer.
+#[test]
+fn add_overflow_uses_go_leading_word_heuristic() {
+    let left = format!("999999999{}", "0".repeat(72));
+    let (actual, warning) = Decimal::from_literal(&left).add_mysql(&Decimal::from_int(1));
+
+    assert_eq!(warning, Some(DecimalCodecWarning::Overflow));
+    assert_eq!(actual.to_string(), "9".repeat(81));
+
+    // Opposite-sign DecimalAdd takes Go's doSub path, so the same leading
+    // word must not spuriously trigger the add-only overflow precheck.
+    let (actual, warning) =
+        Decimal::from_signed_literal(&format!("-{left}")).add_mysql(&Decimal::from_int(1));
+    assert_eq!(warning, None);
+    assert_eq!(actual.to_string(), format!("-999999998{}", "9".repeat(72)));
+}
+
 /// Complete source `TestSubMyDecimal` row set.
 #[test]
 fn test_sub_my_decimal() {

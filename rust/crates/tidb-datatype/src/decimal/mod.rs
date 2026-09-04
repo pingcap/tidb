@@ -783,12 +783,33 @@ impl Decimal {
 
     /// Source `DecimalAdd`, including MyDecimal's nine-word result bound.
     pub fn add_mysql(&self, other: &Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
-        self.bound_add_sub_result(self.add(other))
+        let result = self.add(other);
+        // `DecimalAdd` reaches Go's `doAdd` only when both operands have the
+        // same sign. Opposite-sign inputs use `doSub` and must be bounded from
+        // the actual difference instead of this add-only heuristic.
+        if self.negative == other.negative && add_leading_word_overflow(self, other) {
+            return (
+                Decimal::max_or_min(false, (CODEC_WORD_BUF_LEN * DIGITS_PER_WORD) as u32, 0),
+                Some(DecimalCodecWarning::Overflow),
+            );
+        }
+        self.bound_add_sub_result(result)
     }
 
     /// Source `DecimalSub`, including MyDecimal's nine-word result bound.
     pub fn sub_mysql(&self, other: &Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
-        self.bound_add_sub_result(self.add(&other.negate()))
+        let result = self.add(&other.negate());
+        // Go's DecimalSub reaches doAdd only when the operands have opposite
+        // signs; in that branch the same leading-word carry heuristic applies
+        // to the two magnitudes. Same-sign subtraction uses doSub and is
+        // bounded from the actual result below.
+        if self.negative != other.negative && add_leading_word_overflow(self, other) {
+            return (
+                Decimal::max_or_min(false, (CODEC_WORD_BUF_LEN * DIGITS_PER_WORD) as u32, 0),
+                Some(DecimalCodecWarning::Overflow),
+            );
+        }
+        self.bound_add_sub_result(result)
     }
 
     fn bound_add_sub_result(&self, result: Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
@@ -1614,6 +1635,31 @@ impl Decimal {
         let digits = pad_scale(&kept, result_scale, storage_scale);
         Decimal::new_with_storage(self.negative, digits, result_scale, storage_scale)
     }
+}
+
+/// Go `doAdd` decides an overflow from the leading base-1e9 word before it
+/// adds the remaining words. That heuristic intentionally over-reports for a
+/// full leading word of `999999999`, even when the exact result would still
+/// fit in nine words; preserving it is required for the source error/value
+/// pair at the fixed-word boundary.
+fn add_leading_word_overflow(left: &Decimal, right: &Decimal) -> bool {
+    let left = MyDecimalWords::from_decimal(left);
+    let right = MyDecimalWords::from_decimal(right);
+    let left_words = digits_to_words(left.digits_int.max(0) as usize);
+    let right_words = digits_to_words(right.digits_int.max(0) as usize);
+    let leading = if left_words > right_words {
+        left.word_buf[0]
+    } else if right_words > left_words {
+        right.word_buf[0]
+    } else {
+        left.word_buf[0].saturating_add(right.word_buf[0])
+    };
+    // `doAdd` increments the destination word count when this leading
+    // word can carry.  That is only an overflow once the increment would
+    // exceed the fixed nine-word buffer; smaller values (for example,
+    // `999999999 + 1`) legitimately grow from one word to two.
+    let carry = leading > CODEC_POWERS10[DIGITS_PER_WORD] - 2;
+    left_words.max(right_words) + usize::from(carry) > CODEC_WORD_BUF_LEN
 }
 
 fn format_go_shortest_float(value: f64) -> String {
