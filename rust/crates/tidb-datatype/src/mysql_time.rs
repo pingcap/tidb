@@ -768,17 +768,14 @@ impl fmt::Display for Time {
     }
 }
 
-/// Returns the number of fractional digits in a temporal literal, capped at 6.
+/// Returns Go `GetFsp`'s byte count after the selected fraction dot, capped at
+/// six. The source deliberately includes trailing text and timezone bytes.
 pub fn get_fsp(value: &str) -> u8 {
     let index = get_frac_index(value);
     if index < 0 {
         return 0;
     }
-    value.as_bytes()[index as usize + 1..]
-        .iter()
-        .take_while(|byte| byte.is_ascii_digit())
-        .count()
-        .min(6) as u8
+    (value.len() - index as usize - 1).min(6) as u8
 }
 
 /// Returns the byte index of the fraction dot, or `-1`.
@@ -1208,7 +1205,7 @@ mod tests {
             ("2012-01-01 00:00:00", -1, 0),
             ("2012-01-01 00:00:00.1", 19, 1),
             ("00:00:00.1234567", 8, 6),
-            ("1.2e3", 1, 1),
+            ("1.2e3", 1, 3),
             ("2019.01.01 00:00:00", -1, 0),
             ("2019.01.01 00:00:00.1", 19, 1),
             ("12345.6", 5, 1),
@@ -1218,6 +1215,19 @@ mod tests {
             assert_eq!(get_frac_index(value), index);
             assert_eq!(get_fsp(value), fsp);
         }
+    }
+
+    /// Go `GetFsp` counts every byte after the selected dot, including a time
+    /// zone suffix or trailing text, before capping the result at six.
+    #[test]
+    fn get_fsp_counts_source_suffix_bytes() {
+        assert_eq!(get_fsp("2020-01-01 12:00:00.1+05:00"), 6);
+        assert_eq!(get_fsp("2020-01-01 12:00:00.5xyz"), 4);
+
+        let parsed =
+            crate::parse_datetime("2020-01-01 12:00:00.1+05:00", &chrono_tz::UTC, true, false)
+                .unwrap();
+        assert_eq!(parsed.time.fsp(), 6);
     }
 
     /// Complete translation of `pkg/types/time_test.go::TestGetFsp`.

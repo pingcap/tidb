@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned `get_fsp` in the Rust `tidb-datatype` owner for the
+  complete Go-master `pkg/types` temporal literal boundary. FSP now counts all
+  bytes after the source fraction dot (including timezone/trailing bytes) and
+  caps at six; the focused fail-before regression also checks the live
+  `parse_datetime` metadata path. Evidence is recorded in
+  `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04: aligned signed string/bytes integer conversion in the Rust
   `tidb-datatype` owner for complete Go-master `pkg/types`. Narrow signed
   targets now preserve Go's original parse/truncation error when range

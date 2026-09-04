@@ -259,6 +259,29 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # pre-fix: failed (`Overflow` instead of `Truncated`); after fix: 1 passed
 ```
 
+## Rust-only parity follow-up: temporal FSP byte counting
+
+The complete 61-artifact `pkg/types` inventory owns the temporal literal
+helpers used by the Rust parser. Go's `GetFsp` (`pkg/types/time.go:569-581`)
+defines FSP as the number of bytes after the selected dot, capped at six; it
+does not stop at the first non-digit, so timezone suffixes and trailing text
+contribute to the count. Rust's `get_fsp` previously counted only an initial
+ASCII-digit run, producing a different FSP on the live `parse_datetime` path.
+
+The Rust `tidb-datatype` owner now uses the source byte-length calculation. The
+focused regression `mysql_time::tests::get_fsp_counts_source_suffix_bytes`
+covers a timezone suffix (`"... .1+05:00"` → FSP 6), trailing text
+(`"... .5xyz"` → FSP 4), and the resulting `parse_datetime` metadata. Before
+the change the first assertion returned FSP 1. No Go, generated, or Bazel file
+changed.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib get_fsp_counts_source_suffix_bytes -- --nocapture
+# pre-fix: failed (1 instead of 6); after fix: 1 passed
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.
