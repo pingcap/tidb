@@ -23,8 +23,10 @@
 //! pool). Helpers that have a direct metadata owner are asserted live below;
 //! queue- and cluster-lifecycle helpers remain `#[ignore]`d documentaries.
 
+use tidb_executor::ddl::{merge_continuous_key_ranges, KeyRangeMayExclude};
 use tidb_executor::StmtContext;
 use tidb_model::{GoSharedSlice, PartitionDefinition, PartitionInfo};
+use tidb_txnkv::{Key, KeyRange};
 
 /// A `StmtContext` exists so this module keeps a crate-level dependency even
 /// when every test in it is an ignored documentary.
@@ -89,14 +91,49 @@ fn find_next_non_touched_partition_id_skips_dropping_definitions() {
 // excluded/excluded/kept -> the last; kept/excluded/excluded -> the first;
 // excluded/kept/excluded -> the middle.
 //
-// go-parity-gap: neither `keyRangeMayExclude` nor the merge is transcreated
-// (the flashback-cluster key-range planner it serves is not ported).
 #[test]
-#[ignore = "go-parity-gap: mergeContinuousKeyRanges (pkg/ddl/cluster.go:330) is not transcreated"]
 fn merge_continuous_key_ranges_drops_excluded_and_coalesces_rest() {
     // Contract (pkg/ddl/cluster.go:330-368): excluded ranges vanish, the
     // remaining ones merge when adjacent, per the seven cases of
     // pkg/ddl/ddl_test.go:360.
+    let range = |start: u8, end: u8, exclude: bool| KeyRangeMayExclude {
+        range: KeyRange::new(Key::from_bytes(vec![start]), Key::from_bytes(vec![end])),
+        exclude,
+    };
+    let output = |ranges: &[KeyRangeMayExclude]| {
+        merge_continuous_key_ranges(ranges)
+            .into_iter()
+            .map(|range| {
+                (
+                    range.start_key.as_bytes().to_vec(),
+                    range.end_key.as_bytes().to_vec(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(output(&[range(1, 2, true)]), Vec::<(Vec<u8>, Vec<u8>)>::new());
+    assert_eq!(output(&[range(1, 2, false)]), vec![(vec![1], vec![2])]);
+    assert_eq!(
+        output(&[range(1, 2, false), range(3, 4, false)]),
+        vec![(vec![1], vec![4])]
+    );
+    assert_eq!(
+        output(&[range(1, 2, false), range(2, 3, true), range(3, 4, false)]),
+        vec![(vec![1], vec![2]), (vec![3], vec![4])]
+    );
+    assert_eq!(
+        output(&[range(1, 2, true), range(2, 3, true), range(3, 4, false)]),
+        vec![(vec![3], vec![4])]
+    );
+    assert_eq!(
+        output(&[range(1, 2, false), range(2, 3, true), range(3, 4, true)]),
+        vec![(vec![1], vec![2])]
+    );
+    assert_eq!(
+        output(&[range(1, 2, true), range(2, 3, false), range(3, 4, true)]),
+        vec![(vec![2], vec![3])]
+    );
 }
 
 // --- TestDetectAndUpdateJobVersion (pkg/ddl/ddl_test.go:475) ---

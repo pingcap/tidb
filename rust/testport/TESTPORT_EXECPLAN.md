@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` continuous key-range merge): transcreated Go
+  `mergeContinuousKeyRanges` and its `keyRangeMayExclude` wrapper in
+  `tidb-executor::ddl`. Excluded ranges now terminate a run while kept ranges
+  coalesce into owned half-open `KeyRange`s; the seven source cases from
+  `pkg/ddl/ddl_test.go:360` are live rather than ignored. The DDL job queue and
+  flashback-cluster orchestration remain separate documented gaps.
 - 2026-09-05 (`pkg/meta/autoid` service ownership transfer): aligned
   `tidb-exec::AutoIdServiceAllocator` with Go master `singlePointAlloc.Transfer`.
   Transfer now takes an exclusive binding lock, refreshes the authoritative
