@@ -43,6 +43,15 @@ For each bounded behavior cluster:
 ## Progress
 
 - 2026-09-04: aligned the Rust `tidb-datatype` owner for the complete
+  Go-master `pkg/types` binary-literal signed-conversion boundary. Direct
+  `Datum::to_i64` now preserves Go's split between bounded `BinaryLiteral`
+  conversion and MySQL BIT reinterpretation, while `Datum::convert_to` returns
+  zero beside the truncation event for literals wider than eight bytes. The
+  focused fail-before regression and the package-wide Ready validation are
+  recorded in `receipts/types_explain_format_audit.md`; the remaining
+  comparison-context findings stay explicit follow-ups.
+
+- 2026-09-04: aligned the Rust `tidb-datatype` owner for the complete
   Go-master `pkg/types` float-to-decimal conversion boundary. `Datum::to_decimal`
   now routes REAL and FLOAT32 through Go's shortest `%g` formatting and the
   existing `MyDecimal.FromString`-equivalent parser, preserving the saturated

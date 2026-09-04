@@ -113,6 +113,39 @@ timezone or session-warning policy is introduced here. Broader SQL warning
 disposition and all non-UTF-8 datum comparison boundaries remain separate
 `pkg/types` follow-ups.
 
+## Rust-only parity follow-up: binary-literal signed conversion
+
+The same complete 61-artifact `pkg/types` inventory remains the owning package
+for this follow-up. Go's `Datum.ToInt64` special-cases `KindMysqlBit` and
+reinterprets its unsigned payload as `int64`, but sends `KindBinaryLiteral`
+through `toSignedInteger`. That bounded path returns `math.MaxInt64` plus
+`ErrOverflow` for an eight-byte `0xffffffffffffffff` literal, and returns the
+zero value plus `ErrTruncatedWrongVal` when `BinaryLiteral.ToInt` rejects a
+non-zero payload wider than eight bytes. Rust previously combined the two kinds
+and unconditionally cast the unsigned payload to `i64`, producing `-1` for the
+eight-byte hex literal and retaining `u64::MAX` for a too-wide literal.
+
+The Rust `tidb-datatype` owner now keeps the source split: direct
+`Datum::to_i64` bounds `BinaryLiteral` while preserving BIT reinterpretation,
+and `Datum::convert_to` uses the source bounded path for both kinds. The
+focused regression is
+`datum::convert::tests::source_binary_literal_to_i64_saturates_but_mysql_bit_reinterprets`;
+with the old combined arm it failed (`-1` instead of `9223372036854775807`),
+and after the fix it covers the overflow, too-wide, BIT, and `ConvertTo`
+results. No Go, generated, or Bazel file changed.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib source_binary_literal_to_i64_saturates_but_mysql_bit_reinterprets -- --nocapture
+# pre-fix: failed (`-1` vs `9223372036854775807`); after fix: 1 passed
+```
+
+The remaining `Datum::compare` context/non-UTF-8 findings stay separate
+follow-ups because they require a broader warning and timezone context API.
+Because this follow-up changes only Rust production/tests plus its receipt and
+plan, it does not add a new Go/Bazel preparation requirement.
+
 ## Validation
 
 Profile: Ready for this bounded production change.
@@ -125,6 +158,15 @@ Profile: Ready for this bounded production change.
 - `rustfmt +nightly-2026-08-22 --edition 2021 --check crates/tidb-datatype/src/explain_format.rs crates/tidb-datatype/src/lib.rs` — passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed.
 - `git diff --check` — passed.
+
+For the binary-literal follow-up specifically:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib source_binary_literal_to_i64_saturates_but_mysql_bit_reinterprets -- --nocapture` — pre-fix failed on the unsaturated `-1`; after the fix, 1 focused test passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (373 tests).
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,114 tests; 130 documented source-carrier gaps ignored).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` and `git diff --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed.
 
 `make bazel_prepare` is required by the new top-level Go regression and was
 attempted; the local toolchain blocks it before metadata generation.

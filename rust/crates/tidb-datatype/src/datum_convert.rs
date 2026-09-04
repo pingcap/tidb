@@ -270,15 +270,16 @@ impl Datum {
             )),
             Self::BinaryLiteral(value) | Self::Bit(value) => {
                 let literal = value.to_int();
-                let bounded = numeric_outcome(convert_uint_to_int(literal.value(), upper, target));
-                Converted {
-                    value: bounded.value,
-                    event: prefer_event(
-                        literal
-                            .is_truncated()
-                            .then_some(ScalarConversionEvent::Truncated),
-                        bounded.event,
-                    ),
+                if literal.is_truncated() {
+                    // Go's `toSignedInteger` returns immediately when
+                    // `BinaryLiteral.ToInt` reports the too-wide literal;
+                    // the value beside that error is the zero `int64`.
+                    Converted {
+                        value: 0,
+                        event: Some(ScalarConversionEvent::Truncated),
+                    }
+                } else {
+                    numeric_outcome(convert_uint_to_int(literal.value(), upper, target))
                 }
             }
             Self::Json(value) => json_to_int(value, false, target, flags),

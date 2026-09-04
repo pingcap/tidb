@@ -24,8 +24,8 @@ use std::cmp::Ordering;
 use super::{decimal_from_bytes, Datum, DatumStringError, DatumValueError};
 use crate::{
     compare_binary_json, json_to_decimal, json_to_float, json_to_int64, str_to_float, str_to_int,
-    BinaryJSON, BinaryJSONValue, Collation, Converted, Decimal, ScalarConversionEvent,
-    DEFAULT_STATEMENT_FLAGS,
+    BinaryJSON, BinaryJSONValue, BinaryLiteral, Collation, Converted, Decimal,
+    ScalarConversionEvent, DEFAULT_STATEMENT_FLAGS,
 };
 
 impl Datum {
@@ -169,7 +169,14 @@ impl Datum {
                 event: None,
             },
             Self::Json(value) => json_to_int64(value, false, DEFAULT_STATEMENT_FLAGS),
-            Self::BinaryLiteral(value) | Self::Bit(value) => {
+            // `ToInt64` special-cases `KindMysqlBit`: it reinterprets the
+            // unsigned payload even when it exceeds int64::MAX. A
+            // `KindBinaryLiteral` instead takes the bounded signed path and
+            // returns the saturated value plus an overflow event. The source
+            // also returns zero (with the truncation event) when `ToInt`
+            // itself rejects a literal wider than eight bytes.
+            Self::BinaryLiteral(value) => binary_literal_to_i64(value),
+            Self::Bit(value) => {
                 let outcome = value.to_int();
                 Converted {
                     value: outcome.value() as i64,
@@ -386,12 +393,43 @@ fn decimal_to_i64(decimal: Decimal) -> Converted<i64> {
     }
 }
 
+/// Source `toSignedInteger`'s `KindBinaryLiteral`/`KindMysqlBit` arm after
+/// `BinaryLiteral.ToInt`. A too-wide literal returns zero beside its
+/// truncation event; an in-range-width literal then follows the bounded
+/// unsigned-to-signed conversion and can saturate at int64::MAX.
+fn binary_literal_to_signed(
+    literal: &BinaryLiteral,
+    target: crate::FieldTypeCode,
+    upper: i64,
+) -> Converted<i64> {
+    let outcome = literal.to_int();
+    if outcome.is_truncated() {
+        return Converted {
+            value: 0,
+            event: Some(ScalarConversionEvent::Truncated),
+        };
+    }
+    match crate::convert_uint_to_int(outcome.value(), upper, target) {
+        Ok(value) => Converted { value, event: None },
+        Err((value, error)) => Converted {
+            value,
+            event: Some(ScalarConversionEvent::Overflow(error)),
+        },
+    }
+}
+
+/// Source `Datum.ToInt64`'s `KindBinaryLiteral` arm. Unlike a MySQL BIT
+/// datum, a hex/bit literal is bounded to the signed integer domain.
+fn binary_literal_to_i64(literal: &BinaryLiteral) -> Converted<i64> {
+    binary_literal_to_signed(literal, crate::FieldTypeCode::LongLong, i64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Datum;
     use crate::{
-        BinaryJSON, BinaryLiteral, Collation, Decimal, MySqlDuration, ScalarConversionEvent,
-        TimeType,
+        BinaryJSON, BinaryLiteral, Collation, ConversionFlags, Decimal, FieldType, FieldTypeCode,
+        MySqlDuration, ScalarConversionEvent, TimeType,
     };
 
     #[test]
@@ -538,6 +576,44 @@ mod tests {
         let float32 = Datum::Float32(3.1).to_decimal().unwrap();
         assert_eq!(float32.event, None);
         assert_eq!(float32.value.to_string(), "3.0999999046325684");
+    }
+
+    /// Go's `ToInt64` keeps `KindBinaryLiteral` on the bounded signed path,
+    /// while `KindMysqlBit` deliberately reinterprets the unsigned payload.
+    /// The two datum kinds must therefore differ for a value above int64::MAX.
+    #[test]
+    fn source_binary_literal_to_i64_saturates_but_mysql_bit_reinterprets() {
+        let payload = BinaryLiteral::from(vec![0xff; 8]);
+
+        let literal = Datum::new_binary_literal(payload.clone()).to_i64().unwrap();
+        assert_eq!(literal.value, i64::MAX);
+        assert!(matches!(
+            literal.event,
+            Some(ScalarConversionEvent::Overflow(_))
+        ));
+
+        let bit = Datum::new_mysql_bit(payload.clone()).to_i64().unwrap();
+        assert_eq!(bit.value, -1);
+        assert_eq!(bit.event, None);
+
+        let wide = BinaryLiteral::from(vec![1; 9]);
+        let literal = Datum::new_binary_literal(wide.clone()).to_i64().unwrap();
+        assert_eq!(literal.value, 0);
+        assert_eq!(literal.event, Some(ScalarConversionEvent::Truncated));
+
+        let bit = Datum::new_mysql_bit(wide).to_i64().unwrap();
+        assert_eq!(bit.value, -1);
+        assert_eq!(bit.event, Some(ScalarConversionEvent::Truncated));
+
+        let longlong = FieldType::new(FieldTypeCode::LongLong);
+        let converted = Datum::new_binary_literal(payload)
+            .convert_to(&longlong, ConversionFlags::default())
+            .unwrap();
+        assert_eq!(converted.value, Datum::Int(i64::MAX));
+        assert!(matches!(
+            converted.event,
+            Some(ScalarConversionEvent::Overflow(_))
+        ));
     }
 
     #[test]
