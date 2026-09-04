@@ -22,11 +22,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 )
@@ -109,33 +114,90 @@ func TestShowBackupQueryRedact(t *testing.T) {
 }
 
 func TestCancel(t *testing.T) {
-	tk := initTestKit(t)
-	executor.ResetGlobalBRIEQueueForTest()
-	tk.MustExec("use test;")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/block-on-brie", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/block-on-brie")
-
-	req := require.New(t)
-	ch := make(chan struct{})
-	go func() {
-		tk := testkit.NewTestKit(t, tk.Session().GetStore())
-		err := tk.QueryToErr("backup database * to 'noop://'")
-		req.Error(err)
-		close(ch)
-	}()
-
-	check := func() bool {
-		wb := tk.Session().GetSessionVars().StmtCtx.WarningCount()
-		tk.MustExec("cancel br job 1;")
-		wa := tk.Session().GetSessionVars().StmtCtx.WarningCount()
-		return wb == wa
+	testCases := []struct {
+		name         string
+		query        string
+		showQuery    string
+		kill         bool
+		expectedCode int
+	}{
+		{
+			name:         "cancel backup",
+			query:        "backup database * to 'noop://'",
+			showQuery:    "show backups",
+			expectedCode: int(exeerrors.ErrBRIEBackupFailed.Code()),
+		},
+		{
+			name:         "cancel restore",
+			query:        "restore database * from 'noop://'",
+			showQuery:    "show restores",
+			expectedCode: int(exeerrors.ErrBRIERestoreFailed.Code()),
+		},
+		{
+			name:         "kill backup",
+			query:        "backup database * to 'noop://'",
+			showQuery:    "show backups",
+			kill:         true,
+			expectedCode: int(exeerrors.ErrQueryInterrupted.Code()),
+		},
 	}
-	req.Eventually(check, 5*time.Second, 1*time.Second)
 
-	select {
-	case <-ch:
-	case <-time.After(5 * time.Second):
-		req.FailNow("the backup job doesn't be canceled")
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			controlTK := initTestKit(t)
+			executor.ResetGlobalBRIEQueueForTest()
+			t.Cleanup(executor.ResetGlobalBRIEQueueForTest)
+			controlTK.MustExec("use test")
+
+			taskBlocked := make(chan struct{})
+			resumeTask := make(chan struct{})
+			releaseTask := func() {
+				select {
+				case <-resumeTask:
+				default:
+					close(resumeTask)
+				}
+			}
+			t.Cleanup(releaseTask)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeRunBRIETask", func() {
+				close(taskBlocked)
+				<-resumeTask
+			})
+
+			taskTK := testkit.NewTestKit(t, controlTK.Session().GetStore())
+			taskTK.MustExec("use test")
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- taskTK.QueryToErr(testCase.query)
+			}()
+
+			select {
+			case <-taskBlocked:
+			case <-time.After(5 * time.Second):
+				t.Fatal("BRIE task did not reach the execution hook")
+			}
+			if testCase.kill {
+				taskTK.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+			} else {
+				controlTK.MustExec("cancel br job 1")
+			}
+			require.Eventually(t, func() bool {
+				rows := controlTK.MustQuery(testCase.showQuery).Rows()
+				return len(rows) == 1 && strings.Contains(rows[0][2].(string), "Canceled")
+			}, 5*time.Second, 10*time.Millisecond)
+			releaseTask()
+
+			var err error
+			select {
+			case err = <-errCh:
+			case <-time.After(5 * time.Second):
+				t.Fatal("BRIE task did not return after cancellation")
+			}
+			require.Error(t, err)
+			cause, ok := errors.Cause(err).(*terror.Error)
+			require.True(t, ok, "%T", errors.Cause(err))
+			require.Equal(t, testCase.expectedCode, int(terror.ToSQLError(cause).Code))
+		})
 	}
 }
 
