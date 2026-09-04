@@ -352,6 +352,14 @@ pub struct NumericPrefix {
     truncated: bool,
 }
 
+/// Returns the subject Go includes in a `Truncated incorrect DOUBLE value`
+/// diagnostic. `StrToFloat` trims Unicode whitespace before
+/// `getValidFloatPrefix`, and that helper shortens the same subject at the
+/// first NUL byte before formatting the error.
+pub fn float_warning_input(input: &str) -> &str {
+    input.trim().split('\0').next().unwrap_or_default()
+}
+
 impl NumericPrefix {
     /// Prefix accepted by Go's `strconv` call.
     pub fn value(&self) -> &str {
@@ -1320,6 +1328,13 @@ mod tests {
             assert_eq!(actual.truncated(), truncated, "{input:?}");
         }
         assert_source_float_string_to_integer_rows();
+    }
+
+    #[test]
+    fn float_warning_input_truncates_at_nul_like_go() {
+        assert_eq!(float_warning_input("\0 12"), "");
+        assert_eq!(float_warning_input(" 12\0suffix "), "12");
+        assert_eq!(float_warning_input(" 12abc "), "12abc");
     }
 
     /// `pkg/types/convert_test.go:843` `TestGetValidInt`, first table: the

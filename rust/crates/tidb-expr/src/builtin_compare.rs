@@ -125,7 +125,7 @@ fn note_string_truncation(ctx: &dyn Columns, datum: &Datum) -> Result<(), ()> {
         }
     };
     let text = String::from_utf8_lossy(bytes);
-    let text = text.trim();
+    let text = tidb_datatype::float_warning_input(&text);
     if tidb_datatype::str_to_float(text, false).event.is_none() {
         return Ok(());
     }

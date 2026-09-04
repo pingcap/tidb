@@ -195,3 +195,10 @@ receiver and fixed payload consumption beside `BadNumber` for callers that
 need cursor progress, while the strict decoder API remains unchanged. Full
 owner profiles and the baseline blockers are recorded in
 `rust/testport/receipts/types_decimal_from_bin_failure.md`.
+
+## `pkg/types` float-prefix NUL warning batch
+
+The datatype and live `CAST(... AS DOUBLE)` focused regressions pass. All
+DOUBLE warning builders now use the source-compatible trimmed subject and
+stop at NUL. Full owner profiles and baseline blockers are recorded in
+`rust/testport/receipts/types_float_warning_nul.md`.

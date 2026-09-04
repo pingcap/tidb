@@ -965,7 +965,7 @@ fn str_to_real_for_cast(v: &Datum, ctx: &dyn crate::Columns) -> Result<f64, Eval
     if converted.event.is_some() {
         ctx.handle_truncate(&format!(
             "Truncated incorrect DOUBLE value: '{}'",
-            text.trim()
+            tidb_datatype::float_warning_input(&text)
         ))?;
     }
     Ok(converted.value)
@@ -1687,6 +1687,18 @@ mod tests {
                 "{input}",
             );
         }
+    }
+
+    #[test]
+    fn double_cast_warning_subject_stops_at_nul_like_go() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        let got = eval_cast(&CastType::Double, Datum::new_string("\0 12"), None, &ctx)
+            .expect("a truncated DOUBLE cast remains a successful read");
+        assert_eq!(got, Datum::Real(0.0));
+        assert_eq!(
+            ctx.0.borrow().as_slice(),
+            &[(1292, "Truncated incorrect DOUBLE value: ''".to_owned())]
+        );
     }
 
     #[test]

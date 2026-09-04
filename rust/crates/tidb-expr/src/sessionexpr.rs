@@ -971,7 +971,8 @@ pub fn get_stmt_timestamp(sctx: &Arc<dyn SessionContext>) -> Result<DateTime<Utc
             &tidb_datatype::IGNORE_CONVERSION_WARNINGS,
         );
         let truncated = tidb_datatype::ERR_TRUNCATED_WRONG_VALUE.generate_with_stack(format!(
-            "Truncated incorrect DOUBLE value: '{timestamp_str}'"
+            "Truncated incorrect DOUBLE value: '{}'",
+            tidb_datatype::float_warning_input(&timestamp_str)
         ));
         if let Some(err) = type_ctx.handle_truncate(Some(truncated)) {
             return Err(EvalCtxError::new(err.to_string()));

@@ -131,7 +131,7 @@ pub use conversion_context::{
 pub use convert::{
     convert_decimal_str_to_uint, convert_decimal_to_uint, convert_float_to_int,
     convert_float_to_uint, convert_int_to_int, convert_int_to_uint, convert_scientific_notation,
-    convert_uint_to_int, convert_uint_to_uint, float_string_to_integer_string,
+    convert_uint_to_int, convert_uint_to_uint, float_string_to_integer_string, float_warning_input,
     integer_signed_lower_bound, integer_signed_upper_bound, integer_unsigned_upper_bound,
     json_to_decimal, json_to_float, json_to_int, json_to_int64, number_to_duration,
     round_integer_string, scalar_to_string, str_to_datetime, str_to_duration, str_to_float,

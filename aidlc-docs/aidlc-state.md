@@ -2,7 +2,7 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` decimal `FromBin` failure-state parity batch (finding M7)
+- Work unit: `pkg/types` float-prefix NUL warning parity batch (finding D9)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
@@ -85,5 +85,8 @@
 - Current batch: Rust `Decimal::from_bin_with_failure` now preserves Go's
   zero receiver and fixed payload size on corrupt legal-shape input. Receipt:
   `rust/testport/receipts/types_decimal_from_bin_failure.md`.
+- Current batch: Rust DOUBLE warning sites now use Go's trimmed, NUL-terminated
+  diagnostic subject. Receipt:
+  `rust/testport/receipts/types_float_warning_nul.md`.
 - Next action: continue with the next executable package boundary after the
-  M7 batch is committed and pushed.
+  D9 batch is committed and pushed.

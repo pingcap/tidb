@@ -41,6 +41,10 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (D9, `pkg/types` float-prefix NUL warning subject): added the
+  shared trim-and-NUL diagnostic helper and applied it to every Rust DOUBLE
+  warning site. Focused regressions and Ready evidence are in
+  `receipts/types_float_warning_nul.md`.
 - 2026-09-04 (M7, `pkg/types` decimal `FromBin` corrupt payload): added a
   structured Rust failure outcome carrying Go's zero receiver and legal
   payload size alongside `BadNumber`, while retaining the strict legacy

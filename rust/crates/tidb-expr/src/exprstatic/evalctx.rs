@@ -642,7 +642,8 @@ fn current_time_fn_from_string_val(val: &str) -> CurrentTimeFn {
         let converted = str_to_float(&val, false);
         if converted.event.is_some() {
             return Err(EvalCtxError::new(format!(
-                "[types:1292]Truncated incorrect DOUBLE value: '{val}'"
+                "[types:1292]Truncated incorrect DOUBLE value: '{}'",
+                tidb_datatype::float_warning_input(&val)
             )));
         }
 

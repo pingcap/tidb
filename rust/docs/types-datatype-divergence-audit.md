@@ -52,7 +52,7 @@ section; the remaining findings are explicitly bounded or still open.
 
 ---
 
-## D1 (rank 1) — `Datum::to_i64` does not round a TIME/DATETIME before rendering it as a number
+## D1 (rank 1, FIXED) — `Datum::to_i64` does not round a TIME/DATETIME before rendering it as a number
 
 `CAST(<temporal> AS SIGNED)` in MySQL rounds the *temporal value* to `fsp = 0`
 first, so a fractional second carries through the sexagesimal fields. Go does
@@ -99,7 +99,13 @@ number. `rust/crates/tidb-datatype/src/datum_convert.rs:216-236`
 comment "`11:59:59.999999` becomes 120000, not 115960". The two paths
 disagree with each other.
 
-Not fixed here. `Time::round_frac` needs a timezone
+Fixed in the Rust datum conversion path: `to_i64_in` now rounds temporal
+values at `DEFAULT_FSP` in the caller's session zone before rendering them as
+numbers. Focused carry and DST regressions are covered by the datatype owner
+tests.
+
+The earlier context concern remains relevant to callers of the zone-free
+`to_i64` convenience method, which intentionally supplies UTC. `Time::round_frac` needs a timezone
 (`mysql_time.rs:442`; Go's `Time.RoundFrac` reaches the location through
 `GoTime(ctx.Location())`) and `Datum::to_i64()` takes no context, so the fix is
 either a context parameter or a documented UTC choice matching what
@@ -113,7 +119,7 @@ ModeHalfUp)` on the rendered number rather than `RoundFrac`, so
 `convert_to_unsigned` (`datum_convert.rs:283-284`) mirrors that correctly.
 `Datum::to_i64` is applying the *unsigned* rule on the signed path.
 
-## D2 (rank 1) — `Datum::to_i64` treats a hex/bit LITERAL like a BIT column value
+## D2 (rank 1, FIXED) — `Datum::to_i64` treats a hex/bit LITERAL like a BIT column value
 
 Go splits the two kinds. `KindMysqlBit` (a stored `BIT(n)` column value)
 reinterprets the low 64 bits; `KindBinaryLiteral` (a `0x…` / `b'…'` literal)
@@ -138,10 +144,10 @@ Distinguishing input: a `BinaryLiteral` payload of eight `0xFF` bytes
 - For `KindMysqlBit` both sides give `-1` with no error, so Rust is correct for
   half the pair and wrong for the other half.
 
-Unverified: whether TiDB's expression layer keeps a hex literal as
-`KindBinaryLiteral` all the way to this call, or folds it to a `UInt` datum
-first. The Datum-level divergence is unambiguous from the source; the
-SQL-level reachability is not something I could establish without running.
+The Datum-level split is now implemented and covered by
+`source_binary_literal_to_i64_saturates_but_mysql_bit_reinterprets`. Whether
+the expression layer retains a hex literal as `KindBinaryLiteral` through this
+call remains a separate SQL-reachability question.
 
 ## D3 (rank 3) — `Datum::compare` REFUSES a non-UTF-8 string operand where Go compares it
 
@@ -228,7 +234,7 @@ incorrect DOUBLE value: 'abc'` produces no warning at all. This is exactly the
 class the integration replay cannot see (28 of 4,906 statements observe
 warnings).
 
-## D6 (rank 2) — `Datum::to_decimal` for a float source discards `FromString`'s error
+## D6 (rank 2, FIXED) — `Datum::to_decimal` for a float source discards `FromString`'s error
 
 - Go: `pkg/types/datum.go:1941-1944` (`ConvertDatumToDecimal`) — `err =
   dec.FromFloat64(d.GetFloat64())`, and the error is returned
@@ -251,9 +257,13 @@ stored `f64` to `f32` and widens it back, because `SetFloat32FromF64`
 (`:192-196`) stores a raw `f64`. Rust's `to_decimal` uses the stored value
 directly while its own `to_f64` (`datum/convert.rs:169`) *does* apply the
 `as f32` round-trip — so the two Rust accessors disagree with each other.
-Distinguishing input: a `Float32` datum built from the `f64` `3.1` —
-`to_f64()` gives `3.0999999046325684`, `to_decimal()` gives `3.1`; Go gives
-`3.0999999046325684` for both.
+Distinguishing input: a `Float32` datum built from the `f64` `3.1` — both Rust
+accessors now narrow to `3.0999999046325684`, matching Go.
+
+Fixed in the Rust datum conversion owner: float parsing now preserves the
+source overflow event and narrows `Float32` through `f32`. The focused
+regression is recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
 
 ## D7 (rank 1, now FIXED) — `str_to_int`/`str_to_uint` accepted a bare sign as the function-cast prefix
 
@@ -311,7 +321,7 @@ Rust reports `1690 TINYINT value is out of range in '999'`. Both saturate to
 error-vs-warning disposition is the same — this is a message/code difference
 only.
 
-## D9 (rank 4) — `getValidFloatPrefix`'s NUL-byte error argument
+## D9 (rank 4, FIXED 2026-09-04) — `getValidFloatPrefix`'s NUL-byte error argument
 
 Go truncates the *subject string* at the NUL before formatting the message
 (`pkg/types/convert.go:740-742` reassigns `s = s[:validLen]`, and `:755` uses
@@ -320,8 +330,9 @@ that `s`). Rust's `valid_float_prefix`
 length separately and leaves the caller holding the full input for the message.
 
 Distinguishing input: `"\x0012"`. Go's warning text is `Truncated incorrect
-DOUBLE value: ''`; Rust's caller renders the whole operand. Value and
-disposition are identical.
+DOUBLE value: ''`; Rust now uses the same subject while leaving value and
+disposition unchanged. Focused cast regression and Ready evidence are
+recorded in `rust/testport/receipts/types_float_warning_nul.md`.
 
 ---
 
