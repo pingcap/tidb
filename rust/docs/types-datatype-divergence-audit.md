@@ -618,12 +618,21 @@ The TIMESTAMP ceiling and the other structural rows below remain separate.
   that explicitly request field-range validation. The raw-field regression and
   Ready profile are recorded in
   `rust/testport/receipts/types_time_packed_raw.md`.
-- **T16 (reachability unverified)** `AdjustedGoTime` (`time.go:191-209`) works
-  on the *normalized* `time.Date` result, so a `CoreTime` with hour ≥ 24 (e.g.
-  `2020-03-28 26:45` in `Europe/Amsterdam`) normalizes into the DST gap and
-  yields `2020-03-29 03:00 CEST`; Rust `adjusted_datetime`
-  (`core_time.rs:145-150` → `:298-309`) returns `InvalidCalendar` first. No
-  non-synthetic way to build such a `CoreTime` was found.
+- **T16 (reachability CLOSED 2026-09-04 — synthetic-only)** `AdjustedGoTime`
+  (`time.go:191-209`) works on the *normalized* `time.Date` result, so a
+  `CoreTime` with hour ≥ 24 (e.g. `2020-03-28 26:45` in `Europe/Amsterdam`)
+  normalizes into the DST gap and yields `2020-03-29 03:00 CEST`; Rust
+  `adjusted_datetime` (`core_time.rs:145-150` → `:298-309`) returns
+  `InvalidCalendar` first. Reachability verified 2026-09-04: every
+  production constructor enforces hour ≤ 23 — the string parser's digit
+  checks, `validate()`'s `core.hour() >= 24` rejection
+  (`mysql_time.rs:721`), and the chunk decode paths (Go-written payloads are
+  normalized at write time; the strict `PackedTime::from_parts` constructor
+  validates on request). Only a deliberately corrupt packed payload outside
+  the decode contract could deliver an unnormalized `CoreTime`, and Go's own
+  read of such a payload diverges in error behavior anyway. The
+  normalization gap is therefore defensive-contract only, not a live
+  divergence.
 
 The expression crate also holds a *second*, independent `STR_TO_DATE`
 implementation at `rust/crates/tidb-expr/src/time_fn/calendar.rs:1230` that
