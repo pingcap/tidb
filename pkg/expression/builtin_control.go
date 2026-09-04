@@ -66,17 +66,46 @@ func maxlen(lhsFlen, rhsFlen int) int {
 	return max(lhsFlen, rhsFlen)
 }
 
-func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, argTps ...*types.FieldType) {
+// decimalStringFlen converts precision-style DECIMAL Flen to string display width.
+func decimalStringFlen(tp *types.FieldType) int {
+	flen, decimal := tp.GetFlen(), tp.GetDecimal()
+	if flen == types.UnspecifiedLength || decimal == types.UnspecifiedLength {
+		return types.UnspecifiedLength
+	}
+	displayFlen := flen
+	if decimal > 0 {
+		displayFlen++ // decimal point
+		if flen <= decimal {
+			displayFlen++ // leading zero
+		}
+	}
+	if !mysql.HasUnsignedFlag(tp.GetFlag()) {
+		displayFlen++ // minus sign
+	}
+	return displayFlen
+}
+
+func decimalArgStringFlen(arg Expression, tp *types.FieldType) int {
+	if _, ok := arg.(*Constant); ok {
+		// Decimal constants, including param markers, already use rendered Flen.
+		return tp.GetFlen()
+	}
+	return decimalStringFlen(tp)
+}
+
+func setFlenFromArgs(ctx BuildContext, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) {
+	evalCtx := ctx.GetEvalCtx()
 	if evalType == types.ETDecimal || evalType == types.ETInt {
 		maxArgFlen := 0
-		for i := range argTps {
+		for i := range args {
+			argTp := args[i].GetType(evalCtx)
 			flagLen := 0
-			if !mysql.HasUnsignedFlag(argTps[i].GetFlag()) {
+			if !mysql.HasUnsignedFlag(argTp.GetFlag()) {
 				flagLen = 1
 			}
-			flen := argTps[i].GetFlen() - flagLen
-			if argTps[i].GetDecimal() != types.UnspecifiedLength {
-				flen -= argTps[i].GetDecimal()
+			flen := argTp.GetFlen() - flagLen
+			if argTp.GetDecimal() != types.UnspecifiedLength {
+				flen -= argTp.GetDecimal()
 			}
 			maxArgFlen = maxlen(maxArgFlen, flen)
 		}
@@ -87,8 +116,9 @@ func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, 
 		resultFieldType.SetFlenUnderLimit(resultFlen)
 	} else if evalType == types.ETString {
 		maxLen := 0
-		for i := range argTps {
-			switch argTps[i].GetType() {
+		for i := range args {
+			argTp := args[i].GetType(evalCtx)
+			switch argTp.GetType() {
 			case mysql.TypeTiny:
 				maxLen = maxlen(4, maxLen)
 			case mysql.TypeShort:
@@ -99,8 +129,16 @@ func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, 
 				maxLen = maxlen(11, maxLen)
 			case mysql.TypeLonglong:
 				maxLen = maxlen(20, maxLen)
+			case mysql.TypeNewDecimal:
+				// For string results, use DECIMAL display width instead of precision.
+				argFlen := decimalArgStringFlen(args[i], argTp)
+				if argFlen == types.UnspecifiedLength {
+					resultFieldType.SetFlen(types.UnspecifiedLength)
+					return
+				}
+				maxLen = maxlen(argFlen, maxLen)
 			default:
-				argFlen := argTps[i].GetFlen()
+				argFlen := argTp.GetFlen()
 				if argFlen == types.UnspecifiedLength {
 					resultFieldType.SetFlen(types.UnspecifiedLength)
 					return
@@ -111,8 +149,8 @@ func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, 
 		resultFieldType.SetFlen(maxLen)
 	} else {
 		maxLen := 0
-		for i := range argTps {
-			maxLen = maxlen(argTps[i].GetFlen(), maxLen)
+		for i := range args {
+			maxLen = maxlen(args[i].GetType(evalCtx).GetFlen(), maxLen)
 		}
 		resultFieldType.SetFlen(maxLen)
 	}
@@ -246,11 +284,13 @@ func InferType4ControlFuncs(ctx BuildContext, funcName string, args ...Expressio
 	}
 	nullFields := make([]*types.FieldType, 0, argsNum)
 	notNullFields := make([]*types.FieldType, 0, argsNum)
+	notNullArgs := make([]Expression, 0, argsNum)
 	for i := range args {
 		if args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
 			nullFields = append(nullFields, args[i].GetType(ctx.GetEvalCtx()))
 		} else {
 			notNullFields = append(notNullFields, args[i].GetType(ctx.GetEvalCtx()))
+			notNullArgs = append(notNullArgs, args[i])
 		}
 	}
 	resultFieldType := &types.FieldType{}
@@ -278,7 +318,7 @@ func InferType4ControlFuncs(ctx BuildContext, funcName string, args ...Expressio
 			if err != nil {
 				return nil, err
 			}
-			setFlenFromArgs(evalType, resultFieldType, notNullFields...)
+			setFlenFromArgs(ctx, evalType, resultFieldType, notNullArgs...)
 		}
 
 		// If any of arg is NULL, result type need unset NotNullFlag.
