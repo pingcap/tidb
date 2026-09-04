@@ -63,6 +63,14 @@ For each bounded behavior cluster:
   `RollbackDone`. One regression drives submit to phase 1 to the seam to
   rollback; failure sets unchanged (exec 7, executor 165 + 1 pre-existing
   metadef mismatch). Receipt: `receipts/ddl_mview_create_worker.md`.
+- 2026-09-04: aligned the Rust `tidb-chunk` datum-to-decimal boundary with
+  Go master's complete `pkg/util/chunk` inventory (29 source/build/test
+  artifacts, 11,261 Go lines). `Chunk::append_datum`, `MutRow::from_datums`,
+  `SetValue`, and `SetDatum` now preserve Go's fixed `MyDecimal` prefix/
+  truncation result for value-layer decimals wider than nine words instead of
+  panicking during a Rust-only conversion. A focused regression covers the
+  ten-word fractional case; details and the full inventory are in
+  `receipts/chunk_a1_datum.md`.
 
 - 2026-09-04 (batch 16, `pkg/ddl` MV view-create submission): implemented
   Go master `94a9cbedab`'s `CreateMaterializedView` submission body — the
@@ -5428,6 +5436,12 @@ For each bounded behavior cluster:
   callers that do not carry a statement context; wire only the SQL `/` path
   to `EvalContext::handle_truncate`, matching Go's `DecimalDiv`/`HandleTruncate`
   order. Date/Author: 2026-09-04, Codex.
+- 2026-09-04: keep `Datum::Decimal` as the exact value-layer representation,
+  but add a chunk-boundary lossy conversion that delegates overflow/truncation
+  to `MyDecimal::from_string`. Go datums already own that fixed cell, so
+  `AppendDatum`/`MutRow` must not invent a panic when Rust's intermediate value
+  has more than nine base-1e9 words; exact conversions still retain hidden
+  fraction words unchanged.
 
 - Decision: use ryu's human-readable shortest formatter for
   `Decimal::from_f64`, apply Go's `%g` fixed/scientific threshold to those
@@ -6491,6 +6505,13 @@ dispatch, ordinary UNION projection, and recursive-CTE projection. The
 fail-before regression was the existing unsigned wrap (`u64::MAX`) for a
 negative signed integer; the post-fix result is zero. The remaining
 string-to-DECIMAL and vectorized harness cases stay explicit documented gaps.
+
+The chunk A-1 batch is likewise bounded and executable: representable decimal
+datums retain their exact raw layout, while over-wide value-layer decimals now
+follow Go's fixed-word prefix/truncation result across Chunk and MutRow entry
+points. Its focused regression and owner validation are recorded in
+`receipts/chunk_a1_datum.md`; the remaining chunk wire and datum-shape items in
+`docs/chunk-and-stats-divergence.md` remain separate follow-ups.
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state

@@ -743,10 +743,10 @@ impl Chunk {
     /// dispatching on its kind (the inverse of [`Row::get_datum`]).
     ///
     /// A `Datum::Decimal` carries the value-layer `Decimal`, so it is converted
-    /// directly to Go's raw 40-byte `MyDecimal` layout. A
-    /// value too large for the `MyDecimal` buffer panics rather than being
-    /// silently truncated into the cell; callers holding a `MyDecimal`
-    /// already should use the exact [`Chunk::append_my_decimal`].
+    /// directly to Go's raw 40-byte `MyDecimal` layout. Values wider than the
+    /// fixed nine-word buffer use Go's ordinary prefix/truncation result;
+    /// `AppendDatum` itself never introduces an overflow panic. Callers holding
+    /// a `MyDecimal` already should use the exact [`Chunk::append_my_decimal`].
     ///
     /// Supports the kinds whose column storage exists (NULL, int/uint, real/
     /// float32, string/bytes, binary literal, time, duration, decimal, JSON,
@@ -777,11 +777,7 @@ impl Chunk {
             Datum::Time(t) => self.append_time(col_idx, *t),
             Datum::Duration(d) => self.append_duration(col_idx, *d),
             Datum::Decimal(dec) => {
-                let value = dec.to_chunk_my_decimal().unwrap_or_else(|error| {
-                    panic!(
-                        "Chunk::append_datum: decimal {dec} does not fit a MyDecimal cell ({error:?})"
-                    )
-                });
+                let value = dec.to_chunk_my_decimal_lossy();
                 self.append_my_decimal(col_idx, &value);
             }
             Datum::MinNotNull | Datum::MaxValue => {}
@@ -1321,6 +1317,33 @@ mod tests {
             ["1.50", "-273.15", "0", "12345678901234567890.123456789"]
         );
         assert!(chunk.get_row(4).is_null(0));
+    }
+
+    /// Go's `Datum` already owns a fixed `MyDecimal`, so `AppendDatum` copies
+    /// its truncated nine-word value instead of panicking on a wider
+    /// value-layer decimal. The same boundary is shared by `MutRow`.
+    #[test]
+    fn decimal_datum_overflow_uses_go_truncation_without_panicking() {
+        use crate::mutrow::MutRow;
+        use tidb_datatype::{Decimal, FieldTypeCode, MyDecimal};
+
+        let text = format!("0.{}", "123456789".repeat(10));
+        let datum = Datum::Decimal(Decimal::from_literal(&text));
+        let expected = MyDecimal::from_string(text.as_bytes()).0;
+        let field_type = FieldType::new(FieldTypeCode::NewDecimal);
+
+        let mut chunk = Chunk::new(std::slice::from_ref(&field_type), 1, 1);
+        chunk.append_datum(0, &datum);
+        assert_eq!(chunk.get_row(0).get_my_decimal(0), expected);
+
+        let mut mut_row = MutRow::from_types(std::slice::from_ref(&field_type));
+        mut_row.set_datum(0, &datum);
+        assert_eq!(mut_row.to_row().get_my_decimal(0), expected);
+        mut_row.set_value(0, &datum);
+        assert_eq!(mut_row.to_row().get_my_decimal(0), expected);
+
+        let from_datums = MutRow::from_datums(std::slice::from_ref(&datum));
+        assert_eq!(from_datums.to_row().get_my_decimal(0), expected);
     }
 
     #[test]

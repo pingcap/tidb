@@ -17,3 +17,25 @@ loopback-PD label-delivery failure; the expression nextest run retained one
 unrelated loopback HTTP JSON-schema fixture failure. Strict clippy was blocked
 by pre-existing diagnostics in unrelated `tidb-mysql`, generated protobuf, and
 other workspace code.
+
+## Chunk A-1 decimal datum batch
+
+Focused and owner commands were run from `rust/`:
+
+```text
+cargo test --offline --locked -p tidb-chunk --lib chunk::tests::decimal_datum_overflow_uses_go_truncation_without_panicking -- --exact --nocapture
+cargo test --offline --locked -p tidb-datatype --all-targets -- --test-threads=1
+cargo test --offline --locked -p tidb-chunk --lib -- --test-threads=1
+cargo check --offline --locked -p tidb-datatype -p tidb-chunk --all-targets
+cargo fmt --all -- --check
+git diff --check
+cargo clippy --offline --locked -p tidb-datatype -p tidb-chunk --all-targets -- -D warnings
+```
+
+The focused regression, serialized datatype owner (381 unit + 63 generated/
+integration tests), owner compilation, formatting, and diff checks passed. The
+serialized chunk owner retained 241 passes, 35 spill/temp-file or dependent
+row-container failures, and 4 ignored tests; these are the documented macOS
+temporary-storage/concurrency failures. Strict clippy stopped on unrelated
+`tidb-mysql/src/consts.rs:117-120` `map_or_identity` diagnostics. Full details
+are in `rust/testport/receipts/chunk_a1_datum.md`.

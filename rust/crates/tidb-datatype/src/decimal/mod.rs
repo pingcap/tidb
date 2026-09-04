@@ -310,6 +310,42 @@ impl Decimal {
         )
     }
 
+    /// Converts this value to the fixed `MyDecimal` cell used by Go's chunk
+    /// datums, retaining Go's prefix/truncation result when the value exceeds
+    /// the nine-word storage buffer.
+    ///
+    /// Go's `Datum` already owns a `MyDecimal`; `chunk.AppendDatum` and
+    /// `MutRow.SetDatum` copy that value and do not introduce a new overflow
+    /// panic. Rust's value-layer [`Decimal`] can temporarily carry more digits
+    /// than that fixed buffer, so an exact conversion error must be resolved
+    /// at this boundary by applying `MyDecimal.FromString`'s ordinary
+    /// truncation rules rather than aborting the statement.
+    #[must_use]
+    pub fn to_chunk_my_decimal_lossy(&self) -> MyDecimal {
+        if let Ok(value) = self.to_chunk_my_decimal() {
+            return value;
+        }
+
+        let mut text = self.digits.as_str().to_owned();
+        let storage_scale = self.storage_scale as usize;
+        debug_assert!(storage_scale <= text.len());
+        if storage_scale > 0 {
+            // `from_decimal_parts(..., minimum_integer_digit = true)` gives
+            // values below one a leading zero in Go's chunk cell. Preserve
+            // that source shape before asking `MyDecimal.FromString` to
+            // apply its fixed-word truncation.
+            if storage_scale == text.len() {
+                text.insert(0, '0');
+            }
+            let split = text.len() - storage_scale;
+            text.insert(split, '.');
+        }
+        if self.negative {
+            text.insert(0, '-');
+        }
+        MyDecimal::from_string(text.as_bytes()).0
+    }
+
     /// Parses the signed decimal strings accepted by datatype conversion.
     pub fn from_signed_literal(text: &str) -> Self {
         Self::parse_mysql(text).0

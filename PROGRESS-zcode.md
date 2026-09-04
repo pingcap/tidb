@@ -8,6 +8,12 @@
 - 2026-09-04: `BuildCastFunction4Union` unsigned-integer `inUnion` carrier across `tidb-ast` → `tidb-expr` → `tidb-planner`, including recursive CTE projections; focused regressions and receipt are complete, and the batch is pushed to `hparser-integration`.
 
 ## 队列
-1. chunk A-1（datum 决策）
-2. parser #11（结构性）
-3. 分区裁剪验证（等用户对照查询）
+1. parser #11（结构性）
+2. 分区裁剪验证（等用户对照查询）
+
+- 2026-09-04: chunk A-1 datum storage parity is implemented in Rust and
+  validated in the isolated worktree. `Datum::Decimal` now follows Go's
+  fixed-cell prefix/truncation at `Chunk::append_datum` and every `MutRow`
+  datum/value entry point without introducing an overflow panic. Receipt:
+  `rust/testport/receipts/chunk_a1_datum.md`; pushed as commit
+  `471ece97fd` to `hparser-integration`.

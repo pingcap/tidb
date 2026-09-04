@@ -67,23 +67,17 @@ are the same byte run between the same offsets, and the bitmap is bit-identical.
 
 ### Ranked divergences
 
-**A-1 (rank 2 — panic reachable from ordinary data).**
+**A-1 (rank 2 — fixed 2026-09-04).**
 Go `pkg/util/chunk/chunk.go:670` (`case types.KindMysqlDecimal:
 c.AppendMyDecimal(colIdx, d.GetMysqlDecimal())`) appends the `*types.MyDecimal`
 the datum already holds — there is no conversion and no failure mode.
-Rust `rust/crates/tidb-chunk/src/chunk.rs:290-298` instead formats
-`Datum::Decimal` to text, re-parses it with `MyDecimal::from_string`, and
-`assert!(err.is_none(), ...)`.
-Distinguishing case: any `Datum::Decimal` whose canonical text `MyDecimal`
-cannot represent exactly — e.g. a literal with more than 30 fractional digits,
-`0.` followed by 40 digits. Go stores the (truncated) `MyDecimal` cell and the
-query proceeds; Rust aborts the statement with a panic.
-Caveat: reachability depends on whether `tidb_datatype::Decimal` admits more
-digits than `MyDecimal` does. I did not verify that bound, so this is
-"panic exists on a path Go cannot fail on", not "panic confirmed reachable".
-Not fixed — the correct repair is to append the `MyDecimal` without a text
-round trip, which needs the datum representation decision that
-`tidb-datatype` owns.
+Rust now keeps the exact conversion for representable values and adds
+`Decimal::to_chunk_my_decimal_lossy` for values wider than the fixed buffer.
+That fallback asks `MyDecimal::from_string` for Go's ordinary prefix/truncation
+result, then `Chunk::append_datum`, `MutRow::from_datums`, `SetValue`, and
+`SetDatum` copy the resulting 40-byte cell without introducing a new panic.
+The focused regression covers a value with ten fractional base-1e9 words and
+checks all four datum-to-cell entry points against Go's parsed cell.
 
 **A-2 (rank 3 — wire/decode strictness).**
 `rust/crates/tidb-codec/src/column.rs:807-821` rejects an offset table whose

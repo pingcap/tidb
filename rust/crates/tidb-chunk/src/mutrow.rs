@@ -384,14 +384,11 @@ fn make_mut_row_bytes_column(bytes: &[u8]) -> Column {
 ///
 /// The datum carries the value-layer `Decimal`, so it is converted directly to
 /// the raw layout -- the same route [`crate::chunk::Chunk::append_datum`] takes.
+/// Values wider than Go's fixed nine-word cell use its prefix/truncation result;
+/// `MutRow` does not introduce a new overflow panic at this boundary.
 ///
-/// # Panics
-/// Panics on a value too large for a `MyDecimal` buffer, rather than
-/// truncating it silently into the cell.
 fn my_decimal_of(decimal: &tidb_datatype::Decimal) -> MyDecimal {
-    decimal.to_chunk_my_decimal().unwrap_or_else(|error| {
-        panic!("MutRow: decimal {decimal} does not fit a MyDecimal cell ({error:?})")
-    })
+    decimal.to_chunk_my_decimal_lossy()
 }
 
 /// Go `makeMutRowColumn`: a one-row column holding `value`.
