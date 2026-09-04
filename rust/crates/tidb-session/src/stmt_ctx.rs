@@ -559,10 +559,7 @@ impl Session {
                     .vars
                     .get_system("transaction_isolation")
                     .is_ok_and(|value| value.eq_ignore_ascii_case("REPEATABLE-READ")),
-                leader_read: self
-                    .vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ)
-                    .is_ok_and(|value| value.eq_ignore_ascii_case("leader")),
+                leader_read: self.vars.replica_read() == tidb_executor::ReplicaReadType::Leader,
                 staleness: read_staleness,
                 historical_read: self
                     .vars
@@ -712,20 +709,7 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY),
-            replica_read: match self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ)
-                .unwrap_or_default()
-                .as_str()
-            {
-                "follower" => tidb_executor::ReplicaReadType::Follower,
-                "leader-and-follower" => tidb_executor::ReplicaReadType::Mixed,
-                "closest-replicas" => tidb_executor::ReplicaReadType::Closest,
-                "closest-adaptive" => tidb_executor::ReplicaReadType::ClosestAdaptive,
-                "learner" => tidb_executor::ReplicaReadType::Learner,
-                "prefer-leader" => tidb_executor::ReplicaReadType::PreferLeader,
-                _ => tidb_executor::ReplicaReadType::Leader,
-            },
+            replica_read: self.vars.replica_read(),
             isolation_read_engines: self
                 .vars
                 .get_system("tidb_isolation_read_engines")

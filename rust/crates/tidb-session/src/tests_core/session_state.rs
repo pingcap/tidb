@@ -146,6 +146,28 @@ fn statement_hints_use_the_canonical_parse_result() {
     );
 }
 
+#[test]
+fn replica_read_sysvar_reaches_statement_snapshot() {
+    let mut session = Session::new();
+    if tidb_config::kerneltype::is_next_gen() {
+        assert!(session.run("SET tidb_replica_read = 'follower'").is_err());
+        return;
+    }
+
+    session.run("SET tidb_replica_read = 'follower'").unwrap();
+    assert_eq!(
+        session.statement_context(false).replica_read(),
+        tidb_executor::ReplicaReadType::Follower,
+    );
+    session
+        .run("SET tidb_replica_read = 'leader-and-follower'")
+        .unwrap();
+    assert_eq!(
+        session.statement_context(false).replica_read(),
+        tidb_executor::ReplicaReadType::Mixed,
+    );
+}
+
 /// Pinned Go `pkg/session/test/variable/variable_test.go::TestIsolationRead`:
 /// the session variable is the source of the planner's per-statement engine
 /// set, not a catalog-side preference.

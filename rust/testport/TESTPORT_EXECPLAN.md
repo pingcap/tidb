@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` next-gen DML/replica-read hooks): added
+  typed `BulkDMLEnabled` and replica-read state to Rust `SessionVars`, wired
+  inheritance/restore and statement snapshots, and matched Go's next-gen 1235
+  refusal branches for BULK and non-LEADER replica modes. Added focused
+  session and statement regressions; external next-gen build-tag and storage
+  selection fixtures remain explicit receipt boundaries.
 - 2026-09-05 (`pkg/sessionctx/variable` pessimistic fair-locking hook): added
   typed `SessionVars` state for `tidb_pessimistic_transaction_fair_locking`
   and wired the Go next-generation validation branch, including the 1235

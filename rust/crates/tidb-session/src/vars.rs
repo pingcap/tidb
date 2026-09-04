@@ -1067,6 +1067,12 @@ pub struct SessionVars {
     ti_flash_query_spill_ratio: f64,
     /// Go's typed `SessionVars.PessimisticTransactionFairLocking`.
     pessimistic_transaction_fair_locking: bool,
+    /// Go's typed `SessionVars.BulkDMLEnabled`, maintained by
+    /// `tidb_dml_type`'s SetSession hook.
+    bulk_dml_enabled: bool,
+    /// Go's typed replica-read selection, maintained by the
+    /// `tidb_replica_read` SetSession hook.
+    replica_read: tidb_executor::ReplicaReadType,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
     /// PARSES out of the raw text -- chiefly the optimizer's cost environment
     /// -- and re-derive only when a `SET`
@@ -1165,6 +1171,8 @@ impl Default for SessionVars {
                 tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
             ti_flash_query_spill_ratio: tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO,
             pessimistic_transaction_fair_locking: false,
+            bulk_dml_enabled: false,
+            replica_read: tidb_executor::ReplicaReadType::Leader,
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
@@ -1244,6 +1252,8 @@ impl SessionVars {
         let ti_flash_query_spill_ratio = Self::ti_flash_query_spill_ratio_from_systems(&systems);
         let pessimistic_transaction_fair_locking =
             Self::pessimistic_transaction_fair_locking_from_systems(&systems);
+        let bulk_dml_enabled = Self::bulk_dml_enabled_from_systems(&systems);
+        let replica_read = Self::replica_read_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
@@ -1266,6 +1276,8 @@ impl SessionVars {
         self.ti_flash_mem_quota_query_per_node = ti_flash_mem_quota_query_per_node;
         self.ti_flash_query_spill_ratio = ti_flash_query_spill_ratio;
         self.pessimistic_transaction_fair_locking = pessimistic_transaction_fair_locking;
+        self.bulk_dml_enabled = bulk_dml_enabled;
+        self.replica_read = replica_read;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
@@ -1391,6 +1403,41 @@ impl SessionVars {
             .is_some_and(|value| value.eq_ignore_ascii_case("ON") || value == "1")
     }
 
+    fn bulk_dml_enabled_from_systems(systems: &HashMap<String, String>) -> bool {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_DML_TYPE)
+            .is_some_and(|value| value.eq_ignore_ascii_case("bulk"))
+    }
+
+    fn replica_read_from_systems(
+        systems: &HashMap<String, String>,
+    ) -> tidb_executor::ReplicaReadType {
+        match systems
+            .get(tidb_vardef::tidb_vars::TIDB_REPLICA_READ)
+            .map(String::as_str)
+        {
+            Some(value) if value.eq_ignore_ascii_case("follower") => {
+                tidb_executor::ReplicaReadType::Follower
+            }
+            Some(value) if value.eq_ignore_ascii_case("leader-and-follower") => {
+                tidb_executor::ReplicaReadType::Mixed
+            }
+            Some(value) if value.eq_ignore_ascii_case("closest-replicas") => {
+                tidb_executor::ReplicaReadType::Closest
+            }
+            Some(value) if value.eq_ignore_ascii_case("closest-adaptive") => {
+                tidb_executor::ReplicaReadType::ClosestAdaptive
+            }
+            Some(value) if value.eq_ignore_ascii_case("learner") => {
+                tidb_executor::ReplicaReadType::Learner
+            }
+            Some(value) if value.eq_ignore_ascii_case("prefer-leader") => {
+                tidb_executor::ReplicaReadType::PreferLeader
+            }
+            _ => tidb_executor::ReplicaReadType::Leader,
+        }
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -1499,6 +1546,18 @@ impl SessionVars {
     #[must_use]
     pub const fn pessimistic_transaction_fair_locking_enabled(&self) -> bool {
         self.pessimistic_transaction_fair_locking
+    }
+
+    /// Go `SessionVars.BulkDMLEnabled`, set by `tidb_dml_type`.
+    #[must_use]
+    pub const fn bulk_dml_enabled(&self) -> bool {
+        self.bulk_dml_enabled
+    }
+
+    /// Go `SessionVars.GetReplicaRead`, the typed KV replica-read mode.
+    #[must_use]
+    pub const fn replica_read(&self) -> tidb_executor::ReplicaReadType {
+        self.replica_read
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -1631,6 +1690,8 @@ impl SessionVars {
         let mut restores_ti_flash_mem_quota_query_per_node = false;
         let mut restores_ti_flash_query_spill_ratio = false;
         let mut restores_pessimistic_transaction_fair_locking = false;
+        let mut restores_bulk_dml_enabled = false;
+        let mut restores_replica_read = false;
         for (key, previous) in snapshot {
             restores_sql_mode |= key == "sql_mode";
             restores_max_allowed_packet |= key == "max_allowed_packet";
@@ -1655,6 +1716,8 @@ impl SessionVars {
                 key == tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO;
             restores_pessimistic_transaction_fair_locking |=
                 key == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING;
+            restores_bulk_dml_enabled |= key == tidb_vardef::tidb_vars::TIDB_DML_TYPE;
+            restores_replica_read |= key == tidb_vardef::tidb_vars::TIDB_REPLICA_READ;
             match previous {
                 Some(value) => {
                     self.session_resolved
@@ -1721,6 +1784,12 @@ impl SessionVars {
         if restores_pessimistic_transaction_fair_locking {
             self.pessimistic_transaction_fair_locking =
                 Self::pessimistic_transaction_fair_locking_from_systems(&self.systems);
+        }
+        if restores_bulk_dml_enabled {
+            self.bulk_dml_enabled = Self::bulk_dml_enabled_from_systems(&self.systems);
+        }
+        if restores_replica_read {
+            self.replica_read = Self::replica_read_from_systems(&self.systems);
         }
         self.refresh_optimizer_fix_control();
     }
@@ -1801,6 +1870,15 @@ impl SessionVars {
         } else {
             None
         };
+        if key == tidb_vardef::tidb_vars::TIDB_DML_TYPE
+            && !validated.value.eq_ignore_ascii_case("standard")
+            && !validated.value.eq_ignore_ascii_case("bulk")
+        {
+            return Err(VarError::ValidationRefused(format!(
+                "unsupport DML type: {}",
+                validated.value
+            )));
+        }
         // Go's `collation_server.SetSession` hook mirrors the selected
         // collation's owning charset into `character_set_server`. Keep both
         // names in the session image so a later `@@character_set_server` read
@@ -1900,6 +1978,12 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING {
             self.pessimistic_transaction_fair_locking = validated.value == "ON";
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_DML_TYPE {
+            self.bulk_dml_enabled = validated.value.eq_ignore_ascii_case("bulk");
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_REPLICA_READ {
+            self.replica_read = Self::replica_read_from_systems(&self.systems);
         }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
@@ -2671,6 +2755,63 @@ mod tests {
             )
             .unwrap();
             assert!(vars.pessimistic_transaction_fair_locking_enabled());
+        }
+    }
+
+    #[test]
+    fn dml_type_and_replica_read_use_go_typed_hooks() {
+        let mut vars = SessionVars::new();
+        assert!(!vars.bulk_dml_enabled());
+        assert_eq!(vars.replica_read(), tidb_executor::ReplicaReadType::Leader);
+
+        vars.set_system(tidb_vardef::tidb_vars::TIDB_DML_TYPE, "standard".to_owned())
+            .unwrap();
+        assert!(!vars.bulk_dml_enabled());
+
+        if tidb_config::kerneltype::is_next_gen() {
+            let error = vars
+                .set_system(tidb_vardef::tidb_vars::TIDB_DML_TYPE, "bulk".to_owned())
+                .expect_err("nextgen rejects bulk DML");
+            let VarError::SqlError(error) = error else {
+                panic!("nextgen bulk-DML refusal should retain MySQL error 1235");
+            };
+            assert_eq!(error.code, 1235);
+            assert!(!vars.bulk_dml_enabled());
+        } else {
+            vars.set_system(tidb_vardef::tidb_vars::TIDB_DML_TYPE, "bulk".to_owned())
+                .unwrap();
+            assert!(vars.bulk_dml_enabled());
+        }
+
+        let modes = [
+            ("follower", tidb_executor::ReplicaReadType::Follower),
+            ("leader-and-follower", tidb_executor::ReplicaReadType::Mixed),
+            ("closest-replicas", tidb_executor::ReplicaReadType::Closest),
+            (
+                "closest-adaptive",
+                tidb_executor::ReplicaReadType::ClosestAdaptive,
+            ),
+            ("learner", tidb_executor::ReplicaReadType::Learner),
+            (
+                "prefer-leader",
+                tidb_executor::ReplicaReadType::PreferLeader,
+            ),
+        ];
+        for (name, expected) in modes {
+            if tidb_config::kerneltype::is_next_gen() {
+                let error = vars
+                    .set_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ, name.to_owned())
+                    .expect_err("nextgen rejects non-leader replica reads");
+                let VarError::SqlError(error) = error else {
+                    panic!("nextgen replica-read refusal should retain MySQL error 1235");
+                };
+                assert_eq!(error.code, 1235);
+                assert_eq!(vars.replica_read(), tidb_executor::ReplicaReadType::Leader);
+            } else {
+                vars.set_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ, name.to_owned())
+                    .unwrap();
+                assert_eq!(vars.replica_read(), expected);
+            }
         }
     }
 

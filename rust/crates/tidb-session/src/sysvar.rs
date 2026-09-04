@@ -621,6 +621,33 @@ impl SysVarDef {
                 &[FormatArg::from(self.name)],
             )));
         }
+        // Go's nextgen-only `TestTiDBDMLTypeInNextGen` keeps STANDARD
+        // available but rejects BULK with the same 1235 compatibility error.
+        if self.name == tidb_vardef::tidb_vars::TIDB_DML_TYPE
+            && tidb_config::kerneltype::is_next_gen()
+            && validated.value.eq_ignore_ascii_case("bulk")
+        {
+            return Err(ValidationError::SqlError(SqlError::new_f(
+                tidb_error::mysql::errcode::ErrNotSupportedYet,
+                "%s is not supported in the next generation of TiDB",
+                &[],
+                &[FormatArg::from(self.name)],
+            )));
+        }
+        // Go's nextgen-only replica-read validation retains LEADER and maps
+        // every other non-empty mode back to LEADER after returning 1235.
+        if self.name == tidb_vardef::tidb_vars::TIDB_REPLICA_READ
+            && tidb_config::kerneltype::is_next_gen()
+            && !validated.value.eq_ignore_ascii_case("leader")
+            && !validated.value.is_empty()
+        {
+            return Err(ValidationError::SqlError(SqlError::new_f(
+                tidb_error::mysql::errcode::ErrNotSupportedYet,
+                "%s is not supported in the next generation of TiDB",
+                &[],
+                &[FormatArg::from(self.name)],
+            )));
+        }
         // Go's `tiflash_query_spill_ratio` keeps the generic float range
         // [0, 1], then narrows it in its variable-specific Validation closure
         // to [0, 0.85]. Values below zero have already been clamped to 0 by
