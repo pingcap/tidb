@@ -52,6 +52,29 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 	return expr.Restore(restoreCtx)
 }
 
+func writePhysicalKeyDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
+	if ft.GetType() != mysql.TypeSet {
+		return writeDatum(restoreCtx, d, ft)
+	}
+	if d.IsNull() {
+		restoreCtx.WriteKeyWord("NULL")
+		return nil
+	}
+	var value uint64
+	switch d.Kind() {
+	case types.KindMysqlSet:
+		value = d.GetMysqlSet().Value
+	case types.KindUint64:
+		value = d.GetUint64()
+	case types.KindInt64:
+		value = uint64(d.GetInt64())
+	default:
+		return errors.Errorf("invalid SET key datum kind: %d", d.Kind())
+	}
+	restoreCtx.WritePlain(strconv.FormatUint(value, 10))
+	return nil
+}
+
 // FormatSQLDatum formats the datum to a value string in sql
 func FormatSQLDatum(d types.Datum, ft *types.FieldType) (string, error) {
 	var sb strings.Builder
@@ -160,7 +183,7 @@ func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, d
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 
-	b.writeColNames(cols, len(cols) > 1)
+	b.writePhysicalKeyColNames(cols, len(cols) > 1)
 	b.restoreCtx.WritePlain(" ")
 	b.restoreCtx.WritePlain(op)
 	b.restoreCtx.WritePlain(" ")
@@ -200,7 +223,7 @@ func (b *SQLBuilder) WriteInCondition(cols []*model.ColumnInfo, dps ...[]types.D
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 
-	b.writeColNames(cols, len(cols) > 1)
+	b.writePhysicalKeyColNames(cols, len(cols) > 1)
 	b.restoreCtx.WritePlain(" IN ")
 	b.restoreCtx.WritePlain("(")
 	first := true
@@ -274,6 +297,27 @@ func (b *SQLBuilder) writeColNames(cols []*model.ColumnInfo, writeBrackets bool)
 	}
 }
 
+func (b *SQLBuilder) writePhysicalKeyColNames(cols []*model.ColumnInfo, writeBrackets bool) {
+	if writeBrackets {
+		b.restoreCtx.WritePlain("(")
+	}
+	for i, col := range cols {
+		if i > 0 {
+			b.restoreCtx.WritePlain(", ")
+		}
+		if col.GetType() == mysql.TypeSet {
+			b.restoreCtx.WritePlain("CAST(")
+			b.writeColName(col)
+			b.restoreCtx.WritePlain(" AS UNSIGNED)")
+		} else {
+			b.writeColName(col)
+		}
+	}
+	if writeBrackets {
+		b.restoreCtx.WritePlain(")")
+	}
+}
+
 func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) error {
 	writeBrackets := len(cols) > 1
 	if len(cols) != len(dp) {
@@ -291,7 +335,7 @@ func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) 
 		} else {
 			b.restoreCtx.WritePlain(", ")
 		}
-		if err := writeDatum(b.restoreCtx, d, &cols[i].FieldType); err != nil {
+		if err := writePhysicalKeyDatum(b.restoreCtx, d, &cols[i].FieldType); err != nil {
 			return err
 		}
 	}

@@ -930,6 +930,49 @@ func TestBuildDeleteSQL(t *testing.T) {
 	}
 }
 
+func TestSetPhysicalKeySQL(t *testing.T) {
+	setType := types.NewFieldTypeBuilder().SetType(mysql.TypeSet).SetElems([]string{"z", "a", "b"}).Build()
+	tbl := &cache.PhysicalTable{
+		Schema: ast.NewCIStr("test"),
+		TableInfo: &model.TableInfo{
+			Name: ast.NewCIStr("t"),
+		},
+		KeyColumns: []*model.ColumnInfo{
+			{Name: ast.NewCIStr("s"), FieldType: setType},
+			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		},
+		TimeColumn: &model.ColumnInfo{
+			Name:      ast.NewCIStr("created_at"),
+			FieldType: *types.NewFieldType(mysql.TypeDatetime),
+		},
+	}
+	setValue, err := types.ParseSetValue(setType.GetElems(), 5)
+	require.NoError(t, err)
+	key := []types.Datum{types.NewMysqlSetDatum(setValue, setType.GetCollate()), types.NewIntDatum(1)}
+	expire := time.UnixMilli(0).In(time.UTC)
+
+	generator, err := sqlbuilder.NewScanQueryGenerator(tbl, expire, nil, nil)
+	require.NoError(t, err)
+	firstSQL, err := generator.NextSQL(nil, 1)
+	require.NoError(t, err)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `s`, `id` FROM `test`.`t` WHERE `created_at` < FROM_UNIXTIME(0) ORDER BY `s`, `id` ASC LIMIT 1", firstSQL)
+	nextSQL, err := generator.NextSQL([][]types.Datum{key}, 1)
+	require.NoError(t, err)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `s`, `id` FROM `test`.`t` WHERE CAST(`s` AS UNSIGNED) = 5 AND `id` > 1 AND `created_at` < FROM_UNIXTIME(0) ORDER BY `s`, `id` ASC LIMIT 1", nextSQL)
+	afterPrefixSQL, err := generator.NextSQL(nil, 1)
+	require.NoError(t, err)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `s`, `id` FROM `test`.`t` WHERE CAST(`s` AS UNSIGNED) > 5 AND `created_at` < FROM_UNIXTIME(0) ORDER BY `s`, `id` ASC LIMIT 1", afterPrefixSQL)
+
+	deleteSQL, err := sqlbuilder.BuildDeleteSQL(tbl, [][]types.Datum{key}, expire)
+	require.NoError(t, err)
+	require.Equal(t, "DELETE LOW_PRIORITY FROM `test`.`t` WHERE (CAST(`s` AS UNSIGNED), `id`) IN ((5, 1)) AND `created_at` < FROM_UNIXTIME(0) LIMIT 1", deleteSQL)
+
+	for _, sql := range []string{firstSQL, nextSQL, afterPrefixSQL, deleteSQL} {
+		_, _, err = parser.New().ParseSQL(sql)
+		require.NoError(t, err)
+	}
+}
+
 func d(vs ...any) []types.Datum {
 	datums := make([]types.Datum, len(vs))
 	for i, v := range vs {

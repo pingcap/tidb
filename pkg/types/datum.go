@@ -1362,7 +1362,7 @@ func (d *Datum) convertToUint(ctx Context, target *FieldType) (Datum, error) {
 	case KindMysqlEnum:
 		val, err = ConvertFloatToUint(ctx.Flags(), d.GetMysqlEnum().ToNumber(), upperBound, tp)
 	case KindMysqlSet:
-		val, err = ConvertFloatToUint(ctx.Flags(), d.GetMysqlSet().ToNumber(), upperBound, tp)
+		val, err = ConvertUintToUint(d.GetMysqlSet().Value, upperBound, tp)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err = d.GetBinaryLiteral().ToInt(ctx)
 		if err == nil {
@@ -1983,6 +1983,11 @@ func (d *Datum) ToInt64(ctx Context) (int64, error) {
 	if d.Kind() == KindMysqlBit {
 		uintVal, err := d.GetBinaryLiteral().ToInt(ctx)
 		return int64(uintVal), err
+	}
+	if d.Kind() == KindMysqlSet {
+		// MySQL evaluates an explicit integer cast of SET from its physical
+		// bitmask, not through the display string or a floating-point value.
+		return int64(d.GetMysqlSet().Value), nil
 	}
 	return d.toSignedInteger(ctx, mysql.TypeLonglong)
 }
