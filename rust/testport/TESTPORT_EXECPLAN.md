@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned Rust `tidb-expr` `DATE_FORMAT` `%X`/`%x` week-year
+  rendering with Go `types.Time.convertDateFormat`: a negative ISO week-year
+  now emits the source's `4294967295` uint32 sentinel instead of `-001`.
+  The focused year-zero regression failed before the formatter change and
+  passes after it; the complete `pkg/expression` and `pkg/types` inventories
+  and Ready checks are recorded in `receipts/expression_collation_audit.md`.
+
 - 2026-09-04: aligned the expression-level Rust `STR_TO_DATE` `%.'` token
   with Go's Unicode punctuation predicate. The duplicate `tidb-expr`
   implementation now shares `tidb-datatype`'s source-version classifier,
@@ -5498,6 +5505,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: preserve Go's explicit `math.MaxUint32` spelling for negative
+  `%X`/`%x` week-years by centralizing the sign check in the Rust formatter's
+  local week-year helper. Positive years retain their existing zero-padded
+  output, and no week-number arithmetic is changed. Date/Author: 2026-09-04,
+  Codex.
+
 - Decision: share the already source-pinned `is_go_punctuation` classifier
   from `tidb-datatype` with the duplicate expression-level `STR_TO_DATE`
   parser instead of introducing a second Unicode dependency/table. This keeps
@@ -6089,6 +6102,11 @@ For each bounded behavior cluster:
   Codex.
 
 ## Surprises & Discoveries
+
+- Go's week-year formatter deliberately converts negative `YearWeek` results
+  to an unsigned `MaxUint32` sentinel. Rust's signed formatting exposed
+  `-001` at the year-zero boundary, even though ordinary week-year vectors
+  already matched.
 
 - The expression crate carried a second `STR_TO_DATE` parser that had not
   inherited the datatype owner's Unicode punctuation correction. A shared

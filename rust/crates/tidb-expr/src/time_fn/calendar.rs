@@ -2049,6 +2049,15 @@ pub(crate) fn date_format(date: &Datum, fmt: &Datum) -> Result<Datum, EvalError>
             _ => "th",
         }
     };
+    // Go's `convertDateFormat` writes a negative week-year through
+    // `uint32`, exposing MaxUint32 rather than a signed year such as `-001`.
+    let format_week_year = |year: i64| {
+        if year < 0 {
+            u32::MAX.to_string()
+        } else {
+            format!("{year:04}")
+        }
+    };
 
     let mut out = String::new();
     let mut chars = fmt.chars().peekable();
@@ -2094,8 +2103,8 @@ pub(crate) fn date_format(date: &Datum, fmt: &Datum) -> Result<Datum, EvalError>
             Some('u') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 1, false).1)),
             Some('V') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 2, false).1)),
             Some('v') => out.push_str(&format!("{:02}", week_of_year(y, m, d, 3, false).1)),
-            Some('X') => out.push_str(&format!("{:04}", week_of_year(y, m, d, 2, true).0)),
-            Some('x') => out.push_str(&format!("{:04}", week_of_year(y, m, d, 3, true).0)),
+            Some('X') => out.push_str(&format_week_year(week_of_year(y, m, d, 2, true).0)),
+            Some('x') => out.push_str(&format_week_year(week_of_year(y, m, d, 3, true).0)),
             Some('%') => out.push('%'),
             // An unknown specifier emits the letter verbatim (MySQL rule).
             Some(other) => out.push(other),

@@ -746,3 +746,41 @@ Risks are limited to sharing a pure Unicode-category predicate across the two
 Rust parser owners. The `%.'` path performs one table lookup per consumed
 character; all other `STR_TO_DATE` tokens and expression evaluation paths are
 unchanged.
+
+## Rust follow-up: negative `DATE_FORMAT` week-year rendering
+
+The same current Go authority remains `origin/master` at
+`fc7788ff517c3407dc7e000be989ab23e6648211`. Before this edit, the complete
+`pkg/expression` inventory was already reread (208 tracked artifacts; 137
+direct-root artifacts; 68 production, 60 test, seven generated sources,
+`BUILD.bazel`, `OWNERS`, and nested package/build/support inputs). Because the
+formatter delegates its week-year calculation to `types.Time`, the complete
+`pkg/types` owner was also inventoried: 61 tracked artifacts, 30 production
+files, 29 tests, and two `BUILD.bazel` files, including the nested
+`parser_driver` package; no platform or fixture files are present.
+
+Go's `pkg/types/time.go` `convertDateFormat` writes `%X`/`%x` week-years
+through `uint32` when `YearWeek` returns a negative year, producing the literal
+`4294967295` (`math.MaxUint32`). Rust's `tidb-expr` formatter instead emitted a
+signed `-001` for `%x` at `0000-01-01`. The focused regression
+`time_fn::tests::date_format_negative_week_year_uses_go_uint32_sentinel`
+failed before the change (`0000 -001`) and passes after the formatter uses the
+same sentinel for negative `%X`/`%x` years. Positive week-years and all other
+format tokens remain unchanged.
+
+No Go, generated, fixture, platform, or Bazel source changed. This bounded
+expression/type-formatting fix does not claim the wider package complete;
+documented typed temporal and warning-state boundaries remain in the receipt.
+
+## Validation for negative `DATE_FORMAT` week-year rendering
+
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib time_fn::tests::date_format_negative_week_year_uses_go_uint32_sentinel -- --exact --nocapture` — pre-fix failed (`0000 -001` vs Go's sentinel); post-fix passed (1 focused test).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib time_fn::tests::date_format_source_vectors -- --exact --nocapture` — positive and existing zero-year vectors pass.
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --all-targets` — passed (existing warnings only).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` and `git diff --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed.
+
+The compatibility risk is limited to the documented negative week-year
+sentinel. The formatter now allocates the same short-lived decimal string for
+negative years that it already allocates for positive year formatting; no
+execution or storage path changes.

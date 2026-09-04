@@ -645,6 +645,18 @@ fn date_format_source_vectors() {
     );
 }
 
+/// Go's `Time.convertDateFormat` uses the `uint32` sentinel
+/// `4294967295` when `%X`/`%x`'s ISO week-year calculation is negative (for
+/// example, the year-zero boundary). Rust's signed formatting must preserve
+/// that source-visible spelling rather than exposing `-001`.
+#[test]
+fn date_format_negative_week_year_uses_go_uint32_sentinel() {
+    assert_eq!(
+        calendar::date_format(&string_datum("0000-01-01"), &string_datum("%X %x"),).unwrap(),
+        Datum::new_string("0000 4294967295".to_owned())
+    );
+}
+
 /// Representable rows from `TestStrToDate` at
 /// `pkg/expression/builtin_time_test.go:1792`.  The Go function class
 /// chooses typed DATE/DATETIME/DURATION signatures from the format; this
