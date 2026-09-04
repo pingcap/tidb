@@ -464,6 +464,15 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `receipts/cast_hybrid_push.md` sibling — the vectors live in
   `simple_expr::tests::format_bytes_and_nano_time_follow_the_go_unit_tables`.
 
+- 2026-09-04 (registry arity parity verification): systematic
+  accept/reject-arity check across all 283 Go `baseFunctionClass`
+  declarations (pkg/expression, every `ast.<Const>` resolved through
+  `pkg/parser/ast/functions.go`) against the Rust registry's 276 entries —
+  zero divergences. The seven naive name-diff flags were each traced to a
+  dedicated mechanism (CAST build path, typed getvar signatures, the INSERT
+  VALUES path, the builtin_ext JSON dispatch). Verification receipt:
+  `receipts/registry_arity_parity.md`.
+
 - 2026-09-04 (hybrid-type cast push, `builtin_cast.go:2898`): ported
   `TryPushCastIntoControlFunctionForHybridType` — a numeric-target cast over
   IF/CASE/ELT pushes INTO the branches when one is a hybrid type (Enum/Set,
