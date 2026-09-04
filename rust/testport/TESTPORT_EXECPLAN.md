@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (D5, `pkg/types` comparison context seam): added
+  `Datum::compare_with_context`, which forwards statement zero-in-date and
+  invalid-date flags plus an explicit session timezone through temporal string
+  comparisons while preserving Go's ordering/error pair. Focused regressions
+  cover `ALLOW_INVALID_DATES` and timezone-offset ordering. The context-free
+  wrapper remains compatible; live expression warning/context wiring is still
+  open and is recorded in the receipt.
 - 2026-09-04 (M6, `pkg/types` decimal add/sub fixed-word boundary): aligned
   Rust `Decimal::add_mysql` and opposite-sign `sub_mysql` with Go's
   leading-word carry precheck, including the nine-word capacity limit. The

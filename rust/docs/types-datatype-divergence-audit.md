@@ -31,8 +31,9 @@ the bottom.
 
 The highest-impact open item is now:
 
-- **D5** — `Datum::compare` still lacks Go's statement context, so timezone,
-  SQL-mode flags, and truncation-warning publication are pinned or dropped.
+- **D5** — the datatype comparison seam now accepts statement date flags and
+  timezone, but the live expression evaluator still owns warning publication
+  and has a separate context-wiring follow-up.
 
 M6 and M10 are fixed in the Rust owner: the decimal add/sub boundary now
 preserves Go's leading-word overflow heuristic, and the fixed-word parser
@@ -210,7 +211,7 @@ Distinguishing input: `Time('2011-01-01 00:00:00')` compared with
   paired result. Focused regressions cover both directions and the numeric
   prefix event in `receipts/types_explain_format_audit.md`.
 
-## D5 (rank 2/3) — `Datum::compare` has no context: flags, timezone and warning sink are all hardcoded
+## D5 (rank 2/3, PARTIALLY FIXED 2026-09-04) — `Datum::compare` has no context: flags, timezone and warning sink are all hardcoded
 
 `Datum.Compare` in Go takes a `types.Context` and threads it into every nested
 conversion. The Rust `Datum::compare` takes only a `Collation`. Three
@@ -239,10 +240,27 @@ Go passes through `ctx.HandleTruncate`, which appends a warning under
 floor. `compare_f64`'s decimal arm (`:124`) likewise uses the infallible
 `to_f64()` where Go's `MyDecimal.ToFloat64()` returns an error.
 
-Consequence: a comparison that MySQL accompanies with `Warning 1292 Truncated
-incorrect DOUBLE value: 'abc'` produces no warning at all. This is exactly the
-class the integration replay cannot see (28 of 4,906 statements observe
-warnings).
+The datatype owner now exposes `Datum::compare_with_context`, which threads
+the caller's zero-in-date and invalid-date flags plus an explicit
+`SessionTimeZone` through every temporal string conversion. It preserves the
+source ordering/error pair, so a strict parse failure can still be handled by
+the statement layer without losing the zero-value ordering. Focused
+regressions cover `2020-02-31` under strict versus `ALLOW_INVALID_DATES`, and a
+`+01:00` offset whose result changes between UTC and `+02:00` session zones.
+
+The context-free `compare` wrapper remains deliberately source-compatible for
+dependency-leaf callers and uses its documented UTC/default policy. Warning
+publication is still caller-owned: `compare_with_context` returns the
+diagnostic rather than inventing a `TerrorError` code, and the live
+`tidb-expr::ops::time_compare_ordering` path still has to replace its
+hard-coded flags/UTC and publish 1292 through its `Columns` sink. Until that
+caller wiring lands, D5 remains open even though the datatype context seam is
+no longer hard-coded.
+
+Consequence of the remaining live gap: a comparison that MySQL accompanies
+with `Warning 1292 Truncated incorrect DOUBLE value: 'abc'` can still produce
+no warning in the expression path. This is exactly the class the integration
+replay cannot see (28 of 4,906 statements observe warnings).
 
 ## D6 (rank 2, FIXED) — `Datum::to_decimal` for a float source discards `FromString`'s error
 

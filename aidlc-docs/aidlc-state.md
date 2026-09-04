@@ -2,16 +2,16 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` decimal add/sub fixed-word boundary parity batch (finding M6)
+- Work unit: `pkg/types` comparison context seam parity batch (finding D5)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: the focused decimal add-overflow regression and serialized
-  datatype/expression/executor owner profiles pass or retain their known
-  baseline blockers. Datatype reports 407 unit and 64 source/integration
-  passes; expression reports 1,146 passes, one known loopback HTTP
-  JSON-schema fixture failure, and 121 ignored; executor reports 1,052
-  passes and 121 existing planner/storage/fixture failures. Strict
+- Validation: the focused context-aware comparison regressions pass. The
+  datatype owner reports 409 unit and 64 source/integration passes; expression
+  reports 1,147 passes, one known loopback HTTP JSON-schema fixture failure,
+  and 121 ignored; executor reports 1,052 passes and 121 existing
+  planner/storage/fixture failures. The context seam preserves Go's date flags
+  and timezone while leaving warning publication to its live caller. Strict
   datatype clippy remains blocked only by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
@@ -111,6 +111,6 @@
   preserve Go's leading-word carry heuristic and nine-word overflow boundary.
   The focused 81-digit regression and Ready counts are recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
-- Next action: continue with the next executable Rust package boundary after
-  this M6 batch; D5 statement-context flags, timezone, and warning publication
-  remain explicit follow-ups.
+- Next action: run the D5 Ready profile, commit and push the context seam, then
+  continue with the next executable Rust package boundary. The live
+  expression warning/context wiring remains an explicit follow-up.

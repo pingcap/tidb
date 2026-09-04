@@ -180,4 +180,10 @@
   error-only callers; focused bidirectional temporal and numeric regressions
   plus the datatype Ready profile are recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
+- 2026-09-04: Rust `Datum::compare_with_context` now carries statement
+  zero-in-date/invalid-date flags and the explicit session timezone through
+  temporal string ordering. Focused `ALLOW_INVALID_DATES` and timezone-offset
+  regressions are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`; live expression
+  warning/context publication remains the open D5 caller follow-up.
 - parser #5 (RESERVED_KEYWORDS 缺 DATABASE/DATABASES/DISTINCT) 核实已被并发会话修复 — RESERVED_KEYWORDS 当前含全部 236 条含这三个关键词。审计项 5 关闭。

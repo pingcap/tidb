@@ -753,6 +753,63 @@ git diff --check
 # documented baseline test failures above
 ```
 
+## Rust-only parity fix: comparison context carries date flags and timezone
+
+Go's `Datum.Compare` receives a statement `types.Context`; temporal string
+operands therefore use the statement's zero-in-date/invalid-date flags and
+location. Rust's context-free `Datum::compare` had those choices pinned to
+`allow_zero_in_date = true`, `allow_invalid_date = false`, and UTC, which made
+`ALLOW_INVALID_DATES` and explicit timezone-offset inputs diverge.
+
+The Rust datatype owner now exposes `Datum::compare_with_context`, threading
+the two date flags and an explicit `SessionTimeZone` through every temporal
+string conversion. It preserves Go's ordering/error pair so a caller can apply
+its own warning policy without losing the zero-value ordering. The legacy
+`compare` and `compare_with_error` wrappers retain their documented UTC
+behavior for dependency-leaf callers.
+
+Focused regressions:
+
+- `datum::compare::tests::compare_with_context_uses_statement_date_flags`
+  compares `2020-02-31` strictly (error plus zero ordering) and under
+  `ALLOW_INVALID_DATES` (accepted calendar ordering).
+- `datum::compare::tests::compare_with_context_uses_statement_timezone`
+  compares a `+01:00` offset under UTC versus `+02:00` and proves the result
+  follows the supplied session zone.
+
+Ready validation (commands run from the dedicated worktree):
+
+```text
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+# passed
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib compare_with_context_uses_statement -- --nocapture
+# passed: 2 focused tests
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,147 passed, 1 known loopback HTTP JSON-schema fixture failed, 121 ignored
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,052 passed, 121 existing planner/storage/fixture failures, 0 ignored
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
+The live `tidb-expr::ops::time_compare_ordering` caller still needs to wire
+its `Columns` date modes/timezone and 1292 warning sink to this seam; that
+remaining caller integration is intentionally still counted as open D5.
+
 ## Rust-only parity fix: decimal add/sub leading-word overflow heuristic
 
 Go `pkg/types/mydecimal.go:1909-1926` computes the destination integer-word
