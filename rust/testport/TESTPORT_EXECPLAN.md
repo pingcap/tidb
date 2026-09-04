@@ -68,7 +68,12 @@ For each bounded behavior cluster:
 - 2026-09-05 (`pkg/sessionctx/variable` receipt cleanup): removed the stale
   empty ignored shims for every sysvar test whose executable coverage now
   lives in `tidb-session`; the remaining `tidb-vardef` inventory is 13
-  passing constant/initial-value checks and 13 explicit gap tests.
+  passing constant/initial-value checks and 12 explicit gap tests.
+- 2026-09-05 (`pkg/sessionctx/variable` status registry inventory): reconciled
+  `TestStatusVar` to the existing `tidb-exec` provider registry, added source
+  coverage for last-provider overwrite and provider-error propagation, and
+  removed the stale `tidb-vardef` ignored shim. The process-global mutex and
+  SessionVars-aware default provider remain an explicit partial boundary.
 - 2026-09-05 (`pkg/sessionctx/variable` TiFlash session hooks): added typed
   SessionVars state for the three external-spill thresholds, per-node memory
   quota, and query spill ratio. Session writes, statement restore, GLOBAL

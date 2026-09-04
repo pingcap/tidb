@@ -130,12 +130,6 @@ fn tidb_replica_read_in_next_gen_unported() {}
 // pkg/sessionctx/variable/statusvar_test.go
 // ---------------------------------------------------------------------------
 
-/// Go `pkg/sessionctx/variable/statusvar_test.go::TestStatusVar`.
-// go-parity-gap: RegisterStatistics/GetStatusVars status-variable layer not ported
-#[test]
-#[ignore]
-fn status_var_unported() {}
-
 // ---------------------------------------------------------------------------
 // pkg/sessionctx/variable/sysvar_test.go (first 50 tests, canonical order)
 // ---------------------------------------------------------------------------
