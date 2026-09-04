@@ -4489,17 +4489,19 @@ func (e *executor) dropTableObject(
 			}
 		}
 
+		involvingSchemas := buildDropTableInvolvingSchemaInfo(e.ctx, is, schema.Name.L, tableInfo.Meta())
 		job := &model.Job{
-			Version:        model.GetJobVerInUse(),
-			SchemaID:       schema.ID,
-			TableID:        tableInfo.Meta().ID,
-			SchemaName:     schema.Name.L,
-			SchemaState:    schema.State,
-			TableName:      tableInfo.Meta().Name.L,
-			Type:           jobType,
-			BinlogInfo:     &model.HistoryInfo{},
-			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-			SQLMode:        ctx.GetSessionVars().SQLMode,
+			Version:             model.GetJobVerInUse(),
+			SchemaID:            schema.ID,
+			TableID:             tableInfo.Meta().ID,
+			SchemaName:          schema.Name.L,
+			SchemaState:         schema.State,
+			TableName:           tableInfo.Meta().Name.L,
+			Type:                jobType,
+			BinlogInfo:          &model.HistoryInfo{},
+			InvolvingSchemaInfo: involvingSchemas,
+			CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+			SQLMode:             ctx.GetSessionVars().SQLMode,
 		}
 		args := &model.DropTableArgs{
 			Identifiers: objectIdents,
@@ -4535,6 +4537,39 @@ func (e *executor) dropTableObject(
 		}
 	}
 	return nil
+}
+
+func buildDropTableInvolvingSchemaInfo(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemaName string,
+	tableInfo *model.TableInfo,
+) []model.InvolvingSchemaInfo {
+	involvingSchemas := []model.InvolvingSchemaInfo{{
+		Database: schemaName,
+		Table:    tableInfo.Name.L,
+	}}
+	if tableInfo.MaterializedViewLog != nil {
+		if baseTbl, ok := is.TableByID(ctx, tableInfo.MaterializedViewLog.BaseTableID); ok {
+			involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
+				Database: schemaName,
+				Table:    baseTbl.Meta().Name.L,
+			})
+		}
+	}
+	if tableInfo.MaterializedView != nil {
+		for _, baseTableID := range tableInfo.MaterializedView.BaseTableIDs {
+			baseTbl, ok := is.TableByID(ctx, baseTableID)
+			if !ok {
+				continue
+			}
+			involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
+				Database: schemaName,
+				Table:    baseTbl.Meta().Name.L,
+			})
+		}
+	}
+	return involvingSchemas
 }
 
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.

@@ -969,7 +969,11 @@ func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, dr
 	switch {
 	case droppingTable.MaterializedView != nil:
 		if len(droppingTable.MaterializedView.BaseTableIDs) == 0 {
-			return nil, errors.New("materialized view must reference at least one base table")
+			logutil.DDLLogger().Warn(
+				"materialized view has no base tables in metadata, skip dependency cleanup when dropping",
+				zap.Int64("mviewID", droppingTable.ID),
+			)
+			return nil, nil
 		}
 		baseTableIDs = droppingTable.MaterializedView.BaseTableIDs
 		apply = func(base *model.TableInfo) {
@@ -1011,7 +1015,10 @@ func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, dr
 		}
 		processed[baseID] = struct{}{}
 		base, err := jobCtx.metaMut.GetTable(job.SchemaID, baseID)
-		if err != nil || base == nil {
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if base == nil {
 			continue
 		}
 		var mlogID int64

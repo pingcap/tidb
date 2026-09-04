@@ -725,7 +725,7 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	if err != nil {
 		return err
 	}
-	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
+	if !isValidMaterializedViewLogBaseTable(schemaName.L, baseTable.Meta()) {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 	baseTableID := baseTable.Meta().ID
@@ -746,6 +746,7 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 		return errDropMaterializedViewLogDependent(schemaName.O, s.Table.Name.O)
 	}
 
+	failpoint.InjectCall("afterCheckDropMaterializedViewLog")
 	failpoint.Inject("pauseDropMaterializedViewLogAfterCheck", func() {})
 	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: mlogName}}}
 	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)

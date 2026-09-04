@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,6 +49,8 @@ func TestDropMaterializedViewIfExists(t *testing.T) {
 
 	err = tk.ExecToErr("drop materialized view if exists t_drop_if_exists")
 	require.ErrorContains(t, err, "is not MATERIALIZED VIEW")
+	err = tk.ExecToErr("drop materialized view log if exists on mv_drop_if_exists")
+	require.ErrorContains(t, err, "is not BASE TABLE")
 
 	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
 	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
@@ -92,6 +96,14 @@ func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *t
 	tk.MustExec("create materialized view log on t_drop_recheck (a, b) purge next date_add(now(), interval 1 hour)")
 
 	const pauseDropFailpoint = "github.com/pingcap/tidb/pkg/ddl/pauseDropMaterializedViewLogAfterCheck"
+	const afterCheckDropFailpoint = "github.com/pingcap/tidb/pkg/ddl/afterCheckDropMaterializedViewLog"
+	dropCheckDoneCh := make(chan struct{})
+	var dropCheckDoneOnce sync.Once
+	testfailpoint.EnableCall(t, afterCheckDropFailpoint, func() {
+		dropCheckDoneOnce.Do(func() {
+			close(dropCheckDoneCh)
+		})
+	})
 	require.NoError(t, failpoint.Enable(pauseDropFailpoint, "pause"))
 	enabled := true
 	defer func() {
@@ -107,7 +119,11 @@ func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *t
 		dropErrCh <- tkDrop.ExecToErr("drop materialized view log on t_drop_recheck")
 	}()
 
-	time.Sleep(500 * time.Millisecond)
+	select {
+	case <-dropCheckDoneCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for DROP MATERIALIZED VIEW LOG precheck")
+	}
 	tk.MustExec("create materialized view mv_drop_dep (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_drop_recheck group by a")
 
 	require.NoError(t, failpoint.Disable(pauseDropFailpoint))
@@ -316,11 +332,41 @@ func TestDropMaterializedViewLogPrivilege(t *testing.T) {
 	tkSelect := newMViewTestKit(t, store)
 	require.NoError(t, tkSelect.Session().Auth(&auth.UserIdentity{Username: "u_drop_mlog_select", Hostname: "%"}, nil, nil, nil))
 	err := tkSelect.ExecToErr("drop materialized view log on test.t_drop_mlog_priv")
-	require.ErrorContains(t, err, "DROP command denied")
+	require.ErrorContains(t, err, "DROP MATERIALIZED VIEW LOG command denied")
+	require.ErrorContains(t, err, "for table 't_drop_mlog_priv'")
 
 	tkDrop := newMViewTestKit(t, store)
 	require.NoError(t, tkDrop.Session().Auth(&auth.UserIdentity{Username: "u_drop_mlog_ok", Hostname: "%"}, nil, nil, nil))
 	tkDrop.MustExec("drop materialized view log on test.t_drop_mlog_priv")
+}
+
+func TestDropMaterializedViewPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_drop_mv_priv (a int)")
+	tk.MustExec("create materialized view log on t_drop_mv_priv (a)")
+	tk.MustExec("create materialized view mv_drop_priv (a) as select a from t_drop_mv_priv")
+
+	tk.MustExec("create user 'u_drop_mv_select'@'%'")
+	tk.MustExec("create user 'u_drop_mv_ok'@'%'")
+	t.Cleanup(func() {
+		tk.MustExec("drop user 'u_drop_mv_select'@'%'")
+		tk.MustExec("drop user 'u_drop_mv_ok'@'%'")
+	})
+	tk.MustExec("grant select on test.mv_drop_priv to 'u_drop_mv_select'@'%'")
+	tk.MustExec("grant drop on test.mv_drop_priv to 'u_drop_mv_ok'@'%'")
+
+	tkSelect := newMViewTestKit(t, store)
+	require.NoError(t, tkSelect.Session().Auth(&auth.UserIdentity{Username: "u_drop_mv_select", Hostname: "%"}, nil, nil, nil))
+	err := tkSelect.ExecToErr("drop materialized view test.mv_drop_priv")
+	require.ErrorContains(t, err, "DROP command denied")
+
+	tkDrop := newMViewTestKit(t, store)
+	require.NoError(t, tkDrop.Session().Auth(&auth.UserIdentity{Username: "u_drop_mv_ok", Hostname: "%"}, nil, nil, nil))
+	tkDrop.MustExec("drop materialized view test.mv_drop_priv")
+	tk.MustExec("drop materialized view log on test.t_drop_mv_priv")
+	tk.MustExec("drop table test.t_drop_mv_priv")
 }
 
 func TestDropMaterializedViewLogBeforeBaseTable(t *testing.T) {
