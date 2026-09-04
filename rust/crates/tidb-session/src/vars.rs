@@ -1326,6 +1326,14 @@ impl SessionVars {
         } else {
             None
         };
+        // Go's `collation_server.SetSession` hook mirrors the selected
+        // collation's owning charset into `character_set_server`. Keep both
+        // names in the session image so a later `@@character_set_server` read
+        // observes the same side effect as the source SessionVars map.
+        let collation_server_charset = (key == "collation_server")
+            .then(|| tidb_datatype::get_collation_by_name(&validated.value).ok())
+            .flatten()
+            .map(|collation| collation.charset_name);
         // Go `SetSessionFromHook`: the alias takes the SAME stored value, with
         // its own validation skipped -- `tx_isolation` and
         // `transaction_isolation` are one value under two spellings.
@@ -1337,6 +1345,11 @@ impl SessionVars {
         self.note_system_change(&key);
         if let Some(other) = alias_of(&key) {
             self.note_system_change(other);
+        }
+        if let Some(charset) = collation_server_charset {
+            self.systems
+                .insert("character_set_server".to_owned(), charset);
+            self.note_system_change("character_set_server");
         }
         if key == "autocommit" {
             self.autocommit = validated.value == "ON";

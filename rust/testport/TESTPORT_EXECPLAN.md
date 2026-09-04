@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` collation-server validation): aligned
+  `tidb-session` with Go's `checkCollation` and `CollationServer.SetSession`
+  hook.  `collation_server` now canonicalizes registry names, rejects unknown
+  names with 1273, and mirrors the selected charset into
+  `character_set_server`; the source-derived session regression is live and
+  the b010 receipt no longer records this behavior as an ignored gap.
 - 2026-09-05 (`pkg/sessionctx/variable` embedding receipt): re-audited the
   b010 rows against the live session owner. `tidb-session::embedding` and
   `tests_session_embedding_source` already cover endpoint normalization and

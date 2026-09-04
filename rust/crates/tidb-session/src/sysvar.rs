@@ -157,6 +157,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use tidb_error::mysql::{FormatArg, SqlError};
+
 mod catalog;
 
 pub use catalog::SYS_VARS;
@@ -522,6 +524,24 @@ impl SysVarDef {
             tidb_util::timeutil::parse_time_zone(&validated.value)
                 .map_err(|error| ValidationError::SqlError(error.to_sql_error()))?;
             return Ok(validated);
+        }
+        // Go's `collation_server` validation (`sysvar.go`'s `checkCollation`)
+        // resolves names through the parser registry, stores the canonical
+        // spelling, and returns `ErrUnknownCollation` (1273) for a missing
+        // entry.  The registry lookup is case-insensitive and also knows the
+        // UTF8MB3 aliases, matching `collate.GetCollationByName`.
+        if self.name == "collation_server" {
+            let collation =
+                tidb_datatype::get_collation_by_name(&validated.value).map_err(|_| {
+                    ValidationError::SqlError(SqlError::new(
+                        tidb_error::mysql::errcode::ErrUnknownCollation,
+                        &[FormatArg::from(original)],
+                    ))
+                })?;
+            return Ok(Validated {
+                value: collation.name,
+                truncated: validated.truncated,
+            });
         }
         // Go keeps this compatibility variable in the integer range [1, 2],
         // then its variable-specific validation closure rejects 1 because the

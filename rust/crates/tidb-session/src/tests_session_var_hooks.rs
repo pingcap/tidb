@@ -27,6 +27,37 @@ fn one(session: &mut Session, sql: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Go `pkg/sessionctx/variable/sysvar_test.go::TestCollationServer`: the
+/// validation canonicalizes case, unknown names return 1273, and the session
+/// hook mirrors the collation's charset into `character_set_server`.
+#[test]
+fn collation_server_normalizes_rejects_and_updates_charset() {
+    let mut session = Session::new();
+
+    session.run("SET collation_server = 'LATIN1_bin'").unwrap();
+    assert_eq!(one(&mut session, "SELECT @@collation_server"), "latin1_bin");
+    assert_eq!(one(&mut session, "SELECT @@character_set_server"), "latin1");
+
+    let error = session
+        .run("SET collation_server = 'BOGUSCOLLation'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1273);
+    assert_eq!(error.message, "Unknown collation: 'BOGUSCOLLation'");
+    assert_eq!(one(&mut session, "SELECT @@collation_server"), "latin1_bin");
+    assert_eq!(one(&mut session, "SELECT @@character_set_server"), "latin1");
+
+    session.run("SET collation_server = 'utf8mb4_bin'").unwrap();
+    assert_eq!(
+        one(&mut session, "SELECT @@collation_server"),
+        "utf8mb4_bin"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@character_set_server"),
+        "utf8mb4"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.
