@@ -41,7 +41,17 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
-=======
+
+- 2026-09-04: aligned the Rust `tidb-datatype` signed subtraction owner with
+  Go `pkg/types/overflow.go` at `origin/master` `fc7788ff...`. Go's
+  `SubInt64` negates `MinInt64` before its guard, so positive-minus-
+  `MinInt64` inputs pass the check and wrap in the final subtraction; Rust's
+  `checked_sub` previously rejected them as a Rust-only overflow. The owner
+  now mirrors the guard with explicit wrapping arithmetic, and a focused
+  regression covers both positive boundary shapes. Complete `pkg/types`
+  inventory, fail-before/pass-after evidence, and Ready validation are
+  recorded in `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04 (batch 19, `pkg/ddl` MV job-envelope metadata): implemented
   Go master `94a9cbedab`'s `initMaterializedViewReorgMetaFromVariables` +
   `NewDDLReorgMeta` (the empty warning maps, recorded SQL mode/zone/resource
@@ -5523,6 +5533,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 ## Decision Log
 
+- Decision: mirror Go's `SubInt64` guard and wrapping subtraction exactly,
+  including the `MinInt64` negation edge. Rust's checked subtraction was a
+  Rust-only refusal for positive-minus-`MinInt64`; `wrapping_neg` and
+  `wrapping_sub` preserve the source's two's-complement result while the
+  explicit zero-minus-`MinInt64` guard still reports overflow. Date/Author:
+  2026-09-04, Codex.
+
 - Decision: preserve Go's explicit `math.MaxUint32` spelling for negative
   `%X`/`%x` week-years by centralizing the sign check in the Rust formatter's
   local week-year helper. Positive years retain their existing zero-padded
@@ -6120,6 +6137,12 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Codex.
 
 ## Surprises & Discoveries
+
+- Go's signed subtraction guard intentionally leaves positive-minus-
+  `MinInt64` unchecked because `-b` wraps before comparison. The final Go
+  integer subtraction then wraps too, so replacing it with Rust's
+  `checked_sub` produced a Rust-only error; the parity fix must use explicit
+  wrapping arithmetic while retaining Go's special zero-minus-minimum error.
 
 - Go's week-year formatter deliberately converts negative `YearWeek` results
   to an unsigned `MaxUint32` sentinel. Rust's signed formatting exposed

@@ -463,6 +463,34 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # pre-fix: failed (`CHAR` instead of `CHAR CHARSET `); after fix: 1 passed
 ```
 
+## Rust-only parity follow-up: signed subtraction at `MinInt64`
+
+The same complete 61-artifact `pkg/types` inventory remains the owning
+package for this checked-arithmetic boundary. Go master
+(`fc7788ff517c3407dc7e000be989ab23e6648211`) implements `SubInt64` with a
+guard that negates `b` before comparing it with the signed limits. When
+`b == math.MinInt64`, Go's integer negation wraps back to `MinInt64`, so a
+positive minuend is accepted and the final `a-b` operation wraps as well:
+`SubInt64(1, MinInt64)` returns `MinInt64+1`, and
+`SubInt64(MaxInt64, MinInt64)` returns `-1`, both without an error. Rust's
+`checked_sub` previously rejected these inputs, introducing Rust-only
+overflow behavior.
+
+The Rust `tidb-datatype::sub_int64` owner now mirrors the source guard with
+`wrapping_neg` and performs the accepted subtraction with `wrapping_sub`.
+The explicit Go guard for `0 - MinInt64` remains an overflow error. The focused
+regression `overflow_tests::sub_int64_min_rhs_positive_lhs_wraps_like_go`
+failed before the production change with `OverflowError` and passes after it,
+covering both positive boundary shapes. No Go, generated, platform, fixture,
+or Bazel file changed.
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib overflow_tests::sub_int64_min_rhs_positive_lhs_wraps_like_go \
+  -- --exact --nocapture
+# pre-fix: failed (`OverflowError` for 1 - MinInt64); after fix: 1 passed
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.
