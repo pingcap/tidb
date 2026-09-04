@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` TiFlash session hooks): added typed
+  SessionVars state for the three external-spill thresholds, per-node memory
+  quota, and query spill ratio. Session writes, statement restore, GLOBAL
+  inheritance for new sessions, and materialized-view execution capture now
+  follow Go's SetSession hook products instead of reparsing strings. Added
+  focused regressions; the receipt retains the downstream planner-consumer
+  boundary as partial.
 - 2026-09-05 (`pkg/sessionctx/variable` server memory limit): wired the
   existing Go-compatible memory-limit parser into the Rust sysvar registry,
   including unit/percentage normalization, the 512MiB floor, and tested

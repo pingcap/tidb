@@ -1009,6 +1009,17 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.EnableSharedLockUpgrade`, maintained by the
     /// `tidb_enable_shared_lock_upgrade` sysvar's `SetSession` hook.
     enable_shared_lock_upgrade: bool,
+    /// Go's typed `SessionVars.TiFlashMaxBytesBeforeExternalJoin`, maintained
+    /// by the corresponding TiFlash threshold `SetSession` hook.
+    ti_flash_max_bytes_before_ext_join: i64,
+    /// Go's typed `SessionVars.TiFlashMaxBytesBeforeExternalGroupBy`.
+    ti_flash_max_bytes_before_ext_agg: i64,
+    /// Go's typed `SessionVars.TiFlashMaxBytesBeforeExternalSort`.
+    ti_flash_max_bytes_before_ext_sort: i64,
+    /// Go's typed `SessionVars.TiFlashMemQuotaQueryPerNode`.
+    ti_flash_mem_quota_query_per_node: i64,
+    /// Go's typed `SessionVars.TiFlashQuerySpillRatio`.
+    ti_flash_query_spill_ratio: f64,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
     /// PARSES out of the raw text -- chiefly the optimizer's cost environment
     /// -- and re-derive only when a `SET`
@@ -1097,6 +1108,15 @@ impl Default for SessionVars {
             multi_statement_mode: 0,
             enable_prepared_plan_cache: tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
             enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
+            ti_flash_max_bytes_before_ext_join:
+                tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN,
+            ti_flash_max_bytes_before_ext_agg:
+                tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY,
+            ti_flash_max_bytes_before_ext_sort:
+                tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_SORT,
+            ti_flash_mem_quota_query_per_node:
+                tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+            ti_flash_query_spill_ratio: tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO,
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
@@ -1165,6 +1185,15 @@ impl SessionVars {
         let multi_statement_mode = Self::multi_statement_mode_from_systems(&systems);
         let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
         let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
+        let ti_flash_max_bytes_before_ext_join =
+            Self::ti_flash_max_bytes_before_ext_join_from_systems(&systems);
+        let ti_flash_max_bytes_before_ext_agg =
+            Self::ti_flash_max_bytes_before_ext_agg_from_systems(&systems);
+        let ti_flash_max_bytes_before_ext_sort =
+            Self::ti_flash_max_bytes_before_ext_sort_from_systems(&systems);
+        let ti_flash_mem_quota_query_per_node =
+            Self::ti_flash_mem_quota_query_per_node_from_systems(&systems);
+        let ti_flash_query_spill_ratio = Self::ti_flash_query_spill_ratio_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
@@ -1181,6 +1210,11 @@ impl SessionVars {
         self.multi_statement_mode = multi_statement_mode;
         self.enable_prepared_plan_cache = enable_prepared_plan_cache;
         self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
+        self.ti_flash_max_bytes_before_ext_join = ti_flash_max_bytes_before_ext_join;
+        self.ti_flash_max_bytes_before_ext_agg = ti_flash_max_bytes_before_ext_agg;
+        self.ti_flash_max_bytes_before_ext_sort = ti_flash_max_bytes_before_ext_sort;
+        self.ti_flash_mem_quota_query_per_node = ti_flash_mem_quota_query_per_node;
+        self.ti_flash_query_spill_ratio = ti_flash_query_spill_ratio;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
@@ -1263,6 +1297,41 @@ impl SessionVars {
             )
     }
 
+    fn ti_flash_max_bytes_before_ext_join_from_systems(systems: &HashMap<String, String>) -> i64 {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN)
+    }
+
+    fn ti_flash_max_bytes_before_ext_agg_from_systems(systems: &HashMap<String, String>) -> i64 {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY)
+    }
+
+    fn ti_flash_max_bytes_before_ext_sort_from_systems(systems: &HashMap<String, String>) -> i64 {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_SORT)
+    }
+
+    fn ti_flash_mem_quota_query_per_node_from_systems(systems: &HashMap<String, String>) -> i64 {
+        systems
+            .get(tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE)
+    }
+
+    fn ti_flash_query_spill_ratio_from_systems(systems: &HashMap<String, String>) -> f64 {
+        systems
+            .get(tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO)
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO)
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -1335,6 +1404,36 @@ impl SessionVars {
     #[must_use]
     pub const fn shared_lock_upgrade_enabled(&self) -> bool {
         self.enable_shared_lock_upgrade
+    }
+
+    /// Go `SessionVars.TiFlashMaxBytesBeforeExternalJoin`.
+    #[must_use]
+    pub const fn ti_flash_max_bytes_before_ext_join(&self) -> i64 {
+        self.ti_flash_max_bytes_before_ext_join
+    }
+
+    /// Go `SessionVars.TiFlashMaxBytesBeforeExternalGroupBy`.
+    #[must_use]
+    pub const fn ti_flash_max_bytes_before_ext_agg(&self) -> i64 {
+        self.ti_flash_max_bytes_before_ext_agg
+    }
+
+    /// Go `SessionVars.TiFlashMaxBytesBeforeExternalSort`.
+    #[must_use]
+    pub const fn ti_flash_max_bytes_before_ext_sort(&self) -> i64 {
+        self.ti_flash_max_bytes_before_ext_sort
+    }
+
+    /// Go `SessionVars.TiFlashMemQuotaQueryPerNode`.
+    #[must_use]
+    pub const fn ti_flash_mem_quota_query_per_node(&self) -> i64 {
+        self.ti_flash_mem_quota_query_per_node
+    }
+
+    /// Go `SessionVars.TiFlashQuerySpillRatio`.
+    #[must_use]
+    pub const fn ti_flash_query_spill_ratio(&self) -> f64 {
+        self.ti_flash_query_spill_ratio
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -1461,6 +1560,11 @@ impl SessionVars {
         let mut restores_multi_statement_mode = false;
         let mut restores_prepared_plan_cache = false;
         let mut restores_shared_lock_upgrade = false;
+        let mut restores_ti_flash_max_bytes_before_ext_join = false;
+        let mut restores_ti_flash_max_bytes_before_ext_agg = false;
+        let mut restores_ti_flash_max_bytes_before_ext_sort = false;
+        let mut restores_ti_flash_mem_quota_query_per_node = false;
+        let mut restores_ti_flash_query_spill_ratio = false;
         for (key, previous) in snapshot {
             restores_sql_mode |= key == "sql_mode";
             restores_max_allowed_packet |= key == "max_allowed_packet";
@@ -1473,6 +1577,16 @@ impl SessionVars {
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
             restores_shared_lock_upgrade |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE;
+            restores_ti_flash_max_bytes_before_ext_join |=
+                key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN;
+            restores_ti_flash_max_bytes_before_ext_agg |=
+                key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY;
+            restores_ti_flash_max_bytes_before_ext_sort |=
+                key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT;
+            restores_ti_flash_mem_quota_query_per_node |=
+                key == tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE;
+            restores_ti_flash_query_spill_ratio |=
+                key == tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO;
             match previous {
                 Some(value) => {
                     self.session_resolved
@@ -1515,6 +1629,26 @@ impl SessionVars {
         }
         if restores_shared_lock_upgrade {
             self.enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&self.systems);
+        }
+        if restores_ti_flash_max_bytes_before_ext_join {
+            self.ti_flash_max_bytes_before_ext_join =
+                Self::ti_flash_max_bytes_before_ext_join_from_systems(&self.systems);
+        }
+        if restores_ti_flash_max_bytes_before_ext_agg {
+            self.ti_flash_max_bytes_before_ext_agg =
+                Self::ti_flash_max_bytes_before_ext_agg_from_systems(&self.systems);
+        }
+        if restores_ti_flash_max_bytes_before_ext_sort {
+            self.ti_flash_max_bytes_before_ext_sort =
+                Self::ti_flash_max_bytes_before_ext_sort_from_systems(&self.systems);
+        }
+        if restores_ti_flash_mem_quota_query_per_node {
+            self.ti_flash_mem_quota_query_per_node =
+                Self::ti_flash_mem_quota_query_per_node_from_systems(&self.systems);
+        }
+        if restores_ti_flash_query_spill_ratio {
+            self.ti_flash_query_spill_ratio =
+                Self::ti_flash_query_spill_ratio_from_systems(&self.systems);
         }
         self.refresh_optimizer_fix_control();
     }
@@ -1661,6 +1795,36 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE {
             self.enable_shared_lock_upgrade = validated.value == "ON";
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN {
+            self.ti_flash_max_bytes_before_ext_join = validated
+                .value
+                .parse::<i64>()
+                .expect("TiFlash external join threshold validation stores signed bytes");
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY {
+            self.ti_flash_max_bytes_before_ext_agg = validated
+                .value
+                .parse::<i64>()
+                .expect("TiFlash external group-by threshold validation stores signed bytes");
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT {
+            self.ti_flash_max_bytes_before_ext_sort = validated
+                .value
+                .parse::<i64>()
+                .expect("TiFlash external sort threshold validation stores signed bytes");
+        }
+        if key == tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE {
+            self.ti_flash_mem_quota_query_per_node = validated
+                .value
+                .parse::<i64>()
+                .expect("TiFlash per-node quota validation stores signed bytes");
+        }
+        if key == tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO {
+            self.ti_flash_query_spill_ratio = validated
+                .value
+                .parse::<f64>()
+                .expect("TiFlash spill ratio validation stores a decimal fraction");
         }
         self.generation += 1;
         if let Some(parsed) = parsed_fix_control {
@@ -1876,34 +2040,19 @@ impl MViewExecutionVarsRestore<'_> {
 /// Go `CaptureMViewExecutionSessionVars`: captures the user-facing MV
 /// execution knobs that should be inherited by a later MV build/refresh job.
 /// Go reads typed `SessionVars` fields maintained by `SetSession` hooks; the
-/// Rust carrier stores the same values as validated session text, so each
-/// field reads through [`SessionVars::get_system`] and parses.
+/// Rust carrier reads the matching typed session fields rather than reparsing
+/// the authoritative system-variable text at every capture.
 #[must_use]
 pub fn capture_m_view_execution_session_vars(vars: &SessionVars) -> MViewExecutionSessionVars {
     MViewExecutionSessionVars {
         maintain_mem_quota: system_i64(vars, tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA),
         isolation_read_engines: get_isolation_read_engines_string(vars),
         ti_flash_max_threads: system_i64(vars, tidb_vardef::tidb_vars::TIDB_MAX_TIFLASH_THREADS),
-        ti_flash_max_bytes_before_ext_join: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN,
-        ),
-        ti_flash_max_bytes_before_ext_agg: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY,
-        ),
-        ti_flash_max_bytes_before_ext_sort: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT,
-        ),
-        ti_flash_mem_quota_query_per_node: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
-        ),
-        ti_flash_query_spill_ratio: system_f64(
-            vars,
-            tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO,
-        ),
+        ti_flash_max_bytes_before_ext_join: vars.ti_flash_max_bytes_before_ext_join(),
+        ti_flash_max_bytes_before_ext_agg: vars.ti_flash_max_bytes_before_ext_agg(),
+        ti_flash_max_bytes_before_ext_sort: vars.ti_flash_max_bytes_before_ext_sort(),
+        ti_flash_mem_quota_query_per_node: vars.ti_flash_mem_quota_query_per_node(),
+        ti_flash_query_spill_ratio: vars.ti_flash_query_spill_ratio(),
         fine_grained_stream_count: system_i64(
             vars,
             tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
@@ -1935,26 +2084,11 @@ pub fn capture_applied_m_view_execution_session_vars(
         maintain_mem_quota: system_i64(vars, tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY),
         isolation_read_engines: get_isolation_read_engines_string(vars),
         ti_flash_max_threads: system_i64(vars, tidb_vardef::tidb_vars::TIDB_MAX_TIFLASH_THREADS),
-        ti_flash_max_bytes_before_ext_join: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN,
-        ),
-        ti_flash_max_bytes_before_ext_agg: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY,
-        ),
-        ti_flash_max_bytes_before_ext_sort: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT,
-        ),
-        ti_flash_mem_quota_query_per_node: system_i64(
-            vars,
-            tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
-        ),
-        ti_flash_query_spill_ratio: system_f64(
-            vars,
-            tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO,
-        ),
+        ti_flash_max_bytes_before_ext_join: vars.ti_flash_max_bytes_before_ext_join(),
+        ti_flash_max_bytes_before_ext_agg: vars.ti_flash_max_bytes_before_ext_agg(),
+        ti_flash_max_bytes_before_ext_sort: vars.ti_flash_max_bytes_before_ext_sort(),
+        ti_flash_mem_quota_query_per_node: vars.ti_flash_mem_quota_query_per_node(),
+        ti_flash_query_spill_ratio: vars.ti_flash_query_spill_ratio(),
         fine_grained_stream_count: system_i64(
             vars,
             tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
@@ -2338,6 +2472,97 @@ mod tests {
                 std::sync::atomic::Ordering::SeqCst,
             );
         }
+    }
+
+    #[test]
+    fn tiflash_set_session_hooks_update_typed_state_and_mview_capture() {
+        let mut vars = SessionVars::new();
+        assert_eq!(
+            vars.ti_flash_max_bytes_before_ext_join(),
+            tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN
+        );
+        assert_eq!(
+            vars.ti_flash_mem_quota_query_per_node(),
+            tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE
+        );
+        assert_eq!(
+            vars.ti_flash_query_spill_ratio(),
+            tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO
+        );
+
+        let join_snapshot = vars
+            .snapshot_system(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN);
+        vars.set_system(
+            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN,
+            "10000".to_owned(),
+        )
+        .unwrap();
+        vars.set_system(
+            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY,
+            "20000".to_owned(),
+        )
+        .unwrap();
+        vars.set_system(
+            tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT,
+            "30000".to_owned(),
+        )
+        .unwrap();
+        vars.set_system(
+            tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+            "40000".to_owned(),
+        )
+        .unwrap();
+        vars.set_system(
+            tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO,
+            "0.75".to_owned(),
+        )
+        .unwrap();
+
+        assert_eq!(vars.ti_flash_max_bytes_before_ext_join(), 10_000);
+        assert_eq!(vars.ti_flash_max_bytes_before_ext_agg(), 20_000);
+        assert_eq!(vars.ti_flash_max_bytes_before_ext_sort(), 30_000);
+        assert_eq!(vars.ti_flash_mem_quota_query_per_node(), 40_000);
+        assert_eq!(vars.ti_flash_query_spill_ratio(), 0.75);
+
+        let captured = capture_m_view_execution_session_vars(&vars);
+        assert_eq!(captured.ti_flash_max_bytes_before_ext_join, 10_000);
+        assert_eq!(captured.ti_flash_max_bytes_before_ext_agg, 20_000);
+        assert_eq!(captured.ti_flash_max_bytes_before_ext_sort, 30_000);
+        assert_eq!(captured.ti_flash_mem_quota_query_per_node, 40_000);
+        assert_eq!(captured.ti_flash_query_spill_ratio, 0.75);
+
+        vars.restore_system(join_snapshot);
+        assert_eq!(
+            vars.ti_flash_max_bytes_before_ext_join(),
+            tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN
+        );
+    }
+
+    #[test]
+    fn tiflash_global_values_seed_typed_state_for_new_sessions() {
+        let globals = GlobalSysvars::new();
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO,
+                "0.85".to_owned(),
+            )
+            .unwrap();
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+                "10000".to_owned(),
+            )
+            .unwrap();
+
+        let mut vars = SessionVars::new();
+        vars.seed_from_globals(globals).unwrap();
+        assert_eq!(vars.ti_flash_query_spill_ratio(), 0.85);
+        assert_eq!(vars.ti_flash_mem_quota_query_per_node(), 10_000);
+        assert_eq!(
+            vars.get_system(tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO)
+                .unwrap(),
+            "0.85"
+        );
     }
 
     #[test]
