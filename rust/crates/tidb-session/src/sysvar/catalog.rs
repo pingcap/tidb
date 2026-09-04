@@ -152,3 +152,40 @@ pub static SYS_VARS: &[SysVarDef] = {
     static MERGED: [SysVarDef; TOTAL] = merged();
     &MERGED
 };
+
+#[cfg(test)]
+mod registry_tests {
+    use super::super::VarType;
+    use super::*;
+
+    /// The assembled registry stays name-ordered so binary search remains
+    /// valid, and every sysvar Go's registry carries that this port carries
+    /// too resolves here — including the two late additions Go registers at
+    /// `sysvar.go:982` (columnar storage, Global Bool ON) and `sysvar.go:2294`
+    /// (query cop store limit, Global+Session Unsigned 0..256, default 15).
+    #[test]
+    fn registry_is_name_ordered_and_carries_the_late_additions() {
+        let mut sorted_names: Vec<&str> = SYS_VARS.iter().map(|v| v.name).collect();
+        sorted_names.sort_unstable();
+        let names: Vec<&str> = SYS_VARS.iter().map(|v| v.name).collect();
+        assert_eq!(names, sorted_names, "registry must stay name-ordered");
+
+        let columnar = SYS_VARS
+            .iter()
+            .find(|v| v.name == "tidb_columnar_storage_enabled");
+        let columnar = columnar.expect("tidb_columnar_storage_enabled in registry");
+        assert_eq!(columnar.scope, 1_u8);
+        assert_eq!(columnar.value, "ON");
+        assert!(matches!(columnar.var_type, VarType::Bool));
+
+        let cop = SYS_VARS
+            .iter()
+            .find(|v| v.name == "tidb_query_cop_store_limit");
+        let cop = cop.expect("tidb_query_cop_store_limit in registry");
+        assert_eq!(cop.scope, 3_u8);
+        assert_eq!(cop.value, "15");
+        assert!(matches!(cop.var_type, VarType::Unsigned));
+        assert_eq!(cop.min_value, 0_i64);
+        assert_eq!(cop.max_value, 256_u64);
+    }
+}

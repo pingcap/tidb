@@ -23,7 +23,7 @@
 
 use super::super::{SysVarDef, VarType};
 
-pub(super) static ENTRIES: [SysVarDef; 49] = [
+pub(super) static ENTRIES: [SysVarDef; 51] = [
     SysVarDef {
         name: "pd_enable_follower_handle_region",
         scope: 1,
@@ -161,6 +161,18 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
         scope: 1,
         value: "",
         var_type: VarType::Str,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 0,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    },
+    SysVarDef {
+        name: "tidb_columnar_storage_enabled",
+        scope: 1,
+        value: "ON",
+        var_type: VarType::Bool,
         read_only: false,
         allow_auto_value: false,
         min_value: 0,
@@ -441,6 +453,18 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
         allow_auto_value: false,
         min_value: 0,
         max_value: 15,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    },
+    SysVarDef {
+        name: "tidb_query_cop_store_limit",
+        scope: 3,
+        value: "15",
+        var_type: VarType::Unsigned,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 256,
         possible_values: &[],
         auto_convert_negative_bool: false,
     },
