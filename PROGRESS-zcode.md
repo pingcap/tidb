@@ -274,3 +274,5 @@
 - 下批候选: CHAR/VARCHAR padding、Cast flen/flag 族、chunk A-2。
 - 本轮核实(只读): 算术 flen/decimal 规则(builtin_arithmetic.rs)已逐行实现 Go setFlenDecimal4*/setType4Div*; inUnion 已建模(simple_expr.rs:677 + func.rs 25 处); 时序 cast 目标(wrap_with_cast_as_time)存在。expr-builtin inventory 第 5 条(Cast)已改写为"mostly absorbed", 残差=逐行 BINARY(n)/DECIMAL(p,s) 宽度核对。推送 `fa26adb05b1`+inventory 改写批。
 - 下轮恢复点: (1) 逐行核对 BINARY(n)/DECIMAL(p,s) cast 目标宽度 vs builtin_cast.go(残差子批); (2) chunk A-2(docs/chunk-and-stats-divergence.md); (3) 若并发会话新增 MysqlError::new 站点跟随 error-code 新约定。
+- Cast 家族闭环: Go WrapWithCastAs{Int,Real,Decimal,String,Time,Duration,JSON,VectorFloat32} 与 Rust wrap_with_cast_as_* 8:8 一一对应; wrap_with_cast_as_string 本轮逐行核对一致(decimal+3/MaxIntWidth/bit(flen+7)/float清 flen/coercibility 三分支); 11 个 wrapper 测试全绿。inventory 残差改指 BINARY(n)/DECIMAL(p,s) 解析器 FieldInfo 宽度(归语句重写面)。
+- 下轮恢复点: (1) chunk A-2(docs/chunk-and-stats-divergence.md); (2) 语句重写面 BINARY(n)/DECIMAL(p,s) FieldInfo 宽度; (3) 并发会话新增站点跟随。

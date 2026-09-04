@@ -380,11 +380,16 @@ these.
    Go-derived cast-wrapper metadata tables (decimal wrapper rows,
    `CAST AS CHAR` width rows, temporal FSP, JSON widening) are active on
    the normal wrapper paths; and temporal cast targets exist
-   (`wrap_with_cast_as_time`, `rewriter.rs:554`). **Residual, verified
-   narrow (2026-09-05):** audit-vs-Go spot checks of individual
-   `BINARY(n)`/`DECIMAL(p,s)` target widths beyond the activated tables,
-   and any `getFunction`-family row the metadata tables do not carry —
-   per-row work against `builtin_cast.go`, not a structural gap.
+   (`wrap_with_cast_as_time`, `rewriter.rs:554`). **Family complete
+   (2026-09-05):** Go's `WrapWithCastAs{Int,Real,Decimal,String,Time,
+   Duration,JSON,VectorFloat32}` (`builtin_cast.go`) correspond one-to-one
+   with Rust's `wrap_with_cast_as_*`; `wrap_with_cast_as_string` was
+   re-verified line-by-line this session (decimal +3, `MaxIntWidth`,
+   bit `(flen+7)/8`, float/double → unspecified, coercibility/bit/
+   connection charset selection). **Residual, verified narrow:**
+   `BINARY(n)`/`DECIMAL(p,s)` target widths come from the parser's
+   `FieldInfo` through the rewriter, not from the eval cast family, so
+   they belong to the statement-rewrite sweep rather than here.
 6. *Math and rounding* — RESOLVED (2026-09-04): `ABS`, `MOD` as function
    call, `POW`, `EXP`, `LOG`, `RAND`'s per-key seeding
    (`math_fn/mod.rs:49`/`:561`), `CRC32`, and `CONV` are all implemented in
