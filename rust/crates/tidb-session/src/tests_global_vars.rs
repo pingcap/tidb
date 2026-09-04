@@ -852,7 +852,9 @@ fn low_resolution_tso_update_interval_clamps_and_warns() {
         ]]
     );
     assert_eq!(
-        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_low_resolution_tso_update_interval'")),
+        row_text(
+            session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_low_resolution_tso_update_interval'")
+        ),
         vec![vec![
             "tidb_low_resolution_tso_update_interval".to_owned(),
             "10".to_owned()
@@ -872,7 +874,9 @@ fn low_resolution_tso_update_interval_clamps_and_warns() {
         ]]
     );
     assert_eq!(
-        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_low_resolution_tso_update_interval'")),
+        row_text(
+            session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_low_resolution_tso_update_interval'")
+        ),
         vec![vec![
             "tidb_low_resolution_tso_update_interval".to_owned(),
             "60000".to_owned()

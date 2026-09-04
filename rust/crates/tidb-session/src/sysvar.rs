@@ -783,10 +783,7 @@ impl SysVarDef {
                 if hour < 24 && minute < 60 {
                     if valid_offset {
                         return Ok(Validated {
-                            value: format!(
-                                "{hour:02}:{minute:02} {}",
-                                offset.unwrap_or("+0000")
-                            ),
+                            value: format!("{hour:02}:{minute:02} {}", offset.unwrap_or("+0000")),
                             truncated: validated.truncated,
                         });
                     }

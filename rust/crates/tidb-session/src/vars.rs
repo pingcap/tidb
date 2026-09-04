@@ -117,15 +117,11 @@ fn normalize_ttl_schedule_window(
     }
     let offset_secs = if let Some(offset) = explicit_offset {
         parse_ttl_offset(offset).ok_or_else(|| {
-            VarError::ValidationRefused(format!(
-                "invalid TTL job schedule window time: {value}"
-            ))
+            VarError::ValidationRefused(format!("invalid TTL job schedule window time: {value}"))
         })?
     } else {
         i32::try_from(zone.dag_zone().1).map_err(|_| {
-            VarError::ValidationRefused(format!(
-                "invalid TTL job schedule window time: {value}"
-            ))
+            VarError::ValidationRefused(format!("invalid TTL job schedule window time: {value}"))
         })?
     };
     let sign = if offset_secs < 0 { '-' } else { '+' };
@@ -147,8 +143,14 @@ fn parse_ttl_offset(value: &str) -> Option<i32> {
     if bytes.len() != 5 || !matches!(bytes[0], b'+' | b'-') {
         return None;
     }
-    let hours = std::str::from_utf8(&bytes[1..3]).ok()?.parse::<i32>().ok()?;
-    let minutes = std::str::from_utf8(&bytes[3..5]).ok()?.parse::<i32>().ok()?;
+    let hours = std::str::from_utf8(&bytes[1..3])
+        .ok()?
+        .parse::<i32>()
+        .ok()?;
+    let minutes = std::str::from_utf8(&bytes[3..5])
+        .ok()?
+        .parse::<i32>()
+        .ok()?;
     if hours > 23 || minutes > 59 {
         return None;
     }
