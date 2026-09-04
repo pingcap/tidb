@@ -536,10 +536,20 @@ pub(crate) fn eval_func_values(
         };
         return Some(Ok(Datum::Decimal(dec)));
     }
+    // Go `builtinCastDecimalAsDecimalSig.evalDecimal`
+    // (`builtin_cast.go:1538-1551`): an in-union unsigned-target cast of a
+    // negative source yields the ZERO decimal (the `res = &MyDecimal{}`
+    // default is kept); otherwise the source decimal passes through.
     if name == "cast_decimal_in_union" {
         let value = vals.first()?;
         if value.is_null() {
             return Some(Ok(Datum::Null));
+        }
+        let negative = matches!(value, Datum::Decimal(dec) if dec.is_negative());
+        if negative {
+            return Some(Ok(Datum::Decimal(
+                tidb_datatype::Decimal::parse_mysql("0").0,
+            )));
         }
         let res = crate::cast::to_f64_for_cast(value);
         return Some(Ok(Datum::Real(if res < 0.0 { 0.0 } else { res })));
@@ -966,7 +976,10 @@ mod tests {
         let ctx = PacketLimit::default();
         let decimal = Datum::Decimal(tidb_datatype::Decimal::from_literal("-2.5"));
         let result = eval_func_values("cast_decimal_in_union", &[decimal], &ctx);
-        assert_eq!(result.unwrap().unwrap(), Datum::Real(0.0));
+        assert_eq!(
+            result.unwrap().unwrap(),
+            Datum::Decimal(tidb_datatype::Decimal::parse_mysql("0").0)
+        );
     }
 
     #[test]
