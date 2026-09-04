@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! GO PORTS of the two part9 tests whose production symbols are deferred in
-//! this crate: `TestCtxWithHandleTruncateErrLevel`
-//! (`pkg/expression/exprctx/context_override_test.go:28`),
-//! `TestNewValuesFunc` (`pkg/expression/expression_test.go:30`) and
+//! GO PORT of the part9 test whose production symbol is deferred in this
+//! crate: `TestCtxWithHandleTruncateErrLevel`
+//! (`pkg/expression/exprctx/context_override_test.go:28`) and
 //! `TestExpressionMemeoryUsage`
 //! (`pkg/expression/expression_test.go:328`, also stubbed from
 //! `vectorizable_and_chunk_eval_source.rs`). Each stays beside its family's
@@ -41,13 +40,3 @@
 #[test]
 #[ignore = "go-parity-gap: exprctx::CtxWithHandleTruncateErrLevel is not transcreated (deferred umbrella piece of exprctx.rs), so the truncate-level override contract has no carrier"]
 fn test_ctx_with_handle_truncate_err_level() {}
-
-/// go-parity-gap: TestNewValuesFunc (`expression_test.go:30`) builds
-/// `NewValuesFunc(ctx, 0, TypeLonglong)` and asserts the "values" name, the
-/// LongLong ret type and the `*builtinValuesIntSig` signature choice. No
-/// `NewValuesFunc` symbol exists anywhere in the Rust workspace (the name only
-/// appears inside unfoldable-function tables), so the constructor contract has
-/// nothing to drive.
-#[test]
-#[ignore = "go-parity-gap: NewValuesFunc (expression.go:1168) is not transcreated; no values-signature construction exists in tidb-expr"]
-fn test_new_values_func() {}

@@ -15,6 +15,12 @@
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
+- Current batch: Rust's `VALUES()` constructor/runtime now carries the Go
+  offset and reads the current insert row through a `Columns` session seam.
+  Empty rows and NULL slots return NULL, offset bounds preserve the source
+  error, and malformed arity is rejected. `StmtContext` now owns the mutable
+  carrier while existing DML candidate-row substitution remains unchanged.
+  Focused and Ready evidence will be recorded in `rust/testport/receipts/b070.md`.
 - Current batch: Rust's rewritten `IN()` path now follows Go's first-argument
   eval-type selection for DATETIME/TIMESTAMP, DURATION, and JSON signatures.
   Each list member is cast into the selected domain (with JSON's disabled

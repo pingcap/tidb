@@ -467,6 +467,16 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// Go `SessionVars.CurrInsertValues`, read by `builtinValues*Sig` at
+    /// evaluation time. A statement without an active insert row returns
+    /// `Ok(None)` (the SQL NULL result); an active row whose offset is outside
+    /// its field list returns the source-shaped length/offset error. The
+    /// default keeps expression-only contexts equivalent to Go's empty
+    /// `chunk.Row` used by constant folding.
+    fn current_insert_value(&self, _offset: usize) -> Result<Option<Datum>, EvalError> {
+        Ok(None)
+    }
+
     /// Go `exprctx.ParamValues.GetParamValue`, used by the internal
     /// `GETPARAM()` builtin. A resolver with no plan-cache parameter list
     /// exposes Go's empty-list error by default; statement/session owners

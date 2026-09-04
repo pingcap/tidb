@@ -242,6 +242,11 @@ pub struct ScalarFunction {
     pub ret_type: Option<FieldType>,
     /// The function arguments. In Go these live inside `Function.getArgs()`.
     pub args: Vec<Expression>,
+    /// Go `builtinValues*Sig.offset`, carried by `NewValuesFunc`. `VALUES()`
+    /// has no runtime argument: its column position is fixed when the
+    /// expression is built and the value is read from the statement's
+    /// current-insert row at evaluation time.
+    values_offset: Option<usize>,
     /// Lazily-filled `HashCode` cache (Go `hashcode`).
     hashcode: Vec<u8>,
     /// Go `BuiltinGroupingImplSig` metadata installed by `SetMetadata`.
@@ -325,6 +330,19 @@ impl ScalarFunction {
             func_name,
             ret_type: Some(ret_type),
             args,
+            ..Default::default()
+        }
+    }
+
+    /// Builds Go's `NewValuesFunc(ctx, offset, retTp)` node. The offset is
+    /// immutable build-time state, while the current insert row is supplied
+    /// by [`Columns::current_insert_value`] for each evaluation.
+    #[must_use]
+    pub fn new_values(offset: usize, ret_type: FieldType) -> Self {
+        Self {
+            func_name: CiString::new("values"),
+            ret_type: Some(ret_type),
+            values_offset: Some(offset),
             ..Default::default()
         }
     }
@@ -427,6 +445,13 @@ impl ScalarFunction {
             self.hashcode.extend_from_slice(&code);
         }
         let name = self.func_name.lowercase();
+        if name == "values" {
+            encode_int(
+                &mut self.hashcode,
+                self.values_offset
+                    .map_or(-1, |offset| i64::try_from(offset).unwrap_or(i64::MAX)),
+            );
+        }
         // Cast is special: its result type is effectively an argument.
         if name == "cast" {
             if let Some(rt) = &self.ret_type {
@@ -533,6 +558,13 @@ impl ScalarFunction {
             _ => {
                 append_canonical_name(&mut canonical, &name);
                 append_canonical_args(&mut canonical, &arg_codes);
+                if name == "values" {
+                    encode_int(
+                        &mut canonical,
+                        self.values_offset
+                            .map_or(-1, |offset| i64::try_from(offset).unwrap_or(i64::MAX)),
+                    );
+                }
                 if name == "cast" {
                     if let Some(ret_type) = &self.ret_type {
                         canonical.push(ret_type.eval_type() as u8);
@@ -552,6 +584,7 @@ impl ScalarFunction {
         let mut hasher = crate::column::Fnv64::default();
         SCALAR_FUNCTION_FLAG.hash(&mut hasher);
         self.func_name.lowercase().hash(&mut hasher);
+        self.values_offset.hash(&mut hasher);
         match &self.ret_type {
             Some(ret_type) => {
                 1_u8.hash(&mut hasher);
@@ -572,6 +605,7 @@ impl ScalarFunction {
     #[must_use]
     pub fn equals(&self, other: &Self) -> bool {
         self.func_name.lowercase() == other.func_name.lowercase()
+            && self.values_offset == other.values_offset
             && self.ret_type == other.ret_type
             && self.args.len() == other.args.len()
             && self
@@ -847,6 +881,22 @@ impl ScalarFunction {
     /// [`Self::eval`]'s job, done once for all of them.
     fn eval_by_signature(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         let name = self.func_name.lowercase();
+        // Go `builtinValues*Sig` reads the statement's current insert row,
+        // not its (zero) expression arguments. The offset is immutable build
+        // state from `NewValuesFunc`; an empty/no-session row is SQL NULL,
+        // while a non-empty row with no matching field is the source's
+        // session-current-values length error.
+        if name == "values" {
+            if !self.args.is_empty() {
+                return Err(EvalError::WrongParameterCount("values"));
+            }
+            let offset = self
+                .values_offset
+                .ok_or(EvalError::Unsupported("VALUES offset is not initialized"))?;
+            return ctx
+                .current_insert_value(offset)?
+                .map_or(Ok(Datum::Null), Ok);
+        }
         if name == "json_schema_valid" {
             return self.json_schema_cache.eval(&self.args, ctx, row);
         }

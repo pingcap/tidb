@@ -72,6 +72,44 @@ impl crate::context::Columns for ParamStore {
     }
 }
 
+/// The session-owned `CurrInsertValues` row that Go's `VALUES()` signatures
+/// read without evaluating an expression argument.
+#[derive(Default)]
+struct InsertValuesStore {
+    values: RefCell<Option<Vec<Datum>>>,
+}
+
+impl InsertValuesStore {
+    fn set(&self, values: Vec<Datum>) {
+        *self.values.borrow_mut() = Some(values);
+    }
+}
+
+impl crate::context::Columns for InsertValuesStore {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn current_insert_value(&self, offset: usize) -> Result<Option<Datum>, EvalError> {
+        let values = self.values.borrow();
+        let Some(values) = values.as_ref() else {
+            return Ok(None);
+        };
+        if values.is_empty() {
+            return Ok(None);
+        }
+        values.get(offset).cloned().map_or_else(
+            || {
+                Err(EvalError::IncorrectArguments(format!(
+                    "Session current insert values len {} and column's offset {offset} don't match",
+                    values.len()
+                )))
+            },
+            |value| Ok(Some(value)),
+        )
+    }
+}
+
 fn var_name(name: &str) -> Expression {
     Expression::Constant(Constant::new(
         Datum::new_string(name.to_owned()),
@@ -379,20 +417,68 @@ fn setvar_from_column_snapshots_the_row_value() {
     assert_eq!(store.get("a"), Some(Datum::new_string("a".to_owned())));
 }
 
-/// GO PORT of `pkg/expression/builtin_other_test.go:200 TestValues`.
+/// GO PORT of `pkg/expression/builtin_other_test.go:200 TestValues` and
+/// `pkg/expression/expression_test.go:30 TestNewValuesFunc`.
 ///
 /// Go pins four behaviors against `sessionVars.CurrInsertValues`: arity > 0
 /// fails with `Incorrect parameter count in the call to native function
 /// 'values'`; no current insert values yields NULL; a mismatched row length
 /// fails with `Session current insert values len %d ...`; and the matching
 /// offset returns the CURRENT row's value rather than evaluating anything.
-///
-/// go-parity-gap: VALUES() evaluation and the CurrInsertValues session slot
-/// are not modeled by this evaluator, so none of those behaviors can be
-/// exercised yet.
+/// `NewValuesFunc` also fixes the zero-argument `values` name, return type, and
+/// immutable offset at build time.
 #[test]
-#[ignore = "go-parity-gap: VALUES() evaluation and the CurrInsertValues session state it reads are unmodeled"]
-fn values_function_current_insert_values_gap() {}
+fn values_function_reads_the_current_insert_row() {
+    let string_type = FieldType::new(C::VarString);
+    let function = ScalarFunction::new_values(1, string_type.clone());
+    assert_eq!(function.func_name.lowercase(), "values");
+    assert!(function.args.is_empty());
+    assert_eq!(function.get_static_type(), Some(&string_type));
+
+    let store = InsertValuesStore::default();
+    let empty = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    assert_eq!(
+        function.eval(&store, empty.get_row(0)).unwrap(),
+        Datum::Null
+    );
+
+    // A non-empty row whose offset is outside the insert field list is the
+    // exact Go runtime error, rather than a silent NULL.
+    store.set(vec![Datum::new_string("1".to_owned())]);
+    let error = function.eval(&store, empty.get_row(0)).unwrap_err();
+    assert!(
+        matches!(error, EvalError::IncorrectArguments(ref message) if message.starts_with("Session current insert values len 1")),
+        "unexpected VALUES() error: {error:?}"
+    );
+
+    // Offset 1 reads the candidate row's second value and does not evaluate
+    // any expression argument. A NULL slot is propagated as SQL NULL.
+    store.set(vec![
+        Datum::new_string("1".to_owned()),
+        Datum::new_string("2".to_owned()),
+    ]);
+    assert_eq!(
+        function.eval(&store, empty.get_row(0)).unwrap(),
+        Datum::new_string("2".to_owned())
+    );
+    store.set(vec![Datum::new_string("1".to_owned()), Datum::Null]);
+    assert_eq!(
+        function.eval(&store, empty.get_row(0)).unwrap(),
+        Datum::Null
+    );
+
+    // The constructor's signature is zero-argument. A manually malformed
+    // node with an argument gets Go's native-function parameter-count error.
+    let malformed = ScalarFunction::new(
+        CiString::new("values"),
+        string_type,
+        vec![const_arg(Datum::Int(1), FieldType::new(C::LongLong))],
+    );
+    assert!(matches!(
+        malformed.eval(&store, empty.get_row(0)),
+        Err(EvalError::WrongParameterCount("values"))
+    ));
+}
 
 /// GO PORT of `pkg/expression/builtin_other_test.go:348 TestGetParam` and
 /// `pkg/expression/builtin_other_vec_test.go:94 TestGetParamVec`.

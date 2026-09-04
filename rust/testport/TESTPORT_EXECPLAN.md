@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` VALUES constructor/runtime): activated the Go
+  `TestValues` and shared `TestNewValuesFunc` behavior. `ScalarFunction` now
+  carries the immutable VALUES offset, `Columns::current_insert_value` exposes
+  the current insert row, and `StmtContext` provides the mutable session
+  carrier. Empty rows and NULL slots return NULL, out-of-range offsets preserve
+  the source-shaped error, and malformed non-zero-argument nodes are rejected.
+  The focused regression and Ready profile are recorded in `receipts/b070.md`;
+  concrete per-signature identity/Repertoire remain the documented object-model
+  gap in `receipts/b076.md`.
 - 2026-09-04 (`tidb-expr` typed IN signatures): completed the generated
   `builtin_other_vec_generated_test.go` temporal, duration, and JSON arms.
   Rust's rewritten `ScalarFunction` now follows Go's first-argument eval-type

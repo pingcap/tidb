@@ -109,11 +109,14 @@ fn test_scalar_function() {
 /// (`scalar_function_test.go:107-117`) drives
 /// `NewValuesFunc(ctx, 0, TypeLonglong)` (`expression.go:1168`) and asserts
 /// the CONCRETE signature identity `newSf.Function.(*builtinValuesIntSig)` in
-/// addition to name/ret-type/coercibility/repertoire round-trips. This crate
-/// removed the per-signature object model (see [`crate::scalar_function`]'s
-/// BRIDGE DECISION): dispatch is name-keyed, so no runtime value can prove a
-/// `values` node carries the int signature, and collation `Repertoire()` has
-/// no carrier.
+/// addition to name/ret-type/coercibility/repertoire round-trips. The shared
+/// active regression `values_function_reads_the_current_insert_row` now covers
+/// the transcreated constructor/runtime behavior (name, result type, offset,
+/// zero-argument arity, and current-row lookup). This ignored carrier retains
+/// only the concrete signature identity and collation `Repertoire()` halves:
+/// this crate removed the per-signature object model (see
+/// [`crate::scalar_function`]'s BRIDGE DECISION), so no runtime value can prove
+/// a `values` node carries the int signature and `Repertoire()` has no carrier.
 #[test]
 #[ignore = "go-parity-gap: NewValuesFunc concrete builtinValuesIntSig identity and Repertoire() need the per-signature object model this crate replaced"]
 fn new_values_func_sig_identity() {}

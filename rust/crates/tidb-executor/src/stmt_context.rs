@@ -361,6 +361,12 @@ pub struct StmtContext {
     /// is a context with no session behind it, where a user variable reads as
     /// NULL (Go's own answer for an unset one) and an assignment is dropped.
     user_vars: Option<Arc<Mutex<HashMap<String, Datum>>>>,
+    /// Go `SessionVars.CurrInsertValues`, the candidate row visible to a
+    /// `VALUES(col)` expression while an INSERT/ON DUPLICATE assignment is
+    /// evaluated. The DML path currently substitutes these references before
+    /// evaluation; keeping the session slot here also gives the expression
+    /// layer the same runtime carrier as Go's builtin signature.
+    current_insert_values: Arc<Mutex<Option<Vec<Datum>>>>,
     /// Go `builtinRandSig`'s per-call `*mathutil.MysqlRng`: one generator per
     /// constant `RAND(N)` occurrence, created fresh for each STATEMENT (Go
     /// builds a new `builtinFunc` per plan) and advanced once per row by the
@@ -815,6 +821,7 @@ impl StmtContext {
             connection_collation: "utf8mb4_bin".to_owned(),
             rand_session: None,
             user_vars: None,
+            current_insert_values: Arc::default(),
             rand_seeded: Arc::default(),
             last_insert_id: Arc::default(),
             prev_last_insert_id: 0,
@@ -2264,6 +2271,33 @@ impl StmtContext {
         self
     }
 
+    /// Installs the candidate row exposed to `VALUES(col)` while an insert
+    /// assignment is evaluated. Clones of this context share the same row,
+    /// matching Go's session-owned `CurrInsertValues` slot.
+    #[must_use]
+    pub fn with_current_insert_values(self, values: Vec<Datum>) -> Self {
+        self.set_current_insert_values(values);
+        self
+    }
+
+    /// Replaces the session's current insert row for the next expression
+    /// evaluation. An empty vector means the Go empty `chunk.Row`, which
+    /// makes `VALUES(col)` return SQL NULL.
+    pub fn set_current_insert_values(&self, values: Vec<Datum>) {
+        *self
+            .current_insert_values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(values);
+    }
+
+    /// Clears the current insert row after an insert candidate finishes.
+    pub fn clear_current_insert_values(&self) {
+        *self
+            .current_insert_values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
     /// Fixes the statement's clock for tests and callers that already own an
     /// exact instant.
     #[must_use]
@@ -2951,6 +2985,28 @@ fn resolve_statement_clock(
 impl Columns for StmtContext {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
+    }
+
+    fn current_insert_value(&self, offset: usize) -> Result<Option<Datum>, tidb_expr::EvalError> {
+        let values = self
+            .current_insert_values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(values) = values.as_ref() else {
+            return Ok(None);
+        };
+        if values.is_empty() {
+            return Ok(None);
+        }
+        values.get(offset).cloned().map_or_else(
+            || {
+                Err(tidb_expr::EvalError::IncorrectArguments(format!(
+                    "Session current insert values len {} and column's offset {offset} don't match",
+                    values.len()
+                )))
+            },
+            |value| Ok(Some(value)),
+        )
     }
 
     fn connection_charset_info(&self) -> (&str, &str) {
