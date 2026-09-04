@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` live session getters): wired the
+  missing `tidb_last_query_info` getter to session state, preserving Go's
+  zero-value `QueryInfo` JSON shape alongside the existing current-TS,
+  last-transaction, plan-cache, and binding getters. Added a focused
+  `TestSessionGetterFuncs` regression and reconciled the timestamp and
+  identity receipt rows with their already-live Rust owners; query-diagnostic
+  mutation/RU accounting remains explicitly partial.
 - 2026-09-05 (`pkg/sessionctx/variable` secure_auth validation): ported
   `TestSecureAuth`'s per-variable validation. `secure_auth=OFF` now returns
   Go's 1231 wrong-value error and leaves the global ON default unchanged;

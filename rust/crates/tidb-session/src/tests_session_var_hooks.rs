@@ -106,6 +106,23 @@ fn default_collation_for_utf8mb4_normalizes_warns_and_rejects_other_charsets() {
     assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
 }
 
+/// Go `TestSessionGetterFuncs`: session-only status variables read their live
+/// fields rather than the registry defaults, including the zero-value JSON
+/// shape of `LastQueryInfo`.
+#[test]
+fn session_getter_functions_read_live_defaults() {
+    let mut session = Session::new();
+
+    assert_eq!(one(&mut session, "SELECT @@tidb_current_ts"), "0");
+    assert_eq!(one(&mut session, "SELECT @@tidb_last_txn_info"), "");
+    assert_eq!(
+        one(&mut session, "SELECT @@tidb_last_query_info"),
+        "{\"txn_scope\":\"\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
+    );
+    assert_eq!(one(&mut session, "SELECT @@last_plan_from_cache"), "0");
+    assert_eq!(one(&mut session, "SELECT @@last_plan_from_binding"), "0");
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.

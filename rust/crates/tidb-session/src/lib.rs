@@ -642,6 +642,11 @@ pub struct Session {
     /// untouched by a statement that never took a timestamp (`SELECT 1`).
     /// Empty until the first one, as Go's is.
     last_txn_info: std::cell::RefCell<String>,
+    /// Go `SessionVars.LastQueryInfo`, exposed by the read-only
+    /// `tidb_last_query_info` getter. The zero value is still useful before a
+    /// DML/EXECUTE/SHOW statement records query diagnostics, so retain the
+    /// JSON shape Go's `json.Marshal(sessionstates.QueryInfo{})` emits.
+    last_query_info: std::cell::RefCell<String>,
     /// Where this session reports the tables its statements bind, for the
     /// node's metadata-lock gate; see [`MdlRelatedTableSink`].
     mdl_related_tables: Option<std::sync::Arc<dyn MdlRelatedTableSink>>,
@@ -825,6 +830,10 @@ impl Session {
             cost_env_cache: std::cell::RefCell::new(None),
             prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
             last_txn_info: std::cell::RefCell::new(String::new()),
+            last_query_info: std::cell::RefCell::new(
+                "{\"txn_scope\":\"\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
+                    .to_owned(),
+            ),
             published_last_insert_id: Arc::default(),
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
@@ -1103,6 +1112,10 @@ impl Session {
 
     pub(crate) fn last_txn_info_value(&self) -> String {
         self.last_txn_info.borrow().clone()
+    }
+
+    pub(crate) fn last_query_info_value(&self) -> String {
+        self.last_query_info.borrow().clone()
     }
 
     /// Binds where this session reports the tables its statements bind --

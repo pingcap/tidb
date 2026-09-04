@@ -1220,6 +1220,20 @@ mod tests {
         assert_eq!(sv.validate("99999").unwrap().value, "99999");
     }
 
+    /// Transcreated from Go `TestTimestamp`: values below the minimum clamp
+    /// with the truncation flag, values above the Int32 maximum are rejected,
+    /// and the upper bound itself remains valid.
+    #[test]
+    fn timestamp_validation_matches_go() {
+        let sv = get_sys_var("timestamp").unwrap();
+        let truncated = sv.validate("-5").unwrap();
+        assert_eq!(truncated.value, "0");
+        assert!(truncated.truncated);
+        assert_eq!(sv.validate("3147483698"), Err(ValidationError::WrongValue));
+        assert_eq!(sv.validate("2147483648"), Err(ValidationError::WrongValue));
+        assert_eq!(sv.validate("2147483647").unwrap().value, "2147483647");
+    }
+
     /// Transcreated from Go `TestTiFlashMaxBytes`: these carry
     /// `AllowAutoValue`, so a negative clamps to -1, and a value past
     /// `i64::MAX` cannot convert and is an error.

@@ -1071,6 +1071,15 @@ impl Session {
                 {
                     return Ok(Expr::String(self.last_txn_info_value()));
                 }
+                // `@@tidb_last_query_info` is Go's JSON-marshalled
+                // `SessionVars.LastQueryInfo` getter. Keep it out of the
+                // registry's empty default so the zero-value JSON shape is
+                // visible even before the first diagnostic query.
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case("tidb_last_query_info")
+                {
+                    return Ok(Expr::String(self.last_query_info_value()));
+                }
                 // A no-scope server property uses the same read authority as
                 // an unqualified session read. Most answer their registry
                 // default; `version_comment` is derived from the immutable
