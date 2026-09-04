@@ -40,10 +40,9 @@
 //!   `coreusage.ExtractCorColumnsBySchema4LogicalPlan(inner, outerSchema)`,
 //!   which walks the whole inner subtree; that walk is the driver's, and the
 //!   local half is [`LogicalApply::prune_columns_local`].
-//! * `DeriveStats`' two LATERAL estimates are
-//!   `cardinality.EstimateFullJoinRowCount` and
-//!   `cardinality.EstimateColsNDVWithMatchedLen`, both of which need the
-//!   session and both histogram collections. The caller resolves them; see
+//! * `DeriveStats`' keyed LATERAL estimate is
+//!   `cardinality.EstimateFullJoinRowCount`, which needs the session and both
+//!   histogram collections. The caller resolves it; see
 //!   [`LogicalApply::needs_lateral_row_count_estimate`], which reports when a
 //!   caller MUST supply one rather than letting the Cartesian fallback answer.
 //! * `ExtractColGroups` is dispatched through [`LogicalPlan`] because it needs
@@ -193,20 +192,23 @@ impl LogicalApply {
     ///   decorrelated — is scaled by [`SELECTION_FACTOR`], matching
     ///   `LogicalJoin::derive_stats`;
     /// * a `LATERAL` inner or outer apply takes `lateral_row_count`, floored at
-    ///   the outer count for a left outer join.
+    ///   the outer count for a left outer join. For an explicit keyed `ON`
+    ///   clause this is Go's `EstimateFullJoinRowCount`; a correlated lateral
+    ///   subtree with no explicit key uses the product fallback because the
+    ///   inner profile already includes its correlated predicate.
     ///
     /// The NDVs are the outer child's, plus one entry per column the INNER side
     /// contributes: `2.0` for the marker of a left-outer-semi apply, and the
     /// row count for every other inner column.
     ///
-    /// # Blocked
+    /// # Narrowing
     ///
-    /// `lateral_row_count` stands for Go's first two `IsLateral` branches; see
-    /// this module's header and [`Self::needs_lateral_row_count_estimate`].
-    /// `None` selects Go's THIRD branch, `leftProfile.RowCount *
-    /// rightProfile.RowCount` — the Cartesian bound Go itself takes when the
-    /// apply has neither join keys nor correlated columns, because
-    /// decorrelation will turn it into a plain cross join.
+    /// `lateral_row_count` stands for Go's keyed `IsLateral` branch; see this
+    /// module's header and [`Self::needs_lateral_row_count_estimate`].
+    /// `None` selects Go's product branch, `leftProfile.RowCount *
+    /// rightProfile.RowCount`. This is also the correct bound for a
+    /// correlated lateral inner with no explicit key because the right
+    /// profile already includes the correlated predicate.
     ///
     /// `getGroupNDVs` is vacuous: [`StatsInfo`] has no `GroupNDVs` field.
     pub fn derive_stats(
@@ -226,6 +228,13 @@ impl LogicalApply {
         let left = &child_stats[0];
         let right = &child_stats[1];
         let mut row_count = left.row_count();
+        if self.needs_lateral_row_count_estimate() {
+            if let Some(count) = lateral_row_count {
+                // Go stores this estimator result in the embedded join before
+                // publishing the Apply profile.
+                self.join.equal_cond_out_cnt = count;
+            }
+        }
         if self.is_lateral
             && matches!(
                 self.join.join_type,
@@ -268,10 +277,12 @@ impl LogicalApply {
 
     /// Whether [`Self::derive_stats`] MUST be given a `lateral_row_count`.
     ///
-    /// True exactly when Go takes one of the two estimator branches — explicit
-    /// `ON`-clause join keys, or a correlated inner — rather than the
-    /// dependency-closed Cartesian fallback. A caller that cannot supply the
-    /// estimate is choosing an over-estimate, and this says so out loud.
+    /// True exactly when Go takes its keyed estimator branch — explicit `ON`
+    /// clause join keys — rather than the dependency-closed Cartesian
+    /// fallback. A correlated inner with no explicit key intentionally takes
+    /// the product path: its right profile already includes the pushed
+    /// correlated predicate, so dividing by the outer NDV would apply the
+    /// selectivity twice.
     #[must_use]
     pub fn needs_lateral_row_count_estimate(&self) -> bool {
         if !self.is_lateral
@@ -282,7 +293,8 @@ impl LogicalApply {
         {
             return false;
         }
-        !self.join.equal_conditions.is_empty() || !self.cor_cols.is_empty()
+        let (left_keys, _, _, _) = self.join.get_join_keys();
+        !left_keys.is_empty()
     }
 
     /// Go's join-type gate inside `ExtractColGroups`

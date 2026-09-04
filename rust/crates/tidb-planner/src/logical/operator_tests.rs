@@ -1962,10 +1962,12 @@ fn apply_derive_stats_takes_the_lateral_estimate_and_floors_it() {
 
     let mut la = apply(LogicalJoinType::Inner);
     la.is_lateral = true;
+    la.join.equal_conditions = vec![call("eq", vec![col_expr(1), col_expr(2)])];
     let (stats, _) = la
         .derive_stats(&children, &output, 1, Some(500.0), &[true])
         .unwrap();
     assert!((stats.row_count() - 500.0).abs() < 1e-9);
+    assert!((la.join.equal_cond_out_cnt - 500.0).abs() < 1e-9);
 
     // A left outer apply never drops below its outer count.
     let mut la = apply(LogicalJoinType::LeftOuter);
@@ -1975,27 +1977,30 @@ fn apply_derive_stats_takes_the_lateral_estimate_and_floors_it() {
         .unwrap();
     assert!((stats.row_count() - 80.0).abs() < 1e-9);
 
-    // No estimate and no correlation: Go's Cartesian bound.
+    // No explicit key but a correlated inner: Go's product bound, because
+    // the right profile already includes the pushed correlated predicate.
     let mut la = apply(LogicalJoinType::Inner);
     la.is_lateral = true;
+    la.cor_cols = vec![cor(1)];
     let (stats, _) = la
         .derive_stats(&children, &output, 1, None, &[true])
         .unwrap();
     assert!((stats.row_count() - 240.0).abs() < 1e-9);
 }
 
-/// `needs_lateral_row_count_estimate` names exactly Go's two estimator
-/// branches, so a caller cannot take the Cartesian fallback by accident.
+/// `needs_lateral_row_count_estimate` names exactly Go's keyed estimator
+/// branch, while correlated lateral predicates without an explicit key keep
+/// the product fallback.
 #[test]
 fn apply_reports_when_the_lateral_estimate_is_mandatory() {
     let mut la = apply(LogicalJoinType::Inner);
     // Not lateral at all.
     assert!(!la.needs_lateral_row_count_estimate());
     la.is_lateral = true;
-    // Lateral, but neither join keys nor correlation: Go's third branch.
+    // Lateral, but neither join keys nor correlation: Go's product branch.
     assert!(!la.needs_lateral_row_count_estimate());
     la.cor_cols = vec![cor(1)];
-    assert!(la.needs_lateral_row_count_estimate());
+    assert!(!la.needs_lateral_row_count_estimate());
     la.cor_cols.clear();
     la.join.equal_conditions = vec![call("eq", vec![col_expr(1), col_expr(2)])];
     assert!(la.needs_lateral_row_count_estimate());

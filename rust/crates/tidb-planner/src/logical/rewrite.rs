@@ -2012,21 +2012,49 @@ impl OwnedRewrite for DeriveStatsFold {
                 }
             }
             LogicalPlan::Apply(op) => {
-                if op.needs_lateral_row_count_estimate() {
-                    // The first two `IsLateral` branches of Go's body; see
-                    // the operator's own doc for what they need.
-                    StatsOutcome::Done(unported_stats(
-                        "LogicalApply.DeriveStats' IsLateral row-count branches (logical_apply.go)",
-                    ))
+                let outer_len = child_schemas
+                    .first()
+                    .map_or(0, |schema| schema.columns.len());
+                let lateral_row_count = if op.needs_lateral_row_count_estimate() {
+                    match (child_stats.first(), child_stats.get(1)) {
+                        (Some(left), Some(right)) => {
+                            let (left_keys, right_keys, _, _) = op.join.get_join_keys();
+                            let input = FullJoinRowCountInput {
+                                left_row_count: left.row_count(),
+                                right_row_count: right.row_count(),
+                                // Go passes `false` for IsCartesian after
+                                // confirming that the left key slice is
+                                // non-empty, even when other equal-condition
+                                // shapes are present.
+                                is_cartesian: false,
+                                left_join_keys: join_key_estimate(&left_keys, left),
+                                right_join_keys: join_key_estimate(&right_keys, right),
+                                // Go passes nil NA keys for LogicalApply.
+                                left_non_equi_keys: join_key_estimate(&[], left),
+                                right_non_equi_keys: join_key_estimate(&[], right),
+                                join_reorder_threshold: self.join_reorder_threshold,
+                            };
+                            Some(estimate_full_join_row_count(&input))
+                        }
+                        _ => None,
+                    }
                 } else {
-                    let outer_len = child_schemas
-                        .first()
-                        .map_or(0, |schema| schema.columns.len());
-                    StatsOutcome::Done(
-                        op.derive_stats(&child_stats, &self_schema, outer_len, None, &reloads)
-                            .ok_or_else(|| stats_arity("LogicalApply.DeriveStats")),
+                    None
+                };
+                let result = if op.needs_lateral_row_count_estimate() && lateral_row_count.is_none()
+                {
+                    Err(stats_arity("LogicalApply.DeriveStats"))
+                } else {
+                    op.derive_stats(
+                        &child_stats,
+                        &self_schema,
+                        outer_len,
+                        lateral_row_count,
+                        &reloads,
                     )
-                }
+                    .ok_or_else(|| stats_arity("LogicalApply.DeriveStats"))
+                };
+                StatsOutcome::Done(result)
             }
             LogicalPlan::Aggregation(op) => StatsOutcome::Done(
                 op.derive_stats(&child_stats, &self_schema, &reloads)

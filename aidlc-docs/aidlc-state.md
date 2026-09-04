@@ -217,3 +217,9 @@
   predicate now also governs CREATE/ALTER `ON UPDATE` validation, with
   focused DDL regressions. Ready evidence is recorded in
   `rust/testport/receipts/b075.md`.
+- Current batch: Rust's recursive logical Apply stats now implement Go's keyed
+  LATERAL cardinality branch instead of returning the Rust-only unported-stats
+  error. Explicit `ON` keys use the existing full-join NDV estimator and
+  correlated lateral inners without explicit keys retain Go's product
+  fallback. Focused recursive/operator tests and the package Ready profile
+  are recorded in `rust/testport/receipts/logical_apply_lateral_stats.md`.

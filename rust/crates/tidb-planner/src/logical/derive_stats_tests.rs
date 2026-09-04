@@ -32,6 +32,7 @@ use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanIdAllocator;
 use crate::stats_info::StatsInfo;
 
+use super::apply::LogicalApply;
 use super::data_source::DataSource;
 use super::join::LogicalJoin;
 use super::projection::LogicalProjection;
@@ -208,6 +209,28 @@ fn a_cartesian_join_multiplies_the_children() {
 
     let (stats, _) = derive(&mut join).expect("a cartesian join derives");
     assert!((stats.row_count() - 1200.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn a_lateral_apply_estimates_explicit_keys_like_a_full_join() {
+    // Go `LogicalApply.DeriveStats` uses `EstimateFullJoinRowCount` for a
+    // lateral apply with explicit ON keys. This used to stop at the Rust
+    // `unported_stats` arm, so the same keyed shape must now derive through
+    // the recursive driver: 100 * 200 / max(10, 20) = 1000.
+    let allocator = PlanIdAllocator::new();
+    let left = stated_source(&allocator, &[1], 100.0, &[(1, 10.0)]);
+    let right = stated_source(&allocator, &[11], 200.0, &[(11, 20.0)]);
+    let mut apply = LogicalApply::new(
+        base(&allocator, "Apply", Some(schema_of(&[1, 11]))),
+        LogicalJoinType::Inner,
+    );
+    apply.is_lateral = true;
+    apply.join.equal_conditions = vec![eq_condition(1, 11)];
+    let mut plan = LogicalPlan::Apply(apply);
+    plan.set_children(vec![left, right]);
+
+    let (stats, _) = derive(&mut plan).expect("a keyed lateral apply derives");
+    assert!((stats.row_count() - 1000.0).abs() < f64::EPSILON);
 }
 
 #[test]

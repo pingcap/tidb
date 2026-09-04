@@ -63,6 +63,14 @@ For each bounded behavior cluster:
   test-helper mismatch and tempfile lock split. The SQL executor consumer that
   constructs lock contexts for `SELECT ... FOR UPDATE` remains a separate
   unported boundary. Receipt: `receipts/shared_lock_upgrade_gate.md`.
+- 2026-09-05 (`pkg/planner/core/operator/logicalop` LATERAL Apply stats):
+  removed the Rust-only recursive `unported_stats` refusal for keyed LATERAL
+  Apply nodes. Rust now uses the existing full-join NDV estimator for explicit
+  `ON` keys, records Go's `EqualCondOutCnt`, and keeps the current Go product
+  fallback for correlated lateral inners without explicit keys. Focused
+  recursive/operator regressions pass; the complete 43-artifact Go owner
+  inventory and Ready evidence are recorded in
+  `receipts/logical_apply_lateral_stats.md`.
 - 2026-09-04 (`pkg/executor/sortexec` TopN spill threshold): aligned Rust's
   `TopNSpillAction` with Go's package-level tenth-of-quota guard. The focused
   action-level regression fails at exactly 10% under the old aggregation
