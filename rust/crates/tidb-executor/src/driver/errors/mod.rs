@@ -1109,6 +1109,16 @@ impl DriverError {
             ER_UNKNOWN_SYSTEM_VARIABLE,
             format!("Unknown system variable '{name}'"),
         ),
+        // Go `ErrVariableNoLongerSupported` (8136): a removed option is
+        // accepted by SET for compatibility, but reads explain the removal
+        // instead of returning dummy data.
+        DriverError::Var(crate::VarErrorKind::RemovedSystemVariable {
+            name,
+            reason,
+        }) => MysqlError::new(
+            8136,
+            format!("option '{name}' is no longer supported. Reason: {reason}"),
+        ),
         // Go: "Variable '%-.192s' is a %s variable".
         DriverError::Var(crate::VarErrorKind::ReadOnlyVariable(name)) => {
             MysqlError::new(

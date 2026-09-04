@@ -913,6 +913,9 @@ impl GlobalSysvars {
 pub enum VarError {
     /// Go `ErrUnknownSystemVar` (1193).
     UnknownSystemVariable(String),
+    /// Go `ErrVariableNoLongerSupported` (8136), used by the expression
+    /// read path for a removed system variable.
+    RemovedSystemVariable { name: String, reason: String },
     /// Go `ErrIncorrectGlobalLocalVar` (1238): the variable is read-only.
     ReadOnlyVariable(String),
     /// Go `ErrWrongTypeForVar` (1232).

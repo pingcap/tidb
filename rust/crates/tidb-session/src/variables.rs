@@ -131,6 +131,9 @@ pub(crate) fn var_error(error: VarError) -> DriverError {
         VarError::UnknownSystemVariable(name) => {
             tidb_executor::VarErrorKind::UnknownSystemVariable(name)
         }
+        VarError::RemovedSystemVariable { name, reason } => {
+            tidb_executor::VarErrorKind::RemovedSystemVariable { name, reason }
+        }
         VarError::ReadOnlyVariable(name) => tidb_executor::VarErrorKind::ReadOnlyVariable(name),
         VarError::WrongTypeForVar(name) => tidb_executor::VarErrorKind::WrongTypeForVar(name),
         VarError::WrongValueForVar(name, value) => {
@@ -380,6 +383,12 @@ impl Session {
         &mut self,
         assignment: &tidb_ast::SystemVariableAssignment,
     ) -> Result<(), DriverError> {
+        // Go's SetExecutor deliberately checks the removed-variable table
+        // before privilege and scope handling: these names are parse-but-
+        // ignore compatibility shims, even for SET GLOBAL.
+        if sysvar::removed_sys_var_reason(&assignment.name).is_some() {
+            return Ok(());
+        }
         let is_global = assignment.scope == tidb_ast::SystemVariableScope::Global;
         if is_global {
             self.require_set_global_privilege()?;
@@ -967,9 +976,20 @@ impl Session {
         use tidb_ast::Expr;
         Ok(match expr {
             Expr::SysVar { scope, name } => {
-                let def = sysvar::get_sys_var(name).ok_or_else(|| {
-                    var_error(VarError::UnknownSystemVariable(name.to_ascii_lowercase()))
-                })?;
+                let def = match sysvar::get_sys_var(name) {
+                    Some(def) => def,
+                    None => {
+                        if let Some(reason) = sysvar::removed_sys_var_reason(name) {
+                            return Err(var_error(VarError::RemovedSystemVariable {
+                                name: name.to_ascii_lowercase(),
+                                reason: reason.to_owned(),
+                            }));
+                        }
+                        return Err(var_error(VarError::UnknownSystemVariable(
+                            name.to_ascii_lowercase(),
+                        )));
+                    }
+                };
                 if def.scope != sysvar::SCOPE_NONE {
                     let incorrect_scope = match scope {
                         Some(tidb_ast::SysVarScope::Global)

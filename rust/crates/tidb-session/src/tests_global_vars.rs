@@ -98,6 +98,36 @@ fn test_setting_sql_variables() {
         .is_err());
 }
 
+/// Transcreated from Go `TestRemovedOpt` and the executor's removed-variable
+/// compatibility path: SET accepts removed names as parse-but-ignore shims,
+/// while a SELECT read identifies the option and its replacement guidance.
+#[test]
+fn removed_system_variables_ignore_set_and_explain_reads() {
+    assert!(sysvar::is_removed_sys_var("tidb_enable_alter_placement"));
+    assert!(sysvar::is_removed_sys_var("TIDB_ENABLE_ALTER_PLACEMENT"));
+    assert!(!sysvar::is_removed_sys_var(
+        tidb_vardef::tidb_vars::TIDB_ENABLE1_PC
+    ));
+
+    let mut session = Session::new();
+    session
+        .run("SET tidb_enable_alter_placement = ON")
+        .expect("removed SET is parse-but-ignore");
+    session
+        .run("SET GLOBAL TIDB_ENABLE_ALTER_PLACEMENT = OFF")
+        .expect("removed SET GLOBAL is parse-but-ignore before privilege checks");
+
+    let error = session
+        .run("SELECT @@TIDB_ENABLE_ALTER_PLACEMENT")
+        .expect_err("removed reads must not return a dummy value")
+        .to_mysql_error();
+    assert_eq!(error.code, 8136);
+    assert_eq!(
+        error.message,
+        "option 'tidb_enable_alter_placement' is no longer supported. Reason: alter placement is now always enabled"
+    );
+}
+
 #[test]
 fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     let globals = vars::GlobalSysvars::new();

@@ -53,6 +53,10 @@ For each bounded behavior cluster:
   `TestSessionGetterFuncs` regression and reconciled the timestamp and
   identity receipt rows with their already-live Rust owners; query-diagnostic
   mutation/RU accounting remains explicitly partial.
+- 2026-09-05 (`pkg/sessionctx/variable` removed options): ported Go's removed
+  sysvar compatibility table, parse-but-ignore SET behavior, and explicit
+  8136 read errors with replacement guidance. Added a case-insensitive
+  end-to-end regression for both SET scopes and reconciled `TestRemovedOpt`.
 - 2026-09-05 (`pkg/sessionctx/variable` secure_auth validation): ported
   `TestSecureAuth`'s per-variable validation. `secure_auth=OFF` now returns
   Go's 1231 wrong-value error and leaves the global ON default unchanged;

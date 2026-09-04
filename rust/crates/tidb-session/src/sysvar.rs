@@ -47,6 +47,67 @@
 
 /// Go `vardef.ScopeNone`: a read-only server property.
 pub const SCOPE_NONE: u8 = 0;
+
+/// Go `pkg/sessionctx/variable/removed.go`'s compatibility table. Removed
+/// names remain accepted by `SET` (the session writer checks this table before
+/// normal registry lookup), while reads report why the option disappeared.
+const REMOVED_SYS_VARS: &[(&str, &str)] = &[
+    (
+        "tidb_enable_alter_placement",
+        "alter placement is now always enabled",
+    ),
+    (
+        "tidb_enable_global_temporary_table",
+        "temporary table support is now always enabled",
+    ),
+    ("tidb_slow_log_masking", "use tidb_redact_log instead"),
+    (
+        "placement_checks",
+        "placement_checks is removed and use tidb_placement_mode instead",
+    ),
+    (
+        "tidb_mem_quota_hashjoin",
+        "use tidb_mem_quota_query instead",
+    ),
+    (
+        "tidb_mem_quota_mergejoin",
+        "use tidb_mem_quota_query instead",
+    ),
+    ("tidb_mem_quota_sort", "use tidb_mem_quota_query instead"),
+    ("tidb_mem_quota_topn", "use tidb_mem_quota_query instead"),
+    (
+        "tidb_mem_quota_indexlookupreader",
+        "use tidb_mem_quota_query instead",
+    ),
+    (
+        "tidb_mem_quota_indexlookupjoin",
+        "use tidb_mem_quota_query instead",
+    ),
+    ("tidb_enable_streaming", "streaming is no longer supported"),
+    (
+        "tidb_opt_broadcast_join",
+        "tidb_opt_broadcast_join is removed and use tidb_allow_mpp instead",
+    ),
+    (
+        "tidb_enable_change_multi_schema",
+        "alter multiple schema objects in a table is now always enabled",
+    ),
+];
+
+/// Returns Go's removal explanation for a system-variable name, matching the
+/// case-insensitive lookup performed by `GetSysVar` and `IsRemovedSysVar`.
+pub fn removed_sys_var_reason(name: &str) -> Option<&'static str> {
+    REMOVED_SYS_VARS
+        .iter()
+        .find(|(removed, _)| removed.eq_ignore_ascii_case(name))
+        .map(|(_, reason)| *reason)
+}
+
+/// Go `IsRemovedSysVar`.
+#[must_use]
+pub fn is_removed_sys_var(name: &str) -> bool {
+    removed_sys_var_reason(name).is_some()
+}
 /// Go `vardef.ScopeGlobal`.
 pub const SCOPE_GLOBAL: u8 = 1;
 /// Go `vardef.ScopeSession`.
