@@ -387,6 +387,16 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   2018 US DST gap. Full tidb-datatype sweep 474/474. Receipt:
   `receipts/types_time_dst_metadata.md`; audit entry T14 marked FIXED.
 
+- 2026-09-04 (`ROW_COUNT()`/`LAST_INSERT_ID()` evaluation): the two info
+  functions were registered and typed but had no evaluation arms — a built
+  node answered `Unsupported` where Go answers numbers. Added the arms
+  (builtin_info.go:913-923 ROW_COUNT → PrevAffectedRows; :482-489
+  LAST_INSERT_ID → PrevLastInsertID through the UNSIGNED result; :508-521
+  LAST_INSERT_ID(expr) records via SetLastInsertID and returns the value),
+  with the vectorized source's `UInt(7)` pin kept green and a capturing
+  context regression proving the record side effect. Fail-before verified.
+  Receipt: `receipts/info_row_count_last_insert_id.md`.
+
 - 2026-09-04 (hybrid-type cast push, `builtin_cast.go:2898`): ported
   `TryPushCastIntoControlFunctionForHybridType` — a numeric-target cast over
   IF/CASE/ELT pushes INTO the branches when one is a hybrid type (Enum/Set,

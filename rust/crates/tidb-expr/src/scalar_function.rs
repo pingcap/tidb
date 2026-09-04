@@ -1574,8 +1574,42 @@ impl ScalarFunction {
                         None => Datum::Null,
                     })
                 }
+                "row_count" => {
+                    return Ok(match ctx.row_count() {
+                        Some(rows) => Datum::Int(rows),
+                        None => Datum::Null,
+                    })
+                }
+                "last_insert_id" => {
+                    // LAST_INSERT_ID is an unsigned domain (Go
+                    // `builtinLastInsertIDSig.evalInt` returns the
+                    // PrevLastInsertID through an ETInt result the vectorized
+                    // source pins as UInt).
+                    return Ok(match ctx.last_insert_id() {
+                        Some(id) => Datum::UInt(id),
+                        None => Datum::Null,
+                    });
+                }
                 _ => {}
             }
+        }
+        // Go `builtinLastInsertIDWithIDSig.evalInt`: LAST_INSERT_ID(expr)
+        // evaluates the integer expression, records it as the session's
+        // last insert id, and returns the same value (NULL for a NULL
+        // argument).
+        if name == "last_insert_id" && self.args.len() == 1 {
+            let value = self.args[0].eval(ctx, row)?;
+            if value.is_null() {
+                return Ok(Datum::Null);
+            }
+            let cast = crate::cast::cast_arg_as_int(&value, self.args[0].static_type(), ctx)?;
+            let recorded = match cast {
+                crate::Datum::Int(i) => i as u64,
+                crate::Datum::UInt(u) => u,
+                _ => return Err(EvalError::Unsupported("LAST_INSERT_ID argument")),
+            };
+            ctx.set_last_insert_id(recorded);
+            return Ok(Datum::Int(recorded as i64));
         }
         // Go `builtinTrim*Sig`: the name carries the direction and the second
         // argument is the string to remove.

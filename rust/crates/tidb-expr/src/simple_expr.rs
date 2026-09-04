@@ -1470,6 +1470,132 @@ mod tests {
         assert_eq!(value, crate::Datum::Int(2));
     }
 
+    /// Go `builtinRowCountSig`/`builtinLastInsertIDSig`/
+    /// `builtinLastInsertIDWithIDSig` (builtin_info.go:913/482/508):
+    /// ROW_COUNT() answers the preceding statement's affected-row count
+    /// (never NULL; the default context counts 0), LAST_INSERT_ID() answers
+    /// the previous statement's generated id (NULL when the context has
+    /// none), and LAST_INSERT_ID(expr) records the integer and returns it.
+    #[test]
+    fn info_functions_read_and_record_session_counts() {
+        use crate::context::Columns;
+        use crate::expression::Constant;
+
+        struct CountingContext {
+            row_count: Option<i64>,
+            last_insert_id: Option<u64>,
+            recorded: std::cell::RefCell<Vec<u64>>,
+        }
+        impl Default for CountingContext {
+            fn default() -> Self {
+                Self {
+                    row_count: None,
+                    last_insert_id: None,
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                }
+            }
+        }
+        impl Columns for CountingContext {
+            fn get(&self, _path: &[String]) -> Option<crate::Datum> {
+                None
+            }
+            fn row_count(&self) -> Option<i64> {
+                self.row_count
+            }
+            fn last_insert_id(&self) -> Option<u64> {
+                self.last_insert_id
+            }
+            fn set_last_insert_id(&self, value: u64) {
+                self.recorded.borrow_mut().push(value);
+            }
+        }
+
+        let row_count_type = FieldType::new(FieldTypeCode::LongLong);
+        let empty_args: Vec<Expression> = Vec::new();
+
+        // ROW_COUNT(): the context's count, or NULL when the context has
+        // none (the trait default).
+        let node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("row_count"),
+            row_count_type.clone(),
+            empty_args.clone(),
+        ));
+        let mut chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
+        let row = chunk.get_row(0);
+        let value = node
+            .eval(
+                &CountingContext {
+                    row_count: Some(7),
+                    last_insert_id: None,
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                },
+                row,
+            )
+            .unwrap();
+        assert_eq!(value, crate::Datum::Int(7));
+        let value = node
+            .eval(
+                &CountingContext {
+                    row_count: None,
+                    last_insert_id: None,
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                },
+                row,
+            )
+            .unwrap();
+        assert_eq!(value, crate::Datum::Null);
+
+        // LAST_INSERT_ID(): the context's generated id, or NULL when unset.
+        let last_insert_id_type = FieldType::new(FieldTypeCode::LongLong);
+        let node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("last_insert_id"),
+            last_insert_id_type.clone(),
+            empty_args,
+        ));
+        let value = node
+            .eval(
+                &CountingContext {
+                    row_count: None,
+                    last_insert_id: Some(5),
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                },
+                row,
+            )
+            .unwrap();
+        assert_eq!(value, crate::Datum::UInt(5));
+        let value = node
+            .eval(
+                &CountingContext {
+                    row_count: None,
+                    last_insert_id: None,
+                    recorded: std::cell::RefCell::new(Vec::new()),
+                },
+                row,
+            )
+            .unwrap();
+        assert_eq!(value, crate::Datum::Null);
+
+        // LAST_INSERT_ID(expr): records the integer for the next statement
+        // boundary and returns it.
+        let argument = Expression::Constant(Constant::new(
+            crate::Datum::Int(42),
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+        let node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("last_insert_id"),
+            last_insert_id_type,
+            vec![argument],
+        ));
+        let context = CountingContext {
+            row_count: None,
+            last_insert_id: None,
+            recorded: std::cell::RefCell::new(Vec::new()),
+        };
+        let value = node.eval(&context, row).unwrap();
+        assert_eq!(value, crate::Datum::Int(42));
+        assert_eq!(context.recorded.borrow().as_slice(), &[42]);
+    }
+
     /// Go `ParseSimpleExpr`'s empty-string guard.
     #[test]
     fn parse_simple_expr_rejects_an_empty_string() {
