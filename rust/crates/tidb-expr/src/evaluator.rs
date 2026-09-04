@@ -205,9 +205,20 @@ fn eval_vectorized_expression<C: Columns>(
                 .map(|row| input.get_row(row).get_datum(column_index, field_type))
                 .collect())
         }
-        Expression::Constant(constant) => Ok(std::iter::repeat_with(|| constant.eval())
-            .take(input.num_rows())
-            .collect::<Result<Vec<_>, _>>()?),
+        // A deferred constant (the clock family) re-evaluates per row against
+        // the statement clock, matching Go's `Constant.Eval` over
+        // `DeferredExpr`; a plain constant repeats its build-time value.
+        Expression::Constant(constant) => {
+            if constant.deferred_expr.is_none() {
+                Ok(std::iter::repeat_with(|| constant.eval())
+                    .take(input.num_rows())
+                    .collect::<Result<Vec<_>, _>>()?)
+            } else {
+                (0..input.num_rows())
+                    .map(|row| expression.eval(ctx, input.get_row(row)))
+                    .collect()
+            }
+        }
         Expression::CorrelatedColumn(column) => Ok(std::iter::repeat_with(|| Ok(column.eval()))
             .take(input.num_rows())
             .collect::<Result<Vec<_>, EvalError>>()?),

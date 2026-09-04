@@ -116,6 +116,13 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
     if unfoldable || !all_const_arg {
         return None;
     }
+    // Go `expression_rewriter.go:3016-3029`: a deferred function (the clock
+    // family) folds into a Constant that carries the function as
+    // `DeferredExpr`, so a cached plan re-evaluates it on every execution
+    // instead of serving the folding-time value. `UNIX_TIMESTAMP` with
+    // arguments is explicitly excluded (it is a normal expression of its
+    // argument).
+    let deferred_self = is_deferred_function(func.func_name.lowercase(), func.args.len());
     let value = crate::eval_expression_once(expr, ctx).ok()?;
     let mut ret_type = expr.static_type()?.clone();
     if !has_null_arg {
@@ -127,7 +134,7 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
     }
     let mut folded = crate::constant::Constant::new(value.clone(), ret_type);
     folded.collation = original_collation;
-    if has_deferred_arg {
+    if has_deferred_arg || deferred_self {
         folded.deferred_expr = Some(Box::new(expr.clone()));
     }
     *expr = Expression::Constant(folded);
@@ -279,6 +286,28 @@ pub fn is_unfoldable(name: &str) -> bool {
     )
 }
 
+/// Go `IsDeferredFunctions` (`pkg/expression/function_traits.go:159-171`),
+/// with the caller's `UNIX_TIMESTAMP`-with-arguments exception
+/// (`expression_rewriter.go:3021`): these foldable clock functions must be
+/// re-evaluated per execution when a plan cache reuses the built tree.
+fn is_deferred_function(name: &str, arg_count: usize) -> bool {
+    let clock = matches!(
+        name,
+        "now"
+            | "random_bytes"
+            | "current_timestamp"
+            | "utc_time"
+            | "curtime"
+            | "current_time"
+            | "utc_timestamp"
+            | "unix_timestamp"
+            | "curdate"
+            | "current_date"
+            | "utc_date"
+    );
+    clock && (name != "unix_timestamp" || arg_count == 0)
+}
+
 /// Whether the function evaluates only SOME of its arguments at run time.
 /// Folding inside one would evaluate branches or operands the executor can
 /// skip, changing warnings and errors (`IF(1, 1, 1/0)` divides).
@@ -287,4 +316,70 @@ fn is_lazy_short_circuit(name: &str) -> bool {
         name,
         "if" | "ifnull" | "case" | "case_when" | "and" | "or" | "xor" | "nullif" | "coalesce"
     )
+}
+
+#[cfg(test)]
+mod deferred_function_tests {
+    use super::super::context::Columns;
+    use super::*;
+    use crate::context::NoColumns;
+    use crate::expression::{Constant, Expression, ScalarFunction};
+    use tidb_ast::CiString;
+    use tidb_datatype::FieldType;
+
+    /// A context whose statement clock the test pins, so NOW() evaluations
+    /// are deterministic and two executions can observe the difference.
+    struct Clock(u64);
+
+    impl Columns for Clock {
+        fn get(&self, _path: &[String]) -> Option<Datum> {
+            None
+        }
+        fn now(&self) -> Option<(i64, u32, i32)> {
+            Some((self.0 as i64, 0, 0))
+        }
+    }
+
+    #[test]
+    fn deferred_function_fold_re_evaluates_per_execution() {
+        let now_node = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("now"),
+            FieldType::new(tidb_datatype::FieldTypeCode::Datetime),
+            vec![],
+        ));
+
+        // Fold once under clock 1000.
+        let mut expr = now_node.clone();
+        fold_constant_in_mode(&mut expr, &Clock(1000), ConstantFoldMode::Try);
+
+        // The folded constant must carry the deferred provenance: evaluating
+        // the SAME folded node under a LATER statement clock must serve the
+        // fresh value, not the folding-time one (Go `Constant.DeferredExpr`,
+        // expression_rewriter.go:3016-3029).
+        // Re-executing under a LATER statement clock must re-evaluate: the
+        // folding-time value (00:16:40) must not be served again.
+        let later_value = expr
+            .eval(
+                &Clock(5000),
+                tidb_chunk::chunk::Chunk::new(&[], 1, 1).get_row(0),
+            )
+            .unwrap();
+        let later = later_value.sql_string().unwrap();
+        assert!(
+            later.contains("01:23:20"),
+            "clock 5000 must render 01:23:20, got {later}"
+        );
+        // And the first execution's own value stayed at its own clock.
+        let first_value = expr
+            .eval(
+                &Clock(1000),
+                tidb_chunk::chunk::Chunk::new(&[], 1, 1).get_row(0),
+            )
+            .unwrap();
+        let first = first_value.sql_string().unwrap();
+        assert!(
+            first.contains("00:16:40"),
+            "clock 1000 must render 00:16:40, got {first}"
+        );
+    }
 }

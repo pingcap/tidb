@@ -726,7 +726,19 @@ impl Expression {
     ) -> Result<tidb_datatype::Datum, crate::context::EvalError> {
         let value = match self {
             Expression::Column(c) => c.eval(row),
-            Expression::Constant(c) => c.eval(),
+            // A deferred constant (Go `Constant.DeferredExpr`) re-evaluates
+            // its function on every execution, so a cached plan serves a
+            // fresh clock/counter value instead of the folding-time one.
+            Expression::Constant(c) => {
+                // A deferred constant (Go `Constant.DeferredExpr`)
+                // re-evaluates its function on every execution, so a cached
+                // plan serves a fresh clock/counter value instead of the
+                // folding-time one.
+                if let Some(deferred) = &c.deferred_expr {
+                    return deferred.eval(ctx, row);
+                }
+                c.eval()
+            }
             Expression::CorrelatedColumn(c) => Ok(c.eval()),
             Expression::ScalarFunction(c) => c.eval(ctx, row),
         }?;

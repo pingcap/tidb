@@ -489,6 +489,18 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `receipts/cast_hybrid_push.md` sibling — the vectors live in
   `simple_expr::tests::format_bytes_and_nano_time_follow_the_go_unit_tables`.
 
+- 2026-09-04 (deferred clock functions under plan reuse — wrong-value): the
+  constant folder froze NOW()/CURDATE()/UTC_DATE and the rest of Go's
+  `IsDeferredFunctions` clock set (function_traits.go:159-171) at build
+  time, so a prepared statement or cached plan served the first execution's
+  clock on every reuse. The fold now marks those constants with
+  `deferred_expr` (Go `expression_rewriter.go:3016-3029`) and evaluation
+  re-runs the function against the statement clock per execution; the
+  vectorized constant repeat follows the same rule. Fail-before: folding
+  under clock 1000 then evaluating under clock 5000 served the stale
+  00:16:40 instead of 01:23:20. Receipt:
+  `receipts/deferred_clock_functions.md`.
+
 - 2026-09-04 (charset-transcode classification parity): entry-by-entry
   verification of Go's `convertActionMap` (pkg/expression/
   builtin_convert_charset.go:300-330) against `convert_charset::func_prop` —
