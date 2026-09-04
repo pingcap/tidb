@@ -1624,6 +1624,19 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
+	// keep DATEDIFF at root when its argument subtree contains a BIT column (#67002).
+	exprs = exprs[:0]
+	constArgs := datumsToConstants(types.MakeDatums(int64(100), int64(100)))
+	concatWSWithBit, err := NewFunction(ctx, ast.ConcatWS, types.NewFieldType(mysql.TypeString), constArgs[0], constArgs[1], byteColumn)
+	require.NoError(t, err)
+	function, err = NewFunction(ctx, ast.DateDiff, types.NewFieldType(mysql.TypeLonglong), concatWSWithBit, datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
+	require.Len(t, pushed, 0)
+	require.Len(t, remained, len(exprs))
+	require.Nil(t, (&PbConverter{client: client, ctx: ctx}).ExprToPB(function.(*ScalarFunction)))
+
 	// Test exprs that can be pushed.
 	exprs = exprs[:0]
 	pushed = pushed[:0]
