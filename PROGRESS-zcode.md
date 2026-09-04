@@ -306,3 +306,5 @@
 - 下轮恢复点: (1) vardef 深层=Go SysVar 注册表 484 条 vs Rust catalog 971 条的结构差异解释与逐条 scope/type/默认 diff(脚本化, 大面); (2) 或选择下一个无 audit 文档的 Go package 继续遍历; (3) F2/F3-seam 仍被 live 证据阻塞。
 - sysvar 注册表面批: 脚本 name-set diff(Go defaultSysVars 521+noop 423=944 vs Rust catalog 963, 含 GlobalConfigName/并发 helper 注册的解释) → 真实缺失=2 条: tidb_columnar_storage_enabled(Go sysvar.go:982 Global Bool ON)与 tidb_query_cop_store_limit(Go sysvar.go:2294 Global|Session Unsigned 0..256 def 15), 已补入 distsql_storage.rs(ENTRIES 计数 49→51)+registry 有序不变量回归测试。31 个 Rust-only=fork 扩展。A/B: 280 失败预存一致, 净 +1 通过。fmt/clippy/diff-check PASS。
 - 下轮恢复点: (1) sysvar scope/type/default 的逐条值 diff(名字集已闭环); (2) F2/F3-seam 被 live 证据阻塞。
+- sysvar 注册表批推送 `4d1b311ab7e`。本轮累计 4 推: 12577ef915d/c07080636c8/fb20b01ab78(vardef)/4d1b311ab7e(registry)+journal 提交。
+- 下轮恢复点: (1) sysvar scope/type/default 逐条值 diff(名字集已闭环, 脚本已有, 扩展 scope/value/min/max 三元组即可); (2) F2/F3-seam 被 live 证据阻塞; (3) F4 逐站点低优先级。
