@@ -737,19 +737,50 @@ impl SysVarDef {
             "tidb_ttl_job_schedule_window_start_time" | "tidb_ttl_job_schedule_window_end_time"
         ) {
             let text = validated.value.trim();
-            let parsed = text
-                .strip_suffix(" +0000")
-                .unwrap_or(text)
-                .split_once(':')
-                .and_then(|(hour, minute)| {
-                    Some((hour.parse::<u8>().ok()?, minute.parse::<u8>().ok()?))
+            let mut fields = text.split_whitespace();
+            let parsed = fields.next().and_then(|clock| {
+                let (hour, minute) = clock.split_once(':')?;
+                Some((
+                    hour.parse::<u8>().ok()?,
+                    minute.parse::<u8>().ok()?,
+                    fields.next(),
+                ))
+            });
+            if let Some((hour, minute, offset)) = parsed {
+                let valid_offset = offset.is_none_or(|offset| {
+                    let bytes = offset.as_bytes();
+                    if bytes.len() != 5 || !matches!(bytes[0], b'+' | b'-') {
+                        return false;
+                    }
+                    let Ok(hours) = std::str::from_utf8(&bytes[1..3])
+                        .unwrap_or_default()
+                        .parse::<u8>()
+                    else {
+                        return false;
+                    };
+                    let Ok(minutes) = std::str::from_utf8(&bytes[3..5])
+                        .unwrap_or_default()
+                        .parse::<u8>()
+                    else {
+                        return false;
+                    };
+                    hours < 24 && minutes < 60
                 });
-            if let Some((hour, minute)) = parsed {
+                if fields.next().is_some() {
+                    return Err(ValidationError::Refused(format!(
+                        "invalid TTL job schedule window time: {original}"
+                    )));
+                }
                 if hour < 24 && minute < 60 {
-                    return Ok(Validated {
-                        value: format!("{hour:02}:{minute:02} +0000"),
-                        truncated: validated.truncated,
-                    });
+                    if valid_offset {
+                        return Ok(Validated {
+                            value: format!(
+                                "{hour:02}:{minute:02} {}",
+                                offset.unwrap_or("+0000")
+                            ),
+                            truncated: validated.truncated,
+                        });
+                    }
                 }
             }
             return Err(ValidationError::Refused(format!(

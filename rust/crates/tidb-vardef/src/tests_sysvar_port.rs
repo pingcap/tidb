@@ -320,10 +320,6 @@ fn derive_top_n_default_off() {
 }
 
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestSetJobScheduleWindow`.
-// go-parity-gap: timezone-sensitive TTL job schedule window accessor round-trip not ported
-#[test]
-#[ignore]
-fn job_schedule_window_unported() {}
 
 /// Go `pkg/sessionctx/variable/sysvar_test.go::TestTiDBIgnoreInlistPlanDigest`.
 ///
