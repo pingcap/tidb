@@ -1081,6 +1081,10 @@ pub const TIDB_ANALYZE_PARTITION_CONCURRENCY: &str = "tidb_analyze_partition_con
 /// TiDBMergePartitionStatsConcurrency is deprecated. It is kept for backward compatibility
 /// but no longer affects behavior. Global stats always use the combined merge algorithm.
 /// Go `TiDBMergePartitionStatsConcurrency`.
+/// Go `TiDBQueryCopStoreLimit`.
+pub const TIDB_QUERY_COP_STORE_LIMIT: &str = "tidb_query_cop_store_limit";
+/// Go `TiDBColumnarStorageEnabled`.
+pub const TIDB_COLUMNAR_STORAGE_ENABLED: &str = "tidb_columnar_storage_enabled";
 pub const TIDB_MERGE_PARTITION_STATS_CONCURRENCY: &str = "tidb_merge_partition_stats_concurrency";
 /// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 /// Go `TiDBEnableAsyncMergeGlobalStats`.
