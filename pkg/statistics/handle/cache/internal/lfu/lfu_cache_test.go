@@ -17,6 +17,7 @@ package lfu
 import (
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -313,4 +314,31 @@ func TestMemoryControlWithUpdate(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return int64(0) == lfu.Cost()
 	}, 5*time.Second, 100*time.Millisecond)
+}
+
+// TestCloseDuringWait closes the cache while another goroutine keeps waiting for buffered writes
+// to be applied, which happens when the stats cache is replaced (for example at the end of
+// InitStats) while sync stats loading is running. The wait must not hang.
+func TestCloseDuringWait(t *testing.T) {
+	for range 300 {
+		lfu, err := NewLFU(100000000)
+		require.NoError(t, err)
+		lfu.Put(1, testutil.NewMockStatisticsTable(1, 1, true, false, false))
+		var stop atomic.Bool
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for !stop.Load() {
+				lfu.WaitForAsyncUpdates()
+			}
+		}()
+		time.Sleep(time.Duration(rand.Intn(200)) * time.Microsecond)
+		lfu.Close()
+		stop.Store(true)
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("WaitForAsyncUpdates hangs when the cache is closed concurrently")
+		}
+	}
 }
