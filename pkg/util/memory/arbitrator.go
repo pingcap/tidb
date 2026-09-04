@@ -2136,7 +2136,7 @@ func (m *MemArbitrator) AutoRun(
 
 func (m *MemArbitrator) refreshRuntimeMemStats() {
 	if m.actions.UpdateRuntimeMemStats != nil {
-		m.actions.UpdateRuntimeMemStats() // should invoke `SetRuntimeMemStats`
+		m.actions.UpdateRuntimeMemStats() // should invoke `setRuntimeMemStats`
 	}
 	atomic.AddInt64(&m.execMetrics.Action.UpdateRuntimeMemStats, 1)
 }
