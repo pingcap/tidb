@@ -52,13 +52,22 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 
 // DumpStatus is the status of dumping.
 type DumpStatus struct {
-	CompletedTables   float64
-	FinishedBytes     float64
-	FinishedRows      float64
-	EstimateTotalRows float64
-	TotalTables       int64
-	CurrentSpeedBPS   float64
-	Progress          string
+	CompletedTables   float64 `json:"completedTables"`
+	FinishedBytes     float64 `json:"finishedBytes"`
+	FinishedRows      float64 `json:"finishedRows"`
+	EstimateTotalRows float64 `json:"estimateTotalRows"`
+	TotalTables       int64   `json:"totalTables"`
+	CurrentSpeedBPS   float64 `json:"currentSpeedBPS"`
+	// Progress is rendered for a person reading a log line. A caller that
+	// needs to compute with it - to drive a progress bar, or to estimate a
+	// finish time - should read ProgressPercent instead of parsing this.
+	Progress string `json:"progress,omitempty"`
+	// ProgressPercent is Progress as a number between 0 and 100. It is nil
+	// until the chunk count is known, which is the same moment Progress stops
+	// being empty: before that there is no denominator to divide by, and
+	// reporting zero would claim no work had been done rather than that the
+	// answer is not available yet.
+	ProgressPercent *float64 `json:"progressPercent,omitempty"`
 }
 
 // GetStatus returns the status of dumping by reading metrics.
@@ -73,18 +82,30 @@ func (d *Dumper) GetStatus() *DumpStatus {
 	if d.metrics.progressReady.Load() {
 		// chunks will be zero when upstream has no data
 		if d.metrics.totalChunks.Load() == 0 {
-			ret.Progress = "100 %"
+			ret.setProgress(1)
 			return ret
 		}
 		progress := float64(d.metrics.completedChunks.Load()) / float64(d.metrics.totalChunks.Load())
 		if progress > 1 {
-			ret.Progress = "100 %"
+			progress = 1
 			d.L().Warn("completedChunks is greater than totalChunks", zap.Int64("completedChunks", d.metrics.completedChunks.Load()), zap.Int64("totalChunks", d.metrics.totalChunks.Load()))
-		} else {
-			ret.Progress = fmt.Sprintf("%5.2f %%", progress*100)
 		}
+		ret.setProgress(progress)
 	}
 	return ret
+}
+
+// setProgress records one progress value in both the shapes callers need:
+// the string a log line prints, and the number an API returns. They are set
+// together so the two can never disagree.
+func (s *DumpStatus) setProgress(fraction float64) {
+	percent := fraction * 100
+	s.ProgressPercent = &percent
+	if fraction >= 1 {
+		s.Progress = "100 %"
+		return
+	}
+	s.Progress = fmt.Sprintf("%5.2f %%", percent)
 }
 
 func calculateTableCount(m DatabaseTables) int {
