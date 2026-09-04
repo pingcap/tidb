@@ -192,7 +192,6 @@ func TestPlanStatsLoad(t *testing.T) {
 				},
 			},
 		}
-		checkedCases := 0
 		for _, testCase := range testCases {
 			if testCase.skip {
 				continue
@@ -207,18 +206,11 @@ func TestPlanStatsLoad(t *testing.T) {
 			nodeW := resolve.NewNodeW(stmt)
 			p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 			require.NoError(t, err)
-			if ctx.GetSessionVars().StmtCtx.IsSyncStatsFailed {
-				t.Logf("skip stats assertions for %q because sync stats load failed: %v",
-					testCase.sql, ctx.GetSessionVars().StmtCtx.GetWarnings())
-				continue
-			}
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			tableInfo := tbl.Meta()
 			testCase.check(p, tableInfo)
-			checkedCases++
 		}
-		require.Positive(t, checkedCases, "all cases failed sync stats loading")
 
 		// issue:48257
 		checkTableFullScanPlan := func(rows [][]any, tableName string, expectPseudo bool) {
