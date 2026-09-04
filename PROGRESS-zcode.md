@@ -55,3 +55,11 @@
   retain Go's ordering. The complete owner inventory, focused regression, and
   Ready profile are recorded in
   `rust/testport/receipts/types_time_validate_max_datetime.md`.
+
+- 2026-09-04: aligned Rust decimal `DIV` with Go's unsigned result-width
+  conversion. `Decimal::div_rem_unbounded` preserves quotients above
+  `i64::MAX`; `tidb-expr` now returns the full-range `Datum::UInt` when either
+  operand is unsigned, while retaining Go's negative overflow and truncated
+  zero rules. Focused regressions, complete owner profiles, and the known
+  external JSON-schema fixture failure are recorded in
+  `rust/testport/receipts/expression_intdiv_unsigned_width.md`.

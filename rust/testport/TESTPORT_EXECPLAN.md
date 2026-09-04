@@ -156,6 +156,15 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   focused regression, serialized owner profile, and Ready results are in
   `receipts/types_time_validate_max_datetime.md`.
 
+- 2026-09-04 (`pkg/expression` decimal `DIV`, findings A/B): aligned the Rust
+  decimal `IntDiv` value path with Go's post-`DecimalDiv` `ToInt`/`ToUint`
+  conversion. `Decimal::div_rem_unbounded` preserves quotients above
+  `i64::MAX`; the evaluator now returns a full-range `Datum::UInt` when either
+  operand is unsigned, rejects negative/over-wide unsigned quotients, and
+  keeps Go's `(-1, 0]` zero exception. The complete recursive expression
+  inventory, focused arithmetic regressions, and Ready results are recorded in
+  `receipts/expression_intdiv_unsigned_width.md`.
+
 - 2026-09-04: aligned Rust `tidb-datatype` `JSON_MERGE_PRESERVE` with Go's
   adjacent-object grouping from the complete `pkg/types` JSON inventory.
   `merge_binary_nodes` now groups object runs, recursively merges duplicate
@@ -6772,6 +6781,15 @@ The DATETIME maximum-precision batch is bounded and executable:
 regression and complete datatype owner profile are recorded in
 `receipts/types_time_validate_max_datetime.md`; the analogous TIMESTAMP
 ceiling and other temporal context boundaries remain open.
+
+The decimal `DIV` unsigned-width batch is bounded and executable:
+`Decimal::div_rem_unbounded` keeps the complete quotient until the evaluator
+applies Go's `ToInt`/`ToUint` range rules, so an upper-half `BIGINT UNSIGNED`
+result is no longer misreported as overflow. Focused datatype and expression
+regressions, the complete owner profiles, and the known external JSON-schema
+fixture failure are recorded in
+`receipts/expression_intdiv_unsigned_width.md`; declared-width/scale and
+vectorized expression boundaries remain open.
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state

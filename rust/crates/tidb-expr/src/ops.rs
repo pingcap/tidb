@@ -947,35 +947,38 @@ fn decimal_binary(
         Lt => bool_int(a < b),
         Ne => bool_int(a != b),
         Div => unreachable!("handled above"),
-        // `div_rem` answers `None` for two unrelated conditions: a zero divisor
-        // and a quotient too wide for `i64`. Go
+        // `div_rem_unbounded` answers `None` only for a zero divisor. Go
         // (`builtinArithmeticIntDivideDecimalSig.evalInt`,
-        // `builtin_arithmetic.go:926`) keeps them apart — a zero divisor comes
-        // back from `DecimalDiv` as `ErrDivByZero` and goes to the
-        // division-by-zero handler, while an out-of-`BIGINT` quotient is caught
-        // later by `ToInt`/`ToUint` and raised as an unconditional
-        // `ErrOverflow`, never downgraded to a warning. Testing the divisor
-        // here is what lets the remaining `None` mean overflow and only
-        // overflow.
+        // `builtin_arithmetic.go:926`) runs `DecimalDiv` first, then catches
+        // an out-of-`BIGINT` quotient in `ToInt`/`ToUint` as an unconditional
+        // `ErrOverflow`, never downgraded to a warning.
         IntDiv => {
             if b.is_zero() {
                 ctx.handle_division_by_zero()?;
                 Datum::Null
             } else {
-                match a.div_rem(&b) {
-                    // Go reads the quotient back through `ToUint` when EITHER
-                    // argument carries `UnsignedFlag`
-                    // (`builtin_arithmetic.go:952-967`), and `ToUint` REFUSES a
-                    // negative value rather than wrapping it -- so
-                    // `double_unsigned_col DIV -1` is `ErrOverflow "BIGINT
-                    // UNSIGNED"`, not the two's-complement 18446744073709551609
-                    // this returned. The one negative quotient that survives is
-                    // Go's own `(-1, 0]` exception, and `div_rem` has already
-                    // truncated that to 0.
-                    Some((q, _)) if unsigned_pair && q < 0 => return Err(EvalError::IntOverflow),
-                    Some((q, _)) if unsigned_pair => Datum::UInt(q as u64),
-                    Some((q, _)) => Datum::Int(q),
-                    None => return Err(EvalError::IntOverflow),
+                match a.div_rem_unbounded(&b) {
+                    Some((q, _)) if unsigned_pair => {
+                        // Go reads the quotient through `ToUint` when EITHER
+                        // argument carries `UnsignedFlag`
+                        // (`builtin_arithmetic.go:952-967`). It accepts the
+                        // complete `[0, u64::MAX]` range, rejects negative
+                        // quotients, and leaves the truncated `(-1, 0]`
+                        // quotient as zero.
+                        let (value, warning) = q.to_u64_trunc();
+                        if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow) {
+                            return Err(EvalError::IntOverflow);
+                        }
+                        Datum::UInt(value)
+                    }
+                    Some((q, _)) => {
+                        let (value, warning) = q.to_i64_trunc();
+                        if warning == Some(tidb_datatype::DecimalIntegerWarning::Overflow) {
+                            return Err(EvalError::IntOverflow);
+                        }
+                        Datum::Int(value)
+                    }
+                    None => unreachable!("nonzero decimal divisor was checked above"),
                 }
             }
         }

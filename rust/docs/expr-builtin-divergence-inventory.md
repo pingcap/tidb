@@ -1,10 +1,10 @@
 # Builtin expression divergence inventory (`pkg/expression` vs `tidb-expr`)
 
 A function-by-function comparison of TiDB's Go builtin evaluation against the
-Rust `tidb-expr` crate. Go source is the oracle. **Nothing here was executed** —
-this machine cannot run freshly built binaries — so every claim is a source
-reading, and every distinguishing input is derived from Go's control flow rather
-than observed. `cargo check`/`cargo clippy`/`cargo fmt` are the only gates run.
+Rust `tidb-expr` crate. Go source is the oracle. The broad inventory below is
+source-derived; closed slices also carry focused and owner test evidence in
+their receipts. Distinguishing inputs are derived from Go's control flow and
+the package tests, not from changing Go source or build artifacts.
 
 **Status: PARTIAL.** See [Resume here](#resume-here) for exactly where the sweep
 stopped and what is untouched.
@@ -41,12 +41,11 @@ or flen; (4) diagnostics only.
 
 - Go: `pkg/expression/builtin_arithmetic.go:926` `builtinArithmeticIntDivideDecimalSig.evalInt`
 - Rust: `rust/crates/tidb-expr/src/ops.rs:708` (`decimal_binary`, `IntDiv` arm)
-- Helper: `rust/crates/tidb-datatype/src/decimal.rs:690` `Decimal::div_rem`
+- Helper: `rust/crates/tidb-datatype/src/decimal/mod.rs` `Decimal::div_rem`
 
-`div_rem` answers `None` for **two** unrelated conditions: a zero divisor
-(`other.is_zero()`, line 691) and a quotient too wide for `i64`
-(`q_digits.parse().ok()?`, line 699). `ops.rs` collapsed both into
-`ctx.handle_division_by_zero()`.
+The old `div_rem` answered `None` for **two** unrelated conditions: a zero
+divisor and a quotient too wide for `i64`. `ops.rs` initially collapsed both
+into `ctx.handle_division_by_zero()`.
 
 Go keeps them apart. `evalInt` runs `types.DecimalDiv` first; a zero divisor
 returns `types.ErrDivByZero` and takes the division-by-zero path (line 938),
@@ -62,24 +61,26 @@ never downgraded to a warning by any sql_mode.
 Row 2 is the worse case: a **wrong value** — `NULL` for a well-defined result —
 on an input containing no error at all.
 
-**FIXED (partially), this branch.** `decimal_binary`'s `IntDiv` arm now tests
-`b.is_zero()` itself, so a `None` from `div_rem` can only mean the quotient
-overflowed, and it is reported as `EvalError::IntOverflow`. That makes row 1
-agree with Go. Row 2 still returns an error rather than the value — it needs
-finding B.
+**FIXED.** `decimal_binary` now checks the divisor separately and uses
+`Decimal::div_rem_unbounded`; the quotient is converted through the existing
+`to_i64_trunc`/`to_u64_trunc` source-compatible paths. Zero divisors still take
+the division-by-zero handler, while signed and unsigned quotient overflow is
+an unconditional `EvalError::IntOverflow`. This closes row 1 without
+collapsing it into a divide-by-zero diagnostic and leaves the wider unsigned
+result in row 2 representable.
 
 ### B — rank 1/3 — `DIV`'s result signedness ignores `UnsignedFlag` once an operand is decimal
 
 - Go: `pkg/expression/builtin_arithmetic.go:853` (flag stamped on `bf.tp`),
   `:952-967` (`isLHSUnsigned || isRHSUnsigned` -> `c.ToUint()`)
-- Rust: `rust/crates/tidb-expr/src/ops.rs:709` (`Datum::Int(q)`, always signed)
+- Rust: `rust/crates/tidb-expr/src/ops.rs` (`decimal_binary`, `IntDiv` arm)
 
 Go's `DIV` rule: **either** operand unsigned makes the result unsigned, and the
 quotient is then read with `ToUint`, spanning `[0, 2^64)`. The Rust decimal path
 always yields `Datum::Int`, capping the representable range at `i64::MAX`.
 
-This is inconsistent *within Rust itself*: the sibling float path already
-captures the same distinction at `ops.rs:921`
+This was inconsistent *within Rust itself*: the sibling float path already
+captures the same distinction in `ops.rs`
 (`let unsigned_div = matches!(l, Datum::UInt(_)) || matches!(r, Datum::UInt(_))`)
 and produces `Datum::UInt`. The decimal path does not, and it cannot simply copy
 that line, because `Decimal::div_rem` returns an `i64` quotient — the wider value
@@ -93,9 +94,13 @@ all**. Distinguishing input `SELECT CAST(1 AS UNSIGNED) DIV -3.0;` — exact
 quotient `-0.3333`; Go returns `0`; Rust's `div_rem` also truncates to `0` but
 types it `Datum::Int(0)`, so here only the *type* differs.
 
-**NOT FIXED.** Needs the signedness threaded from `infer_arithmetic_type`'s
-already-correct `"intdiv"` arm (`builtin_arithmetic.rs:329`) into the evaluator,
-plus a `u64`-capable quotient.
+**FIXED.** `eval_binary_full` already carries the inferred unsigned flag from
+the operand descriptors. The decimal path now keeps the quotient as a
+scale-zero `Decimal` until conversion, so either unsigned operand produces a
+`Datum::UInt` across the full `u64` range; negative unsigned quotients still
+overflow and the source `(-1, 0]` truncation exception remains zero. Focused
+regressions cover the upper-half unsigned value, negative overflow, and the
+zero exception.
 
 ### C — rank 1 — `ROUND`/`TRUNCATE` on a decimal ignore the result type's decimal cap when the scale argument is non-constant
 

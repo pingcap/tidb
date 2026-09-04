@@ -1059,6 +1059,21 @@ impl Decimal {
     /// the dividend). `None` for division by zero (MySQL: `NULL`) or a
     /// quotient too large for `i64`.
     pub fn div_rem(&self, other: &Decimal) -> Option<(i64, Decimal)> {
+        let (quotient, remainder) = self.div_rem_unbounded(other)?;
+        let (quotient, warning) = quotient.to_i64_trunc();
+        (warning != Some(DecimalIntegerWarning::Overflow)).then_some((quotient, remainder))
+    }
+
+    /// Truncating division (`DIV`) and remainder with the complete quotient.
+    ///
+    /// Go's decimal `DIV` evaluates `DecimalDiv` and only then converts the
+    /// quotient through `ToInt` or `ToUint`. The latter accepts every value in
+    /// `[0, 2^64)` when either input is unsigned, so routing the quotient
+    /// through `i64` first loses valid results above `i64::MAX`. This value
+    /// layer keeps the quotient as a scale-zero [`Decimal`]; the expression
+    /// layer can then apply the source conversion and distinguish overflow
+    /// from a valid upper-half unsigned result.
+    pub fn div_rem_unbounded(&self, other: &Decimal) -> Option<(Decimal, Decimal)> {
         if other.is_zero() {
             return None;
         }
@@ -1067,12 +1082,7 @@ impl Decimal {
         let a = pad_scale(&self.digits, self.storage_scale, storage_scale);
         let b = pad_scale(&other.digits, other.storage_scale, storage_scale);
         let (q_digits, r_digits) = digit_divmod(&a, &b);
-        let q_mag: i64 = q_digits.parse().ok()?;
-        let quotient = if self.negative != other.negative {
-            -q_mag
-        } else {
-            q_mag
-        };
+        let quotient = Decimal::new_with_storage(self.negative != other.negative, q_digits, 0, 0);
         let remainder = Decimal::new_with_storage(self.negative, r_digits, scale, storage_scale);
         Some((quotient, remainder))
     }

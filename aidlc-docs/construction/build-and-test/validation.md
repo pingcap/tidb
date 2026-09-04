@@ -77,3 +77,15 @@ whitespace checks passed. Strict clippy remains blocked by the unrelated
 `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics. Full
 commands and remaining temporal boundaries are recorded in
 `rust/testport/receipts/types_time_validate_max_datetime.md`.
+
+## `pkg/expression` decimal `DIV` unsigned-width batch
+
+The focused decimal quotient and Go-arithmetic regressions passed. The
+serialized `tidb-datatype` owner profile passed with 391 unit and 63
+generated/source integration tests. The serialized `tidb-expr` owner profile
+had 1,121 passes, one pre-existing external HTTP JSON-schema fixture failure,
+and 130 documented gap tests ignored; the new arithmetic regression passed.
+Owner compilation, formatting, and whitespace checks passed. Strict clippy
+remains blocked by the unrelated `tidb-mysql/src/consts.rs:117-120`
+`map-or-identity` diagnostics. Full commands and boundaries are recorded in
+`rust/testport/receipts/expression_intdiv_unsigned_width.md`.

@@ -492,6 +492,22 @@ fn go_arithmetic_vectors() {
     );
 }
 
+/// Decimal `DIV` keeps a quotient wider than `i64` available for the
+/// expression layer's unsigned conversion, matching Go's `ToUint` path.
+#[test]
+fn div_rem_unbounded_preserves_unsigned_bigint_range() {
+    let (quotient, remainder) = Decimal::from_literal("18446744073709551615")
+        .div_rem_unbounded(&Decimal::from_literal("1.5"))
+        .expect("nonzero divisor");
+    assert_eq!(quotient.to_string(), "12297829382473034410");
+    assert_eq!(remainder.to_string(), "0.0");
+    assert_eq!(quotient.to_u64_trunc(), (12_297_829_382_473_034_410, None));
+    assert_eq!(
+        quotient.to_i64_trunc().1,
+        Some(DecimalIntegerWarning::Overflow)
+    );
+}
+
 /// `DecimalDiv` stores whole base-1e9 fraction words while exposing only
 /// `resultFrac`. This vector is the source-observed shape behind
 /// `pkg/executor/test/executor_test.go:TestDecimalDivPrecisionIncrement`:

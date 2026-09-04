@@ -227,6 +227,31 @@ fn go_test_arithmetic_int_divide() {
             Datum::Null,
             Some("BIGINT UNSIGNED value is out of range in '(1 DIV -1)'"),
         ),
+        // Go stamps the decimal DIV result unsigned when either operand is
+        // unsigned, then reads the exact quotient through ToUint. This value
+        // is above i64::MAX but still valid in BIGINT UNSIGNED.
+        (
+            vec![u(u64::MAX), Datum::Decimal(Decimal::from_literal("1.5"))],
+            u(12_297_829_382_473_034_410),
+            None,
+        ),
+        // A negative quotient remains an unsigned overflow, while a quotient
+        // truncated from (-1, 0] is the source's special zero result.
+        (
+            vec![u(1), Datum::Decimal(Decimal::from_literal("-0.5"))],
+            Datum::Null,
+            Some("BIGINT UNSIGNED value is out of range in '(1 DIV -0.5)'"),
+        ),
+        (
+            vec![u(1), Datum::Decimal(Decimal::from_literal("-2.0"))],
+            u(0),
+            None,
+        ),
+        (
+            vec![u(u64::MAX), Datum::Decimal(Decimal::from_literal("0.5"))],
+            Datum::Null,
+            Some("BIGINT UNSIGNED value is out of range in '(18446744073709551615 DIV 0.5)'"),
+        ),
     ];
     for (args, expected, error_part) in cases {
         match go_eval("intdiv", args) {
