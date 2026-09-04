@@ -912,6 +912,32 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        // Go's tidb_runtime_filter_type Validation (`sysvar.go:3726`): a
+        // comma-separated list whose tokens must each be IN or MIN_MAX in
+        // any case; a bad token is refused with the hint message (a bare
+        // errors.New, so it reports as 1105).
+        if self.name == tidb_vardef::tidb_vars::TIDB_RUNTIME_FILTER_TYPE_NAME {
+            let ok = validated.value.split(',').all(|token| {
+                matches!(token.trim().to_ascii_uppercase().as_str(), "IN" | "MIN_MAX")
+            });
+            if !ok {
+                return Err(ValidationError::Refused(format!(
+                    "incorrect value: {original}. tidb_runtime_filter_type should be sepreated by , such as IN, also we only support IN and MIN_MAX now. "
+                )));
+            }
+            return Ok(validated);
+        }
+        // Go's tidb_runtime_filter_mode Validation (`sysvar.go:3741`): only
+        // the exact spellings OFF and LOCAL pass (the lookup is
+        // case-sensitive); the refusal is the option-list message, 1105.
+        if self.name == tidb_vardef::tidb_vars::TIDB_RUNTIME_FILTER_MODE_NAME {
+            if !matches!(validated.value.as_str(), "OFF" | "LOCAL") {
+                return Err(ValidationError::Refused(format!(
+                    "incorrect value: {original}. tidb_runtime_filter_mode options: OFF "
+                )));
+            }
+            return Ok(validated);
+        }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
         // else is `ErrWrongTypeForVar` (1232).
@@ -1772,5 +1798,35 @@ fn database_charset_and_collation_set_validation_matches_go() {
     assert!(matches!(
         coll.validate("bogus_collation"),
         Err(ValidationError::SqlError(_))
+    ));
+}
+
+/// Go's runtime-filter Validations (`sysvar.go:3726-3751`): the type is a
+/// comma-separated IN/MIN_MAX list (case-insensitive tokens, stored as
+/// typed) and the mode is exactly OFF or LOCAL; both refusals are the
+/// option-list messages reporting as 1105.
+#[test]
+fn runtime_filter_validations_match_go() {
+    let rf_type = get_sys_var("tidb_runtime_filter_type").unwrap();
+    assert_eq!(rf_type.validate("IN").unwrap().value, "IN");
+    assert_eq!(rf_type.validate("in,min_max").unwrap().value, "in,min_max");
+    assert_eq!(
+        rf_type.validate("IN, MIN_MAX").unwrap().value,
+        "IN, MIN_MAX"
+    );
+    match rf_type.validate("BOGUS") {
+        Err(ValidationError::Refused(message)) => {
+            assert!(message.contains("incorrect value: BOGUS"), "{message}");
+            assert!(message.contains("only support IN and MIN_MAX"), "{message}");
+        }
+        other => panic!("expected a refused error, got {other:?}"),
+    }
+
+    let rf_mode = get_sys_var("tidb_runtime_filter_mode").unwrap();
+    assert_eq!(rf_mode.validate("OFF").unwrap().value, "OFF");
+    assert_eq!(rf_mode.validate("LOCAL").unwrap().value, "LOCAL");
+    assert!(matches!(
+        rf_mode.validate("local"),
+        Err(ValidationError::Refused(_))
     ));
 }

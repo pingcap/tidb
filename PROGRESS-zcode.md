@@ -322,3 +322,5 @@
 - database charset/collation 批: collation_database 并入 checkCollation 臂; character_set_database 新臂(空值 1231/未知 1115/存规范名, Go varsutil.go:76)。session lib 1265 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
 - mpp_exchange_compression_mode 白名单批: run_validation 臂(ToExchangeCompressionMode 复用 vardef modes 模块, 拒绝信息列选项 NONE/FAST/HIGH_COMPRESSION/UNSPECIFIED, 裸 errors.Errorf→1105=Refused 变体) + 大小写回归。session lib 1267 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) hook 白名单后续: mpp_version(需先移植 kv MppVersion 表)/runtime_filter_type|mode/tiflash_hashagg_preaggregation_mode/init_connect(SQL 解析); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- runtime_filter type/mode 白名单批: type=逗号分隔 IN/MIN_MAX 大小写不敏感(拒绝消息照 Go 原文含 "sepreated" 拼写错误); mode=精确 OFF/LOCAL(大小写敏感)。两条 run_validation 臂 + 回归。session lib 1280 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) hook 白名单后续: mpp_version(需 kv MppVersion 表)/init_connect(SQL 解析)/tiflash_hashagg_preaggregation_mode; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
