@@ -4069,6 +4069,11 @@ pub fn plan_persisted_materialized_view_create_job_step<S: MetaSnapshot>(
             // caller supplies the finished build's read TS (Go's
             // `job.SnapshotVer`) and this step records the post-build state.
             let Some(outcome) = build else {
+                // The caller can generate the exact build SQL via
+                // `tidb_executor::ddl::build_create_materialized_view_insert_sql`
+                // or `build_create_materialized_view_import_sql`, execute it
+                // through a real store session, and feed the resulting read TS
+                // back as `MviewBuildOutcome { read_ts }`.
                 return Err(DdlPlanError::Encode(
                     "create materialized view: the initial-build data movement \
                      (import-into / insert-select at the build read TS) requires \
