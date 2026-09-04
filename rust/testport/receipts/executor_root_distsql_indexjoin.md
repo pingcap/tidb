@@ -1,6 +1,6 @@
 # `pkg/executor` Go-master bounded parity receipt
 
-Status: Ready for the nine focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
+Status: Ready for the ten focused executor behavior clusters in this batch. The receipt records the complete root-package inventory at Go `origin/master` `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (pulled 2026-09-02) and the complete nested `pkg/executor/sortexec` inventory at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (pulled 2026-09-04); it is not a complete transcreation claim for the 101,740-line executor package.
 
 ## Complete root inventory
 
@@ -477,3 +477,39 @@ The Cargo manifest was restored to its original `openssl = "0.10"` line and
 has no diff. The full executor suite, planner materialization coverage,
 concurrent constant evaluation under live SQL, spill integration under live
 TiKV, and native TiKV behavior were not run.
+
+## TopN repeated post-spill worker rounds alignment
+
+The same complete `pkg/executor/sortexec` inventory covers this tenth
+Rust-only fix. Go's `fetchChunksFromChild` checks `isSpillNeeded` after every
+dispatched chunk during `executeTopNWhenSpillTriggered`; `topNSpillHelper.spill`
+waits for all current workers, drains every worker heap into a sorted run, and
+then fetching continues. Rust previously waited for EOF and wrote only one
+final run per worker, so a shared trigger raised while workers were processing
+could leave their bounded heaps resident until the entire post-spill phase
+finished. Rust now tracks a monotonic request generation: each worker drains
+once per generation, the last worker acknowledgement clears the shared flag,
+and final worker heaps are written as another run. The existing multi-way
+merge consumes all intermediate and final runs.
+
+The focused regression is
+`topn::spill_tests::parallel_topn_re_spills_worker_heaps_after_shared_trigger`.
+Before the production change it failed with `got 2`, showing only the two
+final worker runs; after the change it passes with an intermediate run per
+worker plus the final runs. Rust ownership remains within `topn.rs` and
+`topn_spill.rs`; no Go, Bazel, generated, fixture, or platform artifact
+changed.
+
+## TopN repeated post-spill worker rounds Ready validation
+
+- Pre-fix `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib topn::spill_tests::parallel_topn_re_spills_worker_heaps_after_shared_trigger -- --exact --nocapture` failed with `a repeated worker spill must create an intermediate run per worker; got 2` (the first host-only run was blocked by missing OpenSSL discovery before the vendored retry).
+- The same focused command passed after the fix with a temporary host-only `openssl` vendored feature toggle; the manifest was reverted immediately after the run.
+- `LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib topn::spill_tests:: -- --nocapture` passed all 10 TopN spill tests (the broader `--lib topn` filter still exposes four unrelated pre-existing analyze/planner fixture failures).
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --all-targets` passed with the same temporary vendored-OpenSSL toggle; the manifest was reverted immediately after the run.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`
+- `git diff --check`
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint`
+
+The full executor suite, concurrent quota-trigger stress with live worker
+interleavings, spill integration under live TiKV, and native TiKV behavior were
+not run.

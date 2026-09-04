@@ -71,7 +71,7 @@
 //!   spill mechanism.
 
 use std::cmp::Ordering;
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::Arc;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
@@ -122,6 +122,9 @@ pub struct TopNExec<C: Columns> {
     enable_tmp_storage_on_oom: bool,
     /// Raised by the spill action; see [`crate::topn_spill`].
     need_spill: Arc<AtomicBool>,
+    /// Monotonic generations let post-spill workers coordinate repeated
+    /// requests without losing a trigger between chunks.
+    spill_generation: Arc<AtomicUsize>,
     /// The action registered on the session tracker, kept so `close` can
     /// unbind it.
     registered_action: Option<ArcAction>,
@@ -150,8 +153,91 @@ pub struct TopNExec<C: Columns> {
 }
 
 struct ParallelTopNWorkerResult {
-    run: Option<SpilledRun>,
+    runs: Vec<SpilledRun>,
     chunks: usize,
+}
+
+/// Shared state for Go's repeated `topNSpillHelper.spill` rounds. The action
+/// raises `need_spill` and advances `generation`; each worker spills once for
+/// that generation, and the last worker clears the flag so a later quota
+/// crossing can request another round.
+struct ParallelTopNSpillState {
+    need_spill: Arc<AtomicBool>,
+    generation: Arc<AtomicUsize>,
+    completed_workers: Arc<AtomicUsize>,
+    worker_count: usize,
+}
+
+fn spill_parallel_worker_heap(
+    heap: &mut TopNChunkHeap,
+    field_types: &[FieldType],
+    spill_chunk_size: usize,
+    disk_tracker: &Arc<tidb_util::disk::Tracker>,
+    memory: &StatementMemory,
+    tracker: &Arc<Tracker>,
+    accounted: &mut i64,
+    runs: &mut Vec<SpilledRun>,
+) -> Result<(), ExecError> {
+    if !heap.is_row_ptrs_init() {
+        heap.init_ptrs();
+        heap.heap_init();
+    }
+    heap.take_cmp_err()?;
+    heap.sort_row_ptrs_ascending(0)?;
+    if !heap.is_empty() {
+        runs.push(SpilledRun::write(
+            field_types,
+            heap.chunks(),
+            heap.row_ptrs(),
+            spill_chunk_size,
+            disk_tracker,
+            memory.spill_storage(),
+        )?);
+    }
+    heap.clear();
+    if *accounted != 0 {
+        tracker.consume(-*accounted);
+        *accounted = 0;
+    }
+    Ok(())
+}
+
+fn maybe_spill_parallel_worker_heap(
+    heap: &mut TopNChunkHeap,
+    field_types: &[FieldType],
+    spill_chunk_size: usize,
+    disk_tracker: &Arc<tidb_util::disk::Tracker>,
+    memory: &StatementMemory,
+    tracker: &Arc<Tracker>,
+    accounted: &mut i64,
+    runs: &mut Vec<SpilledRun>,
+    state: &ParallelTopNSpillState,
+    seen_generation: &mut Option<usize>,
+) -> Result<(), ExecError> {
+    if !state.need_spill.load(SeqCst) {
+        return Ok(());
+    }
+    let generation = state.generation.load(SeqCst);
+    if *seen_generation == Some(generation) {
+        return Ok(());
+    }
+    spill_parallel_worker_heap(
+        heap,
+        field_types,
+        spill_chunk_size,
+        disk_tracker,
+        memory,
+        tracker,
+        accounted,
+        runs,
+    )?;
+    *seen_generation = Some(generation);
+    let completed = state.completed_workers.fetch_add(1, SeqCst) + 1;
+    if completed == state.worker_count {
+        state.completed_workers.store(0, SeqCst);
+        state.need_spill.store(false, SeqCst);
+    }
+    Ok(())
 }
 
 struct TopNMergeHead {
@@ -172,6 +258,7 @@ fn run_parallel_topn_worker<C>(
     memory: StatementMemory,
     disk_tracker: Arc<tidb_util::disk::Tracker>,
     spill_chunk_size: usize,
+    spill_state: Arc<ParallelTopNSpillState>,
 ) -> Result<ParallelTopNWorkerResult, ExecError>
 where
     C: Columns + Clone + Send + Sync + 'static,
@@ -187,6 +274,8 @@ where
     );
     let mut chunks = 0usize;
     let mut accounted = 0i64;
+    let mut seen_generation = None;
+    let mut runs = Vec::new();
     let result = (|| -> Result<ParallelTopNWorkerResult, ExecError> {
         while let Ok(chunk) = input.recv() {
             chunks += 1;
@@ -210,26 +299,42 @@ where
             tracker.consume(bytes - accounted);
             accounted = bytes;
             memory.check()?;
-        }
-        if !heap.is_row_ptrs_init() {
-            heap.init_ptrs();
-            heap.heap_init();
-        }
-        heap.take_cmp_err()?;
-        heap.sort_row_ptrs_ascending(0)?;
-        let run = if heap.is_empty() {
-            None
-        } else {
-            Some(SpilledRun::write(
+            maybe_spill_parallel_worker_heap(
+                &mut heap,
                 &field_types,
-                heap.chunks(),
-                heap.row_ptrs(),
                 spill_chunk_size,
                 &disk_tracker,
-                memory.spill_storage(),
-            )?)
-        };
-        Ok(ParallelTopNWorkerResult { run, chunks })
+                &memory,
+                &tracker,
+                &mut accounted,
+                &mut runs,
+                &spill_state,
+                &mut seen_generation,
+            )?;
+        }
+        maybe_spill_parallel_worker_heap(
+            &mut heap,
+            &field_types,
+            spill_chunk_size,
+            &disk_tracker,
+            &memory,
+            &tracker,
+            &mut accounted,
+            &mut runs,
+            &spill_state,
+            &mut seen_generation,
+        )?;
+        spill_parallel_worker_heap(
+            &mut heap,
+            &field_types,
+            spill_chunk_size,
+            &disk_tracker,
+            &memory,
+            &tracker,
+            &mut accounted,
+            &mut runs,
+        )?;
+        Ok(ParallelTopNWorkerResult { runs, chunks })
     })();
     tracker.consume(-accounted);
     result
@@ -274,6 +379,7 @@ where
             disk_tracker,
             enable_tmp_storage_on_oom,
             need_spill: Arc::new(AtomicBool::new(false)),
+            spill_generation: Arc::new(AtomicUsize::new(0)),
             registered_action: None,
             runs: Vec::new(),
             spilled_runs: 0,
@@ -435,8 +541,9 @@ where
 
     /// Go `executeTopNWhenSpillTriggered`: the caller keeps fetching child
     /// chunks while persistent executor-pool tasks each maintain a bounded
-    /// TopN heap. Every worker spills its final sorted heap and the ordinary
-    /// run merger combines those runs with the pre-spill run.
+    /// TopN heap. Each shared spill request drains every worker heap once;
+    /// after input EOF each worker's final heap becomes another sorted run,
+    /// and the ordinary run merger combines all runs with the pre-spill run.
     fn fetch_parallel_remainder(&mut self) -> Result<(), ExecError> {
         let workers = self.parallelism;
         let field_types = self.child.ret_field_types().to_vec();
@@ -444,6 +551,12 @@ where
         let max_chunk_size = self.child.max_chunk_size();
         let mut senders = Vec::with_capacity(workers);
         let mut results = Vec::with_capacity(workers);
+        let spill_state = Arc::new(ParallelTopNSpillState {
+            need_spill: Arc::clone(&self.need_spill),
+            generation: Arc::clone(&self.spill_generation),
+            completed_workers: Arc::new(AtomicUsize::new(0)),
+            worker_count: workers,
+        });
         for _ in 0..workers {
             let (sender, input) = std::sync::mpsc::sync_channel(1);
             senders.push(sender);
@@ -455,6 +568,7 @@ where
             let disk_tracker = Arc::clone(&self.disk_tracker);
             let total_limit = self.total_limit;
             let spill_chunk_size = self.spill_chunk_size;
+            let spill_state = Arc::clone(&spill_state);
             results.push(crate::worker_pool::spawn(move || {
                 run_parallel_topn_worker(
                     input,
@@ -468,6 +582,7 @@ where
                     memory,
                     disk_tracker,
                     spill_chunk_size,
+                    spill_state,
                 )
             }));
         }
@@ -500,7 +615,7 @@ where
             match result {
                 Ok(result) => {
                     self.parallel_worker_chunks.push(result.chunks);
-                    if let Some(run) = result.run {
+                    for run in result.runs {
                         self.runs.push(run);
                         self.spilled_runs += 1;
                     }
@@ -752,6 +867,7 @@ where
         self.merge_heads.clear();
         self.merge_initialized = false;
         self.need_spill.store(false, SeqCst);
+        self.spill_generation.store(0, SeqCst);
         // Go `TopNExec.Open`: an operator re-opened by an Apply's inner side
         // must not keep charging for the rows it just dropped.
         self.tracker.replace_bytes_used(0);
@@ -766,6 +882,7 @@ where
         if self.enable_tmp_storage_on_oom {
             let (action, need_spill) = TopNSpillAction::new(&self.tracker);
             self.need_spill = need_spill;
+            self.spill_generation = action.spill_generation();
             let action: ArcAction = action;
             self.memory
                 .session_tracker()
@@ -1723,6 +1840,38 @@ mod spill_tests {
             exec.parallel_worker_chunks()
         );
         assert!(spill_files_in(&dir).is_empty(), "close leaked worker runs");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Go's `fetchChunksFromChild` checks the shared spill flag after each
+    /// dispatched chunk and `topNSpillHelper.spill` drains every worker heap
+    /// before fetching more input. A trigger that arrives during the
+    /// post-spill phase therefore creates an intermediate run, not only the
+    /// one final run per worker. This regression records the fail-before
+    /// evidence for that seam and guards the worker-round contract.
+    #[test]
+    fn parallel_topn_re_spills_worker_heaps_after_shared_trigger() {
+        let dir = scratch_temp_dir("topn-parallel-repeat-spill");
+        let rows = shuffled_rows(256);
+        let memory = StatementMemory::new(1 << 30, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir));
+        let mut exec = topn(&rows, &[(0, false)], 0, 32, memory).with_parallelism(2);
+        exec.set_spill_chunk_size_for_test(8);
+        exec.open().unwrap();
+
+        // Simulate a shared session-quota trigger before the first worker
+        // batch. Go responds by spilling both worker heaps, then continues
+        // and spills their final heaps at EOF as a second round.
+        exec.need_spill.store(true, SeqCst);
+        exec.fetch_parallel_remainder().unwrap();
+
+        assert!(
+            exec.num_spilled_runs() > 2,
+            "a repeated worker spill must create an intermediate run per worker; got {}",
+            exec.num_spilled_runs()
+        );
+        exec.close().unwrap();
+        assert!(spill_files_in(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

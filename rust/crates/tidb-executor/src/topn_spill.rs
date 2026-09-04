@@ -32,9 +32,11 @@
 //! # Parallel spill adaptation
 //!
 //! Like Go, the post-spill phase runs a pool of workers, each with its own
-//! bounded heap, fed through bounded chunk channels. Each final worker heap is
-//! written as a sorted run and all run heads are merged through Go-compatible
-//! heap operations. One remaining execution-shape difference is named:
+//! bounded heap, fed through bounded chunk channels. Every shared spill
+//! request drains each worker heap into an intermediate sorted run; each final
+//! worker heap is written as another run and all run heads are merged through
+//! Go-compatible heap operations. One remaining execution-shape difference is
+//! named:
 //!
 //! * Go also re-checks for a spill WHILE EMITTING results
 //!   (`generateTopNResultsWhenNoSpillTriggered` polls every 10 rows, and
@@ -48,7 +50,7 @@
 //! loader to call that container's process-wide config seam, so its startup
 //! remains plaintext and rejects unsupported command-line options loudly.
 
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
@@ -82,6 +84,10 @@ pub struct TopNSpillAction {
     need_spill: Arc<AtomicBool>,
     /// The TopN's own tracker, which `hasEnoughDataToSpill` reads.
     topn_tracker: Arc<Tracker>,
+    /// Monotonic spill request generation observed by every post-spill worker.
+    /// A generation lets all workers drain once per shared request while the
+    /// flag remains raised until the last worker has acknowledged it.
+    spill_generation: Arc<AtomicUsize>,
 }
 
 impl TopNSpillAction {
@@ -93,8 +99,15 @@ impl TopNSpillAction {
             base: BaseOomAction::default(),
             need_spill: Arc::clone(&need_spill),
             topn_tracker: Arc::clone(topn_tracker),
+            spill_generation: Arc::new(AtomicUsize::new(0)),
         });
         (action, need_spill)
+    }
+
+    /// The generation shared with post-spill workers.
+    #[must_use]
+    pub(crate) fn spill_generation(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.spill_generation)
     }
 
     /// Go `sortexec.hasEnoughDataToSpill`: a tenth of the quota, read off the
@@ -122,6 +135,7 @@ impl ActionOnExceed for TopNSpillAction {
                 quota = t.get_bytes_limit(),
                 "memory exceeds quota, spill to disk now."
             );
+            self.spill_generation.fetch_add(1, SeqCst);
             self.need_spill.store(true, SeqCst);
             return;
         }

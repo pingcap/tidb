@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor/sortexec` repeated TopN worker spill rounds):
+  aligned Rust with Go's post-spill fetch loop. Workers now drain their
+  bounded heaps once per shared spill generation while input continues, then
+  write final runs at EOF; all runs feed the existing merge. The focused
+  fail-before/pass-after regression and Ready checks are recorded in
+  `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-05 (`pkg/executor/sortexec` constant by-item evaluation): aligned
   Rust with Go's omission of constant `ByItems` from materialized sort keys.
   Deferred constants are no longer evaluated during sort/TopN key handling;
