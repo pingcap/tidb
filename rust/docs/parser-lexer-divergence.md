@@ -432,8 +432,13 @@ Rust API cannot represent — see #11, which is the same boundary.
 - #10 (whitespace class): accepted as parity-by-API — the audit's own
   reachability caveat shows the divergence requires input the Rust `&str`
   API cannot represent; closing it would mean widening the lexer to bytes.
-- #11 (client-charset-aware scanners): open, structural — needs charset
-  plumbing through the lexer API.
+- #11 (client-charset-aware scanners): CLOSED as parity-by-API
+  (2026-09-05) — the reachability chain below is now verified end to end:
+  the GBK/big5/sjis pairs Go's `skipRune` treats differently are never
+  valid UTF-8, and the wire layer transcodes or refuses non-UTF-8 queries
+  before the lexer runs, so no input the Rust pipeline can express fires
+  the divergence. Adding a `client` charset field would be behavior with
+  no reachable input behind it.
 
 #### 11. Rust's string and backtick scanners are not client-charset aware
 
@@ -471,9 +476,11 @@ merely unused:
   a token boundary, because every non-leading byte of a UTF-8 sequence is
   `>= 0x80` and can therefore never be a delimiter or an escape lead.
 * The bytes are refused before the lexer regardless:
-  `tidb-server/src/mysql_connection.rs`'s `COM_QUERY` arm answers
-  `ER_PARSE_ERROR "COM_QUERY is not valid UTF-8"`, and
-  `Session::run`/`tidb_parser::parse`/`Lexer::new` are all `&str`.
+  `crates/tidb-server/src/mysql_connection.rs`'s query-decode gate
+  transcodes `gbk`/`gb18030` payloads to UTF-8 (erroring on invalid
+  source bytes) and runs `std::str::from_utf8` for every other charset,
+  answering an error before `Session::run`/`tidb_parser::parse`/
+  `Lexer::new` — all `&str` — ever see the bytes.
 
 Closing this needs a byte-oriented pipeline (`&[u8]` from the wire
 through `Lexer`), plus `@@character_set_client` reaching the parser —
