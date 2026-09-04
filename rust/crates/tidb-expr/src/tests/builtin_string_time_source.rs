@@ -26,7 +26,7 @@ use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use crate::time_fn;
 use std::cell::RefCell;
-use tidb_ast::{CiString, QueryStmt, SelectField};
+use tidb_ast::{CiString, QueryStmt, SelectField, Stmt};
 use tidb_datatype::{FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone, Time, TimeType};
 
 /// A [`Columns`] stub modeling the statement state Go's packet-sig tests
@@ -857,10 +857,57 @@ fn test_to_base64() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: TO_BASE64's session-charset conversion half ('一二三' encoded as gbk) needs constant folding against connection_charset_info, which the chunk tier does not perform"]
 fn test_to_base64_gbk_session_rows() {
     // Go pkg/expression/builtin_string_test.go:2643+ converts each literal to
-    // the session charset first: ('一二三', gbk) -> 0ru2/sj9 etc.
+    // the session charset first: ('一二三', gbk) -> 0ru2/sj9 etc.  Build the
+    // expression with the same connection metadata rather than relying on
+    // the process-default UTF-8 resolver used by `chunk_e`.
+    struct GbkSession;
+
+    impl crate::rewriter::ColumnResolver for GbkSession {
+        fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
+            None
+        }
+
+        fn time_zone(&self) -> SessionTimeZone {
+            SessionTimeZone::utc()
+        }
+
+        fn connection_charset_info(&self) -> (&str, &str) {
+            ("gbk", "gbk_bin")
+        }
+    }
+
+    impl Columns for GbkSession {
+        fn get(&self, _path: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn connection_charset_info(&self) -> (&str, &str) {
+            ("gbk", "gbk_bin")
+        }
+    }
+
+    let eval = |input: &str| {
+        let statement = tidb_parser::parse(&format!("SELECT to_base64('{input}')")).unwrap();
+        let Stmt::Query(query) = statement else {
+            panic!("expected query")
+        };
+        let QueryStmt::Select(select) = query.into_inner() else {
+            panic!("expected SELECT")
+        };
+        let SelectField::Expr { expr, .. } = &select.fields[0] else {
+            panic!("expected expression")
+        };
+        let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GbkSession).unwrap();
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        rewritten.eval(&GbkSession, chunk.get_row(0)).unwrap()
+    };
+
+    assert_eq!(eval("abc"), Datum::new_string("YWJj"));
+    assert_eq!(eval("一二三"), Datum::new_string("0ru2/sj9"));
+    assert_eq!(eval("一二三!"), Datum::new_string("0ru2/sj9IQ=="));
 }
 
 /// Go `pkg/expression/builtin_string_test.go:2650 TestToBase64Sig`. The

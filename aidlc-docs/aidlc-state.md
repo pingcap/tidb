@@ -2,14 +2,14 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `tidb-expr` BINARY-source string-cast parity batch
+- Work unit: `tidb-expr` TO_BASE64 session-charset parity batch
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: focused valid/invalid BINARY-source CAST AS CHAR regressions pass.
+- Validation: focused GBK session-charset TO_BASE64 regression passes.
   Ready reports 409 datatype unit and 64 source/integration passes; expression
-  reports 1,160 passes, one known loopback HTTP JSON-schema fixture failure,
-  and 116 ignored; executor reports 1,058 passes and 121 existing
+  reports 1,161 passes, one known loopback HTTP JSON-schema fixture failure,
+  and 115 ignored; executor reports 1,058 passes and 121 existing
   planner/storage/fixture failures. All three owner checks plus formatting and diff checks
   pass. Strict datatype clippy remains blocked only by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
@@ -124,10 +124,14 @@
   active in Rust: 51 decimal constant rows and 40 CHAR-width rows cover
   source families, caps, FSP, JSON, and blob/string sizing. Focused evidence
   is in `rust/testport/receipts/types_explain_format_audit.md`.
-- Current batch: Rust BINARY-source `CAST AS CHAR` now follows Go's
+- Prior batch: Rust BINARY-source `CAST AS CHAR` now follows Go's
   `HandleBinaryLiteral`/`from_binary` path, preserving the valid decoded prefix
   and publishing warning 3854 for invalid octets. Focused evidence is in
   `rust/testport/receipts/types_explain_format_audit.md`.
-- Next action: run the Ready profile, commit and push this BINARY-source cast
-  batch, then continue with the next executable Rust package boundary. Direct
+- Current batch: Rust TO_BASE64 connection-aware rewriting now stamps literals
+  with the session charset, so GBK strings pass through the existing `to_binary`
+  boundary before encoding. Focused evidence is in
+  `rust/testport/receipts/types_explain_format_audit.md`.
+- Next action: run the Ready profile, commit and push this TO_BASE64 batch, then
+  continue with the next executable Rust package boundary. Direct
   datatype comparison warning publication remains a bounded API follow-up.

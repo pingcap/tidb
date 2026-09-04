@@ -215,4 +215,9 @@
   successfully decoded prefix and publish warning 3854 in non-strict mode;
   valid bytes remain unchanged. Focused and Ready evidence is recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
+- 2026-09-04: activated Go's TO_BASE64 GBK session-charset rows using a
+  connection-aware Rust resolver. String literals now enter the ordinary
+  `to_binary` boundary with GBK metadata before base64 encoding, matching
+  `0ru2/sj9` and related rows. Focused evidence is recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 - parser #5 (RESERVED_KEYWORDS 缺 DATABASE/DATABASES/DISTINCT) 核实已被并发会话修复 — RESERVED_KEYWORDS 当前含全部 236 条含这三个关键词。审计项 5 关闭。

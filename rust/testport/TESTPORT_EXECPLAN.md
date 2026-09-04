@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`tidb-expr` TO_BASE64 session charset): activated the Go-derived
+  GBK connection-charset rows. A connection-aware resolver now stamps string
+  literals with the session charset, allowing the ordinary `to_binary` boundary
+  to encode GBK bytes before base64; focused evidence is recorded in
+  `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (`tidb-expr` BINARY-source string casts): aligned the
   `BuildCastFunction`/`HandleBinaryLiteral` boundary for `CAST(... AS CHAR)`.
   Rust now decodes a BINARY-charset source through the target charset, keeps
