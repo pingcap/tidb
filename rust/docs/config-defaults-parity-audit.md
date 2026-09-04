@@ -20,3 +20,22 @@ against the Rust `DefaultConfig` field tree.
   `DefSchemaLease.String()` (`"45s"`).
 - Nested-section defaults (`tikvclient.rs`, memory limits) are their own
   table diffs and are not claimed here.
+
+## Nested sections (2026-09-05, second pass)
+
+- `PessimisticTxn` (`DefaultPessimisticTxn`): max_retry_count 256,
+  deadlock_history_capacity 10, collect_retryable false,
+  constraint_check_in_place_pessimistic true, and the auto-commit
+  default's kernel-conditional (true only on next-gen) all match
+  Rust's `PessimisticTxn::default_config`, which maps the conditional
+  to `kerneltype::is_next_gen()`.
+- `TrxSummary` (`DefaultTrxSummary`): capacity 500 and
+  transaction_id_digest_min_duration 2147483647 match.
+- `Performance`: every Go field matches the Rust default — including
+  txn_entry_size_limit 6MB and txn_total_size_limit 100MB (Go
+  `config.go:64-66`), stats leases, plan-replayer and stats-load
+  settings, and the concurrency quotas.
+- `TiKVClient`/`PDClient` defaults live in the client-go lineage
+  (`tikvcfg.DefaultConfig()`), outside this tree; the Rust mirror is
+  `third_party/tikv-client-rs` and follows the resync process rather
+  than this audit.

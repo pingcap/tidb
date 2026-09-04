@@ -357,3 +357,5 @@
 - 下轮恢复点: (1) 下一无文档面候选: tidb-domain/tidb-config 深层; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 微差异(需 registry 时区, 排队)。
 - config 默认值面首审: 69 顶层字段零真实分歧(38 值级匹配+21 拼写/嵌套归属核实), 收据 rust/docs/config-defaults-parity-audit.md。
 - 下轮恢复点: (1) config 嵌套段默认值(TiKVClient/PDClient/内存限制)表 diff; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- config 嵌套段第二遍: PessimisticTxn/TrxSummary/Performance 逐字段全一致(txn 尺寸限制 6MB/100MB 经 config.go:64-66 核实); TiKVClient/PDClient 属 client-go 外部谱系(由 third_party 重同步流程负责), 不在本审计声明内。收据已追加。
+- 下轮恢复点: (1) 新面候选: tidb-domain infoschema 面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
