@@ -502,10 +502,12 @@ The TIMESTAMP ceiling and the other structural rows below remain separate.
   (`time.go:467`), whose low 4 bits are zero, so the result's type reverts to
   DATETIME and fsp to 0. Rust `convert_kind` (`mysql_time.rs:355-362`) keeps
   `Timestamp` and the fsp. Same calendar value, different type metadata.
-- **T15** `ToPackedUint` (`time.go:646-657`) never validates; Rust
-  `to_packed_uint` (`mysql_time.rs:669-681` → `packed_time.rs:70-90`) rejects
-  `hour > 23` / `year > 9999` / `microsecond > 999_999`, turning an infallible
-  Go call into a fallible one.
+- **T15 (FIXED 2026-09-04)** `ToPackedUint` (`time.go:646-657`) never
+  validates. Rust `Time::to_packed_uint` now performs the same direct bit pack;
+  the strict `PackedTime::from_parts` constructor remains reserved for callers
+  that explicitly request field-range validation. The raw-field regression and
+  Ready profile are recorded in
+  `rust/testport/receipts/types_time_packed_raw.md`.
 - **T16 (reachability unverified)** `AdjustedGoTime` (`time.go:191-209`) works
   on the *normalized* `time.Date` result, so a `CoreTime` with hour ≥ 24 (e.g.
   `2020-03-28 26:45` in `Europe/Amsterdam`) normalizes into the DST gap and

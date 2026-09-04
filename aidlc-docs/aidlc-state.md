@@ -2,17 +2,15 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/expression` decimal `DIV` unsigned-width parity batch
+- Work unit: `pkg/types` raw `ToPackedUint` parity batch
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: focused datatype and expression regressions, serialized
-  `tidb-datatype` owner profile (391 unit + 63 integration/source tests),
-  owner compilation, formatting, and diff checks pass. The serialized
-  `tidb-expr` profile has 1,121 passes, one pre-existing external JSON-schema
-  fixture failure, and 130 documented gap tests ignored. Strict clippy remains
-  blocked only by the unrelated `tidb-mysql/src/consts.rs:117-120`
-  `map-or-identity` diagnostics.
+- Validation: the focused raw-pack regression, existing codec regression,
+  serialized `tidb-datatype` owner profile, owner compilation, formatting, and
+  diff checks pass. Strict clippy remains blocked only by the unrelated
+  `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics and
+  generated workspace diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
 - Commit/push: JSON merge batch `71ffce262e` is pushed to
@@ -33,4 +31,8 @@
   BIGINT results and source overflow boundaries. Focused and serialized owner
   results are recorded in
   `rust/testport/receipts/expression_intdiv_unsigned_width.md`.
+- Current batch: Rust `Time::to_packed_uint` now mirrors Go's direct raw
+  bit-pack and accepts synthetic fields without revalidation. Focused and
+  serialized owner results are recorded in
+  `rust/testport/receipts/types_time_packed_raw.md`.
 - Next action: continue with the next executable package boundary.

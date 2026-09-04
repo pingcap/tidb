@@ -719,17 +719,16 @@ impl Time {
 
     /// Encodes TiDB's packed temporal storage representation.
     pub fn to_packed_uint(self) -> Result<u64, TimeError> {
-        PackedTime::from_parts(
-            self.core.year() as u16,
-            self.core.month(),
-            self.core.day(),
-            self.core.hour(),
-            self.core.minute(),
-            self.core.second(),
-            self.core.microsecond(),
-        )
-        .map(PackedTime::raw)
-        .map_err(|_| TimeError::OutOfRange("packed value"))
+        // Go's `Time.ToPackedUint` is a raw bit-pack and deliberately does
+        // not revalidate calendar or clock fields; validation belongs to
+        // `Time.Check`/conversion callers. Keep this storage boundary
+        // infallible for synthetic CoreTime values as well.
+        let ymd = ((self.core.year() as u64 * 13 + self.core.month() as u64) << 5)
+            | self.core.day() as u64;
+        let hms = (self.core.hour() as u64) << 12
+            | (self.core.minute() as u64) << 6
+            | self.core.second() as u64;
+        Ok(((ymd << 17 | hms) << 24) | self.core.microsecond() as u64)
     }
 
     /// Decodes TiDB's packed temporal storage representation.
@@ -1804,6 +1803,21 @@ mod tests {
         )
         .unwrap();
         assert!(earlier_date.validate(false, false, &chrono_tz::UTC).is_ok());
+    }
+
+    /// Go `Time.ToPackedUint` is a raw bit-pack and does not call `Check`.
+    #[test]
+    fn test_to_packed_uint_preserves_raw_fields_without_validation() {
+        let time = Time::new(
+            CoreTime::from_date(2020, 1, 1, 24, 60, 60, 1_000_000),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        let expected_ymd = ((2020_u64 * 13 + 1) << 5) | 1;
+        let expected_hms = (24_u64 << 12) | (60_u64 << 6) | 60;
+        let expected = ((expected_ymd << 17 | expected_hms) << 24) | 1_000_000;
+        assert_eq!(time.to_packed_uint(), Ok(expected));
     }
 
     /// Complete translation of `pkg/types/time_test.go::TestCheckTimestamp`.

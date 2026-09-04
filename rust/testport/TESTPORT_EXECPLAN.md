@@ -165,6 +165,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   focused regression, serialized owner profile, and Ready results are in
   `receipts/types_time_validate_max_datetime.md`.
 
+- 2026-09-04 (`pkg/types` raw temporal packing, finding T15): aligned
+  `Time::to_packed_uint` with Go's infallible raw bit-pack. The Rust method no
+  longer routes stored fields through the strict `PackedTime::from_parts`
+  validator; a synthetic invalid clock/fraction now produces the same packed
+  bits as Go. The focused regression, complete temporal inventory, and Ready
+  results are recorded in `receipts/types_time_packed_raw.md`.
+
 - 2026-09-04 (`pkg/expression` decimal `DIV`, findings A/B): aligned the Rust
   decimal `IntDiv` value path with Go's post-`DecimalDiv` `ToInt`/`ToUint`
   conversion. `Decimal::div_rem_unbounded` preserves quotients above
@@ -6814,6 +6821,12 @@ regressions, the complete owner profiles, and the known external JSON-schema
 fixture failure are recorded in
 `receipts/expression_intdiv_unsigned_width.md`; declared-width/scale and
 vectorized expression boundaries remain open.
+
+The raw temporal packing batch is bounded and executable: `Time::to_packed_uint`
+now mirrors Go's direct bit-pack and no longer rejects synthetic fields that
+the source method does not validate. Its focused regression and datatype Ready
+profile are recorded in `receipts/types_time_packed_raw.md`; strict temporal
+validation remains on the parse/conversion paths.
 
 Work remains in progress. Current validated behavior includes ANALYZE prefix
 indexes, MPP equivalence comparison, retained runnable b103 DDL final-state

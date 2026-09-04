@@ -89,3 +89,14 @@ Owner compilation, formatting, and whitespace checks passed. Strict clippy
 remains blocked by the unrelated `tidb-mysql/src/consts.rs:117-120`
 `map-or-identity` diagnostics. Full commands and boundaries are recorded in
 `rust/testport/receipts/expression_intdiv_unsigned_width.md`.
+
+## `pkg/types` raw `ToPackedUint` batch
+
+The focused raw-pack and existing codec regressions passed. The serialized
+`tidb-datatype` owner profile passed with 392 unit and 63 generated/source
+integration tests; benchmark targets compiled. Owner
+compilation, formatting, and whitespace checks pass. Strict clippy remains
+blocked by the unrelated `tidb-mysql/src/consts.rs:117-120`
+`map-or-identity` diagnostics and generated workspace diagnostics. Full
+commands and remaining temporal boundaries are recorded in
+`rust/testport/receipts/types_time_packed_raw.md`.
