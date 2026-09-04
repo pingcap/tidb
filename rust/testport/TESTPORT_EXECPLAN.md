@@ -79,6 +79,14 @@ For each bounded behavior cluster:
   focused executor and cop-scan regressions pass; row-based final mode,
   DISTINCT/window sliding state, aggregate protobuf adapter harness, and SQL
   integration remain explicit boundaries in `receipts/expression_aggregation_audit.md`.
+- 2026-09-05 (`pkg/executor/aggfuncs` max/min-count sliding state): ported the
+  Go `minMaxCountDeque` tie-index contract and
+  `partialResult4MaxMinCountSliding` lifecycle into `tidb-exec`. Equal extreme
+  values retain all source indices, incoming rows are enqueued before the
+  outgoing boundary is expired, NULL-only frames return the count-shaped zero,
+  and mixed typed comparison domains remain errors. Focused sliding/reset
+  regressions pass; window operator/frame dispatch and SQL integration remain
+  explicit boundaries in `receipts/expression_aggregation_audit.md`.
 - 2026-09-05 (`pkg/executor/sortexec` repeated TopN worker spill rounds):
   aligned Rust with Go's post-spill fetch loop. Workers now drain their
   bounded heaps once per shared spill generation while input continues, then

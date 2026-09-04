@@ -113,6 +113,20 @@ count. Focused source-derived regressions cover MAX/MIN ties, NULL/default
 semantics, UInt/Decimal/case-insensitive string comparison, partial merges,
 kind mismatch, and reset behavior.
 
+The sliding half of the same Go owner is now represented by
+`MaxMinCountSlidingState` and `MinMaxCountDeque`. The count-aware deque groups
+equal extreme values while retaining every source index, so a frame slide can
+expire one tied row without discarding the remaining ties. The runtime follows
+Go's incoming-before-expiry order, ignores NULLs, returns zero for an empty
+frame, and propagates typed comparison errors. Focused regressions cover both
+directions, equal-index expiry, NULL-only frames, reset, and collation mismatch.
+
+The Go owner files for this follow-up are
+`pkg/executor/aggfuncs/func_max_min_count.go` (1,868 lines) and
+`func_max_min_count_test.go` (359 lines); the complete expression descriptor
+inventory above remains the separate 25-artifact, 4,193-line
+`pkg/expression/aggregation` package.
+
 The dependency-closed live path now includes `AggKind::MinCount`/
 `MaxCount` in `tidb-executor` hash aggregation, spill serialization and
 parallel merge, access/table local partial aggregation, physical-builder
@@ -122,21 +136,24 @@ Go's generated enum. Focused regressions cover runtime tie counts, aggregate
 kind construction, and cop-scan enum projection.
 
 The remaining boundaries are intentional and tracked: Go's row-based final
-mode, DISTINCT/window sliding state, memory tracker, aggregate protobuf
-adapter test harness, and SQL integration tests have no complete Rust owner
-yet. These must be implemented together before the package can claim
-end-to-end parity.
+mode, window operator/frame dispatch around the new sliding state, DISTINCT
+window interaction, memory tracker, aggregate protobuf adapter test harness,
+and SQL integration tests have no complete Rust owner yet. These must be
+implemented together before the package can claim end-to-end parity.
 
 ## Validation
 
-Profile: Ready for the dependency-closed descriptor/runtime/hash-aggregation
-slice; package-complete parity is not claimed while row-based/window/SQL
-owners remain unported.
+Profile: Ready for the dependency-closed descriptor/runtime/hash-aggregation/
+sliding-state slice; package-complete parity is not claimed while row-based/
+window-dispatch/SQL owners remain unported.
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/expression/aggregation -count=1` — package tests passed.
 - `cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr max_min_count -- --nocapture` — 6 active descriptor regressions passed; the SQL evaluator and PB source carriers remain ignored for their documented owner gaps.
 - `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-exec --test all max_min_count_runtime_source -- --nocapture` — 3 focused pair-state regressions passed.
-- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-exec` — passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-exec max_min_count -- --nocapture` — 5 focused pair/sliding-state regressions passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-exec` — passed after adding the count-aware sliding deque and runtime state.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-executor --test all -- --test-threads=1` — Ready executor profile completed with 208 passing, 10 pre-existing unrelated baseline failures, and no max/min-count failure.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-exec --test all -- --test-threads=1` — Ready profile reached both new sliding regressions (passed), then encountered the known `cop_scan_partial_predicate_limit_source::a_limit_over_a_fully_lowered_builtin_predicate_travels_with_it` baseline failure and later the known placement fixture failure/hang; interrupted after no max/min-count failure.
 - `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-executor max_min_count -- --nocapture` — 2 focused regressions passed (runtime kind mapping and hash-aggregation tie counts).
 - `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-exec cop_scan::tests::max_min_count_uses_the_go_tipb_aggregate_enums -- --nocapture` — cop-scan enum projection regression passed.
 - `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-executor -p tidb-exec -p tidb-proto` — passed after wiring hash aggregation, local partial scans, and tipb enums.
@@ -159,8 +176,8 @@ owners remain unported.
 - Compatibility risk spans parser canonicalization, planner one-store routing,
   tipb expression enums, and KV checker behavior; a leaf-only implementation
   could expose SQL that cannot be planned or executed.
-- Runtime cost is one native comparison per input row plus constant-size state;
-  no serialization path was added.
+- Runtime cost is one native comparison per input row plus monotonic deque
+  storage for the live frame; no serialization path was added.
 - The end-to-end max/min-count feature remains unverified until live hash-agg,
   protobuf, row-based/window, and SQL owners are implemented as one
   dependency-closed batch.

@@ -33,7 +33,7 @@ pub use count::{
     CountDistinctDecimalState, CountDistinctDurationState, CountDistinctIntState,
     CountDistinctRealState, CountDistinctStringState, CountState, CountWithDistinctState,
 };
-pub use max_min::{MaxMinCountState, MaxMinState};
+pub use max_min::{MaxMinCountSlidingState, MaxMinCountState, MaxMinState};
 pub use sum::{
     SumDecimalState, SumFloat64State, SumInt64State, SumIntError, SumState, SumUint64State,
 };

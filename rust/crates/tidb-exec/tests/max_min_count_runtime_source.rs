@@ -20,7 +20,7 @@
 //! integer count and is zero for an empty or all-NULL group.
 
 use tidb_datatype::{Collation, Datum};
-use tidb_exec::aggregate::runtime::{fold_values, MaxMinCountState};
+use tidb_exec::aggregate::runtime::{fold_values, MaxMinCountSlidingState, MaxMinCountState};
 use tidb_planner::aggregation_descriptor::AggregateKind;
 
 fn fold(kind: AggregateKind, values: &[Datum]) -> i64 {
@@ -93,4 +93,72 @@ fn max_min_count_merges_winner_and_tie_count() {
         .is_err(), "different max/min count kinds must not merge");
     minimum.reset();
     assert_eq!(minimum.result(), 0);
+}
+
+#[test]
+fn max_min_count_sliding_state_keeps_equal_indices_through_expiry() {
+    // Source: pkg/executor/aggfuncs/func_max_min_count.go sliding deque and
+    // TestMaxMinCountSlidingWindow. Equal extrema stay grouped so expiring
+    // one occurrence leaves the remaining ties visible.
+    let mut max = MaxMinCountSlidingState::new(AggregateKind::MaxCount).unwrap();
+    max.update(
+        0,
+        &[
+            Datum::Int(1),
+            Datum::Int(1),
+            Datum::Int(2),
+            Datum::Int(2),
+        ],
+    )
+    .unwrap();
+    assert_eq!(max.result(), 2);
+    assert!(!max.is_null());
+
+    // Go Slide enqueues incoming rows first, then removes rows at the old
+    // frame boundary. The new frame is [2, 5], whose max is tied twice.
+    max.slide(
+        4,
+        &[Datum::Null, Datum::Int(2)],
+        Some(1),
+    )
+    .unwrap();
+    assert_eq!(max.result(), 3);
+
+    let mut min = MaxMinCountSlidingState::new(AggregateKind::MinCount).unwrap();
+    min.update(0, &[Datum::Null, Datum::Int(3), Datum::Int(1)])
+        .unwrap();
+    assert_eq!(min.result(), 1);
+    min.slide(3, &[Datum::Int(1), Datum::Int(1)], Some(1))
+        .unwrap();
+    assert_eq!(min.result(), 3);
+}
+
+#[test]
+fn max_min_count_sliding_state_resets_empty_and_rejects_mixed_domains() {
+    let mut state = MaxMinCountSlidingState::new(AggregateKind::MaxCount).unwrap();
+    state.update(10, &[Datum::Null]).unwrap();
+    assert!(state.is_null());
+    assert_eq!(state.result(), 0);
+
+    state
+        .slide(11, &[Datum::Int(4), Datum::Int(4)], None)
+        .unwrap();
+    assert_eq!(state.result(), 2);
+    state.reset();
+    assert!(state.is_null());
+    assert_eq!(state.result(), 0);
+
+    let err = state
+        .update(
+            0,
+            &[
+                Datum::new_collation_string(b"a", Collation::Utf8Mb4GeneralCi),
+                Datum::new_collation_string(b"b", Collation::Utf8Mb4Bin),
+            ],
+        )
+        .expect_err("mixed string collations must stay a typed-domain error");
+    assert!(matches!(
+        err,
+        tidb_exec::ExecError::Unsupported("MAX/MIN string collation mismatch")
+    ));
 }
