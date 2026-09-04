@@ -146,8 +146,9 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # pre-fix: failed (`-1` vs `9223372036854775807`); after fix: 1 passed
 ```
 
-The remaining `Datum::compare` context/non-UTF-8 findings stay separate
-follow-ups because they require a broader warning and timezone context API.
+The remaining `Datum::compare` context and ordering-plus-error findings stay
+separate follow-ups because they require a broader warning and timezone
+context API.
 Because this follow-up changes only Rust production/tests plus its receipt and
 plan, it does not add a new Go/Bazel preparation requirement.
 

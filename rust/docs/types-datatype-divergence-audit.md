@@ -29,21 +29,17 @@ compares rejected-vs-accepted only, never error text, and observes warnings on
 `M*` MyDecimal, `F*` FieldType/Set/Enum. Counts and the unaudited list are at
 the bottom.
 
-The worst three:
+The highest-impact open items are now:
 
-- **F1** — a `utf8mb4_0900_bin` CHAR or VARCHAR column wrote a restored-data
-  payload TiDB never writes, so the index and row bytes were mutually
-  undecodable between the two engines. Two independent bugs in one boolean.
-  **Fixed** in this branch.
-- **D1** — `CAST(TIME '11:59:59.999999' AS SIGNED)` returns `115960` instead of
-  `120000`: the port rounds the rendered decimal instead of the temporal value,
-  so the fractional carry never propagates through the sexagesimal fields. The
-  sibling entry point three files over already does this correctly and
-  documents the same number.
-- **T1/T2** — a duration with trailing garbage or an invalid minute silently
-  becomes a *different duration* rather than the parsed value or NULL:
-  `'11:22:33abc'` is `11:22:33` in Go and `00:00:11` here; `'10:70:00'` is NULL
-  in Go and `00:00:10` here.
+- **D5** — `Datum::compare` still lacks Go's statement context, so timezone,
+  SQL-mode flags, and truncation-warning publication are pinned or dropped.
+- **D4** — malformed temporal/string comparisons still return only `Err`,
+  while Go returns the zero-value ordering beside the parse error.
+- **M10** — the fixed-word parser still collapses Go's distinct no-digits
+  `TruncatedWrongValue` and exponent `BadNumber` identities.
+
+The former F1, D1, and T1/T2 rank-one defects are fixed in this branch; their
+focused regressions and Ready outcomes remain linked in the sections below.
 
 Multiple fixes have landed in this branch, including the F1/F2 field-type
 predicates and the D/T/M temporal and decimal batches. Their focused
@@ -149,7 +145,7 @@ The Datum-level split is now implemented and covered by
 the expression layer retains a hex literal as `KindBinaryLiteral` through this
 call remains a separate SQL-reachability question.
 
-## D3 (rank 3) — `Datum::compare` REFUSES a non-UTF-8 string operand where Go compares it
+## D3 (rank 3, FIXED 2026-09-04) — `Datum::compare` REFUSES a non-UTF-8 string operand where Go compares it
 
 Go's datum comparison operates on raw bytes throughout. The Rust port converts
 through `std::str::from_utf8` and propagates the error, so a `binary`- or
@@ -173,11 +169,16 @@ Distinguishing input: `Datum::Bytes(vec![0xFF])` compared against
 - Go: `compareInt64` → default → `compareFloat64` → `StrToFloat` yields `0.0`
   with a truncation event → result `0` (equal), which under a
   warning-disposition context is just a warning.
-- Rust: `compare_i64` → `compare_f64` → `numeric_bytes_to_float` →
-  `Utf8Error` → `Err(DatumValueError)`; no ordering is produced at all.
+- Rust: `compare_i64` → `compare_f64` → `numeric_bytes_to_float` now uses a
+  lossy byte-preserving prefix scan and produces the same zero ordering; the
+  earlier `Utf8Error` refusal is removed.
 
 Any `VARBINARY`/`BLOB`/`latin1` value holding a byte outside ASCII reaches
-this. The same shape applies to `Datum::String` via `as_utf8()?`.
+this. The same shape applies to `Datum::String` via its raw bytes. The focused
+regression `datum::compare::tests::non_utf8_numeric_bytes_keep_go_zero_prefix_ordering`
+and Ready evidence are recorded in
+`rust/testport/receipts/types_explain_format_audit.md`; the warning sink and
+session context remain the separate D4/D5 boundary.
 
 ## D4 (rank 3) — `Datum::compare` returns `Err` where Go returns an ORDERING *and* an error
 
@@ -300,7 +301,7 @@ Reachability today: `str_to_int(_, true)` has no in-tree caller —
 case right. So this was a latent trap in a public API rather than a live wrong
 answer.
 
-## D8 (rank 4) — error-code precedence inverted on the signed string→int path
+## D8 (rank 4, FIXED 2026-09-04) — error-code precedence inverted on the signed string→int path
 
 When both the string parse and the range clamp have something to report, Go
 keeps the **parse** error on the signed path and the **clamp** error on the
@@ -316,10 +317,13 @@ unsigned path. Rust uses one helper for both and always keeps the clamp error.
 
 Distinguishing input: `Datum::String("999abc")` converted to a signed
 `TINYINT`. Go reports `1292 Truncated incorrect INTEGER value: '999abc'`;
-Rust reports `1690 TINYINT value is out of range in '999'`. Both saturate to
-`127`, and both codes are in `HandleTruncate`'s allowlist so the
-error-vs-warning disposition is the same — this is a message/code difference
-only.
+Rust now retains the same source truncation event while the unsigned path
+continues to retain the clamp event. Both saturate to `127`, and both codes
+are in `HandleTruncate`'s allowlist so the error-vs-warning disposition is
+the same — this is a message/code difference only. The focused regression
+`datum_convert::tests::signed_string_conversion_prefers_source_truncation_over_clamp`
+and Ready evidence are recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
 
 ## D9 (rank 4, FIXED 2026-09-04) — `getValidFloatPrefix`'s NUL-byte error argument
 
@@ -344,7 +348,7 @@ myself (`T1`'s `matchDuration` tail and `T4`'s `GetFsp` arithmetic); the rest
 carry the sub-audit's file:line evidence and have **not** been independently
 re-derived.
 
-## T1 (rank 1) — trailing garbage after a duration: Go keeps the parsed clock, Rust re-parses the leading digits
+## T1 (rank 1, FIXED 2026-09-04) — trailing garbage after a duration: Go keeps the parsed clock, Rust re-parses the leading digits
 
 - Go: `pkg/types/time.go:1777-1781` — after a successful match,
   `if err == nil && len(rest) > 0 { return Duration{d, fsp}, false,
@@ -361,16 +365,25 @@ Distinguishing inputs:
 | `'11:22:33abc'` fsp 0 | `11:22:33` + warning 1292 | `00:00:11` |
 | `'12:34:56.7890 xyz'` | NULL (`time.go:1751`, `charsLen >= 12`) | `00:00:12` |
 
-## T2 (rank 1) — invalid minute/second: Go returns NULL, Rust returns a value
+Rust now preserves the parsed clock plus a truncation event for short
+literals and returns the NULL-shaped error for the source's long/invalid
+forms. The focused regression
+`duration_tests::malformed_duration_input_has_only_the_two_source_outcomes`
+is part of commit `0d6d34ccb7`; the owner profile was rerun in the later
+temporal Ready receipts.
+
+## T2 (rank 1, FIXED 2026-09-04) — invalid minute/second: Go returns NULL, Rust returns a value
 
 - Go: `pkg/types/time.go:1760-1762` — `checkHHMMSS` failure returns
   `ZeroDuration, isNull=true`.
 - Rust: `rust/crates/tidb-datatype/src/duration.rs:619-621` returns
   `InvalidFormat`, which falls into the same `:692-719` re-parse.
 
-Distinguishing input: `'10:70:00'` → Go NULL, Rust `00:00:10`.
+Distinguishing input: `'10:70:00'` → Go NULL, Rust now returns the matching
+NULL-shaped parse error instead of `00:00:10`; covered by the same focused
+malformed-duration regression above.
 
-## T3 (rank 1) — a trailing bare `.` is legal in Go and rejected in Rust
+## T3 (rank 1, FIXED 2026-09-04) — a trailing bare `.` is legal in Go and rejected in Rust
 
 - Go: `pkg/types/time.go:1703-1720` — `matchFrac` uses `parser.Digit(rest, 0)`
   (`pkg/util/parser/parser.go:104`), and zero digits is legal, so frac is 0 and
@@ -379,9 +392,10 @@ Distinguishing input: `'10:70:00'` → Go NULL, Rust `00:00:10`.
   `if start == index { return Err(InvalidFormat) }`.
 
 Distinguishing input: `'11:22:33.'` → Go `11:22:33` with **no** warning, Rust
-`00:00:11` with a truncation event.
+now retains the same value with no event; covered by the same focused
+malformed-duration regression above.
 
-## T4 (rank 1) — `GetFsp` counts BYTES after the dot, Rust counts digits
+## T4 (rank 1, FIXED 2026-09-04) — `GetFsp` counts BYTES after the dot, Rust counts digits
 
 - Go: `pkg/types/time.go:569-581` — `fsp = len(s) - index - 1`, capped at 6.
 - Rust: `rust/crates/tidb-datatype/src/mysql_time.rs:737-747` —
@@ -394,9 +408,12 @@ Distinguishing inputs:
 | `ParseDatetime('2020-01-01 10:00:00.5x')` | fsp 4 → `2020-01-01 10:00:00.5000` | fsp 1 → `…10:00:00.5` |
 | `'2020-01-01 12:00:00.1+05:00'` | fsp 6 → `2020-01-01 07:00:00.100000` | fsp 1 → `2020-01-01 07:00:00.1` |
 
-Also on the live path via `rust/crates/tidb-expr/src/cast.rs:457`.
+Also on the live path via `rust/crates/tidb-expr/src/cast.rs:457`. The focused
+`mysql_time::tests::get_fsp_counts_source_suffix_bytes` regression and owner
+validation are recorded in
+`rust/testport/receipts/types_explain_format_audit.md`.
 
-## T5 (rank 1) — fractional-overflow carry bypasses the session zone and the calendar check
+## T5 (rank 1, FIXED 2026-09-04) — fractional-overflow carry bypasses the session zone and the calendar check
 
 - Go: `pkg/types/time.go:1186-1193` — `t1, err := tmp.GoTime(ctx.Location())`
   then `FromGoTime(t1.Add(gotime.Second))`; **errors** when `GoTime` fails.
@@ -411,6 +428,12 @@ Distinguishing inputs:
   `2021-03-14 02:00:00`, a wall clock that does not exist in that zone.
 - `'2017-00-05 23:59:59.9999999'` fsp 6 → Go `ErrWrongValue`; Rust returns a
   value (a 2016-12 date out of `calc_daynr`).
+
+Rust now carries fractional overflow through the session timezone and calendar
+validation. The focused datatype and expression regressions, with Ready
+evidence, are recorded in
+`rust/testport/receipts/types_timestamp_dst_gap.md` and
+`rust/testport/receipts/types_explain_format_audit.md`.
 
 ## T6 (rank 1) — `Duration.RoundFrac` halfway direction is wrong for negatives (FIXED 2026-09-04)
 
