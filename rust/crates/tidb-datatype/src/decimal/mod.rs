@@ -855,7 +855,19 @@ impl Decimal {
         let result_scale = (self.scale + other.scale).min(CODEC_MAX_DECIMAL_SCALE as u32);
 
         if warning == Some(DecimalCodecWarning::Overflow) {
-            return (Decimal::new(false, "0".to_owned(), 0), warning);
+            // Go assigns `to.negative` before returning ErrOverflow.  The
+            // fixed-word receiver therefore retains a signed zero when the
+            // operands have opposite signs; preserve that observable
+            // `ToString` result instead of normalizing it away.
+            return (
+                Decimal::new_with_storage_preserving_zero_sign(
+                    self.negative != other.negative,
+                    "0".to_owned(),
+                    result_scale,
+                    result_scale,
+                ),
+                warning,
+            );
         }
 
         let mut tmp_int = requested_words_int;
@@ -910,7 +922,12 @@ impl Decimal {
             if carry > 0 {
                 if index_to < 0 {
                     return (
-                        Decimal::new(false, "0".to_owned(), 0),
+                        Decimal::new_with_storage_preserving_zero_sign(
+                            self.negative != other.negative,
+                            "0".to_owned(),
+                            result_scale,
+                            result_scale,
+                        ),
                         Some(DecimalCodecWarning::Overflow),
                     );
                 }
@@ -921,7 +938,12 @@ impl Decimal {
             while carry > 0 {
                 if index_to < 0 {
                     return (
-                        Decimal::new(false, "0".to_owned(), 0),
+                        Decimal::new_with_storage_preserving_zero_sign(
+                            self.negative != other.negative,
+                            "0".to_owned(),
+                            result_scale,
+                            result_scale,
+                        ),
                         Some(DecimalCodecWarning::Overflow),
                     );
                 }

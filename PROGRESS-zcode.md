@@ -130,6 +130,11 @@
 - 2026-09-04: aligned Go's NUL-truncated DOUBLE warning subjects across every
   Rust warning site, with datatype and live cast regressions. Evidence is in
   `rust/testport/receipts/types_float_warning_nul.md`.
+
+- 2026-09-04: aligned bounded decimal multiplication overflow with Go's
+  sign-preserving receiver state. Opposite-signed overflow products now render
+  `-0`; the focused regression and Ready profile are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 ## chunk A-1 范围确认（下批实现）
 ## chunk A-1 范围确认（下批实现；树当前全绿 1128/0 expr lib，A-1 实现需新上下文完整验证）
 

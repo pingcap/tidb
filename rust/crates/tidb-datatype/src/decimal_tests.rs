@@ -1199,6 +1199,12 @@ fn test_mul_my_decimal() {
             Some(DecimalCodecWarning::Overflow),
         ),
         (
+            "-1000000000000000000000000000000000000000000000000000000000000",
+            "1000000000000000000000000000000000000000000000000000000000000",
+            "-0",
+            Some(DecimalCodecWarning::Overflow),
+        ),
+        (
             "0.5999991229316",
             "0.918755041726043",
             "0.5512522192246113614062276588",
@@ -1217,6 +1223,18 @@ fn test_mul_my_decimal() {
         assert_eq!(actual_warning, *warning, "{a} * {b} warning");
         assert_eq!(actual.to_string(), *product, "{a} * {b}");
     }
+}
+
+/// Go's `DecimalMul` assigns the result sign before returning `ErrOverflow`,
+/// so an overflowing product of opposite-signed operands renders as `-0`.
+#[test]
+fn decimal_mul_overflow_preserves_negative_zero() {
+    let magnitude = "1".to_owned() + &"0".repeat(60);
+    let (value, warning) = Decimal::from_signed_literal(&format!("-{magnitude}"))
+        .mul_mysql(&Decimal::from_signed_literal(&magnitude));
+    assert_eq!(warning, Some(DecimalCodecWarning::Overflow));
+    assert_eq!(value.to_string(), "-0");
+    assert!(value.is_negative());
 }
 
 /// Exact source `TestShiftMyDecimal`, including the temporary two-word buffer

@@ -752,11 +752,15 @@ The focused regression is recorded in
 
 ## M9 / M10 (rank 4)
 
-- **M9** `DecimalMul` overflow loses Go's `-0`. Go assigns `to.negative`
-  *before* the `err == ErrOverflow` early return
-  (`pkg/types/mydecimal.go:2070-2075`), so `ToString` emits `-0`; Rust
-  `decimal.rs:523-525` builds `Decimal::new(false, "0", 0)`. Input
-  `(-999…9, 81 digits) * (999…9, 81 digits)`. Unreachable at `DECIMAL(65)`.
+- **M9 (FIXED 2026-09-04)** `DecimalMul` overflow loses Go's `-0`. Go assigns
+  `to.negative` *before* the `err == ErrOverflow` early return
+  (`pkg/types/mydecimal.go:2070-2075`), so `ToString` emits `-0`; Rust now
+  preserves the operand sign on every bounded overflow exit. Input
+  `(-999…9, 61 digits) * (999…9, 61 digits)` is covered by
+  `decimal_tests::decimal_mul_overflow_preserves_negative_zero`; complete
+  owner validation is recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`. Unreachable at
+  `DECIMAL(65)`.
 - **M10** Error identity for the no-digits case. Go
   (`mydecimal.go:415, 443`) returns `ErrTruncatedWrongVal("DECIMAL", str)`
   (MySQL 1292); `mydecimal.rs:772, 802` collapses it to

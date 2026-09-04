@@ -573,6 +573,42 @@ For the explicit empty-charset cast-restoration follow-up specifically:
 - `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — 1,117 tests passed, 130 documented gaps were ignored, and the known loopback HTTP JSON-schema fixture failed with `WouldBlock`; its isolated retry reproduced the same unrelated resource error.
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
 
+## Rust-only parity follow-up: multiplication overflow preserves Go's signed zero
+
+The complete `pkg/types` decimal inventory above also owns `DecimalMul`.
+Go assigns the output sign before returning `ErrOverflow`, so an overflowing
+product whose operands have opposite signs renders as `-0` through
+`MyDecimal.ToString`. Rust's bounded `Decimal::mul_mysql` previously returned
+an ordinary normalized positive zero from every overflow exit, losing that
+source-visible sign.
+
+The Rust decimal owner now constructs overflow zeros with the operand sign and
+the source result scale while preserving the existing warning-bearing API.
+The focused regression `decimal_tests::decimal_mul_overflow_preserves_negative_zero`
+uses the source's 61-digit overflow shape, asserts `Overflow`, `-0`, and the
+retained negative flag; the existing `test_mul_my_decimal` table also carries
+the signed row. No Go, generated, or Bazel file changed.
+
+Ready validation (commands run from `rust/`):
+
+```text
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --lib decimal_tests::decimal_mul_overflow_preserves_negative_zero -- --exact --nocapture
+# passed: 1 test
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 402 unit tests; 63 source/integration tests
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-expr --all-targets -- --test-threads=1
+# 1,141 passed, 1 known loopback HTTP JSON-schema fixture failed, 122 ignored
+cargo +nightly-2026-08-22 test --offline --locked -p tidb-executor --all-targets -- --test-threads=1
+# 1,052 passed, 121 existing planner/storage/fixture failures, 0 ignored
+cargo +nightly-2026-08-22 check --offline --locked -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --offline --locked -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --offline --locked -p tidb-executor --all-targets
+# all three passed (existing warnings only)
+cargo +nightly-2026-08-22 fmt --all -- --check
+git diff --check
+# both passed
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (M9, `pkg/types` decimal multiplication overflow sign): aligned
+  Rust bounded `Decimal::mul_mysql` with Go's early `to.negative` assignment,
+  preserving `-0` for opposite-signed overflow products on every overflow
+  exit. The focused regression and complete Ready profile are recorded in
+  `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (D9, `pkg/types` float-prefix NUL warning subject): added the
   shared trim-and-NUL diagnostic helper and applied it to every Rust DOUBLE
   warning site. Focused regressions and Ready evidence are in
