@@ -326,7 +326,15 @@ these.
    suspect" is implemented verbatim, `IFNULL(NULL, decimal_col)` keeps the
    column precision), the AggFieldType + zeroed-flags + AggregateEvalType
    merge, the NULL-branch NOT_NULL drop, and the Int/String scale fixups.
-   Still open: `CASE`/`IF` branch laziness and `NULLIF`'s NULL rule review.
+   FULLY REVIEWED (2026-09-04): `IF`/`IFNULL`/`CASE` evaluation is LAZY —
+   only the taken branch is evaluated (`lib.rs:149`/`:160`/`:998`; the CASE
+   doc cites the gorun-confirmed `CASE WHEN x != 0 THEN 1/x` guard idiom),
+   and `NULLIF`'s eval matches Go's `IF(a = b, NULL, a)` rewrite including
+   NULL-condition propagation (`func.rs:539`). One documented residual:
+   CASE's overall result type is the taken branch's own type — Go's
+   static promotion across EVERY branch (gorun-confirmed) needs a genuine
+   type-inference pass and is deliberately not attempted in the eval crate
+   (`lib.rs:1009-1016`).
 4. *Strings* — **partly done:** `SUBSTRING`, `LEFT`/`RIGHT`, `LOCATE`/`INSTR`,
    `TRIM` (all three arities), `CONCAT`, `LIKE`. Findings D, F, G. **Not done:**
    `REPLACE`, `CHAR` vs `VARCHAR` padding on comparison and on read-back,
