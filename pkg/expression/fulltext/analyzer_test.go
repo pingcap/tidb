@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -180,4 +181,40 @@ func setGlobalSysVar(t *testing.T, sctx *mock.Context, name, value string) {
 	globalAccessor, ok := sctx.GetSessionVars().GlobalVarsAccessor.(*variable.MockGlobalAccessor)
 	require.True(t, ok)
 	require.NoError(t, globalAccessor.SetGlobalSysVarOnly(context.Background(), name, value, false))
+}
+
+func TestAnalyzerConfigEqualComparesWhatTheParserReads(t *testing.T) {
+	standard := AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize:   3,
+		InnodbFtMaxTokenSize:   84,
+		InnodbFtEnableStopword: true,
+	}
+	// An index records no ngram size for STANDARD text, while a session always
+	// carries the ngram_token_size default. That difference cannot change the
+	// tokens, so it must not make the two look incompatible.
+	withNgram := standard
+	withNgram.NgramTokenSize = 2
+	require.True(t, standard.Equal(withNgram))
+
+	differentBound := standard
+	differentBound.InnodbFtMinTokenSize = 5
+	require.False(t, standard.Equal(differentBound))
+
+	withoutStopwords := standard
+	withoutStopwords.InnodbFtEnableStopword = false
+	require.False(t, standard.Equal(withoutStopwords))
+
+	ngram := AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 2}
+	require.False(t, standard.Equal(ngram))
+	// The ngram analyzer neither length-filters nor removes stopwords, so
+	// those settings cannot separate two ngram configurations.
+	ngramWithBounds := ngram
+	ngramWithBounds.InnodbFtMinTokenSize = 3
+	ngramWithBounds.InnodbFtEnableStopword = true
+	require.True(t, ngram.Equal(ngramWithBounds))
+
+	differentNgram := ngram
+	differentNgram.NgramTokenSize = 3
+	require.False(t, ngram.Equal(differentNgram))
 }

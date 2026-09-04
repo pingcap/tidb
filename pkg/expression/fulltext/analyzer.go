@@ -47,15 +47,42 @@ type AnalyzerConfig struct {
 }
 
 // Equal reports whether two analyzer configurations produce the same token
-// stream. Stopword order does not affect analysis; DDL stores it sorted, so an
+// stream, and so whether index entries built with one can answer a query
+// compiled with the other.
+//
+// Only the settings the parser actually reads are compared, because those are
+// the ones that can change the tokens. Comparing the whole struct would reject
+// a usable index whenever an unrelated session variable happened to differ -
+// an index over STANDARD text carries no ngram size, so a session default of
+// ngram_token_size would make it look incompatible with itself.
+//
+// Stopword order does not affect analysis; DDL stores it sorted, so an
 // order-sensitive comparison also catches malformed or non-canonical metadata.
 func (c AnalyzerConfig) Equal(other AnalyzerConfig) bool {
-	return c.ParserType == other.ParserType &&
-		c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
-		c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
-		c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
-		c.NgramTokenSize == other.NgramTokenSize &&
-		slices.Equal(c.Stopwords, other.Stopwords)
+	if c.ParserType != other.ParserType {
+		return false
+	}
+	switch c.ParserType {
+	case model.FullTextParserTypeStandardV1:
+		// analyzeStandardV1 applies the token-size bounds and the stopword
+		// list, and never reads the ngram size.
+		return c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
+			c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
+			c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
+			slices.Equal(c.Stopwords, other.Stopwords)
+	case model.FullTextParserTypeNgramV1:
+		// analyzeNgramV1 reads only the ngram size: it neither length-filters
+		// nor removes stopwords.
+		return c.NgramTokenSize == other.NgramTokenSize
+	default:
+		// An unknown parser has no known-irrelevant settings, so require the
+		// whole configuration to agree.
+		return c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
+			c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
+			c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
+			c.NgramTokenSize == other.NgramTokenSize &&
+			slices.Equal(c.Stopwords, other.Stopwords)
+	}
 }
 
 // Analyzer analyzes text into fulltext tokens.
