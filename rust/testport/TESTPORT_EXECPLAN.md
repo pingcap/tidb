@@ -41,7 +41,6 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
-=======
 - 2026-09-04 (batch 22, `pkg/ddl` MV remaining pure surface): implemented
   Go master `94a9cbedab`'s `MViewExecutionSessionVarsFromJob` (tidb-session,
   per-field fallback to the captured defaults over the job's system-variable
@@ -53,7 +52,39 @@ For each bounded behavior cluster:
   Failure sets: exec 7 (base), session byte-identical to base on the final
   full run. Receipt: `receipts/ddl_mview_pure_surface.md`.
 
-db08e71dbd3 (rust: align pkg/ddl mview remaining pure surface with Go master)
+`db08e71dbd3` (`rust: align pkg/ddl mview remaining pure surface with Go master`).
+- 2026-09-04: aligned the Rust `tidb-expr` `ADDTIME`/`SUBTIME` datetime
+  parser and DATE-string FSP with Go `ParseTimeWithString`. Packed
+  `YYYYMMDDHHMMSS`/`YYMMDDHHMMSS` text produced by the integer-cast signature
+  now reaches the shared numeric datetime parser, and DATE+STRING uses
+  `getFsp4TimeAddSub` (so an all-zero fraction stays second precision). The
+  duration-operand and packed-integer carriers are active; inventory and
+  fail-before/pass-after evidence are recorded in
+  `receipts/expression_collation_audit.md`.
+
+- 2026-09-04: aligned the Rust `tidb-expr` `ADDTIME`/`SUBTIME` typed
+  DATETIME path with Go's row/vector split. Constant-folded (row-path) calls
+  now retain the parsed second operand's fractional precision, while the
+  vectorized DATETIME+TIME arm keeps Go's `Fsp=-1` behavior; the existing
+  issue-56861 carrier now pins DATE/DATETIME FSP and malformed-string NULL
+  rows. Complete package inventory and fail-before/pass-after evidence are
+  recorded in `receipts/expression_collation_audit.md`.
+
+- 2026-09-04: aligned the Rust `tidb-expr` `FORMAT` precision coercion with
+  Go's `evalNumDecArgsForFormat` and activated the existing
+  `WEIGHT_STRING AS BINARY(n)` warning carrier. Malformed string/byte precision
+  now uses the shared warning-aware integer conversion, preserving the parsed
+  value and emitting Go's 1292 event; the weight-string test now supplies a
+  warning-capable statement context and pins all three cut rows. Complete
+  package inventory and fail-before/pass-after evidence are recorded in
+  `receipts/expression_collation_audit.md`.
+
+- 2026-09-04: aligned the Rust `tidb-expr` `FROM_UNIXTIME` real-input path
+  with Go `pkg/expression/builtin_time.go` at `origin/master`
+  `fc7788ff...`. Real and float32 datum arguments now pass through the shared
+  Go-shortest `Decimal::from_f64` conversion before FSP-6 half-up rounding;
+  the focused boundary regression, complete package inventory, and existing
+  source vectors are recorded in `receipts/expression_collation_audit.md`.
 
 - 2026-09-04: aligned the Rust `tidb-expr` `FROM_BASE64` evaluator with Go
   `pkg/expression/builtin_string.go` at `origin/master` `fc7788ff...`. The
@@ -5605,6 +5636,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
 
 ## Decision Log
 
+- Decision: reuse `tidb_datatype::parse_time_from_num` for delimiter-free
+  12/14-digit datetime strings and map its validated fields into the local
+  `GoDateTime`, preserving Go's packed numeric normalization and two-digit-year
+  window. Select `fsp_for_time_add_sub` only for the DATE+STRING signature;
+  DATETIME and DURATION string arms retain `GetFsp`. Date/Author: 2026-09-04,
+  Codex.
+
 - Decision: make `add_sub_time` select the Go `Time.Add` duration FSP by
   evaluator tier. Preserve `getFsp` for row-path constants and string-second
   vector calls, but use `Fsp=-1` only for the vectorized DATETIME+TIME arm;
@@ -6235,6 +6273,13 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   Codex.
 
 ## Surprises & Discoveries
+
+- The prior ADDTIME/SUBTIME gap was two independent source rules: integer
+  arguments are cast to ETString before `ParseTimeWithString` (which accepts
+  packed date-time digits), and DATE+STRING parses fractions with the legacy
+  non-zero sentinel (`getFsp4TimeAddSub`) rather than the written digit count.
+  Both were hidden by the ignored carriers; no new Go or generated artifact was
+  needed.
 
 - The ignored issue-56861 carrier mixed two different Go evaluator bodies:
   the row body calls `Time.Add` with the parsed string FSP, while only the

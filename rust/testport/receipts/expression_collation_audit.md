@@ -920,6 +920,56 @@ PATH=... GOPATH=... TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
 
+## Rust follow-up: `ADDTIME`/`SUBTIME` packed datetime and DATE-string FSP
+
+This batch remains inside the complete `pkg/expression` inventory at the
+latest fetched Go `origin/master` `3bd6b6d4d632b16ee5db7fbbefbf21b1e57527b2`:
+208 tracked artifacts, 146,291 Go lines (68 production files, 60 tests, seven
+generated sources, `BUILD.bazel`, `OWNERS`, and eight nested package/build/test
+boundaries). The Rust `tidb-expr` owner remains 176 tracked artifacts and
+107,196 lines. Before editing, the Go `getBf4TimeAddSub` selector, all
+ADDTIME/SUBTIME typed signatures and generated vector bodies, the integer and
+duration tables in `builtin_time_test.go`, and the Rust duration parser and
+argument-type seam were reread. No Go, generated, fixture, platform, or Bazel
+file changed.
+
+Go's string-cast ADDTIME/SUBTIME signatures send integer arguments through
+`ParseTimeWithString`, whose delimiter-free 14-digit and 12-digit forms are
+`YYYYMMDDHHMMSS` and `YYMMDDHHMMSS`. Rust's `parse_datetime` accepted only
+delimited dates, so the source row `20171010123456 + 1` returned NULL. The
+parser now delegates those packed forms to the datatype crate's validated
+numeric datetime normalizer and maps the resulting fields into the local
+microsecond value.
+
+The Go DATE+STRING signatures also use `getFsp4TimeAddSub`, where an all-zero
+fraction has FSP 0 even when six zero digits are written. Rust had used
+`GetFsp` for that branch and emitted `.000000`; the branch now selects the
+source sentinel while DATETIME and DURATION string arms retain `GetFsp`.
+
+Focused regressions cover ADDTIME and SUBTIME packed integer rows, the
+duration-operand arithmetic tables, and both DATE+STRING zero/non-zero
+fraction forms. The packed row was reproduced failing before the parser
+change (`<null>` instead of the Go datetime); the DATE zero-fraction row also
+failed before the FSP selector; all pass after the fix. The pre-existing
+TIMESTAMP packed-date contract was updated to the same now-shared parser
+behavior.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_string_time_source::test_add_time_sig_value_tables \
+  -- --exact --nocapture
+# pre-fix: failed (packed 20171010123456 + 1 returned <null>)
+# after fix: 1 passed
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib tests::builtin_string_time_source::test_add_sub_time_issue_56861_typed_tables \
+  -- --exact --nocapture
+# pre-fix: failed (DATE + '12:00:01.000000' emitted .000000)
+# after fix: 1 passed
+```
+
 ## Rust follow-up: `ADDTIME`/`SUBTIME` typed row-path fractional precision
 
 This batch remains inside the complete `pkg/expression` inventory at Go
@@ -958,8 +1008,8 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 ```
 
 The remaining ignored issue-56861 matrix is explicitly bounded to its full
-fixture sweep; the separate duration-operand string and wide-integer date
-arms remain listed in `b071.md` rather than being partially claimed.
+fixture sweep; the focused duration-operand and packed-integer rows are now
+active rather than being partially claimed.
 
 ## Rust follow-up: `FROM_UNIXTIME` real-input rounding
 

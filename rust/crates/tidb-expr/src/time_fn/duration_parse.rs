@@ -503,6 +503,11 @@ pub(crate) fn parse_datetime(value: &str) -> Option<GoDateTime> {
         Some((date, time)) => (date, time.trim()),
         None => (value, ""),
     };
+    if time.is_empty() {
+        if let Some(compact) = parse_compact_datetime(date) {
+            return Some(compact);
+        }
+    }
     let parts = calendar::split_numeric_components_for_time_diff(date)?;
     let year = calendar::expand_year_for_time_diff(parts[0].0, parts[0].1);
     let month = parts[1].0;
@@ -533,6 +538,38 @@ pub(crate) fn parse_datetime(value: &str) -> Option<GoDateTime> {
         second,
         micros,
         fsp: fsp.min(MAX_FSP),
+    })
+}
+
+/// Go `ParseTimeWithString` accepts packed `YYYYMMDDHHMMSS` and
+/// `YYMMDDHHMMSS` spellings in addition to delimited dates. The ADDTIME /
+/// SUBTIME string signature reaches this parser after integer arguments have
+/// been cast to text, so preserve that packed datetime arm instead of treating
+/// the fourteen digits as an unsupported delimiter-free date.
+fn parse_compact_datetime(value: &str) -> Option<GoDateTime> {
+    if !matches!(value.len(), 12 | 14) || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let number = value.parse::<i64>().ok()?;
+    let parsed = tidb_datatype::parse_time_from_num(
+        number,
+        tidb_datatype::TimeType::DateTime,
+        0,
+        true,
+        false,
+        &chrono_tz::Tz::UTC,
+    )
+    .ok()?;
+    let core = parsed.time.core_time();
+    Some(GoDateTime {
+        year: i64::from(core.year()),
+        month: u32::from(core.month()),
+        day: u32::from(core.day()),
+        hour: u32::from(core.hour()),
+        minute: u32::from(core.minute()),
+        second: u32::from(core.second()),
+        micros: core.microsecond(),
+        fsp: 0,
     })
 }
 

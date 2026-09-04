@@ -233,7 +233,7 @@ pub(crate) fn add_sub_time(
         // folding takes the row body, so preserve the right-side fractional
         // digits there and retain that one vectorized distinction.
         TemporalKind::Datetime => {
-            let Some(delta) = second_as_duration(&right, kinds[1], cols)? else {
+            let Some(delta) = second_as_duration(&right, kinds[1], cols, false)? else {
                 return Ok(Datum::Null);
             };
             let delta = if !row_path && kinds[1] == TemporalKind::Duration {
@@ -245,9 +245,11 @@ pub(crate) fn add_sub_time(
         }
         // `...DateAnd*`: `arg0.SetType(TypeDatetime)` first, so a DATE reads
         // as midnight; the result is a STRING and the DATE's own fsp is 0,
-        // which leaves the duration's fsp deciding.
+        // which leaves the duration's fsp deciding. The DATE+STRING row and
+        // vector bodies use `getFsp4TimeAddSub` (non-zero fraction => 6),
+        // unlike the DATETIME+STRING bodies' `GetFsp`.
         TemporalKind::Date => {
-            let Some(delta) = second_as_duration(&right, kinds[1], cols)? else {
+            let Some(delta) = second_as_duration(&right, kinds[1], cols, true)? else {
                 return Ok(Datum::Null);
             };
             datetime_result(&left, delta, sign)
@@ -261,7 +263,7 @@ pub(crate) fn add_sub_time(
             let Ok(first) = parse_duration(&left, get_fsp(&left)) else {
                 return Ok(truncated_time_warning(cols, &left));
             };
-            let Some(delta) = second_as_duration(&right, kinds[1], cols)? else {
+            let Some(delta) = second_as_duration(&right, kinds[1], cols, false)? else {
                 return Ok(Datum::Null);
             };
             Ok(Datum::new_string(first.combine(delta, sign).format()))
@@ -319,13 +321,19 @@ fn second_as_duration(
     text: &str,
     kind: TemporalKind,
     cols: &dyn Columns,
+    date_string_fsp: bool,
 ) -> Result<Option<GoDuration>, EvalError> {
     if kind != TemporalKind::Duration && !is_duration(text) {
         // `builtin...AndStringSig`: a second argument that is not
         // duration-shaped is NULL without a warning.
         return Ok(None);
     }
-    match parse_duration(text, get_fsp(text)) {
+    let fsp = if date_string_fsp && kind != TemporalKind::Duration {
+        fsp_for_time_add_sub(text)
+    } else {
+        get_fsp(text)
+    };
+    match parse_duration(text, fsp) {
         Ok(duration) => Ok(Some(duration)),
         Err(Truncated) => {
             truncated_time_warning(cols, text);

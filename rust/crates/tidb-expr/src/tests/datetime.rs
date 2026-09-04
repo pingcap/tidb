@@ -1411,14 +1411,15 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
 /// select timestamp('20240315123045')  RS:2024-03-15 12:30:45   (not isFloat)
 /// ```
 ///
-/// so the NULL here is this tier's own `add_sub::parse_datetime` refusing a
-/// bare 14-digit run, not a missing type. `TIMESTAMP` DOES depend on its
+/// the shared `add_sub::parse_datetime` now accepts the packed 14-digit run,
+/// so the value agrees with Go rather than becoming a parser-only NULL.
+/// `TIMESTAMP` DOES depend on its
 /// argument's type -- Go's
 /// `switch args[0].GetType(ctx.GetEvalCtx()).GetType() { case
 /// mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal,
 /// mysql.TypeLonglong: isFloat = true }` (`builtin_time.go:4592-4595`)
 /// stores the answer in the SIGNATURE (`builtinTimestamp1ArgSig{bf,
-/// isFloat}`) -- but the dependence only becomes observable where the two
+/// isFloat}`) -- and the dependence remains observable where the two
 /// PARSERS disagree, which is a value carrying a fraction. Captured:
 ///
 /// ```text
@@ -1428,11 +1429,12 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
 ///
 /// That is signature-selection state over an `types.ETString` argument, not
 /// an argument cast, so it is NOT this rung's `types.ETDatetime` layer and
-/// must not be smuggled into it. Both rows are NULL here today; the
-/// assertion is deliberately absolute so the gap cannot close silently.
+/// must not be smuggled into it. The packed integer row is nevertheless
+/// accepted by the shared parser; the fraction-bearing rows remain explicit
+/// signature-selection gaps.
 #[test]
 fn timestamp_stays_outside_the_etdatetime_layer_and_says_why() {
-    assert_eq!(e("timestamp(20240315123045)"), "NULL");
+    assert_eq!(e("timestamp(20240315123045)"), "STR:2024-03-15 12:30:45");
     assert_eq!(e("timestamp(20240315.5)"), "NULL");
     assert_eq!(e("timestamp('20240315.5')"), "NULL");
 }

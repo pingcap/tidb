@@ -1970,11 +1970,9 @@ fn test_add_time_sig_value_tables() {
         assert_eq!(addtime(input, input_duration), expect);
     }
 
-    // Integer/int64 sources ride the internal casts the signature applies;
-    // master pins {123456,1}->"12:34:57". The wide YYYYMMDDHHMMSS integral
-    // arm ("20171010123456",1 -> "2017-10-10 12:34:57") rides an
-    // int-as-datetime coercion this tier refuses, so it is recorded as a gap
-    // below rather than narrowed here.
+    // Integer/int64 sources ride the internal string casts the signature
+    // applies; both the compact duration and packed datetime forms are
+    // accepted by Go's `ParseTimeWithString` fallback.
     let int_add = |l: i64, r: i64| {
         got_text(
             &eval_scalar(
@@ -1990,6 +1988,8 @@ fn test_add_time_sig_value_tables() {
         )
     };
     assert_eq!(int_add(123456, 1), "12:34:57");
+    assert_eq!(int_add(20171010123456, 1), "2017-10-10 12:34:57");
+    assert_eq!(int_add(121231113045, 1), "2012-12-31 11:30:46");
 
     // Truncated-mix rows answer SQL NULL everywhere; each of the four
     // numeric/truncate rows carries exactly one ErrTruncatedWrongVal-class
@@ -2041,10 +2041,85 @@ fn test_add_time_sig_value_tables() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: ADDTIME's DURATION-operand doors ignore a string second operand (left '01:00:00.999999' + '02:00:00.999998' answers 03:00:00.999998; master answers 03:00:01.999997), so the duration-sourced tables and the wide-int date arm ride explicit gaps"]
 fn test_add_time_duration_operand_tables() {
     // Go pkg/expression/builtin_time_test.go rows over NewDurationDatum /
     // NewIntDatum inputs, incl issue #7334's du.add fsp-6 half.
+    for (left, right, expected) in [
+        (
+            MySqlDuration::new(1, 0, 0, 999999, 6).expect("valid duration"),
+            "02:00:00.999998",
+            "03:00:01.999997",
+        ),
+        (
+            MySqlDuration::new(23, 59, 59, 0, 0).expect("valid duration"),
+            "00:00:01",
+            "24:00:00",
+        ),
+        (
+            MySqlDuration::new(110, 0, 0, 0, 0).expect("valid duration"),
+            "1 02:00:00",
+            "136:00:00",
+        ),
+        (
+            MySqlDuration::new(-110, 0, 0, 0, 0).expect("valid duration"),
+            "1 02:00:00",
+            "-84:00:00",
+        ),
+    ] {
+        let got = eval_scalar(
+            "ADDTIME",
+            FieldType::new(FieldTypeCode::Duration),
+            vec![
+                const_arg_typed(
+                    Datum::Duration(left),
+                    FieldType::new(FieldTypeCode::Duration),
+                ),
+                const_arg_typed(
+                    Datum::new_string(right),
+                    FieldType::new(FieldTypeCode::VarString),
+                ),
+            ],
+            &NoColumns,
+        )
+        .unwrap();
+        assert_eq!(got_text(&got), expected, "{left:?} + {right}");
+    }
+}
+
+/// Go `pkg/expression/builtin_time_test.go:1260` duration-valued SUBTIME
+/// rows, including compact `235959`'s normalized value and microsecond carry.
+#[test]
+fn test_sub_time_duration_operand_tables() {
+    for (left, right, expected) in [
+        (
+            MySqlDuration::new(3, 0, 0, 999999, 6).expect("valid duration"),
+            "02:00:00.999998",
+            "01:00:00.000001",
+        ),
+        (
+            MySqlDuration::new(23, 59, 59, 0, 0).expect("valid duration"),
+            "00:00:01",
+            "23:59:58",
+        ),
+    ] {
+        let got = eval_scalar(
+            "SUBTIME",
+            FieldType::new(FieldTypeCode::Duration),
+            vec![
+                const_arg_typed(
+                    Datum::Duration(left),
+                    FieldType::new(FieldTypeCode::Duration),
+                ),
+                const_arg_typed(
+                    Datum::new_string(right),
+                    FieldType::new(FieldTypeCode::VarString),
+                ),
+            ],
+            &NoColumns,
+        )
+        .unwrap();
+        assert_eq!(got_text(&got), expected, "{left:?} - {right}");
+    }
 }
 /// Go `pkg/expression/builtin_time_test.go:1220 TestSubTimeSig`. The SUBTIME
 /// mirror of the ADDTIME tables — first-difference arms, day subtraction,
@@ -2081,7 +2156,7 @@ fn test_sub_time_sig_value_tables() {
         assert_eq!(subtime(input, input_duration), expect);
     }
     // Integer sources keep second-level precision through the same casts as
-    // ADDTIME's int arm; the wide date form rides the shared gap above.
+    // ADDTIME's int arm, including packed YYYYMMDDHHMMSS input.
     let int_sub = |l: i64, r: i64| {
         got_text(
             &eval_scalar(
@@ -2097,6 +2172,8 @@ fn test_sub_time_sig_value_tables() {
         )
     };
     assert_eq!(int_sub(123456, 1), "12:34:55");
+    assert_eq!(int_sub(20171010123456, 1), "2017-10-10 12:34:55");
+    assert_eq!(int_sub(121231113045, 1), "2012-12-31 11:30:44");
 }
 
 /// Focused typed halves of Go's issue #56861 tables inside TestAddTimeSig /
@@ -2166,6 +2243,36 @@ fn test_add_sub_time_issue_56861_typed_tables() {
     )
     .unwrap();
     assert_eq!(got_text(&got), "2024-11-01 12:00:01.341300");
+
+    let got = eval_scalar(
+        "ADDTIME",
+        FieldType::new(FieldTypeCode::String),
+        vec![
+            const_arg_typed(date_of(2024, 11, 1), FieldType::new(FieldTypeCode::Date)),
+            const_arg_typed(
+                Datum::new_string("12:00:01.000000"),
+                FieldType::new(FieldTypeCode::VarString),
+            ),
+        ],
+        &NoColumns,
+    )
+    .unwrap();
+    assert_eq!(got_text(&got), "2024-11-01 12:00:01");
+
+    let got = eval_scalar(
+        "SUBTIME",
+        FieldType::new(FieldTypeCode::String),
+        vec![
+            const_arg_typed(date_of(2024, 11, 1), FieldType::new(FieldTypeCode::Date)),
+            const_arg_typed(
+                Datum::new_string("12:00:01.000000"),
+                FieldType::new(FieldTypeCode::VarString),
+            ),
+        ],
+        &NoColumns,
+    )
+    .unwrap();
+    assert_eq!(got_text(&got), "2024-10-31 11:59:59");
 
     // The vectorized DATETIME+TIME arm deliberately forces Fsp=-1, while
     // constant folding follows Go's row body and preserves the duration FSP.
