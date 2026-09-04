@@ -335,11 +335,13 @@ these.
    static promotion across EVERY branch (gorun-confirmed) needs a genuine
    type-inference pass and is deliberately not attempted in the eval crate
    (`lib.rs:1009-1016`).
-4. *Strings* — **partly done:** `SUBSTRING`, `LEFT`/`RIGHT`, `LOCATE`/`INSTR`,
-   `TRIM` (all three arities), `CONCAT`, `LIKE`. Findings D, F, G. **Not done:**
-   `REPLACE`, `CHAR` vs `VARCHAR` padding on comparison and on read-back,
-   `LPAD`/`RPAD` truncation, `STRCMP`'s collation, `ELT`/`FIELD`/`MAKE_SET`,
-   `EXPORT_SET`, and every packet-limited builtin besides `CONCAT`.
+4. *Strings* — RESOLVED (2026-09-03/04): `REPLACE`, `LPAD`/`RPAD` (content,
+   truncation, character counting, packet limit), `STRCMP`'s collation,
+   `ELT`/`FIELD`/`MAKE_SET`, and `EXPORT_SET` are implemented with
+   Go-pinned regressions (string_fn.rs, string_packet.rs,
+   func.rs `TestInsertBinarySig` port covering INSERT's packet overflow).
+   Still open: `CHAR` vs `VARCHAR` padding on comparison/read-back (a
+   storage-and-type surface, not an eval-builtin).
 5. *Cast* — **partly done:** to/from signed and unsigned across int, decimal and
    real. **Not done:** the flen/flag each `CAST` *produces* (the whole
    `builtin_cast.go` `getFunction` family), `CAST` to and from `CHAR(n)`,

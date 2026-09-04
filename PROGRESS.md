@@ -39,3 +39,7 @@
 - CAST 面勘察：builtin_cast_semantics 套件全绿（3 通过 + 1 文档化 ignored gap=向量化层）。F2 修复后 decimal=-1 → 0 的涟漪已消（expr 全绿 1113+18/0）。inUnion flag 与 CAST flen/flag 产出族为多批次项目（audit item 5）。
 
 - 已推送 632d55f3f2：temporal 复合单元提取（DAY_MICROSECOND..SECOND_MICROSECOND）的 Go 钉住回归 6 断言（日期串、时长串、六位微秒保留、负号整体应用）；诊断出新分歧：MINUTE_MICROSECOND 提取 mm:ss.ffffff 时 parse_signed_duration_hms 要求 HH: 前缀返回 NULL（Go ParseDurationValue 按 2 组分配 = 203456700）——已排队单独批次。time_fn 全绿 46/0。expr 全绿 1114+18/0。
+
+- 已推送 608dda6d29：MINUTE_MICROSECOND mm:ss.ffffff 分歧确认已被分组解析重写解决（2 组→mi/sec），补 3 断言（两分组 MINUTE_MICROSECOND/HOUR_MICROSECOND、单分组 SECOND_MICROSECOND 已有）。expr 全绿 1114+18/0。
+
+- 审计 item 4（字符串族）关闭：INSERT packet 溢出已被 TestInsertBinarySig 移植钉住、STRCMP collation 已实现、ELT/FIELD/MAKE_SET/EXPORT_SET 覆盖齐；CHAR/VARCHAR padding 归 storage 面仍开放。已推送。
