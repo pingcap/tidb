@@ -326,3 +326,5 @@
 - 下轮恢复点: (1) hook 白名单后续: mpp_version(需 kv MppVersion 表)/init_connect(SQL 解析)/tiflash_hashagg_preaggregation_mode; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - init_connect 批: run_validation 臂落地—值必须可解析为 SQL(Go sysvar.go:704, 会话模式在本边界以缺省模式代替并注释), 失败=ErrWrongTypeForVar 1232, 空值=零语句通过(同 Go ParseSQL(""))。回归 3 断言。session lib 1283 通过/281 预存(失败集与既有一致), fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) hook 白名单后续: mpp_version(需 kv MppVersion 表)/tiflash_hashagg_preaggregation_mode(核实 Go master 无此变量, 已剔除); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- mpp_version 批: kv MppVersion 表镜像移植到 vardef modes.rs(UNSPECIFIED=-1/V0..V3/newest=3 + to_mpp_version 解析, -1..3 闭区间)+mpp_version run_validation 臂(拒绝消息 "-1 (unspecified), 0, 1, 2, 3")+双侧回归。session lib 1288 通过/281 预存(失败集与既有零新增), vardef 45+3+3, fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) hook 余项逐个; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。

@@ -1001,6 +1001,18 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        // Go's mpp_version Validation (`sysvar.go:3335`): the value must
+        // parse (`ToMppVersion`); a miss is refused with the option list
+        // `-1 (unspecified), 0, 1, 2, 3` (a bare errors.Errorf, so it
+        // reports as 1105).
+        if self.name == tidb_vardef::tidb_vars::MPP_VERSION {
+            if tidb_vardef::modes::to_mpp_version(&validated.value).is_none() {
+                return Err(ValidationError::Refused(format!(
+                    "incorrect value: `{original}`. mpp_version options: -1 (unspecified), 0, 1, 2, 3",
+                )));
+            }
+            return Ok(validated);
+        }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
         // else is `ErrWrongTypeForVar` (1232).
@@ -1854,6 +1866,35 @@ mod tests {
             sv.validate("THIS IS NOT SQL ~~~"),
             Err(ValidationError::WrongType)
         );
+    }
+
+    /// Go's mpp_version Validation (`sysvar.go:3335`): UNSPECIFIED and the
+    /// integer range [-1, 3] pass (stored as typed); anything else is
+    /// refused with the option list.
+    #[test]
+    fn mpp_version_whitelist_matches_go() {
+        let sv = get_sys_var("mpp_version").unwrap();
+        assert_eq!(sv.validate("UNSPECIFIED").unwrap().value, "UNSPECIFIED");
+        assert_eq!(sv.validate("0").unwrap().value, "0");
+        assert_eq!(sv.validate("3").unwrap().value, "3");
+        assert_eq!(sv.validate("-1").unwrap().value, "-1");
+        match sv.validate("4") {
+            Err(ValidationError::Refused(message)) => {
+                assert!(
+                    message.contains(
+                        "incorrect value: `4`. mpp_version options: -1 (unspecified), 0, 1, 2, 3"
+                    ),
+                    "{message}"
+                );
+            }
+            other => panic!("expected a refused error, got {other:?}"),
+        }
+        match sv.validate("bogus") {
+            Err(ValidationError::Refused(message)) => {
+                assert!(message.contains("bogus"), "{message}");
+            }
+            other => panic!("expected a refused error, got {other:?}"),
+        }
     }
 
     fn bool_validation() {

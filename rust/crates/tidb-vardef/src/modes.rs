@@ -187,3 +187,49 @@ mod tests {
         assert_eq!(to_exchange_compression_mode("bogus"), None);
     }
 }
+
+/// Go `MppVersionUnspecifiedName`.
+pub const MPP_VERSION_UNSPECIFIED_NAME: &str = "UNSPECIFIED";
+
+/// Go `newestMppVersion` (`pkg/kv/mpp.go`): V0..V3 are registered, V3
+/// being the newest (`MppVersionV3 supports TiFlash version [v7.3, ~]`
+/// lineage ends at V3 on this master).
+pub const NEWEST_MPP_VERSION: i64 = 3;
+
+/// Go `MppVersionUnspecified`: the illegal-or-unspecified sentinel, only
+/// used inside TiDB.
+pub const MPP_VERSION_UNSPECIFIED: i64 = -1;
+
+/// Go `ToMppVersion` (`pkg/kv/mpp.go`): `UNSPECIFIED` in any case maps to
+/// the `-1` sentinel; otherwise the value must be an integer in
+/// `[-1, 3]`. `None` is Go's `false`, the illegal value.
+#[must_use]
+pub fn to_mpp_version(name: &str) -> Option<i64> {
+    let upper = name.to_uppercase();
+    if upper == MPP_VERSION_UNSPECIFIED_NAME {
+        return Some(MPP_VERSION_UNSPECIFIED);
+    }
+    let version: i64 = upper.parse().ok()?;
+    if (MPP_VERSION_UNSPECIFIED..=NEWEST_MPP_VERSION).contains(&version) {
+        Some(version)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod mpp_version_tests {
+    use super::*;
+
+    #[test]
+    fn to_mpp_version_matches_go() {
+        assert_eq!(to_mpp_version("UNSPECIFIED"), Some(-1));
+        assert_eq!(to_mpp_version("unspecified"), Some(-1));
+        assert_eq!(to_mpp_version("0"), Some(0));
+        assert_eq!(to_mpp_version("3"), Some(3));
+        assert_eq!(to_mpp_version("-1"), Some(-1));
+        assert_eq!(to_mpp_version("4"), None);
+        assert_eq!(to_mpp_version("-2"), None);
+        assert_eq!(to_mpp_version("bogus"), None);
+    }
+}
