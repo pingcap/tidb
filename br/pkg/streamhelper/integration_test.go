@@ -314,7 +314,6 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	taskName2 := "simple2"
 	taskInfo2 := simpleTask(taskName2, 4)
 	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
-	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
 
 	first := <-ch
 	require.Equal(t, first.Type, streamhelper.EventAdd)
@@ -326,7 +325,8 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	third := <-ch
 	require.Equal(t, third.Type, streamhelper.EventAdd)
 	require.Equal(t, third.Name, taskName2)
-	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
+	require.ElementsMatch(t, third.Ranges, simpleRanges(4))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
 	forth := <-ch
 	require.Equal(t, forth.Type, streamhelper.EventDel)
 	require.Equal(t, forth.Name, taskName2)
