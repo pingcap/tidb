@@ -233,10 +233,21 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
         CastType::Vector { .. } => "cast_vector",
     };
     let ft = match cast_type {
-        CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
+        // parser.y `"SIGNED" OptInteger`: TypeLonglong + CharsetBin/
+        // CollationBin/BinaryFlag.
+        CastType::Signed => {
+            let mut ft = FieldType::new(FieldTypeCode::LongLong);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        // parser.y `"UNSIGNED" OptInteger`: TypeLonglong +
+        // UnsignedFlag|BinaryFlag + the binary charset. (`UnsignedInUnion`
+        // is this crate's internal union-projection carrier, not a parser
+        // target; it keeps the same shape as `Unsigned`.)
         CastType::Unsigned | CastType::UnsignedInUnion => {
             let mut ft = FieldType::new(FieldTypeCode::LongLong);
             ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            set_binary_charset(&mut ft);
             ft
         }
         CastType::Char { len, .. } => {
@@ -246,18 +257,29 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
             }
             ft
         }
+        // parser.y `"BINARY" OptFieldLen`: TypeVarString, but a GIVEN length
+        // switches the code to TypeString; the binary charset/collation/flag
+        // are always set. An omitted length keeps TypeVarString, whose
+        // missing default in `defaultLengthAndDecimalForCast` leaves flen
+        // unspecified (no truncation).
         CastType::Binary { len } => {
-            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            let mut ft = FieldType::new(match len {
+                Some(_) => FieldTypeCode::String,
+                None => FieldTypeCode::VarString,
+            });
             set_binary_charset(&mut ft);
             if let Some(len) = len {
                 ft.set_flen(i64::from(*len));
             }
             ft
         }
+        // parser.y `"DECIMAL" FloatOpt`: TypeNewDecimal + the binary
+        // charset/collation/flag.
         CastType::Decimal { flen, scale } => {
             let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
             ft.set_flen(i64::from(*flen));
             ft.set_decimal(i64::from(*scale));
+            set_binary_charset(&mut ft);
             ft
         }
         CastType::Date => {
@@ -283,19 +305,52 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
             set_binary_charset(&mut ft);
             ft
         }
-        CastType::Year => FieldType::new(FieldTypeCode::LongLong),
-        CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
+        // parser.y `"YEAR"`: TypeYear + the binary charset — the eval type
+        // is still ETInt, so the evaluation arm is unchanged.
+        CastType::Year => {
+            let mut ft = FieldType::new(FieldTypeCode::Year);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        // parser.y `"DOUBLE"`: TypeDouble + the
+        // defaultLengthAndDecimalForCast defaults {22, -1} + binary.
+        CastType::Double => {
+            let mut ft = FieldType::new(FieldTypeCode::Double);
+            ft.set_flen(22);
+            ft.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        // parser.y `"FLOAT" FloatOpt`: TypeFloat (p <= 24; p >= 25 folds to
+        // `CastType::Double` at parse time) + the {12, -1} defaults + binary.
+        CastType::Float => {
+            let mut ft = FieldType::new(FieldTypeCode::Float);
+            ft.set_flen(12);
+            ft.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        // parser.y `"JSON"`: TypeJSON + BinaryFlag|ParseToJSONFlag + the
+        // default utf8mb4 charset/collation.
         CastType::Json => {
             let mut ft = FieldType::new(FieldTypeCode::Json);
             ft.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            ft.set_charset_name("utf8mb4");
+            ft.set_collation_name("utf8mb4_bin");
             ft
         }
+        // parser.y `"VECTOR" OptVectorElementType OptFieldLen`:
+        // TypeTiDBVectorFloat32. Unlike the other targets, this rule sets
+        // only CharsetBin/CollationBin — it does NOT add BinaryFlag.
         CastType::Vector { dimensions } => {
             let mut ft = FieldType::new(FieldTypeCode::VectorFloat32);
             if let Some(dimensions) = dimensions {
                 ft.set_flen(i64::from(*dimensions));
             }
             ft.set_decimal(0);
+            ft.set_charset_name("binary");
+            ft.set_collation_name("binary");
             ft
         }
     };
@@ -820,7 +875,6 @@ fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
 /// declared scale; a constant scale fixes the result scale at build time.
 fn round_truncate_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     use tidb_datatype::{EvalType, MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH};
-
     let value_type = args.first()?.static_type()?;
     let eval_type = match value_type.eval_type() {
         EvalType::Int => EvalType::Int,

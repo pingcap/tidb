@@ -228,6 +228,22 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   scheduled log's deadline into the purge row; the failure set is the
   exact base set. Receipt: `receipts/ddl_mview_purge_derivation.md`.
 
+- 2026-09-04 (`CAST` target-type production family, audit item 5): aligned
+  `rewriter::result_type::cast_target` with Go's `parser.y` `CastType` rule —
+  where each target's `FieldType` is born. `BINARY(N)` now switches to
+  `TypeString` (plain `BINARY` stays `VarString`), `CAST AS YEAR` produces
+  `TypeYear` instead of `LongLong` (eval type stays `ETInt`; the eval arm is
+  unchanged), `FLOAT` keeps `TypeFloat` with the `{12, -1}` defaults instead
+  of folding onto `Double`, `DOUBLE` gains the `{22, -1}` defaults, and
+  `SIGNED`/`UNSIGNED`/`DECIMAL`/`DOUBLE`/`FLOAT`/`JSON` gain the missing
+  binary charset/`BinaryFlag` (JSON also the utf8mb4 charset/collation);
+  `VECTOR` sets only charset/collation — the one target without
+  `BinaryFlag` — matching the existing semantics pin. The pre-existing
+  `CHAR` charset boundary (restore-only) stands. One fail-before regression
+  pins every row of the CastType table; full tidb-expr sweep green except
+  the documented network flake, and the cast/sysvar/restore consumer tests
+  in exec/planner pass. Receipt: `receipts/cast_target_type_family.md`.
+
 - 2026-09-04 (`pkg/util/chunk` clamped decimal read-back, A-1 follow-up):
   closed the observable gap `c59b2bd60e`'s lossy bridge left — its
   `FromString`-tail `resultFrac = digitsFrac` leaked hidden fraction words

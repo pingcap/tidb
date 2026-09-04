@@ -15,6 +15,95 @@
 use super::*;
 
 #[test]
+fn cast_target_types_follow_go_parser_y_cast_rules() {
+    use tidb_datatype::UNSPECIFIED_LENGTH;
+
+    // parser.y `"BINARY" OptFieldLen`: TypeVarString, but a GIVEN length
+    // switches the code to TypeString; the binary charset/collation/flag are
+    // always set.
+    let (_, binary_len) = cast_target(&tidb_ast::CastType::Binary { len: Some(5) }).unwrap();
+    assert_eq!(binary_len.code(), FieldTypeCode::String);
+    assert_eq!(binary_len.flen(), 5);
+    assert_eq!(
+        (binary_len.charset_name(), binary_len.collation_name()),
+        ("binary", "binary")
+    );
+    let (_, binary_bare) = cast_target(&tidb_ast::CastType::Binary { len: None }).unwrap();
+    assert_eq!(binary_bare.code(), FieldTypeCode::VarString);
+
+    // parser.y `"YEAR"`: TypeYear + binary — not LongLong.
+    let (_, year) = cast_target(&tidb_ast::CastType::Year).unwrap();
+    assert_eq!(year.code(), FieldTypeCode::Year);
+    assert_eq!(
+        (year.charset_name(), year.collation_name()),
+        ("binary", "binary")
+    );
+
+    // parser.y `"SIGNED" OptInteger` / `"UNSIGNED" OptInteger`: LongLong
+    // (plus UnsignedFlag) with the binary charset/collation/flag.
+    let (_, signed) = cast_target(&tidb_ast::CastType::Signed).unwrap();
+    assert_eq!(signed.code(), FieldTypeCode::LongLong);
+    assert!(!signed.is_unsigned());
+    assert_eq!(
+        (signed.charset_name(), signed.collation_name()),
+        ("binary", "binary")
+    );
+    let (_, unsigned) = cast_target(&tidb_ast::CastType::Unsigned).unwrap();
+    assert!(unsigned.is_unsigned());
+    assert_eq!(
+        (unsigned.charset_name(), unsigned.collation_name()),
+        ("binary", "binary")
+    );
+
+    // parser.y `"DECIMAL" FloatOpt`: NewDecimal + binary.
+    let (_, decimal) = cast_target(&tidb_ast::CastType::Decimal { flen: 10, scale: 2 }).unwrap();
+    assert_eq!(
+        (decimal.charset_name(), decimal.collation_name()),
+        ("binary", "binary")
+    );
+
+    // parser.y `"DOUBLE"` / `"FLOAT" FloatOpt` / `"REAL"`: the
+    // defaultLengthAndDecimalForCast defaults (TypeDouble {22, -1},
+    // TypeFloat {12, -1}) plus binary. REAL under REAL_AS_FLOAT folds to
+    // CastType::Float at parse time.
+    let (_, double) = cast_target(&tidb_ast::CastType::Double).unwrap();
+    assert_eq!(double.code(), FieldTypeCode::Double);
+    assert_eq!((double.flen(), double.decimal()), (22, UNSPECIFIED_LENGTH));
+    assert_eq!(
+        (double.charset_name(), double.collation_name()),
+        ("binary", "binary")
+    );
+    let (_, float) = cast_target(&tidb_ast::CastType::Float).unwrap();
+    assert_eq!(float.code(), FieldTypeCode::Float);
+    assert_eq!((float.flen(), float.decimal()), (12, UNSPECIFIED_LENGTH));
+    assert_eq!(
+        (float.charset_name(), float.collation_name()),
+        ("binary", "binary")
+    );
+
+    // parser.y `"JSON"`: ParseToJSON + Binary flags, utf8mb4/utf8mb4_bin.
+    let (_, json) = cast_target(&tidb_ast::CastType::Json).unwrap();
+    assert!(json.has_flag(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON));
+    assert!(json.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+    assert_eq!(
+        (json.charset_name(), json.collation_name()),
+        ("utf8mb4", "utf8mb4_bin")
+    );
+
+    // parser.y `"VECTOR" OptVectorElementType OptFieldLen`: binary
+    // charset/collation but — uniquely among the targets — NO BinaryFlag.
+    let (_, vector) = cast_target(&tidb_ast::CastType::Vector {
+        dimensions: Some(3),
+    })
+    .unwrap();
+    assert_eq!(
+        (vector.charset_name(), vector.collation_name()),
+        ("binary", "binary")
+    );
+    assert!(!vector.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+}
+
+#[test]
 fn pi_and_abs_keep_their_source_field_metadata() {
     let pi = builtin_return_type("pi", &[]).unwrap();
     assert_eq!(pi.code(), FieldTypeCode::Double);

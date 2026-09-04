@@ -139,7 +139,11 @@ Numerically equal, but the **text the client receives differs**, which is a wron
 returned value over both the text and binary protocols, and a different
 `decimals` byte in the column definition.
 
-**NOT FIXED** — the evaluator has no access to the argument `FieldType`.
+**FIXED (verified 2026-09-04).** The build-time result type now owns the
+cap: `rewriter::result_type::round_truncate_return_type` applies
+`args[0]`'s declared decimal whenever the scale argument is not a
+`Constant` (the constant branch caps at `MAX_DECIMAL_SCALE`), matching
+`calculateDecimal4RoundAndTruncate`.
 
 ### D — rank 1 — `LIKE` counts `_` in characters even for a binary operand
 
@@ -167,8 +171,11 @@ Go: `0` — `_` consumes one **byte**, and 2 bytes remain unmatched against a
 
 Equivalently `SELECT _binary'é' LIKE _binary'_';`.
 
-**NOT FIXED** — needs a byte-wise `compile`/`match` pair plus the derived
-collation at the call site.
+**FIXED (verified 2026-09-04).** `like_match_with_collation` dispatches
+`Collation::Binary` (and the ASCII fast paths over the bin collations) to
+the byte-wise `do_match_binary_pattern`, leaving the rune-wise
+collation-weight matcher for the rest — the two matchers Go has, selected
+by the derived collation at the call site.
 
 ### E — rank 3 — `FLOOR`/`CEIL` pick the decimal-vs-int result type from the runtime digits, not the declared width
 
@@ -198,7 +205,9 @@ Rust code's own comment claims this preserves the source boundary; it does so
 only for literals wide enough to carry their own digits (`9223372036854775807.0`
 does), not for narrow values in wide columns.
 
-**NOT FIXED** — same `FieldType`-plumbing dependency as B and C.
+**FIXED (verified 2026-09-04).** `ceil_floor_return_type` reads the
+declared width — `source.flen() - source.decimal() > 18` selects the
+`NewDecimal` result (`MaxIntWidth - 2`), not the runtime digits.
 
 ### F — rank 2 — `SUBSTRING`'s position/length arguments refused instead of cast
 
@@ -224,12 +233,14 @@ identical Go `ETInt` cast.
   `if uint64(len(s)+len(d)) > b.maxAllowedPacket { return "", true, handleAllowedPacketOverflowed(...) }`,
   which appends warning `1301 Result of concat() was larger than max_allowed_packet`
   and returns `NULL`.
-- Rust: `rust/crates/tidb-expr/src/string_fn.rs` `concat` — no size check.
+- Rust: `rust/crates/tidb-expr/src/string_fn.rs` — the packet guard now
+  exists (`ctx.max_allowed_packet()` in `concat`, `LPAD`/`RPAD`, `REPEAT`,
+  and the shared `string_packet` helpers).
 
 A `CONCAT` result over `max_allowed_packet` (default 64 MiB) is `NULL` + warning
-in Go and a full-length string in Rust. Listed for completeness; it needs
-session state the value evaluator does not carry, and the same guard is missing
-from the other packet-limited string builtins.
+in Go; Rust now refuses the same way through the evaluator's
+`max_allowed_packet` context (FIXED, verified 2026-09-04, alongside the other
+packet-limited string builtins).
 
 ---
 
