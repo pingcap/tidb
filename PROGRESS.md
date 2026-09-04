@@ -2,7 +2,7 @@
 
 > 已知 flaky：tidb-expr `json_schema_valid_resolves_file_and_http_references`（网络依赖，单跑通过/全量偶发，与本会话改动无关）。
 
-> 当前焦点 / 下一步：①expr-builtin temporal arithmetic（DATE_ADD/DATE_SUB/DATEDIFF/TIMESTAMPDIFF/EXTRACT，审计建议顺序 2——完全未扫）②chunk A-3 已核实过期（row.rs 重构为 row_decoder.rs，Missing/Null 已建模；datum 级 per-type 审计仍开放）③parser #11（结构性）④CAST 面：套件全绿，大缺口=inUnion flag 与 CAST flen/flag 产出族（audit item 5），需要多批次。⑤等用户的分区对照查询后验证 Rust 裁剪。注意：另一会话 ca9bc95d09 修了 parser 测试注册——重放我批次时需重跑 parser/lexer 套件（已验证全绿）。
+> 当前焦点 / 下一步（union shape-pin 测试草稿未通过 harness 断言，已回退；inUnion 评估标志的 ignored gap pin 待下轮用 set_opr_tests 真实 harness 重写）：①expr-builtin temporal arithmetic（DATE_ADD/DATE_SUB/DATEDIFF/TIMESTAMPDIFF/EXTRACT，审计建议顺序 2——完全未扫）②chunk A-3 已核实过期（row.rs 重构为 row_decoder.rs，Missing/Null 已建模；datum 级 per-type 审计仍开放）③parser #11（结构性）④CAST 面：套件全绿，大缺口=inUnion flag 与 CAST flen/flag 产出族（audit item 5），需要多批次。⑤等用户的分区对照查询后验证 Rust 裁剪。注意：另一会话 ca9bc95d09 修了 parser 测试注册——重放我批次时需重跑 parser/lexer 套件（已验证全绿）。
 
 ## 已推送（origin/hparser-integration，截至 8e0f80e381 之后还有 f8ddb7c72a/06bccf90e2/6fba82d378/50a0a29c13/5465936985/3369859aa2）
 
