@@ -1205,6 +1205,15 @@ fn parse_mysql_clamped_exponent_keeps_go_error_precedence() {
     assert_eq!(negative_error, Some(DecimalParseError::Truncated));
 }
 
+/// Go discards a rounding carry when every original digit was shifted out of
+/// the fixed nine-word decimal buffer.
+#[test]
+fn parse_mysql_shift_discards_carry_after_fraction_exhaustion() {
+    let (value, error) = Decimal::parse_mysql("9e-82");
+    assert_eq!(value.to_string(), "0");
+    assert_eq!(error, Some(DecimalParseError::Truncated));
+}
+
 /// Exact source `TestFromStringMyDecimal`, including exponent best-effort
 /// parsing and the test-only one-word buffer.
 #[test]

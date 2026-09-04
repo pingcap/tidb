@@ -42,6 +42,13 @@ For each bounded behavior cluster:
 
 ## Progress
 
+- 2026-09-04: aligned the Rust `tidb-datatype` decimal shift owner for the
+  complete Go-master `pkg/types` fixed-word boundary. A rounding carry is now
+  discarded when every original digit lies outside the retained fractional
+  words, matching Go's post-round digit-bound check for `9e-82` (zero plus
+  truncation). The focused fail-before regression, package inventory, and
+  Ready validation are recorded in `receipts/types_explain_format_audit.md`.
+
 - 2026-09-04: aligned the Rust `tidb-datatype` `STR_TO_DATE` owner for the
   complete Go-master `pkg/types` Unicode punctuation boundary. The `%.'` token
   now follows Go's `unicode.IsPunct` categories, including non-ASCII
@@ -5344,6 +5351,12 @@ For each bounded behavior cluster:
 
 ## Decision Log
 
+- Decision: preserve Go's pre-round digit-bound check in Rust decimal shifting
+  by inspecting the source digit prefix before accepting a rounding carry.
+  Checking only the rounded numeric value would incorrectly retain a carry
+  after all source digits had fallen outside the fixed word buffer. Date/Author:
+  2026-09-04, Codex.
+
 - Decision: use `unicode-general-category` for `STR_TO_DATE`'s `%.'` token and
   explicitly subtract the 13 punctuation code points introduced in Unicode
   16.0. The fetched Go 1.25 source uses Unicode 15.0, so Rust's default
@@ -5866,6 +5879,12 @@ For each bounded behavior cluster:
   Codex.
 
 ## Surprises & Discoveries
+
+- `Decimal::shift_mysql_with_word_limit` already rounded to the right scale,
+  but it tested only `rounded.is_zero()`. For a value such as `9e-82`, Go's
+  separate pre-round `digitBegin`/`digitEnd` geometry makes the carry itself
+  non-surviving; the Rust equivalent is an all-zero retained prefix in the
+  unrounded digit string.
 
 - Go 1.25's `unicode.IsPunct` table is Unicode 15.0 while the already-locked
   Rust `unicode-general-category` dependency is generated from Unicode 16.0.

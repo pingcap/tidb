@@ -317,6 +317,33 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 # pre-fix: failed (`¿` returned InvalidDate); after fix: 1 passed
 ```
 
+## Rust-only parity follow-up: decimal shift carry exhaustion
+
+The complete 61-artifact `pkg/types` inventory above remains the owning
+package for the fixed-word decimal shift path. Go's `MyDecimal.Shift`
+(`pkg/types/mydecimal.go:599-606`) checks the pre-round digit bounds after
+rounding the excess fractional words. If the rounding carry is the only digit
+that would survive, Go clears the value and keeps `ErrTruncated`; the carry is
+not allowed to resurrect a value that was shifted entirely out of the
+nine-word buffer. Rust's `Decimal::shift_mysql_with_word_limit` previously
+checked only whether the rounded value was numerically zero, so `9e-82`
+became `1e-81` instead of zero.
+
+The Rust `tidb-datatype` owner now checks the retained prefix of the pre-round
+digit string before accepting a rounding carry. When that prefix is all zero,
+it returns the Go-compatible zero plus `DecimalCodecWarning::Truncated`; a
+carry with any surviving source digit is still retained. The focused
+regression `decimal_tests::parse_mysql_shift_discards_carry_after_fraction_exhaustion`
+failed before the production change (`1e-81` instead of `0`) and passes after
+it. No Go, generated, or Bazel file changed.
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --lib decimal_tests::parse_mysql_shift_discards_carry_after_fraction_exhaustion -- --exact
+# pre-fix: failed (`1e-81` instead of `0`); after fix: 1 passed
+```
+
 ## Validation
 
 Profile: Ready for this bounded production change.
@@ -356,6 +383,14 @@ For the Unicode-punctuation follow-up specifically:
 - `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (379 tests).
 - `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
 - `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,114 tests; 130 documented source-carrier gaps ignored).
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
+
+For the decimal-shift follow-up specifically:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib decimal_tests::parse_mysql_shift_discards_carry_after_fraction_exhaustion -- --exact` — pre-fix failed on the carried `1e-81`; after the fix, 1 focused test passed.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype --lib -- --test-threads=1` — passed (380 tests).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-datatype -p tidb-expr` — passed (existing warnings only).
+- `OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-expr --lib -- --test-threads=1` — passed (1,114 tests; 130 documented source-carrier gaps ignored). The first run had one transient local HTTP-fixture `WouldBlock`; its isolated retry and this full rerun passed.
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `git diff --check`, and the pinned `make lint` command above — passed.
 
 ## Risks and not verified

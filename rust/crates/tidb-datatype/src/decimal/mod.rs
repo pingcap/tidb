@@ -981,6 +981,17 @@ impl Decimal {
 
         let kept_scale = ((word_limit - words_int) * DIGITS_PER_WORD) as i32;
         let rounded = exact.round_to_scale(kept_scale);
+        // Go checks the pre-round digit bounds after applying the carry. If
+        // every source digit was below the retained fractional boundary, a
+        // carry from rounding must not resurrect that shifted-out value.
+        let discarded_digits = exact.storage_scale.saturating_sub(kept_scale as u32) as usize;
+        let retained_len = exact.digits.len().saturating_sub(discarded_digits);
+        if exact.digits[..retained_len]
+            .bytes()
+            .all(|digit| digit == b'0')
+        {
+            return (Decimal::from_int(0), Some(DecimalCodecWarning::Truncated));
+        }
         if rounded.is_zero() {
             return (Decimal::from_int(0), Some(DecimalCodecWarning::Truncated));
         }
