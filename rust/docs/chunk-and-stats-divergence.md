@@ -114,20 +114,25 @@ exists: the row decoder was reworked into `row_decoder.rs`, whose
 `row_decoder_source.rs:61-62`). The datum-level conversion still owes a
 per-type audit, but the referenced panic site is gone.
 
-**A-3 (ORIGINAL TEXT) (rank 3 — panic where Go returns NULL).**
+**A-3 (ORIGINAL TEXT) (rank 3 — panic where Go returns NULL). FIXED (verified 2026-09-05).**
 Go's `Row.DatumWithBuffer` (`row.go:152-197`) is a `switch` with **no default
 arm**: an unlisted `tp.GetType()` leaves the caller's buffer at its zero value,
-i.e. a NULL datum. Rust `row.rs:247-249` panics.
+i.e. a NULL datum. The Rust `datum_with_buffer` now has the same contract —
+its unlisted-type arm simply returns and leaves the caller's datum untouched,
+exactly what Go's absent default arm does — and the checked
+`try_datum_with_buffer` boundary turns malformed cells into typed errors
+instead of panics. The audit's original `row.rs:247-249` panic no longer
+exists.
 Distinguishing case: a non-null cell in a column typed `TypeGeometry` or
-`TypeNull`. Go yields NULL; Rust aborts. TiDB does not produce non-null cells
-of those types, so this is defensive-only.
+`TypeNull`. Go yields NULL; the former Rust panic is gone.
 
-**A-4 (rank 3 — documented deferral, affects printed/encoded decimals).**
-`row.rs:233-246` notes that Go additionally calls `d.SetLength(tp.GetFlen())`
-and `d.SetFrac(tp.GetDecimal())` (`row.go:176-185`) and that the explicit
-`SetFrac` override is deferred. Distinguishing case: a `DECIMAL(10,2)` column
-whose cell carries `digitsFrac = 4`; Go's datum reports frac 2, Rust's reports
-the stored 4, changing the re-encoded/printed text. Already tracked in-code.
+**A-4 (ORIGINAL TEXT) (rank 3 — documented deferral, affects printed/encoded decimals). FIXED (verified 2026-09-05).**
+Go additionally calls `d.SetLength(tp.GetFlen())` and `d.SetFrac(...)`
+(`row.go:176-185`). The Rust NewDecimal arm now stamps the same shape:
+`Decimal::from_my_decimal(&stored).with_declared_shape(flen, fraction)`
+where `fraction` is Go's unspecified-decimal rule verbatim — the cell's
+`digitsFrac` when `tp.decimal` is unspecified, else `tp.decimal`
+(`row.rs` `datum_with_buffer`). The former SetFrac deferral is closed.
 
 **A-5 (informational — not representable).**
 Go's `Chunk.Reset` (`chunk.go:301-310`) returns early when `c.columns == nil`,

@@ -276,3 +276,5 @@
 - 下轮恢复点: (1) 逐行核对 BINARY(n)/DECIMAL(p,s) cast 目标宽度 vs builtin_cast.go(残差子批); (2) chunk A-2(docs/chunk-and-stats-divergence.md); (3) 若并发会话新增 MysqlError::new 站点跟随 error-code 新约定。
 - Cast 家族闭环: Go WrapWithCastAs{Int,Real,Decimal,String,Time,Duration,JSON,VectorFloat32} 与 Rust wrap_with_cast_as_* 8:8 一一对应; wrap_with_cast_as_string 本轮逐行核对一致(decimal+3/MaxIntWidth/bit(flen+7)/float清 flen/coercibility 三分支); 11 个 wrapper 测试全绿。inventory 残差改指 BINARY(n)/DECIMAL(p,s) 解析器 FieldInfo 宽度(归语句重写面)。
 - 下轮恢复点: (1) chunk A-2(docs/chunk-and-stats-divergence.md); (2) 语句重写面 BINARY(n)/DECIMAL(p,s) FieldInfo 宽度; (3) 并发会话新增站点跟随。
+- chunk A-3/A-4 核实为**已修复**(吸收树中 row.rs `_ => return` 零触碰契约 = Go 无 default 臂; NewDecimal 臂已 with_declared_shape 按Go SetFrac 规则), divergence 文档已标记 FIXED(verified 2026-09-05)。
+- 下轮恢复点: (1) BINARY(n)/DECIMAL(p,s) 解析器 FieldInfo 宽度面; (2) B-3 命名项(改公开参数名, 属"小而确定"之外, 暂缓); (3) 并发会话新增站点跟随。
