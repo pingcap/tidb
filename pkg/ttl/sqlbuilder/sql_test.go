@@ -577,6 +577,165 @@ func TestSQLBuilder(t *testing.T) {
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` IN ('a', 'b') AND `time` < FROM_UNIXTIME(0)")
 }
 
+func TestEnumClusteredPKDeleteUsesPhysicalValues(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table ttl_enum_delete(
+		e enum('', 'a') not null,
+		id bigint not null,
+		expired_at datetime not null,
+		primary key(e, id) clustered
+	) TTL=expired_at + interval 1 hour`)
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec(`insert into ttl_enum_delete values
+		(0, 1, '2024-01-01 00:00:00'),
+		('', 1, '2024-01-01 00:00:00')`)
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_enum_delete"))
+	require.NoError(t, err)
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+	expire := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Delete ordinal 1 first while ordinal 0 still exists. Both display as an
+	// empty string, so a string key predicate could delete the wrong row.
+	ordinal1 := [][]types.Datum{{
+		types.NewMysqlEnumDatum(types.Enum{Name: "", Value: 1}),
+		types.NewIntDatum(1),
+	}}
+	deleteOrdinal1, err := sqlbuilder.BuildDeleteSQL(ttlTbl, ordinal1, expire)
+	require.NoError(t, err)
+	require.Contains(t, deleteOrdinal1, "WHERE (`e`, `id`) IN ((1, 1))")
+	plan := tk.MustQuery("explain format='brief' " + deleteOrdinal1)
+	plan.CheckContain("Point_Get")
+	plan.CheckNotContain("TableFullScan")
+	tk.MustExec(deleteOrdinal1)
+	tk.MustQuery("select e+0, id from ttl_enum_delete order by e, id").Check(testkit.Rows("0 1"))
+
+	ordinal0 := [][]types.Datum{{
+		types.NewMysqlEnumDatum(types.Enum{Name: "", Value: 0}),
+		types.NewIntDatum(1),
+	}}
+	deleteOrdinal0, err := sqlbuilder.BuildDeleteSQL(ttlTbl, ordinal0, expire)
+	require.NoError(t, err)
+	require.Contains(t, deleteOrdinal0, "WHERE (`e`, `id`) IN ((0, 1))")
+	plan = tk.MustQuery("explain format='brief' " + deleteOrdinal0)
+	plan.CheckContain("Point_Get")
+	plan.CheckNotContain("TableFullScan")
+	tk.MustExec(deleteOrdinal0)
+	tk.MustQuery("select e+0, id from ttl_enum_delete").Check(testkit.Rows())
+}
+
+func TestClusteredPKPaginationUsesRangeScan(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@sql_mode=''")
+	testCases := []struct {
+		name        string
+		keyType     string
+		values      string
+		expectedIDs []int64
+	}{
+		{
+			name:    "enum",
+			keyType: "enum('z','a','b')",
+			// ENUM 0 is its special empty error value. The remaining values are
+			// stored in declaration order, which differs from display-string order.
+			values: `(0, 1, '2024-01-01 00:00:00'),
+				('z', 2, '2024-01-01 00:00:00'),
+				('z', 3, '2024-01-01 00:00:00'),
+				('a', 4, '2024-01-01 00:00:00'),
+				('b', 5, '2024-01-01 00:00:00')`,
+			expectedIDs: []int64{1, 2, 3, 4, 5},
+		},
+		{
+			name:    "varchar",
+			keyType: "varchar(16)",
+			values: `('', 1, '2024-01-01 00:00:00'),
+				('a', 2, '2024-01-01 00:00:00'),
+				('a', 3, '2024-01-01 00:00:00'),
+				('b', 4, '2024-01-01 00:00:00')`,
+			expectedIDs: []int64{1, 2, 3, 4},
+		},
+		{
+			name:    "decimal",
+			keyType: "decimal(10,2)",
+			values: `(-1.5, 1, '2024-01-01 00:00:00'),
+				(0, 2, '2024-01-01 00:00:00'),
+				(0, 3, '2024-01-01 00:00:00'),
+				(2.5, 4, '2024-01-01 00:00:00')`,
+			expectedIDs: []int64{1, 2, 3, 4},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tableName := "ttl_clustered_pk_" + tc.name
+			tk.MustExec(fmt.Sprintf(`create table %s(
+				k %s not null,
+				id bigint not null,
+				expired_at datetime not null,
+				primary key(k, id) clustered
+			) TTL=expired_at + interval 1 hour`, tableName, tc.keyType))
+			tk.MustExec(fmt.Sprintf("insert into %s values %s", tableName, tc.values))
+
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+			require.NoError(t, err)
+			ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+			require.NoError(t, err)
+			generator, err := sqlbuilder.NewScanQueryGenerator(
+				ttlTbl, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), nil, nil)
+			require.NoError(t, err)
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+			var previous [][]types.Datum
+			var ids []int64
+			var generatedSQL []string
+			for range 32 {
+				sql, err := generator.NextSQL(previous, 1)
+				require.NoError(t, err)
+				if sql == "" {
+					break
+				}
+				generatedSQL = append(generatedSQL, sql)
+				plan := tk.MustQuery("explain format='brief' " + sql)
+				plan.CheckNotContain("TopN")
+				plan.CheckNotContain("Sort")
+				if previous != nil {
+					plan.CheckNotContain("TableFullScan")
+					plan.CheckContain("TableRangeScan")
+				}
+				rs, err := tk.Session().GetSQLExecutor().ExecuteInternal(ctx, sql)
+				require.NoError(t, err)
+				rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+				require.NoError(t, err)
+				previous = make([][]types.Datum, len(rows))
+				for i, row := range rows {
+					previous[i] = row.GetDatumRow(ttlTbl.KeyColumnTypes)
+					ids = append(ids, previous[i][1].GetInt64())
+				}
+			}
+			require.True(t, generator.IsExhausted())
+			require.Equal(t, tc.expectedIDs, ids)
+
+			if tc.name == "enum" {
+				allSQL := strings.Join(generatedSQL, "\n")
+				require.Contains(t, allSQL, "`k` = 1 AND `id` > 2")
+				require.Contains(t, allSQL, "`k` > 1")
+				enumStart := types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 2})
+				enumEnd := types.NewMysqlEnumDatum(types.Enum{Name: "b", Value: 3})
+				rangeGenerator, err := sqlbuilder.NewScanQueryGenerator(
+					ttlTbl, time.Unix(1, 0).UTC(), []types.Datum{enumStart}, []types.Datum{enumEnd})
+				require.NoError(t, err)
+				rangeSQL, err := rangeGenerator.NextSQL(nil, 10)
+				require.NoError(t, err)
+				require.Contains(t, rangeSQL, "WHERE `k` >= 2 AND `k` < 3")
+			}
+		})
+	}
+}
+
 func TestScanQueryGenerator(t *testing.T) {
 	t1 := &cache.PhysicalTable{
 		Schema: ast.NewCIStr("test"),

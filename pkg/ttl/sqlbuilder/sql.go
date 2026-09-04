@@ -52,6 +52,23 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 	return expr.Restore(restoreCtx)
 }
 
+// writePhysicalKeyDatum writes a datum used to locate or order a physical key.
+// ENUM must use its numeric ordinal: ordinal 0 (the special error value) and an
+// explicitly declared empty-string member have the same display value, so the
+// display string is neither a stable cursor nor an exact key predicate.
+func writePhysicalKeyDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldType) error {
+	switch ft.GetType() {
+	case mysql.TypeEnum:
+		if d.Kind() != types.KindMysqlEnum {
+			return errors.Errorf("invalid ENUM cursor datum kind: %d", d.Kind())
+		}
+		restoreCtx.WritePlain(strconv.FormatUint(d.GetMysqlEnum().Value, 10))
+		return nil
+	default:
+		return writeDatum(restoreCtx, d, ft)
+	}
+}
+
 // FormatSQLDatum formats the datum to a value string in sql
 func FormatSQLDatum(d types.Datum, ft *types.FieldType) (string, error) {
 	var sb strings.Builder
@@ -148,7 +165,7 @@ func (b *SQLBuilder) WriteDelete() error {
 	return nil
 }
 
-// WriteCommonCondition writes a new condition
+// WriteCommonCondition writes a new condition for physical key values.
 func (b *SQLBuilder) WriteCommonCondition(cols []*model.ColumnInfo, op string, dp []types.Datum) error {
 	switch b.state {
 	case writeSelOrDel:
@@ -188,7 +205,7 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 	return nil
 }
 
-// WriteInCondition writes an IN condition
+// WriteInCondition writes an IN condition for physical key values.
 func (b *SQLBuilder) WriteInCondition(cols []*model.ColumnInfo, dps ...[]types.Datum) error {
 	switch b.state {
 	case writeSelOrDel:
@@ -291,7 +308,7 @@ func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) 
 		} else {
 			b.restoreCtx.WritePlain(", ")
 		}
-		if err := writeDatum(b.restoreCtx, d, &cols[i].FieldType); err != nil {
+		if err := writePhysicalKeyDatum(b.restoreCtx, d, &cols[i].FieldType); err != nil {
 			return err
 		}
 	}
