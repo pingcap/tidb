@@ -539,6 +539,14 @@ func waitTableReplicaStateWithTableName(dom *domain.Domain, t *testing.T, db str
 	require.Equal(t, available, replica.Available)
 }
 
+func waitForTiFlashProgress(t *testing.T, tableID int64, expected float64, timeout time.Duration) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		progress, isExist := infosync.GetTiFlashProgressFromCache(tableID)
+		return isExist && progress == expected
+	}, timeout, ddl.PollTiFlashInterval/2)
+}
+
 func CheckTableNoReplica(dom *domain.Domain, t *testing.T, db string, table string) {
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
 	require.NoError(t, err)
@@ -1222,17 +1230,14 @@ func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	// after available, progress should can be updated.
-	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
-	require.True(t, isExist)
-	require.True(t, progress == 0)
+	partitionID := tb.Meta().Partition.Definitions[0].ID
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateAvailableTableProgressCache", "1*sleep(7000)")
 
-	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	progress, isExist = infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
-	require.True(t, isExist)
-	require.True(t, progress == 1)
+	s.tiflash.ResetSyncStatus(int(partitionID), false)
+	waitForTiFlashProgress(t, partitionID, 0, ddl.PollTiFlashInterval*RoundToBeAvailable*6)
+
+	s.tiflash.ResetSyncStatus(int(partitionID), true)
+	waitForTiFlashProgress(t, partitionID, 1, ddl.PollTiFlashInterval*RoundToBeAvailable*6)
 }
 
 func TestTiFlashProgressCache(t *testing.T) {
