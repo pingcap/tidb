@@ -340,3 +340,5 @@
 - 下轮恢复点: (1) 工单余项: tiflash_pipeline_model/pessimistic_txn_fair_locking(条目位置待查); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - 工单最终处置并推送: tiflash_pipeline_model=废弃警告型(值透传, 警告 sink 缺口同 schema_cache 钳位注释); fair_locking 拒绝臂仅 next-gen 生效(惰性)。30 项全部处置: 16 已落地+回归/2 Enum 通用覆盖/1 废弃/1 空操作/1 next-gen 惰性/若干 fork 或不存在。hook 审计关闭。
 - 下轮恢复点: (1) 选下一个无 audit 文档的 Go package 遍历; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- F2 静态分类完成并写入 audit: 47 站点四桶(startup 13/事务写 8/点读 prepare 8/完成杂项 18); 事务写簇修复设计=复用 txn.rs TxnErrorKind 映射, 仍需一次冲突捕获钉错误文本签名。
+- 下轮恢复点: (1) 若有 live cluster 捕获冲突错误文本→落地事务写簇 9007 路由; (2) 选下一无文档 Go package(候选 tidb-hint 已查结构在位); (3) F4 低优先级。

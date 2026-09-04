@@ -425,3 +425,28 @@ separately, the extracted format-verb sequences. The SQLSTATE and class comparis
 same shape. Re-running that against a later tree is how this document stays honest; the
 integration replay will not do it, because it still classifies `(Err(_), true)` as
 `BothRejected`.
+
+### F2 progress (2026-09-05): static reachability classification
+
+The unknown-flattening sites are classified by enclosing function
+(static call-site analysis, no cluster needed):
+
+- Startup/connect path (fail process bring-up, not per-SQL): `connect`
+  x4 + x2, `connect_loaded_catalog_authority` x4,
+  `configured_catalog_from_tables`, `open_session` x2 -- 13 sites.
+- Per-statement transaction/write seams -- the cluster Go classifies as
+  9007-class (`driver/errors/txn.rs` already carries the
+  `TxnErrorKind::WriteConflict` mapping): `commit_bound_write` x3,
+  `control_transaction` x2, `transaction_for_statement`,
+  `transaction_error`, `execute_prepared_write` -- 8 sites.
+- Point-read and prepare seams: `prepare_point_read` x4,
+  `prepare_configured_query` x2, `point_handles` x2 -- 8 sites.
+- Statement completion and misc: `finish_execute_stmt` x3,
+  `node_accounts` x3, `loaded_table_refusal_error` x2,
+  `lightweight_ddl_statement_context` and friends -- the remainder.
+
+Repair design for the transaction/write cluster: route those seams
+through the existing txn error-kind mapping instead of `unknown()`.
+Still gated on one captured conflict to pin the Rust tikv-client's
+error text signatures -- the mapping keys on text/kind, and guessing
+signatures without a capture would be speculative.
