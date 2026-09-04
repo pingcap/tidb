@@ -525,6 +525,12 @@ impl SysVarDef {
                 .map_err(|error| ValidationError::SqlError(error.to_sql_error()))?;
             return Ok(validated);
         }
+        // Go's `secure_auth` validation keeps the deprecated compatibility
+        // switch permanently enabled: OFF is ErrWrongValueForVar (1231),
+        // while ON remains the normalized stored value.
+        if self.name == "secure_auth" && validated.value == "OFF" {
+            return Err(ValidationError::WrongValue);
+        }
         // Go's `collation_server` validation (`sysvar.go`'s `checkCollation`)
         // resolves names through the parser registry, stores the canonical
         // spelling, and returns `ErrUnknownCollation` (1273) for a missing
@@ -1247,21 +1253,12 @@ mod tests {
         assert_eq!(sv.validate("Warn").unwrap().value, "WARN");
     }
 
-    /// Go `TestSecureAuth` does NOT pass against this layer, and this test
-    /// pins why rather than hiding it.
-    ///
-    /// `secure_auth` rejects `OFF` from its per-variable `Validation`
-    /// closure, which runs after `ValidateFromType`. Only `ValidateFromType`
-    /// is ported (see the module doc), so the type check accepts `OFF` here
-    /// where real TiDB answers
-    /// "Variable 'secure_auth' can't be set to the value of 'OFF'".
-    /// Porting the closures is the next unit for this file.
+    /// Go `TestSecureAuth`: the compatibility switch permanently rejects
+    /// OFF with ErrWrongValueForVar while accepting ON.
     #[test]
-    fn per_variable_validation_closures_are_not_modelled() {
+    fn secure_auth_rejects_off_and_accepts_on() {
         let sv = get_sys_var("secure_auth").unwrap();
-        // The declarative type check passes it, unlike real TiDB.
-        assert_eq!(sv.validate("OFF").unwrap().value, "OFF");
-        // The part that IS ported agrees with Go.
+        assert_eq!(sv.validate("OFF"), Err(ValidationError::WrongValue));
         assert_eq!(sv.validate("ON").unwrap().value, "ON");
     }
 

@@ -900,6 +900,34 @@ fn global_read_only_noop_variables_need_the_global_gate() {
     }
 }
 
+/// Go `TestSecureAuth`: the global compatibility switch cannot be disabled;
+/// the rejected OFF write leaves the default ON intact, while ON remains a
+/// valid global assignment.
+#[test]
+fn secure_auth_global_write_rejects_off() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    let error = session
+        .run("SET GLOBAL secure_auth = OFF")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1231);
+    assert_eq!(
+        error.message,
+        "Variable 'secure_auth' can't be set to the value of 'OFF'"
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.secure_auth"),
+        Some("1".to_owned())
+    );
+
+    session.run("SET GLOBAL secure_auth = ON").unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.secure_auth"),
+        Some("1".to_owned())
+    );
+}
+
 /// Go's `max_allowed_packet` `Validation`: a SESSION write is `ErrReadOnly`
 /// (1621) even though the variable has session scope for READING.
 #[test]

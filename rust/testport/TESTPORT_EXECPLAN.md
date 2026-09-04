@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` secure_auth validation): ported
+  `TestSecureAuth`'s per-variable validation. `secure_auth=OFF` now returns
+  Go's 1231 wrong-value error and leaves the global ON default unchanged;
+  ON remains accepted. Added both registry-level and end-to-end GLOBAL
+  assignment regressions and reconciled the b010 receipt row.
 - 2026-09-05 (`pkg/sessionctx/variable` SQL mode and no-op read-only gates):
   reconciled the remaining `TestSQLModeVar`, `TestReadOnlyNoop`, and
   `TestSQLAutoIsNull` receipt rows with their live Rust owners. Added a
