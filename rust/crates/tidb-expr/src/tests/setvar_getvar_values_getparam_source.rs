@@ -459,7 +459,8 @@ fn ast_args(expr: &tidb_ast::Expr) -> &[tidb_ast::Expr] {
 /// GETVAR string path end-to-end (assign → observe store → overwrite),
 /// keeping the arms' invariant: what the call returns is what lands in the
 /// session. `ast.In {}` carries no case; `ast.BitCount` is driven cross-tier
-/// below; `ast.GetParam`'s ranged-index arm is the GETPARAM gap above.
+/// below; `ast.GetParam`'s ranged-index arm is exercised by the active
+/// GETPARAM regression above.
 #[test]
 fn vectorized_builtin_other_func_representable_arms() {
     let store = VarStore::default();
