@@ -309,7 +309,7 @@ impl BuiltinSignature {
                 ))
             }
             RetCollation::FirstArgString => {
-                let argument = children.first()?.field_type.as_ref()?;
+                let argument = children[0].field_type.as_ref()?;
                 let argument_flag = argument.flag.unwrap_or_default();
                 let collation =
                     tidb_datatype::proto_to_collation(argument.collate.unwrap_or_default());
@@ -339,7 +339,7 @@ impl BuiltinSignature {
                 ))
             }
             RetCollation::SecondArgString => {
-                let argument = children.get(1)?.field_type.as_ref()?;
+                let argument = children[1].field_type.as_ref()?;
                 let argument_flag = argument.flag.unwrap_or_default();
                 let collation =
                     tidb_datatype::proto_to_collation(argument.collate.unwrap_or_default());
