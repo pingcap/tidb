@@ -97,6 +97,10 @@ For each bounded behavior cluster:
   made GLOBAL concurrency writes enforce Go's prerequisite switches against
   the pending table image. The focused regression covers both refusal paths,
   the source error text, and successful atomic/readback publication.
+- 2026-09-05 (`pkg/sessionctx/variable` auto-analyze ratio validation): ported
+  Go's minimum-ratio closure while preserving values above one and the exact
+  bare refusal error. Focused SQL coverage verifies failed writes leave the
+  previous GLOBAL value intact and that the 0.00001 minimum is accepted.
 - 2026-09-05 (`pkg/sessionctx/variable` resource-control hooks): published
   Go's process-wide enable and strict-mode switches on named GLOBAL writes,
   startup/cluster/reset paths, and changed resource-group hint admission to

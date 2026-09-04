@@ -855,6 +855,23 @@ impl SysVarDef {
                     .to_owned(),
             ));
         }
+        // Go's `tidb_auto_analyze_ratio` accepts values above one but refuses
+        // ratios below 0.00001 (within the source's 1e-9 tolerance), keeping
+        // the previous setting intact with a bare validation error.
+        if self.name == tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_RATIO {
+            let ratio = validated
+                .value
+                .parse::<f64>()
+                .map_err(|_| ValidationError::WrongType)?;
+            const MIN_RATIO: f64 = 0.00001;
+            const TOLERANCE: f64 = 1e-9;
+            if ratio < MIN_RATIO && (ratio - MIN_RATIO).abs() > TOLERANCE {
+                return Err(ValidationError::Refused(format!(
+                    "the value of {} should be greater than or equal to {MIN_RATIO:.6}",
+                    self.name
+                )));
+            }
+        }
         // Direct registry users (including Go's validation unit tests) may
         // toggle the process-wide scheduler products without a GLOBAL table.
         // Preserve the source closure's prerequisite check here; SQL writes

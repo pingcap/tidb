@@ -1150,6 +1150,43 @@ fn resource_control_global_hooks_publish_process_switches() {
     assert!(!session.vars().resource_control_enabled());
 }
 
+/// Go `TestTiDBAutoAnalyzeRatio`: values greater than one remain valid, while
+/// tiny positive ratios are refused at 0.00001 and leave the prior GLOBAL
+/// value unchanged.
+#[test]
+fn auto_analyze_ratio_validation_matches_go() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_auto_analyze_ratio = 1.1")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_auto_analyze_ratio"),
+        Some("1.1".to_owned())
+    );
+
+    let error = session
+        .run("SET GLOBAL tidb_auto_analyze_ratio = 0")
+        .expect_err("zero ratio must be refused");
+    assert_eq!(error.to_mysql_error().code, 1105);
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_auto_analyze_ratio"),
+        Some("1.1".to_owned())
+    );
+
+    let error = session
+        .run("SET GLOBAL tidb_auto_analyze_ratio = 0.0000000001")
+        .expect_err("tiny ratio must be refused");
+    assert_eq!(error.to_mysql_error().code, 1105);
+    session
+        .run("SET GLOBAL tidb_auto_analyze_ratio = 0.00001")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_auto_analyze_ratio"),
+        Some("0.00001".to_owned())
+    );
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.
