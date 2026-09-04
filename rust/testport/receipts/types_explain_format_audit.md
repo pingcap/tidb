@@ -1421,7 +1421,10 @@ accessor or scalar evaluator arm, so the source-derived test was ignored. The
 `Columns` contract now exposes `current_resource_group()`, and the live
 zero-argument evaluator returns that value (or SQL NULL when the resolver has
 no session value). The regression uses the same session-backed information
-test harness as the neighboring Go ports.
+test harness as the neighboring Go ports. The executor's `StmtContext` now
+implements that accessor from its already-effective resource-group field, so a
+rewritten `SELECT CURRENT_RESOURCE_GROUP()` observes the same value that
+storage requests receive after statement-hint activation.
 
 The AST/value evaluator now shares the same session-state implementation via
 `eval_func_values_in`, so a parsed `Expr::Func` cannot diverge into an
@@ -1434,6 +1437,13 @@ Focused validation:
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
   -p tidb-expr --lib test_current_resource_group_ast_path -- --nocapture
 # passed: 1 test (AST/value effective resource-group value and no-session NULL)
+
+LC_ALL=C LANG=C cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml \
+  --offline --locked -p tidb-executor --lib \
+  stmt_context::tests::current_resource_group_evaluates_from_statement_context \
+  -- --exact --nocapture
+# pre-fix: failed because StmtContext did not implement the accessor
+# after binding: 1 passed (rewritten SELECT reads the effective group)
 ```
 
 Ready validation for this batch:

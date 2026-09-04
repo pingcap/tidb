@@ -3011,6 +3011,10 @@ impl Columns for StmtContext {
         Some(rendered.join(","))
     }
 
+    fn current_resource_group(&self) -> Option<String> {
+        Some(self.resource_group_name.clone())
+    }
+
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
     }
@@ -3452,6 +3456,36 @@ mod tests {
     fn connection_id_reports_the_attached_value() {
         let ctx = StmtContext::for_query().with_connection_id(Some(7));
         assert_eq!(ctx.connection_id(), Some(7));
+    }
+
+    /// Go `builtinCurrentResourceGroupSig` reads the effective
+    /// `StmtCtx.ResourceGroupName`, which is the value storage requests also
+    /// receive after statement-hint activation.
+    #[test]
+    fn current_resource_group_evaluates_from_statement_context() {
+        let stmt = tidb_parser::parse("SELECT CURRENT_RESOURCE_GROUP()")
+            .expect("the information builtin parses");
+        let tidb_ast::Stmt::Query(query) = &stmt else {
+            panic!("not a query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("not a select")
+        };
+        let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
+            panic!("not an expression field")
+        };
+        let expression =
+            tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
+                .expect("CURRENT_RESOURCE_GROUP rewrites");
+        let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        dual.set_num_virtual_rows(1);
+        let ctx = StmtContext::for_query().with_resource_group_name("rg1");
+        assert_eq!(
+            expression
+                .eval(&ctx, dual.get_row(0))
+                .expect("CURRENT_RESOURCE_GROUP evaluates"),
+            Datum::new_string(b"rg1".to_vec())
+        );
     }
 
     #[test]
