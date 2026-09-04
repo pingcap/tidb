@@ -81,6 +81,11 @@ For each bounded behavior cluster:
   SQL-level GLOBAL clamp/readback coverage for the 10..60000ms bounds and
   original-value 1292 warnings, preserving the process-wide setter callback
   as an explicit boundary.
+- 2026-09-05 (`pkg/sessionctx/variable` schema-cache hook): added the
+  process-wide `SchemaCacheSize` byte publication for validated GLOBAL,
+  startup, cluster-load, reset, and committed-image paths, with focused
+  suffix/floor/default regressions and the optional cache-resize callback
+  retained as an explicit boundary.
 - 2026-09-05 (`pkg/sessionctx/variable` TTL schedule-window inventory): wired
   GLOBAL TypeTime writes through the issuing session's timezone so short
   `HH:MM` values retain the same numeric offset as Go's `ParseInLocation`;

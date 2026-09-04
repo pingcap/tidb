@@ -74,6 +74,11 @@ pub static PLAN_REPLAYER_FILE_RETENTION_TIME: AtomicI64 =
 /// Go `vardef.EnableTTLJob`, the process-wide switch used by the TTL worker.
 pub static ENABLE_TTL_JOB: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_TTL_JOB_ENABLE);
 
+/// Go `vardef.SchemaCacheSize`, the process-wide byte count used by the
+/// infoschema cache after a GLOBAL/INSTANCE update.
+pub static SCHEMA_CACHE_SIZE: AtomicU64 =
+    AtomicU64::new(defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64);
+
 const OOM_ACTION_CANCEL: u8 = 0;
 const OOM_ACTION_LOG: u8 = 1;
 

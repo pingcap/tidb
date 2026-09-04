@@ -885,6 +885,51 @@ fn low_resolution_tso_update_interval_clamps_and_warns() {
     assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
 }
 
+/// Go `TestTiDBSchemaCacheSize`: byte-size GLOBAL values preserve their
+/// origin spelling while publishing the parsed byte count used by the cache.
+#[test]
+fn schema_cache_size_global_hook_publishes_bytes() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_schema_cache_size = '10KB'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_schema_cache_size'")),
+        vec![vec![
+            "tidb_schema_cache_size".to_owned(),
+            "64MB".to_owned()
+        ]]
+    );
+    assert_eq!(
+        tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::SeqCst),
+        64 << 20
+    );
+
+    session
+        .run("SET GLOBAL tidb_schema_cache_size = '700MB'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_schema_cache_size'")),
+        vec![vec![
+            "tidb_schema_cache_size".to_owned(),
+            "700MB".to_owned()
+        ]]
+    );
+    assert_eq!(
+        tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::SeqCst),
+        700 << 20
+    );
+
+    session
+        .run("SET GLOBAL tidb_schema_cache_size = DEFAULT")
+        .unwrap();
+    assert_eq!(
+        tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::SeqCst),
+        tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64
+    );
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.

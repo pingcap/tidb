@@ -655,6 +655,11 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE) {
             self.publish_ttl_job_enable();
         }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
+            if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
+                self.publish_schema_cache_size(&value);
+            }
+        }
         self.publish_embedding_settings();
         self.refresh_resolved();
     }
@@ -775,6 +780,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
             self.publish_ttl_job_enable();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE {
+            self.publish_schema_cache_size(&stored_value);
+        }
         self.refresh_resolved();
         if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
             self.publish_redaction_mode();
@@ -805,6 +813,17 @@ impl GlobalSysvars {
                 value.eq_ignore_ascii_case("ON") || value == "1"
             });
         tidb_vardef::ENABLE_TTL_JOB.store(enabled, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Publishes Go's `vardef.SchemaCacheSize` byte counter from a validated
+    /// origin string. The origin spelling remains the SQL-facing value in the
+    /// global table; this typed product is what the infoschema cache consumes.
+    fn publish_schema_cache_size(&self, value: &str) {
+        let bytes = crate::varsutil::parse_byte_size(value)
+            .map(|(bytes, _)| bytes)
+            .or_else(|| value.parse::<u64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64);
+        tidb_vardef::SCHEMA_CACHE_SIZE.store(bytes, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// The length floor the `validate_password` coupling requires right now:
@@ -858,6 +877,13 @@ impl GlobalSysvars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
             self.publish_ttl_job_enable();
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE {
+            self.publish_schema_cache_size(
+                tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE
+                    .to_string()
+                    .as_str(),
+            );
         }
         self.refresh_resolved();
         if !def.has_global_scope() {
@@ -914,6 +940,7 @@ impl GlobalSysvars {
         let mut loaded_memory_arbitration = false;
         let mut loaded_require_secure_transport = false;
         let mut loaded_ttl_job_enable = false;
+        let mut loaded_schema_cache_size = false;
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
             if let Some(def) = get_sys_var(&key) {
@@ -924,6 +951,7 @@ impl GlobalSysvars {
                 loaded_require_secure_transport |=
                     key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT;
                 loaded_ttl_job_enable |= key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE;
+                loaded_schema_cache_size |= key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE;
                 self.store(def)
                     .lock()
                     .expect("global sysvar lock poisoned")
@@ -944,6 +972,11 @@ impl GlobalSysvars {
         }
         if loaded_ttl_job_enable {
             self.publish_ttl_job_enable();
+        }
+        if loaded_schema_cache_size {
+            if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
+                self.publish_schema_cache_size(&value);
+            }
         }
         self.publish_embedding_settings();
         self.refresh_resolved();
@@ -988,6 +1021,9 @@ impl GlobalSysvars {
         self.refresh_resolved();
         self.publish_require_secure_transport();
         self.publish_ttl_job_enable();
+        if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
+            self.publish_schema_cache_size(&value);
+        }
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();
