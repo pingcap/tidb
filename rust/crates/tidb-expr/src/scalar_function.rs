@@ -39,7 +39,7 @@ use crate::schema::Schema;
 use tidb_ast::{BinaryOp, CiString, UnaryOp};
 use tidb_chunk::row::Row;
 use tidb_codec::{encode_compact_bytes, encode_int};
-use tidb_datatype::{Datum, EvalType, FieldType};
+use tidb_datatype::{Datum, EvalType, FieldType, UNSPECIFIED_LENGTH};
 
 const MAX_ADVISORY_LOCK_TIMEOUT_SECS: i64 = 1_073_741_824;
 
@@ -2054,7 +2054,16 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
         }
         "decimal" => CastType::Decimal {
             flen: u32::try_from(ret_type.flen()).unwrap_or(0),
-            scale: u32::try_from(ret_type.decimal()).unwrap_or(0),
+            // `WrapWithCastAsDecimal` preserves Go's `UnspecifiedLength`
+            // scale on non-decimal sources.  The AST cast fields are unsigned,
+            // so carry that state through the internal dispatch with the
+            // sentinel understood by `cast::eval_cast` instead of silently
+            // turning it into scale 0 (which rounds REAL 123.555 to 124).
+            scale: if ret_type.decimal() == UNSPECIFIED_LENGTH {
+                crate::cast::UNSPECIFIED_CAST_SCALE
+            } else {
+                u32::try_from(ret_type.decimal()).unwrap_or(0)
+            },
         },
         "date" => CastType::Date,
         "datetime" => CastType::DateTime {

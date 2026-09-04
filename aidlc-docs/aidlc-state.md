@@ -2,18 +2,17 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `tidb-expr` live temporal comparison context parity batch (finding D5)
+- Work unit: `tidb-expr` unspecified decimal wrapper-scale parity batch
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: the focused live temporal-comparison regressions pass. The
-  datatype owner reports 409 unit and 64 source/integration passes; expression
-  reports 1,150 passes, one known loopback HTTP JSON-schema fixture failure,
-  and 121 ignored; executor reports 1,058 passes and 121 existing
-  planner/storage/fixture failures. The live evaluator now reads statement
-  date modes/timezone and publishes 1292 through `Columns`; direct datatype
-  callers still consume the paired diagnostic explicitly. Strict datatype
-  clippy remains blocked only by the unrelated
+- Validation: focused decimal signature and wrapper-family regressions pass;
+  the formerly ignored REAL-to-DECIMAL fraction test is active. Ready reports
+  409 datatype unit and 64 source/integration passes; expression reports
+  1,151 passes, one known loopback HTTP JSON-schema fixture failure, and 120
+  ignored; executor reports 1,058 passes and 121 existing planner/storage/
+  fixture failures. All three owner checks plus formatting and diff checks
+  pass. Strict datatype clippy remains blocked only by the unrelated
   `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
@@ -112,6 +111,11 @@
   preserve Go's leading-word carry heuristic and nine-word overflow boundary.
   The focused 81-digit regression and Ready counts are recorded in
   `rust/testport/receipts/types_explain_format_audit.md`.
-- Next action: run the D5 caller-integration Ready profile, commit and push it,
-  then continue with the next executable Rust package boundary. Direct
-  dependency-leaf warning publication remains a bounded API follow-up.
+- Current batch: Rust's internal decimal cast dispatch now carries Go's
+  unspecified scale sentinel, and `WrapWithCastAsDecimal` restores strict
+  constant precision/scale refinement. The REAL `123.555` regression is active
+  and its Ready evidence is recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
+- Next action: commit and push the decimal-wrapper batch, then continue with
+  the next executable Rust package boundary. Direct datatype comparison warning
+  publication remains a bounded API follow-up.

@@ -42,14 +42,11 @@
 //!   whose cast signature is not ported; every wrapper below propagates that
 //!   error rather than silently returning the unwrapped expression, because
 //!   an unwrapped argument would make the aggregate read the WRONG eval type.
-//! - **`WrapWithCastAsDecimal`'s constant-refinement tail is dropped**
-//!   (`:2836`-`:2845`). Go evaluates the freshly built cast node
-//!   (`castExpr.EvalDecimal`) when it is `ConstStrict` and narrows the node's
-//!   flen/decimal to the actual precision of the result. It needs an
-//!   `EvalContext` and a decimal evaluation of a node this crate can only
-//!   evaluate through the full builtin dispatch; the result differs only in
-//!   the DISPLAY metadata of a constant argument, never in the value. It is
-//!   dropped, not approximated.
+//! - **`WrapWithCastAsDecimal`'s constant-refinement tail**
+//!   (`:2755`-`:2763`) evaluates a freshly built strict constant and narrows
+//!   the node's flen/decimal to the value's natural precision. Rust can run
+//!   the same value-only dispatch against [`crate::NoColumns`], which also
+//!   preserves the source value when the wrapper's scale is unspecified.
 //! - **`WrapWithCastAsString`'s `CoercibilityExplicit` branch reads the
 //!   argument's FIELD TYPE charset/collation** rather than a separate
 //!   `collationInfo`. Go's `expr.CharsetAndCollation()` returns the derived
@@ -66,7 +63,7 @@
 //!   aggregate path does.
 
 use crate::context::{Columns, EvalError};
-use crate::expression::Expression;
+use crate::expression::{ConstLevel, Expression};
 use crate::simple_expr::build_cast_function;
 use tidb_datatype::{
     EvalType, FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
@@ -187,9 +184,9 @@ const fn minimal_decimal_len_for_holding_integer(code: FieldTypeCode) -> i64 {
     }
 }
 
-/// Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`), without the
-/// constant-refinement tail (see the module header).
+/// Go `WrapWithCastAsDecimal` (`builtin_cast.go:2736`).
 pub fn wrap_with_cast_as_decimal(expr: Expression) -> Result<Expression, EvalError> {
+    let strict_constant = expr.const_level() == ConstLevel::STRICT;
     let source = type_of(&expr);
     if source.eval_type() == EvalType::Decimal {
         return Ok(expr);
@@ -206,7 +203,25 @@ pub fn wrap_with_cast_as_decimal(expr: Expression) -> Result<Expression, EvalErr
     }
     set_bin_chs_cln_flag(&mut tp);
     tp.add_flags(source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL));
-    build_cast_function(expr, tp, false)
+    let mut cast_expr = build_cast_function(expr, tp, false)?;
+    // Go's `ConstStrict` tail records the exact result shape on the cast node.
+    // This is observable through callers that inspect `GetType`, and it is
+    // also what lets a REAL/string wrapper retain 123.555 instead of treating
+    // the unresolved source scale as an explicit zero. The wrapper has no
+    // statement context, so the value-only `NoColumns` context is sufficient;
+    // any warning-bearing/non-constant expression is left untouched.
+    if strict_constant {
+        if let Ok(tidb_datatype::Datum::Decimal(value)) =
+            cast_expr.eval(&crate::NoColumns, tidb_chunk::row::Row::empty())
+        {
+            let (precision, frac) = value.precision_and_frac();
+            if let Some(field_type) = ret_type_mut(&mut cast_expr) {
+                field_type.set_decimal_under_limit(i64::from(frac));
+                field_type.set_flen_under_limit(i64::from(precision));
+            }
+        }
+    }
+    Ok(cast_expr)
 }
 
 /// Go `WrapWithCastAsString` (`builtin_cast.go:2769`).

@@ -918,6 +918,76 @@ The M6 behavior is unreachable through ordinary SQL because the distinguishing
 input exceeds `DECIMAL(65)`, but the fixed-word codec remains source-compatible
 for direct callers and row-codec boundaries.
 
+## Rust-only parity follow-up: unspecified decimal wrapper scale
+
+The complete `pkg/types` inventory above is also exercised by the Rust
+`tidb-expr` aggregate-cast wrappers. Go's `WrapWithCastAsDecimal`
+(`pkg/expression/builtin_cast.go:2736-2765`) carries an unspecified source
+scale through `BuildCastFunction`; `ProduceDecWithSpecifiedTp` therefore keeps
+the value's natural fraction and the `ConstStrict` tail narrows the result
+metadata to `PrecisionAndFrac`. Rust previously converted the `-1` scale in a
+`FieldType` to the AST cast's ordinary scale `0`, rounding a REAL such as
+`123.555` to `124`, and omitted the metadata refinement entirely.
+
+The Rust owner now carries an internal unspecified-scale sentinel through the
+`cast_decimal` dispatch. `eval_cast` skips precision/scale rounding when that
+sentinel is present, while still reporting source-string parse diagnostics.
+`wrap_with_cast_as_decimal` evaluates strict constants in the value-only
+`NoColumns` context and records the natural precision/fraction on the wrapper,
+matching Go's observable result type. No Go, generated, or Bazel file changed.
+
+Focused regression:
+
+- `tests::aggregation_arithmetic_cast_source::test_wrap_with_cast_as_types_classes_real_to_decimal_keeps_fraction`
+  proves `REAL(123.555)` remains a decimal `123.555` and the wrapper metadata
+  is `(flen=6, decimal=3)`; this test was previously ignored as a documented
+  parity gap.
+
+The neighboring `cast_decimal` signature table and all wrapper-family tests
+also pass after the sentinel is introduced:
+
+```text
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib test_cast_func_sig_as_decimal -- --nocapture
+# passed: 1 test
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --lib wrap_with_cast_as_types_classes_ -- --nocapture
+# passed: 6 tests, including the formerly ignored regression
+```
+
+Ready validation for the batch:
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets -- --test-threads=1
+# passed: 409 unit tests; 64 source/integration tests
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets -- --test-threads=1
+# 1,151 passed, 1 known loopback HTTP JSON-schema fixture failed, 120 ignored
+
+OPENSSL_DIR=... DYLD_FALLBACK_LIBRARY_PATH=... \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets -- --test-threads=1
+# 1,058 passed, 121 existing planner/storage/fixture failures, 0 ignored
+
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-datatype --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-expr --all-targets
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-executor --all-targets
+# all three owner checks passed with existing warnings only
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+git diff --check
+# both passed
+```
+
 ## Risks and not verified
 
 - Correctness: the RU literal/order and checked vector-size arithmetic now match

@@ -43,6 +43,13 @@ preserves Go's distinct no-digits `TruncatedWrongValue` and exponent
 The former F1, D1, and T1/T2 rank-one defects are fixed in this branch; their
 focused regressions and Ready outcomes remain linked in the sections below.
 
+The Rust `tidb-expr` aggregate-cast boundary is also aligned for Go's
+unspecified decimal scale: `WrapWithCastAsDecimal` now preserves a strict
+REAL/string constant's natural fraction and refines the wrapper metadata to
+its actual precision. The executable regression and Ready evidence are in
+`rust/testport/receipts/types_explain_format_audit.md`; this is an expression
+caller fix rather than a new `pkg/types` finding.
+
 Multiple fixes have landed in this branch, including the F1/F2 field-type
 predicates and the D/T/M temporal and decimal batches. Their focused
 regressions and Ready outcomes are recorded in the receipts referenced by each

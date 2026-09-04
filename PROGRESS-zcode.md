@@ -192,4 +192,9 @@
   profile are recorded in
   `rust/testport/receipts/types_explain_format_audit.md`; direct datatype
   callers still own publication of returned comparison diagnostics.
+- 2026-09-04: Rust aggregate decimal wrappers now preserve Go's unspecified
+  source scale through internal `cast_decimal` dispatch and restore strict
+  constant precision/scale refinement. The formerly ignored REAL
+  `123.555` regression is active; focused and Ready evidence are recorded in
+  `rust/testport/receipts/types_explain_format_audit.md`.
 - parser #5 (RESERVED_KEYWORDS 缺 DATABASE/DATABASES/DISTINCT) 核实已被并发会话修复 — RESERVED_KEYWORDS 当前含全部 236 条含这三个关键词。审计项 5 关闭。

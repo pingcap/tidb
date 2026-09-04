@@ -34,6 +34,13 @@ use tidb_datatype::{
     JSON_TYPE_CODE_STRING, JSON_TYPE_CODE_TIMESTAMP,
 };
 
+/// Internal marker used when a wrapper carries Go's `UnspecifiedLength`
+/// decimal scale through the AST-facing `CastType::Decimal` (whose fields are
+/// unsigned).  A wrapper cast with an unspecified scale must preserve the
+/// source value; mapping `-1` to the ordinary `0` scale would round every
+/// fractional value to an integer before Go's constant-refinement step.
+pub(crate) const UNSPECIFIED_CAST_SCALE: u32 = u32::MAX;
+
 /// Evaluates a [`CastType`] against an already-evaluated, non-`NULL`
 /// operand (`NULL` is handled by the caller — every target type maps
 /// `NULL` to `NULL`, so there's no per-type NULL case to write here).
@@ -136,6 +143,14 @@ pub(crate) fn eval_cast(
         CastType::Decimal { flen, scale } => {
             report_decimal_input_truncation(&v, ctx);
             let source = to_decimal_for_cast(&v);
+            // `WrapWithCastAsDecimal` leaves the target scale unspecified for
+            // REAL/string/temporal sources. Go's `ProduceDecWithSpecifiedTp`
+            // returns that value unchanged when either half of the target
+            // shape is unspecified, so do not reinterpret the internal
+            // sentinel as scale 0.
+            if *scale == UNSPECIFIED_CAST_SCALE {
+                return Ok(Datum::Decimal(source));
+            }
             let produced = source.cast_to_precision(*flen, *scale);
             report_decimal_production(ctx, &source, &produced, *flen, *scale);
             Ok(Datum::Decimal(produced))

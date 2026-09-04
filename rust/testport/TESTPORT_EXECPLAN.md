@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (D5 follow-up, `tidb-expr` decimal wrapper casts): carried Go's
+  unspecified decimal scale through the internal cast dispatch instead of
+  rounding it to scale 0, and restored `WrapWithCastAsDecimal`'s strict-
+  constant precision/scale refinement. The REAL `123.555` regression and the
+  Ready profile are recorded in `receipts/types_explain_format_audit.md`.
 - 2026-09-04 (D5 caller integration, `tidb-expr` temporal comparisons):
   replaced the live `time_compare_ordering` UTC/permissive constants with
   `Columns::date_modes()` and `Columns::time_zone()`, preserving strict

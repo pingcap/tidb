@@ -1529,9 +1529,6 @@ fn wrap_and_eval(expr: Expression, ctx: &WarningCtx) -> (i64, f64, Decimal, Stri
 
 #[test]
 fn test_wrap_with_cast_as_types_classes_numeric_rows() {
-    // Rows whose REAL→DECIMAL wrap keeps full fraction are split off into
-    // the gap test below: the Rust wrap derives a scale-0 declared shape
-    // for an unspecified-decimal source, so 123.555 lands as 124 there.
     let ctx = WarningCtx::default();
     let rows: Vec<(Expression, i64, f64, &str)> = vec![
         (
@@ -1574,9 +1571,22 @@ fn test_wrap_with_cast_as_types_classes_numeric_rows() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: WrapWithCastAsDecimal over a REAL source leaves the target's decimal unspecified in Go, and the signature keeps the value's own scale; the Rust wrap stores scale 0 in the node's declared shape, so cast(real as decimal) rounds to an integer"]
 fn test_wrap_with_cast_as_types_classes_real_to_decimal_keeps_fraction() {
-    // Go: decRes == types.NewDecFromFloatForTest(123.555) for Real(123.555).
+    let expr = const_typed(Datum::Real(123.555), real_ft());
+    let wrapped = crate::aggregation::wrap_cast::wrap_with_cast_as_decimal(expr).unwrap();
+    let value = wrapped
+        .eval(&WarningCtx::default(), tidb_chunk::row::Row::empty())
+        .unwrap();
+    assert_eq!(
+        value,
+        Datum::Decimal(Decimal::from_literal("123.555")),
+        "Go keeps the source scale when WrapWithCastAsDecimal has an unspecified target scale"
+    );
+    let result_type = wrapped
+        .static_type()
+        .expect("wrapped cast has a result type");
+    assert_eq!(result_type.flen(), 6);
+    assert_eq!(result_type.decimal(), 3);
 }
 
 #[test]
