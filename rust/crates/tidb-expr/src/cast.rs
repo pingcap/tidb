@@ -1151,12 +1151,22 @@ fn cast_to_time_value(
         modes.allow_invalid_dates,
         &ctx.time_zone(),
     );
-    let Ok((time, truncated)) = parsed else {
+    let Ok((time, truncated, dst_adjusted)) = parsed else {
         invalid_time_warning(ctx, &s);
         return Ok(None);
     };
     if truncated {
         ctx.append_warning(1292, &format!("Truncated incorrect datetime value: '{s}'"));
+    }
+    if dst_adjusted {
+        ctx.append_warning(
+            8179,
+            &format!(
+                "Timestamp is not valid, since it is in Daylight Saving Time transition '{}' for time zone '{:?}'",
+                s,
+                ctx.time_zone(),
+            ),
+        );
     }
     // Go's SECOND check is the STRING signature's ALONE
     // (`builtinCastStringAsTimeSig`: `res.IsZero() && HasNoZeroDateMode()`).
@@ -1447,7 +1457,7 @@ fn parse_time_by_source(
     fsp: Option<i64>,
     allow_invalid: bool,
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<(tidb_datatype::Time, bool), ()> {
+) -> Result<(tidb_datatype::Time, bool, bool), ()> {
     match v {
         Datum::Int(value) => tidb_datatype::parse_time_from_num(
             *value,
@@ -1457,7 +1467,7 @@ fn parse_time_by_source(
             allow_invalid,
             zone,
         )
-        .map(|parsed| (parsed.time, false))
+        .map(|parsed| (parsed.time, false, parsed.dst_adjusted))
         .map_err(|_| ()),
         Datum::UInt(value) => {
             let signed = i64::try_from(*value).map_err(|_| ())?;
@@ -1469,7 +1479,7 @@ fn parse_time_by_source(
                 allow_invalid,
                 zone,
             )
-            .map(|parsed| (parsed.time, false))
+            .map(|parsed| (parsed.time, false, parsed.dst_adjusted))
             .map_err(|_| ())
         }
         Datum::Decimal(value) => {
@@ -1479,24 +1489,24 @@ fn parse_time_by_source(
             match fsp {
                 Some(fsp) => time
                     .round_frac(fsp, zone)
-                    .map(|time| (time, false))
+                    .map(|time| (time, false, false))
                     .map_err(|_| ()),
-                None => Ok((time, false)),
+                None => Ok((time, false, false)),
             }
         }
         Datum::Real(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone)
-            .map(|time| (time, false)),
+            .map(|time| (time, false, false)),
         Datum::Float32(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone)
-            .map(|time| (time, false)),
+            .map(|time| (time, false, false)),
         Datum::Time(value) => {
             let mut time = *value;
             time.set_kind(kind);
             match fsp {
                 Some(fsp) => time
                     .round_frac(fsp, zone)
-                    .map(|time| (time, false))
+                    .map(|time| (time, false, false))
                     .map_err(|_| ()),
-                None => Ok((time, false)),
+                None => Ok((time, false, false)),
             }
         }
         // STRING/BYTES and every other coercible source keep Go's
@@ -1522,7 +1532,7 @@ fn parse_time_by_source(
             allow_invalid,
             zone,
         )
-        .map(|parsed| (parsed.time, parsed.truncated))
+        .map(|parsed| (parsed.time, parsed.truncated, parsed.dst_adjusted))
         .map_err(|_| ()),
     }
 }
@@ -1835,6 +1845,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_string_cast_to_timestamp_adjusts_dst_gap_and_warns() {
+        struct ZonedWarnings {
+            zone: tidb_datatype::SessionTimeZone,
+            warnings: RefCell<Vec<(u16, String)>>,
+        }
+        impl crate::Columns for ZonedWarnings {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                self.zone.clone()
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.warnings.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+
+        let ctx = ZonedWarnings {
+            zone: tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles),
+            warnings: RefCell::new(Vec::new()),
+        };
+        let got = cast_to_time(
+            &Datum::new_string("2018-03-11 02:00:16".to_owned()),
+            None,
+            &ctx,
+            tidb_datatype::TimeType::Timestamp,
+            0,
+        )
+        .expect("DST-gap TIMESTAMP cast keeps Go's adjusted value");
+        assert_eq!(render_time(&got), "2018-03-11 03:00:00");
+        let warnings = ctx.warnings.borrow();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].0, 8179);
+        assert!(warnings[0]
+            .1
+            .contains("Daylight Saving Time transition '2018-03-11 02:00:16'"));
     }
 
     fn render_time(v: &Datum) -> String {

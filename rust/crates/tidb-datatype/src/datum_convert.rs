@@ -446,7 +446,7 @@ impl Datum {
                     .convert_kind(kind, zero_in_date, invalid_date, zone)
                     .map_err(wrong_value)?;
                 if adjusted {
-                    event = Some(ScalarConversionEvent::Truncated);
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
                 }
                 converted.round_frac(fsp, zone).map_err(wrong_value)?
             }
@@ -457,7 +457,7 @@ impl Datum {
                 .and_then(|time| time.round_frac(fsp, zone))
                 .map_err(wrong_value)?,
             Self::String(value) => {
-                parse_time(
+                let parsed = parse_time(
                     value.as_utf8()?,
                     kind,
                     fsp,
@@ -466,11 +466,14 @@ impl Datum {
                     invalid_date,
                     zone,
                 )
-                .map_err(wrong_value)?
-                .time
+                .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             Self::Bytes(value) => {
-                parse_time(
+                let parsed = parse_time(
                     std::str::from_utf8(value)?,
                     kind,
                     fsp,
@@ -479,18 +482,29 @@ impl Datum {
                     invalid_date,
                     zone,
                 )
-                .map_err(wrong_value)?
-                .time
+                .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             Self::Int(value) => {
-                parse_time_from_num(*value, kind, fsp, zero_in_date, invalid_date, zone)
-                    .map_err(wrong_value)?
-                    .time
+                let parsed =
+                    parse_time_from_num(*value, kind, fsp, zero_in_date, invalid_date, zone)
+                        .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             Self::UInt(value) if *value <= i64::MAX as u64 => {
-                parse_time_from_num(*value as i64, kind, fsp, zero_in_date, invalid_date, zone)
-                    .map_err(wrong_value)?
-                    .time
+                let parsed =
+                    parse_time_from_num(*value as i64, kind, fsp, zero_in_date, invalid_date, zone)
+                        .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             Self::Decimal(value) => {
                 let mut time = parse_time_from_decimal(value, zero_in_date, invalid_date, zone)
@@ -499,7 +513,7 @@ impl Datum {
                 time.round_frac(fsp, zone).map_err(wrong_value)?
             }
             Self::Json(value) => {
-                parse_time(
+                let parsed = parse_time(
                     &value.unquote()?,
                     kind,
                     fsp,
@@ -508,8 +522,11 @@ impl Datum {
                     invalid_date,
                     zone,
                 )
-                .map_err(wrong_value)?
-                .time
+                .map_err(wrong_value)?;
+                if parsed.dst_adjusted {
+                    event = Some(ScalarConversionEvent::TimestampInDSTTransition);
+                }
+                parsed.time
             }
             _ => return Err(DatumValueError::Unsupported(self.kind(), "time")),
         };

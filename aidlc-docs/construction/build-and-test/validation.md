@@ -133,3 +133,17 @@ compilation, formatting, and whitespace checks passed. Strict clippy remains
 blocked by the unrelated `tidb-mysql/src/consts.rs:117-120`
 `map-or-identity` diagnostics. Full commands and remaining temporal boundaries
 are recorded in `rust/testport/receipts/types_float_string_invalid_date.md`.
+
+## `pkg/types` TIMESTAMP DST-gap batch
+
+The focused parser, expression-cast, and executor write-cast regressions
+passed. A Los Angeles `2018-03-11 02:00:16` TIMESTAMP is adjusted to
+`03:00:00`; read casts and lenient writes report Go's 8179 warning, while
+strict writes return 8179. The serialized `tidb-datatype` owner profile passed
+with 395 unit and 63 generated/source integration tests; the serialized
+`tidb-expr` profile had 1,132 passes, one known external HTTP JSON-schema
+fixture failure, and 124 ignored gap tests. Owner compilation, formatting, and
+whitespace checks passed. Strict datatype clippy remains blocked by the
+unrelated `tidb-mysql/src/consts.rs:117-120` `map_or_identity` diagnostics.
+Full inventory, commands, and boundaries are recorded in
+`rust/testport/receipts/types_timestamp_dst_gap.md`.

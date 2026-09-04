@@ -417,19 +417,26 @@ Distinguishing input: `TIME '-00:00:00.0015'` (nanoseconds `-1_500_000`),
 fsp 6 → 3 → Go and Rust `-00:00:00.001`. A value past the tie,
 `-1_501_000ns`, rounds to `-2ms` on both sides.
 
-## T7 (rank 2) — no `ErrTimestampInDSTTransition` path in the string parser
+## T7 (rank 2) — `ErrTimestampInDSTTransition` path in the string parser (FIXED 2026-09-04)
 
 - Go: `pkg/types/time.go:2012-2034` plus `adjustTimestampErrForDST`
   (`:2036-2052`) — a TIMESTAMP string landing in a DST gap returns the
   **adjusted value** together with `ErrTimestampInDSTTransition`, which callers
   such as `Time.Convert` (`time.go:464-470`) downgrade to a warning.
-- Rust: `rust/crates/tidb-datatype/src/time_parse.rs:501-504` —
-  `time.validate(...)?` propagates a hard `Err`. The adjustment exists only in
-  `mysql_time.rs:355-362` (`convert_kind`), never in the string parser.
+- Rust: `rust/crates/tidb-datatype/src/time_parse.rs` now carries
+  `ParsedTime::dst_adjusted`; both string and packed numeric TIMESTAMP parsing
+  adjust with `CoreTime::adjusted_datetime`. `tidb-expr::cast` emits 8179 for
+  the read path, while `Datum::convert_to_in` carries a dedicated
+  `TimestampInDSTTransition` event through `tidb-executor::driver::write_cast`
+  so writes retain the adjusted value and apply Go's strict/lenient warning
+  policy.
 
 Distinguishing input: tz `America/Los_Angeles`,
-`ParseTime('2018-03-11 02:00:16', TIMESTAMP, 0)` → Go `2018-03-11 03:00:00` +
-warning; Rust `Err(NonexistentLocalTime)`, no value.
+`ParseTime('2018-03-11 02:00:16', TIMESTAMP, 0)` → Go and Rust
+`2018-03-11 03:00:00` plus warning 8179 in lenient mode (the strict write path
+returns the same error). Focused parser, expression-cast, and write-cast
+regressions are recorded in
+`rust/testport/receipts/types_timestamp_dst_gap.md`.
 
 ## T8 (rank 2) — `ParseTimeFromNum(0)` drops the zero-date error
 

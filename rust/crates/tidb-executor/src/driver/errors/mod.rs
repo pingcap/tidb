@@ -1790,6 +1790,12 @@ impl DriverError {
             *b"22007",
             format!("Incorrect {type_name} value: '{value}' for column '{column}' at row {row}"),
         ),
+        DriverError::TimestampInDSTTransition { value, timezone } => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrTimeStampInDSTTransition,
+            format!(
+                "Timestamp is not valid, since it is in Daylight Saving Time transition '{value}' for time zone '{timezone}'"
+            ),
+        ),
         // Go: "Failed to read auto-increment value from storage engine",
         // which is what an exhausted allocator reports.
         DriverError::AutoincReadFailed => MysqlError::new(

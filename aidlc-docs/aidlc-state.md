@@ -2,15 +2,16 @@
 
 - Workspace: brownfield TiDB Go/Rust parity worktree
 - Stage: CONSTRUCTION / Build and Test (complete for the current bounded work unit)
-- Work unit: `pkg/types` float-string invalid-date parity batch (finding T12)
+- Work unit: `pkg/types` TIMESTAMP DST-gap parity batch (finding T7)
 - Go oracle: fetched `origin/master` (`fc7788ff517c3407dc7e000be989ab23e6648211`)
 - Rust target: dedicated worktree branch `codex/hparser-parity-latest`
 - User approval: execution requested directly; no interactive approval pause
-- Validation: the focused raw-pack regression, existing codec regression,
-  serialized `tidb-datatype` owner profile, owner compilation, formatting, and
-  diff checks pass. Strict clippy remains blocked only by the unrelated
-  `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics and
-  generated workspace diagnostics.
+- Validation: the focused parser, expression-cast, and executor write-cast
+  regressions, serialized datatype/expression owner profiles, owner
+  compilation, formatting, and diff checks pass. The expression profile keeps
+  one known external HTTP JSON-schema fixture failure. Strict datatype clippy
+  remains blocked only by the unrelated
+  `tidb-mysql/src/consts.rs:117-120` `map-or-identity` diagnostics.
 - Prior commit/push: JSON separator batch `242d294f2c` is pushed to
   `hparser-integration`.
 - Commit/push: JSON merge batch `71ffce262e` is pushed to
@@ -56,4 +57,11 @@
   integration/source tests; strict clippy remains blocked by unrelated
   `tidb-mysql` diagnostics. Receipt:
   `rust/testport/receipts/types_float_string_invalid_date.md`.
-- Next action: continue with the next executable package boundary.
+- Current batch: Rust TIMESTAMP string and packed numeric parsing now preserve
+  Go's DST-gap adjustment and 8179 diagnostic. The marker flows through
+  expression casts and write conversion, where lenient rows store the adjusted
+  value with a warning and strict rows return 8179. Focused regressions and
+  owner Ready results are recorded in
+  `rust/testport/receipts/types_timestamp_dst_gap.md`.
+- Next action: continue with the next executable package boundary after the
+  T7 batch is committed and pushed.

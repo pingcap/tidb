@@ -733,6 +733,14 @@ pub enum DriverError {
         /// The offending row's 1-based position.
         row: usize,
     },
+    /// Go `ErrTimeStampInDSTTransition` (8179): a TIMESTAMP wall clock in a
+    /// daylight-saving gap was adjusted, but remains a valid stored value.
+    TimestampInDSTTransition {
+        /// The source value as written by the statement.
+        value: String,
+        /// Go `Location.String()` for the session zone.
+        timezone: String,
+    },
     /// Go `ErrTruncatedWrongValueForField` (1265), row form.
     DataTruncatedAtRow {
         /// The column being modified.

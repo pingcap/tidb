@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`pkg/types` TIMESTAMP DST-gap parsing, finding T7): aligned
+  Go's `parseTime`/`adjustTimestampErrForDST` boundary. `ParsedTime` now
+  preserves the adjusted value and marker for a nonexistent local wall clock;
+  packed numeric TIMESTAMP parsing follows the same rule. Expression casts
+  emit 8179 while returning the adjusted value, and write conversion carries a
+  dedicated event so lenient writes store the value with the warning while
+  strict writes return 8179. Focused datatype, expression, and executor
+  regressions plus owner Ready results are recorded in
+  `receipts/types_timestamp_dst_gap.md`.
 - 2026-09-04 (batch 22, `pkg/ddl` MV remaining pure surface): implemented
   Go master `94a9cbedab`'s `MViewExecutionSessionVarsFromJob` (tidb-session,
   per-field fallback to the captured defaults over the job's system-variable

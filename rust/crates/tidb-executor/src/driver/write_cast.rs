@@ -206,9 +206,24 @@ fn cast_value_shaped(
     };
     converted.value = truncate_char_trailing_spaces(converted.value, field_type);
     if let tidb_datatype::Datum::Time(time) = converted.value {
-        return apply_zero_date(
+        let stored = apply_zero_date(
             time, false, field_type, &value, column, row_index, ctx, shape,
-        );
+        )?;
+        if matches!(
+            converted.event,
+            Some(tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition)
+        ) {
+            let error = DriverError::TimestampInDSTTransition {
+                value: datum_error_text(&source),
+                timezone: ctx.session_zone().dag_zone().0,
+            };
+            if ctx.strict() {
+                return Err(error);
+            }
+            let reported = error.to_mysql_error();
+            ctx.append_warning_parts(reported.code, &reported.message);
+        }
+        return Ok(stored);
     }
     let Some(event) = converted.event else {
         return Ok(converted.value);
@@ -260,6 +275,9 @@ fn cast_value_shaped(
         // to keep this match exhaustive.
         tidb_datatype::ScalarConversionEvent::Truncated
         | tidb_datatype::ScalarConversionEvent::RoundedToScale => incorrect_value(),
+        tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition => {
+            unreachable!("timestamp DST events are handled with the converted temporal value above")
+        }
     };
     let error = shape.name(error, &source, field_type);
     if ctx.strict() {
@@ -745,6 +763,33 @@ mod source_tests {
                 "Incorrect string value '\\x81' for column ''"
             );
         }
+    }
+
+    #[test]
+    fn timestamp_dst_gap_keeps_adjusted_value_and_8179_write_diagnostic() {
+        let field_type = FieldType::new(FieldTypeCode::Timestamp);
+        let zone = tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        let input = Datum::new_string("2018-03-11 02:00:16");
+
+        let lenient = crate::StmtContext::for_dml(false, false, false).with_time_zone(zone.clone());
+        let stored = cast_value_for_column(input.clone(), &field_type, "ts", 0, &lenient)
+            .expect("non-strict writes store Go's adjusted timestamp");
+        assert_eq!(datum_error_text(&stored), "2018-03-11 03:00:00");
+        let warnings = lenient.take_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].1, 8179);
+        assert!(warnings[0]
+            .2
+            .contains("Daylight Saving Time transition '2018-03-11 02:00:16'"));
+
+        let strict = crate::StmtContext::for_dml(false, true, false).with_time_zone(zone);
+        let error = cast_value_for_column(input, &field_type, "ts", 0, &strict)
+            .expect_err("strict writes surface Go's transition diagnostic");
+        let reported = error.to_mysql_error();
+        assert_eq!(reported.code, 8179);
+        assert!(reported
+            .message
+            .contains("Daylight Saving Time transition '2018-03-11 02:00:16'"));
     }
 
     #[test]

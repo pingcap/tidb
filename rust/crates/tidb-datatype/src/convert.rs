@@ -71,6 +71,11 @@ pub enum ScalarConversionEvent {
     RoundedToScale,
     /// Conversion saturated at a target boundary.
     Overflow(ScalarConversionError),
+    /// A TIMESTAMP wall clock fell in a daylight-saving gap and was adjusted
+    /// to Go's closest valid transition boundary. The statement layer keeps
+    /// this diagnostic distinct from ordinary truncation because Go reports
+    /// errno 8179 while still storing the adjusted value.
+    TimestampInDSTTransition,
 }
 
 /// A best-effort source conversion result and its warning/error event.
@@ -1869,6 +1874,7 @@ mod decimal_from_text_source_rows {
                 Some(ScalarConversionEvent::Truncated) => "truncated",
                 Some(ScalarConversionEvent::Overflow(_)) => "overflow",
                 Some(ScalarConversionEvent::RoundedToScale) => "rounded",
+                Some(ScalarConversionEvent::TimestampInDSTTransition) => "timestamp-dst",
             };
             assert_eq!(kind, event, "{input:?}");
         }

@@ -88,6 +88,14 @@
   `2020-02-31`, while strict mode rejects it; focused source regressions and
   the complete datatype owner profile are recorded in
   `rust/testport/receipts/types_float_string_invalid_date.md`.
+
+- 2026-09-04: aligned TIMESTAMP DST-gap parsing and write diagnostics with
+  Go's `parseTime`/`adjustTimestampErrForDST`. A Los Angeles
+  `2018-03-11 02:00:16` value becomes `03:00:00`; expression casts and
+  lenient writes emit 8179 while strict writes return it, preserving the
+  adjusted value. Focused parser/cast/write regressions and owner Ready
+  results are recorded in
+  `rust/testport/receipts/types_timestamp_dst_gap.md`.
 ## chunk A-1 范围确认（下批实现）
 ## chunk A-1 范围确认（下批实现；树当前全绿 1128/0 expr lib，A-1 实现需新上下文完整验证）
 
