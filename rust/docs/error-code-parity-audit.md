@@ -274,11 +274,20 @@ code via `tidb_error::mysql::mysql_state` — the same lookup Go's `NewErr` perf
 bytes, so the conversion is total and needs no fallback arm. The six arms now use it, so
 their code and state cannot drift apart again.
 
-**Not fixed:** the other ~169 hand-written `(code, state)` pairs. All 169 are currently
-*correct* — I checked each mechanically against Go's table — but they remain able to drift.
-The real repair is to delete the `state` parameter from `MysqlError::new` so the pair cannot
-be written down at all; that is a ~175-site change across crates other agents hold, so it
-belongs to a dedicated unit.
+**FIXED (2026-09-05): the drift vector is gone.** The `state` parameter
+was deleted from `MysqlError::new`, which now derives the SQLSTATE from
+the code through `tidb_error::mysql::mysql_state` — the same lookup
+`NewErr` performs. The ~246 literal raise sites in `driver/errors/mod.rs`
+and `driver/errors/exec.rs` were rewritten mechanically; a script compared
+every pre-rewrite `(code, state-literal)` pair against the derived value
+before the rewrite and found **all of them agreeing** (explicit table
+entries plus the `HY000` fallback), so the rewrite is behavior-preserving
+and only removes the ability to write a disagreeing pair. The three sites
+that reconstruct an error carried in from outside the module
+(`MemoryExceedForQuery`, `VarErrorKind::SqlError`, `ExecError::Killed`)
+now use `MysqlError::with_state`, which exists solely for those
+externally-given states; a runtime `ParseCoded { errno }` now derives
+like Go's runtime `NewErr` instead of forcing `HY000`.
 
 ---
 

@@ -264,3 +264,6 @@
 - parser #11(client-charset scanner)关闭为 parity-by-API 并推送 `2d97d650ba8`:
   核实链条完整——GBK/big5/sjis 危险字节对(lead≥0x81 + trail 0x5C/0x27/0x60)永非法 UTF-8; mysql_connection.rs 查询解码门先行转码/拒绝非 UTF-8; Lexer 全链 &str 无法表达该输入。加 charset 字段 = 无可达行为的规格化声明(违反 No speculative behavior), 故记录关闭而非实现。
 - 下批: Time::round_frac 时区语义(跨 tidb-datatype/tidb-expr)。
+- Time::round_frac 时区项关闭并推送 `fb6e70a35e0`(types: 记录 zone-free to_i64 的调用方审计):
+  结论——所有生产调用方 zone 安全: 表达式整数 getter 均在 WrapWithCastAsInt(session zone cast, to_i64_signed_in)之后; ranger YEAR 块的 pre_value 仅喂 out-of-range 算符翻转(2e13 量级 vs ≤2155 年界, 时区不可翻转结论); 直转路径均带 session zone。无需签名变更。
+- 下批候选: error-code ~175 站点(跨 crate)、CHAR/VARCHAR padding(storage 面)、Cast flen/flag 族、chunk A-2 offset-table strictness(docs/chunk-and-stats-divergence.md)。
