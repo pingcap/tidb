@@ -119,6 +119,11 @@ pub struct DispatchContext<'a> {
     /// `exhaustPhysicalPlans4LogicalApply` after estimating the correlated
     /// value hit ratio.
     pub apply_cache_capacity: i64,
+    /// Go `fixcontrol.Fix44855`, which raises an IndexJoin probe's scan-row
+    /// floor when the chosen access path can use only a prefix of the equality
+    /// join keys. The source default is enabled; callers that resolve the
+    /// session fix-control map can turn it off explicitly.
+    pub index_join_probe_row_count_fix: bool,
     /// Go `SessionVars.IsMPPAllowed()`, which controls MPP candidates.
     pub mpp_allowed: bool,
     /// Go `BaseLogicalPlan.taskMap`, keyed by the logical plan object and
@@ -151,6 +156,7 @@ impl<'a> DispatchContext<'a> {
             enable_paging: true,
             hash_join_concurrency: 5,
             apply_cache_capacity: 0,
+            index_join_probe_row_count_fix: true,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
             task_map: HashMap::new(),
@@ -198,6 +204,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_apply_cache_capacity(mut self, capacity: i64) -> Self {
         self.apply_cache_capacity = capacity;
+        self
+    }
+
+    /// Uses the session's resolved Fix44855 value for IndexJoin probe sizing.
+    #[must_use]
+    pub const fn with_index_join_probe_row_count_fix(mut self, enabled: bool) -> Self {
+        self.index_join_probe_row_count_fix = enabled;
         self
     }
 
@@ -1077,6 +1090,81 @@ fn equality_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
     ids
 }
 
+/// Computes Go's `indexJoinProbeAccessRowsFloor` for one admitted access
+/// prefix (`exhaust_physical_plans.go:824`).  IndexJoin's post-join row count
+/// uses every equality key, while a probe path may only build ranges from a
+/// leading subset.  In that case the scan still reads approximately one
+/// table row per distinct value of the keys that *were* used by the path.
+///
+/// The source skips this correction for pseudo statistics, complete key
+/// coverage, and a trailing range (the latter is not an equality-prefix
+/// estimate).  Unknown or non-positive NDVs fail closed at the same boundary
+/// rather than making a low-confidence cost estimate look precise.
+fn index_join_probe_access_rows_floor(
+    ds: &crate::logical::DataSource,
+    access_columns: &[tidb_expr::column::Column],
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    enabled: bool,
+) -> Option<f64> {
+    if !enabled || runtime.inner_join_keys.is_empty() || ds.handle_is_int {
+        return None;
+    }
+    let table_stats = ds.table_stats.as_ref()?;
+    if table_stats.stats_version() == 0 {
+        return None;
+    }
+
+    // `lastColIsRange`/`lastColManager` in Go identifies a non-equality tail.
+    // The Rust runtime property carries the source's residual conditions, so
+    // conservatively decline the floor whenever one of them is a range
+    // comparison.  Equality residuals remain eligible.
+    if runtime.other_conditions.iter().any(|condition| {
+        let tidb_expr::expression::Expression::ScalarFunction(function) = condition else {
+            return false;
+        };
+        let name = function.func_name.lowercase();
+        name == "ge" || name == "gt" || name == "lt" || name == "le"
+    }) {
+        return None;
+    }
+
+    let inner_ids = runtime
+        .inner_join_keys
+        .iter()
+        .map(|column| column.unique_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    let fixed = equality_fixed_ids(ds)
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut used_columns = Vec::new();
+    let mut used_runtime_keys = 0usize;
+    for column in access_columns {
+        if inner_ids.contains(&column.unique_id) {
+            used_runtime_keys += 1;
+            used_columns.push(column.clone());
+        } else if fixed.contains(&column.unique_id) {
+            used_columns.push(column.clone());
+        } else {
+            break;
+        }
+    }
+    if used_runtime_keys == 0 || used_runtime_keys >= runtime.inner_join_keys.len() {
+        return None;
+    }
+
+    let ids = used_columns
+        .iter()
+        .map(|column| column.unique_id)
+        .collect::<Vec<_>>();
+    let (ndv, _) =
+        crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&ids, table_stats);
+    if !ndv.is_finite() || ndv <= 0.0 {
+        return None;
+    }
+    let floor = table_stats.row_count() / ndv;
+    floor.is_finite().then_some(floor.max(0.0))
+}
+
 /// The path admission half of Go's
 /// `buildDataSource2{Table,Index}ScanByIndexJoinProp`: a table-range
 /// candidate must probe the clustered handle; an index-range candidate must
@@ -1516,6 +1604,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .table_stats
                     .clone()
                     .or_else(|| ds.base.base.stats_info().cloned());
+                let probe_access_rows_floor = prop.index_join_prop.as_ref().and_then(|runtime| {
+                    index_join_probe_access_rows_floor(
+                        ds,
+                        &common_columns,
+                        runtime,
+                        ctx.index_join_probe_row_count_fix,
+                    )
+                });
                 let mut count_after_access = table_stats.as_ref().map(|stats| stats.row_count());
                 if !table_access_conds.is_empty() {
                     count_after_access = ds.table_path_count_after_access.or_else(|| {
@@ -1533,6 +1629,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             )
                         })
                     });
+                }
+                if let (Some(count), Some(floor)) =
+                    (count_after_access.as_mut(), probe_access_rows_floor)
+                {
+                    *count = count.max(floor);
                 }
                 if let (Some(count), Some(ds_stats), Some(base_stats)) = (
                     count_after_access.as_mut(),
@@ -1581,10 +1682,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     }
                 }
                 if let Some(runtime) = &prop.index_join_prop {
-                    stats = Some(crate::stats_info::StatsInfo::new(
-                        runtime.avg_inner_row_count,
-                        [],
-                    ));
+                    stats = probe_access_rows_floor
+                        .and_then(|floor| {
+                            table_stats.as_ref().map(|table_stats| {
+                                table_stats.scale_by_expect_cnt(floor, ctx.skew_ratio)
+                            })
+                        })
+                        .or_else(|| {
+                            Some(crate::stats_info::StatsInfo::new(
+                                runtime.avg_inner_row_count,
+                                [],
+                            ))
+                        });
                 }
                 base.base.set_stats(stats.clone());
                 let table_range_rebuild = if table_access_conds.is_empty() {
@@ -2017,6 +2126,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .table_stats
                     .clone()
                     .or_else(|| ds.base.base.stats_info().cloned());
+                let probe_access_rows_floor = prop.index_join_prop.as_ref().and_then(|runtime| {
+                    index_join_probe_access_rows_floor(
+                        ds,
+                        &index_cols,
+                        runtime,
+                        ctx.index_join_probe_row_count_fix,
+                    )
+                });
                 let mut count_after_access = table_stats.as_ref().map(|stats| stats.row_count());
                 if detach.is_some() {
                     count_after_access = ds
@@ -2049,6 +2166,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                                 base_stats.row_count(),
                             ))
                         });
+                }
+                if let (Some(count), Some(floor)) =
+                    (count_after_access.as_mut(), probe_access_rows_floor)
+                {
+                    *count = count.max(floor);
                 }
                 if let (Some(count), Some(ds_stats), Some(base_stats)) = (
                     count_after_access.as_mut(),
@@ -2093,10 +2215,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     )
                 });
                 if let Some(runtime) = &prop.index_join_prop {
-                    stats = Some(crate::stats_info::StatsInfo::new(
-                        runtime.avg_inner_row_count,
-                        [],
-                    ));
+                    stats = probe_access_rows_floor
+                        .and_then(|floor| {
+                            table_stats.as_ref().map(|table_stats| {
+                                table_stats.scale_by_expect_cnt(floor, ctx.skew_ratio)
+                            })
+                        })
+                        .or_else(|| {
+                            Some(crate::stats_info::StatsInfo::new(
+                                runtime.avg_inner_row_count,
+                                [],
+                            ))
+                        });
                 }
                 base.base.set_stats(stats.clone());
                 let mut cost_columns = source_index
@@ -3281,6 +3411,65 @@ mod tests {
             &table_path,
             &runtime,
         ));
+    }
+
+    #[test]
+    fn index_join_probe_floor_uses_only_the_accessed_equality_prefix() {
+        use crate::logical::DataSource;
+        use crate::physical_property::IndexJoinRuntimeProp;
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::column::Column;
+
+        let first = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
+        let second = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
+        let source = DataSource {
+            table_stats: Some(
+                StatsInfo::new(2_000.0, [(11, 1_000.0), (12, 2_000.0)]).with_stats_version(1),
+            ),
+            ..DataSource::default()
+        };
+        let runtime = IndexJoinRuntimeProp {
+            other_conditions: Vec::new(),
+            outer_join_keys: vec![Column::new(21, FieldType::new(FieldTypeCode::LongLong))],
+            inner_join_keys: vec![first.clone(), second.clone()],
+            avg_inner_row_count: 1.0,
+            table_range_scan: false,
+        };
+
+        // A path that can only range on the first of two equality keys still
+        // scans one row per distinct first-key value: 2000 / 1000 = 2. The
+        // floor disappears once all equality keys are usable, when Fix44855
+        // is disabled, or when statistics are pseudo.
+        assert_eq!(
+            index_join_probe_access_rows_floor(&source, &[first.clone()], &runtime, true),
+            Some(2.0)
+        );
+        assert_eq!(
+            index_join_probe_access_rows_floor(&source, &[first, second], &runtime, true),
+            None
+        );
+        assert_eq!(
+            index_join_probe_access_rows_floor(
+                &source,
+                &[Column::new(11, FieldType::new(FieldTypeCode::LongLong))],
+                &runtime,
+                false,
+            ),
+            None
+        );
+        let pseudo = DataSource {
+            table_stats: Some(StatsInfo::new(2_000.0, [(11, 1_000.0)])),
+            ..DataSource::default()
+        };
+        assert_eq!(
+            index_join_probe_access_rows_floor(
+                &pseudo,
+                &[Column::new(11, FieldType::new(FieldTypeCode::LongLong))],
+                &runtime,
+                true,
+            ),
+            None
+        );
     }
 
     #[test]

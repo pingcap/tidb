@@ -47,6 +47,15 @@ For each bounded behavior cluster:
   and avoids draining the child for `OFFSET > 0, LIMIT 0`; the focused
   fail-before/pass-after child-consumption regression and Ready checks are
   recorded in `receipts/executor_root_distsql_indexjoin.md`.
+- 2026-09-05 (`pkg/planner/core` IndexJoin probe cardinality): aligned the
+  Rust dispatcher with Go master `19a41f0d4a`. When an IndexJoin probe can
+  build ranges from only a leading subset of equality join keys, the scan
+  profile now receives the conservative `TableStats.RowCount / NDV(used
+  prefix)` floor before costing; complete-key, pseudo-statistics, integer
+  handle, range-tail, invalid-NDV, and Fix44855-off cases fail closed. The
+  focused Rust regression is active, while the source-derived SQL plan-tree
+  comparison remains an explicit mock-store/analyze/cascades boundary. See
+  `receipts/planner_index_join_row_floor.md` and the updated `b082.md` row.
 - 2026-09-05 (`pkg/parser` parenthesized temporal intervals): aligned the
   hand-written Rust expression parser with Go master `5bdb1b6bd1`. The
   keyword-form `INTERVAL (expr) UNIT` now wins over the scalar
