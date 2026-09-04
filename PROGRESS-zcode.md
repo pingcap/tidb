@@ -253,3 +253,14 @@
 - Go 工具链同样从 PATH 消失; 但 ~/.cache/codex-go1.25.10/go(1.25.12, 与 go.mod 匹配)和 codex-gopath-1.25.10 仍在。make lint 用:
   `PATH=~/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=~/.cache/codex-gopath-1.25.10 make lint`
 - chunk lib 35 失败/executor lib 122 失败为**预存环境失败**(macOS 临时目录 spill NotFound 等), stash 对照证明与本批 codec 修复无关(有/无修复均同数失败); codec/datatype/planner/distsql 全绿。
+- 批次完成并推送 `a8c15bd8f8f`(codec: 解码 decimal cell 时以 cell 的 resultFrac 为可见 scale, 弃文本往返):
+  Go 证据 = chunk cell 原样拷贝 40 字节 MyDecimal(DecimalDiv 使 resultFrac 与 digitsFrac 独立), String() 按 resultFrac 渲染。
+  Rust column.rs 旧路径 to_string_bytes→parse_mysql 把可见 scale 钉在 digitsFrac, 多显小数位。
+  修复 = Decimal::from_my_decimal 直转(该 API 已在 tidb-datatype 存在, chunk/row/spill 路径早已使用)。
+  回归 = patched-cell 测试(resultFrac=2/digitsFrac=6 → Display "1.23", 系数 "1234567"); pre-fix 基线失败(scale 6≠2)已证。
+  门禁: codec 46+166 全绿; datatype 410/0; planner 908/0; distsql 253+28/0; fmt/clippy/diff-check/make lint PASS。
+  chunk(35)/executor(122)为预存环境失败, stash A/B 证明与本批无关。
+- 本会话累计 32 个提交。下批: parser #11 charset-aware scanner。
+- parser #11(client-charset scanner)关闭为 parity-by-API 并推送 `2d97d650ba8`:
+  核实链条完整——GBK/big5/sjis 危险字节对(lead≥0x81 + trail 0x5C/0x27/0x60)永非法 UTF-8; mysql_connection.rs 查询解码门先行转码/拒绝非 UTF-8; Lexer 全链 &str 无法表达该输入。加 charset 字段 = 无可达行为的规格化声明(违反 No speculative behavior), 故记录关闭而非实现。
+- 下批: Time::round_frac 时区语义(跨 tidb-datatype/tidb-expr)。

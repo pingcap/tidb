@@ -116,13 +116,40 @@ values at `DEFAULT_FSP` in the caller's session zone before rendering them as
 numbers. Focused carry and DST regressions are covered by the datatype owner
 tests.
 
-The earlier context concern remains relevant to callers of the zone-free
-`to_i64` convenience method, which intentionally supplies UTC. `Time::round_frac` needs a timezone
-(`mysql_time.rs:442`; Go's `Time.RoundFrac` reaches the location through
-`GoTime(ctx.Location())`) and `Datum::to_i64()` takes no context, so the fix is
-either a context parameter or a documented UTC choice matching what
-`convert_to_signed` already does. That is a signature change across callers in
-two crates, and with nothing runnable here I will not land it blind.
+The earlier context concern — callers of the zone-free `to_i64`
+convenience method, which intentionally supplies UTC while
+`Time::round_frac` needs a timezone (`mysql_time.rs:442`; Go's
+`Time.RoundFrac` reaches the location through `GoTime(ctx.Location())`) —
+was CLOSED (2026-09-05) by a production-caller audit. Every call site
+falls into one of three zone-safe classes:
+
+1. Kind-gated or decision-inert: the caller only converts string/bytes
+   kinds through `to_i64` (`executor/driver/agg_build.rs`
+   `constant_eval_int`), or — the ranger YEAR block
+   (`planner/ranger/points.rs` `refine_value_and_op`) — a temporal
+   constant *can* reach the `pre_value` conversion (Go's
+   `ConvertToMysqlYear` explicitly handles `KindMysqlTime`), but
+   `pre_value` only feeds the out-of-range operator flip
+   (`value.GetInt64() > preValue`), where any zone renders the rounded
+   full-datetime number at ~2e13 against year bounds of at most 2155:
+   the comparison outcome is identical under UTC and the session zone,
+   so the zone cannot flip the decision.
+2. Post-cast integer getters: the `other =>` fallback arms in the
+   expression signatures (`string_fn.rs` integer/BIT_COUNT/FORMAT
+   getters, `time_fn/mod.rs` `int_arg`, `hash_agg.rs` `datum_bits`,
+   `math_fn/mod.rs`, `builtin_ext/crypto.rs`, `time_fn/add_sub.rs` FSP,
+   `time_fn/calendar.rs` INTERVAL amount) run after Go's and Rust's
+   `WrapWithCastAsInt` has already converted any Time source through the
+   session zone (`cast.rs` `to_i64_signed_in`, the documented
+   DST-carrying boundary). The signature itself never sees a raw Time,
+   exactly as Go's `EvalInt` signatures do not.
+3. Zone-aware by construction: every path where a Time/Duration datum
+   converts directly (`to_i64_in`, `convert_to_signed`, the temporal
+   comparison evaluator) already carries the caller's session zone.
+
+No reachable call site converts a temporal datum through the zone-free
+convenience, so no signature change is needed; the zone-free method is a
+UTC-fallback for kinds where the location is inert.
 
 Note in passing: Go's own signed and unsigned paths are asymmetric —
 `convertToUint` (`pkg/types/datum.go:1339-1355`) uses `dec.Round(dec, 0,
