@@ -834,6 +834,57 @@ fn disable_txn_auto_retry_off_warns_and_stays_on() {
     );
 }
 
+/// Go `TestTiDBLowResTSOUpdateInterval`: GLOBAL integer bounds clamp to the
+/// declared range and report the original value with warning 1292.
+#[test]
+fn low_resolution_tso_update_interval_clamps_and_warns() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET GLOBAL tidb_low_resolution_tso_update_interval = 0")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Truncated incorrect tidb_low_resolution_tso_update_interval value: '0'".to_owned()
+        ]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_low_resolution_tso_update_interval'")),
+        vec![vec![
+            "tidb_low_resolution_tso_update_interval".to_owned(),
+            "10".to_owned()
+        ]]
+    );
+
+    session
+        .run("SET GLOBAL tidb_low_resolution_tso_update_interval = 100000")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Truncated incorrect tidb_low_resolution_tso_update_interval value: '100000'"
+                .to_owned()
+        ]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_low_resolution_tso_update_interval'")),
+        vec![vec![
+            "tidb_low_resolution_tso_update_interval".to_owned(),
+            "60000".to_owned()
+        ]]
+    );
+
+    session
+        .run("SET GLOBAL tidb_low_resolution_tso_update_interval = 1000")
+        .unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+}
+
 /// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
 /// spaces, because it labels log lines as an identifier. Captured through
 /// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.

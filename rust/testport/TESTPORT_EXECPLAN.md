@@ -77,6 +77,10 @@ For each bounded behavior cluster:
   `tidb_disable_txn_auto_retry` so deprecated OFF assignments warn with 1287
   and remain canonically ON for both SESSION and GLOBAL SQL writes; added a
   focused regression and removed its stale vardef shim.
+- 2026-09-05 (`pkg/sessionctx/variable` low-resolution TSO interval): added
+  SQL-level GLOBAL clamp/readback coverage for the 10..60000ms bounds and
+  original-value 1292 warnings, preserving the process-wide setter callback
+  as an explicit boundary.
 - 2026-09-05 (`pkg/sessionctx/variable` TTL schedule-window inventory): wired
   GLOBAL TypeTime writes through the issuing session's timezone so short
   `HH:MM` values retain the same numeric offset as Go's `ParseInLocation`;
