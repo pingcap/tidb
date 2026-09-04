@@ -230,7 +230,7 @@ impl ActionOnExceed for ParallelSortSpillAction {
         if self.need_spill.load(SeqCst) {
             return;
         }
-        if self.sort_tracker.bytes_consumed() > self.spill_limit {
+        if self.sort_tracker.bytes_consumed() >= self.spill_limit {
             self.need_spill.store(true, SeqCst);
             return;
         }
@@ -1150,6 +1150,32 @@ mod tests {
             Err(ExecError::MemoryExceedForQuery { conn_id }) => assert_eq!(conn_id, 42),
             other => panic!("expected the quota to be enforced, got {other:?}"),
         }
+    }
+
+    /// Go `sortexec/sort_spill.go::hasEnoughDataToSpill` uses an inclusive
+    /// tenth-of-quota boundary. Reaching that boundary must request a spill
+    /// rather than falling through to the previous cancellation action.
+    #[test]
+    fn parallel_sort_requests_spill_at_exact_tenth_of_quota() {
+        let quota = 100_i64;
+        let sort_tracker = Tracker::new(1, -1);
+        sort_tracker.replace_bytes_used(quota / 10);
+        let triggered_tracker = Tracker::new(2, quota);
+        triggered_tracker.replace_bytes_used(quota);
+        let need_spill = Arc::new(AtomicBool::new(false));
+        let action = ParallelSortSpillAction {
+            base: BaseOomAction::default(),
+            need_spill: Arc::clone(&need_spill),
+            sort_tracker,
+            spill_limit: quota / 10,
+        };
+
+        action.action(&triggered_tracker);
+
+        assert!(
+            need_spill.load(SeqCst),
+            "the inclusive tenth-of-quota boundary must request a spill"
+        );
     }
 
     #[test]

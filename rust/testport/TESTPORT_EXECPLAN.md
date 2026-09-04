@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-04 (`pkg/executor/sortexec` parallel spill threshold): aligned
+  Rust's `ParallelSortSpillAction` with Go's inclusive
+  `sortTracker.BytesConsumed() >= quota/10` guard. The focused action-level
+  regression fails at the exact boundary before the fix and passes after it;
+  the nested package inventory and Ready evidence are recorded in
+  `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-04 (`tidb-expr` VALUES constructor/runtime): activated the Go
   `TestValues` and shared `TestNewValuesFunc` behavior. `ScalarFunction` now
   carries the immutable VALUES offset, `Columns::current_insert_value` exposes
