@@ -60,6 +60,29 @@ func TestDropMaterializedViewIfExists(t *testing.T) {
 	tk.MustExec("drop materialized view log if exists on t_drop_if_exists")
 }
 
+func TestDropTableMaterializedViewConstraints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_drop_constraints (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_drop_constraints (a, b)")
+	tk.MustExec("create materialized view mv_drop_constraints (a, s, cnt) as select a, sum(b), count(1) from t_drop_constraints group by a")
+
+	err := tk.ExecToErr("drop table mv_drop_constraints")
+	require.ErrorContains(t, err, "DROP TABLE on materialized view table")
+	err = tk.ExecToErr("drop table `$mlog$t_drop_constraints`")
+	require.ErrorContains(t, err, "DROP TABLE on materialized view log table")
+	err = tk.ExecToErr("drop table t_drop_constraints")
+	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view dependencies")
+
+	tk.MustExec("drop materialized view mv_drop_constraints")
+	err = tk.ExecToErr("drop table t_drop_constraints")
+	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view log")
+
+	tk.MustExec("drop materialized view log on t_drop_constraints")
+	tk.MustExec("drop table t_drop_constraints")
+}
+
 func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
@@ -168,9 +191,19 @@ func TestDropMaterializedViewAndDatabaseCleanMViewState(t *testing.T) {
 	require.NoError(t, err)
 	mvID = mvTable.Meta().ID
 	mlogID = mlogTable.Meta().ID
+	tk.MustExec(fmt.Sprintf(
+		"insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values (%d, '%s', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())",
+		mvID, dbName,
+	))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mvID)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where mview_id = %d", mvID)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).Check(testkit.Rows("1"))
 	tk.MustExec("drop database " + dbName)
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mvID)).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_alert where mview_id = %d", mvID)).Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).Check(testkit.Rows("0"))
+	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr(dbName))
+	require.False(t, ok)
 }
 
 func TestDropMaterializedViewCleansRefreshAlert(t *testing.T) {

@@ -705,7 +705,7 @@ func (e *executor) DropMaterializedView(ctx sessionctx.Context, s *ast.DropMater
 	}
 
 	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: s.ViewName.Name}}}
-	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject)
+	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)
 }
 
 func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMaterializedViewLogStmt) error {
@@ -748,7 +748,7 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 
 	failpoint.Inject("pauseDropMaterializedViewLogAfterCheck", func() {})
 	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: mlogName}}}
-	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject)
+	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, tableObject, true)
 }
 
 func appendDropMaterializedViewNotExistsNote(ctx sessionctx.Context, schemaName, tableName ast.CIStr) {
