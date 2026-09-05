@@ -182,3 +182,13 @@ line for line: nil-safe, first matching configured regexp wins, empty
 suffixes skipped, and the suffix joined as `"{message}, {suffix}."`
 after trimming trailing dots on both sides (`extendErrorMessage`).
 Five integration tests cover the configured-extension path.
+
+## Adjacent face: placement rules (2026-09-05) — OWNED ELSEWHERE
+
+Go's `pkg/ddl/placement` (3,828 lines: bundle/rule/constraints/constraint)
+mirrors to `tidb-placement` (bundle/rule/constraints/constraint/common/
+pd/yaml_lite), which the DDL session actively extends — the bundle
+delivery and partial-write regressions live in that session's tests
+(`placement_delivery_source`, 17 in-module placement tests). Auditing
+the constraint-merging algorithm here would duplicate in-flight work;
+the face is deferred to that owner's receipt.

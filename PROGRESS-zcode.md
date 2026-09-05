@@ -450,3 +450,5 @@
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - errmsg 面核实: extend 与 Go Extend 逐行一致(nil 安全/首个匹配/后缀拼接去尾点), 5 集成测试全绿, 收据已追加。
 - 下轮恢复点: (1) placement/infoschema 深层或新面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- placement rules 面处置: 由 DDL 会话活跃持有(17 模块测试+bundle 投递回归在位), 避免重复审计; 其收据归属 DDL 会话。
+- 下轮恢复点: (1) 新面选型(privilege 余项/其他 crate); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
