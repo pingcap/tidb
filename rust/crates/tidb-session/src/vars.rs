@@ -757,7 +757,8 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE) {
             self.publish_ttl_job_enable();
         }
-        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME) {
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME)
+        {
             self.publish_plan_replayer_file_retention_time();
         }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
@@ -843,6 +844,18 @@ impl GlobalSysvars {
                 .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
         }
         let stored_value = validated.value;
+        // Go's `tidb_super_read_only` Validation (`sysvar.go:999`): turning
+        // the flag OFF through a user SET is refused while
+        // `tidb_restricted_read_only` is ON.
+        if key == "tidb_super_read_only"
+            && stored_value == "OFF"
+            && self.get("tidb_restricted_read_only").ok().as_deref() == Some("ON")
+        {
+            return Err(VarError::ValidationRefused(
+                "can't turn off tidb_super_read_only when tidb_restricted_read_only is on"
+                    .to_owned(),
+            ));
+        }
         if self.publishes_runtime_settings && Self::is_memory_arbitration_setting(&key) {
             tidb_util::memory::validate_process_memory_setting(&key, &stored_value)
                 .map_err(VarError::ValidationRefused)?;

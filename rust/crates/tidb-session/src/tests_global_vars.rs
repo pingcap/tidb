@@ -2185,14 +2185,21 @@ fn an_overflow_names_its_class_and_folded_constants_name_their_expression() {
         );
     }
 
-    // DIVERGENCE (#181, open): runtime column arithmetic still reports the
-    // class only; Go renders the qualified expression, e.g.
-    // BIGINT value is out of range in '(ovx.t.a + ovx.t.b)'.
-    for sql in ["SELECT a + b FROM t", "SELECT a + 1 FROM t"] {
+    // Go renders the qualified expression for runtime column arithmetic
+    // (`ErrOverflow.GenWithStackByArgs("BIGINT", "(a + b)")`), which the
+    // runtime now mirrors.
+    for (sql, expression) in [
+        ("SELECT a + b FROM t", "(test.t.a + test.t.b)"),
+        ("SELECT a + 1 FROM t", "(test.t.a + 1)"),
+    ] {
         let error = session.run(sql).unwrap_err().to_mysql_error();
         assert_eq!(error.code, 1690, "{sql}");
         assert_eq!(&error.state, b"22003", "{sql}");
-        assert_eq!(error.message, "BIGINT value is out of range", "{sql}");
+        assert_eq!(
+            error.message,
+            format!("BIGINT value is out of range in '{expression}'"),
+            "{sql}"
+        );
     }
 
     let error = session
@@ -2200,10 +2207,12 @@ fn an_overflow_names_its_class_and_folded_constants_name_their_expression() {
         .unwrap_err()
         .to_mysql_error();
     assert_eq!(error.code, 1690);
-    // DIVERGENCE (#181, open) on the DOUBLE arm too: Go says DOUBLE value is
-    // out of range in '(1e+308 + 1e+308)' -- the VALUE spelling `1e+308`, not
-    // the statement's `1e308`. This tier still reports the class alone.
-    assert_eq!(error.message, "DOUBLE value is out of range");
+    // Go spells the VALUE `1e+308` (not the statement's `1e308`) inside the
+    // qualified expression, and the runtime mirrors that spelling.
+    assert_eq!(
+        error.message,
+        "DOUBLE value is out of range in '(1e+308 + 1e+308)'"
+    );
 }
 
 /// Go `EvalContext.GetMaxAllowedPacket`, which every result-sizing string
@@ -2354,4 +2363,27 @@ fn validate_password_count_sets_couple_the_length_sibling_like_go() {
         .set("validate_password.length", "5".to_owned())
         .unwrap();
     assert_eq!(globals.get("validate_password.length").unwrap(), "11");
+}
+
+/// Go's `tidb_super_read_only` Validation (`sysvar.go:999`): turning the
+/// flag OFF through a user SET is refused while `tidb_restricted_read_only`
+/// is ON.
+#[test]
+fn super_read_only_cannot_be_turned_off_under_restricted_read_only() {
+    let globals = vars::GlobalSysvars::new();
+    globals
+        .set("tidb_restricted_read_only", "ON".to_owned())
+        .unwrap();
+
+    let refused = globals.set("tidb_super_read_only", "OFF".to_owned());
+    assert!(refused.is_err(), "the OFF set must be refused");
+
+    // With the sibling off, the OFF set goes through.
+    globals
+        .set("tidb_restricted_read_only", "OFF".to_owned())
+        .unwrap();
+    globals
+        .set("tidb_super_read_only", "OFF".to_owned())
+        .unwrap();
+    assert_eq!(globals.get("tidb_super_read_only").unwrap(), "OFF");
 }
