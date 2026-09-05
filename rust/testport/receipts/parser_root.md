@@ -189,3 +189,29 @@ git diff --check: PASS
 
 The full `tidb-parser --test all` Ready run is the next gate before the
 package batch is committed; generated Go parser artifacts remain untouched.
+
+## Rust follow-up: parser arena discard diagnostics
+
+The pinned `origin/master` root inventory above intentionally predates the
+hparser branch's `pkg/parser/arena.go` and `arena_test.go`; those two Go
+artifacts are nevertheless present on `hparser-integration` and are fully
+covered by `rust/crates/tidb-parser/src/arena.rs` and
+`tests/arena_source.rs` (including the three benchmark/support paths). The
+Rust owner carried four explicit `#[must_use]` annotations on `Arena::new`,
+the generic `alloc` and `alloc_slice` portals, and `SlabHandle::as_ptr`.
+Their return values are discardable in the Go source contract, so the
+annotations were Rust-only diagnostics and are now removed. No allocator
+layout, lifetime, reset, or pointer behavior changed.
+
+The source-derived regression
+`arena_source::return_values_may_be_ignored_like_go` discards every affected
+result under `#[deny(unused_must_use)]`. On the pre-fix owner it failed to
+compile with four unused-return errors; the fixed test passes. Ready gates:
+
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-parser --test all arena_source::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-parser --test all -- --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-parser --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-parser -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` is not required.
