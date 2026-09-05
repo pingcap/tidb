@@ -355,7 +355,17 @@ pub struct NumericPrefix {
 /// `getValidFloatPrefix`, and that helper shortens the same subject at the
 /// first NUL byte before formatting the error.
 pub fn float_warning_input(input: &str) -> &str {
-    input.trim().split('\0').next().unwrap_or_default()
+    let nul_cut = input.trim().split('\0').next().unwrap_or_default();
+    // Go's `ErrTruncatedWrongVal` template caps the quoted subject at 128
+    // bytes (`"Truncated incorrect %-.64s value: '%-.128s'"`). The cut rounds
+    // down to a char boundary: identical for ASCII, multi-byte input loses
+    // the partial rune Go's byte cut would have split.
+    let end = nul_cut.len().min(128);
+    let mut cut = end;
+    while cut > 0 && !nul_cut.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    &nul_cut[..cut]
 }
 
 impl NumericPrefix {

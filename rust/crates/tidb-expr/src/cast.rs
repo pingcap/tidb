@@ -1751,6 +1751,34 @@ mod tests {
         }
     }
 
+    /// Go's `ErrTruncatedWrongVal` template truncates the quoted value at
+    /// 128 bytes (`"Truncated incorrect %-.64s value: '%-.128s'"`).
+    #[test]
+    fn double_cast_warning_value_truncates_at_128_bytes_like_go() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        let long = format!("x{margin}", margin = "9".repeat(300));
+        let got = eval_cast(
+            &CastType::Double,
+            Datum::new_string(long.clone()),
+            None,
+            &ctx,
+        )
+        .expect("a truncated DOUBLE cast remains a successful read");
+        assert_eq!(got, Datum::Real(0.0));
+        let warnings = ctx.0.borrow();
+        let (code, text) = &warnings[0];
+        assert_eq!(*code, 1292);
+        // The quoted subject is the first 128 bytes of the input, not all 300.
+        assert!(
+            text.contains(&format!("value: '{}'", &long[..128])),
+            "{text}"
+        );
+        assert!(
+            !text.contains(&format!("value: '{}'", &long[..129])),
+            "{text}"
+        );
+    }
+
     #[test]
     fn double_cast_warning_subject_stops_at_nul_like_go() {
         let ctx = WarningContext(RefCell::new(Vec::new()));
