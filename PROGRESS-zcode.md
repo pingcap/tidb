@@ -472,3 +472,5 @@
 - 下轮恢复点: (1) 跟随兄弟会话修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - 当前树状态: executor 1070/138(基线漂移: 预存集从 122 漂至 138, 因兄弟会话 DDL 增量持续合入); exec.rs random_bytes 编译修复在位; 树编译干净。
 - 下轮恢复点: (1) 新面或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- 增量收敛核查: 同步至 f2d23b20e1f(ddl: validate sequence identifiers + types: preserve numeric set truncation events); 关键套件全绿(datatype 412/0, super_read_only 1/0, tx_isolation_one_shot 1/0, gcutil 2/0)。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
