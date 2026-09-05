@@ -1382,30 +1382,6 @@ impl SysVarDef {
                 ],
             )));
         }
-        // Go's tidb_allow_fallback_to_tikv Validation (`sysvar.go:2657`):
-        // an empty value passes; every comma-separated token must be
-        // `tiflash` in any case (trimmed, deduplicated, first-occurrence
-        // order), and anything else is `ErrWrongValueForVar` (1231).
-        if self.name == "tidb_allow_fallback_to_tikv" {
-            if validated.value.is_empty() {
-                return Ok(validated);
-            }
-            let mut seen: Vec<String> = Vec::new();
-            for engine in validated.value.split(',') {
-                let engine = engine.trim();
-                if !engine.eq_ignore_ascii_case("tiflash") {
-                    return Err(ValidationError::WrongValue);
-                }
-                let lowered = engine.to_ascii_lowercase();
-                if !seen.contains(&lowered) {
-                    seen.push(lowered);
-                }
-            }
-            return Ok(Validated {
-                value: seen.join(","),
-                truncated: validated.truncated,
-            });
-        }
         // Go's `ValidAnalyzeSkipColumnTypes` (`varsutil.go:501`): tokens are
         // lowercased and trimmed, must each be one of the seven column
         // types, and the joined lower-case list is stored; anything else is
