@@ -304,10 +304,6 @@ fn modify_column_between_string_types_shrinks_expands_and_remaps_enum_set_member
 // reachable synchronously — a NULL row present when the MODIFY runs — and
 // the alteration must be refused with the table left untouched.
 //
-// MEASURED DIVERGENCE (recorded in the receipt): this tier answers
-// `DataTruncatedAtRow` — MySQL 1265 "Data truncated for column 'a' at row
-// 4" (`kv_table.rs::modify_column_in`) — where Go answers 1138. The
-// refusal + intact-table contract is pinned; the code/message differ.
 #[test]
 fn modify_column_null_to_not_null_rejects_rows_holding_nulls() {
     let mut catalog = Catalog::default();
@@ -323,8 +319,8 @@ fn modify_column_null_to_not_null_rejects_rows_holding_nulls() {
 
     let error = alter(&mut catalog, "ALTER TABLE tt MODIFY a INT NOT NULL")
         .expect_err("Go: [ddl:1138]Invalid use of NULL value");
-    assert_eq!(code_of(&error), 1265, "divergence: Go answers 1138");
-    assert_eq!(message_of(&error), "Data truncated for column 'a' at row 4");
+    assert_eq!(code_of(&error), 1138);
+    assert_eq!(message_of(&error), "Invalid use of NULL value");
     // The rows survive the refused alteration.
     assert_eq!(
         text_rows(&catalog, "SELECT * FROM tt"),

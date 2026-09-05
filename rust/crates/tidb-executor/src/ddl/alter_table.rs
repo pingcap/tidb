@@ -2878,9 +2878,12 @@ fn modify_column_action(
             crate::kv_table::KvTableError::DataTruncatedValue { column, value } => {
                 DriverError::DataTruncatedValue { column, value }
             }
-            crate::kv_table::KvTableError::DataTruncatedAtRow { column, row } => {
-                DriverError::DataTruncatedAtRow { column, row }
-            }
+            crate::kv_table::KvTableError::InvalidUseOfNull => DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrInvalidUseOfNull,
+                message: tidb_error::tidb::errname::ErrInvalidUseOfNull
+                    .raw
+                    .to_owned(),
+            },
             crate::kv_table::KvTableError::Vector(message) => DriverError::unsupported(message),
             crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
                 DriverError::DuplicateEntry { value, key }

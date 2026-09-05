@@ -687,14 +687,9 @@ pub enum KvTableError {
     /// Go's plain VECTOR conversion error. Vector dimension failures are not
     /// retitled as a generic truncation while a column is reorganized.
     Vector(String),
-    /// Go `ErrTruncatedWrongValueForField` (1265) with the row form: a stored
-    /// NULL is rejected by the column's new NOT NULL.
-    DataTruncatedAtRow {
-        /// The column being modified.
-        column: String,
-        /// The offending row's 1-based position.
-        row: usize,
-    },
+    /// Go `dbterror.ErrInvalidUseOfNull` (1138): a stored NULL is rejected
+    /// while changing a column to `NOT NULL`.
+    InvalidUseOfNull,
     /// Go `table.ErrNoPartitionForGivenValue` (1526): the row's partition
     /// value falls outside every partition. HASH cannot produce it; RANGE and
     /// LIST can (captured: `insert into r2 values (20,0)` on a RANGE table
@@ -2369,7 +2364,7 @@ impl KvTable {
         // In both cases the existing physical owner is the source of truth.
         let rows = self.scan_physical_rows_with_handles_with_context(decode_context)?;
         let mut converted_rows = Vec::with_capacity(rows.len());
-        for (row_number, (physical_id, handle, row)) in rows.into_iter().enumerate() {
+        for (physical_id, handle, row) in rows {
             let mut row = row;
             let mut value = row[offset].clone();
             // Go `updateColumnWorker.getRowRecord`: "convert null value to
@@ -2383,10 +2378,7 @@ impl KvTable {
             // new NOT NULL rejects, and the value itself for a bad conversion.
             if value.is_null() {
                 if not_null {
-                    return Err(KvTableError::DataTruncatedAtRow {
-                        column: new_column.name.clone(),
-                        row: row_number + 1,
-                    });
+                    return Err(KvTableError::InvalidUseOfNull);
                 }
             } else {
                 let converted = value

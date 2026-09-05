@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` MODIFY NULL-to-NOT-NULL error): aligned Rust's
+  ALTER COLUMN data-check refusal with Go's `ErrInvalidUseOfNull` (1138).
+  `KvTable::modify_column_in` now carries a dedicated NULL rejection and the
+  DDL adapter renders Go's exact code/message; value-conversion truncation
+  remains on its existing 1265 path. The tightened Go-derived regression
+  proves fail-before (1265) and pass-after (1138). Complete package inventory,
+  Ready validation, and the remaining package boundary are recorded in
+  `receipts/ddl_modify_column_null_error.md`.
 - 2026-09-05 (`pkg/executor/join` / `tidb-exec` hash join v2): matched Go's
   left-build no-residual `antiSemiJoinProbe` path. Rust now marks matching
   build-row addresses while probing, then scans the retained row table to
