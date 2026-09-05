@@ -8692,6 +8692,11 @@ risks without claiming repository-wide parity.
   The focused `TestFix59705` missing-parent regression asserts the exact
   table error; evidence is recorded in
   `receipts/ddl_foreign_key_modify_missing_parent.md`.
+- 2026-09-05 (`pkg/parser/terror`): Rust's complete terror owner now matches
+  Go's discardable return-value contract by removing 23 Rust-only
+  `#[must_use]` diagnostics from class/code, identity, generated-error, SQL
+  conversion, and helper APIs. The deny-on-discard regression and complete
+  nested-module inventory are recorded in `receipts/parser_terror.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

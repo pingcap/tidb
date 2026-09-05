@@ -22,7 +22,7 @@ use std::process::Command;
 use tidb_error::mysql::{errcode, errname, FormatArg};
 use tidb_error::terror::{
     call, get_error_class, log, must_nil, register_error_class, register_finish,
-    registration_frozen, terror_error_equal, TerrorClass, TerrorCode, TerrorError,
+    registration_frozen, terror_error_equal, TerrorClass, TerrorCode, TerrorError, TerrorIdentity,
     CODE_MISS_CONNECTION_ID, CODE_RESULT_UNDETERMINED, ERR_CRITICAL, ERR_RESULT_UNDETERMINED,
 };
 
@@ -365,6 +365,42 @@ fn test_log_call_and_rust_native_stack_capture() {
             || rendered.contains("terror_source"),
         "stack =\n{rendered}"
     );
+}
+
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    // Go permits every helper result in this package to be discarded. Keep
+    // this compile-time contract explicit so Rust-only must-use diagnostics
+    // cannot return when the owner API changes.
+    registration_frozen();
+    let code = TerrorCode::new(7);
+    code.value();
+    let class = TerrorClass::from_value(1);
+    class.code();
+    class.description();
+    class.equal_class(None);
+    class.not_equal_class(None);
+    let identity = TerrorIdentity::new(class, code);
+    identity.class();
+    identity.code();
+    identity.rfc_code();
+
+    let error = TerrorError::compatible(code, "ignored");
+    error.identity();
+    error.class();
+    error.code();
+    error.message();
+    error.rfc_code();
+    error.stack();
+    error.equal(None);
+    error.generate("ignored");
+    error.generate_with_stack("ignored");
+    error.fast_generate("ignored", &[]);
+    error.to_sql_error();
+    TerrorError::synthesize(class, code, "ignored");
+    terror_error_equal(None, None);
+    get_error_class(&error);
 }
 
 #[test]

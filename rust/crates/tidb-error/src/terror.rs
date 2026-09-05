@@ -120,7 +120,6 @@ pub fn register_finish() {
 }
 
 /// Reports whether error-code registration is frozen.
-#[must_use]
 pub fn registration_frozen() -> bool {
     registry_read().frozen
 }
@@ -167,13 +166,11 @@ pub struct TerrorCode(isize);
 
 impl TerrorCode {
     /// Creates a source error code across Go's complete machine-width `int` domain.
-    #[must_use]
     pub const fn new(value: isize) -> Self {
         Self(value)
     }
 
     /// Returns the complete source machine-width integer value.
-    #[must_use]
     pub const fn value(self) -> isize {
         self.0
     }
@@ -272,19 +269,16 @@ impl TerrorClass {
     ];
 
     /// Source class number.
-    #[must_use]
     pub const fn code(self) -> isize {
         self.0
     }
 
     /// Creates an arbitrary source class without registering a description.
-    #[must_use]
     pub const fn from_value(value: isize) -> Self {
         Self(value)
     }
 
     /// Source RFC class description, or the decimal class code if unregistered.
-    #[must_use]
     pub fn description(self) -> String {
         registry_read()
             .descriptions
@@ -294,7 +288,6 @@ impl TerrorClass {
     }
 
     /// Source `EqualClass`, following context wrappers to their root cause.
-    #[must_use]
     pub fn equal_class(self, error: Option<&(dyn Error + 'static)>) -> bool {
         error
             .map(root_cause)
@@ -304,7 +297,6 @@ impl TerrorClass {
     }
 
     /// Source `NotEqualClass`, including the nil-error case.
-    #[must_use]
     pub fn not_equal_class(self, error: Option<&(dyn Error + 'static)>) -> bool {
         !self.equal_class(error)
     }
@@ -325,25 +317,21 @@ pub struct TerrorIdentity {
 
 impl TerrorIdentity {
     /// Creates a class/code identity.
-    #[must_use]
     pub const fn new(class: TerrorClass, code: TerrorCode) -> Self {
         Self { class, code }
     }
 
     /// Returns the error class.
-    #[must_use]
     pub const fn class(self) -> TerrorClass {
         self.class
     }
 
     /// Returns the class-local error code.
-    #[must_use]
     pub const fn code(self) -> TerrorCode {
         self.code
     }
 
     /// Returns the source RFC identity text.
-    #[must_use]
     pub fn rfc_code(self) -> String {
         let description = registry_read()
             .descriptions
@@ -372,7 +360,6 @@ pub struct TerrorError {
 
 impl TerrorError {
     /// Constructs the compatibility form used by `pingcap/errors` without an RFC code.
-    #[must_use]
     pub fn compatible(code: TerrorCode, message: impl Into<String>) -> Self {
         Self {
             identity: TerrorIdentity::new(TerrorClass::from_value(0), code),
@@ -385,7 +372,6 @@ impl TerrorError {
 
     /// Defines a registered source error prototype, corresponding to `New` or
     /// `NewStdErr` during package initialization.
-    #[must_use]
     pub fn registered(class: TerrorClass, code: TerrorCode, message: impl Into<String>) -> Self {
         register_error_code(class, code);
         Self {
@@ -399,7 +385,6 @@ impl TerrorError {
 
     /// Source `NewStdErr`, retaining the shared catalog's redaction metadata
     /// for every generated message.
-    #[must_use]
     pub fn registered_standard(class: TerrorClass, code: TerrorCode, message: ErrMessage) -> Self {
         register_error_code(class, code);
         Self {
@@ -412,7 +397,6 @@ impl TerrorError {
     }
 
     /// Source `NewStd`, resolving the complete checked MySQL message catalog.
-    #[must_use]
     pub fn registered_from_catalog(class: TerrorClass, code: TerrorCode) -> Self {
         let protocol_code = u16::try_from(code.value())
             .expect("NewStd error code must fit the MySQL uint16 catalog domain");
@@ -433,7 +417,6 @@ impl TerrorError {
     /// the MySQL half and panics on a TiDB code. This is the faithful `NewStd`
     /// for the many error-catalog packages (plannererrors, ...) whose codes
     /// span both halves.
-    #[must_use]
     pub fn registered_std(class: TerrorClass, code: TerrorCode) -> Self {
         let protocol_code = u16::try_from(code.value())
             .expect("NewStd error code must fit the uint16 catalog domain");
@@ -446,7 +429,6 @@ impl TerrorError {
 
     /// Source `Synthesize`: creates an identity without registering its code
     /// for protocol conversion.
-    #[must_use]
     pub fn synthesize(class: TerrorClass, code: TerrorCode, message: impl Into<String>) -> Self {
         Self {
             identity: TerrorIdentity::new(class, code),
@@ -458,7 +440,6 @@ impl TerrorError {
     }
 
     /// Generates a contextual message while retaining the prototype identity.
-    #[must_use]
     pub fn generate(&self, message: impl Into<String>) -> Self {
         Self {
             identity: self.identity,
@@ -470,7 +451,6 @@ impl TerrorError {
     }
 
     /// Source `GenWithStack`, using Rust's native captured backtrace.
-    #[must_use]
     pub fn generate_with_stack(&self, message: impl Into<String>) -> Self {
         let mut generated = self.generate(message);
         generated.stack = Some(Arc::new(Backtrace::force_capture()));
@@ -478,7 +458,6 @@ impl TerrorError {
     }
 
     /// Source `FastGen` formatting over the shared Go-format authority.
-    #[must_use]
     pub fn fast_generate(&self, format: &str, arguments: &[FormatArg]) -> Self {
         let formatted =
             SqlError::new_f(self.protocol_code(), format, self.redact_arg_pos, arguments);
@@ -486,43 +465,36 @@ impl TerrorError {
     }
 
     /// Returns the stable class/code identity.
-    #[must_use]
     pub const fn identity(&self) -> TerrorIdentity {
         self.identity
     }
 
     /// Returns the source error class.
-    #[must_use]
     pub const fn class(&self) -> TerrorClass {
         self.identity.class()
     }
 
     /// Returns the source class-local error code.
-    #[must_use]
     pub const fn code(&self) -> TerrorCode {
         self.identity.code()
     }
 
     /// Returns the generated message without the RFC prefix.
-    #[must_use]
     pub fn message(&self) -> &str {
         &self.message
     }
 
     /// Returns the source RFC identity text.
-    #[must_use]
     pub fn rfc_code(&self) -> &str {
         &self.rfc_code
     }
 
     /// Returns the captured Rust backtrace for a stack-generating operation.
-    #[must_use]
     pub fn stack(&self) -> Option<&Backtrace> {
         self.stack.as_deref()
     }
 
     /// Identity equality used by Go's generated terror errors.
-    #[must_use]
     pub fn equal(&self, other: Option<&(dyn Error + 'static)>) -> bool {
         other
             .map(root_cause)
@@ -532,7 +504,6 @@ impl TerrorError {
 
     /// Source `ToSQLError`. Synthesized/unregistered identities deliberately
     /// use `ErrUnknown`, matching `getMySQLErrorCode` fallback behavior.
-    #[must_use]
     pub fn to_sql_error(&self) -> SqlError {
         let code = self.protocol_code();
         SqlError {
@@ -715,7 +686,6 @@ pub static ERR_RESULT_UNDETERMINED: LazyLock<TerrorError> = LazyLock::new(|| {
 });
 
 /// Source `ErrorEqual`, including root-cause traversal and RFC identity rules.
-#[must_use]
 pub fn terror_error_equal(
     left: Option<&(dyn Error + 'static)>,
     right: Option<&(dyn Error + 'static)>,
@@ -738,7 +708,6 @@ pub fn terror_error_equal(
 }
 
 /// Source `GetErrClass`, resolved through the registered RFC class prefix.
-#[must_use]
 pub fn get_error_class(error: &TerrorError) -> Option<TerrorClass> {
     class_for_rfc_code(error.rfc_code())
 }
