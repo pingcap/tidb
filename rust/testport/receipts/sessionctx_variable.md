@@ -177,3 +177,26 @@ session field. `TestTiDBAnalyzeStoreBatchSize` pins default initialization and
 the session setter path; it passes in the detached Go-master Ready test
 worktree. The package's unrelated large registry deltas remain outside this
 batch.
+
+## 2026-09-05 Rust validation restoration
+
+The Rust registry's generic enum checker accepted ordinal `0` for
+`tidb_opt_partial_ordered_index_for_topn`, while Go's variable-specific
+Validation closure checks the original text and accepts only DISABLE/COST
+case-insensitively. The Rust validation hook now canonicalizes accepted modes
+to uppercase and refuses ordinals/unknown values with Go's 1231 error; the
+SESSION/GLOBAL regression also verifies a rejected assignment leaves the
+previous mode unchanged.
+
+```text
+cargo test -p tidb-session --lib partial_ordered_index_for_topn_validation_matches_go -- --nocapture
+# passed
+
+git diff --check
+# passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+```

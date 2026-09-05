@@ -254,6 +254,49 @@ fn optimizer_and_ddl_global_switches_round_trip_like_go() {
     }
 }
 
+/// Go's `tidb_opt_partial_ordered_index_for_topn` Validation accepts only
+/// DISABLE/COST (case-insensitively), stores the uppercase mode, and refuses
+/// enum ordinals or unknown text with ErrWrongValueForVar (1231).
+#[test]
+fn partial_ordered_index_for_topn_validation_matches_go() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET SESSION tidb_opt_partial_ordered_index_for_topn = 'cost'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@session.tidb_opt_partial_ordered_index_for_topn"
+        ),
+        Some("COST".to_owned())
+    );
+
+    let error = session
+        .run("SET SESSION tidb_opt_partial_ordered_index_for_topn = 0")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1231);
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@session.tidb_opt_partial_ordered_index_for_topn"
+        ),
+        Some("COST".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_opt_partial_ordered_index_for_topn = 'disable'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_opt_partial_ordered_index_for_topn"
+        ),
+        Some("DISABLE".to_owned())
+    );
+}
+
 /// Transcreated from Go `TestTiDBServerMemoryLimitSessMinSize` and
 /// `TestTiDBServerMemoryLimitGCTrigger`: GLOBAL writes store the canonical
 /// byte/fraction representation that subsequent `@@global` reads expose.

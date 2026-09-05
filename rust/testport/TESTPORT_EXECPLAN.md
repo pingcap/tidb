@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` partial ordered-index mode): matched
+  Go's `tidb_opt_partial_ordered_index_for_topn` Validation closure by
+  accepting only case-insensitive DISABLE/COST spellings, storing uppercase
+  modes, and refusing enum ordinals/unknown values with 1231. The focused
+  GLOBAL/SESSION regression checks canonical readback and prior-value
+  retention after refusal.
 - 2026-09-05 (`pkg/sessionctx/variable` restricted read-only promotion):
   matched Go's GLOBAL hook that promotes `tidb_super_read_only=ON` whenever
   `tidb_restricted_read_only` is enabled, while clearing restricted mode leaves

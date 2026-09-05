@@ -750,6 +750,21 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go's `tidb_opt_partial_ordered_index_for_topn` closure validates the
+        // ORIGINAL spelling after enum type normalization: only DISABLE and
+        // COST (case-insensitively) are accepted, and ordinal enum values such
+        // as `0` are rejected with ErrWrongValueForVar. Store the canonical
+        // upper-case mode returned by that closure.
+        if self.name == tidb_vardef::tidb_vars::TIDB_OPT_PARTIAL_ORDERED_INDEX_FOR_TOP_N {
+            let mode = original.trim().to_ascii_uppercase();
+            if matches!(mode.as_str(), "DISABLE" | "COST") {
+                return Ok(Validated {
+                    value: mode,
+                    truncated: validated.truncated,
+                });
+            }
+            return Err(ValidationError::WrongValue);
+        }
         // Go's `tidb_enable_shared_lock_upgrade` gate is unavailable on the
         // classic kernel. Its Validation closure sees the normalized ON
         // value (including a typed `1`) and refuses it with
