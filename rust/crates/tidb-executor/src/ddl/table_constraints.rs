@@ -71,6 +71,7 @@ pub(crate) fn table_indexes(
     clustered: bool,
     common_handle: bool,
     ctx: &crate::StmtContext,
+    max_index_length: i64,
 ) -> Result<(Vec<KvIndex>, Vec<HiddenIndexColumn>), DriverError> {
     let zone = &ctx.session_zone();
     // Go `buildIndexColumns` reads the SESSION's `sql_mode` here: outside
@@ -234,11 +235,12 @@ pub(crate) fn table_indexes(
                     name, prefix_len, ..
                 } => {
                     let offset = offset_of(name)?;
-                    prefix_lengths.push(crate::ddl::index_prefix::key_part_length(
+                    prefix_lengths.push(crate::ddl::index_prefix::key_part_length_with_max(
                         &column_types[offset],
                         crate::ddl::index_prefix::IndexedColumn::Named(name),
                         *prefix_len,
                         strict,
+                        max_index_length,
                     )?);
                     part_types.push(column_types[offset].clone());
                     offsets.push(offset);
@@ -262,11 +264,12 @@ pub(crate) fn table_indexes(
         // Go `buildIndexColumns`: the sum of every key part's stored bytes
         // must stay within `config.MaxIndexLength`, checked in declaration
         // order so the reported number is the running sum that crossed it.
-        let outcome = crate::ddl::index_prefix::check_index_key_length(
+        let outcome = crate::ddl::index_prefix::check_index_key_length_with_max(
             part_types.iter().zip(prefix_lengths.iter().copied()),
             index.parts.len(),
             unique,
             strict,
+            max_index_length,
         )
         .map_err(crate::ddl::index_prefix::driver_error)?;
         if let crate::ddl::index_prefix::KeyLengthOutcome::Truncated {
@@ -276,7 +279,7 @@ pub(crate) fn table_indexes(
         {
             let reported = DriverError::TooLongKey {
                 length,
-                max: crate::ddl::index_prefix::MAX_INDEX_LENGTH,
+                max: max_index_length,
             }
             .to_mysql_error();
             ctx.append_warning_parts(reported.code, &reported.message);
@@ -756,6 +759,7 @@ pub(crate) fn is_int_column(column: &ColumnInfo) -> bool {
 pub(crate) fn primary_key_column(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
+    max_index_length: i64,
 ) -> Result<Option<PrimaryKeyDecl>, DriverError> {
     let mut found: Option<PrimaryKeyDecl> = None;
     for def in &create.columns {
@@ -825,11 +829,12 @@ pub(crate) fn primary_key_column(
             // different problem from a cut secondary-index entry: there is no
             // row to go back to for the whole value. See
             // `index_prefix::clustered_prefix_unsupported`.
-            if crate::ddl::index_prefix::key_part_length(
+            if crate::ddl::index_prefix::key_part_length_with_max(
                 field_type,
                 crate::ddl::index_prefix::IndexedColumn::Named(name),
                 *prefix_len,
                 true,
+                max_index_length,
             )? != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
             {
                 return Err(DriverError::unsupported(
@@ -845,11 +850,12 @@ pub(crate) fn primary_key_column(
         // `PRIMARY KEY (c01,c02,c03,c04)` is
         // "[ddl:1071]Specified key was too long (4080 bytes); max key length
         // is 3072 bytes".
-        crate::ddl::index_prefix::check_index_key_length(
+        crate::ddl::index_prefix::check_index_key_length_with_max(
             part_lengths,
             index.parts.len(),
             true,
             true,
+            max_index_length,
         )
         .map_err(crate::ddl::index_prefix::driver_error)?;
         found = Some(PrimaryKeyDecl {

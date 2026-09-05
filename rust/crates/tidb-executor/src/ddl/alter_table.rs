@@ -1109,6 +1109,7 @@ fn add_index_constraint_action(
             super::indexes::anonymous_index_name(existing, first_column)
         }
     };
+    let max_index_length = catalog.max_index_length();
     add_index_to_table(
         catalog,
         database,
@@ -1123,6 +1124,7 @@ fn add_index_constraint_action(
             if_not_exists: index.if_not_exists,
         },
         ctx,
+        max_index_length,
     )
 }
 
@@ -2447,7 +2449,13 @@ fn modify_column_action(
         if_exists,
         allow_remove_auto_inc,
     } = request;
-    let mut field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
+    let max_index_length = catalog.max_index_length();
+    let enum_length_limit = catalog.enable_enum_length_limit();
+    let mut field_type = field_type_of(
+        def,
+        existing_table_charset(catalog, database, table_name),
+        enum_length_limit,
+    )?;
     let mut default_value = None;
     let mut nullability = None;
     let mut has_null_flag = false;
@@ -2822,11 +2830,12 @@ fn modify_column_action(
             let length = index.prefix_length(position);
             let surviving = (field_type.code().is_type_prefixable() && field_type.flen() > length)
                 .then_some(length);
-            crate::ddl::index_prefix::key_part_length(
+            crate::ddl::index_prefix::key_part_length_with_max(
                 &field_type,
                 crate::ddl::index_prefix::IndexedColumn::Named(&def.name),
                 surviving,
                 true,
+                max_index_length,
             )?;
         }
     }
@@ -2850,11 +2859,12 @@ fn modify_column_action(
                 };
                 (field_type, index.prefix_length(position))
             });
-        crate::ddl::index_prefix::check_index_key_length(
+        crate::ddl::index_prefix::check_index_key_length_with_max(
             parts,
             index.column_offsets.len(),
             index.unique,
             true,
+            max_index_length,
         )
         .map_err(crate::ddl::index_prefix::driver_error)?;
     }
@@ -3010,7 +3020,11 @@ fn add_column_action(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let zone = &ctx.session_zone();
-    let mut field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
+    let mut field_type = field_type_of(
+        def,
+        existing_table_charset(catalog, database, table_name),
+        catalog.enable_enum_length_limit(),
+    )?;
     let mut default_value = None;
     let mut not_null = false;
     for option in &def.options {

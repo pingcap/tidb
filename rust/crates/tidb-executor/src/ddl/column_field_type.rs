@@ -564,20 +564,20 @@ mod tests {
         let dynamic = built("embedding vector");
         assert_eq!(dynamic.code(), FieldTypeCode::VectorFloat32);
         assert_eq!(dynamic.flen(), tidb_datatype::UNSPECIFIED_LENGTH);
-        check_column_attributes(&dynamic).unwrap();
+        check_column_attributes(&dynamic, true).unwrap();
 
         let fixed = built("embedding vector(3)");
         assert_eq!(fixed.code(), FieldTypeCode::VectorFloat32);
         assert_eq!((fixed.flen(), fixed.decimal()), (3, 0));
-        check_column_attributes(&fixed).unwrap();
+        check_column_attributes(&fixed, true).unwrap();
 
         let explicit_element = built("embedding vector<float>(3)");
         assert_eq!(explicit_element, fixed);
         let zero = built("embedding vector(0)");
-        check_column_attributes(&zero).unwrap();
+        check_column_attributes(&zero, true).unwrap();
 
         let oversized = built("embedding vector(16384)");
-        let error = check_column_attributes(&oversized).unwrap_err();
+        let error = check_column_attributes(&oversized, true).unwrap_err();
         assert!(matches!(
             error,
             super::ColumnAttributeError::InvalidVectorDimension(message)
@@ -703,6 +703,9 @@ pub enum ColumnAttributeError {
         /// `ENUM` or `SET`, as Go spells it in the message.
         type_name: &'static str,
     },
+    /// Go `ErrTooLongValueForType` (3505), gated by
+    /// `config.EnableEnumLengthLimit`.
+    TooLongEnumSetValue,
     /// Go `types.CheckVectorDimValid`'s plain HY000 error.
     InvalidVectorDimension(String),
 }
@@ -729,7 +732,10 @@ pub enum ColumnAttributeError {
 ///     'x' in ENUM
 /// create table a6b(a set('y','y'))   -> 1291 ... 'y' in SET
 /// ```
-pub fn check_column_attributes(field_type: &FieldType) -> Result<(), ColumnAttributeError> {
+pub fn check_column_attributes(
+    field_type: &FieldType,
+    enable_enum_length_limit: bool,
+) -> Result<(), ColumnAttributeError> {
     match field_type.code() {
         FieldTypeCode::NewDecimal | FieldTypeCode::Double | FieldTypeCode::Float => {
             if field_type.flen() < field_type.decimal() {
@@ -749,6 +755,22 @@ pub fn check_column_attributes(field_type: &FieldType) -> Result<(), ColumnAttri
         }
         code @ (FieldTypeCode::Enum | FieldTypeCode::Set) => {
             let collator = field_type.runtime_collator();
+            if enable_enum_length_limit {
+                let charset_maxlen = match field_type.charset_name() {
+                    "utf8mb4" | "gb18030" => 4,
+                    "utf8" | "gbk" => 3,
+                    _ => 1,
+                };
+                let too_long = field_type.with_elems_visible(|members| {
+                    members.iter().any(|member| {
+                        let key = collator.key(member.as_bytes());
+                        key.len() > 255 || key.len() * charset_maxlen > 1020
+                    })
+                });
+                if too_long {
+                    return Err(ColumnAttributeError::TooLongEnumSetValue);
+                }
+            }
             let duplicate = field_type.with_elems_visible(|members| {
                 let mut seen: Vec<Vec<u8>> = Vec::with_capacity(members.len());
                 for member in members {

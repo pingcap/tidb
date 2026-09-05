@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` configurable index and ENUM/SET limits): aligned
+  CREATE TABLE, CREATE INDEX, and ALTER index-length checks with Go's
+  catalog-scoped `MaxIndexLength`, and aligned CREATE/ALTER ENUM/SET member
+  validation with the `EnableEnumLengthLimit` switch and exact 3505 error.
+  The two promoted b115 regressions first failed before the production paths
+  were wired (3073-byte ASCII keys were capped at 3072 and 301-byte ENUM
+  members were accepted), then passed with exact 1071/3505 behavior including
+  disabled and re-enabled controls. The b115 receipt now records the full
+  owner inventory, test counts, and the two remaining fixture gaps.
 - 2026-09-05 (`pkg/ddl` AUTO_RANDOM ADD/MODIFY ordering): aligned Rust's
   ALTER behavior with Go `origin/master`
   `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`. The promoted ADD regression

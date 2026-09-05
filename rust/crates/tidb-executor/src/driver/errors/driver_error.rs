@@ -170,6 +170,11 @@ pub enum DriverError {
         /// `ENUM` or `SET`, as Go spells it in the message.
         type_name: &'static str,
     },
+    /// Go `dbterror.ErrTooLongValueForType` (3505), carrying the column.
+    TooLongEnumSetValue {
+        /// The column whose ENUM/SET member exceeded the configured limit.
+        column: String,
+    },
     /// Go `ErrCantDropFieldOrKey` (1091), with the index-specific message.
     UnknownIndex(String),
     /// Go `ErrCantDropFieldOrKey` (1091).

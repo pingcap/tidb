@@ -163,6 +163,17 @@ pub fn stored_index_length(
     declared: Option<i64>,
     strict: bool,
 ) -> Result<i64, PrefixError> {
+    stored_index_length_with_max(field_type, column, declared, strict, MAX_INDEX_LENGTH)
+}
+
+/// [`stored_index_length`] with the catalog's configured maximum index length.
+pub fn stored_index_length_with_max(
+    field_type: &FieldType,
+    column: IndexedColumn<'_>,
+    declared: Option<i64>,
+    strict: bool,
+    max_index_length: i64,
+) -> Result<i64, PrefixError> {
     let code = field_type.code();
     let declared = declared.unwrap_or(UNSPECIFIED_LENGTH);
 
@@ -239,10 +250,10 @@ pub fn stored_index_length(
     if code.is_string() {
         length_in_bytes *= charset_max_bytes(field_type);
     }
-    if length_in_bytes > MAX_INDEX_LENGTH && strict {
+    if length_in_bytes > max_index_length && strict {
         return Err(PrefixError::TooLongKey {
             length: length_in_bytes,
-            max: MAX_INDEX_LENGTH,
+            max: max_index_length,
         });
     }
 
@@ -330,16 +341,28 @@ pub fn check_index_key_length<'a>(
     unique: bool,
     strict: bool,
 ) -> Result<KeyLengthOutcome, PrefixError> {
+    check_index_key_length_with_max(parts, part_count, unique, strict, MAX_INDEX_LENGTH)
+}
+
+/// [`check_index_key_length`] with the catalog's configured maximum index
+/// length.
+pub fn check_index_key_length_with_max<'a>(
+    parts: impl IntoIterator<Item = (&'a FieldType, i64)>,
+    part_count: usize,
+    unique: bool,
+    strict: bool,
+    max_index_length: i64,
+) -> Result<KeyLengthOutcome, PrefixError> {
     let mut sum = 0;
     for (field_type, declared) in parts {
         sum += index_column_bytes(field_type, declared);
-        if sum <= MAX_INDEX_LENGTH {
+        if sum <= max_index_length {
             continue;
         }
         if strict || unique || part_count > 1 {
             return Err(PrefixError::TooLongKey {
                 length: sum,
-                max: MAX_INDEX_LENGTH,
+                max: max_index_length,
             });
         }
         // Go: `colLenPerUint := getIndexColumnLength(col, 1)` then
@@ -349,7 +372,7 @@ pub fn check_index_key_length<'a>(
         let per_unit = index_column_bytes(field_type, 1).max(1);
         return Ok(KeyLengthOutcome::Truncated {
             length: sum,
-            stored_length: MAX_INDEX_LENGTH / per_unit,
+            stored_length: max_index_length / per_unit,
         });
     }
     Ok(KeyLengthOutcome::Fits)
@@ -405,7 +428,19 @@ pub fn key_part_length(
     declared: Option<i64>,
     strict: bool,
 ) -> Result<i64, crate::DriverError> {
-    stored_index_length(field_type, column, declared, strict).map_err(driver_error)
+    key_part_length_with_max(field_type, column, declared, strict, MAX_INDEX_LENGTH)
+}
+
+/// [`key_part_length`] with the catalog's configured maximum index length.
+pub fn key_part_length_with_max(
+    field_type: &FieldType,
+    column: IndexedColumn<'_>,
+    declared: Option<i64>,
+    strict: bool,
+    max_index_length: i64,
+) -> Result<i64, crate::DriverError> {
+    stored_index_length_with_max(field_type, column, declared, strict, max_index_length)
+        .map_err(driver_error)
 }
 
 /// Go's index-length errors as the driver reports them, so an illegal key

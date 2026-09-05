@@ -148,6 +148,7 @@ pub(crate) fn database_charset_of(
 pub(crate) fn field_type_of(
     def: &ColumnDef,
     table: TableCharset,
+    enable_enum_length_limit: bool,
 ) -> Result<FieldType, DriverError> {
     let written_charset = def.ty.charset.as_deref().map(charset_named).transpose()?;
     let written_collation = def
@@ -186,27 +187,34 @@ pub(crate) fn field_type_of(
     // Go `checkColumnAttributes`: the parser stores what was written and the
     // DDL builder is what refuses it, which is why these are coded errors and
     // not parse failures.
-    column_field_type::check_column_attributes(&field_type).map_err(|error| match error {
-        column_field_type::ColumnAttributeError::MBiggerThanD => {
-            DriverError::MBiggerThanD(def.name.clone())
-        }
-        column_field_type::ColumnAttributeError::TooBigPrecision { precision, maximum } => {
-            DriverError::TooBigPrecision {
-                precision,
-                column: def.name.clone(),
-                maximum,
+    column_field_type::check_column_attributes(&field_type, enable_enum_length_limit).map_err(
+        |error| match error {
+            column_field_type::ColumnAttributeError::MBiggerThanD => {
+                DriverError::MBiggerThanD(def.name.clone())
             }
-        }
-        column_field_type::ColumnAttributeError::DuplicatedValueInType { value, type_name } => {
-            DriverError::DuplicatedValueInType {
-                column: def.name.clone(),
-                value,
-                type_name,
+            column_field_type::ColumnAttributeError::TooBigPrecision { precision, maximum } => {
+                DriverError::TooBigPrecision {
+                    precision,
+                    column: def.name.clone(),
+                    maximum,
+                }
             }
-        }
-        column_field_type::ColumnAttributeError::InvalidVectorDimension(message) => {
-            DriverError::unsupported(message)
-        }
-    })?;
+            column_field_type::ColumnAttributeError::DuplicatedValueInType { value, type_name } => {
+                DriverError::DuplicatedValueInType {
+                    column: def.name.clone(),
+                    value,
+                    type_name,
+                }
+            }
+            column_field_type::ColumnAttributeError::TooLongEnumSetValue => {
+                DriverError::TooLongEnumSetValue {
+                    column: def.name.clone(),
+                }
+            }
+            column_field_type::ColumnAttributeError::InvalidVectorDimension(message) => {
+                DriverError::unsupported(message)
+            }
+        },
+    )?;
     Ok(field_type)
 }

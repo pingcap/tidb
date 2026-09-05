@@ -153,6 +153,13 @@ fn enqueue_sync_load_failures(
 #[derive(Clone, Debug)]
 pub struct Catalog {
     databases: HashMap<String, Database>,
+    /// Go's process-global `config.MaxIndexLength`, scoped to this in-process
+    /// catalog so DDL tests and embedded callers can change it without
+    /// racing unrelated catalogs.
+    max_index_length: i64,
+    /// Go's process-global `config.EnableEnumLengthLimit`, likewise carried
+    /// with the catalog that owns the DDL metadata in this tier.
+    enable_enum_length_limit: bool,
     /// Go `infoschema`'s policy map, keyed by the FOLDED policy name.
     ///
     /// A placement policy is a schema object in its own right, not an
@@ -381,6 +388,8 @@ impl Default for Catalog {
         );
         let mut catalog = Catalog {
             databases,
+            max_index_length: crate::ddl::index_prefix::MAX_INDEX_LENGTH,
+            enable_enum_length_limit: true,
             policies: HashMap::new(),
             next_policy_id: 0,
             next_database_id: 3,
@@ -544,6 +553,29 @@ impl TableEntry {
 }
 
 impl Catalog {
+    /// Sets the Go-compatible maximum index length for this catalog's DDL.
+    pub fn set_max_index_length(&mut self, max_index_length: i64) {
+        self.max_index_length = max_index_length;
+    }
+
+    /// Sets whether this catalog's DDL enforces the Go ENUM/SET member-length
+    /// limit.
+    pub fn set_enable_enum_length_limit(&mut self, enabled: bool) {
+        self.enable_enum_length_limit = enabled;
+    }
+
+    /// Returns the catalog-scoped Go `config.MaxIndexLength`.
+    #[must_use]
+    pub(crate) const fn max_index_length(&self) -> i64 {
+        self.max_index_length
+    }
+
+    /// Returns the catalog-scoped Go `config.EnableEnumLengthLimit`.
+    #[must_use]
+    pub(crate) const fn enable_enum_length_limit(&self) -> bool {
+        self.enable_enum_length_limit
+    }
+
     /// Whether this catalog contains any in-process matrix-backed tables.
     ///
     /// Cluster sessions keep row changes in their shared `MutationBuffer`,

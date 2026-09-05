@@ -453,6 +453,11 @@ impl DriverError {
             1291,
             format!("Column '{column}' has duplicated value '{value}' in {type_name}"),
         ),
+        // Go: "Too long enumeration/set value for column %s.".
+        DriverError::TooLongEnumSetValue { column } => MysqlError::new(
+            3505,
+            format!("Too long enumeration/set value for column {column}."),
+        ),
         // Go: "Duplicate column name '%-.192s'".
         DriverError::DuplicateColumnName(name) => {
             MysqlError::new(1060, format!("Duplicate column name '{name}'"))

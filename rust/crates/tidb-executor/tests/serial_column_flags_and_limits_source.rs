@@ -23,9 +23,9 @@
 //! `config.MaxIndexLength` (`pkg/ddl/index_prefix.rs`'s Go counterpart,
 //! `checkIndexLength`), the collation gate from
 //! `charset.GetCollationByName` via the DDL, and the enum/set limit from
-//! `EnableEnumLengthLimit`. Where this tier has no carrier (a global config
-//! switch, LOCK TABLES, `GetRangeEndKey`, the enum length gate), the Go test
-//! is an `#[ignore]` gap test — never approximated.
+//! `EnableEnumLengthLimit`. The two remaining tests with no Rust carrier
+//! (LOCK TABLES and `GetRangeEndKey`) stay as explicit `#[ignore]` gap tests;
+//! the configurable index and enum controls are modeled on `Catalog`.
 
 use tidb_executor::{
     run_alter_table_in, run_create_table_on, run_select_meta_on, Catalog, StmtContext,
@@ -113,12 +113,32 @@ fn primary_key_without_default_sets_the_no_default_value_flag() {
 /// `varchar(12289)` answers
 /// `[ddl:1071]Specified key was too long (12289 bytes); max key length is
 /// 12288 bytes`.
-// go-parity-gap: this tier has no MaxIndexLength config switch —
-// `crate::ddl::index_prefix::MAX_INDEX_LENGTH` is fixed at Go's default
-// 3072 bytes, so the raised-limit arms cannot be reproduced.
 #[test]
-#[ignore]
 fn raising_max_index_length_admits_wider_indexed_columns() {
+    let mut catalog = Catalog::default();
+    catalog.set_max_index_length(12_288);
+    run_create_table_on(
+        "create table wide3073 (a varchar(3073) ascii, key idx(a))",
+        &mut catalog,
+    )
+    .expect("Go's raised MaxIndexLength admits a 3073-byte ASCII key");
+    run_create_table_on(
+        "create table wide12288 (a varchar(12288) ascii, key idx(a))",
+        &mut catalog,
+    )
+    .expect("Go's DefMaxOfMaxIndexLength admits a 12288-byte ASCII key");
+
+    let error = run_create_table_on(
+        "create table wide12289 (a varchar(12289) ascii, key idx(a))",
+        &mut catalog,
+    )
+    .expect_err("Go refuses a key one byte beyond MaxIndexLength")
+    .to_mysql_error();
+    assert_eq!(error.code, 1071);
+    assert_eq!(
+        error.message,
+        "Specified key was too long (12289 bytes); max key length is 12288 bytes"
+    );
 }
 
 /// Go `serial_test.go:1044-1063::TestTableLocksDisable`: with
@@ -173,12 +193,54 @@ fn unsupported_collations_answer_ddl_1273_on_every_statement_kind() {
 /// ALTER TABLE ADD; with `EnableEnumLengthLimit=false` the same members are
 /// stored and read back verbatim; with it back on, creation is refused
 /// again.
-// go-parity-gap: this tier has no enum/set member-length gate and no
-// EnableEnumLengthLimit switch — a 301-character member builds fine
-// (measured).
 #[test]
-#[ignore]
 fn enum_set_member_length_limit_follows_the_config_switch() {
+    let long = "a".repeat(301);
+    let mut catalog = Catalog::default();
+    let error = run_create_table_on(
+        &format!("create table t1 (a enum('{long}'))"),
+        &mut catalog,
+    )
+    .expect_err("Go's default EnableEnumLengthLimit refuses 301-byte members")
+    .to_mysql_error();
+    assert_eq!(error.code, 3505);
+    assert_eq!(error.message, "Too long enumeration/set value for column a.");
+
+    run_create_table_on("create table t2 (id int)", &mut catalog).expect("create alter source");
+    let error = run_alter_table_in(
+        &format!("alter table t2 add a enum('{long}')"),
+        &mut catalog,
+        "test",
+        &ctx(),
+    )
+    .expect_err("Go applies the same limit to ALTER TABLE ADD")
+    .to_mysql_error();
+    assert_eq!(error.code, 3505);
+    assert_eq!(error.message, "Too long enumeration/set value for column a.");
+
+    catalog.set_enable_enum_length_limit(false);
+    run_create_table_on(
+        &format!("create table t3 (a enum('{long}'))"),
+        &mut catalog,
+    )
+    .expect("Go stores the long member while the limit is disabled");
+    run_create_table_on("create table t4 (id int)", &mut catalog).expect("create alter source");
+    run_alter_table_in(
+        &format!("alter table t4 add a set('{long}')"),
+        &mut catalog,
+        "test",
+        &ctx(),
+    )
+    .expect("Go stores long SET members while the limit is disabled");
+
+    catalog.set_enable_enum_length_limit(true);
+    let error = run_create_table_on(
+        &format!("create table t5 (a enum('{long}'))"),
+        &mut catalog,
+    )
+    .expect_err("Go refuses the member again after re-enabling the limit")
+    .to_mysql_error();
+    assert_eq!(error.code, 3505);
 }
 
 /// Go `serial_test.go:1421-1485::TestGetReverseKey`: over a split table with

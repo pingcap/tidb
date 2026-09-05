@@ -94,6 +94,7 @@ pub fn run_create_index_in(
         return Err(DriverError::OperationOnCachedTable("Create Index"));
     }
     reject_partial_index(&create.options)?;
+    let max_index_length = catalog.max_index_length();
     add_index_to_table(
         catalog,
         &database,
@@ -108,6 +109,7 @@ pub fn run_create_index_in(
             if_not_exists: create.if_not_exists,
         },
         ctx,
+        max_index_length,
     )
 }
 
@@ -217,6 +219,7 @@ pub(crate) fn add_index_to_table(
     table_name: &str,
     index: IndexSpec<'_>,
     ctx: &crate::StmtContext,
+    max_index_length: i64,
 ) -> Result<(), DriverError> {
     let IndexSpec {
         name: index_name,
@@ -305,11 +308,12 @@ pub(crate) fn add_index_to_table(
                 // is -- captured: under `sql_mode=''` a CREATE TABLE truncates
                 // the key with a warning but `ALTER TABLE ... ADD KEY` on the
                 // same column still fails 1071.
-                prefix_lengths.push(crate::ddl::index_prefix::key_part_length(
+                prefix_lengths.push(crate::ddl::index_prefix::key_part_length_with_max(
                     &table.columns[offset].field_type,
                     crate::ddl::index_prefix::IndexedColumn::Named(name),
                     *prefix_len,
                     true,
+                    max_index_length,
                 )?);
                 part_types.push(table.columns[offset].field_type.clone());
                 offsets.push(offset);
@@ -325,11 +329,12 @@ pub(crate) fn add_index_to_table(
     }
     // Go `buildIndexColumns` runs the same running sum for ADD INDEX as for
     // CREATE TABLE: each part may be legal and their total still refused.
-    crate::ddl::index_prefix::check_index_key_length(
+    crate::ddl::index_prefix::check_index_key_length_with_max(
         part_types.iter().zip(prefix_lengths.iter().copied()),
         parts.len(),
         unique,
         true,
+        max_index_length,
     )
     .map_err(crate::ddl::index_prefix::driver_error)?;
     // Go `checkPartitionKeysConstraint` reaches ADD INDEX too: a unique index

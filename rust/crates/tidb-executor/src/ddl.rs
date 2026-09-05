@@ -1214,7 +1214,7 @@ pub fn run_create_table_in(
     let table_charset = table_charset_of(&create.table_options, database_charset)?;
     let mut columns = Vec::with_capacity(create.columns.len());
     for (i, def) in create.columns.iter().enumerate() {
-        let field_type = field_type_of(def, table_charset)?;
+        let field_type = field_type_of(def, table_charset, catalog.enable_enum_length_limit())?;
         let column_id = i64::try_from(
             i.checked_add(1)
                 .expect("a parsed table cannot contain usize::MAX columns"),
@@ -1297,7 +1297,7 @@ pub fn run_create_table_in(
         auto_increment_offset = Some(i);
     }
 
-    let primary_key = primary_key_column(create, &columns)?;
+    let primary_key = primary_key_column(create, &columns, catalog.max_index_length())?;
     let pk_offsets: Vec<usize> = match &primary_key {
         Some(declared) => {
             let mut offsets = Vec::with_capacity(declared.columns.len());
@@ -1629,6 +1629,7 @@ pub fn run_create_table_in(
         clustered,
         matches!(&handle, HandleKind::CommonHandle(_)),
         ctx,
+        catalog.max_index_length(),
     )?;
     for hidden in hidden_columns {
         // Go `checkExpressionIndexAutoIncrement`: an expression index may not
