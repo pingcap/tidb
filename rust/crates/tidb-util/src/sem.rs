@@ -221,7 +221,6 @@ pub fn disable() {
 }
 
 /// Go `IsEnabled`: whether SEM is currently on.
-#[must_use]
 pub fn is_enabled() -> bool {
     SEM_ENABLED.load(Ordering::SeqCst)
 }
@@ -248,13 +247,11 @@ fn go_equal_fold_ascii(input: &str, expected: &str) -> bool {
 }
 
 /// Go `IsInvisibleSchema`: whether `db_name` is hidden under SEM.
-#[must_use]
 pub fn is_invisible_schema(db_name: &str) -> bool {
     go_equal_fold_ascii(db_name, METRIC_SCHEMA_L)
 }
 
 /// Go `IsInvisibleTable`: whether the lower-cased schema/table is hidden.
-#[must_use]
 pub fn is_invisible_table(db_lower_name: &str, tbl_lower_name: &str) -> bool {
     match db_lower_name {
         SYSTEM_DB => matches!(
@@ -303,21 +300,18 @@ pub fn is_invisible_table(db_lower_name: &str, tbl_lower_name: &str) -> bool {
 }
 
 /// Go `IsInvisibleStatusVar`: whether the status variable is hidden.
-#[must_use]
 pub fn is_invisible_status_var(var_name: &str) -> bool {
     var_name == TIDB_GC_LEADER_DESC
 }
 
 /// Go `IsInvisibleSysVar`: whether the (lower-cased) system variable is
 /// hidden under SEM.
-#[must_use]
 pub fn is_invisible_sys_var(var_name_in_lower: &str) -> bool {
     INVISIBLE_SYS_VARS.contains(&var_name_in_lower)
 }
 
 /// Go `IsRestrictedPrivilege`: whether a dynamic privilege must not be
 /// satisfied by `SUPER` (i.e. it is a `RESTRICTED_*` privilege).
-#[must_use]
 pub fn is_restricted_privilege(priv_name_in_upper: &str) -> bool {
     crate::intest::assert_with_message(
         priv_name_in_upper == priv_name_in_upper.to_uppercase(),
@@ -330,6 +324,17 @@ pub fn is_restricted_privilege(priv_name_in_upper: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        is_enabled();
+        is_invisible_schema("metrics_schema");
+        is_invisible_table("mysql", "tidb");
+        is_invisible_status_var("tidb_gc_leader_desc");
+        is_invisible_sys_var("tidb_config");
+        is_restricted_privilege("RESTRICTED_SELECT");
+    }
 
     // Go TestInvisibleSchema.
     #[test]

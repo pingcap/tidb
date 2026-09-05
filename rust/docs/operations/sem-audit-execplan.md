@@ -26,6 +26,11 @@ After this plan is complete, the direct Go package at `pkg/util/sem` will have o
 - [x] (2026-09-02) Published the one-package commit linearly to
   `origin/hparser-integration` and verified matching local/tracking/remote
   SHAs before fetching the newest target branch.
+- [x] (2026-09-05) Removed six Rust-only `#[must_use]` diagnostics from the
+  source-shaped SEM predicates. The deny-on-discard regression failed with
+  exactly six diagnostics on the detached pre-fix owner and passes on the
+  corrected owner; the integration-only effective-default helper remains
+  intentionally annotated.
 
 ## Surprises & Discoveries
 
@@ -143,7 +148,7 @@ Unicode-fold regression evidence:
 
 Focused post-fix evidence:
 
-    tidb-util sem tests: 6 passed; 0 failed
+    tidb-util sem tests: 6 passed; 0 failed, including the discard-contract regression
     tidb-session SEM default regression: 1 passed; 0 failed
     enable emitted: tidb-server is operating with security enhanced mode (SEM) enabled
 
