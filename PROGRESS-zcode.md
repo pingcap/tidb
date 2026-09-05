@@ -456,3 +456,5 @@
 - 下轮恢复点: (1) privilege 余项或其他 crate 面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - redact 面核实: MARKER/OFF/ON 模式(含内部 marker 双写)、NeedRedact、Value("?")、DeRedact/File 日志后处理全镜像; 4 单测+5 planner 回归全绿。收据已追加。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- SEM 面核实: v1 门+sem_v2(config/sql_rule/restricted_hint+六个不可见/受限谓词)全镜像, 18 测试全绿——noop-gated sysvar 臂所依赖的门面。收据已追加。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

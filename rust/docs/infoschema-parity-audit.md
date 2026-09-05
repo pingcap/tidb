@@ -201,3 +201,12 @@ interior markers, ON erases, invalid mode is an intest assertion),
 `NeedRedact` over the redaction-mode atomic, `Value` answering "?" when
 enabled, plus `DeRedact`/`DeRedactFile` for log post-processing.
 Four unit tests and the five planner-side redaction regressions pass.
+
+## Adjacent face: sem (2026-09-05) — VERIFIED
+
+The secure-enhanced-mode face mirrors Go `pkg/util/sem` in three layers:
+`sem.rs`/`sem_compat.rs` (the v1 gates) and `sem_v2` (config parse and
+validate, the SQL-rule registry, `restricted_hint`, and the predicate
+set — `is_invisible_schema/table`, `is_restricted_privilege`,
+`is_invisible_sys_var`, `is_read_only_variable`, `is_restricted_sql`).
+18 sem tests pass. This is the face the noop-gated sysvar arm rides on.
