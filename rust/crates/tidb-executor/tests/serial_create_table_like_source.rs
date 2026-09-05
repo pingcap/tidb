@@ -449,12 +449,16 @@ fn create_temporary_if_not_exists_over_existing_table_files_a_1050_warning() {
 /// over an EXISTING `t1` and still answers `mysql.ErrNoSuchTable` (1146):
 /// preprocessing resolves the LIKE source before the DDL layer's
 /// `infoschema.ErrTableExists` check fires.
-// go-parity-gap: this tier checks the target's existence first (the
-// `name_taken` gate before the like branch in `crate::ddl`), so the same
-// statement answers 1050.
 #[test]
-#[ignore]
 fn create_table_like_missing_source_wins_over_existing_target() {
+    let mut catalog = Catalog::default();
+    create(&mut catalog, "create table t1 (a int)").expect("t1");
+    let error = create_error(&mut catalog, "create table t1 like test_not_exist.t");
+    assert_eq!(code_of(&error), 1146, "Go mysql.ErrNoSuchTable");
+    assert_eq!(
+        message_of(&error),
+        "Table 'test_not_exist.t' doesn't exist"
+    );
 }
 
 /// Go `serial_test.go:196-224`: with region splitting enabled

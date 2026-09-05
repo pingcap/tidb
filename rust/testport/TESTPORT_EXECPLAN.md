@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` CREATE TABLE LIKE source ordering): aligned the
+  ordinary DDL path with Go's preprocessing order by validating a LIKE source
+  before the target-exists gate. The promoted regression now returns exact
+  1146 for a missing source over an existing target (the old Rust path returned
+  1050), while valid-source duplicate and `IF NOT EXISTS` behavior stays on
+  the existing path; b115 records the owner inventory and focused evidence.
 - 2026-09-05 (`pkg/ddl` sequence CREATE privilege): closed the final
   sequence-create row by adding the missing `DdlStmt::CreateSequence` table
   privilege request in `tidb-session`'s ordinary DDL visit-info dispatch.

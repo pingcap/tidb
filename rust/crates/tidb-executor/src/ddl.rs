@@ -1062,6 +1062,15 @@ pub fn run_create_table_in(
     // therefore succeeds and SHADOWS it for this session, which is MySQL's
     // rule and the reason the shadowed entry has to be preserved rather than
     // overwritten (see `Catalog::register_local_temporary_in`).
+    // Go's preprocessor resolves a LIKE source before the DDL layer checks
+    // whether the target already exists.  Validate the source now so a
+    // missing table (1146) or wrong object (1347) wins over a target 1050,
+    // including the `IF NOT EXISTS` spelling.
+    if let Some(source) = &create.like_table {
+        let (source_db, source_name) = crate::driver::split_table_path_pub(source, current_db)?;
+        create_like_source(source_db, source_name, catalog)?;
+    }
+
     let name_taken = if temporary == tidb_model::TempTableType::LOCAL {
         matches!(catalog.table_in(&database, name), Some(crate::TableEntry::Kv(table))
             if table.temp_table_type() == tidb_model::TempTableType::LOCAL)
@@ -1086,9 +1095,7 @@ pub fn run_create_table_in(
 
     // `CREATE TABLE ... LIKE` copies a built table rather than building one
     // from column definitions, so it leaves before any of that work. The
-    // target's own existence was settled just above, which is the order Go
-    // reports the two in: an existing target is 1050 even when the source is
-    // a view.
+    // source was validated above to preserve Go's preprocessing order.
     if let Some(source) = &create.like_table {
         let (source_db, source_name) = crate::driver::split_table_path_pub(source, current_db)?;
         let (source_db, source_name) = (source_db.to_owned(), source_name.to_owned());
