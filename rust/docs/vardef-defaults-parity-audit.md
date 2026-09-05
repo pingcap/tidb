@@ -123,4 +123,8 @@ materialized results), `PrivilegeRegistry::has_dynamic_priv_with_roles`
 (`registry_ops.rs:1156`, the CONNECTION_ADMIN skip), and
 `GlobalSysvars::get_global` (`vars.rs:2678`, the value read). The
 remaining work is wiring these at the handshake-completion point in the
-connection layer — a self-contained slice now that the seams are named.
+connection layer — and that layer is the actual prerequisite: the
+server crate carries the auth state machine, the pipeline execution and
+their tests, but no per-connection run loop yet, so the hook point this
+feature needs is future infrastructure. The seam inventory stands; the
+wiring lands together with the connection run loop.

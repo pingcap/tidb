@@ -420,3 +420,5 @@
 - 下轮恢复点: (1) init_connect 执行面(连接后置钩子)立项或继续他面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - init_connect 立项推进: Go 语义(conn.go:1114-1157)与 Rust 三缝点(pipeline execute/has_dynamic_priv_with_roles/get_global)全部提取并写入收据, 实现面已完备可执行。
 - 下轮恢复点: (1) 按 DESIGN 在握手完成点接线 initConnect 执行; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- init_connect 执行面定性更新: 连接层仅有 auth 状态机+执行管线脚手架, **逐连接 run loop 尚未建成**→钩子点属未来基础设施, 该缺口与连接循环一起落地(收据已更新)。
+- 下轮恢复点: (1) 选与连接循环无关的新面(如 perfschema/metrics 表面或 planner 行为面); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
