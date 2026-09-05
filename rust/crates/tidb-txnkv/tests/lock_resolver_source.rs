@@ -24,8 +24,8 @@ use std::time::Duration;
 pub use tidb_txnkv::region;
 pub use tidb_txnkv::rpc;
 pub use tidb_txnkv::{
-    DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode, SharedReadRuntime,
-    UnaryCallContext, UnaryCancellation,
+    DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode, ResolvingLock,
+    SharedReadRuntime, UnaryCallContext, UnaryCancellation,
 };
 
 #[allow(unused_imports)]
