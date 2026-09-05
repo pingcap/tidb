@@ -1057,6 +1057,19 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 }
 
 func TestRootRuntimeStats(t *testing.T) {
+	t.Run("non-creating root lookup", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		root, ok := coll.GetRootStatsIfExists(1)
+		require.False(t, ok)
+		require.Nil(t, root)
+		require.False(t, coll.ExistsRootStats(1))
+
+		created := coll.GetRootStats(1)
+		root, ok = coll.GetRootStatsIfExists(1)
+		require.True(t, ok)
+		require.Same(t, created, root)
+	})
+
 	pid := 1
 	stmtStats := NewRuntimeStatsColl(nil)
 	basic1 := stmtStats.GetBasicRuntimeStats(pid, true)
