@@ -8429,3 +8429,11 @@ risks without claiming repository-wide parity.
   child is gone. Evidence is recorded in
   `receipts/ddl_foreign_key_database_owner.md`, with the complete package
   inventory shared by `receipts/ddl_foreign_key_owner_inventory.md`.
+- 2026-09-05 (`pkg/ddl` ALTER ADD FOREIGN KEY validation): Rust now rejects
+  same-column self-references with Go's 1215 and requires a full-length
+  parent-side covering index (or the single-column clustered handle),
+  returning Go's exact 1822 message before metadata is staged. Focused
+  executor and session regressions prove both refusals and the successful
+  indexed control. Evidence is recorded in
+  `receipts/ddl_foreign_key_alter_validation.md`; multi-action ALTER
+  atomicity and partial-index predicates remain explicit boundaries.

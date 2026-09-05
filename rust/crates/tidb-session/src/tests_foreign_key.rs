@@ -1170,6 +1170,44 @@ fn adding_a_foreign_key_with_the_checks_off_blesses_the_rows_it_did_not_check() 
     );
 }
 
+/// ALTER-side owner validation requires a covering index on the referenced
+/// columns and rejects a same-column self-reference, matching Go's 1822/1215
+/// checks before metadata is staged.
+#[test]
+fn alter_add_foreign_key_checks_parent_index_and_self_reference() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE p (id INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE c (id INT PRIMARY KEY, b INT, INDEX (b))")
+        .unwrap();
+
+    let error = session
+        .run("ALTER TABLE c ADD FOREIGN KEY (b) REFERENCES p(b)")
+        .expect_err("the parent b column has no covering index");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 1822);
+    assert_eq!(
+        mysql_error.message,
+        "Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 'p'"
+    );
+    assert!(rows(&mut session, "SHOW CREATE TABLE c")[0][1]
+        .find("CONSTRAINT")
+        .is_none());
+
+    session.run("ALTER TABLE p ADD INDEX (b)").unwrap();
+    session
+        .run("ALTER TABLE c ADD FOREIGN KEY (b) REFERENCES p(b)")
+        .unwrap();
+    let error = session
+        .run("ALTER TABLE c ADD FOREIGN KEY (b) REFERENCES c(b)")
+        .expect_err("same-column self-reference is unsupported");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 1215);
+    assert_eq!(mysql_error.message, "Cannot add foreign key constraint");
+}
+
 /// Go `checkFKDupName` (1826), and Go `ErrForeignKeyNotExists`, which is
 /// `ErrCantDropFieldOrKey` (1091) with the "check that column/key exists"
 /// message rather than a foreign-key-specific code.

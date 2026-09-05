@@ -37,6 +37,7 @@ use super::column_types::{field_type_of, NOT_NULL_FLAG};
 use super::indexes::{add_index_to_table, drop_index_from_table, is_visible};
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
+use crate::kv_table::KvForeignKey;
 use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 
@@ -1134,12 +1135,16 @@ fn add_index_constraint_action(
 ///    generated column on either side, 3104 for an action that would write a
 ///    stored one, the parent lookup behind `foreign_key_checks` -- hold
 ///    identically whichever statement declared it.
-/// 3. A constraint whose referencing columns no index covers gets one, named
+/// 3. An existing parent must have a covering index (or a clustered handle
+///    primary key for the single-column case), and same-column self-reference
+///    is rejected with Go's 1215. These owner checks run before metadata is
+///    staged.
+/// 4. A constraint whose referencing columns no index covers gets one, named
 ///    after the constraint, exactly as `CREATE TABLE` does. Go creates it
 ///    here as a real `createIndex` before the job is submitted, which is why
 ///    the missing-index error inside `checkAddForeignKeyValidInOwner` is not
 ///    reachable from this path.
-/// 4. The rows the table ALREADY holds are checked against the new
+/// 5. The rows the table ALREADY holds are checked against the new
 ///    constraint, and an orphan is 1452 -- see
 ///    [`crate::foreign_key::require_existing_rows`]. `foreign_key_checks = 0`
 ///    skips this and only this step, which is how a constraint can be
@@ -1187,6 +1192,7 @@ fn add_foreign_key_action(
         database,
         ctx.foreign_key_checks(),
     )?;
+    validate_alter_foreign_key_parent(catalog, database, name, &foreign_key)?;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
@@ -1261,6 +1267,83 @@ fn add_foreign_key_action(
     }
     table.add_foreign_key(foreign_key);
     catalog.mark_has_foreign_keys();
+    Ok(())
+}
+
+/// Go `checkTableForeignKeyValid`'s owner-side self-reference and parent-index
+/// checks (`pkg/ddl/foreign_key.go:186-211, 290-297`). CREATE TABLE has its own
+/// historical path; this helper is deliberately called only for ALTER ADD.
+fn validate_alter_foreign_key_parent(
+    catalog: &Catalog,
+    database: &str,
+    child_table: &str,
+    foreign_key: &KvForeignKey,
+) -> Result<(), DriverError> {
+    let self_reference = foreign_key.ref_schema.eq_ignore_ascii_case(database)
+        && foreign_key.ref_table.eq_ignore_ascii_case(child_table)
+        && foreign_key.cols.len() == foreign_key.ref_cols.len()
+        && foreign_key
+            .cols
+            .iter()
+            .zip(&foreign_key.ref_cols)
+            .all(|(child, parent)| child.eq_ignore_ascii_case(parent));
+    if self_reference {
+        return Err(DriverError::DdlCoded {
+            errno: 1215,
+            message: "Cannot add foreign key constraint".to_owned(),
+        });
+    }
+
+    // With checks off Go permits an as-yet-missing parent. There is no parent
+    // index to validate in that deferred case; when the parent exists, its
+    // covering-index rule still applies just as in Go's checkTableForeignKey.
+    let Some(crate::TableEntry::Kv(parent)) =
+        catalog.get_in(&foreign_key.ref_schema, &foreign_key.ref_table)
+    else {
+        return Ok(());
+    };
+    let Some(ref_offsets) = foreign_key
+        .ref_cols
+        .iter()
+        .map(|column| {
+            parent
+                .columns
+                .iter()
+                .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(());
+    };
+    let clustered = parent
+        .pk_handle_offset()
+        .map(|offset| vec![offset])
+        .unwrap_or_else(|| parent.common_handle_offsets().to_vec());
+    let clustered_cover = ref_offsets.len() == 1 && ref_offsets == clustered;
+    let column_flens: Vec<i64> = parent
+        .columns
+        .iter()
+        .map(|column| column.field_type.flen())
+        .collect();
+    let index_cover = parent.indexes().iter().any(|index| {
+        index.column_offsets.starts_with(&ref_offsets)
+            && ref_offsets.iter().enumerate().all(|(position, offset)| {
+                let length = index.prefix_length(position);
+                length == super::index_prefix::UNSPECIFIED_LENGTH
+                    || column_flens
+                        .get(*offset)
+                        .is_some_and(|flen| length >= *flen)
+            })
+    });
+    if !clustered_cover && !index_cover {
+        return Err(DriverError::DdlCoded {
+            errno: 1822,
+            message: format!(
+                "Failed to add the foreign key constraint. Missing index for constraint '{}' in the referenced table '{}'",
+                foreign_key.name, foreign_key.ref_table
+            ),
+        });
+    }
     Ok(())
 }
 

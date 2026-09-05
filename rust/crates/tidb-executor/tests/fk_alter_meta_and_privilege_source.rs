@@ -330,15 +330,64 @@ fn alter_add_foreign_key_lands_constraints_and_enforces_child_side() {
 //   * `alter table t2 add foreign key (b) references t2(b)` fails
 //     `infoschema.ErrCannotAddForeign` ([schema:1215]).
 //
-// go-parity-gap (documented divergence): the tier's ADD FOREIGN KEY checks
-// neither the PARENT side's index coverage (it only ever ensures the CHILD's
-// own support index) nor the self-reference case — both statements succeed
-// here where Go refuses them.
+// The Rust ALTER owner now checks the same parent-side index and
+// same-column self-reference rules before staging metadata.
 #[test]
-#[ignore = "go-parity-gap: no parent-index check (1822) and no self-reference refusal (1215) on ALTER ADD"]
 fn alter_add_foreign_key_refuses_missing_parent_index_and_self_reference() {
-    // Contract (foreign_key_test.go:1101, :1106): the parent-index row fails
-    // [schema:1822]; the self-reference row fails [schema:1215].
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    ddl::run_create_table_in(
+        "create table t1 (id int key, b int)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t2 (id int key, b int, index(b))",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+
+    let error = ddl::run_alter_table_in(
+        "alter table t2 add foreign key (b) references t1(b)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go: parent b has no covering index");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 1822);
+    assert_eq!(
+        mysql_error.message,
+        "Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 't1'"
+    );
+    assert!(declared(&catalog, "test", "t2").is_empty());
+
+    ddl::run_alter_table_in("alter table t1 add index(b)", &mut catalog, "test", &ctx).unwrap();
+    ddl::run_alter_table_in(
+        "alter table t2 add foreign key (b) references t1(b)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+
+    let error = ddl::run_alter_table_in(
+        "alter table t2 add foreign key (b) references t2(b)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go: same-column self-reference is not supported");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 1215);
+    assert_eq!(mysql_error.message, "Cannot add foreign key constraint");
+    assert_eq!(declared(&catalog, "test", "t2").len(), 1);
 }
 
 // The multi-add atomicity rows of Go's TestAddForeignKey
