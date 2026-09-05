@@ -236,6 +236,7 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
             statement_warnings: Vec::new(),
+            statement_message: None,
             write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             last_affected_rows: 0,
             _process: process,
@@ -264,6 +265,10 @@ pub struct RealTiKvMultiServerSession {
     time_zone: RealTiKvSessionTimeZone,
     cursor_memory: tidb_executor::SessionMemory,
     statement_warnings: Vec<ConfiguredWriteWarning>,
+    /// The OK-packet info text the most recently completed write composed
+    /// (Go `StmtCtx.SetMessage`). INSERT/REPLACE fill it once the statement
+    /// attempted more than one row, mirroring `setMessage`'s own gate.
+    statement_message: Option<String>,
     write_sli: tidb_util::sli::TxnWriteThroughputSli,
     last_affected_rows: u64,
     _process: ProcessGuard,
@@ -405,6 +410,7 @@ impl QuerySession for RealTiKvMultiServerSession {
             ._process
             .statement_started(statement.sql(), "", "autocommit");
         self.statement_warnings.clear();
+        self.statement_message = None;
         let bound = statement
             .template()
             .bind(parameters)
@@ -427,6 +433,14 @@ impl QuerySession for RealTiKvMultiServerSession {
         }
         self.last_affected_rows = report.affected_rows;
         self.statement_warnings = report.warnings;
+        // Go `ReplaceExec.setMessage` / `InsertExec.setMessage`: the message
+        // appears once the statement attempted more than one row. The
+        // duplicates count is the affected rows beyond the attempted ones.
+        self.statement_message = tidb_planner::prepared_dml::compose_insert_ok_message(
+            tidb_planner::prepared_dml::configured_write_record_rows(&bound),
+            report.affected_rows,
+            u64::try_from(self.statement_warnings.len()).unwrap_or(u64::MAX),
+        );
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
             // This node has no auto-increment allocator.
@@ -443,6 +457,13 @@ impl QuerySession for RealTiKvMultiServerSession {
             .iter()
             .map(|warning| warning.code)
             .collect()
+    }
+
+    fn statement_info(&self) -> Vec<u8> {
+        self.statement_message
+            .clone()
+            .unwrap_or_default()
+            .into_bytes()
     }
 
     /// A catalog change is the only text-protocol OK-packet statement this

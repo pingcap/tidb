@@ -899,6 +899,53 @@ pub fn lower_text_write(
     lower_write(statement, catalog, ValueMode::Literal)
 }
 
+/// Go `InsertExec.setMessage` / `ReplaceExec.setMessage`
+/// (`pkg/executor/insert.go` / `replace.go`): after an INSERT or REPLACE the
+/// statement context carries
+/// `Records: <records>  Duplicates: <dups>  Warnings: <warnings>`
+/// (`mysql.ErrInsertInfo`), which the OK packet appends as its info text.
+/// Go only composes it when the statement ran as INSERT ... SELECT or
+/// attempted MORE THAN ONE row; a single-row VALUES insert answers with a
+/// bare OK. `Duplicates` is the affected rows beyond the attempted ones --
+/// two per replaced row, one per plain insert -- exactly the shape Go reads
+/// as `stmtCtx.AffectedRows() - numRecords`.
+#[must_use]
+pub fn compose_insert_ok_message(
+    record_rows: u64,
+    affected_rows: u64,
+    warnings: u64,
+) -> Option<String> {
+    if record_rows <= 1 {
+        return None;
+    }
+    let duplicates = affected_rows.saturating_sub(record_rows);
+    Some(format!(
+        "Records: {record_rows}  Duplicates: {duplicates}  Warnings: {warnings}"
+    ))
+}
+
+/// The rows the write ATTEMPTED to store — Go `StmtCtx.RecordRows()`, which
+/// `InsertExec`/`ReplaceExec` raise once per evaluated row before any
+/// duplicate handling (`AddRecordRows(uint64(len(newRows)))`). Go's
+/// INSERT/REPLACE OK message derives its `Duplicates` count from this and
+/// the affected rows together (`affected - records`), so the server needs
+/// the attempted count even though only the affected count reaches the OK
+/// packet's row field. UPDATE/DELETE carry their own counters and return 0
+/// here; their message shape is a different statement surface.
+#[must_use]
+pub fn configured_write_record_rows(write: &ConfiguredPreparedWrite) -> u64 {
+    match write {
+        ConfiguredPreparedWrite::InsertRows { rows, .. }
+        | ConfiguredPreparedWrite::InsertIgnoreRows { rows, .. }
+        | ConfiguredPreparedWrite::InsertOnDuplicateRows { rows, .. }
+        | ConfiguredPreparedWrite::ReplaceRows { rows, .. } => {
+            u64::try_from(rows.len()).unwrap_or(u64::MAX)
+        }
+        ConfiguredPreparedWrite::UpdatePoint { .. }
+        | ConfiguredPreparedWrite::DeletePoint { .. } => 0,
+    }
+}
+
 fn lower_write(
     statement: &Stmt,
     catalog: &ConfiguredCatalog,
@@ -1391,4 +1438,72 @@ fn identifier_eq(left: &str, right: &str) -> bool {
 
 const fn unsupported(feature: UnsupportedPreparedWrite) -> PreparedWritePlanError {
     PreparedWritePlanError::Unsupported(feature)
+}
+
+#[cfg(test)]
+mod insert_ok_message_tests {
+    use super::{
+        compose_insert_ok_message, configured_write_record_rows, ConfiguredInsertRow,
+        ConfiguredPreparedWrite,
+    };
+    use crate::read_only_scan::ConfiguredTable;
+
+    /// Go `ReplaceExec.setMessage`: two rows attempted, one of them replaced
+    /// an old row (affected 3 = 1 plain insert + one delete+insert pair).
+    #[test]
+    fn multi_row_replace_composes_the_records_duplicates_warnings_text() {
+        assert_eq!(
+            compose_insert_ok_message(2, 3, 1),
+            Some("Records: 2  Duplicates: 1  Warnings: 1".to_owned()),
+            "duplicates is the affected rows beyond the attempted ones, \
+             with Go's two-space field separators"
+        );
+        assert_eq!(
+            compose_insert_ok_message(3, 3, 0),
+            Some("Records: 3  Duplicates: 0  Warnings: 0".to_owned()),
+            "three plain inserts leave duplicates at zero"
+        );
+    }
+
+    /// Go composes the message only for INSERT ... SELECT or MORE THAN ONE
+    /// row: a single-row VALUES insert answers with a bare OK.
+    #[test]
+    fn single_row_and_empty_attempts_compose_nothing() {
+        assert_eq!(compose_insert_ok_message(1, 2, 0), None);
+        assert_eq!(compose_insert_ok_message(0, 0, 0), None);
+    }
+
+    /// Only the insert-family writes report attempted rows; the point
+    /// UPDATE/DELETE writes belong to UPDATE/DELETE's own message shapes.
+    #[test]
+    fn record_rows_count_insert_family_rows_only() {
+        let rows = |count: usize| {
+            (0..count)
+                .map(|_| ConfiguredInsertRow { values: Vec::new() })
+                .collect()
+        };
+        let table = ConfiguredTable::new("u6", "t", 11, std::iter::empty());
+        assert_eq!(
+            configured_write_record_rows(&ConfiguredPreparedWrite::InsertRows {
+                table: table.clone(),
+                rows: rows(4),
+            }),
+            4
+        );
+        assert_eq!(
+            configured_write_record_rows(&ConfiguredPreparedWrite::ReplaceRows {
+                table: table.clone(),
+                rows: rows(2),
+            }),
+            2
+        );
+        assert_eq!(
+            configured_write_record_rows(&ConfiguredPreparedWrite::DeletePoint {
+                table,
+                handle: 1,
+            }),
+            0,
+            "DELETE carries its own affected-row counter"
+        );
+    }
 }

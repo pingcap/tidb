@@ -2348,3 +2348,99 @@ fn stmt_reset_drops_the_long_data_buffer_before_the_next_execute() {
     assert_eq!(report.exit, ConnectionExit::Quit);
     assert_eq!(report.commands.stmt_reset_commands, 1);
 }
+
+/// Go `ReplaceExec.setMessage` / `InsertExec.setMessage`
+/// (`pkg/executor/replace.go:211`, `insert.go:557`): a multi-row INSERT or
+/// REPLACE composes `Records: N  Duplicates: W  Warnings: M` into the
+/// statement context, and Go's `writeOKWith` appends that text to the OK
+/// packet (`pkg/server/conn.go`). The connection writer must forward the
+/// session's composed message as the OK packet's info field.
+#[test]
+fn a_multi_row_write_ok_packet_carries_the_records_message_as_info() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &MessageFactory,
+            &users(),
+            &Arc::new(ConnectionTracker::default()),
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    write_packet(
+        &mut client,
+        0,
+        &[&[COM_QUERY][..], b"REPLACE INTO m.rows VALUES (1), (2)"].concat(),
+    );
+    reader.set_sequence(1);
+    let ok = reader.read_packet().unwrap();
+    assert_eq!(ok[0], 0, "a write answers with OK");
+    // The info text rides the OK packet tail as a length-encoded string:
+    // exactly Go's ErrInsertInfo text for the counts the session composed.
+    // Header ahead of it: affected-rows varint, insert-id varint, and the
+    // two-byte warning count.
+    let text = b"Records: 2  Duplicates: 1  Warnings: 0";
+    let tail = &ok[ok.len() - text.len() - 1..];
+    assert_eq!(tail[0], text.len() as u8, "length-encoded info string");
+    assert_eq!(
+        &tail[1..],
+        &text[..],
+        "the OK packet carries Go's ErrInsertInfo info text"
+    );
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    worker.join().unwrap();
+}
+
+struct MessageFactory;
+
+impl QuerySessionFactory for MessageFactory {
+    type Session = MessageSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(MessageSession)
+    }
+}
+
+/// A session whose multi-row REPLACE composed Go's message, the way the real
+/// configured-write sessions do after `compose_insert_ok_message`.
+struct MessageSession;
+
+impl QuerySession for MessageSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "text execution is not part of this test",
+        ))
+    }
+
+    fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        if !sql.to_ascii_uppercase().starts_with("REPLACE") {
+            return Ok(None);
+        }
+        Ok(Some(WriteOutcome {
+            affected_rows: 3,
+            last_insert_id: 0,
+        }))
+    }
+
+    fn warning_count(&self) -> u16 {
+        0
+    }
+
+    fn statement_info(&self) -> Vec<u8> {
+        b"Records: 2  Duplicates: 1  Warnings: 0".to_vec()
+    }
+}

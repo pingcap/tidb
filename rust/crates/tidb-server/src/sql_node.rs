@@ -1258,8 +1258,12 @@ pub trait QuerySession {
     }
 
     /// The length-encoded info string Go's `StatementContext.LastMessage`
-    /// publishes in UPDATE's OK packet. Sessions without a statement-message
-    /// producer keep the protocol field empty.
+    /// publishes in the INSERT/REPLACE/UPDATE OK packet. INSERT and REPLACE
+    /// compose `Records: <records>  Duplicates: <dups>  Warnings: <warnings>`
+    /// once the statement attempted more than one row or ran as INSERT ...
+    /// SELECT (`InsertExec.setMessage` / `ReplaceExec.setMessage`); UPDATE
+    /// composes its own matched/changed text. Sessions without a
+    /// statement-message producer keep the protocol field empty.
     fn statement_info(&self) -> Vec<u8> {
         Vec::new()
     }

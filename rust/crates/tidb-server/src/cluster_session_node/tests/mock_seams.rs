@@ -105,6 +105,36 @@ impl ClusterDdl for MockDdl {
         };
         let mut created_id = None;
         match statement {
+            // Go master 94a9cbedab plans these parser-only statements as the
+            // generic DDL and its executor no-ops them: OK, nothing written.
+            DdlStatement::AlterMaterializedViewNoOp { schema, view } => {
+                return Ok(ClusterDdlReport::AlreadySatisfied {
+                    warning: None,
+                    detail: format!("ALTER MATERIALIZED VIEW on `{schema}`.{view} changes nothing"),
+                });
+            }
+            DdlStatement::AlterMaterializedViewLogNoOp { schema, table } => {
+                return Ok(ClusterDdlReport::AlreadySatisfied {
+                    warning: None,
+                    detail: format!(
+                        "ALTER MATERIALIZED VIEW LOG on `{schema}`.{table} changes nothing"
+                    ),
+                });
+            }
+            DdlStatement::DropMaterializedViewNoOp { schema, view } => {
+                return Ok(ClusterDdlReport::AlreadySatisfied {
+                    warning: None,
+                    detail: format!("DROP MATERIALIZED VIEW on `{schema}`.{view} changes nothing"),
+                });
+            }
+            DdlStatement::DropMaterializedViewLogNoOp { schema, table } => {
+                return Ok(ClusterDdlReport::AlreadySatisfied {
+                    warning: None,
+                    detail: format!(
+                        "DROP MATERIALIZED VIEW LOG on `{schema}`.{table} changes nothing"
+                    ),
+                });
+            }
             DdlStatement::CreateDatabase {
                 name,
                 if_not_exists,

@@ -42,6 +42,7 @@ pub(crate) fn write_affected_rows_ok<O: ConnectionPacketOutput + ?Sized>(
     status: WireStatus,
     warnings: u16,
     protocol_41: bool,
+    info: &[u8],
 ) -> Result<(), MysqlConnectionError> {
     write_affected_rows_ok_with_info(
         output,
@@ -71,9 +72,10 @@ pub(crate) fn write_affected_rows_ok_with_info<O: ConnectionPacketOutput + ?Size
         last_insert_id,
         status_flags: status.bits(),
         warnings,
-        protocol_41,
+        // Go `writeOKWith` appends `StmtCtx.GetMessage()` here whenever the
+        // statement set one; MySQL renders it after the row counts.
         info: info.to_vec(),
-        ..OkPacket::default()
+        protocol_41,
     });
     write_payload(output, sequence, &payload)
 }

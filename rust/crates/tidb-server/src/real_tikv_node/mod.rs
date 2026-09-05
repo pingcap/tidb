@@ -574,6 +574,7 @@ where
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
             statement_warnings: Vec::new(),
+            statement_message: None,
             write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             last_affected_rows: 0,
             _process: process,
@@ -621,6 +622,10 @@ pub struct RealTiKvServerSession<
     /// The warning records the most recently completed statement exposes in
     /// its OK packet. Configured DML builds them while resolving `IGNORE`.
     statement_warnings: Vec<ConfiguredWriteWarning>,
+    /// The OK-packet info text the most recently completed write composed
+    /// (Go `StmtCtx.SetMessage`). INSERT/REPLACE fill it once the statement
+    /// attempted more than one row, mirroring `setMessage`'s own gate.
+    statement_message: Option<String>,
     /// Go `LazyTxn.writeSLI` for this worker-local session.
     write_sli: tidb_util::sli::TxnWriteThroughputSli,
     /// Go statement-context affected rows read by `addQueryMetrics`.
@@ -797,6 +802,7 @@ where
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
         self.statement_warnings.clear();
+        self.statement_message = None;
         let bound = template
             .bind(parameters)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -860,6 +866,16 @@ where
         }
         self.last_affected_rows = report.affected_rows;
         self.statement_warnings = report.warnings;
+        // Go `ReplaceExec.setMessage` / `InsertExec.setMessage`: the message
+        // appears once the statement attempted more than one row (or ran as
+        // INSERT ... SELECT, which this narrow tier does not lower). The
+        // duplicates count is the affected rows beyond the attempted ones --
+        // two per replaced row, one per plain insert.
+        self.statement_message = tidb_planner::prepared_dml::compose_insert_ok_message(
+            tidb_planner::prepared_dml::configured_write_record_rows(&bound),
+            report.affected_rows,
+            u64::try_from(self.statement_warnings.len()).unwrap_or(u64::MAX),
+        );
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
             // This node has no auto-increment allocator.
@@ -1179,6 +1195,13 @@ where
             .iter()
             .map(|warning| warning.code)
             .collect()
+    }
+
+    fn statement_info(&self) -> Vec<u8> {
+        self.statement_message
+            .clone()
+            .unwrap_or_default()
+            .into_bytes()
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {

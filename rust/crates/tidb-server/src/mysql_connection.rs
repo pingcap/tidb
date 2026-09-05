@@ -1356,7 +1356,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 if subcommand == 0x01 {
                     match engine.execute_write("FLUSH PRIVILEGES") {
                         Ok(Some(outcome)) => {
-                            write_affected_rows_ok(
+                            write_affected_rows_ok_with_info(
                                 &mut output,
                                 1,
                                 outcome.affected_rows,
@@ -1364,6 +1364,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 engine.wire_status(),
                                 engine.warning_count(),
                                 protocol_41,
+                                &engine.statement_info(),
                             )?;
                             record_client_warnings(&output, &engine);
                             queries += 1;
@@ -1506,7 +1507,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         sequence = reader.sequence();
                         match engine.execute_local_infile(sql, &data) {
                             Ok(outcome) => {
-                                write_affected_rows_ok(
+                                write_affected_rows_ok_with_info(
                                     &mut output,
                                     sequence,
                                     outcome.affected_rows,
@@ -1514,6 +1515,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     stamp(engine.wire_status()),
                                     engine.warning_count(),
                                     protocol_41,
+                                    &engine.statement_info(),
                                 )?;
                                 record_client_warnings(&output, &engine);
                                 sequence = sequence.wrapping_add(1);
@@ -2215,6 +2217,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 engine.wire_status(),
                                 engine.warning_count(),
                                 protocol_41,
+                                &[],
                             )?;
                         }
                         Err(()) => write_unknown_statement(
