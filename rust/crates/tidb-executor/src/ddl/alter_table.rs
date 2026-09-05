@@ -1120,6 +1120,7 @@ fn add_index_constraint_action(
             parts: &index.parts,
             visible: is_visible(&index.options),
             global: index.options.global,
+            if_not_exists: index.if_not_exists,
         },
         ctx,
     )

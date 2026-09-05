@@ -105,6 +105,7 @@ pub fn run_create_index_in(
             parts: &create.parts,
             visible: is_visible(&create.options),
             global: create.options.global,
+            if_not_exists: create.if_not_exists,
         },
         ctx,
     )
@@ -198,6 +199,8 @@ pub(crate) struct IndexSpec<'a> {
     pub visible: bool,
     /// Go `IndexInfo.Global`, read off the statement's `GLOBAL` keyword.
     pub global: bool,
+    /// Go's `CREATE INDEX`/`ADD INDEX IF NOT EXISTS` guard.
+    pub if_not_exists: bool,
 }
 
 /// Adds one index to a table, shared by `CREATE INDEX` and
@@ -222,6 +225,7 @@ pub(crate) fn add_index_to_table(
         parts,
         visible,
         global,
+        if_not_exists,
     } = index;
     reject_duplicate_index_columns(parts)?;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
@@ -229,6 +233,22 @@ pub(crate) fn add_index_to_table(
             format!("{database}.{table_name}"),
         )));
     };
+    if table
+        .indexes()
+        .iter()
+        .any(|existing| existing.name.eq_ignore_ascii_case(index_name))
+    {
+        // Go's `checkIndexNameAndColumns` turns a duplicate index name into
+        // ErrDupKeyName (1061) and, for IF NOT EXISTS, appends that error as a
+        // Note before returning without building hidden columns or touching
+        // the existing index.
+        let duplicate = DriverError::DuplicateKeyName(index_name.to_owned());
+        if if_not_exists {
+            ctx.append_suppressed(&duplicate);
+            return Ok(());
+        }
+        return Err(duplicate);
+    }
     // A hidden column is built against the VISIBLE columns, so an expression
     // can never name an earlier index's hidden column.
     let names: Vec<String> = table

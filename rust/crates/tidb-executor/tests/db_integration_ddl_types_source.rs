@@ -376,6 +376,56 @@ fn index_length_zero_flen_and_prefix_limits() {
     }
 }
 
+// Go's `checkIndexNameAndColumns` demotes a duplicate ordinary index name to
+// Note 1061 when `CREATE INDEX` or `ALTER TABLE ... ADD INDEX` carries
+// `IF NOT EXISTS`, without rebuilding the existing index.
+#[test]
+fn index_if_not_exists_skips_duplicate_create_and_alter() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t_index_guard (a int)", &mut catalog).unwrap();
+    let ctx = StmtContext::for_query();
+    ddl::run_create_index_in(
+        "create index idx_a on t_index_guard (a)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_index_in(
+        "create index if not exists idx_a on t_index_guard (a)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t_index_guard add index if not exists idx_a (a)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+
+    let table = kv_table(&catalog, "test", "t_index_guard");
+    assert_eq!(
+        table
+            .indexes()
+            .iter()
+            .filter(|index| index.name.eq_ignore_ascii_case("idx_a"))
+            .count(),
+        1,
+        "guarded duplicate adds do not create another index"
+    );
+    assert_eq!(
+        ctx.take_warnings()
+            .iter()
+            .filter(|(_, code, _)| *code == 1061)
+            .count(),
+        2,
+        "CREATE and ALTER guards each file one Note 1061"
+    );
+}
+
 // --- TestIssue2858And2717 (pkg/ddl/db_integration_test.go:238) ---
 //
 // BIT(64) defaults/inserts round-trip (`select a+0` = 0, 100, 12592, 0;

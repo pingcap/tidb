@@ -8516,7 +8516,7 @@ risks without claiming repository-wide parity.
 - 2026-09-05 (`pkg/ddl` ADD COLUMN IF NOT EXISTS): Rust now honors the
   per-action guard for single and grouped `ADD COLUMN` forms, suppressing
   duplicate 1060 errors as Note-level warnings while continuing with new
-  columns. ADD/CREATE INDEX guards and the concurrent job matrix remain
+  columns. Columnar-index guards and the concurrent job matrix remain
   explicit boundaries. Evidence is recorded in
   `receipts/ddl_add_column_if_not_exists.md`.
 - 2026-09-05 (`pkg/ddl` generated-column ADD validation): Rust now resolves
@@ -8524,3 +8524,8 @@ risks without claiming repository-wide parity.
   applying the insertion-position rule, matching Go's 1054-then-3107 error
   ordering for later generated dependencies. Evidence is recorded in
   `receipts/ddl_generated_column_prior_order.md`.
+- 2026-09-05 (`pkg/ddl` ordinary index IF NOT EXISTS): Rust now preserves the
+  parsed guard for both CREATE INDEX and ALTER TABLE ADD INDEX, suppressing
+  duplicate 1061 names as Notes without rebuilding the existing index. The
+  concurrent job race and columnar-index variants remain explicit boundaries.
+  Evidence is recorded in `receipts/ddl_index_if_not_exists.md`.

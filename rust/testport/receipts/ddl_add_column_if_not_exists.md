@@ -20,6 +20,7 @@ covers a single duplicate, a new single column, a grouped duplicate plus a
 new column, final column order, and the two Note warnings.
 
 The source-shaped concurrency documentary remains ignored because its same
-Go matrix also covers ADD INDEX and CREATE INDEX IF NOT EXISTS plus the DDL
-job race; those paths remain explicit gaps. No Go, generated, platform,
-Bazel, or module files changed.
+Go matrix also covers the DDL job race; serial ordinary ADD/CREATE INDEX
+guards are covered by the companion index receipt, while columnar-index
+variants remain an explicit gap. No Go, generated, platform, Bazel, or module
+files changed.
