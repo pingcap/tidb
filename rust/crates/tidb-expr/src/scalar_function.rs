@@ -190,6 +190,11 @@ pub fn is_unfoldable_function(name: &str) -> bool {
                 | "getparam"
                 | "benchmark"
                 | "dayname"
+                // Reads/writes the statement's previous publication through
+                // Go's SessionVarsPropReader. Keep both LAST_INSERT_ID forms
+                // runtime-bound so a planner fold cannot freeze NULL (or
+                // erase the one-argument side effect) in a no-session scope.
+                | "last_insert_id"
                 | "nextval"
                 | "lastval"
                 | "setval"

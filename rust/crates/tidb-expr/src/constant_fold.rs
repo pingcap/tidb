@@ -372,6 +372,10 @@ pub fn is_unfoldable(name: &str) -> bool {
             | "getparam"
             | "benchmark"
             | "dayname"
+            // Go's LAST_INSERT_ID signatures require SessionVarsPropReader;
+            // a no-session fold must stay deferred rather than replacing the
+            // zero-argument form with NULL or dropping its one-argument write.
+            | "last_insert_id"
             // Reads the SESSION transaction context at evaluation: folding
             // it at plan time would freeze the zero the statement had before
             // its first read opened a snapshot.
@@ -508,6 +512,21 @@ mod deferred_function_tests {
             "child warnings leaked into the fold: {:?}",
             warnings.0.borrow()
         );
+    }
+
+    /// Go's LAST_INSERT_ID signatures read/write `SessionVarsPropReader`.
+    /// Folding in a planner scope without session properties must therefore
+    /// leave both forms runtime-bound instead of freezing NULL or erasing the
+    /// one-argument publication side effect.
+    #[test]
+    fn last_insert_id_requires_runtime_session_state() {
+        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("last_insert_id"),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            vec![],
+        ));
+        fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
+        assert!(matches!(expr, Expression::ScalarFunction(_)));
     }
 
     fn benchmark_scope_keeps_its_subtree_unfolded() {

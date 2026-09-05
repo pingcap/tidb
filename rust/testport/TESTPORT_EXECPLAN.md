@@ -9049,3 +9049,10 @@ risks without claiming repository-wide parity.
   executor bridge. Negative fsp keeps the refusing form (Go's CheckFsp
   build-time split). Evidence is recorded in
   `receipts/clock_fsp_too_big_precision.md`.
+- 2026-09-06 (`pkg/expression` LAST_INSERT_ID session state): Rust now keeps
+  both `LAST_INSERT_ID` signatures runtime-bound during constant folding,
+  matching Go's `SessionVarsPropReader` requirement. Auto-increment statements
+  therefore publish and read the previous generated id instead of freezing a
+  no-session `NULL`, while the one-argument publication side effect remains
+  intact. Focused expression and auto-increment regressions plus Ready
+  evidence are recorded in `receipts/expression_last_insert_id_state.md`.
