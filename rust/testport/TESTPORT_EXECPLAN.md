@@ -8586,9 +8586,17 @@ risks without claiming repository-wide parity.
   foreign key when either the child statement or referenced parent is
   partitioned with Go's exact schema 1506 diagnostic, while preserving the
   checks-off deferral for unresolved parents. Evidence is recorded in
-  `receipts/ddl_foreign_key_create_partitioning.md`; self-reference,
-  deferred-parent, temporary-table, and pass-matrix rows remain explicit
-  boundaries in `b111.md`.
+  `receipts/ddl_foreign_key_create_partitioning.md`; deferred-parent,
+  temporary-table, and pass-matrix rows remain explicit boundaries in
+  `b111.md`.
+- 2026-09-05 (`pkg/ddl` CREATE FOREIGN KEY self-reference): Rust now resolves
+  self-referencing constraints against the in-flight table metadata, matching
+  Go's same-column 1215 refusal, reordered-column parent-index 1822 refusal,
+  and successful distinct-column/composite cases. Existing parents continue to
+  be validated even with `foreign_key_checks=0`, while unresolved parents stay
+  deferred. Evidence is recorded in
+  `receipts/ddl_foreign_key_create_self_reference.md`; deferred-parent,
+  temporary-table, and pass-matrix rows remain explicit boundaries in `b111.md`.
 - 2026-09-05 (`pkg/ddl` temporary CREATE TABLE LIKE options and duplicate
   warning): Rust now refuses temporary copies that inherit pre-split or
   shard-row-bit options with Go's exact 8006 diagnostic, and records the

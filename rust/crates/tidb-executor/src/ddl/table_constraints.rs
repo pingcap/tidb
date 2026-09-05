@@ -372,6 +372,7 @@ pub(crate) fn table_indexes(
 pub(crate) fn table_foreign_keys(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
+    current_table: &crate::kv_table::KvTable,
     catalog: &Catalog,
     database: &str,
     foreign_key_checks: bool,
@@ -413,6 +414,7 @@ pub(crate) fn table_foreign_keys(
             definition,
             fk_name,
             &fk_columns,
+            Some(current_table),
             catalog,
             database,
             foreign_key_checks,
@@ -451,6 +453,7 @@ pub(crate) fn build_foreign_key(
     definition: &tidb_ast::ForeignKeyConstraintDefinition,
     fk_name: String,
     columns: &[FkColumn],
+    current_table: Option<&crate::kv_table::KvTable>,
     catalog: &Catalog,
     database: &str,
     foreign_key_checks: bool,
@@ -504,30 +507,32 @@ pub(crate) fn build_foreign_key(
             });
         }
         child_generated_column_rules(columns, &cols, definition, &fk_name)?;
-        // Go's owner check still rejects a partitioned relationship when the
-        // parent exists even if `foreign_key_checks=0`; only an unresolved
-        // parent is deferred by that switch. Probe the existing parent first
-        // so both CREATE and ALTER preserve that ordering.
-        let existing_parent = catalog.get_in(&ref_schema, &ref_table);
-        if let Some(crate::TableEntry::Kv(parent)) = existing_parent {
+        let self_reference = current_table.is_some_and(|table| {
+            ref_schema.eq_ignore_ascii_case(database) && ref_table.eq_ignore_ascii_case(&table.name)
+        });
+        let same_self_columns = self_reference
+            && cols.len() == ref_cols.len()
+            && cols
+                .iter()
+                .zip(&ref_cols)
+                .all(|(child_offset, parent_name)| {
+                    columns[*child_offset]
+                        .name
+                        .eq_ignore_ascii_case(parent_name)
+                });
+        if same_self_columns {
+            // Go resolves a self-reference against the table's in-flight
+            // `TableInfo`, then rejects a constraint that writes back to the
+            // same columns with ErrCannotAddForeign (1215).
+            return Err(DriverError::DdlCoded {
+                errno: 1215,
+                message: "Cannot add foreign key constraint".to_owned(),
+            });
+        }
+        let validate_parent = |parent: &crate::kv_table::KvTable| -> Result<(), DriverError> {
             if child_partitioned || parent.partition().is_some() {
                 return Err(DriverError::ForeignKeyOnPartitioned);
             }
-        }
-        if foreign_key_checks {
-            // Go `checkTableInfoValid`: an unresolvable reference is
-            // `ErrNoReferencedRow`-adjacent at DDL time, not at write time.
-            let parent = existing_parent
-                .ok_or_else(|| DriverError::ForeignKeyReferencedTableMissing(ref_table.clone()))?;
-            // Go `checkTableForeignKey`: the REFERENCED column may not be
-            // virtual either. Unlike the child-side rule above this one sits
-            // behind the switch, because it is the parent lookup that reaches
-            // it at all.
-            let crate::TableEntry::Kv(parent) = parent else {
-                return Err(DriverError::unsupported(
-                    "a foreign key may not reference a view",
-                ));
-            };
             let mut parent_offsets = Vec::with_capacity(ref_cols.len());
             for (child_offset, name) in cols.iter().zip(&ref_cols) {
                 let Some(parent_offset) = parent
@@ -600,6 +605,32 @@ pub(crate) fn build_foreign_key(
                     constraint: fk_name.clone(),
                     table: ref_table.clone(),
                 });
+            }
+            Ok(())
+        };
+        if self_reference {
+            // The CREATE path has not published its table yet; use the
+            // in-flight metadata snapshot as Go does for self-reference.
+            validate_parent(current_table.expect("self-reference has current table"))?;
+        } else {
+            // Go's owner check still rejects a partitioned relationship when
+            // the parent exists even if `foreign_key_checks=0`; only an
+            // unresolved parent is deferred by that switch.
+            let existing_parent = catalog.get_in(&ref_schema, &ref_table);
+            match existing_parent {
+                Some(crate::TableEntry::Kv(parent)) => validate_parent(parent)?,
+                Some(_) if foreign_key_checks => {
+                    return Err(DriverError::unsupported(
+                        "a foreign key may not reference a view",
+                    ));
+                }
+                Some(_) => {}
+                None if foreign_key_checks => {
+                    return Err(DriverError::ForeignKeyReferencedTableMissing(
+                        ref_table.clone(),
+                    ));
+                }
+                None => {}
             }
         }
         Ok(KvForeignKey {

@@ -298,17 +298,38 @@ fn fk_create_reference_compatibility_rows_match_go() {
 // `[schema:1822]Failed to add the foreign key constraint. Missing index for
 // constraint 'fk_1' in the referenced table 't2'`.
 //
-// go-parity-gap (documented divergence): the tier looks the referenced
-// table up in the catalog BEFORE the table being created is registered, so
-// a self-reference answers 1146 "Table 'test.t2' doesn't exist" instead of
-// Go's 1215/1822 — Go resolves the reference against the table's own new
-// TableInfo (TestCreateTableWithForeignKeyMetaInfo's t5 leg requires
-// exactly that).
 #[test]
-#[ignore = "go-parity-gap: self-referencing CREATE resolves before registration (1146), not Go's 1215/1822"]
 fn fk_create_self_reference_rows_match_go() {
-    // Contract (foreign_key_test.go:530-538): self-reference rows fail
-    // [schema:1215]; the (a,b)→(b,a) row fails [schema:1822].
+    let cases = [
+        (
+            "create table t2 (a int key, foreign key (a) references t2(a));",
+            1215,
+            "Cannot add foreign key constraint",
+        ),
+        (
+            "create table t2 (a int, b int, index(a,b), index(b,a), foreign key (a,b) references t2(a,b));",
+            1215,
+            "Cannot add foreign key constraint",
+        ),
+        (
+            "create table t2 (a int, b int, index(a,b), foreign key (a,b) references t2(b,a));",
+            1822,
+            "Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 't2'",
+        ),
+    ];
+    for (create, code, message) in cases {
+        let mut catalog = Catalog::default();
+        let ctx = StmtContext::for_query();
+        let error = ddl::run_create_table_in(
+            create,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .expect_err("Go's self-reference row must fail");
+        assert_eq!(err(&error), (code, message.to_owned()), "{create}");
+    }
 }
 
 // Go rows 19-20 (`pkg/ddl/tests/fk/foreign_key_test.go:539-551`): with
@@ -502,14 +523,66 @@ fn fk_create_refuses_partitioning_on_either_side() {
 // with both covering indexes, two FKs sharing one parent index, and a
 // 64-character (legal-length) FK name.
 //
-// go-parity-gap (documented divergence): the first (self-reference) and the
-// checks-off unknown-parent rows cannot run here — see the self-reference
-// gap above — and the remaining rows are covered piecemeal by the
-// fk_create_meta_info_source ports; a single aggregate pass-matrix port
-// would still fail on the self-ref row, so the matrix is recorded whole.
 #[test]
-#[ignore = "go-parity-gap: the pass matrix needs self-reference at create, which the tier refuses"]
 fn fk_create_pass_matrix_succeeds() {
-    // Contract (foreign_key_test.go:645-747): all nine scenarios create
-    // cleanly and stay green.
+    let cases = [
+        (
+            Some("create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))"),
+            "create table t2 (id int key);",
+            true,
+        ),
+        (
+            Some("create table t1 (id int key, b int not null, index(b))"),
+            "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
+            true,
+        ),
+        (
+            Some("create table t1 (id int key, a varchar(10), index(a));"),
+            "create table t2 (a int, b varchar(20), foreign key fk_b(b) references t1(a));",
+            true,
+        ),
+        (
+            Some("create table t1 (id int key, a decimal(10,5), index(a));"),
+            "create table t2 (a int, b decimal(20, 10), foreign key fk_b(b) references t1(a));",
+            true,
+        ),
+        (
+            Some("create table t1 (id int key, a varchar(10), index (a(10)));"),
+            "create table t2 (a int, b varchar(20), foreign key fk_b(b) references t1(a));",
+            true,
+        ),
+        (
+            None,
+            "create table t2 (a int, b int, foreign key fk_b(b) references t_unknown(b));",
+            false,
+        ),
+        (
+            None,
+            "create table t2 (a int, b int, index(a,b), index(b,a), foreign key (a,b) references t2(b,a));",
+            true,
+        ),
+        (
+            Some("create table t1 (a int key, b int, index(b))"),
+            "create table t2 (a int, b int, foreign key (a) references t1(a), foreign key (b) references t1(b));",
+            true,
+        ),
+        (
+            Some("create table t1 (id int key);"),
+            "create table t2 (id int key, foreign key name567890123456789012345678901234567890123456789012345678901234(id) references t1(id));",
+            true,
+        ),
+    ];
+    for (parent, create, checks) in cases {
+        let mut catalog = Catalog::default();
+        let ctx = StmtContext::for_query().with_foreign_key_checks(checks);
+        let settings = CreateTableSettings {
+            foreign_key_checks: checks,
+            ..CreateTableSettings::default()
+        };
+        if let Some(parent) = parent {
+            ddl::run_create_table_in(parent, &mut catalog, "test", settings, &ctx).unwrap();
+        }
+        ddl::run_create_table_in(create, &mut catalog, "test", settings, &ctx)
+            .unwrap_or_else(|error| panic!("Go pass-matrix row must succeed: {create}: {error:?}"));
+    }
 }

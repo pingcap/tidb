@@ -1673,6 +1673,7 @@ pub fn run_create_table_in(
     let foreign_keys = table_foreign_keys(
         create,
         &columns,
+        &table,
         catalog,
         &database,
         foreign_key_checks,

@@ -1194,6 +1194,7 @@ fn add_foreign_key_action(
         definition,
         fk_name,
         &columns,
+        Some(table),
         catalog,
         database,
         ctx.foreign_key_checks(),
