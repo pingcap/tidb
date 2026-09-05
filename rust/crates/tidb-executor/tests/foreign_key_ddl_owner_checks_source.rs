@@ -259,10 +259,10 @@ fn drop_index_needed_in_foreign_key_reports_1553_for_the_last_cover() {
 // 'fk_b' on table 't3'.` (the owner-side referral check walking every table
 // the database would remove).
 //
-// go-parity-gap: this tier's drop-database runner has no owner-side referral
-// check, so the 3730 the Go owner produces is not reproducible here.
+// The synchronous session owner now performs the same cross-schema referral
+// check and renders Go's 3730 diagnostic; the source-shaped catalog assertion
+// below exercises the executor helper directly.
 #[test]
-#[ignore = "go-parity-gap: drop-database performs no 3730 referral check across the dropped schema"]
 fn drop_database_with_foreign_key_referred_reports_3730() {
     let mut catalog = Catalog::default();
     let ctx = StmtContext::for_query();
@@ -292,9 +292,13 @@ fn drop_database_with_foreign_key_referred_reports_3730() {
     )
     .unwrap();
 
-    // `Catalog::drop_database` reports success without a referral check, so
-    // the owner-side 3730 cannot fire here.
-    assert!(catalog.drop_database("test"));
+    let error = tidb_executor::find_database_referred(&catalog, "test")
+        .expect("the child in test2 must prevent dropping test");
+    assert_eq!(err_code(&error), 3730);
+    assert_eq!(
+        err_message(&error),
+        "Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'."
+    );
 }
 
 // --- TestAddForeignKey2 (pkg/ddl/foreign_key_test.go:334) ---

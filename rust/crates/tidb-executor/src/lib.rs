@@ -238,6 +238,7 @@ pub use explain::{
     explain_delete_stmt, explain_insert_stmt, explain_select_stmt, explain_set_opr_stmt,
     explain_update_stmt, process_plan_info, ExplainFormat,
 };
+pub use foreign_key::find_database_referred;
 pub use hash_agg::{
     AggFunc, AggKind, GroupedStreamAggExec, HashAggContext, HashAggExec, StreamAggExec,
 };

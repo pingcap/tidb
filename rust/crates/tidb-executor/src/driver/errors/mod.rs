@@ -303,6 +303,18 @@ impl DriverError {
                 "Cannot truncate a table referenced in a foreign key constraint ({detail})"
             ),
         ),
+        // Go `ErrForeignKeyCannotDrop`: DROP DATABASE reports the parent and
+        // child table names in a distinct 3730 diagnostic.
+        DriverError::ForeignKeyDatabaseReferenced {
+            parent_table,
+            constraint,
+            child_table,
+        } => MysqlError::new(
+            3730,
+            format!(
+                "Cannot drop table '{parent_table}' referenced by a foreign key constraint '{constraint}' on table '{child_table}'."
+            ),
+        ),
         // Go: "Foreign key '%s' uses virtual column '%s' which is not
         // supported.". Captured via `gorun`: `[schema:3733]`.
         DriverError::ForeignKeyUsesVirtualColumn {

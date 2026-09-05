@@ -978,3 +978,28 @@ pub(crate) fn find_table_referred(
             table_referenced(&child_db, &child_table, &foreign_key)
         })
 }
+
+/// Go `checkDatabaseHasForeignKeyReferred`: before removing a schema, find a
+/// parent table in it whose child lives outside the schema. Children in the
+/// same DROP DATABASE statement are ignored because they disappear together.
+pub fn find_database_referred(catalog: &Catalog, database: &str) -> Option<DriverError> {
+    let target_tables: Vec<String> = catalog
+        .table_paths()
+        .into_iter()
+        .filter(|(db, _)| db.eq_ignore_ascii_case(database))
+        .map(|(_, table)| table)
+        .collect();
+    for parent_table in target_tables {
+        if let Some((_, child_table, foreign_key)) = referring(catalog, database, &parent_table)
+            .into_iter()
+            .find(|(child_db, _, _)| !child_db.eq_ignore_ascii_case(database))
+        {
+            return Some(DriverError::ForeignKeyDatabaseReferenced {
+                parent_table,
+                constraint: foreign_key.name,
+                child_table,
+            });
+        }
+    }
+    None
+}

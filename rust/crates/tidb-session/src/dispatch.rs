@@ -407,6 +407,14 @@ impl Session {
                     Ok(Some(StmtOutput::Affected(0)))
                 }
                 tidb_ast::DdlStmt::DropDatabase { if_exists, name } => {
+                    let foreign_key_checks = self.foreign_key_checks();
+                    if foreign_key_checks {
+                        if let Some(error) = self.with_catalog_mut(|catalog| {
+                            Ok(tidb_executor::find_database_referred(catalog, name))
+                        })? {
+                            return Err(error);
+                        }
+                    }
                     let dropped =
                         self.with_catalog_mut(|catalog| Ok(catalog.drop_database(name)))?;
                     // Go raises ErrDBDropExists unless IF EXISTS.

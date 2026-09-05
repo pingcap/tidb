@@ -819,6 +819,16 @@ pub enum DriverError {
         /// The child schema, child table and constraint as Go formats them.
         detail: String,
     },
+    /// Go `dbterror.ErrForeignKeyCannotDrop` (3730): `DROP DATABASE` would
+    /// remove a parent table still referenced by a child in another schema.
+    ForeignKeyDatabaseReferenced {
+        /// The parent table being removed.
+        parent_table: String,
+        /// The referring constraint name.
+        constraint: String,
+        /// The child table that owns the constraint.
+        child_table: String,
+    },
     /// Go `ErrFkExceedMaxDepth` (3008): a cascade recursed deeper than
     /// MySQL's 15 levels.
     ForeignKeyCascadeTooDeep,

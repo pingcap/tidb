@@ -52,8 +52,8 @@ platform, Bazel, or module file changed.
 
 ## Boundary retained
 
-`DROP DATABASE`'s cross-schema 3730 referral check remains a separate owner
-gap: `Catalog::drop_database` is still a boolean catalog primitive and the
-session route has no structured DDL referral error. It is intentionally not
-folded into this batch, whose production change is limited to TRUNCATE/DROP
-TABLE and the shared foreign-key error renderer.
+`DROP DATABASE`'s cross-schema 3730 referral check was intentionally kept as
+a separate owner batch because `Catalog::drop_database` is a boolean catalog
+primitive. It is now closed by the follow-up receipt
+`receipts/ddl_foreign_key_database_owner.md`; this receipt's production scope
+remains limited to TRUNCATE/DROP TABLE and the shared foreign-key renderer.

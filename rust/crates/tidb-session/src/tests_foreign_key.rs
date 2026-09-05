@@ -383,7 +383,10 @@ fn truncate_table_is_refused_while_a_foreign_key_still_points_at_it() {
 
     let mut self_reference = Session::new();
     self_reference
-        .run("CREATE TABLE tree (id INT PRIMARY KEY, parent INT, FOREIGN KEY (parent) REFERENCES tree(id))")
+        .run("CREATE TABLE tree (id INT PRIMARY KEY, parent INT)")
+        .unwrap();
+    self_reference
+        .run("ALTER TABLE tree ADD FOREIGN KEY (parent) REFERENCES tree(id)")
         .unwrap();
     self_reference
         .run("INSERT INTO tree VALUES (1, NULL)")
@@ -398,6 +401,54 @@ fn foreign_key_checks_off_allows_dropping_a_referenced_parent() {
     let mut session = pair("");
     session.run("SET foreign_key_checks = 0").unwrap();
     assert_eq!(code(&mut session, "DROP TABLE p"), None);
+}
+
+/// `DROP DATABASE` uses Go's cross-schema 3730 owner error and does not
+/// remove anything until every outside-schema referral is gone. Children in
+/// the database being dropped together are not a referral blocker.
+#[test]
+fn drop_database_is_refused_by_an_outside_schema_foreign_key() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, b INT, INDEX (b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (id INT PRIMARY KEY, b INT, FOREIGN KEY fk_b (b) REFERENCES t1(id))")
+        .unwrap();
+    session.run("CREATE DATABASE test2").unwrap();
+    session
+        .run("CREATE TABLE test2.t3 (id INT PRIMARY KEY, b INT, FOREIGN KEY fk_b (b) REFERENCES test.t2(id))")
+        .unwrap();
+
+    let error = session
+        .run("DROP DATABASE test")
+        .expect_err("the outside-schema child must block the drop");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 3730);
+    assert_eq!(
+        mysql_error.message,
+        "Cannot drop table 't2' referenced by a foreign key constraint 'fk_b' on table 't3'."
+    );
+    assert!(session.run("SELECT id FROM t2").is_ok());
+
+    session.run("DROP TABLE test2.t3").unwrap();
+    assert_eq!(code(&mut session, "DROP DATABASE test"), None);
+}
+
+#[test]
+fn foreign_key_checks_off_allows_dropping_database_with_external_reference() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE parent (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("CREATE DATABASE child_db").unwrap();
+    session
+        .run("CREATE TABLE child_db.child (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY fk_parent (parent_id) REFERENCES test.parent(id))")
+        .unwrap();
+
+    session.run("SET FOREIGN_KEY_CHECKS=0").unwrap();
+    assert_eq!(code(&mut session, "DROP DATABASE test"), None);
+    assert!(session.run("SELECT id FROM child_db.child").is_ok());
 }
 
 /// `CREATE TABLE` resolves the `REFERENCES` clause while the checks are on,

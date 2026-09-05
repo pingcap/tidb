@@ -8413,3 +8413,12 @@ risks without claiming repository-wide parity.
   self-reference behavior. The full 293-artifact `pkg/ddl` inventory and
   Ready evidence are recorded in `receipts/ddl_foreign_key_owner.md` and
   `receipts/ddl_foreign_key_owner_inventory.md`.
+- 2026-09-05 (`pkg/ddl` DROP DATABASE foreign-key owner): Rust now performs
+  Go's cross-schema `checkDatabaseHasForeignKeyReferred` before removing a
+  schema, returning the exact 3730 parent/constraint/child diagnostic while
+  ignoring children removed in the same database and honoring
+  `foreign_key_checks=0`. Focused session and source-shaped executor
+  regressions prove atomic refusal and successful removal after the external
+  child is gone. Evidence is recorded in
+  `receipts/ddl_foreign_key_database_owner.md`, with the complete package
+  inventory shared by `receipts/ddl_foreign_key_owner_inventory.md`.
