@@ -35,3 +35,19 @@ The Rust port distributes the same responsibilities by function:
 3. Behavioral slices proceed in dependency order: (a) DDL reload version
    semantics (`catalog_reload`/`catalog_watch` vs `builder.go`), (b)
    cluster-table plumbing, (c) bundle builder.
+
+## Slice (a): DDL reload version semantics (2026-09-05) — VERIFIED
+
+`catalog_reload.rs` ports Go's `ApplyDiff` reload path faithfully: the
+version to reach is the newest stored diff (`GetSchemaVersionWithNonEmptyDiff`
+mirror in `schema_version_with_non_empty_diff`), every read — version,
+diffs, objects — comes from ONE meta snapshot so the result is a single
+schema version, seven frequent actions (create/drop schema, create
+table(s) including materialized views, drop table, truncate) apply
+targeted patches, and ANY other action falls back to a full reload —
+the same observable contract as Go's `applyDefaultAction` fallback,
+conservatively widened. The full-reload triggers mirror Go's
+`issyncer.LoadSchemaDiffVersionGapThreshold` for version gaps and the
+older-version case.
+
+Remaining slices: (b) cluster-table plumbing, (c) bundle builder.

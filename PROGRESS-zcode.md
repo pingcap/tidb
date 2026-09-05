@@ -396,3 +396,5 @@
 - 下轮恢复点: (1) 新面候选 infoschema(大, 需立项); (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 微差异排队。
 - infoschema 面立项: 架构映射收据 rust/docs/infoschema-parity-audit.md(16 文件/15.4k 行 → 按职责分布映射表+三项范围决策+切片顺序 a/b/c)。
 - 下轮恢复点: (1) 切片 a: DDL reload 版本语义(catalog_reload/catalog_watch vs builder.go); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- infoschema 切片 a 核实: DDL reload 版本语义(单快照/7 动作靶向补丁/其余全量回退=Go applyDefaultAction 等价/版本间隙阈值)全对齐, 收据已追加。
+- 下轮恢复点: (1) 切片 b cluster-table plumbing; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
