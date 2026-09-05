@@ -488,3 +488,5 @@
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - F8 更新: overflow message 现在包含限定表达式(Go 形式), 测试钉住; 审计文档标记 FIXED。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- 增量同步验证: 兄弟会话 DDL foreign key on partitioned tables 拒绝臂合入后全关键面稳定(super_read_only 1/0, datatype 412/0, executor 1071 通过/139 预存)。
+- 下轮恢复点: (1) 新面选型或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
