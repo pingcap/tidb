@@ -275,3 +275,24 @@ func TestFTSMatchAgainstPrefersDeclaredFullTextIndex(t *testing.T) {
 	require.Contains(t, fmt.Sprintf("%v", tk.MustQuery("explain "+openQuery).Rows()), "idx_body")
 	tk.MustQuery(openQuery).Check([][]any{{"1001"}, {"1002"}})
 }
+
+// TestFTSMatchAgainstComparisonIsRejected pins the restriction that keeps score
+// comparisons out of the derivation entirely. If this ever starts passing, the
+// bound rule described in ftsMatchAgainstAsFilter has to be implemented before
+// such a predicate can be trusted: `>= 0` keeps every row, so deriving terms
+// for it would drop the score-zero rows it exists to keep.
+func TestFTSMatchAgainstComparisonIsRejected(t *testing.T) {
+	tk := prepareFTSMVIndexTable(t)
+	for _, predicate := range []string{"> 0", ">= 0", "> -1", ">= 1"} {
+		err := tk.ExecToErr(fmt.Sprintf(
+			"select id from articles where (match(body) against('+rareone' in boolean mode)) %s",
+			predicate))
+		require.ErrorContains(t, err, "outside direct IN BOOLEAN MODE predicate context", predicate)
+	}
+
+	// The forms that do reach the derivation keep working.
+	tk.MustQuery("select count(*) from articles where match(body) against('+rareone' in boolean mode)").
+		Check([][]any{{"2"}})
+	tk.MustQuery("select count(*) from articles where not match(body) against('+rareone' in boolean mode)").
+		Check([][]any{{"1001"}})
+}

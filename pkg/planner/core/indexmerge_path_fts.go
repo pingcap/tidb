@@ -142,23 +142,20 @@ func ftsMatchAgainstAsFilter(cond expression.Expression) *expression.ScalarFunct
 	case ast.IsTruthWithoutNull, ast.IsTruthWithNull:
 		// The same, after the wrapping a boolean context adds.
 		return ftsMatchAgainstAsFilter(sf.GetArgs()[0])
-	case ast.GT, ast.GE:
-		// `MATCH(...) AGAINST(...) > 0`, written explicitly. A non-negative
-		// bound keeps only matching rows; a negative one keeps everything, so
-		// it implies nothing about the terms.
-		match := ftsMatchAgainstAsFilter(sf.GetArgs()[0])
-		if match == nil {
-			return nil
-		}
-		bound, isConst := sf.GetArgs()[1].(*expression.Constant)
-		if !isConst || bound.DeferredExpr != nil || bound.ParamMarker != nil {
-			return nil
-		}
-		val, err := bound.Value.ToFloat64(types.DefaultStmtNoWarningContext)
-		if err != nil || val < 0 {
-			return nil
-		}
-		return match
+	// A score comparison such as `(MATCH(...) AGAINST(...)) > 0` is not
+	// handled, because it cannot reach here: the rewriter accepts a MATCH only
+	// where every enclosing node is a parenthesis, AND, OR or NOT, and rejects
+	// anything else as "MATCH ... AGAINST outside direct IN BOOLEAN MODE
+	// predicate context". TestFTSMatchAgainstComparisonIsRejected pins that.
+	//
+	// Should that restriction ever be lifted, comparisons need care rather
+	// than a blanket allow. Local evaluation is no-score - a matching row
+	// scores 1, every other row 0 - so `> c` for c >= 0 and `>= c` for c > 0
+	// select the matching rows and do imply the terms, while `>= 0` and `> c`
+	// for c < 0 keep every row and imply nothing. Deriving terms for one of
+	// those would range over the matching rows and drop the score-zero rows
+	// the comparison exists to keep. Falling through to the default below is
+	// the safe behaviour in the meantime: no derivation, so no access path.
 	default:
 		return nil
 	}
