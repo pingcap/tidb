@@ -391,6 +391,34 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 	})
 }
 
+func TestParsePassword(t *testing.T) {
+	t.Run("read from MYSQL_PWD when the flag is not set", func(t *testing.T) {
+		t.Setenv(envMySQLPwd, "pwd-from-env")
+		conf := parseConfigFromArgsForTest(t)
+		require.Equal(t, "pwd-from-env", conf.Password)
+	})
+
+	t.Run("flag takes precedence over MYSQL_PWD", func(t *testing.T) {
+		t.Setenv(envMySQLPwd, "pwd-from-env")
+		conf := parseConfigFromArgsForTest(t, "--password", "pwd-from-flag")
+		require.Equal(t, "pwd-from-flag", conf.Password)
+	})
+
+	t.Run("empty flag takes precedence over MYSQL_PWD", func(t *testing.T) {
+		t.Setenv(envMySQLPwd, "pwd-from-env")
+		conf := parseConfigFromArgsForTest(t, "--password", "")
+		require.Equal(t, "", conf.Password)
+	})
+
+	t.Run("no password when neither is set", func(t *testing.T) {
+		// t.Setenv restores the original value on cleanup, so unset it afterwards.
+		t.Setenv(envMySQLPwd, "pwd-from-env")
+		require.NoError(t, os.Unsetenv(envMySQLPwd))
+		conf := parseConfigFromArgsForTest(t)
+		require.Equal(t, "", conf.Password)
+	})
+}
+
 func parseConfigFromArgsForTest(t *testing.T, args ...string) *Config {
 	t.Helper()
 	conf, err := parseConfigFromArgsForTestWithErr(t, args...)
