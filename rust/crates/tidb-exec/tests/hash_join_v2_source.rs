@@ -30,11 +30,11 @@ use tidb_exec::base_join_probe::{is_key_matched, new_join_probe, BaseJoinProbe, 
 use tidb_exec::hash_join_v2::{
     new_join_build_worker_v2, AntiLeftOuterSemiJoinProbe, AntiSemiJoinProbe, BuildTask,
     HashJoinCtxV2, HashJoinV2Exec, HashTableContext, InnerJoinProbe, LeftOuterSemiJoinProbe,
-    OuterJoinProbe, SemiJoinProbe, LABEL_FOR_HASH_TABLE_IN_HASH_JOIN_V2,
+    OuterJoinProbe, ProbeV2, SemiJoinProbe, LABEL_FOR_HASH_TABLE_IN_HASH_JOIN_V2,
 };
 use tidb_exec::hash_table_v2::{get_hash_table_length_by_row_len, get_hash_table_memory_usage};
 use tidb_exec::join_row_table::{RowLayoutMeta, RowTableSegment};
-use tidb_exec::join_table_meta::KeyMode;
+use tidb_exec::join_table_meta::{ColumnType, JoinTableMeta, KeyMode};
 use tidb_exec::row_table_builder::{
     get_partition_mask_offset, BuildChunk, BuildColumn, BuildContext, PartitionInfo,
 };
@@ -86,6 +86,38 @@ fn probe_key(chunk: &Chunk, row: usize) -> Option<Vec<u8>> {
         return None;
     }
     Some(chunk.column(0).get_int64(row).to_le_bytes().to_vec())
+}
+
+fn empty_blob_probe_chunk() -> Chunk {
+    let fields = vec![FieldType::new(FieldTypeCode::Blob)];
+    let mut chunk = Chunk::new(&fields, 1, 1024);
+    chunk.append_bytes(0, b"");
+    chunk
+}
+
+fn empty_blob_probe_key(chunk: &Chunk, row: usize) -> Option<Vec<u8>> {
+    if chunk.column(0).is_null(row) {
+        None
+    } else {
+        Some(chunk.column(0).get_bytes(row).to_vec())
+    }
+}
+
+fn type_null_key_layout() -> RowLayoutMeta {
+    let meta = JoinTableMeta::new(
+        &[0],
+        &[ColumnType::Null],
+        &[ColumnType::Null],
+        &[ColumnType::BinaryString],
+        None,
+        Some(&[0]),
+        true,
+    );
+    RowLayoutMeta::from_join_table_meta(&meta, vec![None])
+}
+
+fn type_null_build_chunk() -> BuildChunk {
+    BuildChunk::new(vec![BuildColumn::variable(&[(Vec::new(), true)])])
 }
 
 /// A whole build side: run [`HashJoinV2Exec::fetch_and_build_hash_table`] over
@@ -678,6 +710,74 @@ fn right_build_semi_and_anti_probes_emit_each_preserved_row_once() {
         })
         .collect();
     assert_eq!(anti_outer_rows, vec![(10, 0), (20, 0), (40, 1)]);
+}
+
+#[test]
+fn left_build_anti_semi_scans_unmatched_nullable_build_rows() {
+    // Source: pkg/executor/join/anti_semi_join_probe_test.go and the
+    // TypeNull regression from commit febee17ec7. A NULL build key is not a
+    // hash match for the empty non-NULL probe key, and left-build anti-semi
+    // must emit it from the post-probe row-table scan.
+    let layout = type_null_key_layout();
+    let ctx = {
+        let mut ctx = HashJoinCtxV2::new(1, JoinType::AntiSemiJoin, false);
+        ctx.need_scan_row_table_after_probe_done = true;
+        ctx
+    };
+    let mut exec = HashJoinV2Exec::new(ctx, &[0], &[false]);
+    let partition = PartitionInfo::new(exec.ctx.partition_number);
+    let serializer = build_key;
+    let mut build_context = BuildContext::new(&layout, partition, &serializer);
+    exec.fetch_and_build_hash_table(
+        &[vec![type_null_build_chunk()]],
+        &mut build_context,
+        layout.null_map_length,
+    )
+    .expect("nullable build side");
+
+    let probe_context = ProbeContext {
+        hash_table: &exec.hash_table_context.hash_table,
+        meta: &layout,
+        column_count_needed_for_other_condition: 0,
+        total_column_number: 1,
+        tag_helper: exec.hash_table_context.tag_helper,
+        partition_number: exec.ctx.partition_number,
+        partition_mask_offset: exec.ctx.partition_mask_offset,
+        has_other_condition: false,
+        right_as_build_side: false,
+        l_used: vec![0],
+        r_used: Vec::new(),
+        l_used_in_other_condition: Vec::new(),
+        r_used_in_other_condition: Vec::new(),
+        concurrency: exec.ctx.concurrency,
+        max_chunk_size: 1024,
+    };
+    let serializer = empty_blob_probe_key as fn(&Chunk, usize) -> Option<Vec<u8>>;
+    let mut probe =
+        AntiSemiJoinProbe::new(probe_context, 0, vec![0], &[false], false, serializer, None);
+    assert!(probe.need_scan_row_table());
+    let output_fields = [FieldType::new(FieldTypeCode::Null)];
+    let probe_results =
+        HashJoinV2Exec::run_join_worker(&mut probe, vec![empty_blob_probe_chunk()], &|| {
+            Chunk::new(&output_fields, 1, 1)
+        })
+        .expect("left-build anti-semi probe");
+    assert!(probe_results.is_empty());
+
+    let scan_results = HashJoinV2Exec::scan_row_table_after_probe_done(&mut probe, &|| {
+        Chunk::new(&output_fields, 1, 1)
+    })
+    .expect("left-build anti-semi row-table scan");
+    let rows: Vec<Option<i64>> = scan_results
+        .iter()
+        .flat_map(|chunk| {
+            (0..chunk.num_rows()).map(|row| {
+                let row = chunk.get_row(row);
+                (!row.is_null(0)).then(|| row.get_int64(0))
+            })
+        })
+        .collect();
+    assert_eq!(rows, vec![None]);
 }
 
 #[test]

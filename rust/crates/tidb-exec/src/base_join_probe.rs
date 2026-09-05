@@ -104,8 +104,9 @@
 //!   which has no Rust counterpart.
 //! * **Per-join-type dispatch.** [`new_join_probe`] returns the validated
 //!   base. [`crate::hash_join_v2`] supplies the inner, probe-preserved outer,
-//!   and right-build semi-family no-residual wrappers; preserved-build,
-//!   residual-condition, and spill variants remain outside this port.
+//!   right-build semi-family, and left-build anti-semi no-residual wrappers;
+//!   other preserved-build, residual-condition, and spill variants remain
+//!   outside this port.
 //! * **`mockJoinProbe`.** Not ported: it is a test-only shell whose every
 //!   method is `panic("not supported")`, and it exists to feed
 //!   `hash_join_v2_test.go`, which is out of scope.
@@ -710,6 +711,12 @@ impl BaseJoinProbe {
     #[must_use]
     pub const fn matched_rows_for_current_probe_row(&self) -> usize {
         self.matched_rows_for_current_probe_row
+    }
+
+    /// Number of staged build rows waiting for reconstruction.
+    #[must_use]
+    pub const fn next_cached_build_row_index(&self) -> usize {
+        self.next_cached_build_row_index
     }
 
     /// Go `finishCurrentLookupLoop`: flush cached build rows, close the

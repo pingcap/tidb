@@ -67,7 +67,9 @@
 //! * `clearPartitionSegments` empties the bucket vector rather than setting
 //!   it to `nil`; both leave a zero-length hash table behind.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::join_row_table::{RowTable, RowTableSegment};
 use crate::tagged_ptr::TagPtrHelper;
@@ -382,9 +384,23 @@ pub struct HashTableV2 {
     pub tables: Vec<Option<SubTable>>,
     /// Number of partitions, kept alongside `tables` as the source does.
     pub partition_number: u64,
+    /// Sequential equivalent of Go's atomic used flags for preserved-build
+    /// anti-semi probes. The row bytes themselves remain immutable in Rust;
+    /// sharing this set lets multiple probe workers observe one match mark.
+    matched_build_rows: Arc<Mutex<HashSet<usize>>>,
 }
 
 impl HashTableV2 {
+    /// Creates an empty partitioned table for the hash-join build stage.
+    #[must_use]
+    pub fn new_empty(partition_number: usize) -> Self {
+        Self {
+            tables: (0..partition_number).map(|_| None).collect(),
+            partition_number: partition_number as u64,
+            matched_build_rows: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
     /// `newJoinHashTableForTest`: one sub table per partitioned row table.
     #[must_use]
     pub fn new_for_test(partitioned_row_tables: Vec<RowTable>) -> Self {
@@ -395,7 +411,33 @@ impl HashTableV2 {
                 .map(|table| Some(SubTable::new(table)))
                 .collect(),
             partition_number,
+            matched_build_rows: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    /// Clears the preserved-build match marks before a new probe round.
+    pub fn clear_matched_build_rows(&self) {
+        self.matched_build_rows
+            .lock()
+            .expect("matched build rows mutex poisoned")
+            .clear();
+    }
+
+    /// Marks one build row as matched, returning whether it was newly marked.
+    pub fn mark_build_row_matched(&self, address: usize) -> bool {
+        self.matched_build_rows
+            .lock()
+            .expect("matched build rows mutex poisoned")
+            .insert(address)
+    }
+
+    /// Reports whether a build row has already been matched.
+    #[must_use]
+    pub fn is_build_row_matched(&self, address: usize) -> bool {
+        self.matched_build_rows
+            .lock()
+            .expect("matched build rows mutex poisoned")
+            .contains(&address)
     }
 
     /// `getPartitionMemoryUsage`, zero for a partition that was never built.

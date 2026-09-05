@@ -25,6 +25,12 @@
 /// Abstract source field categories needed by the metadata decision table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ColumnType {
+    /// SQL `NULL` (variable, non-inlineable key category).
+    ///
+    /// Go's `getKeyProp` falls through to `chunk.GetFixedLen(TypeNull)`,
+    /// yielding the variable-element sentinel while keeping the key out of
+    /// the inline integer fast path.
+    Null,
     /// Signed integer family (including tiny/int/year-like fixed integers).
     Int,
     /// Unsigned integer family.
@@ -66,6 +72,12 @@ struct KeyProperty {
 impl ColumnType {
     fn key_property(self) -> KeyProperty {
         match self {
+            Self::Null => KeyProperty {
+                can_be_inlined: false,
+                key_length: None,
+                is_integer: false,
+                is_unsigned: false,
+            },
             Self::Int => KeyProperty {
                 can_be_inlined: true,
                 key_length: Some(8),
@@ -131,6 +143,7 @@ impl ColumnType {
 
     fn fixed_row_length(self) -> Option<usize> {
         match self {
+            Self::Null => None,
             Self::String
             | Self::BinaryString
             | Self::Decimal

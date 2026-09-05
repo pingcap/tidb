@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor/join` / `tidb-exec` hash join v2): matched Go's
+  left-build no-residual `antiSemiJoinProbe` path. Rust now marks matching
+  build-row addresses while probing, then scans the retained row table to
+  emit unmatched build rows; `ColumnType::Null` follows Go's variable,
+  non-inlineable `GetFixedLen(TypeNull)` metadata fallback. Focused hash-join
+  and metadata regressions cover the empty-BLOB-vs-NULL case and key-mode
+  decision. The full Go testkit, residual-condition, outer-preserved, and
+  spill variants remain outside the dependency-closed Rust owner.
 - 2026-09-05 (`pkg/sessionctx/variable`, `pkg/distsql`, `pkg/kv` query cop
   limiter propagation): matched Go's typed `QueryCopStoreLimit` hook by
   creating one query-scoped per-store limiter for each statement, carrying it

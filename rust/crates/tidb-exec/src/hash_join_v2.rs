@@ -176,11 +176,11 @@ use tidb_executor::joiner::JoinType;
 use tidb_util::memory::Tracker;
 
 use crate::base_join_probe::{
-    is_key_matched, new_join_probe, BaseJoinProbe, BuildRowSource, MatchedRowInfo, ProbeContext,
-    ProbeError, ProbeFilter, ProbeKeySerializer,
+    common_init_for_scan_row_table, is_key_matched, new_join_probe, BaseJoinProbe, BuildRowSource,
+    MatchedRowInfo, ProbeContext, ProbeError, ProbeFilter, ProbeKeySerializer,
 };
 use crate::hash_table_v2::{
-    get_hash_table_length_by_row_table, get_hash_table_memory_usage, HashTableV2, SubTable,
+    get_hash_table_length_by_row_table, get_hash_table_memory_usage, HashTableV2, RowIter, SubTable,
 };
 use crate::join_row_table::{RowTable, RowTableSegment};
 use crate::row_table_builder::{BuildChunk, BuildContext, RowTableBuildError, RowTableBuilder};
@@ -274,10 +274,7 @@ impl HashTableContext {
             row_tables: (0..concurrency)
                 .map(|_| (0..partition_number).map(|_| None).collect())
                 .collect(),
-            hash_table: HashTableV2 {
-                tables: (0..partition_number).map(|_| None).collect(),
-                partition_number: partition_number as u64,
-            },
+            hash_table: HashTableV2::new_empty(partition_number),
             tag_helper: TagPtrHelper::default(),
             memory_tracker: Tracker::new(LABEL_FOR_HASH_TABLE_IN_HASH_JOIN_V2, -1),
         }
@@ -291,6 +288,7 @@ impl HashTableContext {
         self.row_tables.clear();
         self.hash_table.tables.clear();
         self.hash_table.partition_number = 0;
+        self.hash_table.clear_matched_build_rows();
         self.tag_helper = TagPtrHelper::default();
         self.memory_tracker.detach();
     }
@@ -308,6 +306,7 @@ impl HashTableContext {
         for part_id in 0..self.hash_table.tables.len() {
             self.hash_table.clear_partition_segments(part_id);
         }
+        self.hash_table.clear_matched_build_rows();
     }
 
     /// Go `getPartitionMemoryUsage`: one partition's bytes, summed over every
@@ -722,9 +721,9 @@ impl BuildWorkerV2 {
 /// implementations `innerJoinProbe`, `outerJoinProbe`, `semiJoinProbe`,
 /// `antiSemiJoinProbe`, `leftOuterSemiJoinProbe` -- the same symbols
 /// [`crate::base_join_probe`]'s `new_join_probe` stops at. The inner variant,
-/// probe-preserved no-residual outer variant, and right-build existence
-/// variants are implemented below; preserved-build existence, residual-
-/// condition, and spill variants remain deferred.
+/// probe-preserved no-residual outer variant, right-build existence variants,
+/// and left-build anti-semi scan are implemented below; other preserved-build
+/// existence variants, residual-condition, and spill variants remain deferred.
 /// Go's
 /// `SetRestoredChunkForProbe` and `SpillRemainingProbeChunks` are omitted:
 /// both are spill-only, and [`crate::base_join_probe`] already records them
@@ -1037,9 +1036,176 @@ impl<S: ProbeKeySerializer> ProbeV2 for SemiJoinProbe<'_, S> {
     }
 }
 
-/// Go `antiSemiJoinProbe`, restricted to the right-build/equi-key fast path.
+/// Go `antiSemiJoinProbe` when the left side is the build side.
+///
+/// The probe phase only marks matching build rows. Once every probe chunk has
+/// been consumed, `ScanRowTable` emits the rows whose mark is still clear.
+/// Go stores that mark in the row's atomic used flag. Rust's row bytes are
+/// immutable after the hash table is built, so this sequential port keeps the
+/// same observable state in a shared set keyed by the synthetic row address
+/// instead.
+struct LeftBuildAntiSemiJoinProbe<'a, S: ProbeKeySerializer> {
+    base: BaseJoinProbe,
+    ctx: ProbeContext<'a>,
+    key_serializer: S,
+    filter: Option<ProbeFilter<'a>>,
+    row_iter: Option<RowIter<'a>>,
+}
+
+impl<'a, S: ProbeKeySerializer> LeftBuildAntiSemiJoinProbe<'a, S> {
+    fn new(
+        ctx: ProbeContext<'a>,
+        work_id: usize,
+        key_index: Vec<usize>,
+        probe_key_nullable: &[bool],
+        right_as_build_side: bool,
+        key_serializer: S,
+        filter: Option<ProbeFilter<'a>>,
+    ) -> Self {
+        assert!(
+            !right_as_build_side,
+            "left-build anti-semi probe requires left build"
+        );
+        assert!(
+            !ctx.has_other_condition,
+            "left-build anti-semi probe has no residual path"
+        );
+        Self {
+            base: new_join_probe(
+                &ctx,
+                work_id,
+                JoinType::AntiSemiJoin,
+                key_index,
+                probe_key_nullable,
+                right_as_build_side,
+            ),
+            ctx,
+            key_serializer,
+            filter,
+            row_iter: None,
+        }
+    }
+
+    fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
+        self.base
+            .set_chunk_for_probe(&self.ctx, chunk, self.filter, &self.key_serializer)
+    }
+
+    fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        // There are no probe-side output rows for a left-build anti-semi
+        // join. Still clear the per-call staging state so repeated calls have
+        // the same bookkeeping as the other probe implementations.
+        self.base.prepare_for_probe(&self.ctx, joined_chk);
+        while !self.base.is_current_chunk_probe_done() {
+            let probe_row = self.base.current_probe_row();
+            let hash_value = self.base.matched_rows_hash_value()[probe_row];
+            let serialized_key = self.base.serialized_keys()[probe_row].clone();
+            let mut header = self.base.matched_rows_headers()[probe_row];
+            while header != 0 {
+                let build_address =
+                    crate::hash_table_v2::row_address_of(&self.ctx.tag_helper, header);
+                if !self.ctx.hash_table.is_build_row_matched(build_address) {
+                    let build_row = self.ctx.hash_table.row_bytes(build_address);
+                    if is_key_matched(
+                        self.ctx.meta.key_mode,
+                        &serialized_key,
+                        build_row,
+                        self.ctx.meta,
+                    ) {
+                        self.ctx.hash_table.mark_build_row_matched(build_address);
+                    } else {
+                        self.base.record_probe_collision();
+                    }
+                }
+                header = BaseJoinProbe::next_matched_row(
+                    self.ctx.hash_table,
+                    &self.ctx.tag_helper,
+                    header,
+                    hash_value,
+                );
+                self.base.set_matched_rows_header(probe_row, header);
+            }
+            self.base.set_current_probe_row(probe_row + 1);
+        }
+        Ok(())
+    }
+
+    fn init_for_scan_row_table(&mut self) {
+        self.row_iter = Some(common_init_for_scan_row_table(
+            self.ctx.hash_table,
+            self.base.work_id(),
+            self.ctx.concurrency,
+        ));
+    }
+
+    fn is_scan_row_table_done(&self) -> bool {
+        self.row_iter
+            .as_ref()
+            .expect("scan row table before init")
+            .is_end()
+    }
+
+    fn scan_row_table(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        if joined_chk.is_full() {
+            return Ok(());
+        }
+        assert!(self.row_iter.is_some(), "scan row table before init");
+        self.base.prepare_for_probe(&self.ctx, joined_chk);
+        let mut remain_cap = joined_chk
+            .required_rows()
+            .saturating_sub(joined_chk.num_rows());
+        while remain_cap > 0 {
+            let Some(build_address) = self
+                .row_iter
+                .as_ref()
+                .and_then(|iter| (!iter.is_end()).then(|| iter.get_value()))
+            else {
+                break;
+            };
+            if !self.ctx.hash_table.is_build_row_matched(build_address) {
+                self.base.append_build_row_to_cached_build_rows_v1(
+                    &self.ctx,
+                    self.ctx.hash_table,
+                    0,
+                    build_address,
+                    joined_chk,
+                    0,
+                    false,
+                );
+                remain_cap -= 1;
+            }
+            self.row_iter
+                .as_mut()
+                .expect("scan row table before init")
+                .next();
+        }
+        if self.base.next_cached_build_row_index() > 0 {
+            self.base.batch_construct_build_rows(
+                &self.ctx,
+                self.ctx.hash_table,
+                joined_chk,
+                0,
+                false,
+            );
+        }
+        Ok(())
+    }
+
+    fn reset_probe(&mut self) {
+        self.row_iter = None;
+        self.ctx.hash_table.clear_matched_build_rows();
+        self.base.reset_probe(&self.ctx);
+    }
+}
+
+/// Go `antiSemiJoinProbe`, with both build-side orientations supported.
 pub struct AntiSemiJoinProbe<'a, S: ProbeKeySerializer> {
-    inner: ExistenceJoinProbe<'a, S>,
+    inner: AntiSemiJoinProbeInner<'a, S>,
+}
+
+enum AntiSemiJoinProbeInner<'a, S: ProbeKeySerializer> {
+    Right(ExistenceJoinProbe<'a, S>),
+    Left(LeftBuildAntiSemiJoinProbe<'a, S>),
 }
 
 impl<'a, S: ProbeKeySerializer> AntiSemiJoinProbe<'a, S> {
@@ -1055,59 +1221,104 @@ impl<'a, S: ProbeKeySerializer> AntiSemiJoinProbe<'a, S> {
         filter: Option<ProbeFilter<'a>>,
     ) -> Self {
         Self {
-            inner: ExistenceJoinProbe::new(
-                ctx,
-                work_id,
-                JoinType::AntiSemiJoin,
-                key_index,
-                probe_key_nullable,
-                right_as_build_side,
-                key_serializer,
-                filter,
-            ),
+            inner: if right_as_build_side {
+                AntiSemiJoinProbeInner::Right(ExistenceJoinProbe::new(
+                    ctx,
+                    work_id,
+                    JoinType::AntiSemiJoin,
+                    key_index,
+                    probe_key_nullable,
+                    right_as_build_side,
+                    key_serializer,
+                    filter,
+                ))
+            } else {
+                AntiSemiJoinProbeInner::Left(LeftBuildAntiSemiJoinProbe::new(
+                    ctx,
+                    work_id,
+                    key_index,
+                    probe_key_nullable,
+                    right_as_build_side,
+                    key_serializer,
+                    filter,
+                ))
+            },
         }
     }
 }
 
 impl<S: ProbeKeySerializer> ProbeV2 for AntiSemiJoinProbe<'_, S> {
     fn set_chunk_for_probe(&mut self, chunk: Chunk) -> Result<(), ProbeError> {
-        self.inner.set_chunk_for_probe(chunk)
+        match &mut self.inner {
+            AntiSemiJoinProbeInner::Right(probe) => probe.set_chunk_for_probe(chunk),
+            AntiSemiJoinProbeInner::Left(probe) => probe.set_chunk_for_probe(chunk),
+        }
     }
 
     fn is_current_chunk_probe_done(&self) -> bool {
-        self.inner.is_current_chunk_probe_done()
+        match &self.inner {
+            AntiSemiJoinProbeInner::Right(probe) => probe.is_current_chunk_probe_done(),
+            AntiSemiJoinProbeInner::Left(probe) => probe.base.is_current_chunk_probe_done(),
+        }
     }
 
     fn probe(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
-        self.inner.probe(joined_chk)
+        match &mut self.inner {
+            AntiSemiJoinProbeInner::Right(probe) => probe.probe(joined_chk),
+            AntiSemiJoinProbeInner::Left(probe) => probe.probe(joined_chk),
+        }
     }
 
     fn need_scan_row_table(&self) -> bool {
-        false
+        matches!(&self.inner, AntiSemiJoinProbeInner::Left(_))
     }
 
     fn init_for_scan_row_table(&mut self) {
-        panic!("right-build anti-semi join does not scan the build row table")
+        match &mut self.inner {
+            AntiSemiJoinProbeInner::Right(_) => {
+                panic!("right-build anti-semi join does not scan the build row table")
+            }
+            AntiSemiJoinProbeInner::Left(probe) => probe.init_for_scan_row_table(),
+        }
     }
 
     fn is_scan_row_table_done(&self) -> bool {
-        panic!("right-build anti-semi join does not scan the build row table")
+        match &self.inner {
+            AntiSemiJoinProbeInner::Right(_) => {
+                panic!("right-build anti-semi join does not scan the build row table")
+            }
+            AntiSemiJoinProbeInner::Left(probe) => probe.is_scan_row_table_done(),
+        }
     }
 
-    fn scan_row_table(&mut self, _joined_chk: &mut Chunk) -> Result<(), ProbeError> {
-        panic!("right-build anti-semi join does not scan the build row table")
+    fn scan_row_table(&mut self, joined_chk: &mut Chunk) -> Result<(), ProbeError> {
+        match &mut self.inner {
+            AntiSemiJoinProbeInner::Right(_) => {
+                panic!("right-build anti-semi join does not scan the build row table")
+            }
+            AntiSemiJoinProbeInner::Left(probe) => probe.scan_row_table(joined_chk),
+        }
     }
 
     fn reset_probe(&mut self) {
-        self.inner.reset_probe()
+        match &mut self.inner {
+            AntiSemiJoinProbeInner::Right(probe) => probe.reset_probe(),
+            AntiSemiJoinProbeInner::Left(probe) => probe.reset_probe(),
+        }
     }
 
     fn reset_probe_collision(&mut self) {
-        self.inner.reset_probe_collision()
+        match &mut self.inner {
+            AntiSemiJoinProbeInner::Right(probe) => probe.reset_probe_collision(),
+            AntiSemiJoinProbeInner::Left(probe) => probe.base.reset_probe_collision(),
+        }
     }
 
     fn get_probe_collision(&self) -> u64 {
-        self.inner.base.get_probe_collision()
+        match &self.inner {
+            AntiSemiJoinProbeInner::Right(probe) => probe.base.get_probe_collision(),
+            AntiSemiJoinProbeInner::Left(probe) => probe.base.get_probe_collision(),
+        }
     }
 }
 

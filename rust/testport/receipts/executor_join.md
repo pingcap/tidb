@@ -1,12 +1,12 @@
-# `pkg/executor/join` — Go-master null build-key regression receipt
+# `pkg/executor/join` — Go-master null build-key and anti-semi receipt
 
-Status: complete direct-package inventory with a focused current-master
-regression restored. The package now carries the `TypeNull` anti-semi-join
-coverage from Go master; its nested `joinversion`, `test/indexjoin`, and
+Status: complete direct-package inventory with focused current-master
+regressions restored in both the Go fixture and the dependency-closed Rust
+hash-join owner. The package's nested `joinversion`, `test/indexjoin`, and
 `test/mergejoin` packages remain separate boundaries.
 
 Comparison source: Go `origin/master` at
-`1c1a334d2be1dce64888b6e1f054462c566b0734` (2026-09-02).
+`f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (2026-09-04).
 
 ## Complete inventory
 
@@ -54,8 +54,14 @@ in one package commit; the codec production fix is kept in its own package
 commit as requested.
 
 The Rust `tidb-executor` owner has no dependency-closed Go `pkg/executor/join`
-package boundary for this test harness, so no speculative Rust join facade was
-added. Rust join/null semantics remain an explicit integration boundary.
+package boundary for the full testkit harness. The dependency-closed Rust
+`tidb-exec` hash-join owner now supports the missing no-residual
+left-build `AntiSemiJoinProbe` path: probe rows mark matching build addresses,
+then the row-table scan emits every unmarked build row. The immutable Rust row
+representation uses a sequential address set for the source's atomic used
+flag; the existing v2 driver remains sequential and does not claim Go's
+goroutine topology. A focused regression proves that a nullable build row is
+not lost when the probe key is an empty BLOB.
 
 The paired SQL fixture is `tests/integrationtest/t/executor/jointest/hash_join.test`
 with its expected output in
@@ -72,14 +78,22 @@ Profile: Ready for this package batch.
   `[]` instead of one row.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./tools/check/failpoint-go-test.sh pkg/executor/join -run '^TestAntiSemiJoinTypeNullBuildKey$' -count=1 -vet=off` — passed after the paired codec change.
 - `git diff --check` — passed for the package and receipt edits.
+- `cargo test --offline --locked -p tidb-exec --test all hash_join_v2_source` —
+  passed (18 tests), including the left-build nullable anti-semi regression.
+- `cargo test --offline --locked -p tidb-exec --test all test_join_table_meta_key_mode_source` — passed, including the `TypeNull` default key-property case.
+- `make lint` — passed with the repository's configured Go toolchain.
+- `cargo fmt --all -- --check` still reports pre-existing formatting drift in
+  the query-cop-store-limiter files; the changed executor files are rustfmt
+  clean and no unrelated formatting was rewritten.
 - `make bazel_prepare` remains required by the restored BUILD/test import and
   is blocked locally because the `bazel` executable is unavailable.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex ./run-tests.sh -r executor/jointest/hash_join` was attempted from `tests/integrationtest`; recording was blocked while building the server by unrelated stale failpoint-generated `_curpkg_` references in `pkg/ddl/util`, `pkg/bindinfo`, and `pkg/expression/aggregation`. The generated markers were then disabled and verified absent; the committed result diff remains exactly the Go-master fixture delta.
 
 ## Risks and unverified surfaces
 
-- Correctness risk is low for the focused path: NULL keys are marked before
-  hashing and no longer collide with empty byte keys.
+- Correctness risk is low for the focused path: NULL keys are retained for the
+  left-build anti-semi row-table scan, while valid matching addresses are
+  suppressed after probing.
 - The complete join algorithm, spill paths, full outer joins, and nested test
   packages were inventoried but not re-run in this focused batch.
 - Rust cross-crate join integration and distributed SQL behavior remain
