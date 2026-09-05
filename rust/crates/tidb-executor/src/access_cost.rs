@@ -399,6 +399,23 @@ fn index_row_count(
     let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
         return RowEstimate::default_est(pseudo_index_row_count(index, ranges, realtime));
     };
+    // Go `IndexStatsIsInvalid` (`pkg/statistics/index.go:132`): an index whose
+    // statistics are not fully loaded is INVALID for estimation -- the pseudo
+    // formula below answers this call -- and the index is queued into
+    // `AsyncLoadHistogramNeededItems` so the domain's async loader can fetch
+    // the real histogram for later statements. Without the enqueue, an evicted
+    // index stays pseudo forever.
+    if stats.index_is_load_needed(index.id) {
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(
+            tidb_model::TableItemID {
+                table_id: table.table_id,
+                id: index.id,
+                is_index: true,
+                is_sync_load_failed: false,
+            },
+            true,
+        );
+    }
     let Some(index_stats) = stats.indexes.get(&index.id) else {
         // A table WITH statistics whose index was never analyzed: Go's
         // `GetRowCountByIndexRanges` (`row_count_index.go:57`) first tries
@@ -2084,5 +2101,122 @@ mod tests {
         );
         let expected = 1.0 / 1_000.0 * (1.0 - 1.0 / 1_000.0);
         assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+    }
+}
+
+#[cfg(test)]
+mod index_async_load_queue_tests {
+    use super::*;
+    use crate::kv_table::KvColumn;
+    use crate::kv_table::KvTable;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_model::TableItemID;
+
+    fn long_column(name: &str, id: i64) -> KvColumn {
+        KvColumn {
+            name: name.to_owned(),
+            id,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            default_value: None,
+            origin_default: None,
+            comment: String::new(),
+            generated: None,
+        }
+    }
+
+    /// Go `IndexStatsIsInvalid` (`pkg/statistics/index.go:132`): estimating
+    /// over an index whose statistics are NOT fully loaded queues that index
+    /// into `AsyncLoadHistogramNeededItems` so the async loader can fetch the
+    /// real histogram; the estimate itself still answers the pseudo rate.
+    #[test]
+    fn an_index_with_unloaded_stats_is_queued_for_async_load() {
+        let index = KvIndex {
+            id: 7,
+            name: "idx_a".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        let table = KvTable::new(11, vec![long_column("a", 1)]);
+        // No index_load_status entry: the index was never loaded. The
+        // existence map DOES know it (the persisted stats row exists), which
+        // is what makes the load genuinely needed.
+        let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
+        // The table itself is real (not pseudo); only THIS index's stats are
+        // evicted.
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        stats.index_stats_existence.insert(7, true);
+        let item = TableItemID {
+            table_id: 11,
+            id: 7,
+            is_index: true,
+            is_sync_load_failed: false,
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        needed.delete(item);
+
+        let estimate = index_row_count(&index, &table, &[], Some(&stats), 10.0);
+        assert!(
+            estimate.est >= 0.0,
+            "the estimate still answers the pseudo rate"
+        );
+        assert!(
+            needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == item),
+            "the unloaded index is queued for the async loader"
+        );
+        needed.delete(item);
+    }
+
+    /// An index whose statistics ARE fully loaded is not queued: the gate
+    /// fires only on the unloaded half of Go's condition.
+    #[test]
+    fn a_fully_loaded_index_is_not_queued() {
+        let index = KvIndex {
+            id: 8,
+            name: "idx_b".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        let table = KvTable::new(11, vec![long_column("a", 1)]);
+        let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        stats
+            .index_load_status
+            .insert(8, tidb_stats::StatsLoadedStatus::full_load());
+        let item = TableItemID {
+            table_id: 11,
+            id: 8,
+            is_index: true,
+            is_sync_load_failed: false,
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        needed.delete(item);
+
+        let _ = index_row_count(&index, &table, &[], Some(&stats), 10.0);
+        assert!(
+            !needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == item),
+            "a fully loaded index needs no async load"
+        );
+        needed.delete(item);
     }
 }
