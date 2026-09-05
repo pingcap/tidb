@@ -79,3 +79,16 @@ traits.
 init reproducing Go's container/heap), `RemoveExpired`, `Query`, and
 the ring queue's Enqueue — the same arithmetic over the same ordering.
 Next slice: `serverinfo_syncer`.
+
+## serverinfo_syncer slice (2026-09-05, sixth pass) — VERIFIED
+
+`serverinfo_syncer.rs` (73 functions) mirrors `pkg/domain/serverinfo`:
+the `ServerInfo`/`DynamicInfo`/`StaticInfo` trio with Go's clone
+semantics, marshal/unmarshal, topology conversion, and the assumed-
+pool flag; the syncer with `NewSessionAndStoreServerInfo`,
+`StoreServerInfo` (refusing without a session, per the module doc),
+`RemoveServerInfo`, `Restart`, `GetServerInfoByID` and
+`GetAllServerInfo`; plus `status_endpoint_claim` — the endpoint/claim-
+key construction and try-acquire-and-report against the etcd lease.
+Next: none in pkg/domain — the domain file set is fully dispositioned
+pending `ru_stats`/`plan_replayer` deep reads already recorded.

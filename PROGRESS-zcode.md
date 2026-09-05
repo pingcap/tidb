@@ -375,3 +375,5 @@
 - 下轮恢复点: (1) domain 余模块: historical_stats/topn_slow_query/serverinfo_syncer; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - domain historical_stats + topn_slow_query 切片核实(堆算术/partition 决定 is_partition 的查找序/通道满丢弃语义均在位), 推后续提交。
 - 下轮恢复点: (1) domain 末模块 serverinfo_syncer; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- domain serverinfo_syncer 切片核实(73 函数: info 三型+clone/marshal/topology/syncer 会话与存储/endpoint claim 认领全映射), 推后续提交。domain 面全部模块处置完毕。
+- 下轮恢复点: (1) 新面候选: tidb-domain 已闭环→选 tidb-privilege 已闭环→候选 tidb-config 深层已做→下一候选 tidb-kvcache/tidb-hash 小工具面或 infoschema 面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
