@@ -558,6 +558,9 @@ pub struct Session {
     /// `None` for a session with no connection identity, where the builtin
     /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
     connection_id: Option<u64>,
+    /// Go `SessionVars.ClientCapability & mysql.ClientFoundRows`: negotiated
+    /// once by the front end and copied into every statement context.
+    client_found_rows: bool,
     /// This connection's lock references over the domain/server lock service.
     advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
@@ -804,6 +807,7 @@ impl Session {
             login_user: None,
             active_roles: Arc::new(Vec::new()),
             connection_id: None,
+            client_found_rows: false,
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
             last_insert_id: 0,
             statement_insert_id: 0,

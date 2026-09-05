@@ -521,6 +521,7 @@ pub(super) fn session_context_with_identity(
         connection_id,
         peer_addr,
         identity,
+        client_found_rows: false,
         secure_transport: false,
         tls_status: None,
         cancellation: ConnectionCancellation::default(),

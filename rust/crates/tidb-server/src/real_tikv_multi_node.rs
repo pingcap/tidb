@@ -416,7 +416,8 @@ impl QuerySession for RealTiKvMultiServerSession {
             CONTROL_PLANE_TIMEOUT,
             &session_tz,
         )
-        .map_err(|error| configured_write_error(&error))?;
+        .map_err(|error| configured_write_error(&error))?
+        .with_client_found_rows(self.context.client_found_rows);
         if report.write_size > 0 {
             self.write_sli
                 .add_txn_write_size(report.write_size, report.write_keys);

@@ -25,9 +25,10 @@ source-derived/unit-test inventory for the crate. No Go source was edited.
 
 Rust now defines `CLIENT_TRANSACTIONS` as the MySQL bit 1<<13 and includes it
 in `SERVER_CAPABILITIES`. A client can therefore negotiate the transaction
-support that the existing Rust session and command paths provide. The Rust
-`CLIENT_FOUND_ROWS` behavior remains a separate boundary: that capability is
-not modeled and unchanged updates still report changed rows.
+support that the existing Rust session and command paths provide.
+`CLIENT_FOUND_ROWS` was a separate boundary in this batch and is now closed by
+`server_client_found_rows.md`; keeping the receipts separate preserves the
+fail-before/pass-after evidence for each behavior change.
 
 ## Regression evidence
 
@@ -49,7 +50,7 @@ Rust test was reverted and is not part of the change.
 
 ## Boundary
 
-This receipt covers one `pkg/server` handshake capability. It does not claim
-`CLIENT_FOUND_ROWS`, the remaining command refusals, or repository-wide Rust/
-Go parity; those require their own complete package-scoped inventory and
-regression.
+This receipt covers one `pkg/server` handshake capability. The later
+`server_client_found_rows.md` receipt covers the found-rows capability and its
+executor/session integration. Neither receipt claims the remaining command
+refusals or repository-wide Rust/Go parity.

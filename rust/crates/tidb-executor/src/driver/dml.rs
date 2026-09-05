@@ -1607,7 +1607,8 @@ fn prepare_on_duplicate_assignments(
 /// Captured from TiDB: the assignments read the EXISTING row (`c = c + 1` on
 /// a stored 10 gives 11, not the rejected value plus one), `VALUES(col)`
 /// reads the row that would have been inserted, an update that changes
-/// nothing counts 0, and one that changes something counts 2.
+/// nothing counts 0 (or 1 under `CLIENT_FOUND_ROWS`), and one that changes
+/// something counts 2.
 fn apply_on_duplicate(
     table: &mut crate::KvTable,
     handle: &crate::kv_table::TableHandle,
@@ -1661,8 +1662,7 @@ fn apply_on_duplicate(
         .on_update_now
         .apply(&existing, &mut updated, ctx, updated_chunk.get_row(0))?
     {
-        // Captured: an update that changes nothing affects no rows.
-        return Ok(0);
+        return Ok(u64::from(ctx.client_found_rows()));
     }
     if let Some(partitions) = &prepared.selected_partitions {
         table
@@ -1775,9 +1775,8 @@ pub(crate) fn substitute_values_references(
 /// re-evaluated with the `SET` assignments applied, and a row is written back
 /// only when a column actually changed. The affected-row count is the number
 /// of CHANGED rows, not the number matched -- an unchanged row is "touched"
-/// instead, and only a client that negotiated `CLIENT_FOUND_ROWS` sees it
-/// counted (that capability is not modelled here, so the count is always the
-/// changed-row count).
+/// instead, and a client that negotiated `CLIENT_FOUND_ROWS` sees those
+/// successfully matched rows counted too.
 ///
 /// Assignments are evaluated against the row's ORIGINAL values. Go constructs
 /// the complete replacement row before it writes any assignment, so one `SET`
@@ -2827,6 +2826,7 @@ fn run_update_with_physical(
         }
     };
     let mut matched = 0u64;
+    let mut touched = 0u64;
     let mut changed = 0u64;
     let mut rewrites: Vec<(crate::kv_table::TableHandle, Vec<Datum>, Vec<Datum>)> = Vec::new();
     let row_evaluator = UpdateRowEvaluator {
@@ -2847,9 +2847,11 @@ fn run_update_with_physical(
                 if !physical_kv_source && row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
+                let matched_before = matched;
                 if let Some(new_row) = row_evaluator.compute(row, None, None, &mut matched)? {
                     updates.push((index, new_row));
                 }
+                touched += u64::from(matched != matched_before);
             }
             changed = updates.len() as u64;
             let Some(TableEntry::Mem(mem)) = catalog.get_mut_in(&database, &name) else {
@@ -2877,12 +2879,14 @@ fn run_update_with_physical(
                 accountant
                     .account_row(&row.stored)
                     .map_err(DriverError::from)?;
-                if let Some(mut new_row) = row_evaluator.compute(
+                let matched_before = matched;
+                let computed = row_evaluator.compute(
                     &row.stored,
                     extra_handle_value(&row.handle),
                     Some((&row.output, &physical_field_types)),
                     &mut matched,
-                )? {
+                )?;
+                if let Some(mut new_row) = computed {
                     kv.materialize_generated(&mut new_row, ctx)
                         .map_err(kv_write_error)?;
                     if let Some(partitions) = &partition_ids {
@@ -2901,6 +2905,10 @@ fn run_update_with_physical(
                         .account_row(&new_row)
                         .map_err(DriverError::from)?;
                     rewrites.push((row.handle, row.stored, new_row));
+                } else {
+                    // An unchanged selected row is touched immediately in Go;
+                    // a predicate miss did not advance `matched` at all.
+                    touched += u64::from(matched != matched_before);
                 }
             }
         }
@@ -2921,11 +2929,15 @@ fn run_update_with_physical(
                         Ok(conflicts) => conflicts.iter().any(|conflict| conflict != &handle),
                         Err(error) => {
                             handle_partition_write_error(kv_write_error(error), true, ctx)?;
+                            touched += 1;
                             continue;
                         }
                     }
                 };
                 if duplicate {
+                    // Go increments TouchedRows before the table write detects
+                    // a duplicate that UPDATE IGNORE later downgrades.
+                    touched += 1;
                     let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                         unreachable!("only a byte-backed table stages rewrites")
                     };
@@ -2957,6 +2969,7 @@ fn run_update_with_physical(
                         continue;
                     }
                 }
+                touched += 1;
                 let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                     unreachable!("only a byte-backed table stages rewrites")
                 };
@@ -2993,6 +3006,7 @@ fn run_update_with_physical(
                     catalog, &database, &name, &changes, ctx,
                 )?;
             }
+            touched += rewrites.len() as u64;
             let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                 unreachable!("only a byte-backed table stages rewrites")
             };
@@ -3003,7 +3017,11 @@ fn run_update_with_physical(
             }
         }
     }
-    Ok(changed)
+    Ok(if ctx.client_found_rows() {
+        touched
+    } else {
+        changed
+    })
 }
 
 struct UpdateRowEvaluator<'a> {

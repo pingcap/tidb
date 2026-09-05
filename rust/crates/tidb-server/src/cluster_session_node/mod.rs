@@ -1039,6 +1039,7 @@ impl ClusterSessionFactory {
                         connection_id,
                         peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
                         identity: crate::configured_user_store::AuthenticatedIdentity::internal(),
+                        client_found_rows: false,
                         secure_transport: false,
                         tls_status: None,
                         cancellation: crate::sql_node::ConnectionCancellation::default(),
@@ -2958,6 +2959,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             format!("{}@{}", identity.username(), context.peer_addr.ip()),
         );
         session.set_connection_id(context.connection_id);
+        session.set_client_found_rows(context.client_found_rows);
         session.set_secure_transport(context.secure_transport);
         session.set_tls_status(context.tls_status.clone());
         if identity.in_sandbox_mode() {
@@ -3813,6 +3815,7 @@ impl tidb_workloadrepo::SessionPool for WorkloadRepositorySessionPool {
                 connection_id,
                 peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
                 identity: crate::configured_user_store::AuthenticatedIdentity::internal(),
+                client_found_rows: false,
                 secure_transport: false,
                 tls_status: None,
                 cancellation: crate::sql_node::ConnectionCancellation::default(),

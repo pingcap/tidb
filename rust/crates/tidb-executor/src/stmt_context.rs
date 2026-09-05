@@ -395,6 +395,9 @@ pub struct StmtContext {
     /// Go `SessionVars.LastFoundRows`, the count published when the previous
     /// result set reached EOF.
     last_found_rows: Option<u64>,
+    /// Go `SessionVars.ClientCapability & mysql.ClientFoundRows`: UPDATE and
+    /// duplicate-key UPDATE count successfully matched unchanged rows.
+    client_found_rows: bool,
     /// The session transaction timestamp. Unlike ordinary statement
     /// snapshots, this handle may be published after the context is built
     /// when an autocommit statement performs its first storage read.
@@ -834,6 +837,7 @@ impl StmtContext {
             prev_last_insert_id: 0,
             prev_row_count: 0,
             last_found_rows: None,
+            client_found_rows: false,
             current_tso: CurrentTso::default(),
             given_insert_id: Arc::default(),
             retry_auto_ids: Arc::default(),
@@ -2767,6 +2771,19 @@ impl StmtContext {
     pub fn with_last_found_rows(mut self, rows: u64) -> Self {
         self.last_found_rows = Some(rows);
         self
+    }
+
+    /// Attaches the connection's negotiated `CLIENT_FOUND_ROWS` bit.
+    #[must_use]
+    pub fn with_client_found_rows(mut self, enabled: bool) -> Self {
+        self.client_found_rows = enabled;
+        self
+    }
+
+    /// Whether unchanged matched update rows count as affected.
+    #[must_use]
+    pub const fn client_found_rows(&self) -> bool {
+        self.client_found_rows
     }
 
     /// Attaches the session's live transaction timestamp authority.

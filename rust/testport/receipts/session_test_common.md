@@ -49,6 +49,13 @@ found to remove, and implementing this package locally would duplicate the
 session/server ownership and risk diverging on schema versioning, database
 scope, protocol state, or storage execution.
 
+The 2026-09-05 `server_client_found_rows.md` batch closes the
+`CLIENT_FOUND_ROWS` branch of `TestAffectedRows` through a real TCP handshake
+and Rust session/executor regressions. The exact package carrier remains
+ignored because the rest of `TestAffectedRows` and the other common tests
+still require the dependency-closed Go TestKit/Domain/storage owner described
+above.
+
 ## Validation and risk
 
 Profile: **WIP** for this documentation-only boundary audit; no production,

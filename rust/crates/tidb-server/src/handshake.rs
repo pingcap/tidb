@@ -33,6 +33,8 @@ use crate::handshake_response::{HandshakeResponse41, WireString};
 
 /// MySQL `CLIENT_CONNECT_WITH_DB`.
 pub const CLIENT_CONNECT_WITH_DB: u32 = 1 << 3;
+/// MySQL `CLIENT_FOUND_ROWS` (UPDATE reports matched rather than changed rows).
+pub const CLIENT_FOUND_ROWS: u32 = 1 << 1;
 /// MySQL `CLIENT_TRANSACTIONS` (the client understands transaction commands).
 pub const CLIENT_TRANSACTIONS: u32 = 1 << 13;
 /// MySQL `CLIENT_COMPRESS` (zlib compressed command packets).

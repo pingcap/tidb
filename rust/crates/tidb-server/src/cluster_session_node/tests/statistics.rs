@@ -459,6 +459,7 @@ fn open_session_as_with_stats_lock(
             connection_id: 2,
             peer_addr,
             identity,
+            client_found_rows: false,
             secure_transport: false,
             tls_status: None,
             cancellation: ConnectionCancellation::default(),

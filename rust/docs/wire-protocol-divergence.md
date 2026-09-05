@@ -122,26 +122,25 @@ Distinguishing case: with `SET character_set_results = latin1`, both servers
 advertise collation `47` and send `0xE9` for `SELECT 'é'`; the client no longer
 sees a UTF-8 column id paired with UTF-8 row bytes.
 
-### D5. `CLIENT_FOUND_ROWS` is not advertised (`CLIENT_TRANSACTIONS` fixed)
+### D5. `CLIENT_FOUND_ROWS` and `CLIENT_TRANSACTIONS` are advertised (FIXED 2026-09-05)
 
 - Go: `pkg/server/server.go:116-121` `defaultCapability` includes
   `ClientTransactions` (1<<13) and `ClientFoundRows` (1<<1).
-- Rust: `rust/crates/tidb-server/src/mysql_connection.rs` now advertises
-  `CLIENT_TRANSACTIONS` (1<<13), matching the Go handshake and the transaction
-  status/command implementation. `CLIENT_FOUND_ROWS` (1<<1) remains outside
-  the Rust capability model, so it is still masked during negotiation.
+- Rust: `rust/crates/tidb-server/src/mysql_connection.rs` advertises both bits
+  and stores negotiated `CLIENT_FOUND_ROWS` state in `SessionContext`.
+  Pipeline and cluster sessions copy it into each statement context, while
+  configured real-TiKV nodes apply the same value to their completed write
+  reports. Single-table UPDATE, multi-table UPDATE, unchanged duplicate-key
+  UPDATE, and configured point-update reports then count successfully touched
+  rows when the bit is enabled while retaining the changed-row default when it
+  is absent.
 
 Distinguishing case: a client connecting with `CLIENT_FOUND_ROWS` set (JDBC
-`useAffectedRows=false`, which is the **default**) has the bit masked away by
-`negotiate_capabilities` (`handshake.rs:485-490`, `client & server`). An
-`UPDATE t SET c=c WHERE id=1` that matches one row but changes nothing then
-reports `affected_rows=0` where MySQL and Go report 1 — JDBC's
-`executeUpdate()` returns a different number, and code that branches on
-"did the update find the row" takes the wrong branch. The transaction
-capability no longer compounds D2: clients can negotiate the transaction
-support that Rust already implements. The `CLIENT_FOUND_ROWS` affected-row
-distinction remains a separate follow-up because the executor still reports
-changed rows rather than matched rows for an unchanged update.
+`useAffectedRows=false`, which is the **default**) now retains the bit through
+`negotiate_capabilities` (`handshake.rs`, `client & server`). Over one changed
+row and one unchanged matched row, `UPDATE t SET c=10` reports
+`affected_rows=2`; an unchanged `ON DUPLICATE KEY UPDATE` reports one. Without
+the bit, the same execution paths preserve their changed-row counts.
 
 ---
 
@@ -295,9 +294,8 @@ These were compared field by field and match. Do not re-audit them.
    `conn.go:writeInitialHandshake` (`:474-531`) does: protocol 10, NUL server
    version, 4-byte connection id, `salt[0..8]`, filler `0`, low capability
    word, collation, status, high capability word, `len(salt)+1`, ten reserved
-   zeros, `salt[8..]`, `0`, plugin name, `0`. The remaining field-value
-   difference is the deliberately unadvertised `CLIENT_FOUND_ROWS` bit (D5);
-   the layout and runtime server-version value (D10) now match.
+   zeros, `salt[8..]`, `0`, plugin name, `0`. The capability value, layout,
+   and runtime server-version value (D10) now match for the implemented bits.
 6. **HandshakeResponse41 parsing**, including the `CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA`
    one-byte-marker special case, the `CLIENT_SECURE_CONNECTION` fallback, the
    NUL-terminated legacy form, optional database, plugin name, the 1 MiB

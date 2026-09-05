@@ -1049,6 +1049,9 @@ pub struct SessionContext {
     /// Identity established by ordinary password verification or validated
     /// process-wide skip-grant admission.
     pub identity: AuthenticatedIdentity,
+    /// Whether this client negotiated `CLIENT_FOUND_ROWS`, making UPDATE and
+    /// duplicate-key UPDATE report successfully matched unchanged rows.
+    pub client_found_rows: bool,
     /// Whether the MySQL front end completed a TLS handshake for this
     /// connection.
     pub secure_transport: bool,

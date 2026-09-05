@@ -160,6 +160,32 @@ fn multi_table_update_counts_changed_rows_only() {
     );
 }
 
+/// `CLIENT_FOUND_ROWS` changes the same join's count from the one changed row
+/// to both successfully touched target rows; it does not duplicate writes.
+#[test]
+fn multi_table_update_counts_unchanged_targets_for_client_found_rows() {
+    let mut session = Session::new();
+    session.set_client_found_rows(true);
+    session
+        .run("CREATE TABLE fq1 (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE fq2 (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO fq1 VALUES (1,1)").unwrap();
+    session.run("INSERT INTO fq2 VALUES (1,1)").unwrap();
+
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE fq1 JOIN fq2 ON fq1.id = fq2.id SET fq1.v = fq1.v, fq2.v = 5"
+        ),
+        2
+    );
+    assert_eq!(column(&mut session, "SELECT v FROM fq1"), ["1"]);
+    assert_eq!(column(&mut session, "SELECT v FROM fq2"), ["5"]);
+}
+
 /// The update-once key is the target POSITION, so one physical table joined
 /// under two aliases is two targets: Go reports 4 for a two-row table and
 /// stores the LATER assignment's value.

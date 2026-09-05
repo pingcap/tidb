@@ -17,8 +17,8 @@
 //! These are the executor contracts from `pkg/executor/insert.go` /
 //! `pkg/executor/insert_common.go` (one affected row per added record) and
 //! `pkg/executor/update.go` / `pkg/executor/write.go` (a row is affected only
-//! when its value actually changes; an unchanged row adds an affected row only
-//! under `ClientFoundRows`, which this bounded path never negotiates).
+//! when its value actually changes by default; the completed report applies
+//! the server's negotiated `ClientFoundRows` presentation rule).
 //!
 //! Publication itself belongs to the real transaction and is proved on real
 //! PD/TiKV by the dependent live slice; nothing here substitutes a mock
@@ -38,7 +38,8 @@ use tidb_exec::real_tikv_dml::{
     plan_insert as plan_insert_in_zone, plan_update as plan_update_in_zone,
     planned_publication_bounds as planned_publication_bounds_in_zone, prepare_configured_write,
     prepare_text_write,
-    ConfiguredWriteError, ConfiguredWritePlan, NoWriteReason, WritePlanningSnapshot,
+    ConfiguredWriteError, ConfiguredWritePlan, ConfiguredWriteReport, NoWriteReason,
+    WritePlanningSnapshot,
 };
 use tidb_planner::{
     configured_catalog::ConfiguredCatalog,
@@ -382,6 +383,36 @@ fn an_unchanged_row_publishes_nothing_without_client_found_rows() {
             affected_rows: 0,
         })
     );
+}
+
+#[test]
+fn client_found_rows_changes_only_an_unchanged_match_report() {
+    let unchanged = ConfiguredWriteReport {
+        affected_rows: 0,
+        no_write: Some(NoWriteReason::UnchangedRow),
+        warnings: Vec::new(),
+        write_size: 0,
+        write_keys: 0,
+        processed_keys: 1,
+    };
+    assert_eq!(
+        unchanged
+            .clone()
+            .with_client_found_rows(false)
+            .affected_rows,
+        0
+    );
+    assert_eq!(unchanged.with_client_found_rows(true).affected_rows, 1);
+
+    let missing = ConfiguredWriteReport {
+        affected_rows: 0,
+        no_write: Some(NoWriteReason::MissingRow),
+        warnings: Vec::new(),
+        write_size: 0,
+        write_keys: 0,
+        processed_keys: 0,
+    };
+    assert_eq!(missing.with_client_found_rows(true).affected_rows, 0);
 }
 
 #[test]

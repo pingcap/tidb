@@ -44,8 +44,9 @@ use crate::cursor_state::{CursorFetchError, CursorState};
 use crate::handshake::{
     negotiate_capabilities, parse_response_header, parse_response_with_global_sysvars,
     InitialHandshake, AUTH_NATIVE_PASSWORD, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS,
-    CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
-    CLIENT_SSL, CLIENT_TRANSACTIONS, CLIENT_ZSTD_COMPRESSION_ALGORITHM, DEFAULT_COLLATION_ID,
+    CLIENT_CONNECT_WITH_DB, CLIENT_FOUND_ROWS, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41,
+    CLIENT_SECURE_CONNECTION, CLIENT_SSL, CLIENT_TRANSACTIONS, CLIENT_ZSTD_COMPRESSION_ALGORITHM,
+    DEFAULT_COLLATION_ID,
 };
 use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
@@ -210,6 +211,7 @@ const CLIENT_LOCAL_FILES: u32 = 1 << 7;
 const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
     | CLIENT_COMPRESS
     | CLIENT_CONNECT_WITH_DB
+    | CLIENT_FOUND_ROWS
     | CLIENT_TRANSACTIONS
     | CLIENT_SECURE_CONNECTION
     | CLIENT_PLUGIN_AUTH
@@ -1137,6 +1139,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         connection_id,
         peer_addr,
         identity,
+        client_found_rows: capabilities & CLIENT_FOUND_ROWS != 0,
         secure_transport: socket.is_tls(),
         tls_status: socket.negotiated_tls().map(|(cipher, version)| {
             (

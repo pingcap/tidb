@@ -25,10 +25,10 @@
 //! * INSERT counts one row per successfully added record
 //!   (`pkg/executor/insert_common.go` `addRecordWithAutoIDHint` calls
 //!   `AddAffectedRows(1)` only after `AddRecord` returns).
-//! * UPDATE counts a row only when the new value differs from the old one
-//!   (`pkg/executor/write.go`: an unchanged row takes `AddTouchedRows(1)` and
-//!   adds an affected row only under `ClientFoundRows`, which this bounded path
-//!   does not negotiate).
+//! * UPDATE counts a row only when the new value differs from the old one by
+//!   default. The server applies its negotiated `ClientFoundRows` bit to the
+//!   completed report, turning an unchanged matched update from zero into one
+//!   without publishing a mutation (`pkg/executor/write.go`).
 //! * A missing UPDATE row matches nothing and publishes nothing.
 
 use std::collections::BTreeMap;
@@ -1845,6 +1845,20 @@ pub struct ConfiguredWriteReport {
     pub write_keys: isize,
     /// Go scan detail `ProcessedKeys` for the statement.
     pub processed_keys: i64,
+}
+
+impl ConfiguredWriteReport {
+    /// Applies Go's negotiated `CLIENT_FOUND_ROWS` presentation rule after
+    /// storage planning. Configured writes are point writes, so an unchanged
+    /// match is exactly one affected row; a missing row remains zero and an
+    /// identical REPLACE already reports one independently of this bit.
+    #[must_use]
+    pub fn with_client_found_rows(mut self, enabled: bool) -> Self {
+        if enabled && self.no_write == Some(NoWriteReason::UnchangedRow) {
+            self.affected_rows = 1;
+        }
+        self
+    }
 }
 
 /// Opens one transaction on the shared authority, publishes a bound write, and

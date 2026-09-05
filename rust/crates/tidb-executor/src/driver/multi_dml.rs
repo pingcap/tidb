@@ -855,6 +855,7 @@ pub(crate) fn run_multi_update(
     account_joined_rows(&rows, crate::mem_quota::label::UPDATE, ctx)?;
 
     let mut once: UpdateOnce = BTreeMap::new();
+    let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
     for (ids, values) in &rows {
         let chunk = row_chunk(values, &field_types)?;
@@ -894,10 +895,15 @@ pub(crate) fn run_multi_update(
                 write_row(catalog, table, id, &new_row, ctx)?;
                 changed_rows += 1;
             }
+            touched_rows += 1;
             once.insert((slot, id.clone()), changed);
         }
     }
-    Ok(changed_rows)
+    Ok(if ctx.client_found_rows() {
+        touched_rows
+    } else {
+        changed_rows
+    })
 }
 
 /// One resolved `SET` assignment: which target table it writes, that table's

@@ -217,6 +217,9 @@ impl QuerySessionFactory for PipelineSessionFactory {
         // dropped entirely when `SessionContext` was threaded through here --
         // double-check it actually arrives (see the TCP-level test below).
         session.session.set_connection_id(context.connection_id);
+        session
+            .session
+            .set_client_found_rows(context.client_found_rows);
         if let Some(arbitrator) = self.mem_arbitrator.as_ref() {
             session.session.set_mem_arbitrator(Arc::clone(arbitrator));
         }
@@ -722,6 +725,7 @@ mod tests {
             connection_id,
             peer_addr,
             identity,
+            client_found_rows: false,
             secure_transport: false,
             tls_status: None,
             cancellation: ConnectionCancellation::default(),

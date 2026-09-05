@@ -556,6 +556,13 @@ impl Session {
         self.advisory_locks.set_owner(connection_id);
     }
 
+    /// Records whether the MySQL front end negotiated `CLIENT_FOUND_ROWS`.
+    /// Go stores the complete client capability word on `SessionVars`; this
+    /// session currently consumes only the affected-row bit.
+    pub fn set_client_found_rows(&mut self, enabled: bool) {
+        self.client_found_rows = enabled;
+    }
+
     /// Installs the server/domain advisory-lock authority before this session
     /// evaluates lock functions.
     pub fn set_advisory_lock_service(

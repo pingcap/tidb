@@ -8135,8 +8135,18 @@ risks without claiming repository-wide parity.
   matching the transaction status and command paths already implemented by
   the session. A focused fail-before/pass-after capability regression and the
   complete package inventory are recorded in
-  `receipts/server_capability_transactions.md`; `CLIENT_FOUND_ROWS` remains an
-  explicit executor/session follow-up.
+  `receipts/server_capability_transactions.md`; the former
+  `CLIENT_FOUND_ROWS` follow-up is closed by the next package batch.
+- 2026-09-05 (`pkg/server` `CLIENT_FOUND_ROWS` end-to-end semantics): Rust now
+  advertises and retains the negotiated bit through pipeline, cluster, and
+  configured real-TiKV sessions. Single-table UPDATE distinguishes matched,
+  touched, and changed rows; multi-table UPDATE counts touched targets once;
+  unchanged duplicate-key and configured point updates report one only when
+  requested. The TCP regression failed before on the missing advertised bit
+  and passes with matched-row wire counts; default, multi-table, and configured
+  report vectors also pass. The refreshed Go inventory, Ready commands, and
+  remaining deprecated-EOF info-message boundary are recorded in
+  `receipts/server_client_found_rows.md`.
 - 2026-09-05 (`pkg/server/internal/column` result metadata charset): Rust
   `tidb-exec::convert_result_field` now emits the owning charset's default
   collation ID, matching Go `mysql.CharsetNameToID`, instead of leaking a
