@@ -436,3 +436,5 @@
 - 下轮恢复点: (1) 静默期→新面候选(infoschema 深层/其他 crate)或收敛复查; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - funcdep 面收尾: funcdep_misc.go 三助手定位为 functional_dependencies.rs 的 add_not_null/constant/equivalence_facts(not-null 逐列 null-reject 测试与 Go 一致); 16 FD 提取回归+914 planner 全绿。funcdep 面(fd_graph+misc)全覆盖, 收据已追加。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- memory 工具面核验: mem_total(60s 缓存)/mem_used(500ms 缓存)与 Go meminfo.go 一致; 模块结构(action/arbitrator/pool/tracker/membuf/systimemon)镜像 Go 包布局。收据已追加。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

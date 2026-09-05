@@ -119,3 +119,12 @@ null-rejection-per-column test (`tidb_funcdep::null_reject`), the
 constant and equivalence arms use the shared expression extractors, and
 16 FD-extraction regressions plus the 914-test planner suite pass. The
 funcdep face (fd_graph + misc helpers) is fully covered.
+
+## Adjacent face: process memory utilities (2026-09-05) — VERIFIED
+
+`tidb-util/src/memory/process.rs` mirrors Go `pkg/util/memory/meminfo.go`:
+`mem_total` with the 60-second cache and `mem_used` with the 500-millisecond
+cache, behind the startup cgroup/host decision hook. The module set also
+mirrors the Go package layout (action, arbitrator, pool, tracker,
+membuf, systimemon, servermemorylimit, memoryusagealarm), so the memory
+utility face is covered at both the read path and the module structure.
