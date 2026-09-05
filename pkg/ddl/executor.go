@@ -4896,6 +4896,16 @@ func (e *executor) createFullTextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		return errors.Trace(err)
 	}
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	// Settle the index name against the table before anything else. An existing
+	// name under IF NOT EXISTS returns an empty name and a note, and that has to
+	// win over any complaint about the definition: otherwise
+	// `CREATE FULLTEXT INDEX IF NOT EXISTS taken_name ON t(missing_col)` would
+	// report the bad column, where an ordinary index - and the metadata-only
+	// FULLTEXT path below - report the duplicate and succeed.
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
+	if err != nil || indexName.L == "" {
+		return errors.Trace(err)
+	}
 	if fullTextIndexIsMVBacked(indexPartSpecifications) {
 		// Materialise the index as a multi-valued index over the tokenized
 		// column and continue down the ordinary index path. IndexKeyTypeNone
@@ -4912,10 +4922,6 @@ func (e *executor) createFullTextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		}
 		return e.createIndex(ctx, ti, ast.IndexKeyTypeNone, indexName, mvSpecs,
 			fullTextMVIndexOption(indexOption), ifNotExists)
-	}
-	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
-	if err != nil || indexName.L == "" {
-		return errors.Trace(err)
 	}
 	if _, err = buildFullTextIndexInfo(t.Meta(), indexName, indexPartSpecifications, indexOption, model.StateNone); err != nil {
 		return errors.Trace(err)

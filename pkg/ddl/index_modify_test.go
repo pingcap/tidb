@@ -1899,3 +1899,42 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
 	tk.MustExec("admin check table t")
 }
+
+// TestCreateFullTextIndexIfNotExistsPrefersDuplicateNote covers the ordering of
+// the two checks a CREATE FULLTEXT INDEX statement can fail. An existing name
+// under IF NOT EXISTS is a note, not an error, and that has to win over any
+// complaint about the definition - as it does for an ordinary index.
+func TestCreateFullTextIndexIfNotExistsPrefersDuplicateNote(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a text, b text)")
+	tk.MustExec("create fulltext index idx_taken on t(a)")
+
+	// A bad column would otherwise be reported first, once the definition is
+	// rewritten into an expression index before the name is settled.
+	tk.MustExec("create fulltext index if not exists idx_taken on t(missing_col)")
+	tk.MustQuery("show warnings").CheckContain("Duplicate key name")
+	// The same for a definition the FULLTEXT rewrite rejects outright.
+	tk.MustExec("create fulltext index if not exists idx_taken on t(a) with parser unknown")
+	tk.MustQuery("show warnings").CheckContain("Duplicate key name")
+
+	// Without IF NOT EXISTS the duplicate is still an error.
+	tk.MustContainErrMsg("create fulltext index idx_taken on t(a)", "Duplicate key name")
+	// And a genuinely new index with a bad definition still reports it.
+	tk.MustContainErrMsg("create fulltext index if not exists idx_new on t(missing_col)", "missing_col")
+}
+
+// TestAlterFullTextIndexVisibilityRejected covers both shapes of FULLTEXT
+// index. Creating either as INVISIBLE is rejected, so ALTER must not be a way
+// around that afterwards.
+func TestAlterFullTextIndexVisibilityRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a text, b text, fulltext index idx_mv(a), fulltext index idx_meta(a, b))")
+
+	tk.MustContainErrMsg("alter table t alter index idx_mv invisible", "set fulltext index invisible")
+	tk.MustContainErrMsg("alter table t alter index idx_meta invisible", "set fulltext index invisible")
+	tk.MustContainErrMsg("create table t2(a text, fulltext index idx(a) invisible)", "FULLTEXT index does not support INVISIBLE")
+}
