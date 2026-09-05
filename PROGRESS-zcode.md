@@ -620,3 +620,14 @@
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - 增量收敛核查: 同步至最新, 关键面全绿(super_read_only 1/0, tx_isolation_one_shot 1/0, gcutil 2/0, datatype 412/0)。无新增分歧。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- 新面批次: tidb-timer (Go pkg/timer @ a85e0fd5df) 完整对照审计 (api/tablestore/runtime/metrics 三路并行)。修复 5 项 behavior-breaking:
+  (1) worker.rs VersionNotMatch 后 GetByID err 重赋值 (Go worker.go:349-359, 删除计时器不再无限重试);
+  (2) mod.rs start() 锁跨 check+init 恢复 Go Start 原子性;
+  (3) cron.rs 四项 robfig 对齐: 阶梯星号清 STAR_BIT (dom/dow OR 规则恢复)、descriptor 区分大小写、@every 亚秒截断、空逗号段跳过 + getRange 校验顺序/文案逐字对齐;
+  (4) mem_store.rs overflow sender 观察 closed 标志, close() 不再挂死;
+  (5) TimerExt::unmarshal 严格化 (json.UnmarshalTypeError 语义, 损坏 TIMER_EXT 使 List 报错而非静默半记录)。
+  验收: cargo test -p tidb-timer 16 lib + 49 int 全绿 (8 cron 单测含 5 个新回归 + test_timer_ext_unmarshal_strict_like_go); fmt; git diff --check; make lint 过。
+  收据: rust/docs/timer-package-parity-audit.md。commit 701ec0194cd 已推 origin/hparser-integration (55b0e217e68..701ec0194cd)。
+  接受的 narrowing (已记录收据): TZ=/CRON_TZ= 前缀拒绝 (TiDB 不写)、prometheus metrics 面以 atomics 替代、日志字段收窄、json U+2028 转义/数字宽松度、notifier uuid 格式、panic 路径健壮性。
+  注意: dbsid/hparser-integration 现含兄弟会话 2 个独立 commit (e62a9972080/42e53f1e40c, tpch+session 接线, 基于旧 merge base 7306a715bd2), 与 origin 谱系分叉 3000 commit —— 未强推 dbsid 以免破坏兄弟工作, dbsid 同步暂挂, 需协调。
+- 下轮恢复点: (1) tidb-naming/tidb-schemaver 小面核查; (2) 兄弟增量收敛核查; (3) F2/F3-seam live 阻塞; (4) DST 排队; (5) dbsid 分叉待协调。
