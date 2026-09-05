@@ -2489,6 +2489,97 @@ mod tests {
         }
     }
 
+    /// Go `TestValidateStmtSummary`'s global-scope matrix: empty values are
+    /// rejected, while the integer controls clamp the same out-of-range
+    /// inputs instead of refusing the assignment.
+    #[test]
+    fn stmt_summary_validation_matches_go() {
+        let cases = [
+            (tidb_vardef::tidb_vars::TIDB_ENABLE_STMT_SUMMARY, "", true),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_INTERNAL_QUERY,
+                "",
+                true,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_REFRESH_INTERVAL,
+                "",
+                true,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_REFRESH_INTERVAL,
+                "0",
+                false,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_REFRESH_INTERVAL,
+                "99999999999",
+                false,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_HISTORY_SIZE,
+                "",
+                true,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_HISTORY_SIZE,
+                "0",
+                false,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_HISTORY_SIZE,
+                "-1",
+                false,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_HISTORY_SIZE,
+                "99999999",
+                false,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_MAX_STMT_COUNT,
+                "",
+                true,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_MAX_STMT_COUNT,
+                "0",
+                false,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_MAX_STMT_COUNT,
+                "99999999",
+                false,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_MAX_SQL_LENGTH,
+                "",
+                true,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_MAX_SQL_LENGTH,
+                "0",
+                false,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_MAX_SQL_LENGTH,
+                "-1",
+                false,
+            ),
+            (
+                tidb_vardef::tidb_vars::TIDB_STMT_SUMMARY_MAX_SQL_LENGTH,
+                "99999999999",
+                false,
+            ),
+        ];
+        for (name, value, should_error) in cases {
+            let result = get_sys_var(name)
+                .unwrap()
+                .validate_in_scope(value, SCOPE_GLOBAL);
+            assert_eq!(result.is_err(), should_error, "{name}={value}");
+        }
+    }
+
     /// Go's mpp_exchange_compression_mode Validation (`sysvar.go:3308`):
     /// the four mode names pass (case-insensitively, stored as typed) and
     /// anything else is refused with the option list, reporting as 1105.

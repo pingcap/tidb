@@ -171,6 +171,10 @@ For each bounded behavior cluster:
   override-only encoding, timestamp default suppression, and explicit
   last-insert-id/identity omission; the focused `TestSessionStatesSystemVar`
   matrix is recorded as a partial port.
+- 2026-09-05 (`pkg/sessionctx/variable` statement-summary validation): moved
+  `TestValidateStmtSummary` to the executable `tidb-session::sysvar` owner;
+  its global-scope empty-value and integer-clamping matrix now guards the
+  registry's existing Go-compatible type validation.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session
