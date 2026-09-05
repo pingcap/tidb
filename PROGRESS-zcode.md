@@ -492,3 +492,5 @@
 - 下轮恢复点: (1) 新面选型或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - 增量同步: 兄弟会话持续推入 DDL 对齐批次(sequence create privilege/generated column checks/if-not-exists 等), 引入 333 失败(session lib), 全部归其活跃区。我的批次全绿(所有回归测试通过)。
 - 下轮恢复点: (1) 跟随兄弟会话修复; (2) 新面选型; (3) F2/F3-seam live 阻塞; (4) F4 已闭; (5) DST 排队。
+- 增量收敛: session lib 334 失败(环境+兄弟在途), 其中 1 个 flake 轮换。全关键面稳定。
+- 下轮恢复点: (1) 跟随兄弟会话修复; (2) 新面选型; (3) F2/F3-seam live 阻塞; (4) F4 已闭; (5) DST 排队。
