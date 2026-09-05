@@ -23,7 +23,8 @@ The in-flight validation covers the Go owner checks relevant to this matrix:
   returns `1822 Failed to add the foreign key constraint. Missing index ...`;
 - distinct-column self-references and valid composite references succeed;
 - existing parents are still validated when `foreign_key_checks=0`, while a
-  missing parent remains deferred under that switch;
+  missing parent remains deferred under that switch and is revalidated when
+  the parent is later created;
 - partitioned self-references are refused with `1506`, using the same check as
   ordinary CREATE/ALTER foreign keys.
 
@@ -36,7 +37,10 @@ carrier matching Go's rows 16-18:
 2. two-column same-order self-reference → `1215`;
 3. reordered self-reference without the required `(b,a)` index → `1822`.
 
-`fk_create_pass_matrix_succeeds` runs nine Go success controls, including
+`fk_create_with_checks_off_defers_validation_to_the_parent` runs the two Go
+child-first rows and rechecks the parent-side index and type rules when the
+parent lands. `fk_create_pass_matrix_succeeds` runs nine Go success controls,
+including
 distinct-column and reordered composite self-references, a parent that is
 `NOT NULL` without `SET NULL`, wider compatible varchar/decimal columns, a
 full-length prefix index, checks-off unknown-parent deferral, shared parent
@@ -58,8 +62,8 @@ cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.tom
 ```
 
 Result: the focused self-reference carrier passed; the complete `fk_create_`
-filter passed with 12 tests and 2 explicit ignored carriers (deferred-parent
-validation and temporary-table refusals), with zero failures.
+filter passed with 13 tests and 1 explicit ignored carrier (temporary-table
+refusals), with zero failures.
 
 The full Ready profile for this batch is recorded in the commit and consists
 of workspace format check, `tidb-executor` all-targets check, `git diff --check`,

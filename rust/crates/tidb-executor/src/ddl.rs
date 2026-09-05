@@ -1818,6 +1818,41 @@ pub fn run_create_table_in(
         }
         table.set_partition(partition);
     }
+    // Go's `checkTableForeignKeyValid` re-checks children that were created
+    // earlier with `foreign_key_checks=0` when their referenced parent lands.
+    // The child is already published in this catalog image, while this parent
+    // is still in-flight, so validate against `table` before registration and
+    // leave the catalog untouched on failure.
+    for (child_database, child_name) in catalog.table_paths() {
+        let Some(crate::TableEntry::Kv(child)) = catalog.get_in(&child_database, &child_name)
+        else {
+            continue;
+        };
+        if child.foreign_keys().is_empty() {
+            continue;
+        }
+        let child_columns: Vec<table_constraints::FkColumn> = child
+            .columns
+            .iter()
+            .map(|column| table_constraints::FkColumn {
+                name: column.name.clone(),
+                generated_stored: column.generated.as_ref().map(|generated| generated.stored),
+                field_type: column.field_type.clone(),
+            })
+            .collect();
+        for foreign_key in child.foreign_keys() {
+            if foreign_key.ref_schema.eq_ignore_ascii_case(&database)
+                && foreign_key.ref_table.eq_ignore_ascii_case(name)
+            {
+                table_constraints::validate_foreign_key_parent(
+                    foreign_key,
+                    &child_columns,
+                    child.partition().is_some(),
+                    &table,
+                )?;
+            }
+        }
+    }
     // Go `CreateTableWithInfo` resolves the table's `PLACEMENT POLICY = name`
     // against the policies in the infoschema and refuses an unknown one with
     // `ErrPlacementPolicyNotExists` (8239). Accepting the option and dropping

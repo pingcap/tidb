@@ -53,8 +53,8 @@ GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex-tmp make lint
 # READY_LINT_RC=0
 ```
 
-No Go, generated, platform, Bazel, or module file changed. The remaining
-CREATE matrix boundaries (parent-index coverage, SET NULL/nullability, type
-compatibility, self-reference, deferred-parent validation, temporary-table
-refusals, constraint-name checks, partitioning, and the pass matrix) remain
-explicitly ignored in `fk_create_error_matrix_source.rs`.
+No Go, generated, platform, Bazel, or module file changed. Temporary-table
+FK refusals remain the only explicit CREATE-matrix ignored family in
+`fk_create_error_matrix_source.rs`; parent-index, SET NULL/nullability, type
+compatibility, self-reference, deferred-parent, constraint-name, partitioning,
+and pass-matrix rows are live carriers.

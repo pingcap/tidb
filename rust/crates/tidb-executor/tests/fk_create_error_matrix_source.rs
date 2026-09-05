@@ -338,15 +338,39 @@ fn fk_create_self_reference_rows_match_go() {
 // validate the deferred constraint: `(id int, a int)` → 1822 (no index on
 // id) and `(id bigint key, a int)` → 3780 (type mismatch).
 //
-// go-parity-gap (documented divergence): the tier has no deferred-constraint
-// validation on the parent's CREATE — both parent shapes simply succeed,
-// leaving the stored constraint unchecked.
 #[test]
-#[ignore = "go-parity-gap: parent-side CREATE does not re-validate deferred child constraints"]
 fn fk_create_with_checks_off_defers_validation_to_the_parent() {
-    // Contract (foreign_key_test.go:539-551): parent without an index on the
-    // referenced column fails [schema:1822]; a bigint parent against an int
-    // child column fails [ddl:3780].
+    let cases = [
+        (
+            "create table t1 (id int, a int);",
+            1822,
+            "Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 't1'",
+        ),
+        (
+            "create table t1 (id bigint key, a int);",
+            3780,
+            "Referencing column 'a' and referenced column 'id' in foreign key constraint 'fk_1' are incompatible.",
+        ),
+    ];
+    for (parent, code, message) in cases {
+        let mut catalog = Catalog::default();
+        let ctx = StmtContext::for_query().with_foreign_key_checks(false);
+        let settings = CreateTableSettings {
+            foreign_key_checks: false,
+            ..CreateTableSettings::default()
+        };
+        ddl::run_create_table_in(
+            "create table t2 (a int, foreign key (a) references t1(id));",
+            &mut catalog,
+            "test",
+            settings,
+            &ctx,
+        )
+        .expect("Go permits the child-first create with checks off");
+        let error = ddl::run_create_table_in(parent, &mut catalog, "test", settings, &ctx)
+            .expect_err("Go re-validates deferred children when the parent lands");
+        assert_eq!(err(&error), (code, message.to_owned()), "{parent}");
+    }
 }
 
 // Go rows 21-24, 32-33 (`pkg/ddl/tests/fk/foreign_key_test.go:553-575,
