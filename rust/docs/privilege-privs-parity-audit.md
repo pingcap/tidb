@@ -86,3 +86,13 @@ Non-alphanumeric Count), and the LOW/STRONG policies plus the
 `ValidatePassword` dispatch (NONE bypass, policy dispatch on the
 current global) line up with `pkg/util/password-validation/
 password_validation.go`.
+
+## SHOW GRANTS export (2026-09-05) — VERIFIED
+
+`privilege/export.rs` mirrors the row shapes Go reads back from
+`mysql.user`/`mysql.db`/`mysql.tables_priv`/`mysql.global_grants` and
+the privilege-list formatting of `MySQLPrivilege.showGrants`
+(`cache.go:1740`): printed names walk the ALL_GLOBAL_PRIVS order,
+GrantOption renders its suffix, and the 100-test grants cluster
+(accounts, column grants, dual password, dynamic grants, enforcement,
+password policy, processlist, roles) passes.

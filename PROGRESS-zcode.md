@@ -404,3 +404,5 @@
 - 下轮恢复点: (1) 新面候选继续扫描; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 微差异排队。
 - privilege 第四遍: password policy 簇(MEDIUM 分类链/读取顺序/消息措辞 + LOW/STRONG + ValidatePassword 分派)忠实移植核实, 收据已追加。
 - 下轮恢复点: (1) 新面候选或文档重扫; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 排队。
+- privilege 第五遍: SHOW GRANTS 导出面核实(export.rs 行形状+打印名走查+GrantOption 后缀; grants 测试簇 100/0), 收据已追加。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 排队。
