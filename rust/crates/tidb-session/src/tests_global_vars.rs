@@ -918,10 +918,7 @@ fn schema_cache_size_global_hook_publishes_bytes() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_schema_cache_size'")),
-        vec![vec![
-            "tidb_schema_cache_size".to_owned(),
-            "64MB".to_owned()
-        ]]
+        vec![vec!["tidb_schema_cache_size".to_owned(), "64MB".to_owned()]]
     );
     assert_eq!(
         tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::SeqCst),
@@ -965,9 +962,8 @@ fn circuit_breaker_pd_metadata_ratio_global_hook_publishes_float() {
         }
     }
 
-    let _restore = RestoreRatio(
-        tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio(),
-    );
+    let _restore =
+        RestoreRatio(tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio());
     let (mut session, _peer, _globals) = two_sessions_sharing_globals();
 
     session
@@ -1086,23 +1082,26 @@ fn auto_analyze_concurrency_requires_enabled_scheduler() {
     let error = session
         .run("SET GLOBAL tidb_auto_analyze_concurrency = 10")
         .expect_err("disabled auto-analyze must reject concurrency changes");
-    assert!(error
-        .to_mysql_error()
-        .message
-        .contains("requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue"));
+    assert!(error.to_mysql_error().message.contains(
+        "requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue"
+    ));
 
     session
         .run("SET GLOBAL tidb_enable_auto_analyze = ON")
         .unwrap();
     tidb_vardef::RUN_AUTO_ANALYZE.store(true, std::sync::atomic::Ordering::SeqCst);
-    tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(false, std::sync::atomic::Ordering::SeqCst);
+    tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     let error = sysvar::get_sys_var(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY)
         .expect("auto-analyze concurrency is registered")
         .validate_in_scope("10", sysvar::SCOPE_GLOBAL)
         .expect_err("disabled priority queue must reject concurrency changes");
-    assert!(matches!(error, sysvar::ValidationError::Refused(message) if message.contains("tidb_enable_auto_analyze_priority_queue=false")));
+    assert!(
+        matches!(error, sysvar::ValidationError::Refused(message) if message.contains("tidb_enable_auto_analyze_priority_queue=false"))
+    );
 
-    tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(true, std::sync::atomic::Ordering::SeqCst);
+    tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     session
         .run("SET GLOBAL tidb_auto_analyze_concurrency = 10")
         .unwrap();
@@ -1111,7 +1110,10 @@ fn auto_analyze_concurrency_requires_enabled_scheduler() {
         10
     );
     assert_eq!(
-        scalar_text(&mut session, "SELECT @@global.tidb_auto_analyze_concurrency"),
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_auto_analyze_concurrency"
+        ),
         Some("10".to_owned())
     );
 }
@@ -1141,7 +1143,8 @@ fn resource_control_global_hooks_publish_process_switches() {
             .load(std::sync::atomic::Ordering::SeqCst),
     };
     tidb_vardef::ENABLE_RESOURCE_CONTROL.store(false, std::sync::atomic::Ordering::SeqCst);
-    tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE.store(true, std::sync::atomic::Ordering::SeqCst);
+    tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 
     let (mut session, _peer, _globals) = two_sessions_sharing_globals();
     assert!(session.vars().resource_control_enabled());
@@ -1162,7 +1165,10 @@ fn resource_control_global_hooks_publish_process_switches() {
         .unwrap();
     assert!(!session.vars().resource_control_strict_mode());
     assert_eq!(
-        scalar_text(&mut session, "SELECT @@global.tidb_resource_control_strict_mode"),
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_resource_control_strict_mode"
+        ),
         Some("0".to_owned())
     );
 
@@ -1258,10 +1264,7 @@ fn opt_selectivity_factor_uses_go_typed_session_hook() {
     session
         .run("SET GLOBAL tidb_opt_selectivity_factor = 1.1")
         .unwrap();
-    assert_eq!(
-        globals.get("tidb_opt_selectivity_factor").unwrap(),
-        "1"
-    );
+    assert_eq!(globals.get("tidb_opt_selectivity_factor").unwrap(), "1");
     let mut fresh = vars::SessionVars::new();
     fresh.seed_from_globals(globals).unwrap();
     assert_eq!(fresh.selectivity_factor(), 1.0);
@@ -1286,10 +1289,8 @@ fn analyze_default_bucket_and_topn_global_hooks_match_go() {
     }
 
     let _restore = Restore {
-        buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
-            .load(std::sync::atomic::Ordering::SeqCst),
-        top_n: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N
-            .load(std::sync::atomic::Ordering::SeqCst),
+        buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(std::sync::atomic::Ordering::SeqCst),
+        top_n: tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(std::sync::atomic::Ordering::SeqCst),
     };
     let (mut session, _peer, _globals) = two_sessions_sharing_globals();
 
@@ -1297,7 +1298,10 @@ fn analyze_default_bucket_and_topn_global_hooks_match_go() {
         .run("SET GLOBAL tidb_analyze_default_num_buckets = 100")
         .unwrap();
     assert_eq!(
-        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_buckets"),
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_buckets"
+        ),
         Some("100".to_owned())
     );
     assert_eq!(
@@ -1308,7 +1312,10 @@ fn analyze_default_bucket_and_topn_global_hooks_match_go() {
         .run("SET GLOBAL tidb_analyze_default_num_buckets = 0")
         .unwrap();
     assert_eq!(
-        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_buckets"),
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_buckets"
+        ),
         Some("1".to_owned())
     );
     assert_eq!(
@@ -1319,7 +1326,10 @@ fn analyze_default_bucket_and_topn_global_hooks_match_go() {
         .run("SET GLOBAL tidb_analyze_default_num_buckets = 100001")
         .unwrap();
     assert_eq!(
-        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_buckets"),
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_buckets"
+        ),
         Some("100000".to_owned())
     );
     assert_eq!(
@@ -1331,7 +1341,10 @@ fn analyze_default_bucket_and_topn_global_hooks_match_go() {
         .run("SET GLOBAL tidb_analyze_default_num_topn = 50")
         .unwrap();
     assert_eq!(
-        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_topn"),
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_topn"
+        ),
         Some("50".to_owned())
     );
     assert_eq!(
@@ -1342,14 +1355,20 @@ fn analyze_default_bucket_and_topn_global_hooks_match_go() {
         .run("SET GLOBAL tidb_analyze_default_num_topn = 0")
         .unwrap();
     assert_eq!(
-        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_topn"),
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_topn"
+        ),
         Some("0".to_owned())
     );
     session
         .run("SET GLOBAL tidb_analyze_default_num_topn = 100001")
         .unwrap();
     assert_eq!(
-        scalar_text(&mut session, "SELECT @@global.tidb_analyze_default_num_topn"),
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_analyze_default_num_topn"
+        ),
         Some("100000".to_owned())
     );
     assert_eq!(

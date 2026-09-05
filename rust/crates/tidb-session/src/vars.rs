@@ -350,13 +350,13 @@ fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> O
 /// these atomics are the live scheduler-facing authority.
 fn runtime_auto_analyze_value(name: &str) -> Option<String> {
     match name {
-        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE => Some(if tidb_vardef::RUN_AUTO_ANALYZE
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
-            "ON".to_owned()
-        } else {
-            "OFF".to_owned()
-        }),
+        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE => Some(
+            if tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst) {
+                "ON".to_owned()
+            } else {
+                "OFF".to_owned()
+            },
+        ),
         tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => Some(
             if tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
                 .load(std::sync::atomic::Ordering::SeqCst)
@@ -371,17 +371,16 @@ fn runtime_auto_analyze_value(name: &str) -> Option<String> {
                 .load(std::sync::atomic::Ordering::SeqCst)
                 .to_string(),
         ),
-        tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO =>
-            Some(
-                tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio().to_string(),
-            ),
-        tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL => Some(if tidb_vardef::ENABLE_RESOURCE_CONTROL
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
-            "ON".to_owned()
-        } else {
-            "OFF".to_owned()
-        }),
+        tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO => {
+            Some(tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio().to_string())
+        }
+        tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL => Some(
+            if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
+                "ON".to_owned()
+            } else {
+                "OFF".to_owned()
+            },
+        ),
         tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE => Some(
             if tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
                 .load(std::sync::atomic::Ordering::SeqCst)
@@ -929,7 +928,8 @@ impl GlobalSysvars {
         if is_auto_analyze_setting(&key) {
             self.publish_auto_analyze_setting(&key);
         }
-        if key == tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
+        if key
+            == tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
         {
             self.publish_circuit_breaker_ratio();
         }
@@ -1159,7 +1159,8 @@ impl GlobalSysvars {
         if is_auto_analyze_setting(&key) {
             self.publish_auto_analyze_setting(&key);
         }
-        if key == tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
+        if key
+            == tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
         {
             self.publish_circuit_breaker_ratio();
         }
@@ -1782,9 +1783,7 @@ impl SessionVars {
             // same `HasSessionScope` guard and skips `IsNoop` compatibility
             // variables when copying `GlobalVarsAccessor` into a fresh
             // session.
-            if get_sys_var(&name)
-                .is_some_and(|def| def.has_session_scope() && !def.is_noop())
-            {
+            if get_sys_var(&name).is_some_and(|def| def.has_session_scope() && !def.is_noop()) {
                 systems.insert(name, value);
             }
         }
@@ -2326,8 +2325,7 @@ impl SessionVars {
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
             restores_shared_lock_upgrade |=
                 key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE;
-            restores_window_function |=
-                key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION;
+            restores_window_function |= key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION;
             restores_ti_flash_max_bytes_before_ext_join |=
                 key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN;
             restores_ti_flash_max_bytes_before_ext_agg |=
