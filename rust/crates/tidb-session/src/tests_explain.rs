@@ -413,6 +413,79 @@ fn explain_select() {
     );
 }
 
+/// Go `pkg/planner/core/casetest/rule/rule_common_handle_range_test.go`:
+/// tuple comparisons over a secondary index include every appended common
+/// handle dimension in their lexicographic ranges.
+#[test]
+fn common_handle_tuple_comparison_uses_appended_index_ranges() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE tuple_ranges (
+                a BIGINT NOT NULL,
+                b BIGINT NOT NULL,
+                c BIGINT NOT NULL,
+                PRIMARY KEY (b, c) CLUSTERED,
+                KEY ia(a)
+            )",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO tuple_ranges VALUES (1,2,3), (1,2,4), (1,3,1), (2,1,1)")
+        .unwrap();
+
+    let explain = row_text(session.run(
+        "EXPLAIN SELECT * FROM tuple_ranges USE INDEX (ia) \
+         WHERE (a, b, c) > (1, 2, 3)",
+    ));
+    assert!(
+        explain.iter().any(|row| {
+            row.iter()
+                .any(|cell| cell.contains("range:(1 2 3,1 2 +inf],(1 2,1 +inf],(1,+inf]"))
+        }),
+        "tuple comparison must reach the appended common handle: {explain:?}"
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a, b, c FROM tuple_ranges USE INDEX (ia) \
+             WHERE (a, b, c) > (1, 2, 3) ORDER BY a, b, c",
+        )),
+        [
+            vec!["1".to_owned(), "2".to_owned(), "4".to_owned()],
+            vec!["1".to_owned(), "3".to_owned(), "1".to_owned()],
+            vec!["2".to_owned(), "1".to_owned(), "1".to_owned()],
+        ]
+    );
+
+    session
+        .run(
+            "CREATE TABLE tuple_ranges3 (
+                a BIGINT NOT NULL,
+                b BIGINT NOT NULL,
+                c BIGINT NOT NULL,
+                d BIGINT NOT NULL,
+                PRIMARY KEY (b, c, d) CLUSTERED,
+                KEY ia(a)
+            )",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO tuple_ranges3 VALUES (1,2,3,4), (1,2,3,5), (1,2,4,1)")
+        .unwrap();
+    let explain = row_text(session.run(
+        "EXPLAIN SELECT * FROM tuple_ranges3 USE INDEX (ia) \
+         WHERE (a, b, c, d) > (1, 2, 3, 4)",
+    ));
+    assert!(
+        explain.iter().any(|row| {
+            row.iter().any(|cell| {
+                cell.contains("range:(1 2 3 4,1 2 3 +inf],(1 2 3,1 2 +inf],(1 2,1 +inf],(1,+inf]")
+            })
+        }),
+        "three-column common handles must all be range dimensions: {explain:?}"
+    );
+}
+
 /// Small Web3Bench aggregates must follow Go's root-aggregate cost choice:
 /// COUNT(DISTINCT), a COUNT above a UNION-derived source, and a tiny covering
 /// index range stay serial at the root instead of growing a partial stage.

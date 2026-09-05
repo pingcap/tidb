@@ -1239,6 +1239,60 @@ fn path_matches_index_join_runtime(
     }
 }
 
+/// Go `tryAppendCommonHandleColsToIndexPath` (`pkg/planner/core/stats.go`):
+/// a non-unique secondary-index key physically ends with the complete
+/// clustered common handle.  Keep those handle columns in the ranger prefix
+/// so predicates such as `(a,b,c) > (1,2,3)` can constrain the physical key,
+/// not just the declared `a` part of `KEY ia(a)`.
+///
+/// The append is deliberately conservative at the same boundaries as Go:
+/// primary/unique keys already identify rows, global and special index kinds
+/// have a different key layout, and a V0 new-collation string handle is not
+/// restored as its original value in the key.  If any handle column is
+/// already declared by the index, skip the whole append; the physical key
+/// repeats it and a partial append would misalign every following dimension.
+fn append_common_handle_cols_to_index_prefix(
+    ds: &crate::logical::DataSource,
+    index: &crate::plan_builder::catalog::SourceIndex,
+    resolved: &mut Vec<(tidb_expr::column::Column, i64)>,
+) {
+    if !ds.is_common_handle
+        || ds.common_handle_cols.is_empty()
+        || ds.common_handle_cols.len() != ds.common_handle_lens.len()
+        || index.unique
+        || index.primary
+        || index.global
+        || index.is_multi_valued
+        || index.is_columnar
+    {
+        return;
+    }
+    if ds.common_handle_version < 1
+        && tidb_datatype::new_collation_enabled()
+        && ds.common_handle_cols.iter().any(|column| {
+            column
+                .ret_type
+                .as_ref()
+                .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::String)
+        })
+    {
+        return;
+    }
+    if ds.common_handle_cols.iter().any(|handle| {
+        resolved
+            .iter()
+            .any(|(column, _)| column.unique_id == handle.unique_id)
+    }) {
+        return;
+    }
+    resolved.extend(
+        ds.common_handle_cols
+            .iter()
+            .cloned()
+            .zip(ds.common_handle_lens.iter().copied()),
+    );
+}
+
 /// Go `completeIndexJoinFeedBackInfo`: return the selected access's complete
 /// prefix lengths and map every logical inner key to the chosen key column.
 /// A key left at `-1` becomes a residual equality when the parent completes
@@ -2013,6 +2067,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         resolved_index_prefix
                             .push((handle.clone(), tidb_datatype::UNSPECIFIED_LENGTH));
                     }
+                }
+                if declared_index_prefix_complete {
+                    append_common_handle_cols_to_index_prefix(
+                        ds,
+                        source_index,
+                        &mut resolved_index_prefix,
+                    );
                 }
                 let index_cols = resolved_index_prefix
                     .iter()
@@ -3162,6 +3223,115 @@ mod tests {
             "a non-handle predicate must not scale table-range cardinality",
         );
         assert!(scan.range_rebuild.is_none());
+    }
+
+    #[test]
+    fn a_secondary_index_range_reaches_common_handle_columns() {
+        // Go's `fillIndexPath` appends the complete clustered common handle
+        // to a non-unique secondary index.  A tuple comparison therefore
+        // becomes one lexicographic range per deciding handle column rather
+        // than stopping after the declared `a` key part.
+        use crate::access_path::PossiblePath;
+        use crate::logical::data_source::DataSourceColumn;
+        use crate::logical::DataSource;
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::{Expression, ScalarFunction};
+
+        let column = |unique_id| Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong));
+        let (a, b, c) = (column(11), column(12), column(13));
+        let cmp = |name: &str, left: &Column, value: i64| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                FieldType::new(FieldTypeCode::LongLong),
+                vec![
+                    Expression::Column(left.clone()),
+                    Expression::Constant(Constant::new(
+                        Datum::Int(value),
+                        FieldType::new(FieldTypeCode::LongLong),
+                    )),
+                ],
+            ))
+        };
+        let and = |items: Vec<Expression>| {
+            tidb_expr::simple_expr::compose_cnf_condition(items).expect("non-empty CNF")
+        };
+        let cond = tidb_expr::simple_expr::compose_dnf_condition(vec![
+            cmp("gt", &a, 1),
+            and(vec![cmp("eq", &a, 1), cmp("gt", &b, 2)]),
+            and(vec![cmp("eq", &a, 1), cmp("eq", &b, 2), cmp("gt", &c, 3)]),
+        ])
+        .expect("non-empty DNF");
+
+        let allocator = PlanIdAllocator::new();
+        let coster = crate::find_best_task::coster::Ver2Coster::default();
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+        base.base.set_stats(Some(StatsInfo::new(
+            100.0,
+            [(11, 100.0), (12, 100.0), (13, 100.0)],
+        )));
+        base.base
+            .set_schema(Some(Schema::new(vec![a.clone(), b.clone(), c.clone()])));
+        let source = LogicalPlan::DataSource(DataSource {
+            base,
+            table_id: 7,
+            physical_table_id: 7,
+            is_common_handle: true,
+            handle_is_int: false,
+            columns: vec![
+                DataSourceColumn {
+                    id: 1,
+                    name: "a".to_owned(),
+                    ..DataSourceColumn::default()
+                },
+                DataSourceColumn {
+                    id: 2,
+                    name: "b".to_owned(),
+                    ..DataSourceColumn::default()
+                },
+                DataSourceColumn {
+                    id: 3,
+                    name: "c".to_owned(),
+                    ..DataSourceColumn::default()
+                },
+            ],
+            common_handle_cols: vec![b, c],
+            common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
+            pushed_down_conds: vec![cond],
+            enumerated_paths: vec![PossiblePath::Index { index: 0 }],
+            indexes: vec![SourceIndex {
+                id: 3,
+                name: "ia".to_owned(),
+                columns: vec![SourceIndexColumn {
+                    name: "a".to_owned(),
+                    offset: 0,
+                    length: UNSPECIFIED_LENGTH,
+                }],
+                ..SourceIndex::default()
+            }],
+            ..DataSource::default()
+        });
+        let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
+
+        let scan = match task.plan().expect("physical plan") {
+            PhysicalPlan::IndexLookUpReader(reader) => match reader.index_plan.as_deref() {
+                Some(PhysicalPlan::IndexScan(scan)) => scan,
+                other => panic!("expected an index scan child, got {other:?}"),
+            },
+            PhysicalPlan::IndexReader(reader) => match reader.index_plan.as_deref() {
+                Some(PhysicalPlan::IndexScan(scan)) => scan,
+                other => panic!("expected an index scan child, got {other:?}"),
+            },
+            other => panic!("expected an index reader, got {other:?}"),
+        };
+        let rendered = scan
+            .ranges
+            .iter()
+            .map(crate::ranger::types::Range::to_display_string)
+            .collect::<Vec<_>>();
+        assert_eq!(rendered, ["(1 2 3,1 2 +inf]", "(1 2,1 +inf]", "(1,+inf]",]);
     }
 
     #[test]

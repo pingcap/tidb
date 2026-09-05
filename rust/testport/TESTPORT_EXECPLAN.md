@@ -8343,3 +8343,13 @@ risks without claiming repository-wide parity.
   source-shaped regressions now fail before and pass after the Rust-only fix;
   the placement-policy parity receipt records the focused validation and the
   remaining database/PD/GC boundaries.
+- 2026-09-05 (`pkg/planner/core` common-handle tuple ranges): Rust's active
+  `find_best_task` index-path builder now appends complete clustered common
+  handle columns and their lengths to non-unique secondary indexes before
+  ranger construction, with Go's duplicate/special-index/new-collation
+  exclusions. Tuple comparisons over `KEY ia(a)` therefore derive the full
+  lexicographic `(a,b,c[,d])` ranges instead of stopping at the declared key.
+  Focused planner and session regressions cover the two- and three-column
+  common-handle cases, EXPLAIN ranges, and result rows. The complete Go tree
+  inventory and Ready evidence are recorded in
+  `receipts/planner_common_handle_tuple.md`.
