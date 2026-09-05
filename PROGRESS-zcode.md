@@ -458,3 +458,5 @@
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - SEM 面核实: v1 门+sem_v2(config/sql_rule/restricted_hint+六个不可见/受限谓词)全镜像, 18 测试全绿——noop-gated sysvar 臂所依赖的门面。收据已追加。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- collate charset.go 补记: switchDefaultCollation 的行为由 Rust 条件式 default_collation 架构性吸收(变异 vs 计算), 可观察默认 collation 在两种状态下均一致。收据已追加。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

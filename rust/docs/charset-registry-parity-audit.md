@@ -49,3 +49,13 @@ bit position through `ModeAllowInvalidDates` (bit 32), with `has()` as a
 proper bit test; the combination-mode expansion (`FormatSQLModeStr`/
 `GetSQLMode`) is mirrored by `tidb_mysql::format_sql_mode_str`/
 `get_sql_mode`, already exercised by the sql_mode validation arm.
+
+## switchDefaultCollation (2026-09-05) — VERIFIED as architecturally subsumed
+
+Go `pkg/util/collate/charset.go`'s `switchDefaultCollation` mutates the
+descriptor table when the new-collation state flips, swapping the gbk and
+gb18030 defaults between `*_bin` and `*_chinese_ci`. The Rust
+`Charset::default_collation` computes the same answer from
+`new_collation_enabled()` on every call — the mutation-versus-computation
+difference is the documented architectural divergence, and the observable
+default collations match under either state.
