@@ -36,10 +36,16 @@ default constructor for that state. Go's other consumer is index lookup join;
 Rust has no complete counterpart for that executor package, so no substitute
 consumer was invented here. That remains an explicit executor-package gap.
 
+The owner also carried four explicit Rust-only `#[must_use]` diagnostics on
+the source-shaped `MVMap::new`, `get`, `len`, and `new_iterator` methods. The
+focused `return_values_may_be_ignored_like_go` regression discards all four
+under `#[deny(unused_must_use)]`: the detached pre-fix owner failed with
+exactly four diagnostics, and the corrected owner passes.
+
 ## Validation
 
-Profile: WIP; this completes one package in the continuing package-by-package
-audit, not a repository-wide readiness claim.
+Profile: Ready for this focused parity fix within the continuing
+package-by-package audit, not a repository-wide readiness claim.
 
 - `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/mvmap` — passed.
 - `go test ./pkg/util/mvmap -count=1` — passed, 2 tests.
@@ -49,6 +55,10 @@ audit, not a repository-wide readiness claim.
 - `cargo test --offline --locked -p tidb-exec --test all aggregate_distinct` — passed, 2 consumer tests.
 - `cargo check --offline --locked -p tidb-server` — passed.
 - `cargo fmt -p tidb-util -p tidb-exec -- --check` and `git diff --check` — passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib mvmap::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed after the four-error pre-fix failure.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib mvmap::tests -- --test-threads=1` — passed, 2 tests.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --bench mvmap` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed as the Ready gate.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

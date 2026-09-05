@@ -8758,6 +8758,12 @@ risks without claiming repository-wide parity.
   helpers. The deny-on-discard regression fails with all 26 diagnostics on the
   detached pre-fix owner and passes with 13 focused tests on the corrected
   owner; Ready evidence is recorded in `receipts/util_traceevent.md`.
+- 2026-09-05 (`pkg/util/mvmap`): the complete mvmap owner now matches Go's
+  discardable-return contract by removing four explicit Rust-only
+  `#[must_use]` diagnostics from `MVMap::new`, `get`, `len`, and
+  `new_iterator`. The deny-on-discard regression fails with all four
+  diagnostics on the detached pre-fix owner and passes with the two-test
+  owner suite; Ready evidence is recorded in `receipts/util_mvmap.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

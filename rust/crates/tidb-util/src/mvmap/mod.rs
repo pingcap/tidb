@@ -147,7 +147,6 @@ pub struct MVMap {
 
 impl MVMap {
     /// Creates a new multi-value map.
-    #[must_use]
     pub fn new() -> Self {
         let mut m = MVMap {
             hash_table: HashMap::new(),
@@ -187,7 +186,6 @@ impl MVMap {
 
     /// Gets the values of `key` and appends them to `values`, returning the
     /// grown vector. The returned slices borrow the map's internal arenas.
-    #[must_use]
     pub fn get<'a>(&'a self, key: &[u8], mut values: Vec<&'a [u8]>) -> Vec<&'a [u8]> {
         let hash_key = fnv_hash64(key);
         let mut entry_addr = self.hash_table.get(&hash_key).copied().unwrap_or_default();
@@ -205,14 +203,12 @@ impl MVMap {
 
     /// Returns the number of values in the map. The number of keys may be less
     /// than this if the same key is put more than once.
-    #[must_use]
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.length
     }
 
     /// Creates an iterator over the map's key/value pairs in insertion order.
-    #[must_use]
     pub fn new_iterator(&self) -> Iterator<'_> {
         // The first entry is empty, so init entry_cur to 1.
         Iterator {
@@ -256,6 +252,16 @@ mod tests {
 
     fn as_str(b: &[u8]) -> &str {
         std::str::from_utf8(b).unwrap()
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let map = MVMap::new();
+        MVMap::new();
+        map.get(b"ignored", Vec::new());
+        map.len();
+        map.new_iterator();
     }
 
     // Go `TestMVMap`.
