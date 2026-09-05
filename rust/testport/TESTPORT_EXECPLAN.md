@@ -132,6 +132,14 @@ For each bounded behavior cluster:
   `SET SESSION tidb_redact_log` returns 1193 while its unqualified read path
   remains available; the GLOBAL-only plan-cache companion remains 1229.
   Added focused regression coverage and removed the stale vardef gap shim.
+- 2026-09-05 (`pkg/sessionctx/variable` default validation): added a
+  registry-wide regression that runs every writable default through the Go
+  type/closure validation contract for each advertised scope and requires the
+  canonical value to remain unchanged; removed the stale vardef gap shim.
+- 2026-09-05 (`pkg/sessionctx/variable` plan-replayer retention bound): fixed
+  the Rust catalog's missing one-year `TypeDuration` maximum so the canonical
+  seven-day default remains settable and over-bound writes clamp to Go's
+  `8760h0m0s`; the focused duration regression now pins that boundary.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session

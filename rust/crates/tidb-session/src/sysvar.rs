@@ -1819,6 +1819,40 @@ mod tests {
         assert!(get_sys_var("no_such_variable").is_none());
     }
 
+    /// Go `TestDefaultValuesAreSettable`: every writable default must pass its
+    /// own type and variable validation in each scope it advertises, without
+    /// changing the canonical registry spelling.
+    #[test]
+    fn default_values_are_settable_like_go() {
+        for definition in SYS_VARS {
+            if definition.has_session_scope()
+                && !definition.is_read_only()
+                && !definition.is_internal_session_variable()
+            {
+                let validated = definition
+                    .validate_in_scope(definition.value, SCOPE_SESSION)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "session default rejected for {}: {error:?}",
+                            definition.name
+                        )
+                    });
+                assert_eq!(validated.value, definition.value, "{}", definition.name);
+            }
+            if definition.has_global_scope() && !definition.is_read_only() {
+                let validated = definition
+                    .validate_in_scope(definition.value, SCOPE_GLOBAL)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "global default rejected for {}: {error:?}",
+                            definition.name
+                        )
+                    });
+                assert_eq!(validated.value, definition.value, "{}", definition.name);
+            }
+        }
+    }
+
     /// Transcreated from Go `sysvar_test.go` `TestSQLSelectLimit`: the
     /// out-of-range value converts rather than erroring.
     #[test]
@@ -2288,6 +2322,13 @@ mod tests {
         assert_eq!(duration.validate("1hr"), Err(ValidationError::WrongType));
         assert_eq!(duration.validate("1ms").unwrap().value, "1s");
         assert_eq!(duration.validate("2h10m").unwrap().value, "1h0m0s");
+
+        let retention = get_sys_var("tidb_plan_replayer_file_retention_time").unwrap();
+        assert_eq!(
+            retention.validate("8761h").unwrap().value,
+            "8760h0m0s",
+            "Go caps plan-replayer retention at one year"
+        );
     }
 
     /// Go's mpp_exchange_compression_mode Validation (`sysvar.go:3308`):

@@ -1375,12 +1375,6 @@ fn deprecation_unported() {}
 #[ignore]
 fn is_noop_unported() {}
 
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestDefaultValuesAreSettable.
-// go-parity-gap: SysVar registry + SessionVars/GlobalVarsAccessor validation machinery not ported
-#[test]
-#[ignore]
-fn default_values_are_settable_unported() {}
-
 /// Go `pkg/sessionctx/variable/tests/variable_test.go::TestSettersandGetters.
 // go-parity-gap: SysVar registry with Set/Get session/global hooks not ported
 #[test]

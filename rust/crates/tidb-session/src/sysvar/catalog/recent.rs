@@ -67,7 +67,7 @@ pub(super) static ENTRIES: [SysVarDef; 6] = [
         read_only: false,
         allow_auto_value: false,
         min_value: 0,
-        max_value: 0,
+        max_value: 31536000000000000,
         possible_values: &[],
         auto_convert_negative_bool: false,
     },
