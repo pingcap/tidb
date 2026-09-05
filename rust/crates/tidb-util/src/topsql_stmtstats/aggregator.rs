@@ -107,7 +107,6 @@ pub(super) fn global_aggregator() -> &'static Arc<Aggregator> {
 
 impl Aggregator {
     /// Go `newAggregator`: an empty aggregator.
-    #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             running: AtomicBool::new(false),
@@ -144,7 +143,6 @@ impl Aggregator {
     }
 
     /// Go `aggregator.currentRUVersion`.
-    #[must_use]
     pub fn current_ru_version(&self) -> RuVersion {
         match self.ru_version_provider() {
             Some(provider) => normalize_ru_version(provider.get_ru_version()),
@@ -396,9 +394,22 @@ impl Aggregator {
     }
 
     /// Go `aggregator.closed`.
-    #[must_use]
     pub fn closed(&self) -> bool {
         !self.running.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_api_returns_may_be_ignored_like_go() {
+        Aggregator::new();
+        let aggregator = Aggregator::new();
+        aggregator.current_ru_version();
+        aggregator.closed();
     }
 }
 

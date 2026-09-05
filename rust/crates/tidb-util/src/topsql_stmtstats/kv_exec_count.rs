@@ -49,7 +49,6 @@ impl StatementStats {
     ///
     /// The created counter can only be used during a single statement
     /// execution and cannot be reused.
-    #[must_use]
     pub fn create_kv_exec_counter(
         self: &Arc<Self>,
         sql_digest: &[u8],
@@ -71,7 +70,6 @@ impl KvExecCounter {
     /// transaction or snapshot. That way the logic preset by [`KvExecCounter`]
     /// runs before each RPC request is initiated, counting SQL executions in
     /// the TiKV dimension.
-    #[must_use]
     pub fn rpc_interceptor(self: &Arc<Self>) -> RpcInterceptor {
         RpcInterceptor {
             name: KV_EXEC_COUNTER_INTERCEPTOR_NAME,
@@ -139,6 +137,20 @@ impl RpcInterceptor {
             }
             next(target, req)
         }
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_api_returns_may_be_ignored_like_go() {
+        let stats = Arc::new(StatementStats::default());
+        stats.create_kv_exec_counter(b"sql", b"plan");
+        let counter = stats.create_kv_exec_counter(b"sql", b"plan");
+        counter.rpc_interceptor();
     }
 }
 

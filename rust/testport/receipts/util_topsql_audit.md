@@ -145,6 +145,39 @@ Validation for this bounded Rust-only batch:
 No Go, Bazel, module, or Cargo manifest file changed, so `make
 bazel_prepare` was not required.
 
+## Rust-only diagnostic alignment for `stmtstats` (`2026-09-06`)
+
+The complete `pkg/util/topsql/stmtstats` production, test, benchmark, and
+Bazel inventory above was rechecked before editing. Fourteen Rust
+`#[must_use]` annotations on direct Go-shaped APIs were removed:
+`DefaultRUVersion`, `NormalizeRUVersion`, `Aggregator.new`/
+`currentRUVersion`/`closed`, `CreateKvExecCounter`, `RPCInterceptor`,
+`newSQLPlanDigest`, `NewKvStatementStatsItem`, `NewStatementStatsItem`,
+`CreateStatementStats`, `StatementStats.Take`, `StatementStats.Finished`, and
+`StatementStats.MergeRUInto`. Rust-only conveniences such as map constructors,
+`BinaryDigest::as_bytes`, collector membership probes, and the interceptor's
+test-facing target accessors remain annotated because they have no direct Go
+return API.
+
+The focused `#[deny(unused_must_use)]` regressions named
+`source_api_returns_may_be_ignored_like_go` discard every affected Go-shaped
+return. On a detached pre-fix worktree at `e48748cd816`, the filtered compile
+failed with exactly fourteen diagnostics; after the fix the four focused tests
+pass. The complete `topsql_stmtstats` owner suite passes all 42 tests.
+
+Validation for this bounded Rust-only batch:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib contract_tests::source_api_returns_may_be_ignored_like_go --offline --locked` — passed after the fix; the detached pre-fix owner failed with the expected fourteen diagnostics across three contract-test modules.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib topsql_stmtstats::stmtstats::tests::source_api_returns_may_be_ignored_like_go --offline --locked -- --exact` — passed after the fix.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib topsql_stmtstats:: --offline --locked -- --test-threads=1` — passed; all 42 owner tests.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-util --all-targets --offline --locked` — passed.
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `make lint` — passed under the Ready profile.
+- `git diff --check` — passed.
+
+No Go, Bazel, module, or Cargo manifest file changed, so `make
+bazel_prepare` was not required.
+
 ## Validation (Ready profile)
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/topsql/reporter/metrics -run '^TestIgnoreReportDataByBackpressureCounter$' -count=1` — passed after the implementation; before it the test failed to compile because the counter was undefined.

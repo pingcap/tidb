@@ -47,19 +47,29 @@ pub trait RuVersionProvider: Send + Sync {
 /// Go `DefaultRUVersion`: the RU version used when no provider is bound.
 ///
 /// boundary: `rmclient.DefaultRUVersion` is v1 accounting.
-#[must_use]
 pub fn default_ru_version() -> RuVersion {
     RuVersion::V1
 }
 
 /// Go `NormalizeRUVersion`: converts zero-value or unknown versions to the
 /// default.
-#[must_use]
 pub fn normalize_ru_version(version: RuVersion) -> RuVersion {
     if version == RuVersion::UNSPECIFIED {
         default_ru_version()
     } else {
         version
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_api_returns_may_be_ignored_like_go() {
+        default_ru_version();
+        normalize_ru_version(RuVersion::V1);
     }
 }
 

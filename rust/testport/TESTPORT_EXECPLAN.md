@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/topsql/stmtstats` Go-shaped constructors and
+  queries): the complete TopSQL inventory was rechecked before the edit.
+  Fourteen direct Go-shaped Rust `#[must_use]` diagnostics were removed while
+  Rust-only map/field conveniences remained annotated. Focused deny-on-discard
+  regressions failed with exactly fourteen diagnostics on the detached
+  pre-fix owner and pass with all 42 stmtstats tests, the util all-target
+  check, formatting, lint, and diff checks. Evidence is recorded in
+  `receipts/util_topsql_audit.md`.
 - 2026-09-06 (`pkg/util/topsql/state` Go-shaped flag queries): the complete
   TopSQL inventory was rechecked before the edit. Rust's four direct Go-shaped
   state queries no longer emit Rust-only `#[must_use]` diagnostics. A focused
