@@ -468,14 +468,20 @@ impl HookWorker {
             }
 
             let update = build_event_update(req, &pre_result, &self.now_func);
-            if let Err(err) = req.store.update(&self.ctx, &timer.id, &update) {
+            if let Err(mut err) = req.store.update(&self.ctx, &timer.id, &update) {
                 if err == TimerError::VersionNotMatch {
                     bg_logger().info(
                         "cannot change timer to trigger state, timer version not match",
                         &self.logger_fields(),
                     );
-                    if let Ok(new_timer) = req.store.get_by_id(&self.ctx, &timer.id) {
-                        return req.timer_meta_changed_response(Some(new_timer));
+                    // Go reassigns `err` from this GetByID (worker.go:349-359),
+                    // so a NotExist here falls into the deleted-timer branch
+                    // below instead of retrying forever.
+                    match req.store.get_by_id(&self.ctx, &timer.id) {
+                        Ok(new_timer) => {
+                            return req.timer_meta_changed_response(Some(new_timer));
+                        }
+                        Err(get_err) => err = get_err,
                     }
                 }
 

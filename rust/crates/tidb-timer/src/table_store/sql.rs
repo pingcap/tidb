@@ -107,23 +107,52 @@ impl TimerExt {
         out
     }
 
-    /// Go `json.Unmarshal(extJSON, &ext)`.
+    /// Go `json.Unmarshal(extJSON, &ext)`. Go's `UnmarshalTypeError` fails the
+    /// whole enclosing `List`, so a mistyped member must error here rather than
+    /// decode into a silently partial record.
     pub fn unmarshal(text: &str) -> Result<Self> {
         let document = parse(text).map_err(TimerError::message)?;
-        let tags = document
-            .get("tags")
-            .and_then(JsonValue::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let type_error = |field: &str, kind: &str| {
+            TimerError::message(format!(
+                "json: cannot unmarshal {kind} into Go struct field timerExt.{field}"
+            ))
+        };
+        let tags = match document.get("tags") {
+            None => Vec::new(),
+            Some(JsonValue::Array(items)) => {
+                let mut tags = Vec::with_capacity(items.len());
+                for item in items {
+                    match item.as_str() {
+                        Some(text) => tags.push(text.to_string()),
+                        None => return Err(type_error("tags", "non-string element")),
+                    }
+                }
+                tags
+            }
+            Some(_) => return Err(type_error("tags", "non-array value")),
+        };
+        let require_object =
+            |value: Option<&JsonValue>, field: &str| -> std::result::Result<bool, TimerError> {
+                match value {
+                    None => Ok(false),
+                    Some(JsonValue::Object(_)) => Ok(true),
+                    Some(_) => Err(type_error(field, "non-object value")),
+                }
+            };
+        let manual = document.get("manual");
+        let event = document.get("event");
         Ok(Self {
             tags,
-            manual: document.get("manual").map(ManualRequestObj::from_json),
-            event: document.get("event").map(EventExtObj::from_json),
+            manual: if require_object(manual, "manual")? {
+                Some(ManualRequestObj::from_json(manual.unwrap()))
+            } else {
+                None
+            },
+            event: if require_object(event, "event")? {
+                Some(EventExtObj::from_json(event.unwrap()))
+            } else {
+                None
+            },
         })
     }
 }

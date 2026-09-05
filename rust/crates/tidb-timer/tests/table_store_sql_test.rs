@@ -26,7 +26,7 @@ use tidb_timer::go_time::{GoTime, MINUTE, SECOND};
 use tidb_timer::store::{and, not, or, Cond, OptionalVal, TimerCond, TimerUpdate};
 use tidb_timer::table_store::sql::{
     build_cond_criteria, build_delete_timer_sql, build_insert_timer_sql, build_select_timer_sql,
-    build_update_criteria, build_update_timer_sql, SqlArg,
+    build_update_criteria, build_update_timer_sql, SqlArg, TimerExt,
 };
 use tidb_timer::table_store::store::{
     execute_sql, run_in_txn, Datum, Row, SessionContext, SessionPool, SqlContext, SysSession,
@@ -1230,4 +1230,24 @@ fn test_run_in_txn() {
     let err = run_in_txn(se.as_ref(), &mut || Err(TimerError::message("mockFuncErr"))).unwrap_err();
     assert_eq!(err.to_string(), "mockFuncErr");
     se.assert_expectations();
+}
+
+#[test]
+fn test_timer_ext_unmarshal_strict_like_go() {
+    // Well-formed document decodes.
+    let ext = TimerExt::unmarshal(r#"{"tags":["a","b"]}"#).unwrap();
+    assert_eq!(ext.tags, vec!["a".to_string(), "b".to_string()]);
+
+    // Go's UnmarshalTypeError fails the whole enclosing List, so mistyped
+    // members must error instead of decoding into a silently partial record.
+    assert!(TimerExt::unmarshal(r#"{"tags":"a"}"#).is_err());
+    assert!(TimerExt::unmarshal(r#"{"tags":[1]}"#).is_err());
+    assert!(TimerExt::unmarshal(r#"{"manual":"x"}"#).is_err());
+    assert!(TimerExt::unmarshal(r#"{"event":42}"#).is_err());
+
+    // Explicit nulls read as absent, matching Go's pointer semantics.
+    let ext = TimerExt::unmarshal(r#"{"tags":null,"manual":null,"event":null}"#).unwrap();
+    assert!(ext.tags.is_empty());
+    assert!(ext.manual.is_none());
+    assert!(ext.event.is_none());
 }

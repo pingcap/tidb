@@ -16,6 +16,7 @@
 //! and the in-memory watch-event notifier.
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
@@ -212,6 +213,10 @@ struct NotifierState {
     open: bool,
     watchers: Vec<MemStoreWatcher>,
     pending: Vec<JoinHandle<()>>,
+    /// Stands in for Go's notifier-level context cancellation: overflow
+    /// senders must observe `Close` even when their watcher context stays
+    /// alive, or `close` would block forever on the join below.
+    closed: Arc<AtomicBool>,
 }
 
 /// Go `memTimerWatchEventNotifier`.
@@ -235,6 +240,7 @@ impl MemTimerWatchEventNotifier {
                 open: true,
                 watchers: Vec::with_capacity(8),
                 pending: Vec::new(),
+                closed: Arc::new(AtomicBool::new(false)),
             }),
         }
     }
@@ -281,6 +287,7 @@ impl TimerWatchEventNotifier for MemTimerWatchEventNotifier {
         };
 
         let mut spawned = Vec::new();
+        let closed_flag = Arc::clone(&state.closed);
         state.watchers.retain(|watcher| {
             if watcher.ctx.is_done() {
                 return false;
@@ -290,11 +297,13 @@ impl TimerWatchEventNotifier for MemTimerWatchEventNotifier {
                 Err(std::sync::mpsc::TrySendError::Disconnected(_)) => false,
                 Err(std::sync::mpsc::TrySendError::Full(response)) => {
                     // Go spawns a goroutine that blocks until either the
-                    // watcher accepts the response or a context is cancelled.
+                    // watcher accepts the response or one of the two contexts
+                    // (the watcher's or the notifier's) is cancelled.
                     let sender = watcher.sender.clone();
                     let ctx = watcher.ctx.clone();
+                    let closed = Arc::clone(&closed_flag);
                     spawned.push(std::thread::spawn(move || {
-                        while !ctx.is_done() {
+                        while !ctx.is_done() && !closed.load(std::sync::atomic::Ordering::Relaxed) {
                             match sender.try_send(response.clone()) {
                                 Ok(()) | Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
                                     return
@@ -316,6 +325,9 @@ impl TimerWatchEventNotifier for MemTimerWatchEventNotifier {
         let pending = {
             let mut state = self.state.lock().unwrap();
             state.open = false;
+            state
+                .closed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             state.watchers.clear();
             std::mem::take(&mut state.pending)
         };
