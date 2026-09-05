@@ -1148,6 +1148,23 @@ pub trait QuerySession {
         None
     }
 
+    /// Attempts to charge bytes retained by `COM_STMT_SEND_LONG_DATA` to this
+    /// connection's persistent session tracker. Sessions without a memory
+    /// tracker keep the historical unbounded behavior; real TiDB sessions
+    /// override this with the same quota check as Go's `AppendParam`.
+    fn try_consume_long_data(&mut self, _bytes: i64) -> bool {
+        true
+    }
+
+    /// Releases bytes previously charged for `COM_STMT_SEND_LONG_DATA` when
+    /// the statement is reset, executed, or closed.
+    fn release_long_data(&mut self, _bytes: i64) {}
+
+    /// Connection ID used in the client-visible memory-quota diagnostic.
+    fn connection_id(&self) -> u64 {
+        0
+    }
+
     /// Prepares a statement of any shape, reporting the marker count and the
     /// result columns a PREPARE sends.
     ///

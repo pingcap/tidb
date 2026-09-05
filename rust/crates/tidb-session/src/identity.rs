@@ -556,6 +556,49 @@ impl Session {
         self.advisory_locks.set_owner(connection_id);
     }
 
+    /// Charges bytes retained by `COM_STMT_SEND_LONG_DATA` against the same
+    /// persistent session tracker Go stores in `SessionVars.MemTracker`.
+    ///
+    /// The tracker is reconfigured from the live `tidb_mem_quota_query` value
+    /// before every chunk, matching Go's statement-boundary refresh while
+    /// keeping long data (which arrives between statements) on the session
+    /// root. Equality is refused as in `AppendParam`: a chunk that would make
+    /// consumption reach the limit is rejected before it is copied.
+    #[must_use]
+    pub fn try_consume_long_data(&self, bytes: i64) -> bool {
+        if bytes <= 0 {
+            return true;
+        }
+        let quota = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
+        let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
+        self.session_memory
+            .configure(quota, oom_action, tmp_storage_on_oom);
+        let tracker = self.session_memory.session_tracker();
+        if quota > 0 && tracker.bytes_consumed().saturating_add(bytes) >= quota {
+            return false;
+        }
+        tracker.consume(bytes);
+        true
+    }
+
+    /// Releases bytes previously retained by `COM_STMT_SEND_LONG_DATA`.
+    pub fn release_long_data(&self, bytes: i64) {
+        if bytes > 0 {
+            self.session_memory.session_tracker().consume(-bytes);
+        }
+    }
+
+    /// Current bytes retained by this connection's session memory root.
+    #[must_use]
+    pub fn session_memory_bytes_consumed(&self) -> i64 {
+        self.session_memory.bytes_consumed()
+    }
+
     /// Records whether the MySQL front end negotiated `CLIENT_FOUND_ROWS`.
     /// Go stores the complete client capability word on `SessionVars`; this
     /// session currently consumes only the affected-row bit.

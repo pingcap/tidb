@@ -280,15 +280,28 @@ struct ConnectionPreparedStatement {
     /// parameter was never sent as long data" -- and is what makes an empty
     /// bound buffer distinguishable from an unbound one.
     bound_params: Vec<Option<Vec<u8>>>,
+    /// Number of long-data bytes currently charged to the connection's
+    /// session tracker for this statement.
+    bound_long_data_bytes: i64,
+    /// Sticky Go `AppendParam` state: a refused chunk is reported by the next
+    /// EXECUTE and further SEND_LONG_DATA chunks remain silent.
+    bound_params_mem_quota_exceeded: bool,
+    bound_params_too_large: bool,
 }
 
 impl ConnectionPreparedStatement {
     /// Go `for i := range ts.boundParams { ts.boundParams[i] = nil }`.
     /// The vector keeps its prepare-time length; only the buffers go.
-    fn clear_bound_params(&mut self) {
+    fn clear_bound_params<S: QuerySession>(&mut self, session: &mut S) {
+        if self.bound_long_data_bytes > 0 {
+            session.release_long_data(self.bound_long_data_bytes);
+            self.bound_long_data_bytes = 0;
+        }
         for slot in &mut self.bound_params {
             *slot = None;
         }
+        self.bound_params_mem_quota_exceeded = false;
+        self.bound_params_too_large = false;
     }
 }
 
@@ -299,8 +312,6 @@ enum AppendParamError {
     UnknownStatement,
     /// The parameter ID is at or past the statement's marker count.
     ParameterOutOfRange,
-    /// The accumulated buffer would exceed the wire payload cap.
-    TooLarge,
 }
 
 struct PreparedStatementRegistry {
@@ -327,6 +338,9 @@ impl PreparedStatementRegistry {
             statement_id,
             ConnectionPreparedStatement {
                 bound_params: vec![None; statement.parameter_count()],
+                bound_long_data_bytes: 0,
+                bound_params_mem_quota_exceeded: false,
+                bound_params_too_large: false,
                 statement: Arc::new(statement),
                 parameter_types: None,
                 cursor: None,
@@ -349,8 +363,17 @@ impl PreparedStatementRegistry {
         }
     }
 
-    fn remove(&mut self, statement_id: u32) -> Option<ConnectionPreparedStatement> {
-        self.statements.remove(&statement_id)
+    fn remove<S: QuerySession>(
+        &mut self,
+        statement_id: u32,
+        session: &mut S,
+    ) -> Option<ConnectionPreparedStatement> {
+        let mut statement = self.statements.remove(&statement_id)?;
+        if statement.bound_long_data_bytes > 0 {
+            session.release_long_data(statement.bound_long_data_bytes);
+            statement.bound_long_data_bytes = 0;
+        }
+        Some(statement)
     }
 
     /// Go `stmt.Reset` (`pkg/server/driver_tidb.go:151-160`): returns the
@@ -362,10 +385,14 @@ impl PreparedStatementRegistry {
     /// parameter-type vector deliberately survives: Go's `TiDBStatement.Reset`
     /// leaves `paramsType` untouched, so a later execute may keep its
     /// new-parameter-bound flag clear.
-    fn reset(&mut self, statement_id: u32) -> Result<Option<CursorState>, ()> {
+    fn reset<S: QuerySession>(
+        &mut self,
+        statement_id: u32,
+        session: &mut S,
+    ) -> Result<Option<CursorState>, ()> {
         match self.statements.get_mut(&statement_id) {
             Some(statement) => {
-                statement.clear_bound_params();
+                statement.clear_bound_params(session);
                 Ok(statement.cursor.take())
             }
             None => Err(()),
@@ -379,29 +406,84 @@ impl PreparedStatementRegistry {
     /// `ErrWrongArguments("stmt_send_longdata")`. An empty chunk stores an
     /// empty buffer rather than nothing, which is how Go keeps "bound to the
     /// empty string" distinct from "never bound".
-    fn append_param(
+    fn append_param<S: QuerySession>(
         &mut self,
         statement_id: u32,
         parameter_id: usize,
         chunk: &[u8],
+        session: &mut S,
     ) -> Result<(), AppendParamError> {
         let statement = self
             .statements
-            .get_mut(&statement_id)
+            .get(&statement_id)
             .ok_or(AppendParamError::UnknownStatement)?;
-        let slot = statement
+        let current_len = statement
             .bound_params
-            .get_mut(parameter_id)
-            .ok_or(AppendParamError::ParameterOutOfRange)?;
-        let buffer = slot.get_or_insert_with(Vec::new);
+            .get(parameter_id)
+            .ok_or(AppendParamError::ParameterOutOfRange)?
+            .as_ref()
+            .map_or(0, Vec::len);
+
+        // Go treats an empty chunk as an explicit empty-string binding. It
+        // runs this branch before either sticky overflow flag is consulted.
+        if chunk.is_empty() {
+            let statement = self
+                .statements
+                .get_mut(&statement_id)
+                .expect("statement was present above");
+            if let Some(buffer) = statement.bound_params[parameter_id].as_mut() {
+                let released = i64::try_from(buffer.len()).unwrap_or(i64::MAX);
+                if released > 0 {
+                    session.release_long_data(released);
+                    statement.bound_long_data_bytes =
+                        statement.bound_long_data_bytes.saturating_sub(released);
+                }
+                buffer.clear();
+            } else {
+                statement.bound_params[parameter_id] = Some(Vec::new());
+            }
+            return Ok(());
+        }
+
+        if statement.bound_params_mem_quota_exceeded || statement.bound_params_too_large {
+            return Ok(());
+        }
+
         // Go bounds the accumulated value with `max_allowed_packet`, which
         // this node does not have as a session variable yet (gap #185); the
         // same hardcoded wire cap the packet reader enforces is therefore the
         // bound here, so a client cannot grow one parameter without limit.
-        if buffer.len().saturating_add(chunk.len()) > DEFAULT_MAX_ALLOWED_PACKET {
-            return Err(AppendParamError::TooLarge);
+        if current_len.saturating_add(chunk.len()) > DEFAULT_MAX_ALLOWED_PACKET {
+            self.statements
+                .get_mut(&statement_id)
+                .expect("statement was present above")
+                .bound_params_too_large = true;
+            return Ok(());
         }
+
+        let chunk_size = i64::try_from(chunk.len()).unwrap_or(i64::MAX);
+        if !session.try_consume_long_data(chunk_size) {
+            self.statements
+                .get_mut(&statement_id)
+                .expect("statement was present above")
+                .bound_params_mem_quota_exceeded = true;
+            return Ok(());
+        }
+
+        let statement = self
+            .statements
+            .get_mut(&statement_id)
+            .expect("statement was present above");
+        if statement.bound_params_mem_quota_exceeded || statement.bound_params_too_large {
+            // A sticky refusal must not retain bytes if a session-specific
+            // implementation accepted a charge concurrently with it.
+            session.release_long_data(chunk_size);
+            return Ok(());
+        }
+        let buffer = statement.bound_params[parameter_id].get_or_insert_with(Vec::new);
         buffer.extend_from_slice(chunk);
+        statement.bound_long_data_bytes =
+            statement.bound_long_data_bytes.saturating_add(chunk_size);
         Ok(())
     }
 
@@ -415,10 +497,31 @@ impl PreparedStatementRegistry {
     /// `parseBinaryParams` has read the buffers
     /// (`pkg/server/conn_stmt.go:212-217`): long data is consumed by exactly
     /// one execute and never leaks into the next one.
-    fn clear_bound_params(&mut self, statement_id: u32) {
+    fn clear_bound_params<S: QuerySession>(&mut self, statement_id: u32, session: &mut S) {
         if let Some(statement) = self.statements.get_mut(&statement_id) {
-            statement.clear_bound_params();
+            statement.clear_bound_params(session);
         }
+    }
+
+    fn long_data_error(&self, statement_id: u32, connection_id: u64) -> Option<SqlQueryError> {
+        let statement = self.statements.get(&statement_id)?;
+        if statement.bound_params_mem_quota_exceeded {
+            let error = tidb_executor::mem_quota::memory_exceed_for_query(connection_id);
+            return Some(SqlQueryError::new(
+                error.code,
+                error.state.as_bytes().try_into().unwrap_or(*b"HY000"),
+                error.message,
+            ));
+        }
+        if statement.bound_params_too_large {
+            let error = tidb_error::mysql::SqlError::new(1153, &[]);
+            return Some(SqlQueryError::new(
+                error.code,
+                error.state.as_bytes().try_into().unwrap_or(*b"HY000"),
+                error.message,
+            ));
+        }
+        None
     }
 
     fn open_cursor(&mut self, statement_id: u32, state: CursorState) -> Option<CursorState> {
@@ -1736,7 +1839,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 ) {
                     Ok(packets) => packets,
                     Err(error) => {
-                        drop(prepared.remove(statement_id));
+                        drop(prepared.remove(statement_id, &mut engine));
                         write_error(
                             &mut output,
                             1,
@@ -1795,13 +1898,19 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // then calls `stmt.Reset()` unconditionally -- on the decode
                 // error path too (`pkg/server/conn_stmt.go:212-217`), so a
                 // rejected execute still consumes the long data.
+                let long_data_error =
+                    prepared.long_data_error(statement_id, engine.connection_id());
                 let bound_params = prepared.bound_params(statement_id).to_vec();
-                prepared.clear_bound_params(statement_id);
+                prepared.clear_bound_params(statement_id, &mut engine);
                 // Go calls `stmt.Reset()` after parsing every execute packet,
                 // successful or not. The retained cursor therefore closes
                 // before a replacement execution starts, and a malformed
                 // replacement cannot leave the old cursor fetchable.
                 drop(prepared.take_cursor(statement_id));
+                if let Some(error) = long_data_error {
+                    write_query_error(&mut output, &error, protocol_41)?;
+                    continue;
+                }
                 let execute_packet = match split_prepared_statement_execute(
                     &bytes,
                     parameter_count,
@@ -2153,6 +2262,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             statement_id,
                             usize::from(long_data.parameter_id),
                             &long_data.chunk,
+                            &mut engine,
                         ) {
                             Ok(()) => {}
                             Err(AppendParamError::UnknownStatement) => {
@@ -2173,14 +2283,6 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 "Incorrect arguments to stmt_send_longdata",
                                 protocol_41,
                             )?,
-                            Err(AppendParamError::TooLarge) => write_error(
-                                &mut output,
-                                1,
-                                ER_UNKNOWN_ERROR,
-                                *b"HY000",
-                                "COM_STMT_SEND_LONG_DATA exceeds the maximum packet size",
-                                protocol_41,
-                            )?,
                         }
                     }
                     Err(error) => write_error(
@@ -2196,7 +2298,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             Command::StmtClose(bytes) => {
                 commands.stmt_close_commands += 1;
                 if let Ok(statement_id) = decode_prepared_statement_close(&bytes) {
-                    drop(prepared.remove(statement_id));
+                    drop(prepared.remove(statement_id, &mut engine));
                 }
             }
             Command::StmtReset(bytes) => {
@@ -2204,7 +2306,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 match decode_prepared_statement_close(&bytes) {
                     // The payload is the same four-byte statement id the
                     // close command carries.
-                    Ok(statement_id) => match prepared.reset(statement_id) {
+                    Ok(statement_id) => match prepared.reset(statement_id, &mut engine) {
                         Ok(cursor) => {
                             drop(cursor);
                             // COM_STMT_RESET runs no statement, so like Go's

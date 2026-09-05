@@ -2070,6 +2070,8 @@ fn long_data_catalog() -> ConfiguredCatalog {
 /// a long-data parameter must arrive as one concatenated byte string.
 struct LongDataSession {
     bound: Arc<Mutex<Vec<Vec<PreparedBindValue>>>>,
+    long_data_quota: Option<i64>,
+    long_data_consumed: Option<Arc<Mutex<i64>>>,
 }
 
 impl QuerySession for LongDataSession {
@@ -2100,10 +2102,35 @@ impl QuerySession for LongDataSession {
             last_insert_id: 0,
         })
     }
+
+    fn try_consume_long_data(&mut self, bytes: i64) -> bool {
+        let (Some(quota), Some(consumed)) = (&self.long_data_quota, &self.long_data_consumed)
+        else {
+            return true;
+        };
+        let mut consumed = consumed.lock().unwrap();
+        if *quota > 0 && consumed.saturating_add(bytes) >= *quota {
+            return false;
+        }
+        *consumed += bytes;
+        true
+    }
+
+    fn release_long_data(&mut self, bytes: i64) {
+        if let Some(consumed) = &self.long_data_consumed {
+            *consumed.lock().unwrap() -= bytes;
+        }
+    }
+
+    fn connection_id(&self) -> u64 {
+        42
+    }
 }
 
 struct LongDataFactory {
     bound: Arc<Mutex<Vec<Vec<PreparedBindValue>>>>,
+    long_data_quota: Option<i64>,
+    long_data_consumed: Option<Arc<Mutex<i64>>>,
 }
 
 impl QuerySessionFactory for LongDataFactory {
@@ -2112,6 +2139,8 @@ impl QuerySessionFactory for LongDataFactory {
     fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
         Ok(LongDataSession {
             bound: Arc::clone(&self.bound),
+            long_data_quota: self.long_data_quota,
+            long_data_consumed: self.long_data_consumed.as_ref().map(Arc::clone),
         })
     }
 }
@@ -2176,6 +2205,8 @@ fn send_long_data_writes_no_packet_and_lands_as_the_concatenated_parameter() {
         let (stream, peer_addr) = listener.accept().unwrap();
         let factory = LongDataFactory {
             bound: worker_bound,
+            long_data_quota: None,
+            long_data_consumed: None,
         };
         serve_mysql_connection(
             stream,
@@ -2262,6 +2293,104 @@ fn send_long_data_writes_no_packet_and_lands_as_the_concatenated_parameter() {
 }
 
 #[test]
+fn long_data_quota_refuses_before_copy_and_releases_on_execute_and_close() {
+    // pkg/server/driver_tidb.go:126-132 charges SEND_LONG_DATA to the
+    // session tracker, refuses a chunk that reaches tidb_mem_quota_query, and
+    // reports the sticky refusal only on EXECUTE. The bytes accepted before
+    // that refusal are released by the unconditional RESET in EXECUTE; a
+    // later accepted buffer is released by CLOSE.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let bound = Arc::new(Mutex::new(Vec::new()));
+    let consumed = Arc::new(Mutex::new(0_i64));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_bound = Arc::clone(&bound);
+    let worker_consumed = Arc::clone(&consumed);
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let factory = LongDataFactory {
+            bound: worker_bound,
+            long_data_quota: Some(1024),
+            long_data_consumed: Some(worker_consumed),
+        };
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &factory,
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let timeout_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let statement_id = prepare_long_data_insert(&mut client, &mut reader);
+    write_packet(
+        &mut client,
+        0,
+        &send_long_data_command(statement_id, 1, &vec![b'a'; 600]),
+    );
+    write_packet(
+        &mut client,
+        0,
+        &send_long_data_command(statement_id, 1, &vec![b'b'; 500]),
+    );
+    assert_no_pending_packet(&timeout_side, &mut reader, "after the refused quota chunk");
+    assert_eq!(*consumed.lock().unwrap(), 600);
+
+    // EXECUTE has no long-data bytes in its value section. The sticky quota
+    // verdict is returned before the configured write path is entered.
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&statement_id.to_le_bytes());
+    execute.push(0);
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    execute.push(0);
+    execute.push(1);
+    execute.extend_from_slice(&[TYPE_LONGLONG, 0, TYPE_BLOB, 0]);
+    execute.extend_from_slice(&7_i64.to_le_bytes());
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    let error = reader.read_packet().unwrap();
+    assert_eq!(error[0], 0xff, "EXECUTE must return an ERR packet");
+    assert_eq!(u16::from_le_bytes([error[1], error[2]]), 8175);
+    assert_eq!(&error[4..9], b"HY000");
+    assert_eq!(*consumed.lock().unwrap(), 0, "EXECUTE reset releases prior bytes");
+    assert!(bound.lock().unwrap().is_empty(), "quota failure skips the write");
+
+    // A later chunk is accepted again after RESET released the old bytes.
+    write_packet(
+        &mut client,
+        0,
+        &send_long_data_command(statement_id, 1, &vec![b'c'; 1023]),
+    );
+    assert_no_pending_packet(&timeout_side, &mut reader, "after a post-reset chunk");
+    assert_eq!(*consumed.lock().unwrap(), 1023);
+    let mut close = vec![COM_STMT_CLOSE];
+    close.extend_from_slice(&statement_id.to_le_bytes());
+    write_packet(&mut client, 0, &close);
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    let report = worker.join().unwrap();
+    assert_eq!(
+        *consumed.lock().unwrap(),
+        0,
+        "CLOSE releases long-data bytes still held by the statement"
+    );
+    assert_eq!(report.exit, ConnectionExit::Quit);
+    assert_eq!(report.commands.stmt_send_long_data_commands, 3);
+    assert_eq!(report.commands.stmt_execute_successes, 0);
+}
+
+#[test]
 fn stmt_reset_drops_the_long_data_buffer_before_the_next_execute() {
     // pkg/server/conn_stmt.go:627-631 names what RESET must clear: the open
     // cursor and "the argument sent through SEND_LONG_DATA".
@@ -2278,6 +2407,8 @@ fn stmt_reset_drops_the_long_data_buffer_before_the_next_execute() {
         let (stream, peer_addr) = listener.accept().unwrap();
         let factory = LongDataFactory {
             bound: worker_bound,
+            long_data_quota: None,
+            long_data_consumed: None,
         };
         serve_mysql_connection(
             stream,

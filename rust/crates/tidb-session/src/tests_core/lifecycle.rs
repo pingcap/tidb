@@ -66,6 +66,27 @@ fn server_spill_authority_reaches_every_statement_context() {
 }
 
 #[test]
+fn long_data_uses_live_query_quota_and_releases_session_bytes() {
+    let mut session = Session::new();
+    session.set_connection_id(42);
+    session.run("SET @@tidb_mem_quota_query = 1024").unwrap();
+
+    assert!(session.try_consume_long_data(600));
+    assert_eq!(session.session_memory_bytes_consumed(), 600);
+    assert!(
+        !session.try_consume_long_data(424),
+        "reaching the quota is refused"
+    );
+    assert_eq!(session.session_memory_bytes_consumed(), 600);
+
+    session.release_long_data(600);
+    assert_eq!(session.session_memory_bytes_consumed(), 0);
+    assert!(session.try_consume_long_data(1023));
+    session.release_long_data(1023);
+    assert_eq!(session.session_memory_bytes_consumed(), 0);
+}
+
+#[test]
 fn statement_contexts_keep_one_session_memory_root() {
     let session = Session::new();
     let first = session.statement_context(false).statement_memory();

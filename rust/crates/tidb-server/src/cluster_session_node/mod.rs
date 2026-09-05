@@ -6018,6 +6018,18 @@ impl QuerySession for ClusterServerSession {
         Some(self.session.max_allowed_packet() as usize)
     }
 
+    fn try_consume_long_data(&mut self, bytes: i64) -> bool {
+        self.session.try_consume_long_data(bytes)
+    }
+
+    fn release_long_data(&mut self, bytes: i64) {
+        self.session.release_long_data(bytes);
+    }
+
+    fn connection_id(&self) -> u64 {
+        self.session.connection_id()
+    }
+
     fn split_statements(
         &mut self,
         sql: &str,

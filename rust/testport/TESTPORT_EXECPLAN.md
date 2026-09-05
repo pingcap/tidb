@@ -8278,3 +8278,16 @@ risks without claiming repository-wide parity.
   regressions record fail-before/pass-after evidence in
   `receipts/expression_overflow_column_name.md`; the values-only arithmetic
   helper remains carrier-only because it has no source expression node.
+- 2026-09-05 (`pkg/server` prepared long-data quota): Rust's
+  `COM_STMT_SEND_LONG_DATA` path now charges retained chunks to the connection's
+  persistent session memory tracker, refuses a chunk that would reach
+  `tidb_mem_quota_query`, keeps the refusal sticky and silent on subsequent
+  SEND commands, and reports Go's 8175 memory error only on EXECUTE. Reset,
+  successful execute, and close release the accepted bytes; the existing
+  `max_allowed_packet` overflow is likewise deferred to EXECUTE with Go's
+  1153/`08S01` identity. A loopback regression in
+  `mysql_client_lifecycle_source.rs` covers the exact 600+500 quota sequence,
+  deferred error, tracker release, post-reset reuse, and close cleanup. The
+  complete package inventory and Ready validation remain in
+  `receipts/server_connection.md`; Go's profiling/status-listener owners stay
+  explicit boundaries.

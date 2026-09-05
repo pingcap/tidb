@@ -1,15 +1,16 @@
 # Server connection and lifecycle parity receipt
 
-Date: 2026-09-02
+Date: 2026-09-05
 
 ## Scope
 
 This receipt covers the Go server connection lifecycle, prepared-statement
 limits, profiling request observability, advertised-status checker, and
 connection-event sysvar. It also records the explicit-disconnect regression
-that exercises the behavior against a real TiKV playground. Rust has no
-dependency-closed SQL server owner for this surface; this is an explicit Go
-ownership boundary, not a partial Rust package-completion claim.
+that exercises the behavior against a real TiKV playground. The Rust server
+now owns the dependency-closed prepared long-data quota seam; the remaining
+profiling, advertised-status, and connection-event items stay explicit Go
+ownership boundaries rather than partial Rust package-completion claims.
 
 ## Complete pre-edit inventory
 
@@ -30,6 +31,14 @@ found.
 | `pkg/sessionctx/variable/tests` | 7 / 2,658 | complete variable test package and BUILD/support read |
 | `tests/realtikvtest/pessimistictest` | 4 / 4,305 | all tests, BUILD, real-TiKV support and fixtures read; no generated artifact |
 
+For this Rust-owned batch, the corresponding owner walk covered
+`tidb-server/src/mysql_connection.rs`, `sql_node.rs`,
+`pipeline_session.rs`, `cluster_session_node/mod.rs`, and
+`real_tikv_multi_node.rs`, plus `tidb-session/src/identity.rs` and its
+`tests_core/lifecycle.rs` regression. Their production, test, generated-test
+aggregation, and fixture paths were checked before editing; no platform
+variant or build artifact owns the prepared long-data tracker seam.
+
 ## Restored behavior and regressions
 
 - Connection liveness is installed for prepared, traced, explained, DDL-adjacent
@@ -38,7 +47,11 @@ found.
 - `COM_CHANGE_USER` keeps the old session and identity on every authentication
   failure and moves resource-group accounting only after a successful reset.
 - `COM_STMT_SEND_LONG_DATA` enforces `max_allowed_packet`, charges and releases
-  query-memory quota, and reports the deferred protocol error on execute.
+  query-memory quota, and reports the deferred protocol error on execute. Rust
+  mirrors the same sticky refusal and cleanup through
+  `ConnectionPreparedStatement` and the session memory root; a loopback TCP
+  regression covers silent SEND commands, deferred 8175, post-EXECUTE reuse,
+  and CLOSE release.
 - Profiling and debug-zip endpoints emit structured request logs; the tests
   assert route, query fields, method, and remote address.
 - Added `tidb_enable_connection_event_log` and the login/logout event path.
@@ -58,8 +71,11 @@ Ready-profile checks passed with failpoint enable/disable wrappers:
 - `tools/check/failpoint-go-test.sh ./pkg/server/handler/tests -run '^(TestDebugRoutes|TestDebugZip)$' -count=1`
 - `tools/check/failpoint-go-test.sh ./pkg/server/tests/tls -run '^TestTLSBasic$' -count=1`
 - `tools/check/failpoint-go-test.sh ./pkg/sessionctx/variable/tests -run '^TestSetSysVar$' -count=1`
+- `cargo test --offline --locked -p tidb-server --test all long_data -- --nocapture`
+- `cargo test --offline --locked -p tidb-session long_data_uses_live_query_quota_and_releases_session_bytes -- --nocapture`
 - `make lint`
 - `git diff --check`
+- `cargo fmt --all -- --check`
 
 The real-TiKV regression was also run with the required playground lifecycle:
 `go test -run '^TestStatementsInterruptedOnDisconnect$' -tags=intest,deadlock
@@ -74,4 +90,6 @@ The liveness changes affect cancellation timing for long-running SQL and
 pessimistic locks; prepared-statement quota accounting affects memory pressure;
 and the advertised-status checker depends on status-listener lifecycle. The
 focused suites cover these paths, while Bazel graph validation remains a local
-environment gap. No Rust replacement is integrated or claimed.
+environment gap. Rust's prepared long-data implementation is intentionally
+limited to the existing session-tracker and wire command owners; no profiling
+or status-listener replacement is integrated or claimed.

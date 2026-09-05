@@ -292,6 +292,18 @@ impl QuerySession for PipelineServerSession {
         Some(self.session.max_allowed_packet() as usize)
     }
 
+    fn try_consume_long_data(&mut self, bytes: i64) -> bool {
+        self.session.try_consume_long_data(bytes)
+    }
+
+    fn release_long_data(&mut self, bytes: i64) {
+        self.session.release_long_data(bytes);
+    }
+
+    fn connection_id(&self) -> u64 {
+        self.session.connection_id()
+    }
+
     /// The live status word Go reads with `cc.ctx.Status()` before every
     /// OK/EOF packet: this session owns a real transaction and a real
     /// `autocommit` variable, so both bits come from it rather than from a

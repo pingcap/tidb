@@ -281,6 +281,29 @@ impl QuerySession for RealTiKvMultiServerSession {
             .finish_execute_stmt(cost, self.last_affected_rows, false);
     }
 
+    fn try_consume_long_data(&mut self, bytes: i64) -> bool {
+        if bytes <= 0 {
+            return true;
+        }
+        let quota = self.cursor_memory.session_tracker().get_bytes_limit();
+        let consumed = self.cursor_memory.bytes_consumed();
+        if quota > 0 && consumed.saturating_add(bytes) >= quota {
+            return false;
+        }
+        self.cursor_memory.session_tracker().consume(bytes);
+        true
+    }
+
+    fn release_long_data(&mut self, bytes: i64) {
+        if bytes > 0 {
+            self.cursor_memory.session_tracker().consume(-bytes);
+        }
+    }
+
+    fn connection_id(&self) -> u64 {
+        self.context.connection_id
+    }
+
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         self.last_affected_rows = 0;
         let process_statement = self._process.statement_started(sql, "", "autocommit");
