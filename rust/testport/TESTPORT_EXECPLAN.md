@@ -8684,3 +8684,11 @@ risks without claiming repository-wide parity.
   Only physical region splitting/SHOW TABLE REGIONS remains an explicit
   carrier boundary; evidence is recorded in `receipts/b115.md` and
   `receipts/ddl_temporary_create_like_warning.md`.
+- 2026-09-05 (`pkg/ddl` CHANGE COLUMN deferred foreign-key parent): Rust now
+  resolves the referenced table before comparing a type-changing MODIFY or
+  CHANGE, returning Go's 1146 when an unchecked foreign key still points at a
+  parent that has not been created. A stale referenced column is surfaced as
+  Go's 1054, while nullability-only changes retain Go's early-return behavior.
+  The focused `TestFix59705` missing-parent regression asserts the exact
+  table error; evidence is recorded in
+  `receipts/ddl_foreign_key_modify_missing_parent.md`.

@@ -464,7 +464,7 @@ fn foreign_key_in_write_only_mode_hides_the_table() {
 // With `foreign_key_checks=off`, Go lets `child(pid_test)` declare a
 // constraint against the NOT-YET-EXISTING `parent(pid)` (that is the bug's
 // setup). Then:
-//   * renaming the column toward the referenced name while the parent is
+//   * changing the column toward the referenced name while the parent is
 //     missing fails `[schema:1146]Table 'test.parent' doesn't exist`;
 //   * after `parent` exists, `change column pid_test pid varchar(10)` fails
 //     `[ddl:3780]... 'pid' and referenced column 'pid' ... are
@@ -472,13 +472,7 @@ fn foreign_key_in_write_only_mode_hides_the_table() {
 //   * `change column pid_test pid int` succeeds and `show create table`
 //     prints the constraint with its `KEY fk_1 (pid)` support index.
 //
-// go-parity-gap: the missing-parent leg of the Go test cannot be pinned —
-// Go's job resolves the constraint's referenced table at CHANGE COLUMN time
-// and reports 1146 when it is gone, while this tier skips the FK type check
-// for a parent it cannot find (`foreign_key.rs:651` acceptable_column_change
-// never sees a related type), so the rename below succeeds here.
 #[test]
-#[ignore = "go-parity-gap: CHANGE COLUMN does not resolve the constraint's referenced table, so Go's 1146 for a missing parent is not reproducible"]
 fn fix_59705_change_column_toward_a_missing_parent_reports_1146() {
     let mut catalog = Catalog::default();
     let ctx = StmtContext::for_query();
@@ -503,6 +497,10 @@ fn fix_59705_change_column_toward_a_missing_parent_reports_1146() {
     )
     .expect_err("Go: [schema:1146]Table 'test.parent' doesn't exist");
     assert_eq!(err_code(&error), 1146);
+    assert_eq!(
+        err_message(&error),
+        "Table 'test.parent' doesn't exist"
+    );
 }
 
 // The remaining legs of Go's TestFix59705, against a parent that exists: the

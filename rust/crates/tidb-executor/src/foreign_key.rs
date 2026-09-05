@@ -765,14 +765,31 @@ pub(crate) fn check_modify_column(
             }
             let referenced = &foreign_key.ref_cols[i];
             // Go reads the parent through the infoschema and propagates its
-            // error; a parent that is gone cannot answer the question, and
-            // this tier has no such error to raise here.
+            // error before it can compare the two column types.  This matters
+            // for unchecked, deferred foreign keys: a CHANGE COLUMN against
+            // a parent that has not landed yet is 1146, not an accepted local
+            // rename (or a later generic type error).
+            let Some(parent) = catalog.get_in(&foreign_key.ref_schema, &foreign_key.ref_table)
+            else {
+                return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+                    format!("{}.{}", foreign_key.ref_schema, foreign_key.ref_table),
+                )));
+            };
             let Some(refer) = column_type(
                 catalog,
                 &foreign_key.ref_schema,
                 &foreign_key.ref_table,
                 referenced,
             ) else {
+                // Keep the same infoschema lookup order as Go: once the
+                // parent exists, a stale referenced column is reported as
+                // 1054 rather than silently skipping this constraint.
+                if matches!(parent, TableEntry::Kv(_)) {
+                    return Err(DriverError::UnknownColumnInTable {
+                        column: referenced.clone(),
+                        table: foreign_key.ref_table.clone(),
+                    });
+                }
                 continue;
             };
             if new.code() != refer.code() {
