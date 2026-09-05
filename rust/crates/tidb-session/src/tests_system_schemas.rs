@@ -260,7 +260,7 @@ fn enumerating_the_system_schema_under_reports() {
     );
 }
 
-/// DIVERGENCE, pinned: `DROP DATABASE mysql` is accepted here.
+/// `DROP DATABASE mysql` is refused before the catalog mutation, matching Go.
 ///
 /// Captured from Go:
 ///
@@ -268,24 +268,19 @@ fn enumerating_the_system_schema_under_reports() {
 /// drop database mysql;  -> [ddl:8267]Drop 'mysql' database is forbidden
 /// ```
 ///
-/// The refusal belongs in the `DropDatabase` statement arm that calls
-/// `Catalog::drop_database`, in `tidb_session::dispatch`, which a parallel
-/// unit owns; `drop_database` returns a bare `bool` and cannot carry 8267 on
-/// its own. `DROP DATABASE information_schema` has the same hole today, so
-/// this widens a pre-existing gap by one name rather than opening a class.
-/// Nothing in the integration corpus drops either schema, so the gap is
-/// unmeasured as well as unfixed.
-///
-/// FLIPS TO SUPPORT when the guard lands: assert `8267` and
-/// `Drop 'mysql' database is forbidden` instead of `Ok`.
 #[test]
-fn dropping_the_mysql_schema_is_not_refused_yet() {
+fn dropping_the_mysql_schema_is_refused() {
     let mut session = Session::new();
-    assert!(session.run("DROP DATABASE mysql").is_ok());
-    // And the object really is gone, which is what makes it a divergence
-    // rather than a cosmetic one: the `USE` this unit fixed fails again.
-    let error = session.run("USE mysql").unwrap_err().to_mysql_error();
-    assert_eq!(error.code, 1049);
+    for statement in ["DROP DATABASE mysql", "DROP DATABASE IF EXISTS mysql"] {
+        let error = session.run(statement).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 8267, "{statement}");
+        assert_eq!(
+            error.message, "Drop 'mysql' database is forbidden",
+            "{statement}"
+        );
+    }
+    // The refusal must leave the bootstrap schema available to the session.
+    session.run("USE mysql").unwrap();
 }
 
 /// `information_schema.tables` lists the schema's OWN tables -- all of them,

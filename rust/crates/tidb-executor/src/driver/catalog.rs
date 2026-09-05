@@ -345,14 +345,11 @@ impl Default for Catalog {
     /// statement in the corpus -- nothing `USE`s them and nothing connects
     /// with them -- so seeding them would buy nothing and under-report more.
     ///
-    /// DIVERGENCE (documented): `DROP DATABASE mysql` is accepted here and
-    /// removes the object; Go refuses it with
-    /// `[ddl:8267]Drop 'mysql' database is forbidden` (captured). The guard
-    /// belongs in the statement arm that calls [`Catalog::drop_database`],
-    /// which this unit does not own. `information_schema` has the same hole
-    /// today, so this is a pre-existing gap widened by one name rather than a
-    /// new class; it is pinned by
-    /// `tidb_session`'s `dropping_the_mysql_schema_is_not_refused_yet`.
+    /// `DROP DATABASE mysql` is refused by the session statement arm before
+    /// it calls [`Catalog::drop_database`], matching Go's
+    /// `[ddl:8267]Drop 'mysql' database is forbidden` guard. The catalog
+    /// remains deliberately generic: callers that operate on it directly
+    /// still own policy checks for protected schemas.
     fn default() -> Self {
         let mut databases = HashMap::new();
         databases.insert(

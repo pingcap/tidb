@@ -8539,3 +8539,8 @@ risks without claiming repository-wide parity.
   duplicate-table 1050 as a Note for both plain and `LIKE`-copy forms while
   preserving the existing table. Evidence is recorded in
   `receipts/ddl_create_table_if_not_exists.md`.
+- 2026-09-05 (`pkg/ddl` protected system database): Rust now refuses
+  `DROP DATABASE mysql` (including `IF EXISTS`) before catalog mutation with
+  Go's exact ErrForbiddenDDL 8267 diagnostic, leaving the bootstrap schema
+  available. Evidence is recorded in
+  `receipts/ddl_system_database_guard.md`.

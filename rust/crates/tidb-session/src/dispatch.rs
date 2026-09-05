@@ -407,6 +407,16 @@ impl Session {
                     Ok(Some(StmtOutput::Affected(0)))
                 }
                 tidb_ast::DdlStmt::DropDatabase { if_exists, name } => {
+                    // Go protects the bootstrap `mysql` schema before the
+                    // drop executor sees IF EXISTS or foreign-key checks.
+                    // The guard is unconditional: both `DROP DATABASE
+                    // mysql` and its IF EXISTS form report ErrForbiddenDDL.
+                    if name.eq_ignore_ascii_case("mysql") {
+                        return Err(DriverError::DdlCoded {
+                            errno: tidb_error::tidb::errcode::ErrForbiddenDDL,
+                            message: "Drop 'mysql' database is forbidden".to_owned(),
+                        });
+                    }
                     let foreign_key_checks = self.foreign_key_checks();
                     if foreign_key_checks {
                         if let Some(error) = self.with_catalog_mut(|catalog| {
