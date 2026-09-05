@@ -55,3 +55,27 @@ No Go or Bazel file changed, so `make bazel_prepare` is not required.
 - Compatibility: one artificial public Rust error and one artificial public
   adapter type are no longer exposed.
 - Performance: unchanged.
+
+## Rust follow-up: Go-discardable redact helpers
+
+The complete three-artifact inventory and source behavior above remain
+unchanged. The Rust owner carried five explicit `#[must_use]` annotations on
+the direct Go-shaped `String`, `Stringer`, `NeedRedact`, `Value`, and `Key`
+helpers. Go permits callers to discard all of these results, so the
+annotations were Rust-only diagnostics and are now removed without changing
+redaction mode, marker, key, or value semantics.
+
+The focused unit regression
+`redact::tests::return_values_may_be_ignored_like_go` discards every affected
+result under `#[deny(unused_must_use)]`. On the pre-fix owner it failed to
+compile with five unused-return errors; the fixed test passes.
+
+Ready validation:
+
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib redact::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib redact::tests:: -- --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-util -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` is not required.

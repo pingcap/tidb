@@ -35,7 +35,6 @@ mod compact_text;
 /// `MARKER` wraps the value in `‹...›`, doubling any interior marker rune;
 /// `OFF` returns the input unchanged; `ON` erases it. Any other mode is a
 /// programming error and yields the empty string (Go asserts in tests).
-#[must_use]
 pub fn string(mode: &str, input: &str) -> String {
     match mode {
         "MARKER" => {
@@ -69,7 +68,6 @@ struct RedactStringer<'a> {
 }
 
 /// Go `redact.Stringer`: wraps `input` so its `Display` output is redacted.
-#[must_use]
 pub fn stringer<'a>(
     mode: &'a str,
     input: &'a dyn std::fmt::Display,
@@ -261,13 +259,11 @@ pub fn init_redact(redact_log: bool) {
 
 /// Go `redact.NeedRedact`: whether redaction is currently enabled (the flag
 /// is neither `OFF` nor its uninitialized empty value).
-#[must_use]
 pub fn need_redact() -> bool {
     tidb_error::mysql::redaction_mode() != tidb_error::mysql::RedactionMode::Disabled
 }
 
 /// Go `redact.Value`: `?` when redaction is enabled, else `arg` unchanged.
-#[must_use]
 pub fn value(arg: &str) -> String {
     if need_redact() {
         "?".to_owned()
@@ -278,7 +274,6 @@ pub fn value(arg: &str) -> String {
 
 /// Go `redact.Key`: `?` when redaction is enabled, else the upper-case hex
 /// encoding of `key` (`strings.ToUpper(hex.EncodeToString(key))`).
-#[must_use]
 pub fn key(key: &[u8]) -> String {
     if need_redact() {
         return "?".to_owned();
@@ -412,5 +407,19 @@ mod tests {
         assert_eq!(key(secret.as_bytes()), "?");
 
         init_redact(false);
+    }
+
+    // Go permits callers to discard the direct redact helper results. Keep
+    // this package from adding a Rust-only diagnostic contract.
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let input = "secret";
+
+        string("OFF", input);
+        stringer("OFF", &input);
+        need_redact();
+        value(input);
+        key(input.as_bytes());
     }
 }

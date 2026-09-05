@@ -8722,6 +8722,11 @@ risks without claiming repository-wide parity.
   `#[must_use]` annotations from group lookup, level-map, multi-error, context,
   and level-resolution APIs. The deny-on-discard regression and Ready evidence
   are recorded in `receipts/errctx_audit.md`.
+- 2026-09-05 (`pkg/util/redact`): the complete `tidb-util::redact` owner now
+  matches Go's discardable helper contract by removing five explicit Rust-only
+  `#[must_use]` annotations from String, Stringer, NeedRedact, Value, and Key.
+  The deny-on-discard regression and Ready evidence are recorded in
+  `receipts/util_redact.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
