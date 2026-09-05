@@ -8752,6 +8752,12 @@ risks without claiming repository-wide parity.
   `#[must_use]` diagnostics from `escape_string` and `must_escape_sql`. The
   deny-on-discard regression, benchmark compilation, and Ready evidence are
   recorded in `receipts/util_sqlescape.md`.
+- 2026-09-05 (`pkg/util/traceevent`): the complete traceevent owner now
+  matches Go's discardable-return contract by removing 26 explicit Rust-only
+  `#[must_use]` diagnostics from event, sink, trace, trigger, and recorder
+  helpers. The deny-on-discard regression fails with all 26 diagnostics on the
+  detached pre-fix owner and passes with 13 focused tests on the corrected
+  owner; Ready evidence is recorded in `receipts/util_traceevent.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

@@ -54,6 +54,49 @@ fn int_field(key: &str, value: i64) -> Field {
     Field::new(key, Value::I64(value))
 }
 
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    let _guard = lock_global_state();
+    let context = TraceContext::background();
+    is_enabled(TXN_LIFECYCLE);
+    get_enabled_categories();
+    current_mode();
+    current_sink();
+    flight_recorder();
+    trace_id_from_context(&context);
+    context_with_trace_id(&context, &[]);
+    generate_trace_id(&context, 1, 2);
+    MultiSink::new(Vec::new());
+    RingBufferSink::new(1);
+    RingBufferSink::new(1).snapshot();
+    convert_events_for_rendering(&[]);
+    fields_to_json(&[]);
+    extract_rand_from_trace_id(&[]);
+
+    Trace::new();
+    let trace = Trace::new();
+    trace.rand32();
+    trace.bits();
+    truth_table_for_and(Vec::new(), Vec::new());
+    truth_table_for_or(Vec::new(), Vec::new());
+    check_truth_table(0, &[]);
+    parse_categories(&[]);
+
+    let (sender, _receiver) = crossbeam_channel::unbounded();
+    let recorder = start_http_flight_recorder(sender, all_categories_config()).unwrap();
+    get_flight_recorder();
+    recorder.enabled_categories();
+    recorder.truth_table();
+    recorder.should_keep(0);
+    recorder.check_sampling(&DumpTriggerConfig {
+        kind: "sampling".to_owned(),
+        sampling: 1,
+        ..DumpTriggerConfig::default()
+    });
+    recorder.close();
+}
+
 // Go `TestSuite`. The six subtests run in order, under one lock, exactly as
 // Go's `t.Run` sequence does.
 #[test]

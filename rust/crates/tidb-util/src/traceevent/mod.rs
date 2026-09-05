@@ -105,7 +105,6 @@ pub fn enable(categories: TraceCategory) {
 }
 
 /// Go `IsEnabled`: whether the category is enabled on the active recorder.
-#[must_use]
 pub fn is_enabled(category: TraceCategory) -> bool {
     if tidb_config::kerneltype::is_classic() && !crate::intest::IN_TEST {
         return false;
@@ -117,7 +116,6 @@ pub fn is_enabled(category: TraceCategory) -> bool {
 }
 
 /// Go `GetEnabledCategories`: the categories the active recorder enables.
-#[must_use]
 pub fn get_enabled_categories() -> TraceCategory {
     get_flight_recorder().map_or(TraceCategory(0), |fr| fr.enabled_categories())
 }
@@ -163,7 +161,6 @@ pub fn set_mode(mode: &str) -> Result<&'static str, String> {
 }
 
 /// Go `CurrentMode`: the canonical tracing mode string.
-#[must_use]
 pub fn current_mode() -> &'static str {
     let recorder = RECORDER_ENABLED.load(Ordering::SeqCst);
     let logging = LOGGING_ENABLED.load(Ordering::SeqCst);
@@ -190,7 +187,6 @@ pub fn set_sink(sink: Option<Arc<dyn Sink>>) {
 }
 
 /// Go `CurrentSink`: the sink currently used for trace events.
-#[must_use]
 pub fn current_sink() -> Arc<dyn Sink> {
     Arc::clone(
         &EVENT_SINK
@@ -200,7 +196,6 @@ pub fn current_sink() -> Arc<dyn Sink> {
 }
 
 /// Go `FlightRecorder()`: the always-on in-memory ring buffer.
-#[must_use]
 pub fn flight_recorder() -> &'static RingBufferSink {
     &FLIGHT_RECORDER
 }
@@ -235,13 +230,11 @@ pub fn trace_event(ctx: &TraceContext, category: TraceCategory, name: &str, fiel
 }
 
 /// Go `TraceIDFromContext`: the trace identifier carried by the context.
-#[must_use]
 pub fn trace_id_from_context(ctx: &TraceContext) -> &[u8] {
     tracing::extract_trace_id(ctx)
 }
 
 /// Go `ContextWithTraceID`: a context carrying the given trace identifier.
-#[must_use]
 pub fn context_with_trace_id(ctx: &TraceContext, trace_id: &[u8]) -> TraceContext {
     ctx.with_trace_id(trace_id)
 }
@@ -252,7 +245,6 @@ pub fn context_with_trace_id(ctx: &TraceContext, trace_id: &[u8]) -> TraceContex
 /// The random suffix distinguishes statement executions, and is taken from the
 /// statement's [`Trace`] when the context sink is one. Call once per statement
 /// execution, not per retry.
-#[must_use]
 pub fn generate_trace_id(ctx: &TraceContext, start_ts: u64, stmt_count: u64) -> Vec<u8> {
     let mut trace_id = vec![0_u8; 20];
     trace_id[0..8].copy_from_slice(&start_ts.to_be_bytes());
@@ -315,7 +307,6 @@ pub struct MultiSink {
 
 impl MultiSink {
     /// Go `NewMultiSink`.
-    #[must_use]
     pub fn new(sinks: Vec<Arc<dyn Sink>>) -> Self {
         Self { sinks }
     }
@@ -348,7 +339,6 @@ struct RingBufferState {
 
 impl RingBufferSink {
     /// Go `NewRingBufferSink`. A non-positive capacity becomes 1.
-    #[must_use]
     pub fn new(capacity: usize) -> Self {
         let capacity = capacity.max(1);
         Self {
@@ -371,7 +361,6 @@ impl RingBufferSink {
     }
 
     /// Go `RingBufferSink.Snapshot`: buffered events, oldest to newest.
-    #[must_use]
     pub fn snapshot(&self) -> Vec<Event> {
         let state = self
             .state
@@ -513,7 +502,6 @@ fn serialize_phase<S: serde::Serializer>(
 /// Go reads the four bytes at offset 16 through a `*uint32`, i.e. in the host's
 /// native byte order, even though [`generate_trace_id`] writes them big-endian.
 /// This mirrors that native-endian read exactly rather than "fixing" it.
-#[must_use]
 fn extract_rand_from_trace_id(trace_id: &[u8]) -> u32 {
     if trace_id.len() != 20 {
         return 0;
@@ -522,7 +510,6 @@ fn extract_rand_from_trace_id(trace_id: &[u8]) -> u32 {
 }
 
 /// Go `ConvertEventsForRendering`.
-#[must_use]
 pub fn convert_events_for_rendering(events: &[Event]) -> Vec<RenderEvent> {
     let mut tid = 0_u32;
     let mut res = Vec::with_capacity(events.len());
@@ -584,7 +571,6 @@ pub fn convert_events_for_rendering(events: &[Event]) -> Vec<RenderEvent> {
 
 /// Renders log fields as the JSON object Go's zap JSON encoder produces for
 /// `RenderEvent.Args`.
-#[must_use]
 pub fn fields_to_json(fields: &[Field]) -> serde_json::Value {
     let mut map = serde_json::Map::with_capacity(fields.len());
     for field in fields {

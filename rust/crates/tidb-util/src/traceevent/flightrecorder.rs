@@ -45,7 +45,6 @@ const MAX_EVENTS: usize = 4096;
 
 impl Trace {
     /// Go `NewTrace`.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             state: RwLock::new(TraceState {
@@ -57,13 +56,11 @@ impl Trace {
     }
 
     /// Go `Trace.rand32`, read under the trace's lock.
-    #[must_use]
     pub(crate) fn rand32(&self) -> u32 {
         self.read().rand32
     }
 
     /// Go `Trace.bits`, read under the trace's lock.
-    #[must_use]
     pub(crate) fn bits(&self) -> u64 {
         self.read().bits
     }
@@ -383,7 +380,6 @@ impl CompiledDumpTriggerConfig {
 }
 
 /// Go `truthTableForAnd`.
-#[must_use]
 pub(crate) fn truth_table_for_and(x: Vec<u64>, mut y: Vec<u64>) -> Vec<u64> {
     if x.is_empty() {
         return y;
@@ -411,7 +407,6 @@ fn truth_table_for_and1(x: u64, xs: &mut [u64]) {
 }
 
 /// Go `truthTableForOr`.
-#[must_use]
 pub(crate) fn truth_table_for_or(mut x: Vec<u64>, y: Vec<u64>) -> Vec<u64> {
     // not doing any deduplication because duplicate trigger condition is not
     // allowed by compile
@@ -420,7 +415,6 @@ pub(crate) fn truth_table_for_or(mut x: Vec<u64>, y: Vec<u64>) -> Vec<u64> {
 }
 
 /// Go `checkTruthTable`.
-#[must_use]
 pub(crate) fn check_truth_table(bits: u64, table: &[u64]) -> bool {
     for &value in table {
         // The accumulated bits satisfy this alternative when they are a
@@ -514,7 +508,6 @@ impl FlightRecorderConfig {
 }
 
 /// Go `parseCategories`.
-#[must_use]
 pub(crate) fn parse_categories(categories: &[String]) -> TraceCategory {
     let mut result = TraceCategory(0);
     let mut sub = false;
@@ -565,7 +558,6 @@ fn store_global(recorder: Option<Arc<HttpFlightRecorder>>) {
 }
 
 /// Go `GetFlightRecorder`.
-#[must_use]
 pub fn get_flight_recorder() -> Option<Arc<HttpFlightRecorder>> {
     GLOBAL_HTTP_FLIGHT_RECORDER
         .read()
@@ -641,7 +633,6 @@ impl HttpFlightRecorder {
     }
 
     /// Go `HTTPFlightRecorder.enabledCategories`.
-    #[must_use]
     pub(crate) fn enabled_categories(&self) -> TraceCategory {
         TraceCategory(self.enabled_categories.load(Ordering::SeqCst))
     }
@@ -668,20 +659,17 @@ impl HttpFlightRecorder {
     }
 
     /// Go `HTTPFlightRecorder.truthTable`.
-    #[must_use]
     #[cfg(test)]
     pub(crate) fn truth_table(&self) -> &[u64] {
         &self.compiled.truth_table
     }
 
     /// Go `HTTPFlightRecorder.shouldKeep`.
-    #[must_use]
     pub(crate) fn should_keep(&self, bits: u64) -> bool {
         check_truth_table(bits, &self.compiled.truth_table)
     }
 
     /// Go `HTTPFlightRecorder.CheckSampling`.
-    #[must_use]
     pub fn check_sampling(&self, conf: &DumpTriggerConfig) -> bool {
         let value = self.counter.fetch_add(1, Ordering::SeqCst) + 1;
         if value >= conf.sampling {

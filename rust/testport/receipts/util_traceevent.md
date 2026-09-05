@@ -47,6 +47,26 @@ The eleven source tests remain, with one additional regression that invokes
 the installed live client hooks and verifies trace ID plus structured fields.
 Both source benchmarks are executable in `benches/traceevent.rs`.
 
+## Rust follow-up: Go-discardable traceevent returns
+
+The Rust owner carried 26 explicit `#[must_use]` diagnostics on helpers whose
+Go counterparts permit callers to discard the return value. The annotations
+were removed from the complete owner surface in `mod.rs` and
+`flightrecorder.rs`. A focused `return_values_may_be_ignored_like_go` test
+discards all 26 values under `#[deny(unused_must_use)]`: the pre-fix detached
+owner failed with exactly 26 diagnostics, and the corrected owner passes.
+
+Ready validation for this follow-up passed:
+
+- `OPENSSL_DIR=... OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib traceevent::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — PASS.
+- `OPENSSL_DIR=... OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib 'traceevent::tests' -- --test-threads=1` — PASS; 13 tests.
+- `OPENSSL_DIR=... OPENSSL_STATIC=1 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` — PASS.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-util -- --check` and `git diff --check` — PASS.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — PASS.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` was not required.
+
 ## Validation
 
 Profile: Ready for this receipt refresh; this remains one package boundary in
@@ -55,7 +75,7 @@ the continuing repository audit, not a repository-wide readiness claim.
 - `git diff --exit-code c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/traceevent` — PASS; root source is unchanged at current Go master.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/traceevent` — PASS in the active worktree (0.337s).
 - The same pinned Go command passed in the exact detached Go-master worktree `/tmp/tidb-go-latest-c605` (0.329s).
-- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-util --lib 'traceevent::tests' -- --test-threads=1` — PASS; 12 tests.
+- `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-util --lib 'traceevent::tests' -- --test-threads=1` — PASS; 13 tests after the discard-contract regression.
 - Existing owner validation also passed the traceevent benchmark check and `tidb-server` compilation; warnings outside this package remain.
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — PASS.
 - `git diff --check -- rust/testport/receipts/util_traceevent.md rust/docs/operations/util-traceevent-audit-execplan.md rust/testport/TESTPORT_EXECPLAN.md` — PASS.
