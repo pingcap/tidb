@@ -1891,6 +1891,27 @@ mod tests {
         }
     }
 
+    /// Go `TestInstanceConfigHasMatchingSysvar`: every serialized `[instance]`
+    /// option must have a same-named system variable for unified routing.
+    #[test]
+    fn instance_config_keys_have_matching_sysvars() {
+        let json = tidb_config::config_tree::new_config()
+            .get_json_config()
+            .expect("default config serializes as JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&json).expect("GetJSONConfig output is valid JSON");
+        let instance = value
+            .get("instance")
+            .and_then(serde_json::Value::as_object)
+            .expect("config includes an instance object");
+        for name in instance.keys() {
+            assert!(
+                get_sys_var(name).is_some(),
+                "config option instance.{name} requires a matching sysvar"
+            );
+        }
+    }
+
     /// Transcreated from Go `sysvar_test.go` `TestSQLSelectLimit`: the
     /// out-of-range value converts rather than erroring.
     #[test]

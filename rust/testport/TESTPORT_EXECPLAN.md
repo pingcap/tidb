@@ -145,6 +145,10 @@ For each bounded behavior cluster:
   every out-of-scope, read-only, and internal variable rejects writes with the
   same error family Go's setter metadata requires; removed the stale vardef gap
   shim.
+- 2026-09-05 (`pkg/sessionctx/variable` instance config registry): wired the
+  Rust `GetJSONConfig` output into a source-shaped check requiring every
+  serialized `[instance]` option to resolve to a same-named sysvar, and removed
+  the stale vardef gap shim.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session

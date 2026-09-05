@@ -1381,12 +1381,6 @@ fn is_noop_unported() {}
 #[ignore]
 fn validate_with_relaxed_validation_unported() {}
 
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestInstanceConfigHasMatchingSysvar.
-// go-parity-gap: depends on pkg/config JSON config + SysVar registry, neither ported here
-#[test]
-#[ignore]
-fn instance_config_has_matching_sysvar_unported() {}
-
 /// Go `pkg/sessionctx/variable/tests/variable_test.go::TestInstanceScope.
 // go-parity-gap: SysVar registration/unregistration + instance-scope hooks not ported
 #[test]
