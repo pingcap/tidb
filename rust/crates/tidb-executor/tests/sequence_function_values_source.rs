@@ -32,8 +32,8 @@ use std::sync::{Arc, Mutex};
 
 use tidb_datatype::Datum;
 use tidb_executor::{
-    run_create_sequence_in, run_create_table_on, run_insert_on, run_select_on, Catalog,
-    SequenceSnapshot, StmtContext,
+    run_create_sequence_in, run_create_table_on, run_create_view_in, run_insert_on, run_select_on,
+    Catalog, SequenceSnapshot, StmtContext,
 };
 
 /// A comparable copy of one result cell (`testkit.Rows` input).
@@ -81,8 +81,9 @@ fn run_seq(catalog: &mut Catalog, sql: &str) {
 /// `current_db`, with a FRESH session `LASTVAL` map -- Go's
 /// `tk := testkit.NewTestKit(t, store)` with its own `SessionVars.SequenceState`.
 fn session(catalog: &Catalog, current_db: &str) -> StmtContext {
-    let snapshot = SequenceSnapshot::new(
+    let snapshot = SequenceSnapshot::new_with_objects(
         catalog.sequence_allocators(),
+        catalog.object_names(),
         current_db,
         Arc::new(Mutex::new(HashMap::new())),
     );
@@ -98,8 +99,9 @@ fn peer_session(catalog: &Catalog, current_db: &str) -> StmtContext {
         .into_iter()
         .map(|(name, allocator)| (name, allocator.peer()))
         .collect();
-    let snapshot = SequenceSnapshot::new(
+    let snapshot = SequenceSnapshot::new_with_objects(
         peers,
+        catalog.object_names(),
         current_db,
         Arc::new(Mutex::new(HashMap::new())),
     );
@@ -774,14 +776,35 @@ fn an_errored_projection_consumes_no_sequence_values() {
 /// over an existing TABLE (`test.seq`) or VIEW (`test.seq1`) report
 /// `[schema:1347]'test.seq' is not SEQUENCE` (Go's `WrongObjectType`, carried
 /// for DDL at `src/driver/errors/mod.rs:760` as `SchemaErrorKind::WrongObject`).
-// go-parity-gap: documented divergence -- the EXPRESSION-level resolver
-// reports every non-sequence name as 1146 "Table 'x' doesn't exist"
-// (`rust/crates/tidb-expr/src/context.rs:206`), including existing tables
-// and views, where Go distinguishes 1347 for names that exist as another
-// object kind.
 #[test]
-#[ignore]
 fn sequence_functions_over_a_table_or_view_report_1347() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table seq(a int)", &mut catalog).expect("create seq table");
+    let ctx = StmtContext::for_query();
+    let stmt = tidb_parser::parse("create view seq1 as select * from seq")
+        .expect("create seq1 view parses");
+    let tidb_ast::Stmt::Ddl(ddl) = stmt else {
+        panic!("expected CREATE VIEW DDL");
+    };
+    let tidb_ast::DdlStmt::CreateView(create) = &*ddl else {
+        panic!("expected CREATE VIEW");
+    };
+    run_create_view_in(create, &mut catalog, "test", &ctx).expect("create seq1 view");
+    let ctx = session(&catalog, "test");
+    for name in ["seq", "seq1"] {
+        for function in ["nextval", "lastval"] {
+            assert_eq!(
+                query_error(&catalog, &ctx, &format!("select {function}({name})")),
+                (1347, format!("'test.{name}' is not SEQUENCE")),
+                "{function} over {name}"
+            );
+        }
+        assert_eq!(
+            query_error(&catalog, &ctx, &format!("select setval({name}, 10)")),
+            (1347, format!("'test.{name}' is not SEQUENCE")),
+            "setval over {name}"
+        );
+    }
 }
 
 /// Go `BenchmarkInsertCacheDefaultExpr` (`pkg/ddl/sequence_test.go:527`):

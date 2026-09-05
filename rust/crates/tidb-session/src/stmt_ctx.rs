@@ -330,17 +330,21 @@ impl Session {
     /// transaction -- see `with_statement_stage`'s note about a storage whose
     /// clone shares a handle rather than copying by value.
     fn sequence_snapshot(&self) -> Arc<tidb_executor::SequenceSnapshot> {
-        let by_name = match &self.txn {
-            Some(txn) => txn.working.sequence_allocators(),
+        let (by_name, object_names) = match &self.txn {
+            Some(txn) => (
+                txn.working.sequence_allocators(),
+                txn.working.object_names(),
+            ),
             None => match self.catalog.lock() {
-                Ok(catalog) => catalog.sequence_allocators(),
+                Ok(catalog) => (catalog.sequence_allocators(), catalog.object_names()),
                 // A poisoned catalog is reported by the statement itself; an
-                // empty map here just makes every name unknown.
-                Err(_) => HashMap::new(),
+                // empty snapshot here makes every name unknown.
+                Err(_) => (HashMap::new(), std::collections::HashSet::new()),
             },
         };
-        Arc::new(tidb_executor::SequenceSnapshot::new(
+        Arc::new(tidb_executor::SequenceSnapshot::new_with_objects(
             by_name,
+            object_names,
             &self.current_db,
             Arc::clone(&self.sequence_last_values),
         ))

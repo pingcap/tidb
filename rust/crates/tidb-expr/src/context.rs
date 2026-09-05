@@ -190,8 +190,9 @@ pub enum EvalError {
 ///
 /// The two are DIFFERENT error classes in Go, and neither is the auto-id
 /// allocator's 1467: reading past the end of a `NOCYCLE` sequence is
-/// `table.ErrSequenceHasRunOut`, and naming something that is not a sequence
-/// is the ordinary `infoschema.ErrTableNotExists`.
+/// `table.ErrSequenceHasRunOut`; an absent name is
+/// `infoschema.ErrTableNotExists`, while an existing table/view is
+/// `infoschema.ErrWrongObject`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SequenceEvalError {
     /// Go `table.ErrSequenceHasRunOut` (4135). Captured:
@@ -200,6 +201,9 @@ pub enum SequenceEvalError {
     /// Go `infoschema.ErrTableNotExists` (1146). Captured for
     /// `select nextval(nosuch)`: `Table 'test.nosuch' doesn't exist`.
     NotASequence(String),
+    /// Go `infoschema.ErrWrongObject` (1347). An existing table or view was
+    /// named where Go's sequence lookup requires `SEQUENCE`.
+    WrongObject(String),
 }
 
 impl SequenceEvalError {
@@ -209,6 +213,7 @@ impl SequenceEvalError {
         match self {
             SequenceEvalError::RunOut(_) => 4135,
             SequenceEvalError::NotASequence(_) => 1146,
+            SequenceEvalError::WrongObject(_) => 1347,
         }
     }
 
@@ -218,6 +223,7 @@ impl SequenceEvalError {
         match self {
             SequenceEvalError::RunOut(name) => format!("Sequence '{name}' has run out"),
             SequenceEvalError::NotASequence(name) => format!("Table '{name}' doesn't exist"),
+            SequenceEvalError::WrongObject(name) => format!("'{name}' is not SEQUENCE"),
         }
     }
 }

@@ -2232,6 +2232,22 @@ impl Catalog {
         self.get_in(database, name).is_some_and(TableEntry::is_view)
     }
 
+    /// Every catalog object name, keyed by lowercase `db.name`. Sequence
+    /// expression resolution uses this alongside [`Self::sequence_allocators`]
+    /// so Go's 1347 wrong-object error is distinct from 1146 missing-table.
+    #[must_use]
+    pub fn object_names(&self) -> std::collections::HashSet<String> {
+        self.databases
+            .iter()
+            .flat_map(|(database_key, database)| {
+                database
+                    .tables
+                    .keys()
+                    .map(move |table_key| format!("{database_key}.{table_key}"))
+            })
+            .collect()
+    }
+
     /// Every sequence in the catalog, keyed by lowercase `db.name`, with its
     /// allocator handle. The handles are `Arc`-shared, so this is a snapshot of
     /// the NAMES only -- a value consumed through one of them moves the

@@ -726,6 +726,9 @@ pub struct StmtContext {
 pub struct SequenceSnapshot {
     /// Every sequence in the catalog, keyed by lowercase `db.name`.
     by_name: HashMap<String, crate::sequence::SequenceAllocator>,
+    /// Every table/view/sequence name in the same catalog snapshot. A name
+    /// present here but absent from `by_name` is Go's 1347 wrong-object case.
+    object_names: std::collections::HashSet<String>,
     /// The schema an unqualified name resolves in.
     current_db: String,
     /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
@@ -743,8 +746,27 @@ impl SequenceSnapshot {
         current_db: &str,
         last_values: Arc<Mutex<HashMap<String, i64>>>,
     ) -> Self {
+        Self::new_with_objects(
+            by_name,
+            std::collections::HashSet::new(),
+            current_db,
+            last_values,
+        )
+    }
+
+    /// Builds a snapshot with the complete catalog-name set needed to
+    /// distinguish Go's `ErrWrongObject` (1347) from `ErrTableNotExists`
+    /// (1146) for sequence builtins.
+    #[must_use]
+    pub fn new_with_objects(
+        by_name: HashMap<String, crate::sequence::SequenceAllocator>,
+        object_names: std::collections::HashSet<String>,
+        current_db: &str,
+        last_values: Arc<Mutex<HashMap<String, i64>>>,
+    ) -> Self {
         SequenceSnapshot {
             by_name,
+            object_names,
             current_db: current_db.to_ascii_lowercase(),
             last_values,
         }
@@ -770,8 +792,8 @@ impl SequenceSnapshot {
         }
     }
 
-    /// The allocator `path` names, or 1146 -- which is what Go reports for a
-    /// name that is not a sequence, whether it is absent or is a table.
+    /// The allocator `path` names, or Go's 1146 for an absent name / 1347 for
+    /// an existing table or view that is not a sequence.
     fn resolve(
         &self,
         path: &[String],
@@ -779,6 +801,9 @@ impl SequenceSnapshot {
         let key = self.key(path);
         match self.by_name.get(&key) {
             Some(allocator) => Ok((key, allocator)),
+            None if self.object_names.contains(&key) => Err(tidb_expr::EvalError::Sequence(
+                tidb_expr::SequenceEvalError::WrongObject(key),
+            )),
             None => Err(tidb_expr::EvalError::Sequence(
                 tidb_expr::SequenceEvalError::NotASequence(key),
             )),

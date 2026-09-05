@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` sequence wrong-object errors): aligned sequence
+  builtins with Go's infoschema lookup. Existing tables/views now return
+  exact 1347 (`'<db>.<name>' is not SEQUENCE`) while absent names retain
+  1146; the production session snapshot carries catalog object names beside
+  sequence allocators. The promoted table/view regression records the old
+  1146 fail-before result and passes afterward; b110 records the complete
+  inventory and remaining sequence gaps.
 - 2026-09-05 (`pkg/ddl` sequence table options): aligned Rust with Go's
   CREATE SEQUENCE table-option contract. COMMENT and ENGINE are accepted;
   comments are retained on the sequence catalog entry and rendered by SHOW
