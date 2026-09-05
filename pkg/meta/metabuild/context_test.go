@@ -15,9 +15,9 @@
 package metabuild_test
 
 import (
-	"github.com/pingcap/errors"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"

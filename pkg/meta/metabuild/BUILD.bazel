@@ -13,6 +13,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
         "//pkg/util/intest",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
@@ -33,6 +34,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
         "//pkg/util/deeptest",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )
