@@ -2736,8 +2736,9 @@ impl SessionVars {
         if !def.has_session_scope() {
             return Err(VarError::GlobalOnlyVariable(name.to_ascii_lowercase()));
         }
+        let lookup = |sibling: &str| self.get_system(sibling).ok();
         let validated = def
-            .validate_in_scope(&value, SCOPE_SESSION)
+            .validate_in_scope_with_lookup(&value, SCOPE_SESSION, Some(&lookup))
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
         // Go's `tidb_enforce_mpp` Validation refuses ON while the session's

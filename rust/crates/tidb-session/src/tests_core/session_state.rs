@@ -624,6 +624,36 @@ fn read_only_noop_variables_need_the_noop_gate() {
     ));
 }
 
+/// Go's `tidb_enable_noop_functions` Validation rejects disabling the SESSION
+/// gate while a same-scope no-op read-only variable is still ON.
+#[test]
+fn noop_gate_cannot_be_disabled_while_session_read_only_is_on() {
+    let mut session = Session::new();
+    session
+        .apply_set("SET tidb_enable_noop_functions = 'ON'")
+        .unwrap();
+    session.run("SET tx_read_only = ON").unwrap();
+
+    let error = session
+        .run("SET tidb_enable_noop_functions = OFF")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1235);
+    assert_eq!(
+        error.message,
+        "tidb_enable_noop_functions = OFF is not supported when tx_read_only = ON"
+    );
+    assert_eq!(
+        session.run("SELECT @@tidb_enable_noop_functions").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::new_string("ON")]])
+    );
+
+    session.run("SET tx_read_only = OFF").unwrap();
+    session
+        .apply_set("SET tidb_enable_noop_functions = 'OFF'")
+        .unwrap();
+}
+
 /// Go `preprocess.go:TryAddExtraLimit`: `sql_select_limit` caps a top-level
 /// SELECT or set operation that writes no LIMIT of its own, and nothing else.
 ///

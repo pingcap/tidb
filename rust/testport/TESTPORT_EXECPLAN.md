@@ -681,6 +681,12 @@ For each bounded behavior cluster:
   path when promotion is enabled. The focused regression verifies OFF refusal,
   ON acceptance, warning-free execution, and restoration after disabling; the
   real lock executor remains a separate downstream boundary in the receipt.
+- 2026-09-05 (`pkg/sessionctx/variable` no-op gate dependency guard): matched
+  Go's `tidb_enable_noop_functions` Validation closure: disabling the gate is
+  refused with 1235 while any same-scope no-op read-only variable is ON, for
+  both SESSION and GLOBAL writes. Focused regressions cover the exact message,
+  unchanged ON readback, and the successful transition after clearing the
+  dependent variable.
 - 2026-09-05 (`pkg/planner/core/operator/logicalop` LATERAL Apply stats):
   removed the Rust-only recursive `unported_stats` refusal for keyed LATERAL
   Apply nodes. Rust now uses the existing full-join NDV estimator for explicit

@@ -1895,6 +1895,36 @@ fn global_read_only_noop_variables_need_the_global_gate() {
     }
 }
 
+/// Go's `tidb_enable_noop_functions` Validation rejects disabling the GLOBAL
+/// gate while a same-scope no-op read-only variable is still ON.
+#[test]
+fn global_noop_gate_cannot_be_disabled_while_read_only_is_on() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    session
+        .run("SET GLOBAL tidb_enable_noop_functions = ON")
+        .unwrap();
+    session.run("SET GLOBAL tx_read_only = ON").unwrap();
+
+    let error = session
+        .run("SET GLOBAL tidb_enable_noop_functions = OFF")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1235);
+    assert_eq!(
+        error.message,
+        "tidb_enable_noop_functions = OFF is not supported when tx_read_only = ON"
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_enable_noop_functions"),
+        Some("ON".to_owned())
+    );
+
+    session.run("SET GLOBAL tx_read_only = OFF").unwrap();
+    session
+        .run("SET GLOBAL tidb_enable_noop_functions = OFF")
+        .unwrap();
+}
+
 /// Go `SysVar.SkipInit` includes `IsNoop` variables: a fresh session keeps the
 /// compatibility default even when the shared GLOBAL no-op row is ON.
 #[test]

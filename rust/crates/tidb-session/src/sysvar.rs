@@ -760,6 +760,40 @@ impl SysVarDef {
         {
             return Err(ValidationError::WrongValue);
         }
+        // Go's `tidb_enable_noop_functions` Validation refuses OFF while a
+        // same-scope read-only/no-op variable remains ON. The lookup is
+        // supplied by the session or GLOBAL writer; direct registry callers
+        // fall back to each variable's declared default.
+        if self.name == tidb_vardef::tidb_vars::TIDB_ENABLE_NOOP_FUNCS
+            && validated.value == "OFF"
+        {
+            for incompatible in [
+                "tx_read_only",
+                "transaction_read_only",
+                "offline_mode",
+                "super_read_only",
+                "read_only",
+                "sql_auto_is_null",
+            ] {
+                let current = lookup
+                    .and_then(|resolve| resolve(incompatible))
+                    .or_else(|| get_sys_var(incompatible).map(|def| def.value.to_owned()));
+                if current
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case("ON") || value == "1")
+                {
+                    return Err(ValidationError::SqlError(SqlError::new_f(
+                        tidb_error::mysql::errcode::ErrNotSupportedYet,
+                        "%s = OFF is not supported when %s = ON",
+                        &[],
+                        &[
+                            FormatArg::from(self.name),
+                            FormatArg::from(incompatible),
+                        ],
+                    )));
+                }
+            }
+        }
         // Go's nextgen-only `TestTiDBPessimisticTransactionFairLocking`
         // exercises the variable-specific Validation closure: ON is rejected
         // with ErrNotSupportedInNextGen (1235) and the normalized fallback is

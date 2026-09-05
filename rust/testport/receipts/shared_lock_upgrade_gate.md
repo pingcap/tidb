@@ -67,6 +67,14 @@ preprocessor rewrite to the real `FOR UPDATE` path; disabling promotion restores
 the original no-op gate. Global seeding and statement restore recompute the
 typed field just like the other transaction switches.
 
+The same registry hook now also protects the no-op mode itself: `OFF` is
+refused with Go's 1235 `"%s = OFF is not supported when %s = ON"` error while
+any of `tx_read_only`, `transaction_read_only`, `offline_mode`,
+`super_read_only`, `read_only`, or `sql_auto_is_null` is enabled in that
+scope. SESSION validation reads the session image and GLOBAL validation reads
+the shared table, so clearing the dependent switch first restores the normal
+OFF transition.
+
 ## Regression evidence
 
 Before the change, the vendored transaction guard rejected every exclusive
@@ -122,6 +130,10 @@ cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locke
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
   -p tidb-session --lib shared_lock_promotion_switch_uses_go_typed_state -- --nocapture
 # passed: 1 test
+
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-session --lib noop_gate_cannot_be_disabled -- --nocapture
+# passed: 2 tests (SESSION and GLOBAL dependency guards)
 
 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 # reports pre-existing formatting drift in unrelated workspace files and
