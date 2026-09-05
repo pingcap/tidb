@@ -1750,6 +1750,16 @@ pub fn run_create_table_in(
                 })
         };
         if !covered(handle.offsets()) && !table.indexes().iter().any(covered_index) {
+            if table
+                .indexes()
+                .iter()
+                .any(|index| index.name.eq_ignore_ascii_case(&foreign_key.name))
+            {
+                return Err(DriverError::DdlCoded {
+                    errno: tidb_error::mysql::errcode::ErrDupKeyName,
+                    message: format!("duplicate key name {}", foreign_key.name),
+                });
+            }
             let id = table.next_index_id();
             table.add_index(
                 KvIndex {

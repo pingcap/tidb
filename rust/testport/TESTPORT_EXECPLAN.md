@@ -8575,6 +8575,13 @@ risks without claiming repository-wide parity.
   in `receipts/ddl_foreign_key_create_compatibility.md`; self-reference,
   deferred-parent, temporary-table, name, and partition rows remain explicit
   boundaries in `b111.md`.
+- 2026-09-05 (`pkg/ddl` CREATE FOREIGN KEY names and shapes): Rust now matches
+  Go's empty-name (1280), duplicate-child-column (1060), duplicate-reference
+  index (1822), support-index collision (1061), and over-length identifier
+  (1059) diagnostics before metadata mutation. Evidence is recorded in
+  `receipts/ddl_foreign_key_create_name_shape.md`; self-reference,
+  deferred-parent, temporary-table, and partition rows remain explicit
+  boundaries in `b111.md`.
 - 2026-09-05 (`pkg/ddl` temporary CREATE TABLE LIKE options and duplicate
   warning): Rust now refuses temporary copies that inherit pre-split or
   shard-row-bit options with Go's exact 8006 diagnostic, and records the

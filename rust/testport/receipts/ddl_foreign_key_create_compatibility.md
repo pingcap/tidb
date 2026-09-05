@@ -41,7 +41,7 @@ cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.tom
 
 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml \
   -p tidb-executor --test all fk_create_error_matrix_source -- --test-threads=1
-# 3 passed; 0 failed; 6 ignored
+# 4 passed; 0 failed; 5 ignored
 
 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml \
   -p tidb-executor --all-targets

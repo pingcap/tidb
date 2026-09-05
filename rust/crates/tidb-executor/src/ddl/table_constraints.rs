@@ -396,6 +396,14 @@ pub(crate) fn table_foreign_keys(
         let tidb_ast::TableConstraint::ForeignKey(definition) = constraint else {
             continue;
         };
+        if let Some(name) = definition.name.as_deref() {
+            if name.is_empty() {
+                return Err(DriverError::DdlCoded {
+                    errno: tidb_error::tidb::errcode::ErrWrongNameForIndex,
+                    message: "Incorrect index name ''".to_owned(),
+                });
+            }
+        }
         let fk_name = definition
             .name
             .clone()
@@ -457,6 +465,9 @@ pub(crate) fn build_foreign_key(
                 .iter()
                 .position(|column| column.name.eq_ignore_ascii_case(&name))
                 .ok_or_else(|| DriverError::ForeignKeyChildColumnMissing(name.clone()))?;
+            if cols.contains(&offset) {
+                return Err(DriverError::DuplicateColumnName(name));
+            }
             cols.push(offset);
         }
         let Some(path) = &definition.reference.table else {
@@ -469,10 +480,20 @@ pub(crate) fn build_foreign_key(
             [schema, name] => (schema.clone(), name.clone()),
             _ => return Err(DriverError::unsupported("empty referenced table name")),
         };
+        for identifier in [&fk_name, &ref_schema, &ref_table] {
+            if identifier.len() > 64 {
+                return Err(DriverError::TooLongIdent((*identifier).clone()));
+            }
+        }
         let ref_cols = match &definition.reference.parts {
             Some(parts) => index_part_names(parts)?,
             None => Vec::new(),
         };
+        for identifier in &ref_cols {
+            if identifier.len() > 64 {
+                return Err(DriverError::TooLongIdent(identifier.clone()));
+            }
+        }
         if ref_cols.len() != cols.len() {
             return Err(DriverError::WrongFkDef {
                 name: definition.name.clone().unwrap_or_default(),

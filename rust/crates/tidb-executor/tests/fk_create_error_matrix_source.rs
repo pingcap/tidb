@@ -354,18 +354,96 @@ fn fk_create_refuses_temporary_tables_in_both_directions() {
 //     `[ddl:1061]duplicate key name fk_1`;
 //   * any identifier over MySQL's 64-char limit — the FK name, the
 //     constraint name, the referenced schema/table, or a referenced column
-//     — → `[ddl:1059]Identifier name '...' is too long` (4 rows).
-//
-// go-parity-gap (documented divergence): none of these checks exist in the
-// tier's FK build — the empty name stores as "", the duplicate (a,a) is
-// answered by the generic parent lookup, the auto-created index is added
-// BESIDE a same-named explicit one without a collision check, and over-long
-// identifiers store as written.
+//     — → `[ddl:1059]Identifier name '...' is too long` (5 rows).
 #[test]
-#[ignore = "go-parity-gap: 1280/1060/1061/1059 FK-name checks are absent in the create path"]
 fn fk_create_name_shape_rows_match_go() {
-    // Contract (foreign_key_test.go:577-611): each row's exact errno and
-    // message, including the four 65-character identifier rows.
+    let long = "name5678901234567890123456789012345678901234567890123456789012345";
+    let cases = vec![
+        (
+            None,
+            "create table t1 (a int, foreign key ``(a) references t1(a));".to_owned(),
+            1280,
+            "Incorrect index name ''".to_owned(),
+        ),
+        (
+            None,
+            "create table t1 (a int, constraint `` foreign key (a) references t1(a));".to_owned(),
+            1280,
+            "Incorrect index name ''".to_owned(),
+        ),
+        (
+            Some("create table t1 (a int, b int, index(a,b));"),
+            "create table t2 (a int, b int, constraint fk foreign key (a,a) references t1(a,b));".to_owned(),
+            1060,
+            "Duplicate column name 'a'".to_owned(),
+        ),
+        (
+            Some("create table t1 (a int, b int, index(a,b));"),
+            "create table t2 (a int, b int, foreign key (a,b) references t1(a,a));".to_owned(),
+            1822,
+            "Failed to add the foreign key constraint. Missing index for constraint 'fk_1' in the referenced table 't1'".to_owned(),
+        ),
+        (
+            Some("create table t1 (id int key, b int, index(b));"),
+            "create table t2 (a int, b int, index fk_1(a), foreign key (b) references t1(b));".to_owned(),
+            1061,
+            "duplicate key name fk_1".to_owned(),
+        ),
+        (
+            Some("create table t1 (id int key);"),
+            format!("create table t2 (id int key, foreign key {long}(id) references t1(id));"),
+            1059,
+            format!("Identifier name '{long}' is too long"),
+        ),
+        (
+            Some("create table t1 (id int key);"),
+            format!("create table t2 (id int key, constraint {long} foreign key (id) references t1(id));"),
+            1059,
+            format!("Identifier name '{long}' is too long"),
+        ),
+        (
+            None,
+            format!("create table t2 (id int key, constraint fk foreign key (id) references {long}.t1(id));"),
+            1059,
+            format!("Identifier name '{long}' is too long"),
+        ),
+        (
+            None,
+            format!("create table t2 (id int key, constraint fk foreign key (id) references t1.{long}(id));"),
+            1059,
+            format!("Identifier name '{long}' is too long"),
+        ),
+        (
+            Some("create table t1 (id int key);"),
+            format!("create table t2 (id int key, constraint fk foreign key (id) references t1({long}));"),
+            1059,
+            format!("Identifier name '{long}' is too long"),
+        ),
+    ];
+
+    for (refer, create, code, message) in cases {
+        let mut catalog = Catalog::default();
+        let ctx = StmtContext::for_query();
+        if let Some(refer) = refer {
+            ddl::run_create_table_in(
+                refer,
+                &mut catalog,
+                "test",
+                CreateTableSettings::default(),
+                &ctx,
+            )
+            .unwrap();
+        }
+        let error = ddl::run_create_table_in(
+            &create,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .expect_err("Go's FK name/shape row must fail");
+        assert_eq!(err(&error), (code, message), "{create}");
+    }
 }
 
 // Go rows 29-30 (`pkg/ddl/tests/fk/foreign_key_test.go:612-618`): FOREIGN
