@@ -442,3 +442,5 @@
 - 下轮恢复点: (1) arbitrator/pool 深读或新面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - pool+action 切片核实: ResourcePool 41 函数(超集含 arbitrator 集成) 25 测试全绿; ActionOnExceed 契约镜像 12 测试全绿。收据已追加。
 - 下轮恢复点: (1) arbitrator 深读或新面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- memory arbitrator 面核实: 端到端 full_flow 测试(Go TestMemArbitrator 移植)驱动整条仲裁管线, 4 测试全绿; memory 面(meminfo/tracker/pool/action/arbitrator)全部闭环, 收据已追加。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

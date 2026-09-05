@@ -148,3 +148,17 @@ a superset carrying the fork's arbitrator integration) mirrors the
 resource-pool accounting with 25 in-module regressions; `memory/action.rs`
 mirrors the `ActionOnExceed` contract (action, set/get fallback,
 priority, finished lifecycle) with 12 regressions. Both suites green.
+
+## Adjacent face: mem arbitrator (2026-09-05) — VERIFIED via the end-to-end port
+
+Go's arbitrator is 3,900 lines across `arbitrator.go` (129
+`MemArbitrator` methods) and `global_arbitrator.go`; the Rust
+`memory/arbitrator` module splits the same responsibilities across
+`arbitrate`, `root_pool`, `mem_risk`, `digest_profile` and
+`runtime_stats`. Rather than a line diff of 129 methods, the face is
+verified through the ported end-to-end test (`tests/full_flow.rs`, the
+Rust `TestMemArbitrator`), which drives the whole arbitration pipeline
+— soft-limit modes, wait-averse tasks, priority buckets and the
+risk-digest profile — against Go's own test scenario. 4 passing tests
+plus the module-level suites close the memory face (meminfo, tracker,
+pool, action, arbitrator).
