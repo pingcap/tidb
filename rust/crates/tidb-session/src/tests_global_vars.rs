@@ -297,6 +297,63 @@ fn partial_ordered_index_for_topn_validation_matches_go() {
     );
 }
 
+/// Go's retired partition-statistics concurrency variable accepts assignments
+/// for compatibility, warns for non-1 values, and always reads back `1` from
+/// both SESSION and GLOBAL getters.
+#[test]
+fn merge_partition_stats_concurrency_is_fixed_at_one_like_go() {
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET SESSION tidb_merge_partition_stats_concurrency = 4")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1287",
+            "tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."
+        ]]
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@session.tidb_merge_partition_stats_concurrency"
+        ),
+        Some("1".to_owned())
+    );
+
+    session
+        .run("SET GLOBAL tidb_merge_partition_stats_concurrency = 8")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1287",
+            "tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."
+        ]]
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_merge_partition_stats_concurrency"
+        ),
+        Some("1".to_owned())
+    );
+
+    // Startup/upgrade images may contain an old persisted value; Go's fixed
+    // GetGlobal hook still masks it on read.
+    globals.set_startup(
+        "tidb_merge_partition_stats_concurrency",
+        "99".to_owned(),
+    );
+    assert_eq!(
+        globals.get("tidb_merge_partition_stats_concurrency").unwrap(),
+        "1"
+    );
+}
+
 /// Transcreated from Go `TestTiDBServerMemoryLimitSessMinSize` and
 /// `TestTiDBServerMemoryLimitGCTrigger`: GLOBAL writes store the canonical
 /// byte/fraction representation that subsequent `@@global` reads expose.

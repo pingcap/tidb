@@ -750,6 +750,15 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go has retired partition-statistics concurrency: every accepted
+        // assignment is stored and read back as `1`, while a non-1 request
+        // emits a 1287 deprecation warning in the SQL session hook.
+        if self.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
+            return Ok(Validated {
+                value: "1".to_owned(),
+                truncated: validated.truncated,
+            });
+        }
         // Go's `tidb_opt_partial_ordered_index_for_topn` closure validates the
         // ORIGINAL spelling after enum type normalization: only DISABLE and
         // COST (case-insensitively) are accepted, and ordinal enum values such

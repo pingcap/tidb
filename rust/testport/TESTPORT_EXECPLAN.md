@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` retired partition-statistics
+  concurrency): matched Go's fixed SESSION/GLOBAL getters and validation for
+  `tidb_merge_partition_stats_concurrency`: accepted values normalize to `1`,
+  non-1 assignments emit the 1287 compatibility warning, and stale startup
+  values are masked on read. The focused regression covers both scopes and an
+  upgrade-style persisted value.
 - 2026-09-05 (`pkg/sessionctx/variable` plan-cache size deprecation): matched
   Go's `appendDeprecationWarning` hooks for
   `tidb_prepared_plan_cache_size` and `tidb_non_prepared_plan_cache_size`,

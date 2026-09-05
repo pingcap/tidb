@@ -459,6 +459,11 @@ impl GlobalSysvars {
             return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
         };
         let def = &crate::sysvar::SYS_VARS[index];
+        // Go's retired partition-statistics concurrency variable has fixed
+        // getters so upgraded persisted values cannot leak a stale setting.
+        if def.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
+            return Ok("1".to_owned());
+        }
         if self.publishes_runtime_settings && crate::embedding::is_embedding_variable(def.name) {
             return Ok(crate::embedding::masked_global_value(def.name)
                 .expect("embedding variable has a process-wide value"));
@@ -661,6 +666,9 @@ impl GlobalSysvars {
     /// [`Self::get`].
     pub(crate) fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
         let def = &crate::sysvar::SYS_VARS[index];
+        if def.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
+            return Ok("1".to_owned());
+        }
         if self.publishes_runtime_settings && crate::embedding::is_embedding_variable(def.name) {
             return Ok(crate::embedding::masked_global_value(def.name)
                 .expect("embedding variable has a process-wide value"));

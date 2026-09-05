@@ -201,6 +201,28 @@ TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
 
+## 2026-09-05 Rust retired-variable restoration
+
+Go has retired `tidb_merge_partition_stats_concurrency`: the Validation and
+SetSession paths accept assignments for compatibility, warn with 1287 for a
+non-1 request, and both getters return `1` so an upgraded persisted value
+cannot leak stale concurrency. Rust now normalizes writes and masks SESSION,
+GLOBAL, and startup-image reads accordingly. The focused regression covers
+both SQL scopes plus an upgrade-style startup value.
+
+```text
+cargo test -p tidb-session --lib merge_partition_stats_concurrency_is_fixed_at_one_like_go -- --nocapture
+# passed
+
+git diff --check
+# passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+```
+
 ## 2026-09-05 Rust warning restoration
 
 Go's `tidb_prepared_plan_cache_size` and `tidb_non_prepared_plan_cache_size`

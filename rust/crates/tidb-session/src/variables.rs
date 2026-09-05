@@ -933,6 +933,13 @@ impl Session {
                 1287,
                 "'tidb_non_prepared_plan_cache_size' is deprecated and will be removed in a future release. Please use tidb_session_plan_cache_size instead",
             ))
+        } else if name.eq_ignore_ascii_case("tidb_merge_partition_stats_concurrency")
+            && normalized != "1"
+        {
+            Some((
+                1287,
+                "tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility.",
+            ))
         } else if name.eq_ignore_ascii_case("default_collation_for_utf8mb4") {
             // Go appends this deprecation warning only when its validation
             // succeeds.  Unlike the always-warning compatibility variables,
