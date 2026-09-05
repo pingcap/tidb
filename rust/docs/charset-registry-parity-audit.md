@@ -22,8 +22,12 @@ supported-charset descriptors and their default collations.
   collation descriptor superset. Regenerating with
   `rust/scripts/generate-parser-charset.py` against this Go master
   produces a byte-identical tree (2026-09-05), so the generated layer
-  is current; the Go `CharsetIDs` legacy wire-id map is served by the
-  same generated collation table.
+  is current; the Go `CharsetIDs` legacy wire-id map is a separate
+  table whose values disagree with the descriptor defaults for six
+  charsets (Go carries both notions: `CharsetNameToID` wire ids vs
+  `CharacterSetInfos` descriptors); the Rust generated table mirrors
+  the descriptor side, and the wire path derives ids from the column's
+  collation instead.
 
 ## Collation ID table (2026-09-05, second pass)
 

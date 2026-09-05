@@ -390,3 +390,5 @@
 - 下轮恢复点: (1) 验证分派会话上下文穿线设计(解锁 tx_isolation_one_shot + gogc max/min); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - tx_isolation_one_shot 批: 验证分派会话上下文穿线落地(validate_in_scope_with_lookup + run_validation_with_lookup, Option<lookup>), vars.rs write 传 self.get 闭包; SERIALIZABLE/READ-UNCOMMITTED 拒绝 8048 除非 skip-check ON(警告无 sink 已注释)。回归 3 断言。session lib 1340 通过/279 预存, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) gogc max/min 仍待 gctuner 运行面(不随本穿线解锁); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- charset 收据精化: Go 自身双表(CharsetNameToID wire id vs CharacterSetInfos 描述符默认 collation)对 6 字符集不一致(latin1 47 vs 8 等); Rust 生成表镜像描述符侧, wire 路径从列 collation 推 id(更细粒度)。非待修分歧。
+- 下轮恢复点: (1) infoschema/privilege 行为面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 微差异排队。
