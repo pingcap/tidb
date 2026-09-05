@@ -74,10 +74,16 @@ func TestJSONBooleanContext(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (j json)")
-	tk.MustExec("insert into t values ('[1384012953742982754,2947325532971048317]'), ('[1150596447037189411,2407534394954758420]')")
+	tk.MustExec("create table json_source (j json, join_key tinyint)")
+	tk.MustExec("create table string_source (join_key varchar(10))")
+	tk.MustExec("insert into json_source values ('[1384012953742982754,2947325532971048317,4925217513105514339,7040190206842180156,1351707314467911462]', 7)")
+	tk.MustExec("insert into string_source values ('7a')")
 
 	const predicate = "j <=> '[1150596447037189411,2407534394954758420]'"
-	tk.MustQuery("select j from (select j from t limit 1000) x where " + predicate).Check(testkit.Rows())
-	tk.MustQuery("select j from (select j from t limit 1000) x where case when (j or not j or j is null) then " + predicate + " else 1 end").Check(testkit.Rows())
+	const joinPredicate = "s.join_key = t.join_key"
+	const caseJoin = "select s.j from json_source s join string_source t on ((" + joinPredicate + " or not " + joinPredicate + " or " + joinPredicate + " is null) and " + joinPredicate + ") limit 1000"
+	tk.MustQuery("select j from (" + caseJoin + ") x where case when (j or not j or j is null) then " + predicate + " else 1 end").Check(testkit.Rows())
+	tk.MustQuery("show count(*) warnings").Check(testkit.Rows("7"))
+	tk.MustQuery("select j from (select s.j from json_source s join string_source t on " + joinPredicate + " limit 1000) x where " + predicate).Check(testkit.Rows())
+	tk.MustQuery("show count(*) warnings").Check(testkit.Rows("4"))
 }
