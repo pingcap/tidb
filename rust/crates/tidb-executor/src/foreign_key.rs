@@ -924,6 +924,7 @@ pub(crate) fn check_index_needed(
             !index.name.eq_ignore_ascii_case(index_name)
                 && index.column_offsets.len() >= offsets.len()
                 && index.column_offsets[..offsets.len()] == *offsets
+                && kv.partial_index_safe_for_columns(index, offsets)
         })
     };
     let refused = || DriverError::DropIndexNeededInForeignKey(dropping.name.clone());
@@ -936,6 +937,7 @@ pub(crate) fn check_index_needed(
             continue;
         };
         if covers(&child)
+            && kv.partial_index_safe_for_columns(dropping, &child)
             && !remaining_covers(&child)
             && !(child.len() == 1 && kv.is_clustered_handle_column(child[0]))
         {
@@ -948,7 +950,7 @@ pub(crate) fn check_index_needed(
         let Some((offsets, _)) = parent_offsets(catalog, &foreign_key) else {
             continue;
         };
-        if !covers(&offsets) {
+        if !covers(&offsets) || !kv.partial_index_safe_for_columns(dropping, &offsets) {
             continue;
         }
         if offsets.len() == 1 && kv.is_clustered_handle_column(offsets[0]) {

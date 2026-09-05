@@ -1638,7 +1638,7 @@ pub fn run_create_table_in(
                 .map_err(|message| DriverError::unsupported(message))?;
         }
     }
-    let (indexes, hidden_columns) = table_indexes(
+    let (indexes, hidden_columns, partial_conditions) = table_indexes(
         create,
         &columns,
         clustered,
@@ -1685,6 +1685,19 @@ pub fn run_create_table_in(
     for index in indexes {
         let clustered_primary = index.clustered_primary;
         table.add_index(index, clustered_primary);
+    }
+    for (index_id, index_name, condition) in &partial_conditions {
+        table
+            .add_partial_index_condition(
+                *index_id,
+                index_name,
+                condition,
+                &ctx.session_zone(),
+                ctx.like_default_escape(),
+            )
+            .map_err(|error| {
+                DriverError::Parse(format!("partial index condition failed: {error:?}"))
+            })?;
     }
     let foreign_keys = table_foreign_keys(
         create,
@@ -1764,6 +1777,7 @@ pub fn run_create_table_in(
         let covered = |offsets: &[usize]| offsets.starts_with(&fk_offsets[..]);
         let covered_index = |index: &KvIndex| {
             covered(&index.column_offsets)
+                && table.partial_index_safe_for_columns(index, &fk_offsets)
                 && fk_offsets.iter().enumerate().all(|(position, at)| {
                     let length = index.prefix_length(position);
                     length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
@@ -1832,6 +1846,11 @@ pub fn run_create_table_in(
             return Err(DriverError::PartitionNoTemporary);
         }
         table.set_partition(partition);
+        if !partial_conditions.is_empty() {
+            return Err(DriverError::unsupported(
+                "partial index is not supported on partitioned table",
+            ));
+        }
     }
     // Go's `checkTableForeignKeyValid` re-checks children that were created
     // earlier with `foreign_key_checks=0` when their referenced parent lands.

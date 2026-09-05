@@ -72,7 +72,14 @@ pub(crate) fn table_indexes(
     common_handle: bool,
     ctx: &crate::StmtContext,
     max_index_length: i64,
-) -> Result<(Vec<KvIndex>, Vec<HiddenIndexColumn>), DriverError> {
+) -> Result<
+    (
+        Vec<KvIndex>,
+        Vec<HiddenIndexColumn>,
+        Vec<(i64, String, tidb_ast::Expr)>,
+    ),
+    DriverError,
+> {
     let zone = &ctx.session_zone();
     // Go `buildIndexColumns` reads the SESSION's `sql_mode` here: outside
     // strict mode a single non-unique key part that runs past the 3072-byte
@@ -85,6 +92,7 @@ pub(crate) fn table_indexes(
     let column_types: Vec<tidb_datatype::FieldType> =
         columns.iter().map(|c| c.field_type.clone()).collect();
     let mut hidden: Vec<HiddenIndexColumn> = Vec::new();
+    let mut partial_conditions = Vec::new();
     // Go `checkIndexColumn`: a JSON column can never be an index column, in
     // any position of any index kind -- checked here, where every index part
     // resolves its column, so the rule has exactly one home.
@@ -167,6 +175,13 @@ pub(crate) fn table_indexes(
                 "CLUSTERED/NONCLUSTERED keyword is only supported for primary key",
             ));
         }
+        if index.kind == tidb_ast::IndexConstraintKind::PrimaryKey
+            && index.options.condition.is_some()
+        {
+            return Err(DriverError::unsupported(
+                "partial index is not supported on a primary key",
+            ));
+        }
         crate::ddl::indexes::reject_duplicate_index_columns(&index.parts)?;
         match index.kind {
             // Go omits the physical PRIMARY index only for PKIsHandle.  A
@@ -186,7 +201,6 @@ pub(crate) fn table_indexes(
                 ))
             }
         }
-        crate::ddl::indexes::reject_partial_index(&index.options)?;
         let unique = matches!(
             index.kind,
             tidb_ast::IndexConstraintKind::Unique
@@ -288,8 +302,12 @@ pub(crate) fn table_indexes(
             prefix_lengths[0] = stored_length;
         }
         hidden.extend(built.into_iter().map(|(_, column)| column));
+        let id = (indexes.len() + 1) as i64;
+        if let Some(condition) = index.options.condition.clone() {
+            partial_conditions.push((id, name.clone(), condition));
+        }
         indexes.push(KvIndex {
-            id: (indexes.len() + 1) as i64,
+            id,
             name,
             comment: index.options.comment.clone().unwrap_or_default(),
             unique,
@@ -357,7 +375,7 @@ pub(crate) fn table_indexes(
         }
     }
 
-    Ok((indexes, hidden))
+    Ok((indexes, hidden, partial_conditions))
 }
 
 /// Go `ddl.buildFKInfo`: the `FOREIGN KEY` table constraints, resolved

@@ -414,6 +414,32 @@ struct KvCheckConstraint {
     like_default_escape_sensitive: bool,
 }
 
+/// The lightweight evaluation context used by a partial-index predicate.
+/// Index maintenance historically received only a session timezone rather
+/// than the whole statement context; carrying the row and table columns here
+/// preserves that narrow seam while still evaluating the compiled expression
+/// through the same `tidb_expr` machinery as CHECK constraints.
+struct IndexConditionContext<'a> {
+    columns: &'a [KvColumn],
+    row: &'a [Datum],
+    zone: &'a SessionTimeZone,
+}
+
+impl tidb_expr::Columns for IndexConditionContext<'_> {
+    fn get(&self, path: &[String]) -> Option<Datum> {
+        let name = path.last()?;
+        let offset = self
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(name))?;
+        self.row.get(offset).cloned()
+    }
+
+    fn time_zone(&self) -> SessionTimeZone {
+        self.zone.clone()
+    }
+}
+
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
 #[derive(Clone, Debug)]
 pub struct KvTable {
@@ -469,6 +495,11 @@ pub struct KvTable {
     /// The table's indexes (Go `TableInfo.Indices`); `Arc`-shared like
     /// `columns`, for the same reason.
     indexes: std::sync::Arc<Vec<KvIndex>>,
+    /// Compiled `WHERE` predicates for partial indexes, keyed by the Go
+    /// `IndexInfo.ID`. Keeping this sidecar separate from [`KvIndex`] avoids
+    /// widening every source-shaped index fixture while making the predicate
+    /// available to every index write and backfill path.
+    partial_index_conditions: std::collections::BTreeMap<i64, KvCheckConstraint>,
     /// The AUTO_INCREMENT column's offset, if the table has one.
     auto_increment_offset: Option<usize>,
     /// Go's auto-id allocator, shared across the copies a transaction stages
@@ -828,6 +859,7 @@ impl KvTable {
             store,
             pk_handle_offset: None,
             indexes: std::sync::Arc::new(Vec::new()),
+            partial_index_conditions: std::collections::BTreeMap::new(),
             common_handle_offsets: Vec::new(),
             common_handle_version: 0,
             auto_increment_offset: None,
@@ -969,6 +1001,7 @@ impl KvTable {
         copy.mv_key_part_sources = self.mv_key_part_sources.clone();
         copy.pk_handle_offset = self.pk_handle_offset;
         copy.indexes = self.indexes.clone();
+        copy.partial_index_conditions = self.partial_index_conditions.clone();
         copy.common_handle_offsets = self.common_handle_offsets.clone();
         copy.common_handle_version = self.common_handle_version;
         copy.has_affinity = self.has_affinity;
@@ -2098,6 +2131,9 @@ impl KvTable {
         let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
         let mut written = Vec::new();
         for (handle, row) in &rows {
+            if !self.index_condition_holds(&index, row, &zone)? {
+                continue;
+            }
             let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
             let (key, distinct) = self.index_key(&index, row, handle, physical_id, &zone)?;
             let key = Key::from_bytes(key);
@@ -2159,12 +2195,16 @@ impl KvTable {
         let index = self.indexes_mut().remove(position);
         let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
         for (handle, row) in &rows {
+            if !self.index_condition_holds(&index, row, zone)? {
+                continue;
+            }
             let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
             let (key, _) = self.index_key(&index, row, handle, physical_id, zone)?;
             self.store
                 .delete(Key::from_bytes(key))
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
+        self.remove_partial_index_condition(index.id);
         Ok(true)
     }
 
@@ -2652,6 +2692,115 @@ impl KvTable {
         self.indexes_mut()
             .iter_mut()
             .find(|index| index.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Compiles and records a partial-index predicate beside the index
+    /// metadata. The predicate is evaluated for every backfill and row write;
+    /// a false/NULL result means that row has no entry in the partial index.
+    pub(crate) fn add_partial_index_condition(
+        &mut self,
+        index_id: i64,
+        index_name: &str,
+        expression: &tidb_ast::Expr,
+        zone: &SessionTimeZone,
+        like_default_escape: u8,
+    ) -> Result<(), KvTableError> {
+        let compiled = self.compile_check_constraint(
+            &format!("index {index_name}"),
+            expression,
+            zone,
+            like_default_escape,
+        )?;
+        self.partial_index_conditions.insert(index_id, compiled);
+        Ok(())
+    }
+
+    /// Removes a predicate when an index backfill fails or the index is
+    /// dropped. The sidecar must never outlive its `KvIndex` owner.
+    pub(crate) fn remove_partial_index_condition(&mut self, index_id: i64) {
+        self.partial_index_conditions.remove(&index_id);
+    }
+
+    /// Whether a row belongs in an index's partial predicate. A NULL result
+    /// follows Go's `EvalBool` rule for index conditions and is treated as
+    /// false, so `WHERE b IS NOT NULL` excludes NULL rows.
+    pub(in crate::kv_table) fn index_condition_holds(
+        &self,
+        index: &KvIndex,
+        row: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<bool, KvTableError> {
+        let Some(condition) = self.partial_index_conditions.get(&index.id) else {
+            return Ok(true);
+        };
+        let context = IndexConditionContext {
+            columns: &self.columns,
+            row,
+            zone,
+        };
+        let value = crate::generated_column::eval_over_dependencies(
+            &condition.expr,
+            &condition.dependencies,
+            &*self.columns,
+            row,
+            &context,
+        )
+        .map_err(|error| KvTableError::CheckConstraint {
+            name: condition.name.clone(),
+            detail: format!("{error:?}"),
+            eval: Some(error),
+        })?;
+        tidb_expr::truthy_of(&value)
+            .map(|truthy| truthy.unwrap_or(false))
+            .map_err(|error| KvTableError::CheckConstraint {
+                name: condition.name.clone(),
+                detail: format!("{error:?}"),
+                eval: Some(error),
+            })
+    }
+
+    /// Whether a partial index is safe to use as a foreign-key covering key.
+    /// Go's FK validator accepts an `IS NOT NULL` predicate on every indexed
+    /// column; a predicate on another column does not prove that the key row
+    /// exists and therefore must not suppress the FK's auto-created support
+    /// index. Non-partial indexes are safe by definition.
+    pub(crate) fn partial_index_safe_for_columns(
+        &self,
+        index: &KvIndex,
+        offsets: &[usize],
+    ) -> bool {
+        let Some(condition) = self.partial_index_conditions.get(&index.id) else {
+            return true;
+        };
+        let mut not_null = HashSet::new();
+        fn collect(expr: &tidb_ast::Expr, not_null: &mut HashSet<String>) -> bool {
+            match expr {
+                tidb_ast::Expr::Paren(inner) => collect(inner, not_null),
+                tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
+                    collect(left, not_null) && collect(right, not_null)
+                }
+                tidb_ast::Expr::Is {
+                    expr,
+                    target: tidb_ast::IsTarget::Null,
+                    not: true,
+                } => match expr.as_ref() {
+                    tidb_ast::Expr::Column(path) => path.last().is_some_and(|name| {
+                        not_null.insert(name.to_lowercase());
+                        true
+                    }),
+                    _ => false,
+                },
+                _ => false,
+            }
+        }
+        if !collect(&condition.source, &mut not_null) {
+            return false;
+        }
+        offsets.iter().all(|offset| {
+            self.columns
+                .get(*offset)
+                .is_some_and(|column| not_null.contains(&column.name.to_lowercase()))
+        })
     }
 
     /// The indexes a plan may read through, which is [`Self::indexes`] minus

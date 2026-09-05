@@ -1132,7 +1132,15 @@ fn add_index_constraint_action(
             ))
         }
     }
-    crate::ddl::indexes::reject_partial_index(&index.options)?;
+    if index.options.condition.is_some()
+        && catalog.table_in(database, table_name).is_some_and(
+            |entry| matches!(entry, crate::TableEntry::Kv(table) if table.partition().is_some()),
+        )
+    {
+        return Err(DriverError::unsupported(
+            "partial index is not supported on partitioned table",
+        ));
+    }
     // Go `GetName4AnonymousIndex`: an unnamed index takes its first key
     // part's column name, or `expression_index` for an expression part, and
     // keeps suffixing while that name is already present on the table.
@@ -1164,6 +1172,7 @@ fn add_index_constraint_action(
             visible: is_visible(&index.options),
             global: index.options.global,
             if_not_exists: index.if_not_exists,
+            condition: index.options.condition.as_ref(),
         },
         ctx,
         max_index_length,
@@ -1288,6 +1297,7 @@ fn add_foreign_key_action(
         .collect();
     let covered_index = |index: &super::KvIndex| {
         covered(&index.column_offsets)
+            && table.partial_index_safe_for_columns(index, &fk_offsets)
             && fk_offsets.iter().enumerate().all(|(position, at)| {
                 let length = index.prefix_length(position);
                 length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH

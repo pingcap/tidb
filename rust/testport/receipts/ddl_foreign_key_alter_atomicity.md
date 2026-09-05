@@ -53,5 +53,6 @@ GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex-tmp make lint
 # READY_LINT_RC=0
 ```
 
-No Go, generated, platform, Bazel, or module file changed. Partial-index
-predicate safety remains the next explicit FK ALTER boundary.
+No Go, generated, platform, Bazel, or module file changed. FK partial-index
+predicate safety is covered by `receipts/ddl_foreign_key_partial_index.md`;
+the broader literal/type validation matrix remains an explicit boundary.

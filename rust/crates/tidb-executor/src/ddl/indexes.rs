@@ -93,7 +93,16 @@ pub fn run_create_index_in(
     ) {
         return Err(DriverError::OperationOnCachedTable("Create Index"));
     }
-    reject_partial_index(&create.options)?;
+    if create.options.condition.is_some()
+        && matches!(
+            catalog.table_in(&database, &table_name),
+            Some(crate::TableEntry::Kv(table)) if table.partition().is_some()
+        )
+    {
+        return Err(DriverError::unsupported(
+            "partial index is not supported on partitioned table",
+        ));
+    }
     let max_index_length = catalog.max_index_length();
     add_index_to_table(
         catalog,
@@ -107,6 +116,7 @@ pub fn run_create_index_in(
             visible: is_visible(&create.options),
             global: create.options.global,
             if_not_exists: create.if_not_exists,
+            condition: create.options.condition.as_ref(),
         },
         ctx,
         max_index_length,
@@ -122,27 +132,6 @@ pub fn run_create_index_in(
 /// A key with no visibility clause is visible, which is Go's default.
 pub(crate) fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
     options.visibility != Some(tidb_ast::IndexVisibility::Invisible)
-}
-
-/// Refuses a PARTIAL index -- `KEY idx(a) WHERE a > 0` -- which this tier
-/// parses but does not maintain.
-///
-/// Creating it anyway would build a FULL index under a partial index's name:
-/// every row would get an entry, including the rows the condition excludes.
-/// That is wrong in both directions at once. A plan that trusted the
-/// condition would read entries for rows that should not be there, and
-/// `ADMIN CHECK TABLE` -- which Go refuses outright on a partial index unless
-/// `tidb_enable_fast_table_check=ON` (8273) -- would call the table
-/// consistent, because the index really is consistent with the wrong
-/// definition. Refusing at CREATE keeps the condition from being silently
-/// dropped.
-pub(crate) fn reject_partial_index(options: &tidb_ast::IndexOptions) -> Result<(), DriverError> {
-    if options.condition.is_some() {
-        return Err(DriverError::unsupported(
-            "a partial index (KEY ... WHERE) is not supported yet",
-        ));
-    }
-    Ok(())
 }
 
 /// The column names an index's key parts name, rejecting the forms this tier
@@ -201,6 +190,9 @@ pub(crate) struct IndexSpec<'a> {
     pub visible: bool,
     /// Go `IndexInfo.Global`, read off the statement's `GLOBAL` keyword.
     pub global: bool,
+    /// Optional `WHERE` predicate for a partial index. The table compiles it
+    /// into a sidecar keyed by the assigned index id before backfill.
+    pub condition: Option<&'a tidb_ast::Expr>,
     /// Go's `CREATE INDEX`/`ADD INDEX IF NOT EXISTS` guard.
     pub if_not_exists: bool,
 }
@@ -228,6 +220,7 @@ pub(crate) fn add_index_to_table(
         parts,
         visible,
         global,
+        condition,
         if_not_exists,
     } = index;
     reject_duplicate_index_columns(parts)?;
@@ -385,6 +378,22 @@ pub(crate) fn add_index_to_table(
         });
     }
     let id = table.next_index_id();
+    if let Some(condition) = condition {
+        if let Err(error) = table.add_partial_index_condition(
+            id,
+            index_name,
+            condition,
+            &ctx.session_zone(),
+            ctx.like_default_escape(),
+        ) {
+            for _ in 0..added {
+                table.drop_column(table.columns.len() - 1);
+            }
+            return Err(DriverError::Parse(format!(
+                "partial index condition failed: {error:?}"
+            )));
+        }
+    }
     let result = table
         .create_index_with_context(
             KvIndex {
@@ -422,6 +431,7 @@ pub(crate) fn add_index_to_table(
     // the materialized row), so a failure takes them back off rather than
     // leaving a column no statement can name and no index uses.
     if result.is_err() {
+        table.remove_partial_index_condition(id);
         for _ in 0..added {
             table.drop_column(table.columns.len() - 1);
         }

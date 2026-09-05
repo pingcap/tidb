@@ -8514,8 +8514,7 @@ risks without claiming repository-wide parity.
   returning Go's exact 1822 message before metadata is staged. Focused
   executor and session regressions prove both refusals and the successful
   indexed control. Evidence is recorded in
-  `receipts/ddl_foreign_key_alter_validation.md`; partial-index predicates
-  remain an explicit boundary.
+  `receipts/ddl_foreign_key_alter_validation.md`.
 - 2026-09-05 (`pkg/ddl` ALTER foreign-key atomicity): Rust now stages every
   multi-action `ALTER TABLE` containing a foreign-key addition against a
   cloned catalog and publishes it only after all actions succeed. A bad
@@ -8523,8 +8522,19 @@ risks without claiming repository-wide parity.
   dropping an index needed by a same-statement FK returns Go's 1553 before
   metadata changes. The focused source-shaped regression covers both the
   rollback and drop/add guard; evidence is recorded in
-  `receipts/ddl_foreign_key_alter_atomicity.md`. Partial-index predicates
-  remain the next explicit boundary.
+  `receipts/ddl_foreign_key_alter_atomicity.md`.
+- 2026-09-05 (`pkg/ddl` foreign-key partial-index safety): Rust now preserves
+  non-partitioned partial-index predicates as compiled table metadata and
+  evaluates them during backfill, insert, update, delete, and drop-index
+  maintenance. `IS NOT NULL` predicates on every foreign-key column are
+  treated as safe coverage, while unsafe child predicates cause Go-compatible
+  auto-support-index creation and 1553 protection of the actual support key;
+  parent-side partial indexes retain the Go 1452 orphan check. The focused
+  three-shape regression covers safe child, unsafe child, and safe parent
+  predicates with exact 1451/1452/1553 outcomes. Evidence is recorded in
+  `receipts/ddl_foreign_key_partial_index.md`; the broader literal/type,
+  generated-column, primary-key, partition, affect-column, and reorg matrix
+  remains an explicit boundary.
 - 2026-09-05 (`pkg/ddl` DROP INDEX foreign-key clustered-handle exemption):
   Rust now applies Go's `PKIsHandle && len(cols) == 1` escape on both the
   declared-child and referred-parent branches of `checkIndexNeededInForeignKey`.

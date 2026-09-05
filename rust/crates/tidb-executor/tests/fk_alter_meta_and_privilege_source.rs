@@ -508,15 +508,171 @@ fn a_failed_multi_add_leaves_no_constraint_behind() {
 // IS NOT NULL partial index over a REFERENCED column accepts the
 // constraint with 1452 for missing keys.
 //
-// go-parity-gap: this tier's index meta has no partial/WHERE dimension
-// (`KvIndex` carries no predicate), so the safe/unsafe distinction — and
-// therefore each of these assertions — is not reproducible.
 #[test]
-#[ignore = "go-parity-gap: partial (WHERE) index predicates do not exist in this tier's index meta"]
 fn partial_index_safety_rules_match_go() {
-    // Contract (foreign_key_test.go:1162-1221): unsafe partial index →
-    // auto-created fk_b beside it, parent delete 1451, drop-of-support 1553;
-    // safe IS NOT NULL partial index serves both child and parent sides.
+    // Go: an unsafe child predicate does not cover the FK, so TiDB creates a
+    // second support index and allows the unsafe index to be dropped.
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    ddl::run_create_table_in(
+        "create table t1 (id int key)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t2 (id int key, b int, c int, index idx_b(b) where c is not null)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t2 add constraint fk_b foreign key (b) references t1(id)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    let table = match catalog.table_in("test", "t2") {
+        Some(TableEntry::Kv(table)) => table,
+        _ => panic!("expected a storage-backed table"),
+    };
+    let index_names: Vec<_> = table.indexes().iter().map(|index| index.name.as_str()).collect();
+    assert_eq!(index_names, ["idx_b", "fk_b"]);
+    run_insert_on("insert into t1 values (1)", &mut catalog, &ctx).unwrap();
+    run_insert_on("insert into t2 values (1, 1, null)", &mut catalog, &ctx).unwrap();
+    let error = run_delete_on("delete from t1 where id = 1", &mut catalog, &ctx)
+        .expect_err("Go's parent delete sees the FK row");
+    assert_eq!(error.to_mysql_error().code, 1451);
+    ddl::run_alter_table_in("alter table t2 drop index idx_b", &mut catalog, "test", &ctx).unwrap();
+    let error = ddl::run_alter_table_in(
+        "alter table t2 drop index fk_b",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go protects the actual FK support index");
+    assert_eq!(error.to_mysql_error().code, 1553);
+
+    // Go: IS NOT NULL on the child key itself is safe and suppresses the
+    // auto-created FK index.
+    let mut catalog = Catalog::default();
+    ddl::run_create_table_in(
+        "create table t1 (id int key)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t2 (id int key, b int, index idx_b(b) where b is not null)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t2 add constraint fk_b foreign key (b) references t1(id)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    let table = match catalog.table_in("test", "t2") {
+        Some(TableEntry::Kv(table)) => table,
+        _ => panic!("expected a storage-backed table"),
+    };
+    assert_eq!(table.indexes().len(), 1);
+    run_insert_on("insert into t1 values (1)", &mut catalog, &ctx).unwrap();
+    run_insert_on("insert into t2 values (1, 1)", &mut catalog, &ctx).unwrap();
+    let error = run_delete_on("delete from t1 where id = 1", &mut catalog, &ctx)
+        .expect_err("Go's safe partial child index still enforces the FK");
+    assert_eq!(error.to_mysql_error().code, 1451);
+
+    // Go: IS NOT NULL on the referenced key itself is safe for parent-side
+    // lookups and rejects an orphan child row with 1452.
+    let mut catalog = Catalog::default();
+    ddl::run_create_table_in(
+        "create table t1 (id int key, a int, index idx_a(a) where a is not null)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t2 (id int key, b int, index idx_b(b))",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t2 add constraint fk_b foreign key (b) references t1(a)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    let table = match catalog.table_in("test", "t2") {
+        Some(TableEntry::Kv(table)) => table,
+        _ => panic!("expected a storage-backed table"),
+    };
+    assert_eq!(table.indexes().len(), 1);
+    run_insert_on("insert into t1 values (1, 10)", &mut catalog, &ctx).unwrap();
+    run_insert_on("insert into t2 values (1, 10)", &mut catalog, &ctx).unwrap();
+    let error = run_insert_on("insert into t2 values (2, 20)", &mut catalog, &ctx)
+        .expect_err("Go's safe parent partial index rejects missing keys");
+    assert_eq!(error.to_mysql_error().code, 1452);
+
+    // The standalone CREATE INDEX path carries the same predicate metadata,
+    // while Go rejects a partial key on a partitioned table before backfill.
+    let mut catalog = Catalog::default();
+    ddl::run_create_table_in(
+        "create table t (a int, b int)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_index_in(
+        "create index idx_b on t (b) where b is not null",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    let table = match catalog.table_in("test", "t") {
+        Some(TableEntry::Kv(table)) => table,
+        _ => panic!("expected a storage-backed table"),
+    };
+    assert_eq!(table.indexes().len(), 1);
+    ddl::run_create_table_in(
+        "create table tp (a int) partition by hash(a) partitions 2",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    let error = ddl::run_create_index_in(
+        "create index idx_a on tp (a) where a is not null",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go rejects partial indexes on partitioned tables");
+    assert!(error
+        .to_string()
+        .contains("partial index is not supported on partitioned table"));
 }
 
 // --- TestRenameColumnWithForeignKeyMetaInfo

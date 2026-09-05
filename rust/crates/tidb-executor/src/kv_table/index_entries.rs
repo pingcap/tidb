@@ -430,6 +430,9 @@ impl KvTable {
             if index.clustered_primary {
                 continue;
             }
+            if !self.index_condition_holds(index, row, zone)? {
+                continue;
+            }
             let (key, distinct) = self.index_key(index, row, handle, physical_id, zone)?;
             let value = self.index_entry_value(index, row, handle, distinct, physical_id, zone)?;
             let key = Key::from_bytes(key);
@@ -459,6 +462,9 @@ impl KvTable {
             // A clustered PRIMARY's key IS the record handle; deleting the
             // row already removed it.
             if index.clustered_primary {
+                continue;
+            }
+            if !self.index_condition_holds(index, row, zone)? {
                 continue;
             }
             let (key, _) = self.index_key(index, row, handle, physical_id, zone)?;
@@ -498,6 +504,42 @@ impl KvTable {
             // already rewrote it.
             if index.clustered_primary {
                 continue;
+            }
+            let old_holds = self.index_condition_holds(index, old_row, zone)?;
+            let new_holds = self.index_condition_holds(index, new_row, zone)?;
+            match (old_holds, new_holds) {
+                (false, false) => continue,
+                (false, true) => {
+                    let (new_key, new_distinct) =
+                        self.index_key(index, new_row, handle, physical_id, zone)?;
+                    let value = self.index_entry_value(
+                        index,
+                        new_row,
+                        handle,
+                        new_distinct,
+                        physical_id,
+                        zone,
+                    )?;
+                    let key = Key::from_bytes(new_key);
+                    if new_distinct && self.store.get(&key).is_ok() {
+                        return Err(KvTableError::DuplicateEntry {
+                            value: duplicate_value_text(&self.index_values(index, new_row)),
+                            key: self.qualified_key(&index.name),
+                        });
+                    }
+                    self.store
+                        .set(key, value)
+                        .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                    continue;
+                }
+                (true, false) => {
+                    let (old_key, _) = self.index_key(index, old_row, handle, physical_id, zone)?;
+                    self.store
+                        .delete(Key::from_bytes(old_key))
+                        .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+                    continue;
+                }
+                (true, true) => {}
             }
             // If none of the indexed columns changed, the entry key and its
             // payload (which only carries indexed/restored values plus the

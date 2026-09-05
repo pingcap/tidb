@@ -43,14 +43,14 @@ fn ddl_statements_backfill_exactly_when_write_reorganization_is_entered() {}
 /// types), with timestamp/datetime/date/time accepting string literals and
 /// enum/set accepting int and string literals — anything else is refused.
 ///
-/// go-parity-gap note: the Rust carrier REFUSES every partial index at
-/// definition time (`reject_partial_index`, src/ddl/indexes.rs:113-117, also
-/// wired into CREATE TABLE constraints and ALTER TABLE ADD INDEX), so not a
-/// single matrix row is executable here; pinning Go's accept side against a
-/// refuse-everything carrier would be an approximation, so this stays a
-/// documented divergence instead of a test.
+/// go-parity-gap note: the Rust carrier now accepts non-partitioned partial
+/// indexes and maintains their predicate-aware entries. The broader Go matrix
+/// still covers literal/type compatibility, generated-column and primary-key
+/// rejection, partition guards, and reorg/job-state behavior that is not fully
+/// transcreated here, so this remains a documented divergence rather than an
+/// approximation against a refuse-everything carrier.
 #[test]
-#[ignore = "go-parity-gap: Rust reject_partial_index (src/ddl/indexes.rs:113-117) refuses all partial indexes; Go's accept/validation matrix (pkg/ddl/index.go) is not transcreated"]
+#[ignore = "go-parity-gap: partial-index literal/type/shape validation and reorg lifecycle are not fully transcreated; FK IS NOT NULL predicate semantics are covered"]
 fn partial_index_accepts_only_type_matched_where_comparisons() {}
 
 /// GO PORT of `pkg/ddl/integration_test.go:178
@@ -72,7 +72,7 @@ fn drop_table_with_check_before_drop_runs_the_fast_check() {}
 /// `drop column col1` brings it back to 1 — index metadata offsets track
 /// column insertion/removal positions.
 #[test]
-#[ignore = "go-parity-gap: the partial-index carrier refuses the table (src/ddl/indexes.rs:113) and affect-column offset maintenance on add/drop column is not transcreated"]
+#[ignore = "go-parity-gap: affect-column offset maintenance on add/drop column is not transcreated"]
 fn maintain_affect_columns_tracks_offsets_across_column_changes() {}
 
 /// GO PORT of `pkg/ddl/integration_test.go:239
