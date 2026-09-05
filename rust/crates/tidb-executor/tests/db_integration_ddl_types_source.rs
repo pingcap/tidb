@@ -75,18 +75,39 @@ fn column(catalog: &Catalog, database: &str, table_name: &str, name: &str) -> ti
 //
 // Go creates `ct` and `ct1`, then `create table if not exists ct like ct1`
 // and checks the session carries a Note-level `ErrTableExists` warning, and
-// that the same holds for a plain (non-LIKE) duplicate. The suppression
-// result (`Ok(false)`, never an error) is what this tier models; the
-// Note-warning half is a GAP — `run_create_table_in` returns silently
-// without appending the 1050 note (see the comment at the `name_taken`
-// branch of `run_create_table_in`).
+// that the same holds for a plain (non-LIKE) duplicate.
 #[test]
 fn create_table_if_not_exists_like_suppresses_and_copies() {
     let mut catalog = Catalog::default();
     run_create_table_on("create table ct1(a bigint)", &mut catalog).unwrap();
     run_create_table_on("create table ct(a bigint)", &mut catalog).unwrap();
+    let ctx = StmtContext::for_query();
     // Duplicate create-table WITH the LIKE clause: suppressed, not an error.
-    assert!(!run_create_table_on("create table if not exists ct like ct1", &mut catalog).unwrap());
+    assert!(!ddl::run_create_table_in(
+        "create table if not exists ct like ct1",
+        &mut catalog,
+        "test",
+        ddl::CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap());
+    // Plain duplicate CREATE TABLE uses the same Note-level suppression.
+    assert!(!ddl::run_create_table_in(
+        "create table if not exists ct (a bigint)",
+        &mut catalog,
+        "test",
+        ddl::CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap());
+    assert_eq!(
+        ctx.take_warnings()
+            .iter()
+            .filter(|(_, code, _)| *code == 1050)
+            .count(),
+        2,
+        "LIKE and plain guarded duplicates each file Note 1050"
+    );
     // The LIKE copy machinery itself (first creation) copies the structure.
     assert!(run_create_table_on("create table ct3 like ct1", &mut catalog).unwrap());
     let source = column(&catalog, "test", "ct1", "a");

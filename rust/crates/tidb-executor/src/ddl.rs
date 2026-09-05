@@ -1069,14 +1069,19 @@ pub fn run_create_table_in(
         catalog.contains_in(&database, name)
     };
     if name_taken {
+        let duplicate = DriverError::Schema(crate::SchemaErrorKind::TableExists(format!(
+            "{database}.{name}"
+        )));
         if create.if_not_exists {
+            // Go's `createTableWithInfo` appends ErrTableExists (1050) as a
+            // Note for IF NOT EXISTS, including the CREATE TABLE ... LIKE
+            // form, then returns without replacing the existing table.
+            ctx.append_suppressed(&duplicate);
             return Ok(false);
         }
         // Go `infoschema.ErrTableExists` (1050) prints the db-qualified name:
         // "Table 'test.t1' already exists".
-        return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
-            format!("{database}.{name}"),
-        )));
+        return Err(duplicate);
     }
 
     // `CREATE TABLE ... LIKE` copies a built table rather than building one

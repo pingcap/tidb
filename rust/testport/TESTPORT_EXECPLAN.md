@@ -8529,3 +8529,7 @@ risks without claiming repository-wide parity.
   duplicate 1061 names as Notes without rebuilding the existing index. The
   concurrent job race and columnar-index variants remain explicit boundaries.
   Evidence is recorded in `receipts/ddl_index_if_not_exists.md`.
+- 2026-09-05 (`pkg/ddl` CREATE TABLE IF NOT EXISTS): Rust now appends Go's
+  duplicate-table 1050 as a Note for both plain and `LIKE`-copy forms while
+  preserving the existing table. Evidence is recorded in
+  `receipts/ddl_create_table_if_not_exists.md`.
