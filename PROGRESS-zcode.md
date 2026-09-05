@@ -426,3 +426,5 @@
 - 下轮恢复点: (1) 新面选型或文档重扫; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - parser 差分环核验: 51,598 集成 fixture 全量回放——51,499 接受匹配+99 拒绝一致+0 恢复不匹配+0 不对称=解析器与 Go golden 全语料一致。写入 parser-lexer 文档。
 - 下轮恢复点: (1) 新面候选继续; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- metrics schema readers 切片核实(gen_prom_ql/gen_label_condition/gen_label_condition_values 与 Go metrics_schema.go 逐行一致), 收据已追加。
+- 下轮恢复点: (1) 新面选型或既有 slice 深读; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
