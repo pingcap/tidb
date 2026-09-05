@@ -323,6 +323,11 @@ fn is_lazy_short_circuit(name: &str) -> bool {
     matches!(
         name,
         "if" | "ifnull" | "case" | "case_when" | "and" | "or" | "xor" | "nullif" | "coalesce"
+            // Go `TryFoldFunctions` (function_traits.go:81) puts `ast.Interval`
+            // in the try-fold scope: its arguments are try-folded and any
+            // warning keeps the function unfolded. Skipping the arguments in
+            // the walk reproduces that "no build-time warning" outcome.
+            | "interval"
     )
 }
 
@@ -337,6 +342,23 @@ mod deferred_function_tests {
 
     /// A context whose statement clock the test pins, so NOW() evaluations
     /// are deterministic and two executions can observe the difference.
+    struct WarningCollector(std::cell::RefCell<Vec<(u16, String)>>);
+
+    impl Columns for WarningCollector {
+        fn get(&self, _path: &[String]) -> Option<Datum> {
+            None
+        }
+        fn now(&self) -> Option<(i64, u32, i32)> {
+            None
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+        fn warning_count(&self) -> usize {
+            self.0.borrow().len()
+        }
+    }
+
     struct Clock(u64);
 
     impl Columns for Clock {
@@ -354,6 +376,51 @@ mod deferred_function_tests {
     /// their own constant sub-expressions. The tree-walk mirror is: the
     /// recursion must not descend into an unfoldable function's arguments.
     #[test]
+    /// Go `TryFoldFunctions` includes `ast.Interval` (function_traits.go:81):
+    /// INTERVAL's arguments are try-folded, and a warning during that fold
+    /// keeps the function UNFOLDED with no warning raised at build time. The
+    /// walk therefore must not descend into INTERVAL's arguments.
+    #[test]
+    fn interval_scope_does_not_raise_child_warnings_during_fold() {
+        // INTERVAL(1, 0, <cast that warns 1292>): the cast child must not be
+        // folded, so the fold itself must not append the 1292 warning.
+        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("interval"),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            vec![
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(1),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(0),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+                Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new("intdiv"),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    vec![
+                        Expression::Constant(crate::constant::Constant::new(
+                            Datum::Int(1),
+                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        )),
+                        Expression::Constant(crate::constant::Constant::new(
+                            Datum::Int(0),
+                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        )),
+                    ],
+                )),
+            ],
+        ));
+        let warnings = WarningCollector(std::cell::RefCell::new(Vec::new()));
+        fold_constant_in_mode(&mut expr, &warnings, ConstantFoldMode::Normal);
+        assert!(
+            warnings.0.borrow().is_empty(),
+            "child warnings leaked into the fold: {:?}",
+            warnings.0.borrow()
+        );
+    }
+
     fn benchmark_scope_keeps_its_subtree_unfolded() {
         // BENCHMARK(1, CAST('x' AS SIGNED)): the inner cast folds only if the
         // walk descends into the unfoldable parent's children.
