@@ -166,6 +166,11 @@ For each bounded behavior cluster:
   `tidb_allow_fallback_to_tikv`'s Go closure, including whitespace trimming,
   TiFlash-only acceptance, duplicate suppression, and invalid-engine refusal;
   the focused source matrix is recorded as a partial `TestValidate` port.
+- 2026-09-05 (`pkg/sessionctx/variable` session-state migration): added
+  `SessionVars::get_session_states_system_var`, preserving Go's cached
+  override-only encoding, timestamp default suppression, and explicit
+  last-insert-id/identity omission; the focused `TestSessionStatesSystemVar`
+  matrix is recorded as a partial port.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session

@@ -2265,6 +2265,41 @@ impl SessionVars {
         self.system_value(name).map(Cow::into_owned)
     }
 
+    /// Returns the value that Go's `GetSessionStatesSystemVar` would encode
+    /// while migrating this session, together with whether the entry should
+    /// be kept in the session-state image.
+    ///
+    /// Session state is deliberately based on cached session overrides, not
+    /// on `get_system`'s registry-default fallback: an untouched variable is
+    /// omitted so the destination session can use its own default.  Go's
+    /// timestamp state hook also omits an override equal to the default, and
+    /// the last-insert-id/identity hooks are explicitly never migrated.
+    pub fn get_session_states_system_var(&self, name: &str) -> Result<(String, bool), VarError> {
+        let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
+            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+        };
+        let definition = &crate::sysvar::SYS_VARS[index];
+        let key = crate::sysvar::lowered_if_needed(name);
+
+        // Go's GetStateValue hooks intentionally omit these values even when
+        // their ordinary session getter exposes a value.
+        if matches!(key.as_ref(), "last_insert_id" | "identity") {
+            return Ok((String::new(), false));
+        }
+
+        let Some(value) = self.systems.get(key.as_ref()) else {
+            return Ok((String::new(), false));
+        };
+
+        // Go's timestamp hook only migrates a non-default explicit override;
+        // an assignment of the default is equivalent to no session state.
+        if key == "timestamp" && value == definition.value {
+            return Ok((String::new(), false));
+        }
+
+        Ok((value.clone(), true))
+    }
+
     /// A snapshot of the session overrides `name` (and its alias) currently
     /// hold, for a statement-scoped write to put back afterwards.
     ///
@@ -3609,6 +3644,52 @@ mod tests {
         let mut inherited = SessionVars::new();
         inherited.seed_from_globals(globals).unwrap();
         assert!(!inherited.is_autocommit());
+    }
+
+    /// Go `TestSessionStatesSystemVar`: only explicitly cached session values
+    /// are serialized; timestamp's default and the insert-ID hooks are not.
+    #[test]
+    fn session_states_system_var_matches_go() {
+        let mut vars = SessionVars::new();
+
+        vars.set_system("autocommit", "1".to_owned()).unwrap();
+        assert_eq!(
+            vars.get_session_states_system_var("autocommit").unwrap(),
+            ("ON".to_owned(), true)
+        );
+
+        assert_eq!(
+            vars.get_session_states_system_var("timestamp").unwrap(),
+            (String::new(), false)
+        );
+        vars.set_system("timestamp", "1.25".to_owned()).unwrap();
+        assert_eq!(
+            vars.get_session_states_system_var("timestamp").unwrap(),
+            ("1.25".to_owned(), true)
+        );
+        vars.set_system("timestamp", "0".to_owned()).unwrap();
+        assert_eq!(
+            vars.get_session_states_system_var("timestamp").unwrap(),
+            (String::new(), false)
+        );
+
+        vars.set_system("max_allowed_packet", "1024".to_owned())
+            .unwrap();
+        assert_eq!(
+            vars.get_session_states_system_var("max_allowed_packet")
+                .unwrap(),
+            ("1024".to_owned(), true)
+        );
+
+        assert_eq!(
+            vars.get_session_states_system_var("last_insert_id")
+                .unwrap(),
+            (String::new(), false)
+        );
+        assert!(matches!(
+            vars.get_session_states_system_var("not_a_sysvar"),
+            Err(VarError::UnknownSystemVariable(_))
+        ));
     }
 
     #[test]
