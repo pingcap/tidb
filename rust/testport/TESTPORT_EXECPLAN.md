@@ -8865,6 +8865,13 @@ risks without claiming repository-wide parity.
   executor, and server all-target checks; the Rust-only
   `consume_and_check_exceed` adapter remains intentionally annotated. Ready
   evidence is recorded in `receipts/util_memory_audit.md`.
+- 2026-09-06 (`pkg/meta/model` table-mode surface): the complete 23-artifact
+  owner inventory was rechecked and `TableMode::can_transition_to` no longer
+  emits Go-incompatible Rust-only `#[must_use]` diagnostics. Its deny-on-
+  discard regression failed with one diagnostic on the detached pre-fix
+  owner and passes with all four table-mode tests plus affected model/meta/
+  executor/exec all-target checks; Ready evidence is recorded in
+  `receipts/meta_model_materialized_view.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

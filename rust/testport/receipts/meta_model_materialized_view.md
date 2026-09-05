@@ -133,3 +133,27 @@ OPENSSL_DIR=... cargo +nightly-2026-08-22 check --offline --locked \
 ```
 
 No Go source changed in this batch. The `make lint` Go gate does not apply.
+
+## Rust-only diagnostic alignment (`2026-09-06`)
+
+The complete 23-artifact `pkg/meta/model` inventory above was re-read before
+this focused follow-up, including all 14 production files, eight tests, and
+`BUILD.bazel`; there are no fixtures, generated inputs, benchmarks, or
+platform variants. The Rust `tidb-model` table-mode owner and source tests
+were also rechecked.
+
+The Go-shaped `TableMode::can_transition_to` method carried one Rust-only
+`#[must_use]` diagnostic even though Go's `CanTransitionTo` result is freely
+discardable. The annotation was removed. The focused
+`table_mode::tests::can_transition_return_may_be_ignored_like_go` regression
+discards the result under `#[deny(unused_must_use)]`.
+
+On detached pre-fix `eb4ec524ccc2e643e05744d7b4be1e5c5375be12`, the focused
+probe failed with exactly one `unused_must_use` diagnostic. The corrected
+fully-qualified probe passed, as did all four table-mode tests. Ready
+validation passed the affected `tidb-model`, `tidb-meta`, `tidb-executor`,
+and `tidb-exec` all-target check, pinned Rust formatting, `git diff --check`,
+and `make lint`.
+
+No Go source was edited and no live database integration was needed for this
+method diagnostic-only alignment.
