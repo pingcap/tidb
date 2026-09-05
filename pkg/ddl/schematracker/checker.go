@@ -601,6 +601,11 @@ func (d *Checker) GetID() string {
 	return d.realDDL.GetID()
 }
 
+// StorageClassTransitionStatuses implements the DDL interface.
+func (d *Checker) StorageClassTransitionStatuses() []ddl.StorageClassTransitionStatus {
+	return d.realDDL.StorageClassTransitionStatuses()
+}
+
 // DoDDLJob implements the DDL interface.
 func (d *Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	de := d.realExecutor.(ddl.ExecutorForTest)

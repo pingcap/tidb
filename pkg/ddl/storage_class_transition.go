@@ -1,0 +1,1040 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ddl
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"slices"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	pdhttp "github.com/tikv/pd/client/http"
+	"go.uber.org/zap"
+)
+
+const (
+	storageClassDirectionToIA             = "TO_IA"
+	storageClassDirectionToStandard       = "TO_STANDARD"
+	storageClassTransitionStateRunning    = "RUNNING"
+	storageClassTransitionStateCompleted  = "COMPLETED"
+	storageClassTransitionStateSuperseded = "SUPERSEDED"
+
+	storageClassTransitionPollInterval   = 10 * time.Second
+	storageClassTransitionPruneInterval  = time.Minute
+	storageClassTransitionRequestTimeout = 30 * time.Second
+)
+
+// StorageClassTransitionStatus is the SQL-visible status of one explicit storage-class operation.
+// Multiple physical partitions can belong to one operation. In that case the
+// partition fields are empty and the replica counters are aggregated.
+type StorageClassTransitionStatus struct {
+	TableSchema       string
+	TableName         string
+	TableID           int64
+	PartitionName     string
+	PartitionID       int64
+	Direction         string
+	TotalReplicas     uint64
+	CompletedReplicas uint64
+	Progress          float64
+	ProgressValid     bool
+	StartTime         time.Time
+	Duration          time.Duration
+	LastUpdateTime    time.Time
+	StatusValid       bool
+	PhysicalTableIDs  []int64
+	schemaVersion     int64
+	startTS           uint64
+}
+
+type storageClassTransitionKey struct {
+	tableID   int64
+	direction string
+	startTS   uint64
+}
+
+// storageClassTransitionTarget is serialized in the internal bookkeeping
+// column physical_targets and is not exposed through SHOW or InfoSchema.
+type storageClassTransitionTarget struct {
+	PhysicalID    int64  `json:"physical_id"`
+	PartitionID   int64  `json:"partition_id,omitempty"`
+	PartitionName string `json:"partition_name,omitempty"`
+}
+
+type physicalStorageClass struct {
+	storageClassTransitionTarget
+	tier string
+}
+
+type storageClassTransitionOperation struct {
+	StorageClassTransitionStatus
+	target  string
+	targets []storageClassTransitionTarget
+}
+
+type storageClassTransitionManager struct {
+	ddl *ddl
+	mu  struct {
+		sync.RWMutex
+		active   map[storageClassTransitionKey]StorageClassTransitionStatus
+		observed map[storageClassTransitionKey]StorageClassTransitionStatus
+	}
+}
+
+func newStorageClassTransitionManager(d *ddl) *storageClassTransitionManager {
+	m := &storageClassTransitionManager{ddl: d}
+	m.mu.active = make(map[storageClassTransitionKey]StorageClassTransitionStatus)
+	m.mu.observed = make(map[storageClassTransitionKey]StorageClassTransitionStatus)
+	return m
+}
+
+func normalizedStorageClassTransitionTarget(tier string) string {
+	if tier == "" {
+		return model.StorageClassTierDefault
+	}
+	return tier
+}
+
+func storageClassTransitionDirection(target string) (string, error) {
+	switch target {
+	case model.StorageClassTierIA:
+		return storageClassDirectionToIA, nil
+	case model.StorageClassTierStandard:
+		return storageClassDirectionToStandard, nil
+	default:
+		return "", errors.Errorf("invalid storage class transition target %q", target)
+	}
+}
+
+func storageClassTransitionTargetForDirection(direction string) (string, error) {
+	switch direction {
+	case storageClassDirectionToIA:
+		return model.StorageClassTierIA, nil
+	case storageClassDirectionToStandard:
+		return model.StorageClassTierStandard, nil
+	default:
+		return "", errors.Errorf("invalid storage class transition direction %q", direction)
+	}
+}
+
+func snapshotPhysicalStorageClasses(tblInfo *model.TableInfo) map[int64]physicalStorageClass {
+	physical := map[int64]physicalStorageClass{
+		tblInfo.ID: {
+			storageClassTransitionTarget: storageClassTransitionTarget{PhysicalID: tblInfo.ID},
+			tier:                         tblInfo.StorageClassTier,
+		},
+	}
+	if tblInfo.Partition != nil {
+		for _, partition := range tblInfo.Partition.Definitions {
+			physical[partition.ID] = physicalStorageClass{
+				storageClassTransitionTarget: storageClassTransitionTarget{
+					PhysicalID:    partition.ID,
+					PartitionID:   partition.ID,
+					PartitionName: partition.Name.O,
+				},
+				tier: partition.StorageClassTier,
+			}
+		}
+	}
+	return physical
+}
+
+func changedStorageClassPhysicalIDs(
+	old, current map[int64]physicalStorageClass,
+) map[int64]struct{} {
+	changed := make(map[int64]struct{})
+	for physicalID, currentState := range current {
+		oldState, ok := old[physicalID]
+		if !ok || normalizedStorageClassTransitionTarget(oldState.tier) == normalizedStorageClassTransitionTarget(currentState.tier) {
+			continue
+		}
+		changed[physicalID] = struct{}{}
+	}
+	return changed
+}
+
+func buildStorageClassTransitionOperations(
+	tblInfo *model.TableInfo,
+	physicalIDs map[int64]struct{},
+	schemaVersion int64,
+	startTS uint64,
+	schemaName, tableName string,
+) ([]*storageClassTransitionOperation, error) {
+	if schemaVersion <= 0 {
+		return nil, errors.New("storage class transition schema version is unavailable")
+	}
+	if startTS == 0 {
+		return nil, errors.New("storage class transition start TSO is unavailable")
+	}
+	physical := snapshotPhysicalStorageClasses(tblInfo)
+	ids := make([]int64, 0, len(physicalIDs))
+	for physicalID := range physicalIDs {
+		ids = append(ids, physicalID)
+	}
+	slices.Sort(ids)
+
+	byTarget := make(map[string]*storageClassTransitionOperation)
+	for _, physicalID := range ids {
+		state, ok := physical[physicalID]
+		if !ok {
+			return nil, errors.Errorf("physical table %d is missing from table %d", physicalID, tblInfo.ID)
+		}
+		target := normalizedStorageClassTransitionTarget(state.tier)
+		direction, err := storageClassTransitionDirection(target)
+		if err != nil {
+			return nil, errors.Annotatef(err, "physical table %d", physicalID)
+		}
+		operation := byTarget[target]
+		if operation == nil {
+			operation = &storageClassTransitionOperation{
+				StorageClassTransitionStatus: StorageClassTransitionStatus{
+					TableSchema:   schemaName,
+					TableName:     tableName,
+					TableID:       tblInfo.ID,
+					Direction:     direction,
+					StartTime:     model.TSConvert2Time(startTS),
+					schemaVersion: schemaVersion,
+					startTS:       startTS,
+				},
+				target: target,
+			}
+			byTarget[target] = operation
+		}
+		operation.targets = append(operation.targets, state.storageClassTransitionTarget)
+	}
+
+	operations := make([]*storageClassTransitionOperation, 0, len(byTarget))
+	for _, operation := range byTarget {
+		setStorageClassTransitionTargets(operation)
+		operations = append(operations, operation)
+	}
+	slices.SortFunc(operations, func(a, b *storageClassTransitionOperation) int {
+		return cmp.Compare(a.Direction, b.Direction)
+	})
+	return operations, nil
+}
+
+func setStorageClassTransitionTargets(operation *storageClassTransitionOperation) {
+	slices.SortFunc(operation.targets, func(a, b storageClassTransitionTarget) int {
+		return cmp.Compare(a.PhysicalID, b.PhysicalID)
+	})
+	operation.PhysicalTableIDs = make([]int64, len(operation.targets))
+	for i, target := range operation.targets {
+		operation.PhysicalTableIDs[i] = target.PhysicalID
+	}
+	if len(operation.targets) == 1 && operation.targets[0].PartitionID != 0 {
+		operation.PartitionID = operation.targets[0].PartitionID
+		operation.PartitionName = operation.targets[0].PartitionName
+	}
+}
+
+func stageStorageClassTransitions(
+	ctx context.Context,
+	se *sess.Session,
+	tblInfo *model.TableInfo,
+	old map[int64]physicalStorageClass,
+	schemaVersion int64,
+	startTS uint64,
+	schemaName, tableName string,
+) error {
+	current := snapshotPhysicalStorageClasses(tblInfo)
+	changed := changedStorageClassPhysicalIDs(old, current)
+	if len(changed) == 0 {
+		return nil
+	}
+
+	running, err := loadRunningStorageClassTransitionsForTable(ctx, se, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	finishTime := time.Now()
+	for _, operation := range running {
+		if !storageClassTransitionTouches(operation, changed) {
+			continue
+		}
+		superseded, err := supersedeStorageClassTransition(ctx, se, operation, finishTime)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !superseded {
+			continue
+		}
+		// Restart every surviving member of a superseded logical operation
+		// under the latest start TSO. This prevents one operation from being
+		// partly RUNNING and partly SUPERSEDED without reviving dropped targets.
+		addCurrentStorageClassTransitionTargets(changed, current, operation.targets)
+	}
+
+	operations, err := buildStorageClassTransitionOperations(tblInfo, changed, schemaVersion, startTS, schemaName, tableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, operation := range operations {
+		if err := insertRunningStorageClassTransition(ctx, se, operation); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func addCurrentStorageClassTransitionTargets(
+	physicalIDs map[int64]struct{},
+	current map[int64]physicalStorageClass,
+	targets []storageClassTransitionTarget,
+) {
+	for _, target := range targets {
+		if _, ok := current[target.PhysicalID]; ok {
+			physicalIDs[target.PhysicalID] = struct{}{}
+		}
+	}
+}
+
+func storageClassTransitionTouches(
+	operation *storageClassTransitionOperation,
+	physicalIDs map[int64]struct{},
+) bool {
+	for _, target := range operation.targets {
+		if _, ok := physicalIDs[target.PhysicalID]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func supersedeStorageClassTransition(
+	ctx context.Context,
+	se *sess.Session,
+	operation *storageClassTransitionOperation,
+	finishTime time.Time,
+) (bool, error) {
+	duration := finishTime.Sub(operation.StartTime)
+	if duration < 0 {
+		duration = 0
+	}
+	_, err := se.Execute(ctx,
+		`UPDATE mysql.tidb_storage_class_transition_history
+		 SET state = %?, finish_time = %?, duration = %?
+		 WHERE table_id = %? AND start_ts = %? AND direction = %? AND state = %?`,
+		"supersede-storage-class-transition",
+		storageClassTransitionStateSuperseded,
+		finishTime,
+		uint64(duration/time.Second),
+		operation.TableID,
+		operation.startTS,
+		operation.Direction,
+		storageClassTransitionStateRunning,
+	)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return se.GetSessionVars().StmtCtx.AffectedRows() > 0, nil
+}
+
+func insertRunningStorageClassTransition(
+	ctx context.Context,
+	se *sess.Session,
+	operation *storageClassTransitionOperation,
+) error {
+	if operation.schemaVersion <= 0 {
+		return errors.New("storage class transition schema version is unavailable")
+	}
+	targets, err := json.Marshal(operation.targets)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var partitionName any
+	var partitionID any
+	if operation.PartitionID != 0 {
+		partitionName = operation.PartitionName
+		partitionID = operation.PartitionID
+	}
+	_, err = se.Execute(ctx,
+		`INSERT INTO mysql.tidb_storage_class_transition_history
+		 (table_schema, table_name, table_id, partition_name, partition_id, direction, state,
+		  schema_version, start_ts, start_time, physical_targets)
+		 VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+		"insert-storage-class-transition",
+		operation.TableSchema,
+		operation.TableName,
+		operation.TableID,
+		partitionName,
+		partitionID,
+		operation.Direction,
+		storageClassTransitionStateRunning,
+		operation.schemaVersion,
+		operation.startTS,
+		operation.StartTime,
+		targets,
+	)
+	return errors.Trace(err)
+}
+
+func loadRunningStorageClassTransitionsForTable(
+	ctx context.Context,
+	se *sess.Session,
+	tableID int64,
+) ([]*storageClassTransitionOperation, error) {
+	rows, err := se.Execute(ctx,
+		`SELECT table_schema, table_name, table_id, direction, schema_version, start_ts, physical_targets
+		 FROM mysql.tidb_storage_class_transition_history
+		 WHERE state = %? AND table_id = %?
+		 ORDER BY start_ts, direction`,
+		"load-table-storage-class-transitions",
+		storageClassTransitionStateRunning,
+		tableID,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return decodeRunningStorageClassTransitions(rows)
+}
+
+func loadRunningStorageClassTransitions(
+	ctx context.Context,
+	se *sess.Session,
+) ([]*storageClassTransitionOperation, error) {
+	rows, err := se.Execute(ctx,
+		`SELECT table_schema, table_name, table_id, direction, schema_version, start_ts, physical_targets
+		 FROM mysql.tidb_storage_class_transition_history
+		 WHERE state = %?
+		 ORDER BY table_id, start_ts, direction`,
+		"load-storage-class-transitions",
+		storageClassTransitionStateRunning,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return decodeRunningStorageClassTransitions(rows)
+}
+
+func decodeRunningStorageClassTransitions(rows []chunk.Row) ([]*storageClassTransitionOperation, error) {
+	operations := make([]*storageClassTransitionOperation, 0, len(rows))
+	for _, row := range rows {
+		direction := row.GetString(3)
+		target, err := storageClassTransitionTargetForDirection(direction)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		schemaVersion := row.GetInt64(4)
+		if schemaVersion <= 0 {
+			return nil, errors.Errorf("invalid storage class transition schema version for table %d", row.GetInt64(2))
+		}
+		startTS := row.GetUint64(5)
+		if startTS == 0 {
+			return nil, errors.Errorf("invalid storage class transition start TSO for table %d", row.GetInt64(2))
+		}
+		var targets []storageClassTransitionTarget
+		if err := json.Unmarshal(row.GetBytes(6), &targets); err != nil {
+			return nil, errors.Annotatef(err, "decode storage class transition targets for table %d", row.GetInt64(2))
+		}
+		if err := validateStorageClassTransitionTargets(targets); err != nil {
+			return nil, errors.Annotatef(err, "table %d at start TSO %d", row.GetInt64(2), startTS)
+		}
+
+		operation := &storageClassTransitionOperation{
+			StorageClassTransitionStatus: StorageClassTransitionStatus{
+				TableSchema:   row.GetString(0),
+				TableName:     row.GetString(1),
+				TableID:       row.GetInt64(2),
+				Direction:     direction,
+				StartTime:     model.TSConvert2Time(startTS),
+				schemaVersion: schemaVersion,
+				startTS:       startTS,
+			},
+			target:  target,
+			targets: targets,
+		}
+		setStorageClassTransitionTargets(operation)
+		operations = append(operations, operation)
+	}
+	return operations, nil
+}
+
+func validateStorageClassTransitionTargets(targets []storageClassTransitionTarget) error {
+	if len(targets) == 0 {
+		return errors.New("storage class transition has no physical targets")
+	}
+	seen := make(map[int64]struct{}, len(targets))
+	for _, target := range targets {
+		if target.PhysicalID == 0 {
+			return errors.New("storage class transition has a zero physical table ID")
+		}
+		if _, ok := seen[target.PhysicalID]; ok {
+			return errors.Errorf("duplicate physical table %d in storage class transition", target.PhysicalID)
+		}
+		seen[target.PhysicalID] = struct{}{}
+	}
+	return nil
+}
+
+func storageClassTransitionTargetsExist(
+	tblInfo *model.TableInfo,
+	operation *storageClassTransitionOperation,
+) bool {
+	physical := snapshotPhysicalStorageClasses(tblInfo)
+	for _, target := range operation.targets {
+		current, ok := physical[target.PhysicalID]
+		if !ok || normalizedStorageClassTransitionTarget(current.tier) != operation.target {
+			return false
+		}
+	}
+	return true
+}
+
+func replacementStorageClassTransitionPhysicalIDs(
+	tblInfo *model.TableInfo,
+	operation *storageClassTransitionOperation,
+	claimed map[int64]struct{},
+) map[int64]struct{} {
+	physicalIDs := make(map[int64]struct{})
+	// A table-wide operation contains the logical table ID. A partition-only
+	// operation must not grow to include that parent range after reconciliation.
+	tracksTable := slices.ContainsFunc(operation.targets, func(target storageClassTransitionTarget) bool {
+		return target.PhysicalID == tblInfo.ID
+	})
+	for physicalID, current := range snapshotPhysicalStorageClasses(tblInfo) {
+		if physicalID == tblInfo.ID && !tracksTable {
+			continue
+		}
+		if _, ok := claimed[physicalID]; ok {
+			// Another RUNNING row already owns this current physical target.
+			continue
+		}
+		if normalizedStorageClassTransitionTarget(current.tier) != operation.target {
+			continue
+		}
+		physicalIDs[physicalID] = struct{}{}
+	}
+	return physicalIDs
+}
+
+func storageClassTransitionTopologyIsStable(tblInfo *model.TableInfo) bool {
+	return tblInfo.Partition == nil || tblInfo.Partition.DDLState == model.StateNone
+}
+
+func reconcileStorageClassTransitionTopology(
+	ctx context.Context,
+	se *sess.Session,
+	tblInfo *model.TableInfo,
+	operation *storageClassTransitionOperation,
+	schemaVersion int64,
+) error {
+	if err := se.Begin(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			se.Rollback()
+		}
+	}()
+
+	superseded, err := supersedeStorageClassTransition(ctx, se, operation, time.Now())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !superseded {
+		// The conditional update is the reconciliation ownership fence. A
+		// concurrent poller or explicit DDL already handled this operation.
+		return nil
+	}
+
+	running, err := loadRunningStorageClassTransitionsForTable(ctx, se, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	claimed := make(map[int64]struct{})
+	for _, current := range running {
+		if current.target != operation.target {
+			continue
+		}
+		for _, target := range current.targets {
+			claimed[target.PhysicalID] = struct{}{}
+		}
+	}
+	txn, err := se.Txn()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	physicalIDs := replacementStorageClassTransitionPhysicalIDs(tblInfo, operation, claimed)
+	operations, err := buildStorageClassTransitionOperations(
+		tblInfo,
+		physicalIDs,
+		schemaVersion,
+		txn.StartTS(),
+		operation.TableSchema,
+		operation.TableName,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, replacement := range operations {
+		if err := insertRunningStorageClassTransition(ctx, se, replacement); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := se.Commit(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	committed = true
+	return nil
+}
+
+func (m *storageClassTransitionManager) snapshot() []StorageClassTransitionStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]StorageClassTransitionStatus, 0, len(m.mu.active))
+	for _, transition := range m.mu.active {
+		transition.PhysicalTableIDs = slices.Clone(transition.PhysicalTableIDs)
+		transition.Duration = time.Since(transition.StartTime)
+		if transition.Duration < 0 {
+			transition.Duration = 0
+		}
+		result = append(result, transition)
+	}
+	slices.SortFunc(result, func(a, b StorageClassTransitionStatus) int {
+		if a.StartTime.Before(b.StartTime) {
+			return -1
+		}
+		if a.StartTime.After(b.StartTime) {
+			return 1
+		}
+		if a.TableID != b.TableID {
+			return cmp.Compare(a.TableID, b.TableID)
+		}
+		return cmp.Compare(a.Direction, b.Direction)
+	})
+	return result
+}
+
+func setCurrentStorageClassTransitionNames(
+	status *StorageClassTransitionStatus,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+) bool {
+	if dbInfo == nil || tblInfo == nil || tblInfo.ID != status.TableID {
+		return false
+	}
+	status.TableSchema = dbInfo.Name.O
+	status.TableName = tblInfo.Name.O
+	if status.PartitionID == 0 {
+		status.PartitionName = ""
+		return true
+	}
+	if tblInfo.Partition == nil {
+		return false
+	}
+	partitionName := tblInfo.Partition.GetNameByID(status.PartitionID)
+	if partitionName == "" {
+		return false
+	}
+	status.PartitionName = partitionName
+	return true
+}
+
+func storageClassTransitionSchemaPublished(latestSchemaVersion, requiredSchemaVersion int64) bool {
+	return requiredSchemaVersion > 0 && latestSchemaVersion >= requiredSchemaVersion
+}
+
+// StorageClassTransitionStatuses returns the owner-maintained active status snapshot.
+func (d *ddl) StorageClassTransitionStatuses() []StorageClassTransitionStatus {
+	statuses := d.storageClassTransitionManager.snapshot()
+	if d.infoCache == nil {
+		return nil
+	}
+	is := d.infoCache.GetLatest()
+	if is == nil {
+		return nil
+	}
+	latestSchemaVersion := is.SchemaMetaVersion()
+	resolved := statuses[:0]
+	for _, status := range statuses {
+		if !storageClassTransitionSchemaPublished(latestSchemaVersion, status.schemaVersion) {
+			continue
+		}
+		tbl, ok := is.TableByID(context.Background(), status.TableID)
+		if !ok {
+			continue
+		}
+		dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
+		if !ok || !setCurrentStorageClassTransitionNames(&status, dbInfo, tbl.Meta()) {
+			continue
+		}
+		resolved = append(resolved, status)
+	}
+	return resolved
+}
+
+func (m *storageClassTransitionManager) clear() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clear(m.mu.active)
+	clear(m.mu.observed)
+}
+
+func discoverStorageClassTransitions(
+	ctx context.Context,
+	se *sess.Session,
+) (map[storageClassTransitionKey]*storageClassTransitionOperation, error) {
+	operations, err := loadRunningStorageClassTransitions(ctx, se)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	active := make(map[storageClassTransitionKey]*storageClassTransitionOperation, len(operations))
+	for _, operation := range operations {
+		key := operation.key()
+		if _, ok := active[key]; ok {
+			return nil, errors.Errorf(
+				"duplicate storage class transition for table %d at start TSO %d in direction %s",
+				key.tableID,
+				key.startTS,
+				key.direction,
+			)
+		}
+		active[key] = operation
+	}
+	return active, nil
+}
+
+func sameStorageClassTransitionStatus(a, b StorageClassTransitionStatus) bool {
+	return a.TableID == b.TableID && a.schemaVersion == b.schemaVersion && a.startTS == b.startTS &&
+		a.PartitionID == b.PartitionID && a.Direction == b.Direction && a.StartTime.Equal(b.StartTime) &&
+		slices.Equal(a.PhysicalTableIDs, b.PhysicalTableIDs)
+}
+
+func (m *storageClassTransitionManager) setActive(
+	activeOperations map[storageClassTransitionKey]*storageClassTransitionOperation,
+) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active := make(map[storageClassTransitionKey]StorageClassTransitionStatus, len(activeOperations))
+	for key, operation := range activeOperations {
+		transition := operation.StorageClassTransitionStatus
+		if previous, ok := m.mu.observed[key]; ok && previous.StatusValid && !transition.StatusValid &&
+			sameStorageClassTransitionStatus(previous, transition) {
+			transition.TotalReplicas = previous.TotalReplicas
+			transition.CompletedReplicas = previous.CompletedReplicas
+			transition.Progress = previous.Progress
+			transition.ProgressValid = previous.ProgressValid
+			transition.LastUpdateTime = previous.LastUpdateTime
+			transition.StatusValid = true
+		}
+		active[key] = transition
+	}
+	m.mu.active = active
+	for key := range m.mu.observed {
+		if _, ok := activeOperations[key]; !ok {
+			delete(m.mu.observed, key)
+		}
+	}
+}
+
+func (m *storageClassTransitionManager) observe(
+	ctx context.Context,
+	operation *storageClassTransitionOperation,
+	tikvStores map[int64]pdhttp.StoreInfo,
+) (bool, error) {
+	var ready, total uint64
+	allTargetsObserved := true
+	for _, target := range operation.targets {
+		requestCtx, cancel := context.WithTimeout(ctx, storageClassTransitionRequestTimeout)
+		statuses, err := infosync.CollectStorageClassStatus(
+			requestCtx, target.PhysicalID, operation.target, operation.schemaVersion, tikvStores)
+		cancel()
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		var targetTotal uint64
+		for _, status := range statuses {
+			if status.Ready > status.Total {
+				return false, errors.Errorf("TiKV store %d returned ready %d greater than total %d for physical table %d",
+					status.StoreID, status.Ready, status.Total, target.PhysicalID)
+			}
+			ready += status.Ready
+			total += status.Total
+			targetTotal += status.Total
+		}
+		if targetTotal == 0 {
+			allTargetsObserved = false
+		}
+	}
+	complete := updateStorageClassTransitionProgress(operation, ready, total, allTargetsObserved)
+	operation.LastUpdateTime = time.Now()
+	operation.StatusValid = true
+	m.mu.Lock()
+	m.mu.observed[operation.key()] = operation.StorageClassTransitionStatus
+	m.mu.Unlock()
+	return complete, nil
+}
+
+func updateStorageClassTransitionProgress(
+	operation *storageClassTransitionOperation,
+	ready, total uint64,
+	allTargetsObserved bool,
+) bool {
+	operation.CompletedReplicas = ready
+	operation.TotalReplicas = total
+	operation.Progress = 0
+	operation.ProgressValid = false
+	if allTargetsObserved && total > 0 {
+		operation.Progress = float64(ready) / float64(total)
+		operation.ProgressValid = true
+	}
+	return allTargetsObserved && total > 0 && ready == total
+}
+
+func (operation *storageClassTransitionOperation) key() storageClassTransitionKey {
+	return storageClassTransitionKey{
+		tableID:   operation.TableID,
+		direction: operation.Direction,
+		startTS:   operation.startTS,
+	}
+}
+
+func completeStorageClassTransition(
+	ctx context.Context,
+	se *sess.Session,
+	operation *storageClassTransitionOperation,
+) (bool, error) {
+	finishTime := time.Now()
+	duration := finishTime.Sub(operation.StartTime)
+	if duration < 0 {
+		duration = 0
+	}
+	_, err := se.Execute(ctx,
+		`UPDATE mysql.tidb_storage_class_transition_history
+		 SET state = %?, total_replicas = %?, completed_replicas = %?, finish_time = %?, duration = %?
+		 WHERE table_id = %? AND start_ts = %? AND direction = %? AND state = %?`,
+		"complete-storage-class-transition",
+		storageClassTransitionStateCompleted,
+		operation.TotalReplicas,
+		operation.CompletedReplicas,
+		finishTime,
+		uint64(duration/time.Second),
+		operation.TableID,
+		operation.startTS,
+		operation.Direction,
+		storageClassTransitionStateRunning,
+	)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return se.GetSessionVars().StmtCtx.AffectedRows() > 0, nil
+}
+
+func pruneStorageClassTransitionHistory(ctx context.Context, se *sess.Session) error {
+	//nolint:forbidigo
+	value, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBStorageClassTransitionHistorySize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	limit, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows, err := se.Execute(ctx,
+		`SELECT finish_time, table_id, start_ts, direction
+		 FROM mysql.tidb_storage_class_transition_history
+		 WHERE state IN (%?, %?)
+		 ORDER BY finish_time DESC, table_id DESC, start_ts DESC, direction DESC
+		 LIMIT %?, 1`,
+		"find-storage-class-transition-history-prune-boundary",
+		storageClassTransitionStateCompleted,
+		storageClassTransitionStateSuperseded,
+		limit,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	if len(rows) != 1 {
+		return errors.Errorf("unexpected storage class transition history boundary rows: %d", len(rows))
+	}
+	failpoint.InjectCall("afterStorageClassTransitionHistoryPruneSnapshot")
+	finishTime := rows[0].GetTime(0).String()
+	tableID := rows[0].GetInt64(1)
+	startTS := rows[0].GetUint64(2)
+	direction := rows[0].GetString(3)
+	// The complete primary key makes this a stable retained-row boundary. An
+	// old owner repeating the delete can only revisit the same old key range;
+	// it cannot consume another batch from the retained history.
+	_, err = se.Execute(ctx,
+		`DELETE FROM mysql.tidb_storage_class_transition_history
+		 WHERE state IN (%?, %?)
+		   AND (finish_time < %?
+		     OR (finish_time = %? AND table_id < %?)
+		     OR (finish_time = %? AND table_id = %? AND start_ts < %?)
+		     OR (finish_time = %? AND table_id = %? AND start_ts = %? AND direction <= %?))`,
+		"prune-storage-class-transition-history",
+		storageClassTransitionStateCompleted,
+		storageClassTransitionStateSuperseded,
+		finishTime,
+		finishTime,
+		tableID,
+		finishTime,
+		tableID,
+		startTS,
+		finishTime,
+		tableID,
+		startTS,
+		direction,
+	)
+	return errors.Trace(err)
+}
+
+func (m *storageClassTransitionManager) poll(
+	ctx context.Context,
+	se *sess.Session,
+	pruneHistory bool,
+) (bool, error) {
+	active, err := discoverStorageClassTransitions(ctx, se)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	m.setActive(active)
+
+	historyPruneAttempted := false
+	if pruneHistory {
+		historyPruneAttempted = true
+		if err := pruneStorageClassTransitionHistory(ctx, se); err != nil {
+			logutil.DDLLogger().Warn("prune storage class transition history failed", zap.Error(err))
+		}
+	}
+	if len(active) == 0 {
+		return historyPruneAttempted, nil
+	}
+
+	is := m.ddl.infoCache.GetLatest()
+	if is == nil {
+		return historyPruneAttempted, errors.New("latest information schema is unavailable")
+	}
+	latestSchemaVersion := is.SchemaMetaVersion()
+	eligible := make(map[storageClassTransitionKey]*storageClassTransitionOperation, len(active))
+	for key, operation := range active {
+		if err := ctx.Err(); err != nil {
+			return historyPruneAttempted, err
+		}
+		if !storageClassTransitionSchemaPublished(latestSchemaVersion, operation.schemaVersion) {
+			continue
+		}
+		tbl, exists := is.TableByID(ctx, operation.TableID)
+		if !exists {
+			if _, err := supersedeStorageClassTransition(ctx, se, operation, time.Now()); err != nil {
+				logutil.DDLLogger().Warn("supersede orphaned storage class transition failed",
+					zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
+				continue
+			}
+			delete(active, key)
+			continue
+		}
+		eligible[key] = operation
+		if storageClassTransitionTargetsExist(tbl.Meta(), operation) || !storageClassTransitionTopologyIsStable(tbl.Meta()) {
+			continue
+		}
+		if err := reconcileStorageClassTransitionTopology(ctx, se, tbl.Meta(), operation, latestSchemaVersion); err != nil {
+			logutil.DDLLogger().Warn("reconcile storage class transition topology failed",
+				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
+			continue
+		}
+		delete(active, key)
+		delete(eligible, key)
+	}
+	m.setActive(active)
+	if len(eligible) == 0 {
+		return historyPruneAttempted, nil
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, storageClassTransitionRequestTimeout)
+	_, tikvStores, err := infosync.GetTiFlashProgressStores(requestCtx)
+	cancel()
+	if err != nil {
+		return historyPruneAttempted, errors.Trace(err)
+	}
+	for key, operation := range eligible {
+		if err := ctx.Err(); err != nil {
+			return historyPruneAttempted, err
+		}
+		complete, err := m.observe(ctx, operation, tikvStores)
+		if err != nil {
+			logutil.DDLLogger().Warn("storage class transition status poll failed",
+				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
+			continue
+		}
+		if !complete {
+			continue
+		}
+		if _, err := completeStorageClassTransition(ctx, se, operation); err != nil {
+			logutil.DDLLogger().Warn("complete storage class transition failed",
+				zap.Int64("tableID", key.tableID), zap.Uint64("startTS", key.startTS), zap.String("direction", key.direction), zap.Error(err))
+			continue
+		}
+		// A zero-row update means a newer DDL already superseded this row. In
+		// both cases this observation is no longer active.
+		delete(active, key)
+	}
+	m.setActive(active)
+	return historyPruneAttempted, nil
+}
+
+func (m *storageClassTransitionManager) run(ctx context.Context, sessPool *sess.Pool) {
+	defer m.clear()
+	timer := time.NewTimer(storageClassTransitionPollInterval)
+	defer timer.Stop()
+	nextHistoryPrune := time.Now().Add(storageClassTransitionPruneInterval)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		if sessPool == nil {
+			logutil.DDLLogger().Warn("session pool is unavailable for storage class transition poll")
+			timer.Reset(storageClassTransitionPollInterval)
+			continue
+		}
+		sctx, err := sessPool.Get()
+		if err != nil {
+			logutil.DDLLogger().Warn("get session for storage class transition poll failed", zap.Error(err))
+			timer.Reset(storageClassTransitionPollInterval)
+			continue
+		}
+		pollCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+		pruneHistory := !time.Now().Before(nextHistoryPrune)
+		historyPruneAttempted, err := m.poll(pollCtx, sess.NewSession(sctx), pruneHistory)
+		sessPool.Put(sctx)
+		if historyPruneAttempted {
+			nextHistoryPrune = time.Now().Add(storageClassTransitionPruneInterval)
+		}
+		if err != nil && ctx.Err() == nil {
+			logutil.DDLLogger().Warn("storage class transition poll failed", zap.Error(err))
+		}
+		timer.Reset(storageClassTransitionPollInterval)
+	}
+}

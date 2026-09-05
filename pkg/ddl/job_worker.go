@@ -104,6 +104,11 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
+	// Keep storage-class history changes pending until a batched multi-schema
+	// step is known to commit its TableInfo changes.
+	deferStorageClassTransitionStaging bool
+	pendingStorageClassTransitions     []pendingStorageClassTransition
+	sharedMultiSchemaVersion           int64
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -1103,7 +1108,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
 	case model.ActionModifyEngineAttribute:
-		ver, err = onModifyTableEngineAttribute(jobCtx, job)
+		ver, err = w.onModifyTableEngineAttribute(jobCtx, job)
 	case model.ActionRefreshMeta:
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:

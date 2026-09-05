@@ -236,6 +236,129 @@ func TestGetPDRegionStatsKeyspaceEncoding(t *testing.T) {
 	require.Equal(t, expectedEnd, keys.end, "GetPDRegionStats must encode end key with the store's codec")
 }
 
+func TestCollectStorageClassStatusWithCtx(t *testing.T) {
+	var gotPath string
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ready":7,"total":9,"schema_version":456}`))
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := helper.CollectStorageClassStatusWithCtx(
+		context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(42), 123, "STANDARD", 456)
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), status.Ready)
+	require.Equal(t, uint64(9), status.Total)
+	require.Equal(t, "/kvengine/storage_class_status", gotPath)
+	require.Equal(t, "keyspace_id=42&table_id=123&target=STANDARD&schema_version=456", gotQuery)
+
+	t.Run("zero schema version", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":0,"total":1,"schema_version":0}`))
+		}))
+		t.Cleanup(server.Close)
+		status, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA", 0)
+		require.NoError(t, err)
+		require.Equal(t, helper.StorageClassStatusResp{Ready: 0, Total: 1}, status)
+	})
+}
+
+func TestCollectStorageClassStatusWithCtxRejectsBadResponse(t *testing.T) {
+	t.Run("http status", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA", 1)
+		require.ErrorContains(t, err, "status 503")
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":`))
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA", 1)
+		require.Error(t, err)
+	})
+
+	for _, body := range []string{
+		`{"schema_version":1}`,
+		`{"ready":0,"schema_version":1}`,
+		`{"total":0,"schema_version":1}`,
+		`{"ready":null,"total":0,"schema_version":1}`,
+		`{"ready":0,"total":null,"schema_version":1}`,
+	} {
+		t.Run("missing required field "+body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := helper.CollectStorageClassStatusWithCtx(
+				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA", 1)
+			require.ErrorContains(t, err, "must contain ready and total")
+		})
+	}
+
+	for _, body := range []string{
+		`{"ready":0,"total":0}`,
+		`{"ready":0,"total":0,"schema_version":null}`,
+	} {
+		t.Run("missing schema version "+body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := helper.CollectStorageClassStatusWithCtx(
+				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA", 1)
+			require.ErrorContains(t, err, "must contain schema_version")
+		})
+	}
+
+	t.Run("schema version mismatch", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":1,"total":1,"schema_version":2}`))
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA", 1)
+		require.ErrorContains(t, err, "schema_version 2 does not match requested version 1")
+	})
+
+	t.Run("negative requested schema version", func(t *testing.T) {
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), "127.0.0.1:1", tikv.KeyspaceID(1), 2, "IA", -1)
+		require.ErrorContains(t, err, "schema version must be non-negative")
+	})
+
+	t.Run("ready greater than total", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":2,"total":1,"schema_version":1}`))
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA", 1)
+		require.ErrorContains(t, err, "ready 2 greater than total 1")
+	})
+
+	t.Run("unknown fields are allowed", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":1,"total":1,"schema_version":1,"future-field":true}`))
+		}))
+		t.Cleanup(server.Close)
+		status, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA", 1)
+		require.NoError(t, err)
+		require.Equal(t, helper.StorageClassStatusResp{Ready: 1, Total: 1}, status)
+	})
+}
+
 func TestTiKVRegionsInfo(t *testing.T) {
 	store := createMockStore(t)
 

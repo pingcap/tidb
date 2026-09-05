@@ -211,6 +211,23 @@ func TestTTLInfoClone(t *testing.T) {
 	require.Equal(t, true, ttlInfo.Enable)
 }
 
+func TestTableInfoCloneStorageClassTransitions(t *testing.T) {
+	tblInfo := &TableInfo{
+		StorageClassTransitions: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 30}},
+		Partition: &PartitionInfo{Definitions: []PartitionDefinition{{
+			ID:                      1,
+			StorageClassTransitions: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 7}},
+		}}},
+	}
+
+	cloned := tblInfo.Clone()
+	cloned.StorageClassTransitions[0].Tier = StorageClassTierStandard
+	cloned.Partition.Definitions[0].StorageClassTransitions[0].Tier = StorageClassTierStandard
+
+	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransitions[0].Tier)
+	require.Equal(t, StorageClassTierIA, tblInfo.Partition.Definitions[0].StorageClassTransitions[0].Tier)
+}
+
 func TestMaterializedViewInfoClone(t *testing.T) {
 	info := &MaterializedViewInfo{
 		BaseTableIDs:                    []int64{1, 2},

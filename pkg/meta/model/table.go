@@ -236,7 +236,7 @@ type TableInfo struct {
 
 	// StorageClassTier is the storage class tier of the table level.
 	StorageClassTier string `json:"storage_class_tier,omitempty"`
-	// StorageClassTransitions is the storage class transition rules of the table level.
+	// StorageClassTransitions are the storage class transition rules of the table level.
 	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 
 	Mode TableMode `json:"mode,omitempty"`
@@ -316,6 +316,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	if t.Affinity != nil {
 		nt.Affinity = t.Affinity.Clone()
 	}
+	nt.StorageClassTransitions = slices.Clone(t.StorageClassTransitions)
 	if t.MaterializedViewBase != nil {
 		nt.MaterializedViewBase = t.MaterializedViewBase.Clone()
 	}
@@ -1383,7 +1384,9 @@ type PartitionDefinition struct {
 	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 }
 
-// Clone clones PartitionDefinition.
+// Clone clones PartitionDefinition. InValues remains shared to avoid copying
+// potentially large LIST partition metadata in general TableInfo clone paths.
+// Callers that may modify InValues must deep-clone it separately.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = slices.Clone(ci.LessThan)

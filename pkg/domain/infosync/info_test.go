@@ -174,6 +174,53 @@ func TestTiFlashManager(t *testing.T) {
 		}
 	})
 
+	t.Run("storageClassStatusCancelsPendingRequests", func(t *testing.T) {
+		requestStarted := make(chan struct{})
+		requestCanceled := make(chan struct{})
+		schemaVersionSeen := make(chan string, 1)
+		blockingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			close(requestStarted)
+			<-r.Context().Done()
+			close(requestCanceled)
+		}))
+		defer blockingServer.Close()
+
+		failedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-requestStarted
+			schemaVersionSeen <- r.URL.Query().Get("schema_version")
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}))
+		defer failedServer.Close()
+
+		requestCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		tikvStores := map[int64]pdhttp.StoreInfo{
+			1: {
+				Store: pdhttp.MetaStore{
+					ID:            1,
+					StatusAddress: strings.TrimPrefix(failedServer.URL, "http://"),
+					StateName:     "Up",
+				},
+			},
+			2: {
+				Store: pdhttp.MetaStore{
+					ID:            2,
+					StatusAddress: strings.TrimPrefix(blockingServer.URL, "http://"),
+					StateName:     "Up",
+				},
+			},
+		}
+
+		_, err := CollectStorageClassStatus(requestCtx, 1024, model.StorageClassTierIA, 37, tikvStores)
+		require.ErrorContains(t, err, "status 503")
+		require.Equal(t, "37", <-schemaVersionSeen)
+		select {
+		case <-requestCanceled:
+		case <-time.After(time.Second):
+			t.Fatal("expected pending storage class status request to be canceled")
+		}
+	})
+
 	// DeleteTiFlashPlacementRules
 	require.NoError(t, DeleteTiFlashPlacementRules(ctx, []int64{1}))
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")

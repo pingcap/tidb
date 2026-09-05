@@ -15,14 +15,23 @@
 package ddl_test
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -924,4 +933,182 @@ func TestGetSimpleTableStorageClassForShowCreate(t *testing.T) {
 
 func stringPtr(s string) *string {
 	return &s
+}
+
+func TestStorageClassTransitionUsesSystemTableState(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY)")
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+		tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tables
+			WHERE table_schema = 'mysql' AND table_name = 'tidb_storage_class_transition_history'`).Check(testkit.Rows("0"))
+		return
+	}
+
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+	tk.MustQuery(`SELECT direction, state, total_replicas, completed_replicas, finish_time, duration,
+			schema_version > 0
+		FROM mysql.tidb_storage_class_transition_history`).Check(testkit.Rows(
+		"TO_IA RUNNING <nil> <nil> <nil> <nil> 1",
+	))
+	tk.MustQuery("SHOW COLUMNS FROM mysql.tidb_storage_class_transition_history LIKE 'progress'").Check(testkit.Rows())
+
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS STANDARD")
+	tk.MustQuery(`SELECT direction, state, COUNT(*)
+		FROM mysql.tidb_storage_class_transition_history
+		GROUP BY direction, state ORDER BY direction, state`).Check(testkit.Rows(
+		"TO_IA SUPERSEDED 1",
+		"TO_STANDARD RUNNING 1",
+	))
+
+	// Replacing a physical partition ends the old operation and starts a new
+	// one for every current physical target configured for the same tier.
+	tk.MustExec(`INSERT INTO mysql.tidb_storage_class_transition_history
+		(table_schema, table_name, table_id, partition_name, partition_id, direction,
+		 state, schema_version, start_ts, start_time, physical_targets)
+		VALUES ('test', 'history_t', 500, 'p0', 501, 'TO_IA', 'RUNNING', 1, 100,
+		 '2020-01-01 00:00:00',
+		 '[{"physical_id":501,"partition_id":501,"partition_name":"p0"}]')`)
+	tblInfo := &model.TableInfo{
+		ID:               500,
+		Name:             ast.NewCIStr("history_t"),
+		StorageClassTier: model.StorageClassTierIA,
+		Partition: &model.PartitionInfo{Definitions: []model.PartitionDefinition{
+			{ID: 502, Name: ast.NewCIStr("p0"), StorageClassTier: model.StorageClassTierIA},
+		}},
+	}
+	se := ddlsess.NewSession(tk.Session())
+	require.NoError(t, ddl.ReconcileStorageClassTransitionTopologyForTest(context.Background(), se, tblInfo))
+	tk.MustQuery(`SELECT state, COUNT(*) FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 500 GROUP BY state ORDER BY state`).Check(testkit.Rows(
+		"RUNNING 1",
+		"SUPERSEDED 1",
+	))
+	tk.MustQuery(`SELECT physical_targets FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 500 AND state = 'RUNNING'`).Check(testkit.Rows(
+		`[{"physical_id":502,"partition_id":502,"partition_name":"p0"}]`,
+	))
+
+	// Pruning by a stable row boundary is idempotent. A repeated prune from a
+	// former owner cannot consume another batch from the retained history.
+	tk.MustExec("SET GLOBAL tidb_storage_class_transition_history_size = 100")
+	for i := 0; i < 102; i++ {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_storage_class_transition_history
+			(table_schema, table_name, table_id, direction, state, schema_version, start_ts, start_time,
+			 finish_time, duration, physical_targets)
+			VALUES ('test', 'history', %d, 'TO_IA', 'COMPLETED', 1, %d,
+			 '2020-01-01 00:00:00', '2020-01-01 00:00:00', 1, '[]')`, 10000+i, i+1))
+	}
+	secondTK := testkit.NewTestKit(t, store)
+	secondSession := ddlsess.NewSession(secondTK.Session())
+	var snapshotCount atomic.Int32
+	entered := make(chan struct{}, 2)
+	releaseFirst := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	testfailpoint.EnableCall(t,
+		"github.com/pingcap/tidb/pkg/ddl/afterStorageClassTransitionHistoryPruneSnapshot",
+		func() {
+			call := snapshotCount.Add(1)
+			if call > 2 {
+				return
+			}
+			entered <- struct{}{}
+			if call == 1 {
+				<-releaseFirst
+				return
+			}
+			<-releaseSecond
+		},
+	)
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- ddl.PruneStorageClassTransitionHistoryForTest(context.Background(), se)
+	}()
+	go func() {
+		errCh <- ddl.PruneStorageClassTransitionHistoryForTest(context.Background(), secondSession)
+	}()
+	<-entered
+	<-entered
+	close(releaseFirst)
+	require.NoError(t, <-errCh)
+	close(releaseSecond)
+	require.NoError(t, <-errCh)
+	tk.MustQuery(`SELECT COUNT(*) FROM mysql.tidb_storage_class_transition_history
+		WHERE state IN ('COMPLETED', 'SUPERSEDED')`).Check(testkit.Rows("100"))
+
+	// A committed history row can become visible before the owner's InfoSchema
+	// has published the table change. Such a row must not be reconciled using
+	// the stale schema snapshot.
+	tk.MustExec("DELETE FROM mysql.tidb_storage_class_transition_history")
+	currentSchemaVersion := domain.GetDomain(tk.Session()).InfoSchema().SchemaMetaVersion()
+	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_storage_class_transition_history
+		(table_schema, table_name, table_id, direction, state, schema_version, start_ts,
+		 start_time, physical_targets)
+		VALUES ('test', 'not_published', 90001, 'TO_IA', 'RUNNING', %d, 90001,
+		 '2020-01-01 00:00:00', '[{"physical_id":90001}]')`, currentSchemaVersion+1))
+	_, err := ddl.PollStorageClassTransitionsForTest(
+		context.Background(), domain.GetDomain(tk.Session()).DDL(), se)
+	require.NoError(t, err)
+	tk.MustQuery(`SELECT state FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 90001`).Check(testkit.Rows("RUNNING"))
+
+	// Once that exact schema version is visible, normal orphan reconciliation
+	// can safely finish the row without contacting TiKV.
+	tk.MustExec(fmt.Sprintf(`UPDATE mysql.tidb_storage_class_transition_history
+		SET schema_version = %d WHERE table_id = 90001`, currentSchemaVersion))
+	_, err = ddl.PollStorageClassTransitionsForTest(
+		context.Background(), domain.GetDomain(tk.Session()).DDL(), se)
+	require.NoError(t, err)
+	tk.MustQuery(`SELECT state FROM mysql.tidb_storage_class_transition_history
+		WHERE table_id = 90001`).Check(testkit.Rows("SUPERSEDED"))
+
+	// In a multi-schema DDL, the storage-class sub-job may reuse the version
+	// generated by an earlier sub-job instead of generating its own.
+	tk.MustExec("CREATE TABLE multi_t (id INT PRIMARY KEY)")
+	var sawStorageClassSubJob, skippedStorageClassVersion atomic.Bool
+	var cancelSubJobAfterStorageClass, storageClassSubJobRan, cancelledLaterSubJob atomic.Bool
+	testfailpoint.EnableCall(t,
+		"github.com/pingcap/tidb/pkg/ddl/beforeBatchedMultiSchemaParentJobUpdate",
+		func(_ *model.Job, proxyJob *model.Job) {
+			if proxyJob.Type == model.ActionModifyEngineAttribute && proxyJob.MultiSchemaInfo != nil {
+				sawStorageClassSubJob.Store(true)
+				skippedStorageClassVersion.Store(proxyJob.MultiSchemaInfo.SkipVersion)
+				if cancelSubJobAfterStorageClass.Load() {
+					storageClassSubJobRan.Store(true)
+				}
+				return
+			}
+			if cancelSubJobAfterStorageClass.Load() && storageClassSubJobRan.Load() &&
+				!cancelledLaterSubJob.Swap(true) {
+				proxyJob.State = model.JobStateCancelled
+				proxyJob.Error = dbterror.ErrCancelledDDLJob
+			}
+		},
+	)
+	tk.MustExec("ALTER TABLE multi_t ADD COLUMN c INT, STORAGE_CLASS IA")
+	require.True(t, sawStorageClassSubJob.Load())
+	require.True(t, skippedStorageClassVersion.Load())
+	multiSchemaVersion := domain.GetDomain(tk.Session()).InfoSchema().SchemaMetaVersion()
+	tk.MustQuery(fmt.Sprintf(`SELECT schema_version = %d
+		FROM mysql.tidb_storage_class_transition_history
+		WHERE table_schema = 'test' AND table_name = 'multi_t' AND state = 'RUNNING'`, multiSchemaVersion)).Check(testkit.Rows("1"))
+
+	// If a later sub-job fails, the storage-class metadata is restored and its
+	// deferred history changes must be discarded with the same transaction.
+	tk.MustExec("CREATE TABLE multi_fail_t (id INT PRIMARY KEY)")
+	tk.MustExec("ALTER TABLE multi_fail_t STORAGE_CLASS IA")
+	cancelSubJobAfterStorageClass.Store(true)
+	require.Error(t, tk.ExecToErr("ALTER TABLE multi_fail_t STORAGE_CLASS STANDARD, ADD COLUMN c INT"))
+	require.True(t, storageClassSubJobRan.Load())
+	require.True(t, cancelledLaterSubJob.Load())
+	tk.MustQuery(`SELECT direction, state
+		FROM mysql.tidb_storage_class_transition_history
+		WHERE table_schema = 'test' AND table_name = 'multi_fail_t'
+		ORDER BY start_ts`).Check(testkit.Rows("TO_IA RUNNING"))
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+		context.Background(), ast.NewCIStr("test"), ast.NewCIStr("multi_fail_t"))
+	require.NoError(t, err)
+	require.Equal(t, model.StorageClassTierIA, tbl.Meta().StorageClassTier)
 }
