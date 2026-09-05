@@ -8747,3 +8747,14 @@ risks without claiming repository-wide parity.
   `This partition function is not allowed` diagnostic. The focused bound
   regression is live. Evidence is recorded in
   `receipts/ddl_partition_bound_collate.md`.
+- 2026-09-05 (`pkg/parser` partition VALUES arity): the parser itself now
+  reproduces Go's grammar-action arity validation (`ast.PartitionOptions.
+  Validate` -> `Clause.Validate`): plain RANGE multi/single-value and RANGE
+  COLUMNS mismatches are parse errors carrying [ddl:1657]/[ddl:1653], and
+  LIST/LIST COLUMNS row-shape mismatches carry [ddl:1653]/[ddl:1658],
+  DEFAULT-aware exactly as Go. The executor's create-table parse conversion
+  forwards coded parse errors as `ParseCoded`, so the wire code and message
+  match Go end to end (the previous relaxation that deferred these checks to
+  the DDL layer regressed the ported `TestTablePartition` rows Go marks
+  `ok: false`). Evidence is recorded in
+  `receipts/partition_values_arity_parse_errors.md`.

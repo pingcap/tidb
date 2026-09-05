@@ -142,6 +142,70 @@ fn test_table_partition_source_of_truth() {
     }
 }
 
+/// Go validates partition VALUES arity inside the grammar action itself
+/// (`PartitionOptions.Validate` -> `Clause.Validate` in `ast/ddl.go`, called
+/// from `parsePartitionOptions`), so each mismatch below is a PARSE error
+/// carrying its coded DDL errno — `parser_test.go::TestTablePartition` pins
+/// the same statements as `ok: false` (rows 6767-6778).  A regression here
+/// would silently defer the check to the DDL layer and change the observed
+/// code path.
+#[test]
+fn test_partition_values_arity_coded_parse_errors() {
+    for (sql, errno, message) in [
+        // Plain RANGE takes exactly one value: TooManyValues [ddl:1657].
+        (
+            "create table t1 (a int, b int) partition by range (a) (partition x values less than (10, 20))",
+            1657,
+            "Cannot have more than one value for this type of RANGE partitioning",
+        ),
+        // RANGE COLUMNS arity mismatches: PartitionColumnList [ddl:1653].
+        (
+            "create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2))",
+            1653,
+            "Inconsistency in usage of column lists for partitioning",
+        ),
+        (
+            "create table t1 (a int, b int) partition by range columns (a, b) (partition x values less than (10))",
+            1653,
+            "Inconsistency in usage of column lists for partitioning",
+        ),
+        (
+            "create table t1 (a int, b int) partition by range columns (a, b) (partition x values less than maxvalue)",
+            1653,
+            "Inconsistency in usage of column lists for partitioning",
+        ),
+        // LIST rows cannot be tuples under plain LIST: RowSinglePartitionField [ddl:1658].
+        (
+            "create table t1 (a int, b int) partition by list (a) (partition x values in ((10, 20)))",
+            1658,
+            "Row expressions in VALUES IN only allowed for multi-field column partitioning",
+        ),
+        // LIST COLUMNS shape mismatches: PartitionColumnList [ddl:1653].
+        (
+            "create table t1 (a int, b int) partition by list columns (a, b) (partition x values in (10, 20))",
+            1653,
+            "Inconsistency in usage of column lists for partitioning",
+        ),
+        (
+            "create table t1 (a int, b int) partition by list columns (a, b) (partition x values in (10, (20, 30)))",
+            1653,
+            "Inconsistency in usage of column lists for partitioning",
+        ),
+    ] {
+        let error = parse(sql).expect_err("Go's parser rejects this shape at parse time");
+        assert_eq!(error.errno, Some(errno), "{sql}");
+        assert_eq!(error.message, message, "{sql}");
+    }
+    // The matching-arity shapes stay parseable.
+    for sql in [
+        "create table t1 (a int, b int) partition by range columns (a, b) (partition x values less than (10, 20))",
+        "create table t1 (a int, b int) partition by list columns (a, b) (partition x values in ((10, 20)))",
+        "create table t1 (a int) partition by list (a) (partition x default)",
+    ] {
+        assert!(parse(sql).is_ok(), "{sql} must parse");
+    }
+}
+
 /// Mirrors the partition-comment payload assertion that follows the Go table.
 #[test]
 fn test_table_partition_comment_payload() {

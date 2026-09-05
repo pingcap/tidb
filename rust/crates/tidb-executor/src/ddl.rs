@@ -1005,8 +1005,17 @@ pub fn run_create_table_in(
         enable_check_constraint,
         clustered_index_mode,
     } = settings;
-    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
-        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    // A parser refusal carrying its own errno (Go raises partition arity
+    // errors like `ast.ErrPartitionColumnList` [ddl:1653] straight from the
+    // grammar action via `opt.Validate()`) keeps its coded identity on the
+    // wire; ordinary grammar failures stay the plain 1064-style parse error.
+    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode).map_err(|e| match e.errno {
+        Some(errno) => DriverError::ParseCoded {
+            errno,
+            message: e.message,
+        },
+        None => DriverError::Parse(format!("{e:?}")),
+    })?;
 
     let create = match &stmt {
         Stmt::Ddl(ddl) => match &**ddl {
