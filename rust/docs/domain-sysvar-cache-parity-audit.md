@@ -51,3 +51,16 @@ interval), `DoWriteRUStatistics`, `fetchResourceGroupStats`,
 and loop count, plus the `next_wakeup` scheduling helper. Next slices:
 `plan_replayer`, `historical_stats`, `topn_slow_query`,
 `serverinfo_syncer`.
+
+## plan_replayer slice (2026-09-05, fourth pass) — VERIFIED at function mapping
+
+`plan_replayer.rs` mirrors all 31 Go functions: the dump-file GC with
+its per-path duration rules, the plan-replayer status records
+(insert/delete plus the error and success record variants), the handle
+`SendTask`, the collector `CollectPlanReplayerTask`/`GetTasks`/
+`removeTask`, and the running-task-key claiming discipline
+(`occupyRunningTaskKey`/`releaseRunningTaskKey`/
+`checkTaskKeyFinishedBefore`). The trait ports (`RestrictedSqlExecutor`,
+directory walking, file deletion) keep the file-system and SQL effects
+injectable. Next slices: `historical_stats`, `topn_slow_query`,
+`serverinfo_syncer`.

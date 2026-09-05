@@ -371,3 +371,5 @@
 - 下轮恢复点: (1) domain 余模块: ru_stats/plan_replayer/historical_stats/topn_slow_query/serverinfo_syncer; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - domain ru_stats 切片核实(函数级全覆盖+时间桶数学含 DST UTC 往返/除零 panic 对齐), 推后续提交。
 - 下轮恢复点: (1) domain 余模块: plan_replayer/historical_stats/topn_slow_query/serverinfo_syncer; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- domain plan_replayer 切片核实(31 函数全映射: GC/状态记录/handle SendTask/collector/占用键纪律, trait 注入 FS 与 SQL 效应), 推后续提交。
+- 下轮恢复点: (1) domain 余模块: historical_stats/topn_slow_query/serverinfo_syncer; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
