@@ -266,3 +266,24 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
+
+## 2026-09-05 Rust parallel hash-aggregate warning restoration
+
+Go's `tidb_enable_parallel_hashagg_spill` `SetSession` hook emits warning
+1681 when the session switch is turned OFF, because hash-aggregate spill will
+become enabled by default. Rust now mirrors that session-only side effect;
+GLOBAL writes and ON assignments remain quiet. The focused regression pins the
+exact warning text and readback in both scopes.
+
+```text
+cargo test -p tidb-session --lib parallel_hashagg_spill_warns_only_on_session_off_like_go -- --nocapture
+# passed
+
+git diff --check
+# passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+```

@@ -469,6 +469,13 @@ impl Session {
         {
             self.warn_mpp_exchange_compression(&value);
         }
+        if !is_global
+            && assignment
+                .name
+                .eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL)
+        {
+            self.warn_parallel_hashagg_spill(&value);
+        }
         self.warn_sysvar_assignment(&assignment.name, &value);
         if is_node_wide {
             // Go's `require_secure_transport` Validation closure runs after
@@ -838,6 +845,27 @@ impl Session {
                 crate::warnings::WarningLevel::Warning,
                 1105,
                 "mpp exchange compression won't work under current mpp version 0".to_owned(),
+            );
+        }
+    }
+
+    /// Go's `tidb_enable_parallel_hashagg_spill` SetSession hook emits a
+    /// deprecation warning only when the session switch is turned OFF. GLOBAL
+    /// writes do not invoke SetSession, so the caller filters those out.
+    fn warn_parallel_hashagg_spill(&mut self, value: &str) {
+        let Some(definition) =
+            sysvar::get_sys_var(tidb_vardef::tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL)
+        else {
+            return;
+        };
+        let Ok(normalized) = definition.normalize_by_type(value, sysvar::SCOPE_SESSION) else {
+            return;
+        };
+        if normalized.value == "OFF" {
+            self.append_warning(
+                crate::warnings::WarningLevel::Warning,
+                1681,
+                "tidb_enable_parallel_hashagg_spill will be removed in the future and hash aggregate spill will be enabled by default.".to_owned(),
             );
         }
     }

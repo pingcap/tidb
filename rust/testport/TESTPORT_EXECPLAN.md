@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` parallel hash-aggregate spill
+  warning): restored Go's SESSION-only 1681 deprecation warning when
+  `tidb_enable_parallel_hashagg_spill` is turned OFF. ON and GLOBAL writes
+  remain quiet because Go's side effect lives in SetSession. The focused
+  regression checks the exact warning text, readback, and scope gates.
 - 2026-09-05 (`pkg/sessionctx/variable` MPP exchange warning): matched Go's
   `mpp_exchange_compression_mode` SESSION hook by warning with 1105 when a
   concrete mode is selected under effective MPP version 0. `UNSPECIFIED` and

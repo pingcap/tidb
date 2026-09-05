@@ -240,6 +240,50 @@ fn deprecated_compatibility_variables_match_go() {
     );
 }
 
+/// Go's `tidb_enable_parallel_hashagg_spill` SetSession hook warns when the
+/// session switch is turned OFF, but its GLOBAL assignment has no SetSession
+/// side effect and ON assignments are quiet.
+#[test]
+fn parallel_hashagg_spill_warns_only_on_session_off_like_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET SESSION tidb_enable_parallel_hashagg_spill = OFF")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1681");
+    assert_eq!(
+        warnings[0][2],
+        "tidb_enable_parallel_hashagg_spill will be removed in the future and hash aggregate spill will be enabled by default."
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@session.tidb_enable_parallel_hashagg_spill"
+        ),
+        "0"
+    );
+
+    session
+        .run("SET SESSION tidb_enable_parallel_hashagg_spill = ON")
+        .unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+
+    session
+        .run("SET GLOBAL tidb_enable_parallel_hashagg_spill = OFF")
+        .unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_enable_parallel_hashagg_spill"
+        ),
+        "0"
+    );
+}
+
 /// Go's `tidb_scatter_region` Validation accepts only the empty, `table`, and
 /// `global` modes, stores the mode lowercased, and leaves the previous value
 /// untouched after a refusal.
