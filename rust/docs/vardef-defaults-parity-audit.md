@@ -99,3 +99,13 @@ has its specific gap recorded.
   warn-only hooks (value passes unchanged, a deprecation-style warning
   the validation boundary has no sink to emit) — closed consistent with
   the recorded warning-sink gap.
+
+## init_connect execution gap (2026-09-05) — OPEN, feature-sized
+
+The variable is fully modeled for definition, SET validation and
+regression, but the bounded node never EXECUTES it: Go runs the
+init_connect statements on every new non-root connection at session
+establishment and refuses the connection when they fail. Porting needs
+a post-auth hook with SQL execution available at connect time, the
+root bypass, and the connection-refusal error mapping — a feature-sized
+slice, recorded here as the worklist item rather than improvised.

@@ -416,3 +416,5 @@
 - 下轮恢复点: (1) infoschema 切片 b 已闭→下一行为面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - funcdep 邻接面核实: FDSet API 全映射(closure 族/条件 FD/等价/常量/null 化/笛卡尔/AddFrom/唯一 id 注册), 18 模块回归+planner join 规则测试全绿; 边蕴含算法的行级深读列为条件性后续。收据已追加。
 - 下轮恢复点: (1) infoschema 切片 b/c 已闭; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- init_connect 执行缺口记录: 变量定义/SET 校验/回归齐备, 但连接建立时无执行路径(Go 对每个非 root 新连接执行, 失败拒连)——feature 级工单, 已写入 vardef 收据。
+- 下轮恢复点: (1) init_connect 执行面(连接后置钩子)立项或继续他面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
