@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/mviewutil` Go-shaped index helpers): the complete
+  two-artifact Go inventory remains unchanged and was rechecked before the
+  edit. Rust's three direct index-layout helpers no longer emit Rust-only
+  `#[must_use]` diagnostics. A deny-on-discard regression failed with exactly
+  three diagnostics on the detached pre-fix owner and passes with six
+  mviewutil tests, owner all-target check, formatting, lint, and diff checks.
+  Evidence is recorded in `receipts/util_mviewutil.md`.
 - 2026-09-06 (`pkg/util/tracing` Go-shaped return tolerance): the complete
   six-artifact inventory remains unchanged and was rechecked before the edit.
   All 32 Rust-only `#[must_use]` diagnostics in the source-shaped tracing

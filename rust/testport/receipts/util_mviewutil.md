@@ -100,3 +100,35 @@ cargo +nightly-2026-08-22 check --offline -p tidb-util
 ```
 
 No Go source changed in this batch.
+
+## Rust follow-up: Go-shaped index-helper return tolerance
+
+The complete two-artifact Go inventory remains unchanged and was rechecked
+before this edit: `BUILD.bazel` and the 154-line `util.go` source (including
+all five exported functions and both private helpers) are covered above, with
+no tests, fixtures, generated files, or platform variants. The Rust owner has
+three source-shaped index-layout helpers corresponding directly to Go's
+`FindVisibleIndexWithPrefixCoveringColumns`,
+`FindVisibleIndexesWithPrefixCoveringColumns`, and
+`HasIndexWithPrefixCoveringColumns`.
+
+Their Rust-only `#[must_use]` diagnostics are removed. A focused in-module
+regression discards all three returns under `#[deny(unused_must_use)]`, while
+the existing five behavioral tests remain unchanged.
+
+Pre-fix proof: the detached pre-fix owner failed to compile the regression with
+exactly three `unused return value` diagnostics. After removing the
+annotations, the focused test and all six mviewutil tests pass.
+
+Ready validation:
+
+- `OPENSSL_DIR=... OPENSSL_STATIC=1 CARGO_TARGET_DIR=... cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib 'mviewutil::tests::index_helpers_returns_may_be_ignored_like_go' -- --exact --nocapture` — passed.
+- `cargo ... test -p tidb-util --lib 'mviewutil::tests' -- --nocapture --test-threads=1` — passed; 6 tests.
+- `cargo ... check -p tidb-util --all-targets` passed.
+- Pinned Rust formatting, repository `make lint`, and `git diff --check` —
+  passed.
+
+Correctness risk is limited to compile-time diagnostics; index selection and
+materialized-view validation are unchanged. Compatibility is improved because
+Rust callers may ignore returns exactly as Go callers can. No runtime or
+performance-sensitive behavior changed.

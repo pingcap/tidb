@@ -107,7 +107,6 @@ pub fn check_materialized_view_select(query: &QueryStmt) -> Result<(), TerrorErr
 
 /// Go `FindVisibleIndexWithPrefixCoveringColumns`: returns the first public
 /// visible key layout usable by MIN/MAX materialized-view refresh.
-#[must_use]
 pub fn find_visible_index_with_prefix_covering_columns(
     base_table_info: Option<&TableInfo>,
     group_by_cols: &[String],
@@ -119,7 +118,6 @@ pub fn find_visible_index_with_prefix_covering_columns(
 
 /// Go `FindVisibleIndexesWithPrefixCoveringColumns`: returns all public
 /// visible key layouts usable by MIN/MAX materialized-view refresh.
-#[must_use]
 pub fn find_visible_indexes_with_prefix_covering_columns(
     base_table_info: Option<&TableInfo>,
     group_by_cols: &[String],
@@ -131,7 +129,6 @@ pub fn find_visible_indexes_with_prefix_covering_columns(
 /// key layout whose leading columns cover all group-by columns without
 /// prefix length. `excluded_index_name` is used by DDL checks to evaluate a
 /// post-DDL table shape where that index should not be considered.
-#[must_use]
 pub fn has_index_with_prefix_covering_columns(
     base_table_info: Option<&TableInfo>,
     group_by_cols: &[String],
@@ -421,5 +418,14 @@ mod tests {
             "primary",
             true,
         ));
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn index_helpers_returns_may_be_ignored_like_go() {
+        let table = TableInfo::default();
+        find_visible_index_with_prefix_covering_columns(Some(&table), &[]);
+        find_visible_indexes_with_prefix_covering_columns(Some(&table), &[]);
+        has_index_with_prefix_covering_columns(Some(&table), &[], "", true);
     }
 }
