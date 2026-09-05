@@ -104,6 +104,8 @@ pub const PRUNABLE_MEM_TABLES: &[&str] = &[
     "CLUSTER_DEADLOCKS",
     // `infoschema.TableTables`
     "TABLES",
+    // `infoschema.TablePartitions`
+    "PARTITIONS",
 ];
 
 /// What the ported `LogicalMemTable` bodies read off a `*model.ColumnInfo`.

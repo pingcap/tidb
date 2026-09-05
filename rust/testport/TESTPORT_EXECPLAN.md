@@ -8371,3 +8371,10 @@ risks without claiming repository-wide parity.
   then passed with Go's 1071 errors for sums 3100 and 3079. Evidence and the
   package inventory boundary are recorded in
   `receipts/ddl_alter_column_index_length.md`.
+- 2026-09-05 (`pkg/planner/core/operator/logicalop` PARTITIONS pruning): Rust's
+  `LogicalMemTable` allow-list now includes `information_schema.PARTITIONS`,
+  matching Go `65ac2fad58`. The focused pruning regression keeps the schema and
+  table-column vectors aligned when only `TABLE_ROWS` is retained, allowing the
+  already-aligned physical stats detector to skip histogram reads. The complete
+  43-artifact logical-operator inventory and Ready evidence are recorded in
+  `receipts/planner_mem_table_partitions.md`.

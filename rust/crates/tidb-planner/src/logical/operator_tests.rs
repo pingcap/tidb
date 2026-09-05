@@ -3566,6 +3566,7 @@ fn mem_table_prunes_only_the_listed_tables_and_keeps_one_column() {
     let mut other = mem_table("COLUMNS");
     assert!(!other.is_prunable());
     assert!(mem_table("tables").is_prunable());
+    assert!(mem_table("partitions").is_prunable());
     let mut mem_schema = schema(&[1, 2, 3]);
     assert!(other
         .prune_columns(&mut mem_schema, &[column(1)])
@@ -3605,6 +3606,40 @@ fn mem_table_prunes_only_the_listed_tables_and_keeps_one_column() {
     // Nothing used at all still leaves the single remaining column.
     assert!(slow.prune_columns(&mut mem_schema, &[]).is_empty());
     assert_eq!(mem_schema.len(), 1);
+
+    // Go added PARTITIONS to the same allow-list so a TABLE_ROWS-only
+    // information-schema query can prune the size columns before the physical
+    // stats detector decides whether histogram data is needed.
+    let mut partitions = mem_table("PARTITIONS");
+    partitions.columns = vec![
+        MemTableColumn {
+            id: 10,
+            name: "TABLE_NAME".to_owned(),
+        },
+        MemTableColumn {
+            id: 11,
+            name: "TABLE_ROWS".to_owned(),
+        },
+        MemTableColumn {
+            id: 12,
+            name: "DATA_LENGTH".to_owned(),
+        },
+    ];
+    let mut partition_schema = schema(&[10, 11, 12]);
+    assert_eq!(
+        partitions.prune_columns(&mut partition_schema, &[column(11)]),
+        vec![2, 0]
+    );
+    assert_eq!(
+        partition_schema
+            .columns
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![11]
+    );
+    assert_eq!(partitions.columns.len(), 1);
+    assert_eq!(partitions.columns[0].name, "TABLE_ROWS");
 }
 
 /// Go `LogicalMemTable.PushDownTopN` (`logical_mem_table.go:114`),
