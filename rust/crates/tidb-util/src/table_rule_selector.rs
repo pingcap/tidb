@@ -249,7 +249,6 @@ struct TrieState<R> {
 
 impl<R: Clone> TrieSelector<R> {
     /// Returns a new trie selector.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: RwLock::new(TrieState::new()),
@@ -1225,6 +1224,12 @@ mod tests {
         let (out_schemas, out_tables) = s.all_rules();
         assert_eq!(&out_schemas, expected_schema_rules);
         assert_eq!(&out_tables, expected_table_rules);
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        TrieSelector::<Rule>::new();
     }
 
     // Go `TestSelector` — runs the sub-tests in order over one selector, sharing

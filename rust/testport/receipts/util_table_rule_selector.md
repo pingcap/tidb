@@ -42,9 +42,15 @@ already-audited `pkg/util/column-mapping`; both duplicate public modules and
 their tests are removed. All retained filter, router, and column-mapping
 consumers use the `tidb-util` owner.
 
+The source-shaped `TrieSelector::new` constructor also carried one explicit
+Rust-only `#[must_use]` diagnostic. The focused
+`return_values_may_be_ignored_like_go` regression discards it under
+`#[deny(unused_must_use)]`: the detached pre-fix owner failed with exactly one
+diagnostic, and the corrected owner passes.
+
 ## Validation
 
-Profile: WIP; this is one completed package within the continuing repository
+Profile: Ready for this focused parity fix within the continuing repository
 audit, not a repository-wide readiness claim.
 
 - `go test ./pkg/util/table-rule-selector` — passed.
@@ -57,6 +63,10 @@ audit, not a repository-wide readiness claim.
 - `cargo check -p tidb-exec --lib --locked` — passed.
 - `cargo check -p tidb-session --lib --locked` — passed.
 - `cargo fmt --all -- --check` and `git diff --check` — passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib table_rule_selector::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed after the one-error pre-fix failure.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib 'table_rule_selector::tests' -- --test-threads=1` — passed; 3 tests including the discard-contract regression.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed as the Ready gate.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
