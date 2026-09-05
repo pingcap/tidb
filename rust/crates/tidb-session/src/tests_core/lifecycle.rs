@@ -213,6 +213,9 @@ fn either_plan_replayer_capture_switch_enables_statement_statistics_capture() {
         .plan_replayer_capture_enabled());
 
     session
+        .run("SET GLOBAL tidb_enable_historical_stats = ON")
+        .unwrap();
+    session
         .run("SET @@tidb_enable_plan_replayer_continuous_capture = ON")
         .unwrap();
     assert!(session

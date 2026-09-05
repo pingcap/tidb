@@ -840,6 +840,22 @@ impl GlobalSysvars {
                 )));
             }
         }
+        // Go's plan-replayer continuous-capture Validation refuses ON until
+        // the GLOBAL historical-stats switch is enabled. The closure reads
+        // the pending shared image, so validate against this table rather
+        // than a process singleton.
+        if key == "tidb_enable_plan_replayer_continuous_capture"
+            && validated.value == "ON"
+            && !self.global_bool_value(
+                "tidb_enable_historical_stats",
+                false,
+            )
+        {
+            return Err(VarError::ValidationRefused(
+                "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
+                    .to_owned(),
+            ));
+        }
         if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
             OptimizerFixControl::parse(&validated.value)
                 .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
@@ -2606,6 +2622,19 @@ impl SessionVars {
             return Err(VarError::WrongValueForVar(
                 "tidb_enforce_mpp".to_owned(),
                 "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.".to_owned(),
+            ));
+        }
+        // The session Validation uses the same GLOBAL historical-stats
+        // prerequisite as the shared writer above.
+        if key == "tidb_enable_plan_replayer_continuous_capture"
+            && validated.value == "ON"
+            && self
+                .get_system("tidb_enable_historical_stats")
+                .map_or(true, |value| value != "ON")
+        {
+            return Err(VarError::ValidationRefused(
+                "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
+                    .to_owned(),
             ));
         }
         let parsed_fix_control = if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {

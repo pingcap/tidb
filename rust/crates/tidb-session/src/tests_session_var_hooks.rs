@@ -632,6 +632,64 @@ fn partition_prune_mode_updates_and_warns_like_go() {
     );
 }
 
+/// Go's continuous plan-replayer capture validation requires the GLOBAL
+/// historical-stats switch before either SESSION or GLOBAL capture is enabled.
+#[test]
+fn continuous_plan_replayer_capture_requires_historical_stats() {
+    let mut session = Session::new();
+
+    let error = session
+        .run("SET SESSION tidb_enable_plan_replayer_continuous_capture = ON")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@session.tidb_enable_plan_replayer_continuous_capture"
+        ),
+        "0"
+    );
+
+    let error = session
+        .run("SET GLOBAL tidb_enable_plan_replayer_continuous_capture = ON")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
+    );
+
+    session
+        .run("SET GLOBAL tidb_enable_historical_stats = ON")
+        .unwrap();
+    session
+        .run("SET SESSION tidb_enable_plan_replayer_continuous_capture = ON")
+        .unwrap();
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@session.tidb_enable_plan_replayer_continuous_capture"
+        ),
+        "1"
+    );
+    session
+        .run("SET GLOBAL tidb_enable_plan_replayer_continuous_capture = ON")
+        .unwrap();
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_enable_plan_replayer_continuous_capture"
+        ),
+        "1"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.

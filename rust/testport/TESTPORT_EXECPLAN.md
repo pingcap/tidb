@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` continuous plan-replayer capture
+  prerequisite): matched Go's 1105 refusal when
+  `tidb_enable_plan_replayer_continuous_capture=ON` is attempted before
+  GLOBAL `tidb_enable_historical_stats`, for both SESSION and GLOBAL writes.
+  The focused regression verifies refusal/readback and success after enabling
+  historical stats; the lifecycle fixture now enables the prerequisite first.
 - 2026-09-05 (`pkg/sessionctx/variable` partition-prune mode): matched Go's
   `static-only`/`dynamic-only` upgrades and SESSION/GLOBAL transition warnings,
   including the two 1105 reminders emitted when a SESSION value changes from
