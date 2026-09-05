@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` sequence CREATE privilege): closed the final
+  sequence-create row by adding the missing `DdlStmt::CreateSequence` table
+  privilege request in `tidb-session`'s ordinary DDL visit-info dispatch.
+  The focused grant regression now returns Go's exact 1142 denial before a
+  schema `CREATE` grant and succeeds after the positive control grant; the
+  empty executor `#[ignore]` placeholder was removed and b110 records the
+  cross-crate owner inventory.
 - 2026-09-05 (`pkg/ddl` sequence cache bounds): promoted the previously
   ignored `GetSequenceBaseEndRound` contract. The existing non-mutating Rust
   `SequenceAllocator::base_end_round` accessor is now exercised through the

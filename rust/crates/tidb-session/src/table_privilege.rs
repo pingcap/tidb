@@ -451,6 +451,10 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
         DdlStmt::DropIndex(drop) => one(&drop.table, GlobalPriv::Index),
         // Around line 5487.
         DdlStmt::CreateView(create) => one(&create.name, GlobalPriv::CreateView),
+        // `resolveCreateSequenceStmt` (`planbuilder.go` around line 5398)
+        // records the same table-scoped CREATE privilege as CREATE TABLE and
+        // carries the sequence name in the 1142 auth error.
+        DdlStmt::CreateSequence(create) => one(&create.name, GlobalPriv::Create),
         _ => Vec::new(),
     }
 }

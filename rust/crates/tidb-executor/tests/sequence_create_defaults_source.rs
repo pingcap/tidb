@@ -16,10 +16,8 @@
 //! `pkg/ddl/sequence_test.go:32`). The DDL half runs against the transcreated
 //! `CREATE SEQUENCE` carrier (`src/ddl_sequence.rs`, mirroring Go
 //! `pkg/ddl/sequence.go`'s option handling and `pkg/ddl/executor.go`'s
-//! sequence job); the rows whose observable behavior lives in the planner
-//! preprocessor or the privilege system are recorded as `#[ignore]` gap
-//! tests with the contract re-derived from the Go source. Nothing is
-//! approximated.
+//! sequence job). Planner and privilege rows use their ordinary Rust carriers
+//! (`tidb-executor` and `tidb-session` respectively); nothing is approximated.
 
 use tidb_executor::{run_create_sequence_in, Catalog, DriverError};
 
@@ -145,15 +143,4 @@ fn create_sequence_accepts_a_comment_option() {
         "CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 \
          increment by 1 cache 1000 nocycle ENGINE=InnoDB COMMENT='test'"
     );
-}
-
-/// Go rows `pkg/ddl/sequence_test.go:77-93`: a user granted only `select` on
-/// `test.*` is denied `create sequence my_seq` with
-/// `[planner:1142]CREATE command denied to user 'myuser'@'localhost' for
-/// table 'my_seq'`.
-// go-parity-gap: no privilege/authorization carrier (planner privilege
-// check and `session.Auth` are not transcreated in this tier).
-#[test]
-#[ignore]
-fn create_sequence_requires_create_privilege() {
 }
