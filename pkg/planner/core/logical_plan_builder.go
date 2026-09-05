@@ -3435,7 +3435,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 			}
 		}
 		return n, true
-	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
+	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName, *ast.PositionExpr:
 	default:
 		g.inExpr = true
 	}
@@ -3498,6 +3498,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			}
 			g.err = plannererrors.ErrWrongGroupField.GenWithStackByArgs(fieldName)
 			return inNode, false
+		}
+		if !g.inExpr {
+			g.selectFieldIdx = pos - 1
 		}
 		return ret, true
 	case *ast.ValuesExpr:
