@@ -315,6 +315,98 @@ pub(crate) fn locate(
     Ok(Datum::Int(found.map_or(0, |index| index as i64 + 1)))
 }
 
+/// `LOCATE(substr, str, pos)` — the three-argument signatures
+/// `builtinLocate3ArgsSig` (bytes, under a binary collation) and
+/// `builtinLocate3ArgsUTF8Sig` (characters, under any other collation)
+/// (`pkg/expression/builtin_string.go:1615/:1660`).
+///
+/// Go converts the 1-based `pos` to a 0-based index BEFORE the bounds check;
+/// `pos < 1` (0-based negative) or `pos` beyond `len - needle_len` answers 0,
+/// and an empty needle answers `pos` itself (reported 1-based). Under a
+/// case-insensitive collation Go lowers BOTH strings with `strings.ToLower`
+/// before the rune-count bounds, so the bounds apply to the lowered lengths.
+/// Matching in the slice is by the function's collator — which the 2-arg
+/// path already relies on — so a folding collation finds a case-folded
+/// occurrence exactly as it does without a start position.
+pub(crate) fn locate_with_position(
+    vals: &[Datum],
+    collation: tidb_datatype::Collation,
+) -> Result<Datum, EvalError> {
+    let [substr, str, pos] = vals else {
+        return Err(EvalError::Unsupported("bad LOCATE arity"));
+    };
+    // Go evaluates substr, str, then pos, and isNull on ANY of them is the
+    // NULL result (the Int signatures return `0, true, nil`).
+    let binary = collation == tidb_datatype::Collation::Binary;
+    let needle_opt = if binary {
+        coerce_str_bytes(substr)?.map(|bytes| bytes.to_vec())
+    } else {
+        coerce_str(substr)?.map(|text| text.into_bytes())
+    };
+    let hay_opt = if binary {
+        coerce_str_bytes(str)?.map(|bytes| bytes.to_vec())
+    } else {
+        coerce_str(str)?.map(|text| text.into_bytes())
+    };
+    let (Some(needle), Some(hay)) = (needle_opt, hay_opt) else {
+        return Ok(Datum::Null);
+    };
+    let Some(position) = crate::arg_eval_type::eval_int(pos)? else {
+        return Ok(Datum::Null);
+    };
+    // Transfer the 1-based argument to a 0-based index.
+    let start = position - 1;
+
+    if binary {
+        if start < 0 || start > hay.len() as i64 - needle.len() as i64 {
+            return Ok(Datum::Int(0));
+        }
+        if needle.is_empty() {
+            return Ok(Datum::Int(start + 1));
+        }
+        let found = hay[start as usize..]
+            .windows(needle.len())
+            .position(|window| window == needle.as_slice());
+        return Ok(Datum::Int(
+            found.map_or(0, |index| start + index as i64 + 1),
+        ));
+    }
+
+    // Under a case-insensitive collation Go lowers both strings BEFORE the
+    // rune-count bounds, using `strings.ToLower` (the same simple mapping
+    // `tidb_mysql::to_lowercase` ports).
+    let lower = tidb_datatype::is_ci_collation(collation.name());
+    let (needle, hay) = if lower {
+        (
+            tidb_mysql::to_lowercase(&String::from_utf8_lossy(&needle)).into_bytes(),
+            tidb_mysql::to_lowercase(&String::from_utf8_lossy(&hay)).into_bytes(),
+        )
+    } else {
+        (needle, hay)
+    };
+    let needle = String::from_utf8(needle)
+        .map_err(|_| EvalError::Unsupported("invalid UTF-8 LOCATE needle"))?;
+    let hay = String::from_utf8(hay)
+        .map_err(|_| EvalError::Unsupported("invalid UTF-8 LOCATE haystack"))?;
+    let needle: Vec<char> = needle.chars().collect();
+    let hay: Vec<char> = hay.chars().collect();
+    if start < 0 || start > hay.len() as i64 - needle.len() as i64 {
+        return Ok(Datum::Int(0));
+    }
+    if needle.is_empty() {
+        return Ok(Datum::Int(start + 1));
+    }
+    let slice: String = hay[start as usize..].iter().collect();
+    let window = needle.iter().collect::<String>();
+    for offset in 0..=(slice.chars().count() - needle.len()) {
+        let candidate: String = slice.chars().skip(offset).take(needle.len()).collect();
+        if collation.compare(candidate.as_bytes(), window.as_bytes()) == std::cmp::Ordering::Equal {
+            return Ok(Datum::Int(start + offset as i64 + 1));
+        }
+    }
+    Ok(Datum::Int(0))
+}
+
 /// The collation `LOCATE`/`INSTR` derive when no derivation pass ran: Go's
 /// aggregate is `binary` as soon as one string argument is binary.
 pub(crate) fn locate_collation(substr: &Datum, str: &Datum) -> tidb_datatype::Collation {

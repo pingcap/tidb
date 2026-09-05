@@ -2058,12 +2058,38 @@ impl ScalarFunction {
         {
             let collation = self.derived_collation();
             match name {
-                // `LOCATE(substr, str)` / `INSTR(str, substr)`: the same
-                // 1-indexed position with the arguments swapped.
-                "locate" | "instr" if self.args.len() == 2 => {
-                    let (a, b) = (self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?);
-                    let (haystack, needle) = if name == "locate" { (&b, &a) } else { (&a, &b) };
-                    return crate::string_fn::locate(needle, haystack, collation);
+                // `LOCATE(substr, str[, pos])` / `INSTR(str, substr)`: the
+                // same 1-indexed position; INSTR swaps its arguments
+                // internally. The three-argument form is LOCATE-only (Go has
+                // no position signature for INSTR) and takes its arguments
+                // UNSWAPPED, starting the search at `pos`
+                // (`builtinLocate3Args{,UTF8}Sig`).
+                "locate" if matches!(self.args.len(), 2 | 3) => {
+                    let substr = self.args[0].eval(ctx, row)?;
+                    let str = self.args[1].eval(ctx, row)?;
+                    if self.args.len() == 3 {
+                        // Go declares the position `types.ETInt`, so
+                        // `newBaseBuiltinFuncWithTp` wraps it in
+                        // `WrapWithCastAsInt` — the same boundary the wrap
+                        // layer applies (`cast_arg_as_int`), applied here
+                        // because this arm returns before that pass.
+                        let position = self.args[2].eval(ctx, row)?;
+                        let position = crate::cast::cast_arg_as_int(
+                            &position,
+                            self.args[2].static_type().as_deref(),
+                            ctx,
+                        )?;
+                        return crate::string_fn::locate_with_position(
+                            &[substr, str, position],
+                            collation,
+                        );
+                    }
+                    return crate::string_fn::locate(&substr, &str, collation);
+                }
+                "instr" if self.args.len() == 2 => {
+                    let a = self.args[0].eval(ctx, row)?;
+                    let b = self.args[1].eval(ctx, row)?;
+                    return crate::string_fn::locate(&b, &a, collation);
                 }
                 "strcmp" if self.args.len() == 2 => {
                     let vals = [self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?];

@@ -1976,7 +1976,7 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `SetTiFlashReplicaArgs` (and its `SkipColumnarStorageGate` field) has no
   Rust owner yet. Receipt: `receipts/meta_model_materialized_view.md`.
   This batch's ExecPlan edit also repaired the stacked conflict markers
-  (`<<<<<<< HEAD` ×8) that a prior parallel rebase committed into this
+  (` ×8) that a prior parallel rebase committed into this
   file; the duplicated journal entries were deduplicated, no content lost.
 
 - 2026-09-03 (parity sweep, worktree `~/Documents/GitHub/tidb-parity-sweep`,
@@ -8940,3 +8940,11 @@ risks without claiming repository-wide parity.
   `VERSION()` remain on the default. Focused resolver and 13-case session
   collation regressions plus Ready evidence are recorded in
   `receipts/planner_connection_collation.md`.
+- 2026-09-05 (`pkg/expression` 3-arg LOCATE): `LOCATE(substr, str, pos)` now
+  ports both three-argument signatures — 0-based position bounds before the
+  empty-needle answer, character vs byte units by collation, CI lowering
+  before the bounds, and the ETInt cast of the position applied in the arm
+  exactly where Go's builder applies it. The name previously fell through to
+  the generic fallback despite the registry and ETInt mask declaring it.
+  Evidence is recorded in `receipts/locate_three_args.md`.
+>>>>>>> f5809f0a36 (expr: port the three-argument LOCATE signatures)

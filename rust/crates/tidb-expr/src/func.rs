@@ -22,8 +22,9 @@ use crate::row::row_compare;
 use crate::string_fn::{
     ascii, bin, bit_count, bit_length, case_convert, char_func_with_context, concat_with_context,
     concat_ws_with_context, elt, export_set, field, format_num, from_base64,
-    from_base64_with_packet_limit, hex, locate, locate_collation, make_set, oct, ord, quote,
-    replace, reverse, str_insert, str_take, strcmp, substring, substring_index, unhex,
+    from_base64_with_packet_limit, hex, locate, locate_collation, locate_with_position, make_set,
+    oct, ord, quote, replace, reverse, str_insert, str_take, strcmp, substring, substring_index,
+    unhex,
 };
 use crate::string_packet::{pad, repeat, space, to_base64};
 use crate::time_fn::calendar::{date_add, date_diff, date_format, date_part, from_days, time_part};
@@ -757,6 +758,9 @@ pub(crate) fn eval_func_values(
         // not-found rules).
         "LOCATE" if vals.len() == 2 => {
             locate(&vals[0], &vals[1], locate_collation(&vals[0], &vals[1]))
+        }
+        "LOCATE" if vals.len() == 3 => {
+            locate_with_position(vals, locate_collation(&vals[0], &vals[1]))
         }
         "INSTR" if vals.len() == 2 => {
             locate(&vals[1], &vals[0], locate_collation(&vals[0], &vals[1]))

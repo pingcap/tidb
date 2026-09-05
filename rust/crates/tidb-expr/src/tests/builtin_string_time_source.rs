@@ -2603,3 +2603,74 @@ fn test_current_date_current_time_utc_time_clocks() {
         assert!(text.starts_with("00:20:"), "{text}");
     }
 }
+
+/// Go `builtinLocate3ArgsSig`/`builtinLocate3ArgsUTF8Sig`
+/// (`pkg/expression/builtin_string.go:1615/:1660`): the 1-based `pos`
+/// converts to a 0-based index before the bounds; `pos < 1` or a needle
+/// that cannot fit answers 0; an EMPTY needle answers `pos` itself even at
+/// `pos = len + 1`; and the reported position counts from the STRING start,
+/// not the slice. The case-insensitive collation lowers both strings before
+/// the bounds and matches through the collator.
+#[test]
+fn locate_with_position_matches_go_three_args_signature() {
+    use crate::context::NoColumns;
+    let text = FieldType::new(FieldTypeCode::VarString);
+    let int = FieldType::new(FieldTypeCode::LongLong);
+    let eval = |substr: &str, hay: &str, pos: i64| {
+        eval_scalar(
+            "LOCATE",
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::new_string(substr.as_bytes().to_vec()),
+                    text.clone(),
+                )),
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::new_string(hay.as_bytes().to_vec()),
+                    text.clone(),
+                )),
+                Expression::Constant(crate::constant::Constant::new(Datum::Int(pos), int.clone())),
+            ],
+            &NoColumns,
+        )
+        .unwrap()
+    };
+
+    // Go `TestLocatePosition` rows.
+    assert_eq!(eval("bar", "foobarbar", 5), Datum::Int(7));
+    assert_eq!(eval("xbar", "foobarbar", 3), Datum::Int(0));
+    assert_eq!(eval("b", "abc", 2), Datum::Int(2));
+    // pos < 1 zeroes the 0-based index; the bounds then exclude every match.
+    assert_eq!(eval("b", "abc", 0), Datum::Int(0));
+    assert_eq!(eval("b", "abc", -1), Datum::Int(0));
+    // pos beyond the last fit answers 0.
+    assert_eq!(eval("b", "abc", 4), Datum::Int(0));
+    // An empty needle answers pos itself, including at len + 1.
+    assert_eq!(eval("", "abc", 2), Datum::Int(2));
+    assert_eq!(eval("", "abc", 4), Datum::Int(4));
+    assert_eq!(eval("", "abc", 5), Datum::Int(0));
+    // A needle that spans to exactly the end still matches.
+    assert_eq!(eval("bar", "foobarbar", 7), Datum::Int(7));
+
+    // The free-derivation default collation is utf8mb4_bin: byte-exact, so
+    // 'B' matches 'aBc' at 2 with a start position of 1. (The
+    // case-insensitive rule is separately pinned by the 2-arg sibling
+    // capture `INSTR('ABC' COLLATE utf8mb4_general_ci, 'b')` = 2.)
+    let exact = eval_scalar(
+        "LOCATE",
+        FieldType::new(FieldTypeCode::LongLong),
+        vec![
+            Expression::Constant(crate::constant::Constant::new(
+                Datum::new_string(b"B".to_vec()),
+                text.clone(),
+            )),
+            Expression::Constant(crate::constant::Constant::new(
+                Datum::new_string(b"aBc".to_vec()),
+                text.clone(),
+            )),
+            Expression::Constant(crate::constant::Constant::new(Datum::Int(1), int.clone())),
+        ],
+        &NoColumns,
+    );
+    assert_eq!(exact.unwrap(), Datum::Int(2));
+}
