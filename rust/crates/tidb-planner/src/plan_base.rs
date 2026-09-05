@@ -49,6 +49,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use tidb_datatype::FieldName;
 use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
+use tidb_expr::EvalError;
 
 use crate::stats_info::StatsInfo;
 
@@ -268,10 +269,11 @@ impl BasePlan {
 
 /// The `error` half of every fallible plan-interface method.
 ///
-/// Go raises these through `plannererrors.ErrInternal.GenWithStack` and
-/// `errors.Errorf`; both are message-only at the interface boundary, and the
-/// code mapping belongs to the `plannererrors` catalogue rather than to the
-/// plan tree.
+/// Go raises most of these through `plannererrors.ErrInternal.GenWithStack`
+/// and `errors.Errorf`; those remain message-only at the interface boundary.
+/// Expression errors are the deliberate exception: their typed variant is
+/// retained so the executor can map client-visible MySQL codes (for example
+/// `charset.ErrCollationCharsetMismatch`) after planning.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlanError {
     kind: PlanErrorKind,
@@ -281,6 +283,11 @@ pub struct PlanError {
 /// The planner error classes whose MySQL identity survives the plan boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlanErrorKind {
+    /// An expression error whose MySQL identity must survive the planner
+    /// boundary (for example Go's 1253 collation/charset mismatch). Keeping
+    /// the typed error avoids turning it into generic 1105 merely because
+    /// plan construction crossed crates.
+    Eval(EvalError),
     /// Go `plannererrors.ErrInternal` and message-only planner failures.
     Internal,
     /// Go `infoschema.ErrDatabaseNotExists` / `ErrBadDB`.
@@ -320,6 +327,15 @@ pub enum PlanErrorKind {
 }
 
 impl PlanError {
+    /// An expression error that must retain its typed client-facing identity.
+    #[must_use]
+    pub fn eval(error: EvalError) -> Self {
+        Self {
+            message: format!("{error:?}"),
+            kind: PlanErrorKind::Eval(error),
+        }
+    }
+
     /// Go `plannererrors.ErrInternal.GenWithStack(msg)`.
     #[must_use]
     pub fn internal(message: impl Into<String>) -> Self {

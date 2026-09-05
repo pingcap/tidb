@@ -452,6 +452,9 @@ pub(super) fn run_physical_set_opr_stmt(
 
 pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError) -> DriverError {
     match error.kind() {
+        tidb_planner::plan_base::PlanErrorKind::Eval(eval) => {
+            DriverError::Exec(ExecError::Eval(eval.clone()))
+        }
         tidb_planner::plan_base::PlanErrorKind::UnknownDatabase(database) => {
             DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
         }

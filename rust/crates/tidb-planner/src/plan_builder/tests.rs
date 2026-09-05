@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use tidb_ast::{Expr, SelectStmt, Stmt};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, SessionTimeZone};
 use tidb_expr::expression::Expression;
-use tidb_expr::{Columns, ZonedNoColumns};
+use tidb_expr::{Columns, EvalError, ZonedNoColumns};
 
 use super::catalog::{SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, TableSource};
 use super::marker::{MarkerKind, PlanMarker};
@@ -1441,6 +1441,18 @@ fn test_rewrite_error_flattens_into_plan_error() {
 
     let error: PlanError = RewriteError::OperandColumns(2).into();
     assert!(error.message().contains("2 column(s)"));
+}
+
+#[test]
+fn an_eval_error_keeps_its_typed_plan_kind() {
+    use crate::plan_base::{PlanError, PlanErrorKind};
+
+    let eval = EvalError::CollationCharsetMismatch {
+        collation: "latin1_bin".to_owned(),
+        charset: "utf8mb4".to_owned(),
+    };
+    let error: PlanError = eval.clone().into();
+    assert_eq!(error.kind(), &PlanErrorKind::Eval(eval));
 }
 
 impl Harness {

@@ -8917,3 +8917,10 @@ risks without claiming repository-wide parity.
   both positive and negative diagnostics. Focused direct and session
   regressions plus Ready evidence are recorded in
   `receipts/expression_real_unsigned_cast_warning.md`.
+- 2026-09-06 (`pkg/planner/core` COLLATE error propagation): Rust now retains
+  typed expression errors across the planner boundary instead of flattening
+  them into generic 1105. A `COLLATE latin1_bin` applied to a utf8mb4 literal
+  therefore reaches the client as Go's 1253
+  `COLLATION 'latin1_bin' is not valid for CHARACTER SET 'utf8mb4'`. Focused
+  planner-kind and end-to-end session regressions plus Ready evidence are
+  recorded in `receipts/session_collation_error_mapping.md`.

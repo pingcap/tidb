@@ -98,10 +98,9 @@
 //! [`PlanError`] is the crate's plan-side error and what
 //! [`crate::logical::rule`] already returns; [`RewriteError`] is the
 //! expression rewriter's. Rather than a third type, `PlanError: From<RewriteError>`
-//! (and `From<EvalError>`) lets every builder body use `?` over both. Nothing
-//! reads a `RewriteError` variant after it crosses into a builder, so
-//! flattening to `PlanError`'s message loses no decision — the variants stay
-//! available to callers of the rewriter itself.
+//! (and `From<EvalError>`) lets every builder body use `?` over both. Rewrite
+//! failures remain message-only, while evaluation failures retain their typed
+//! variant when the executor must preserve a MySQL error identity.
 //!
 //! # Boundaries, by exact Go symbol
 //!
@@ -245,7 +244,7 @@ impl From<RewriteError> for PlanError {
 /// [`rewrite_expr_resolved`].
 impl From<EvalError> for PlanError {
     fn from(error: EvalError) -> Self {
-        Self::internal(format!("{error:?}"))
+        Self::eval(error)
     }
 }
 
