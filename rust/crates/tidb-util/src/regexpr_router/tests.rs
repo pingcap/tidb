@@ -49,6 +49,15 @@ fn source_extractor(target_column: &str, regexp: &str) -> SourceExtractor {
     }
 }
 
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    let mut rules = vec![rule("test", "table", "target", "target_table")];
+    let router = RouteTable::new(true, &mut rules).unwrap();
+    router.all_rules();
+    router.fetch_extend_column("test", "table", "source");
+}
+
 // Go TestCreateRouter.
 #[test]
 fn create_router() {

@@ -171,7 +171,6 @@ impl RouteTable {
     }
 
     /// Go `AllRules`, preserving insertion order within each rule class.
-    #[must_use]
     pub fn all_rules(&self) -> (Vec<TableRule>, Vec<TableRule>) {
         let mut schema_rules = Vec::new();
         let mut table_rules = Vec::new();
@@ -186,7 +185,6 @@ impl RouteTable {
     }
 
     /// Go `FetchExtendColumn`.
-    #[must_use]
     pub fn fetch_extend_column(
         &self,
         schema: &str,

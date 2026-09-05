@@ -36,9 +36,15 @@ one Go package created independent error, filter, and rule paths. The
 The remaining owner's error no longer derives Rust-only cloning or value
 equality. Go returns ordinary wrapped errors and exposes neither behavior.
 
+The source-shaped `RouteTable::all_rules` and `fetch_extend_column` methods
+also carried explicit Rust-only `#[must_use]` diagnostics. The focused
+`return_values_may_be_ignored_like_go` regression discards both under
+`#[deny(unused_must_use)]`: the detached pre-fix owner failed with exactly two
+diagnostics, and the corrected owner passes.
+
 ## Validation
 
-Profile: WIP; this is one completed package within the continuing repository
+Profile: Ready for this focused parity fix within the continuing repository
 audit, not a repository-wide readiness claim.
 
 - `go test ./pkg/util/regexpr-router` — passed (8 tests).
@@ -46,6 +52,10 @@ audit, not a repository-wide readiness claim.
   — passed, exactly 8 tests.
 - `cargo test --offline --locked -p tidb-util --no-run` — passed.
 - `cargo fmt -p tidb-util -- --check` and `git diff --check` — passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib regexpr_router::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed after the two-error pre-fix failure.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib 'regexpr_router::tests' -- --test-threads=1` — passed; 9 tests including the discard-contract regression.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed as the Ready gate.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

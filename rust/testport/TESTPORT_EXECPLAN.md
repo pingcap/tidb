@@ -8788,6 +8788,12 @@ risks without claiming repository-wide parity.
   constructors. The deny-on-discard regression fails with all three
   diagnostics on the detached pre-fix owner and passes with the two-test owner
   suite; Ready evidence is recorded in `receipts/util_promutil.md`.
+- 2026-09-05 (`pkg/util/regexpr-router`): the complete regexp router owner
+  now matches Go's discardable-return contract by removing two explicit
+  Rust-only `#[must_use]` diagnostics from rule enumeration and extended-column
+  extraction. The deny-on-discard regression fails with both diagnostics on
+  the detached pre-fix owner and passes with the nine-test owner suite; Ready
+  evidence is recorded in `receipts/util_regexpr_router.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
