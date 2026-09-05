@@ -38,3 +38,16 @@ and re-checking, loop exhaustion yielding `ErrInfoSchemaExpired` (8027),
 and the injected sleep port keeping the loop testable. 10 in-module
 regressions pass. Next slices: `ru_stats`, `plan_replayer`,
 `historical_stats`, `topn_slow_query`, `serverinfo_syncer`.
+
+## ru_stats slice (2026-09-05, third pass) — VERIFIED
+
+`ru_stats.rs` mirrors every Go function: the writer loop,
+`GetLastExpectedTime`/`GetLastExpectedTimeTZ` (the day-bucketing math
+reproduces Go's UTC round-trip for DST compatibility, documents Go's
+three caveats, and matches Go's divide-by-zero panic on a zero
+interval), `DoWriteRUStatistics`, `fetchResourceGroupStats`,
+`loadLatestRUStats`/`persistLatestRUStats`, `isLatestDataInserted`,
+`insertRUStats`, `GCOutdatedRecords` with its count/delete SQL builders
+and loop count, plus the `next_wakeup` scheduling helper. Next slices:
+`plan_replayer`, `historical_stats`, `topn_slow_query`,
+`serverinfo_syncer`.

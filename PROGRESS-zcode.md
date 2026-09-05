@@ -369,3 +369,5 @@
 - 下轮恢复点: (1) domain 余模块逐个行为审计(schema_checker/ru_stats/plan_replayer 优先); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - domain schema_checker 切片核实(含 8028/8027 错误对与 ResultFail 带变更的 Go quirk 文档化; 10 测试全绿), 推后续提交。
 - 下轮恢复点: (1) domain 余模块: ru_stats/plan_replayer/historical_stats/topn_slow_query/serverinfo_syncer; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- domain ru_stats 切片核实(函数级全覆盖+时间桶数学含 DST UTC 往返/除零 panic 对齐), 推后续提交。
+- 下轮恢复点: (1) domain 余模块: plan_replayer/historical_stats/topn_slow_query/serverinfo_syncer; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
