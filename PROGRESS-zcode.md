@@ -367,3 +367,5 @@
 - 下轮恢复点: (1) tidb-domain 面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - domain 面开篇: 13 个 Go 文件全部有 Rust 镜像模块; sysvar_cache 切片核实(6 函数语义+SetGlobal 前写全局视图的顺序细节均在位)。收据 rust/docs/domain-sysvar-cache-parity-audit.md。
 - 下轮恢复点: (1) domain 余模块逐个行为审计(schema_checker/ru_stats/plan_replayer 优先); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- domain schema_checker 切片核实(含 8028/8027 错误对与 ResultFail 带变更的 Go quirk 文档化; 10 测试全绿), 推后续提交。
+- 下轮恢复点: (1) domain 余模块: ru_stats/plan_replayer/historical_stats/topn_slow_query/serverinfo_syncer; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。

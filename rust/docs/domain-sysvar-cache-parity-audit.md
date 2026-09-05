@@ -26,3 +26,15 @@ restricted-SQL executor so the cache is testable without a cluster.
 
 The remaining domain files are inventory-verified only; per-module
 behavioral audits follow the same pattern as this slice.
+
+## schema_checker slice (2026-09-05, second pass) — VERIFIED
+
+`schema_checker.rs` mirrors `schema_checker.go` line for line: the retry
+loop bounded by the retry-times atomic, `ResultSucc` returning clean,
+`ResultFail` returning the validator's related change ALONGSIDE
+`ErrInfoSchemaChanged` (8028, with the appended retryable mark — the Go
+quirk documented in-file), `ResultUnknown` sleeping the retry interval
+and re-checking, loop exhaustion yielding `ErrInfoSchemaExpired` (8027),
+and the injected sleep port keeping the loop testable. 10 in-module
+regressions pass. Next slices: `ru_stats`, `plan_replayer`,
+`historical_stats`, `topn_slow_query`, `serverinfo_syncer`.
