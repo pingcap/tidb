@@ -29,7 +29,7 @@ use tidb_planner::cardinality::pseudo::{
 use tidb_planner::cardinality::row_count_column::RowEstimate;
 use tidb_planner::cardinality::row_count_estimator::{
     get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, ColumnStats,
-    EstimatorOptions, IndexRangeDatums, IndexStats,
+    EstimatorOptions, IndexColumnStats, IndexRangeDatums, IndexStats,
 };
 use tidb_planner::selectivity_greedy::{
     combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
@@ -395,6 +395,60 @@ pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
 /// `AsyncLoadHistogramNeededItems` so the async loader can fetch them; the
 /// current estimate still answers the pseudo rate. Internal pseudo columns
 /// (`_tidb_rowid`, ID <= 0) have no persisted stats and are never queued.
+/// Go `findAvailableStatsForCol`'s index fallback: a fully loaded
+/// SINGLE-COLUMN non-prefix index over this column supplies the estimate
+/// when the column's own statistics are invalid. Ranges are evaluated
+/// against the index histogram, encoded at estimation time.
+fn single_column_index_fallback(
+    table: &KvTable,
+    stats: &TableStatistics,
+    column_offset: usize,
+    ranges: &[ColumnRange],
+) -> Option<f64> {
+    for (index_id, index_stats) in stats.indexes.iter() {
+        if index_stats.num_columns != 1 || stats.index_is_load_needed(*index_id) {
+            continue;
+        }
+        let Some(index) = table.indexes().iter().find(|index| index.id == *index_id) else {
+            continue;
+        };
+        let Some(&first_offset) = index.column_offsets.first() else {
+            continue;
+        };
+        // Go: `idxStats.Info.Columns[0].Length == types.UnspecifiedLength` —
+        // a PREFIX index's entry keys on the prefix, not the whole value, so
+        // it never substitutes for the column.
+        if first_offset != column_offset
+            || index.prefix_lengths.first().copied()
+                != Some(crate::ddl::index_prefix::UNSPECIFIED_LENGTH)
+        {
+            continue;
+        }
+        let datum_ranges: Vec<IndexRangeDatums> = ranges
+            .iter()
+            .map(|range| IndexRangeDatums {
+                low: vec![range.low.clone()],
+                high: vec![range.high.clone()],
+                low_exclude: range.low_exclude,
+                high_exclude: range.high_exclude,
+            })
+            .collect();
+        let columns: IndexColumnStats<'_> = vec![None];
+        return Some(
+            get_index_row_count_for_stats_v2(
+                index_stats,
+                &columns,
+                &datum_ranges,
+                stats.row_count,
+                stats.modify_count,
+                estimator_options(),
+            )
+            .est,
+        );
+    }
+    None
+}
+
 fn queue_column_stats_load_if_invalid(
     table: &KvTable,
     stats: &TableStatistics,
@@ -1027,16 +1081,41 @@ fn selectivity_of_conjuncts_with_path_context(
                     column.id,
                     stats.columns.get(&column.id),
                 );
-                get_row_count_by_column_ranges(
-                    stats.columns.get(&column.id),
-                    &ranges,
-                    column.field_type.collation(),
-                    stats.row_count,
-                    stats.modify_count,
-                    is_handle,
-                    estimator_options(),
-                )
-                .est
+                let column_stats = stats.columns.get(&column.id);
+                let column_usable =
+                    column_stats.is_some() && !stats.column_is_load_needed(column.id, true);
+                if !column_usable {
+                    // Go `findAvailableStatsForCol`: the column's own stats
+                    // are invalid, so a single-column non-prefix index over
+                    // this column supplies the estimate instead.
+                    if let Some(fallback) =
+                        single_column_index_fallback(table, stats, offset, &ranges)
+                    {
+                        fallback
+                    } else {
+                        get_row_count_by_column_ranges(
+                            column_stats,
+                            &ranges,
+                            column.field_type.collation(),
+                            stats.row_count,
+                            stats.modify_count,
+                            is_handle,
+                            estimator_options(),
+                        )
+                        .est
+                    }
+                } else {
+                    get_row_count_by_column_ranges(
+                        column_stats,
+                        &ranges,
+                        column.field_type.collation(),
+                        stats.row_count,
+                        stats.modify_count,
+                        is_handle,
+                        estimator_options(),
+                    )
+                    .est
+                }
             }
             // A pseudo handle column uses Go's signed/unsigned integer range
             // estimator, not the ordinary scalar BETWEEN rate. The former
@@ -2321,6 +2400,146 @@ mod index_async_load_queue_tests {
         needed.delete(item);
     }
 
+    /// Go `findAvailableStatsForCol`: when the column's own statistics are
+    /// invalid, a fully loaded SINGLE-COLUMN non-prefix index over the column
+    /// supplies the estimate instead of the pseudo rate.
+    #[test]
+    fn a_single_column_index_supplies_the_fallback_estimate() {
+        let index = KvIndex {
+            id: 7,
+            name: "idx_a".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        let column = long_column("a", 1);
+        let mut table = KvTable::new(11, vec![column]);
+        table.add_index(index.clone(), false);
+        let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        // The COLUMN stats are evicted (absent from `columns`), but the
+        // INDEX histogram is fully loaded.
+        stats
+            .index_load_status
+            .insert(7, tidb_stats::StatsLoadedStatus::full_load());
+        stats.indexes.insert(
+            7,
+            IndexStats {
+                histogram: tidb_stats::Histogram {
+                    id: 7,
+                    ndv: 3,
+                    buckets: vec![tidb_stats::Bucket {
+                        count: 10,
+                        repeat: 1,
+                        ndv: 3,
+                        lower_bound: Datum::Bytes(b"a".to_vec()),
+                        upper_bound: Datum::Bytes(b"z".to_vec()),
+                    }],
+                    ..tidb_stats::Histogram::default()
+                },
+                topn: None,
+                cms: None,
+                stats_ver: 2,
+                num_columns: 1,
+                unique: false,
+            },
+        );
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        let column_item = TableItemID {
+            table_id: 11,
+            id: 1,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        needed.delete(column_item);
+
+        let fallback = single_column_index_fallback(
+            &table,
+            &stats,
+            0,
+            &[ColumnRange {
+                low: Datum::Int(1),
+                high: Datum::Int(2),
+                low_exclude: false,
+                high_exclude: false,
+            }],
+        );
+        assert!(
+            fallback.is_some(),
+            "the single-column index supplies the estimate"
+        );
+
+        // The engine still queues the evicted COLUMN for the async loader.
+        queue_column_stats_load_if_invalid(&table, &stats, 1, None);
+        assert!(
+            needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == column_item),
+            "the evicted column stats are queued for the async loader"
+        );
+        needed.delete(column_item);
+    }
+
+    /// A composite index does NOT qualify for the fallback.
+    #[test]
+    fn a_composite_index_does_not_supply_the_fallback() {
+        let index = KvIndex {
+            id: 7,
+            name: "idx_ab".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0, 1],
+            prefix_lengths: vec![
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+            ],
+            visible: true,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+        };
+        let table = KvTable::new(11, vec![long_column("a", 1), long_column("b", 2)]);
+        let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        stats
+            .index_load_status
+            .insert(7, tidb_stats::StatsLoadedStatus::full_load());
+        stats.indexes.insert(
+            7,
+            IndexStats {
+                histogram: tidb_stats::Histogram::default(),
+                topn: None,
+                cms: None,
+                stats_ver: 2,
+                num_columns: 2,
+                unique: false,
+            },
+        );
+
+        assert_eq!(
+            single_column_index_fallback(
+                &table,
+                &stats,
+                0,
+                &[ColumnRange {
+                    low: Datum::Int(1),
+                    high: Datum::Int(2),
+                    low_exclude: false,
+                    high_exclude: false,
+                }],
+            ),
+            None,
+            "only a single-column index qualifies"
+        );
+    }
     #[test]
     fn a_fully_loaded_index_is_not_queued() {
         let index = KvIndex {
