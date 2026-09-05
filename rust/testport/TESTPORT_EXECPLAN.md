@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` index-serial-scan concurrency
+  warning): matched Go's unconditional 1287 deprecation warning for
+  `tidb_index_serial_scan_concurrency` in both SESSION and GLOBAL writes,
+  retaining the normalized integer value. The focused regression checks
+  warning class/code/text and both readback scopes; the `TestVarsutil` receipt
+  remains explicitly partial.
 - 2026-09-05 (`pkg/sessionctx/variable` auto-analyze partition batch
   warning): matched Go's unconditional 1681 deprecation warning for
   `tidb_auto_analyze_partition_batch_size` while retaining its normalized

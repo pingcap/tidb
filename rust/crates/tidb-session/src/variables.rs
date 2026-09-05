@@ -850,6 +850,11 @@ impl Session {
                 1287,
                 "'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead",
             ))
+        } else if name.eq_ignore_ascii_case("tidb_index_serial_scan_concurrency") {
+            Some((
+                1287,
+                "The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'.",
+            ))
         } else if name.eq_ignore_ascii_case("default_collation_for_utf8mb4") {
             // Go appends this deprecation warning only when its validation
             // succeeds.  Unlike the always-warning compatibility variables,

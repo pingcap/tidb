@@ -488,6 +488,52 @@ fn auto_analyze_partition_batch_size_warns_like_go() {
     );
 }
 
+/// Go's deprecated index-serial-scan concurrency validation appends the
+/// standard 1287 warning in both session and global scope while retaining the
+/// normalized integer value.
+#[test]
+fn index_serial_scan_concurrency_warns_like_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET tidb_index_serial_scan_concurrency = 8")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1287");
+    assert_eq!(
+        warnings[0][2],
+        "The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@session.tidb_index_serial_scan_concurrency"
+        ),
+        "8"
+    );
+
+    session
+        .run("SET GLOBAL tidb_index_serial_scan_concurrency = 12")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1287");
+    assert_eq!(
+        warnings[0][2],
+        "The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_index_serial_scan_concurrency"
+        ),
+        "12"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.
