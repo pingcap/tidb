@@ -899,6 +899,10 @@ pub(crate) fn run_multi_update(
             once.insert((slot, id.clone()), changed);
         }
     }
+    ctx.set_message(format!(
+        "Rows matched: {touched_rows}  Changed: {changed_rows}  Warnings: {}",
+        ctx.warning_count()
+    ));
     Ok(if ctx.client_found_rows() {
         touched_rows
     } else {

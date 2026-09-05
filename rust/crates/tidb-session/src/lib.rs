@@ -569,6 +569,9 @@ pub struct Session {
     /// The id the last statement allocated, which the OK packet carries and
     /// which is 0 for a statement that allocated nothing.
     statement_insert_id: u64,
+    /// Go's `StatementContext.LastMessage`, retained until the next statement
+    /// so the MySQL OK/EOF writer can publish UPDATE's summary text.
+    statement_message: String,
     /// Go `StmtCtx.AddSetVarHintRestore`: the session overrides a `SET_VAR`
     /// hint overwrote for the duration of ONE statement, put back when that
     /// statement finishes whether it succeeded or failed.
@@ -811,6 +814,7 @@ impl Session {
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
             last_insert_id: 0,
             statement_insert_id: 0,
+            statement_message: String::new(),
             set_var_hint_restore: Vec::new(),
             prev_row_count: 0,
             last_found_rows: 0,
@@ -1473,6 +1477,18 @@ impl Session {
         self.statement_insert_id
     }
 
+    /// The info string produced by the statement most recently executed.
+    #[must_use]
+    pub fn statement_message(&self) -> &str {
+        &self.statement_message
+    }
+
+    /// Clears the statement info for command paths that do not enter the
+    /// normal executor lifecycle (for example `SET` and routed DDL).
+    pub fn clear_statement_message(&mut self) {
+        self.statement_message.clear();
+    }
+
     /// The session's variables.
     #[must_use]
     pub fn vars(&self) -> &SessionVars {
@@ -1831,6 +1847,7 @@ impl Session {
         // publication into the `Prev*` fields the next statement reads, so
         // the promotion happens at the boundary, once, for every statement.
         self.statement_kind = StatementKind::Other;
+        self.statement_message.clear();
         *self
             .published_last_insert_id
             .lock()

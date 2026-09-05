@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/executor` UPDATE info-message publication): matched Go's
+  `UpdateExec.Close` summary text by carrying single- and multi-table UPDATE
+  matched/changed/warning counts through Rust's statement context, session,
+  and MySQL OK/deprecated-EOF writers. A focused `CLIENT_FOUND_ROWS` TCP
+  regression failed before the producer existed because the OK info field was
+  empty and passes with `Rows matched: 2  Changed: 1  Warnings: 0`. The complete
+  direct and recursive `pkg/executor` inventory, Ready validation, and the
+  remaining INSERT/REPLACE/LOAD/configured-TiKV producer boundary are recorded
+  in `receipts/executor_update_info.md`.
 - 2026-09-05 (`pkg/sessionctx/variable` MView hook propagation): matched
   Go's `tidb_mview_enable` SessionVars.SetSession hook by storing a typed
   session value and threading it through the cached StatementVarSnapshot into

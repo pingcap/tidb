@@ -43,12 +43,36 @@ pub(crate) fn write_affected_rows_ok<O: ConnectionPacketOutput + ?Sized>(
     warnings: u16,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
+    write_affected_rows_ok_with_info(
+        output,
+        sequence,
+        affected_rows,
+        last_insert_id,
+        status,
+        warnings,
+        protocol_41,
+        &[],
+    )
+}
+
+/// Writes an OK packet with the Go-compatible length-encoded info string.
+pub(crate) fn write_affected_rows_ok_with_info<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
+    sequence: u8,
+    affected_rows: u64,
+    last_insert_id: u64,
+    status: WireStatus,
+    warnings: u16,
+    protocol_41: bool,
+    info: &[u8],
+) -> Result<(), MysqlConnectionError> {
     let payload = encode_ok_packet(&OkPacket {
         affected_rows,
         last_insert_id,
         status_flags: status.bits(),
         warnings,
         protocol_41,
+        info: info.to_vec(),
         ..OkPacket::default()
     });
     write_payload(output, sequence, &payload)

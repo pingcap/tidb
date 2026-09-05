@@ -307,6 +307,10 @@ impl QuerySession for PipelineServerSession {
         self.session.wire_warning_count()
     }
 
+    fn statement_info(&self) -> Vec<u8> {
+        self.session.statement_message().as_bytes().to_vec()
+    }
+
     fn warning_codes(&self) -> Vec<u16> {
         self.session
             .warnings()
@@ -351,6 +355,7 @@ impl QuerySession for PipelineServerSession {
     /// A `SET` statement answers the same way, which is what a connecting
     /// client expects for `SET NAMES` and friends.
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        self.session.clear_statement_message();
         // Both questions below are answered off ONE parse: whether this is a
         // `SET` to apply, and -- if it is not -- what shape its answer takes.
         // They remain two questions with two answers; only the lexing is
@@ -463,7 +468,7 @@ impl QuerySession for PipelineServerSession {
                 .with_statement_output(
                     0,
                     self.session.statement_insert_id(),
-                    Vec::new(),
+                    self.session.statement_message().as_bytes().to_vec(),
                 );
                 GeneralExecuteOutcome::Rows(match process_statement {
                     Some(statement) => result.with_process_statement(statement),
@@ -501,7 +506,11 @@ impl QuerySession for PipelineServerSession {
                 self.session.wire_warning_count(),
                 WireStatus::of_session(&self.session),
             )
-            .with_statement_output(0, self.session.statement_insert_id(), Vec::new());
+            .with_statement_output(
+                0,
+                self.session.statement_insert_id(),
+                self.session.statement_message().as_bytes().to_vec(),
+            );
         Ok(match process_statement {
             Some(statement) => result.with_process_statement(statement),
             None => result,

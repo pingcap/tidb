@@ -1257,6 +1257,13 @@ pub trait QuerySession {
         Vec::new()
     }
 
+    /// The length-encoded info string Go's `StatementContext.LastMessage`
+    /// publishes in UPDATE's OK packet. Sessions without a statement-message
+    /// producer keep the protocol field empty.
+    fn statement_info(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
     /// The live session status word every OK packet this session's statements
     /// produce must carry (Go `status := cc.ctx.Status()`, `pkg/server/conn.go`,
     /// read afresh per statement and passed to every `writeOkWith`/`writeEOF`).

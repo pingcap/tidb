@@ -5991,6 +5991,7 @@ impl QuerySession for ClusterServerSession {
         sql: &str,
         data: &[u8],
     ) -> Result<WriteOutcome, SqlQueryError> {
+        self.session.clear_statement_message();
         if prepare_cluster_load_stats(sql).is_none() {
             return Err(SqlQueryError::unknown(
                 "statement did not request a client-local file",
@@ -6042,6 +6043,10 @@ impl QuerySession for ClusterServerSession {
     /// `SHOW WARNINGS` reports (Go `ctx.WarningCount()`).
     fn warning_count(&self) -> u16 {
         self.session.wire_warning_count()
+    }
+
+    fn statement_info(&self) -> Vec<u8> {
+        self.session.statement_message().as_bytes().to_vec()
     }
 
     fn warning_codes(&self) -> Vec<u16> {
@@ -6149,6 +6154,7 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        self.session.clear_statement_message();
         // Go resolves and plans against the current infoschema before it
         // chooses a statement snapshot. Keep schema refresh ahead of routing,
         // access-shape classification, and the statement lifecycle.
@@ -6644,7 +6650,7 @@ impl QuerySession for ClusterServerSession {
                 .with_statement_output(
                     0,
                     self.session.statement_insert_id(),
-                    Vec::new(),
+                    self.session.statement_message().as_bytes().to_vec(),
                 );
                 GeneralExecuteOutcome::Rows(match process_statement {
                     Some(statement) => result.with_process_statement(statement),
@@ -6663,6 +6669,7 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.session.clear_statement_message();
         // Refresh before access-shape classification. Waiting until the
         // statement lifecycle would allow a stale point shape to select MaxTS
         // before the executor sees the current schema.
@@ -6763,7 +6770,11 @@ impl QuerySession for ClusterServerSession {
                 self.session.wire_warning_count(),
                 WireStatus::of_session(&self.session),
             )
-            .with_statement_output(0, self.session.statement_insert_id(), Vec::new());
+            .with_statement_output(
+                0,
+                self.session.statement_insert_id(),
+                self.session.statement_message().as_bytes().to_vec(),
+            );
         Ok(match process_statement {
             Some(statement) => result.with_process_statement(statement),
             None => result,

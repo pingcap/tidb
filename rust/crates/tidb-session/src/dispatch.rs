@@ -1985,6 +1985,7 @@ impl Session {
                         }),
                     };
                     self.drain_eval_warnings(&ctx);
+                    self.statement_message = ctx.message();
                     output
                 }
                 DmlStmt::Delete(delete) => {

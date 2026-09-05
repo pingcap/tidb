@@ -16,10 +16,10 @@ client or production-cluster packet capture has been run. Line numbers on the
 Rust side are refreshed only where a batch touched the entry.
 
 Counts: **12 audited divergence entries**: 8 fixed, 4 remaining (1 rank-2,
-1 rank-3, 2 rank-4), plus **11 verified-equal areas**. D11's packet encoder
-and statement-value plumbing are now aligned; the Rust session still has no
-Go-equivalent `LastMessage` producer, so the item remains explicitly partial
-instead of being counted as fixed.
+1 rank-3, 2 rank-4), plus **11 verified-equal areas**. D11's packet encoder,
+statement-value plumbing, and the live UPDATE producer are now aligned; the
+remaining insert/replace/load and configured real-TiKV message producers stay
+explicitly partial instead of being counted as fixed.
 
 ---
 
@@ -236,10 +236,11 @@ separate command-owner reason recorded in D6.
   sessions now publish their live `last_insert_id` into that snapshot. A
   focused protocol regression proves non-zero values and info bytes survive
   the deprecated-EOF encoding.
-- Remaining boundary: Rust has no session-owned equivalent of Go's
-  `StatementContext.LastMessage()`, so current SQL producers intentionally
-  publish an empty info field. The transport no longer discards a value if a
-  producer supplies one; the missing producer is tracked rather than hidden.
+- Remaining boundary: Rust's pipeline and cluster UPDATE paths now publish
+  Go's `Rows matched: …  Changed: …  Warnings: …` message through the session
+  and OK/EOF writers. INSERT/REPLACE/LOAD DATA and configured real-TiKV write
+  paths still have no equivalent producer, so their info field remains empty;
+  the transport no longer discards a value if a producer supplies one.
 
 Distinguishing case: after a statement that set `LastMessage` (e.g. an
 `UPDATE`'s `"Rows matched: 1  Changed: 0  Warnings: 0"`), the next result set's

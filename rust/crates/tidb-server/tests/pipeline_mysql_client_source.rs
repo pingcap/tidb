@@ -241,6 +241,36 @@ fn run_write(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: 
     u64::from(affected)
 }
 
+/// Sends one small COM_QUERY write and returns its affected-row count and the
+/// length-encoded info string from the OK packet.
+fn run_write_with_info(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    sql: &str,
+) -> (u64, String) {
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(sql.as_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let packet = reader.read_packet().unwrap();
+    assert_eq!(packet[0], 0x00, "a write answers with an OK packet: {packet:?}");
+    assert!(packet[1] < 0xfb, "test writes report small counts");
+    assert!(packet[2] < 0xfb, "test writes report small ids");
+    // header | affected | last_insert_id | status(2) | warnings(2) |
+    // length-encoded info.
+    let info = match packet.get(7).copied() {
+        None => Vec::new(),
+        Some(info_len) => packet
+            .get(8..8 + usize::from(info_len))
+            .expect("complete length-encoded OK info")
+            .to_vec(),
+    };
+    (
+        u64::from(packet[1]),
+        String::from_utf8(info).expect("Go's update info is UTF-8"),
+    )
+}
+
 /// Sends one write and returns the OK packet's `last_insert_id`, the field a
 /// client reads a generated key from.
 fn run_write_insert_id(
@@ -1586,11 +1616,15 @@ fn client_found_rows_reports_matched_updates_over_the_mysql_wire() {
         ),
         2
     );
-    assert_eq!(
-        run_write(&mut client, &mut reader, "UPDATE found_rows_t SET v = 10"),
-        2,
-        "one changed row plus one unchanged matched row"
+    let (affected, info) = run_write_with_info(
+        &mut client,
+        &mut reader,
+        "UPDATE found_rows_t SET v = 10",
     );
+    assert_eq!(affected, 2, "one changed row plus one unchanged matched row");
+    assert_eq!(info, "Rows matched: 2  Changed: 1  Warnings: 0");
+    let (_, set_info) = run_write_with_info(&mut client, &mut reader, "SET sql_mode = ''");
+    assert!(set_info.is_empty(), "a later SET must not reuse UPDATE info");
     assert_eq!(
         run_write(
             &mut client,

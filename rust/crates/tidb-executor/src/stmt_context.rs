@@ -265,6 +265,9 @@ pub struct StmtContext {
     /// `SHOW WARNINGS` prints in its `Level` column. Without the level here
     /// every executor-tier note would arrive at the session as a `Warning`.
     warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
+    /// Go's `StatementContext.LastMessage`, which UPDATE publishes for the
+    /// OK packet's length-encoded info field.
+    message: Arc<Mutex<String>>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
     /// ([`Self::enter_cop_eval`]).
     ///
@@ -796,6 +799,7 @@ impl StmtContext {
     ) -> Self {
         Self {
             warnings: Arc::default(),
+            message: Arc::default(),
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
             before_executor_first_run: Arc::new(AtomicBool::new(false)),
@@ -2867,6 +2871,25 @@ impl StmtContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
+    }
+
+    /// Publishes the statement's human-readable info string for the protocol
+    /// layer. The value is shared because executor helpers receive the context
+    /// by reference, just like Go's `StatementContext`.
+    pub fn set_message(&self, message: impl Into<String>) {
+        *self
+            .message
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = message.into();
+    }
+
+    /// Returns the statement info string that Go exposes as `LastMessage`.
+    #[must_use]
+    pub fn message(&self) -> String {
+        self.message
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Go `StmtCtx.TruncateWarnings(warnCnt)` + `AppendWarnings`: rewrites

@@ -2719,6 +2719,10 @@ fn run_update_with_physical(
             ctx,
         )?;
         ctx.notify_before_executor_first_run();
+        ctx.set_message(format!(
+            "Rows matched: 0  Changed: 0  Warnings: {}",
+            ctx.warning_count()
+        ));
         return Ok(0);
     }
     // The retained physical child owns WHERE, ORDER BY and LIMIT exactly as
@@ -3017,6 +3021,10 @@ fn run_update_with_physical(
             }
         }
     }
+    ctx.set_message(format!(
+        "Rows matched: {matched}  Changed: {changed}  Warnings: {}",
+        ctx.warning_count()
+    ));
     Ok(if ctx.client_found_rows() {
         touched
     } else {

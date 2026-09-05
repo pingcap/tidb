@@ -36,9 +36,10 @@ use crate::connection_resultset::{
 };
 use crate::connection_writers::{
     access_denied_message, account_locked_message, prepared_parameter_column,
-    prepared_statement_id, write_affected_rows_ok, write_eof_or_ok, write_error, write_ok,
-    write_packet_to, write_payload, write_query_error, write_query_error_at,
-    write_unknown_statement, ConnectionPacketOutput, TcpResultSetSink, WireFraming,
+    prepared_statement_id, write_affected_rows_ok, write_affected_rows_ok_with_info,
+    write_eof_or_ok, write_error, write_ok, write_packet_to, write_payload, write_query_error,
+    write_query_error_at, write_unknown_statement, ConnectionPacketOutput, TcpResultSetSink,
+    WireFraming,
 };
 use crate::cursor_state::{CursorFetchError, CursorState};
 use crate::handshake::{
@@ -1559,7 +1560,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // everything else runs as an ordinary result-set query.
                     match engine.execute_write(sql) {
                         Ok(Some(outcome)) => {
-                            write_affected_rows_ok(
+                            let info = engine.statement_info();
+                            write_affected_rows_ok_with_info(
                                 &mut output,
                                 sequence,
                                 outcome.affected_rows,
@@ -1567,6 +1569,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 stamp(engine.wire_status()),
                                 engine.warning_count(),
                                 protocol_41,
+                                &info,
                             )?;
                             record_client_warnings(&output, &engine);
                             sequence = sequence.wrapping_add(1);
@@ -2014,7 +2017,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 }
                             }
                             if let Some(outcome) = write_outcome {
-                                write_affected_rows_ok(
+                                let info = engine.statement_info();
+                                write_affected_rows_ok_with_info(
                                     &mut output,
                                     1,
                                     outcome.affected_rows,
@@ -2022,6 +2026,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     engine.wire_status(),
                                     engine.warning_count(),
                                     protocol_41,
+                                    &info,
                                 )?;
                                 queries += 1;
                                 commands.stmt_execute_successes += 1;
@@ -2082,7 +2087,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             }
                         }
                         if let Some(outcome) = write_outcome {
-                            write_affected_rows_ok(
+                            let info = engine.statement_info();
+                            write_affected_rows_ok_with_info(
                                 &mut output,
                                 1,
                                 outcome.affected_rows,
@@ -2090,6 +2096,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 engine.wire_status(),
                                 engine.warning_count(),
                                 protocol_41,
+                                &info,
                             )?;
                             queries += 1;
                             commands.stmt_execute_successes += 1;
@@ -2103,7 +2110,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         // terminal state arrived here as an error.
                         match engine.execute_prepared_write(write, &write_bind_parameters(values)) {
                             Ok(outcome) => {
-                                write_affected_rows_ok(
+                                let info = engine.statement_info();
+                                write_affected_rows_ok_with_info(
                                     &mut output,
                                     1,
                                     outcome.affected_rows,
@@ -2111,6 +2119,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     engine.wire_status(),
                                     engine.warning_count(),
                                     protocol_41,
+                                    &info,
                                 )?;
                                 queries += 1;
                                 commands.stmt_execute_successes += 1;
