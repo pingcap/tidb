@@ -2,7 +2,7 @@
 
 > 已知 flaky：tidb-expr `json_schema_valid_resolves_file_and_http_references`（网络依赖，单跑通过/全量偶发，与本会话改动无关）。
 
-> 当前焦点 / 下一步（2026-09-05 更新：表达式层全覆盖核验完成——temporal 算术 DATE_ADD/DATE_SUB/DATEDIFF/TIMESTAMPDIFF/TIMESTAMPADD/EXTRACT 已逐函数核验；CAST 面套件全绿，inUnion 已由兄弟会话落地；registry arity 283 类在 tip 重验零分歧。开放项均阻塞于外部输入：①parser #11 字节流管道架构决策 ②#202 名称键引用表示决策（大）③CHAR coercibility/collation 架构（binary decode/warning 流细节）④#199 estRows fixture 捕获 ⑤#186 剩余转码保真度 ⑥wire D11 terminal-EOF 计数需 engine-trait 扩展 ⑦分区裁剪验证等用户对照查询 ⑧tidb-session sysvar pin（973 vs 971）与集成失败为兄弟会话在途工作 ⑨tpcds 对照需 dsdgen fixture 与双端 server。循环恢复点=本表+各回执 blocker 注记。）
+> 当前焦点 / 下一步（2026-09-05 二次更新：表达式/解析/datatype/chunk 面已系统饱和——registry arity 283 类零分歧、eval 求值臂覆盖扫描 309 名全部 triage、可执行注释/单位表/WEEK 矩阵/FORMAT/HEX/CAST YEAR/extremum 标度/LIKE ESCAPE/AES 模式等逐面核验完毕；本会话批次 #13–#31 已推送，最新三批：分区 VALUES arity 解析层编码错误 1657/1653/1658（兄弟会话放宽引入的回归，Go parser_test.go 行 6767-6778 为 oracle）、eval 覆盖扫描回执、extremum 小数标度 rung 闭合并以 pkg/session 全栈捕获定案（`least(i,d)`=-5 vs `least(1,2.5)`=1.0）。开放项均阻塞于外部输入：①parser #11 字节流管道架构决策 ②#202 名称键引用表示决策 ③CHAR coercibility/collation 架构 ④#199 estRows fixture ⑤#186 转码保真度 ⑥六个 tidb_* 服务端钩子类中五个（需 executor 指针注册；tidb_is_ddl_owner 已由本会话闭臂）⑦分区裁剪验证 ⑧tidb-session/tidb-exec 套件与 txnkv flusher 为兄弟会话在途 ⑨tpcds 对照需 fixture 与双端 server。循环恢复点=本表+各回执 blocker 注记。）
 
 ## 已推送（origin/hparser-integration，截至 8e0f80e381 之后还有 f8ddb7c72a/06bccf90e2/6fba82d378/50a0a29c13/5465936985/3369859aa2）
 
