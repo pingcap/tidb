@@ -527,6 +527,49 @@ fn index_serial_scan_concurrency_warns_like_go() {
     );
 }
 
+/// Go's deprecated prepared and non-prepared plan-cache size Validation
+/// closures append the standard 1287 warning and name the shared session
+/// cache-size replacement in both assignment scopes.
+#[test]
+fn deprecated_plan_cache_sizes_warn_like_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET tidb_prepared_plan_cache_size = 120")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1287",
+            "'tidb_prepared_plan_cache_size' is deprecated and will be removed in a future release. Please use tidb_session_plan_cache_size instead"
+        ]]
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@session.tidb_prepared_plan_cache_size"),
+        "120"
+    );
+
+    session
+        .run("SET GLOBAL tidb_non_prepared_plan_cache_size = 140")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1287",
+            "'tidb_non_prepared_plan_cache_size' is deprecated and will be removed in a future release. Please use tidb_session_plan_cache_size instead"
+        ]]
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_non_prepared_plan_cache_size"
+        ),
+        "140"
+    );
+}
+
 /// Go's deprecated clustered/global-index compatibility switches preserve the
 /// requested value but append their respective warning for both scopes.
 #[test]

@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` plan-cache size deprecation): matched
+  Go's `appendDeprecationWarning` hooks for
+  `tidb_prepared_plan_cache_size` and `tidb_non_prepared_plan_cache_size`,
+  including 1287 text and the `tidb_session_plan_cache_size` replacement in
+  SESSION/GLOBAL writes. The focused regression checks warnings and readback.
 - 2026-09-05 (`pkg/sessionctx/variable` partial ordered-index mode): matched
   Go's `tidb_opt_partial_ordered_index_for_topn` Validation closure by
   accepting only case-insensitive DISABLE/COST spellings, storing uppercase

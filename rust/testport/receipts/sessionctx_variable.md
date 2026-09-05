@@ -200,3 +200,25 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
+
+## 2026-09-05 Rust warning restoration
+
+Go's `tidb_prepared_plan_cache_size` and `tidb_non_prepared_plan_cache_size`
+Validation closures call `appendDeprecationWarning` on every valid SESSION or
+GLOBAL assignment. Rust now emits the same 1287 warning text, including the
+`tidb_session_plan_cache_size` replacement, while retaining the normalized
+cache-size value. The focused regression covers one SESSION and one GLOBAL
+write and their readback.
+
+```text
+cargo test -p tidb-session --lib deprecated_plan_cache_sizes_warn_like_go -- --nocapture
+# passed
+
+git diff --check
+# passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+```
