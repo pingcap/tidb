@@ -319,7 +319,10 @@ fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     match duration_parse::parse_duration(&value, fsp) {
         Ok(duration) => Ok(Datum::new_string(duration.format())),
         Err(_) => {
-            cols.handle_truncate(&format!("Truncated incorrect time value: '{value}'"))?;
+            cols.handle_truncate(&format!(
+                "Truncated incorrect time value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&value)
+            ))?;
             Ok(Datum::new_string("00:00:00".to_owned()))
         }
     }

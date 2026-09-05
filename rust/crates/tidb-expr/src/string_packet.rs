@@ -264,7 +264,7 @@ pub(crate) fn weight_string(
                     1292,
                     &format!(
                         "Truncated incorrect BINARY({length}) value: '{}'",
-                        String::from_utf8_lossy(&bytes)
+                        tidb_datatype::warning_subject_byte_cap(&String::from_utf8_lossy(&bytes))
                     ),
                 );
                 (bytes[..length].to_vec(), tidb_datatype::Collation::Binary)

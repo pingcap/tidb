@@ -290,7 +290,10 @@ fn cast_to_duration(
                 | JSON_TYPE_CODE_DURATION
                 | JSON_TYPE_CODE_STRING
         ) {
-            ctx.handle_truncate(&format!("Truncated incorrect time value: '{input}'"))?;
+            ctx.handle_truncate(&format!(
+                "Truncated incorrect time value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&input)
+            ))?;
             return Ok(Datum::Null);
         }
     }
@@ -324,14 +327,20 @@ fn cast_to_duration(
     match converted {
         Ok((value, None | Some(ScalarConversionEvent::RoundedToScale))) => Ok(value),
         Ok((value, Some(_))) => {
-            ctx.handle_truncate(&format!("Truncated incorrect time value: '{input}'"))?;
+            ctx.handle_truncate(&format!(
+                "Truncated incorrect time value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&input)
+            ))?;
             Ok(if numeric { Datum::Null } else { value })
         }
         Err(DatumValueError::Unsupported(_, _)) => {
             Err(EvalError::Unsupported("CAST AS TIME source datum"))
         }
         Err(_) => {
-            ctx.handle_truncate(&format!("Truncated incorrect time value: '{input}'"))?;
+            ctx.handle_truncate(&format!(
+                "Truncated incorrect time value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&input)
+            ))?;
             Ok(Datum::Null)
         }
     }
@@ -1221,7 +1230,13 @@ fn cast_to_time_value(
         return Ok(None);
     };
     if truncated {
-        ctx.append_warning(1292, &format!("Truncated incorrect datetime value: '{s}'"));
+        ctx.append_warning(
+            1292,
+            &format!(
+                "Truncated incorrect datetime value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&s)
+            ),
+        );
     }
     if dst_adjusted {
         ctx.append_warning(

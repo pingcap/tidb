@@ -95,7 +95,13 @@ pub(crate) fn kind_of(field_type: Option<&FieldType>, value: &Datum) -> Temporal
 }
 
 fn truncated_time_warning(cols: &dyn Columns, value: &str) -> Datum {
-    cols.append_warning(1292, &format!("Truncated incorrect time value: '{value}'"));
+    cols.append_warning(
+        1292,
+        &format!(
+            "Truncated incorrect time value: '{}'",
+            tidb_datatype::warning_subject_byte_cap(value)
+        ),
+    );
     Datum::Null
 }
 
