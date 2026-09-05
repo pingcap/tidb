@@ -406,3 +406,5 @@
 - 下轮恢复点: (1) 新面候选或文档重扫; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 排队。
 - privilege 第五遍: SHOW GRANTS 导出面核实(export.rs 行形状+打印名走查+GrantOption 后缀; grants 测试簇 100/0), 收据已追加。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 排队。
+- sql_mode 位表核验: 33 个 mode 位位置逐一一致(1<<iota 同构), 组合模式展开在位。收据追加 charset-registry 文档。
+- 下轮恢复点: (1) 新面候选或 privs 深层; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 排队。

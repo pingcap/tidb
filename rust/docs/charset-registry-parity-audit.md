@@ -40,3 +40,12 @@ the 256+ dynamic range) come from Go's own collation descriptor list in
 Rust table is that superset, not an invented addition. The id→name
 fallback (46, utf8mb4_bin... GeneralCi) matches Go's
 `DefaultCollationID`.
+
+## SQL mode bit table (2026-09-05)
+
+Go's `ModeX = 1 << iota` bit block (`const.go:533-547`) matches Rust's
+`sql_modes!` table (`tidb-mysql/src/consts.rs:400-414`) bit position for
+bit position through `ModeAllowInvalidDates` (bit 32), with `has()` as a
+proper bit test; the combination-mode expansion (`FormatSQLModeStr`/
+`GetSQLMode`) is mirrored by `tidb_mysql::format_sql_mode_str`/
+`get_sql_mode`, already exercised by the sql_mode validation arm.
