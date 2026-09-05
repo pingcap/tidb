@@ -205,13 +205,21 @@ fn reset_schema_placement_bare_default_policy_name_is_a_parse_error() {
 /// (`pkg/ddl/executor.go:1344-1346` compares `policy.Name.L` against
 /// `defaultPlacementPolicyName` and reports ErrReservedSyntax 1382, "The
 /// 'default' syntax is reserved for purposes internal to the MySQL server").
-// go-parity-gap: run_create_placement_policy has no reserved-name guard, so
-// Rust creates a policy literally named `default` where Go refuses with 1382
-// (divergence verified this session: the create succeeds against the
-// executor carrier).
 #[test]
-#[ignore]
 fn reset_schema_placement_reserved_default_policy_name_reports_1382() {
+    let mut catalog = Catalog::default();
+    let error = policy_ddl(
+        "create placement policy `default` followers=4",
+        &mut catalog,
+    )
+    .expect_err("Go reserves the default placement policy name");
+    let wire = error.to_mysql_error();
+    assert_eq!(wire.code, 1382);
+    assert_eq!(
+        wire.message,
+        "The 'default' syntax is reserved for purposes internal to the MySQL server"
+    );
+    assert!(catalog.policy("default").is_none());
 }
 
 /// Go `TestResetSchemaPlacement` alter half
@@ -784,19 +792,35 @@ fn alter_table_placement_updates_ref_and_failed_alter_keeps_old_ref() {
     assert_eq!(reference_after, reference);
 }
 
-/// Go `TestAlterTablePlacement` reset rows
+/// Go `TestAlterTablePlacement` reset row
 /// (`pkg/ddl/placement_policy_test.go:1457-1466`): `alter table tp placement
 /// policy default` clears the table's reference entirely (Go's
 /// `AlterTable` arm folds the name `default` into a reset,
 /// `pkg/ddl/executor.go:1927` onward), so the following `SHOW CREATE TABLE`
 /// no longer prints a placement clause.
-// go-parity-gap: the Rust alter arm treats `default` as a literal policy
-// name and answers ErrPlacementPolicyNotExists (8239, name "DEFAULT"),
-// verified this session, where Go clears the reference. No carrier of the
-// reset semantics exists, so the row is recorded, not approximated.
 #[test]
-#[ignore]
 fn alter_table_placement_to_default_clears_the_reference() {
+    let mut catalog = Catalog::default();
+    policy_ddl(
+        "create placement policy p1 primary_region='r1' regions='r1'",
+        &mut catalog,
+    )
+    .unwrap();
+    run_create_table_on(
+        "create table tp (id int) placement policy p1",
+        &mut catalog,
+    )
+    .unwrap();
+    assert!(stored_table(&catalog, "tp").placement_policy().is_some());
+
+    tidb_executor::run_alter_table_in(
+        "alter table tp placement policy default",
+        &mut catalog,
+        "test",
+        &StmtContext::default().with_strict(true),
+    )
+    .expect("default resets the table placement policy");
+    assert!(stored_table(&catalog, "tp").placement_policy().is_none());
 }
 
 /// Go `TestDropPartitionWithPlacement` (`pkg/ddl/placement_policy_test.go:

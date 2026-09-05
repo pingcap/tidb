@@ -91,6 +91,15 @@ pub fn run_create_placement_policy(
             second: "IF NOT EXISTS",
         });
     }
+    // Go reserves the case-insensitive name `default` for placement reset
+    // syntax. The refusal happens before catalog insertion.
+    if statement.name.eq_ignore_ascii_case("default") {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrReservedSyntax,
+            message: "The 'default' syntax is reserved for purposes internal to the MySQL server"
+                .to_owned(),
+        });
+    }
     let settings = settings_from_options(&statement.options)?;
     let policy = PolicyInfo {
         placement_settings: Some(tidb_model::GoShared::new(settings.clone())),

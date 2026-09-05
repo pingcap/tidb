@@ -8336,3 +8336,10 @@ risks without claiming repository-wide parity.
   inventories and Ready evidence are recorded in
   `receipts/planner_empty_range.md` and the follow-up section of
   `receipts/util_ranger.md`.
+- 2026-09-05 (`pkg/ddl` placement-policy defaults): Rust now rejects the
+  reserved placement-policy name `default` with Go's ErrReservedSyntax 1382
+  before catalog insertion, and treats `ALTER TABLE ... PLACEMENT POLICY
+  default` as a reset that clears the existing policy reference. The existing
+  source-shaped regressions now fail before and pass after the Rust-only fix;
+  the placement-policy parity receipt records the focused validation and the
+  remaining database/PD/GC boundaries.

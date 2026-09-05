@@ -1303,7 +1303,10 @@ fn set_table_options_action(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     super::validate_table_options(options)?;
-    let mut pending_placement: Option<String> = None;
+    // `Some(None)` records Go's `PLACEMENT POLICY=default` reset, while
+    // `Some(Some(name))` records a policy to resolve after the mutable table
+    // borrow is released. `None` means this ALTER has no placement option.
+    let mut pending_placement: Option<Option<String>> = None;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -1392,7 +1395,11 @@ fn set_table_options_action(
                 // The catalog is borrowed mutably through `table`, so the
                 // lookup is deferred to after this loop rather than fought
                 // with here.
-                pending_placement = Some(policy_name.clone());
+                pending_placement = Some(if policy_name.eq_ignore_ascii_case("default") {
+                    None
+                } else {
+                    Some(policy_name.clone())
+                });
             }
             _ => {
                 return Err(DriverError::unsupported(
@@ -1402,17 +1409,22 @@ fn set_table_options_action(
         }
     }
     if let Some(policy_name) = pending_placement {
-        let Some(policy) = catalog.policy(&policy_name) else {
-            return Err(DriverError::PlacementPolicyNotExists(policy_name));
-        };
-        let reference = tidb_model::PolicyRefInfo {
-            id: policy.id,
-            name: tidb_ast::CiString::new(policy_name),
+        let reference = match policy_name {
+            None => None,
+            Some(policy_name) => {
+                let Some(policy) = catalog.policy(&policy_name) else {
+                    return Err(DriverError::PlacementPolicyNotExists(policy_name));
+                };
+                Some(tidb_model::PolicyRefInfo {
+                    id: policy.id,
+                    name: tidb_ast::CiString::new(policy_name),
+                })
+            }
         };
         let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
             unreachable!("the table was resolved above")
         };
-        table.set_placement_policy(Some(reference));
+        table.set_placement_policy(reference);
     }
     Ok(())
 }
