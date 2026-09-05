@@ -392,3 +392,5 @@
 - 下轮恢复点: (1) gogc max/min 仍待 gctuner 运行面(不随本穿线解锁); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - charset 收据精化: Go 自身双表(CharsetNameToID wire id vs CharacterSetInfos 描述符默认 collation)对 6 字符集不一致(latin1 47 vs 8 等); Rust 生成表镜像描述符侧, wire 路径从列 collation 推 id(更细粒度)。非待修分歧。
 - 下轮恢复点: (1) infoschema/privilege 行为面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 微差异排队。
+- allow_fallback_to_tikv 臂收敛核实: 现行树单臂(并发会话版本: trim/去重/非 tiflash 拒绝, 与我批语义一致且更严格拒绝空 token); 我的回归测试对着统一臂全绿。无重复臂。
+- 下轮恢复点: (1) 新面候选 infoschema(大, 需立项); (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 微差异排队。
