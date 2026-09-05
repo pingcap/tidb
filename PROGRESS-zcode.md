@@ -377,3 +377,5 @@
 - 下轮恢复点: (1) domain 末模块 serverinfo_syncer; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - domain serverinfo_syncer 切片核实(73 函数: info 三型+clone/marshal/topology/syncer 会话与存储/endpoint claim 认领全映射), 推后续提交。domain 面全部模块处置完毕。
 - 下轮恢复点: (1) 新面候选: tidb-domain 已闭环→选 tidb-privilege 已闭环→候选 tidb-config 深层已做→下一候选 tidb-kvcache/tidb-hash 小工具面或 infoschema 面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- kvcache+hash 双面收据(rust/docs/kvcache-hash-parity-audit.md): Put 淘汰循环逐分支对齐(内存重采样规则/探测失败 DeleteAll/quota-0 单次淘汰); IHasher 契约镜像。
+- 下轮恢复点: (1) 新面候选继续; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
