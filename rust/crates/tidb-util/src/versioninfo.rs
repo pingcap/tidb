@@ -35,7 +35,6 @@ fn edition_state() -> &'static RwLock<String> {
 }
 
 /// Returns Go's process-wide mutable `TiDBEdition`.
-#[must_use]
 pub fn tidb_edition() -> String {
     edition_state()
         .read()
@@ -48,4 +47,15 @@ pub fn set_tidb_edition(edition: impl Into<String>) {
     *edition_state()
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = edition.into();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tidb_edition;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        tidb_edition();
+    }
 }
