@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` partition-prune mode): matched Go's
+  `static-only`/`dynamic-only` upgrades and SESSION/GLOBAL transition warnings,
+  including the two 1105 reminders emitted when a SESSION value changes from
+  static to dynamic. The focused regression checks normalized readback and
+  exact warning rows; the `TestVarsutil` receipt remains explicitly partial.
 - 2026-09-05 (`pkg/sessionctx/variable` clustered/global-index compatibility
   warnings): matched Go's 1287 warning for `INT_ONLY` on
   `tidb_enable_clustered_index` and 1105 warning for `OFF` on

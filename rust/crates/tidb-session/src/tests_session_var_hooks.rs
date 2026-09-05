@@ -566,6 +566,72 @@ fn deprecated_index_switches_warn_like_go() {
     );
 }
 
+/// Go's partition-prune mode setter upgrades out-of-date enum spellings and
+/// emits mode-transition warnings from its SESSION/GLOBAL hooks.
+#[test]
+fn partition_prune_mode_updates_and_warns_like_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET SESSION tidb_partition_prune_mode = 'static-only'")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1681");
+    assert_eq!(
+        warnings[0][2],
+        "static prune mode is deprecated and will be removed in the future release."
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@session.tidb_partition_prune_mode"),
+        "static"
+    );
+
+    session
+        .run("SET SESSION tidb_partition_prune_mode = 'dynamic'")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 2);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1105");
+    assert_eq!(
+        warnings[0][2],
+        "Please analyze all partition tables again for consistency between partition and global stats"
+    );
+    assert_eq!(warnings[1][1], "1105");
+    assert_eq!(
+        warnings[1][2],
+        "Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"
+    );
+
+    session
+        .run("SET GLOBAL tidb_partition_prune_mode = 'dynamic'")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][1], "1105");
+    assert_eq!(
+        warnings[0][2],
+        "Please analyze all partition tables again for consistency between partition and global stats"
+    );
+
+    session
+        .run("SET GLOBAL tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][1], "1681");
+    assert_eq!(
+        warnings[0][2],
+        "static prune mode is deprecated and will be removed in the future release."
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@global.tidb_partition_prune_mode"),
+        "static"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.

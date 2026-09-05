@@ -735,6 +735,21 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go's `tidb_partition_prune_mode` closure upgrades the out-of-date
+        // enum spellings (`static-only`/`dynamic-only`) before storing them.
+        // The type metadata admits those spellings, but readers and the
+        // session setter observe only the upgraded `static`/`dynamic` mode.
+        if self.name == "tidb_partition_prune_mode" {
+            let mode = crate::session_vars::PartitionPruneMode::from_str_value(&validated.value);
+            let updated = mode.update();
+            if !mode.valid() {
+                return Err(ValidationError::WrongValue);
+            }
+            return Ok(Validated {
+                value: updated.as_str().to_owned(),
+                truncated: validated.truncated,
+            });
+        }
         // Go's nextgen-only `TestTiDBPessimisticTransactionFairLocking`
         // exercises the variable-specific Validation closure: ON is rejected
         // with ErrNotSupportedInNextGen (1235) and the normalized fallback is

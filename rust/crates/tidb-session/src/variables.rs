@@ -414,6 +414,15 @@ impl Session {
                     // unconditional Validation warning as an explicit value.
                     self.warn_sysvar_assignment(&assignment.name, "ON");
                 }
+                if assignment
+                    .name
+                    .eq_ignore_ascii_case("tidb_partition_prune_mode")
+                {
+                    let default = sysvar::get_sys_var(&assignment.name)
+                        .map(|definition| definition.value)
+                        .unwrap_or("dynamic");
+                    self.warn_partition_prune_assignment(default, is_global);
+                }
                 if is_global {
                     self.vars
                         .reset_global(&assignment.name)
@@ -447,6 +456,12 @@ impl Session {
         self.check_noop_gated_variable(&assignment.name, &value, is_global)?;
         self.check_isolation_level(&assignment.name, &value)?;
         self.check_max_allowed_packet_scope(&assignment.name, &value, is_node_wide)?;
+        if assignment
+            .name
+            .eq_ignore_ascii_case("tidb_partition_prune_mode")
+        {
+            self.warn_partition_prune_assignment(&value, is_global);
+        }
         self.warn_sysvar_assignment(&assignment.name, &value);
         if is_node_wide {
             // Go's `require_secure_transport` Validation closure runs after
@@ -744,6 +759,47 @@ impl Session {
     /// code of its own and files under `ER_UNKNOWN_ERROR` (1105), the same way
     /// [`crate::warnings::CHECK_CONSTRAINT_IS_OFF_CODE`] does.
     ///
+    /// Appends Go's partition-prune mode warnings from the variable's
+    /// `SetSession`/`SetGlobal` hooks. The closure's normalized value is used
+    /// here as well, so out-of-date enum spellings warn as their upgraded mode.
+    fn warn_partition_prune_assignment(&mut self, value: &str, is_global: bool) {
+        let Some(definition) = sysvar::get_sys_var("tidb_partition_prune_mode") else {
+            return;
+        };
+        let Ok(normalized) = definition.validate_in_scope(value, sysvar::SCOPE_SESSION) else {
+            return;
+        };
+        let previous = if is_global {
+            self.vars.get_global("tidb_partition_prune_mode").ok()
+        } else {
+            self.vars.get_system("tidb_partition_prune_mode").ok()
+        };
+        if normalized.value == "static" {
+            self.append_warning(
+                crate::warnings::WarningLevel::Warning,
+                1681,
+                "static prune mode is deprecated and will be removed in the future release."
+                    .to_owned(),
+            );
+        } else if normalized.value == "dynamic" {
+            let warn_analyze = is_global || previous.as_deref() == Some("static");
+            if warn_analyze {
+                self.append_warning(
+                    crate::warnings::WarningLevel::Warning,
+                    1105,
+                    "Please analyze all partition tables again for consistency between partition and global stats".to_owned(),
+                );
+            }
+            if !is_global && previous.as_deref() == Some("static") {
+                self.append_warning(
+                    crate::warnings::WarningLevel::Warning,
+                    1105,
+                    "Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level".to_owned(),
+                );
+            }
+        }
+    }
+
     /// Go tests the NORMALIZED value with `TiDBOptOn`, so this normalizes the
     /// typed text through the registry first: `1`, `on` and `ON` all warn,
     /// while a value the type check would reject falls through to the real
