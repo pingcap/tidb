@@ -804,6 +804,22 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.like_default_escape
     }
 
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        // Go's expression rewriter folds strict literal subtrees as each
+        // builtin is constructed.  The planner resolver historically only
+        // refreshed NULL metadata, leaving shapes such as
+        // `CAST(-1 AS DECIMAL)` wrapped around a unary function.  That made
+        // ranger treat a provably out-of-domain unsigned predicate as an
+        // ordinary residual filter instead of an empty access range.  The
+        // shared folder descends through row-dependent parents and folds only
+        // their closed strict children, preserving the parent expression.
+        if mode != tidb_expr::ConstantFoldMode::Disabled {
+            tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        } else {
+            tidb_expr::derive_constant_null_flag(expression);
+        }
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let column = self.resolve_column(path)?;
         Some((

@@ -634,14 +634,12 @@ impl PointBuilder {
         convert_to_sort_key: bool,
     ) -> Vec<Point> {
         let (column, constant, mut op) = if let Expression::Column(col) = &scalar.args[0] {
-            let Expression::Constant(constant) = &scalar.args[1] else {
-                return Vec::new();
-            };
-            (col, constant, scalar.func_name.lowercase().to_owned())
+            (
+                col,
+                &scalar.args[1],
+                scalar.func_name.lowercase().to_owned(),
+            )
         } else if let Expression::Column(col) = &scalar.args[1] {
-            let Expression::Constant(constant) = &scalar.args[0] else {
-                return Vec::new();
-            };
             // The mirrored operand order flips the inequality.
             let op = match scalar.func_name.lowercase() {
                 "ge" => OP_LE,
@@ -650,14 +648,27 @@ impl PointBuilder {
                 "le" => OP_GE,
                 other => other,
             };
-            (col, constant, op.to_owned())
+            (col, &scalar.args[0], op.to_owned())
         } else {
             return Vec::new();
         };
         let Some(ft) = column.ret_type.as_ref() else {
             return Vec::new();
         };
-        let mut value = constant.value.clone();
+        // Go's `buildFromBinOp` evaluates the non-column operand against an
+        // empty row, so casts and unary arithmetic around literals (for
+        // example `CAST(-1 AS DECIMAL)`) still reach the unsigned-domain
+        // fixups below.  The old Rust arm accepted only a bare Constant and
+        // silently widened these predicates to a full index scan.
+        if constant.const_level() != tidb_expr::expression::ConstLevel::STRICT {
+            return Vec::new();
+        }
+        let Some(mut value) = constant
+            .eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
+            .ok()
+        else {
+            return Vec::new();
+        };
         if op != OP_NULL_EQ && matches!(value, Datum::Null) {
             return Vec::new();
         }
@@ -1805,6 +1816,46 @@ mod tests {
         ));
         assert_eq!(case("eq", vec![a.clone(), null.clone()]), "");
         assert_eq!(case("nulleq", vec![a.clone(), null]), "[<nil> <nil>]");
+    }
+
+    /// Go's `buildFromBinOp` evaluates a strict constant expression operand,
+    /// not only a bare `*expression.Constant`. This matters for the unsigned
+    /// domain fixup: `a > CAST(-1 AS DECIMAL)` is rewritten to `a >= 0`, while
+    /// the mirrored less-than predicate has no valid range.
+    #[test]
+    fn bin_op_points_evaluate_wrapped_strict_constants() {
+        let mut unsigned_decimal = FieldType::new(FieldTypeCode::NewDecimal);
+        unsigned_decimal.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        let column =
+            Expression::Column(tidb_expr::column::Column::new(1, unsigned_decimal.clone()));
+        let mut decimal_result = unsigned_decimal.clone();
+        decimal_result.set_flen(1);
+        decimal_result.set_decimal(0);
+        let wrapped_negative = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("cast_decimal"),
+            decimal_result,
+            vec![func_expr("unaryminus", vec![int_const_expr(1)])],
+        ));
+        let compare = |name: &str| {
+            let expression = func_expr(name, vec![column.clone(), wrapped_negative.clone()]);
+            let mut builder = PointBuilder::default();
+            builder.build(
+                &expression,
+                &unsigned_decimal,
+                super::super::checker::UNSPECIFIED_LENGTH,
+                false,
+            )
+        };
+
+        let greater = compare("gt");
+        assert_eq!(
+            greater.len(),
+            2,
+            "a > -1 should clamp to [0,+inf]: {greater:?}"
+        );
+        assert!(matches!(greater[0].value, Datum::Decimal(_)));
+        assert!(matches!(greater[1].value, Datum::MaxValue));
+        assert!(compare("lt").is_empty(), "a < -1 has no unsigned range");
     }
 
     /// AND intersects, OR unions — `a > 1 AND a < 5`, `a < 2 OR a > 5`.

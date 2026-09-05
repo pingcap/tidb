@@ -62,3 +62,18 @@ The source port already covered point construction, range assembly, detachment, 
 - Rust has no mutable Go `StatementContext`; comparison uses typed datum/collation semantics and literal rendering reports errors instead of mutating warning state.
 - Non-UTF-8 string/byte literals are rejected by the Rust `String` return type; Go can write arbitrary bytes. This is an explicit representation boundary, not silent replacement.
 - Go's plan-cache mutability and testkit warning-surface integration remain outside this crate's type model; they are recorded in the module-level boundary notes and are not claimed as ranger production behavior.
+
+## Follow-up parity batch (2026-09-05)
+
+The complete package inventory above was re-read against Go `master`
+(`a0cdff369bd4c7060a840e3943049a79470e8af4`) before the follow-up change.
+`pkg/util/ranger/points.go`'s `buildFromBinOp` evaluates a strict constant
+operand against an empty row, matching Go's `expr.Eval` path for wrappers such
+as `CAST(-1 AS DECIMAL)`. Rust previously accepted only a bare constant, so an
+unsigned comparison silently lost the domain fixup and widened to a full scan.
+
+The focused `tidb-planner::ranger::points::tests::bin_op_points_evaluate_wrapped_strict_constants`
+regression now pins both directions: `a > CAST(-1 AS DECIMAL)` clamps to
+`[0,+inf]`, while `a < ...` has no points. The existing ranger suite and the
+source-derived session EXPLAIN regression cover the downstream TableDual
+decision.

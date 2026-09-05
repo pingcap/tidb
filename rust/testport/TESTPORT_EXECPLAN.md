@@ -8325,3 +8325,14 @@ risks without claiming repository-wide parity.
   escape byte, table-index row visibility, and cache invalidation. Complete
   tree inventory and Ready evidence are recorded in
   `receipts/planner_like_escape.md`.
+- 2026-09-05 (`pkg/planner/core` empty ranger ranges): Rust's active
+  DataSource dispatcher now returns a root `PhysicalTableDual` immediately
+  when table or index ranger output is empty, matching Go's
+  `findBestTask4LogicalDataSource` short-circuit. The plan-scope rewriter and
+  ranger point builder also evaluate strict literal wrappers such as
+  `CAST(-1 AS DECIMAL)` so unsigned-domain fixups produce the empty range that
+  drives the decision. Focused planner and session regressions cover both
+  impossible unsigned predicates and the valid `[0,+inf]` control. Complete
+  inventories and Ready evidence are recorded in
+  `receipts/planner_empty_range.md` and the follow-up section of
+  `receipts/util_ranger.md`.

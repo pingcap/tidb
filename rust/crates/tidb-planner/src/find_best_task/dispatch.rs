@@ -920,21 +920,27 @@ fn try_to_get_dual_task(
         let is_false = matches!(constant.value, tidb_datatype::Datum::Null)
             || constant.value.as_int() == Some(0);
         if is_false {
-            let mut base = crate::physical::BasePhysicalPlan::new(
-                ctx.allocator,
-                crate::logical::LogicalTableDual::TYPE,
-                ds.base.base.query_block_offset(),
-            );
-            base.base.set_stats(ds.base.base.stats_info().cloned());
-            base.base.set_schema(ds.base.base.schema().cloned());
-            let dual =
-                PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 0 });
-            let mut root = crate::task::RootTask::default();
-            root.set_plan(dual);
-            return Some(Task::Root(root));
+            return Some(empty_range_dual_task(ds, ctx));
         }
     }
     None
+}
+
+/// Go's empty-range branch returns an uncacheable `PhysicalTableDual` before
+/// converting the selected access path into a scan.  Keep the same shape for
+/// both constant-false predicates and ranger-proven empty ranges.
+fn empty_range_dual_task(ds: &crate::logical::DataSource, ctx: &DispatchContext<'_>) -> Task {
+    let mut base = crate::physical::BasePhysicalPlan::new(
+        ctx.allocator,
+        crate::logical::LogicalTableDual::TYPE,
+        ds.base.base.query_block_offset(),
+    );
+    base.base.set_stats(ds.base.base.stats_info().cloned());
+    base.base.set_schema(ds.base.base.schema().cloned());
+    let dual = PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 0 });
+    let mut root = crate::task::RootTask::default();
+    root.set_plan(dual);
+    Task::Root(root)
 }
 
 /// Go `findBestTask4LogicalDataSource` (`find_best_task.go:2027`), the
@@ -1567,24 +1573,32 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         true,
                     )
                 });
-                let ranges = if common_handle.is_some() {
-                    common_detach
-                        .as_ref()
-                        .map_or_else(crate::ranger::points::full_range, |result| {
-                            result.ranges.clone()
-                        })
+                let (ranges, empty_range) = if common_handle.is_some() {
+                    common_detach.as_ref().map_or_else(
+                        || (crate::ranger::points::full_range(), false),
+                        |result| (result.ranges.clone(), result.ranges.is_empty()),
+                    )
                 } else if int_access_conditions.is_empty() {
-                    crate::ranger::points::full_int_range(handle_type.is_unsigned())
+                    (
+                        crate::ranger::points::full_int_range(handle_type.is_unsigned()),
+                        false,
+                    )
                 } else {
                     match crate::ranger::ranger::build_table_range(
                         &int_access_conditions,
                         &handle_type,
                         0,
                     ) {
-                        Ok(result) => result.ranges,
-                        Err(_) => crate::ranger::points::full_int_range(handle_type.is_unsigned()),
+                        Ok(result) => (result.ranges.clone(), result.ranges.is_empty()),
+                        Err(_) => (
+                            crate::ranger::points::full_int_range(handle_type.is_unsigned()),
+                            false,
+                        ),
                     }
                 };
+                if empty_range {
+                    return Ok(empty_range_dual_task(ds, ctx));
+                }
                 let table_access_conds = common_detach.as_ref().map_or_else(
                     || int_access_conditions.clone(),
                     |result| result.access_conds.clone(),
@@ -2011,19 +2025,27 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 let detach = if ds.pushed_down_conds.is_empty() || index_cols.is_empty() {
                     None
                 } else {
-                    crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                    match crate::ranger::detacher::detach_cond_and_build_range_for_index(
                         &ds.pushed_down_conds,
                         &index_cols,
                         &index_lengths,
                         0,
-                    )
-                    .ok()
+                    ) {
+                        Ok(result) => Some(result),
+                        Err(_) => None,
+                    }
                 };
                 let ranges = detach
                     .as_ref()
                     .map_or_else(crate::ranger::points::full_range, |result| {
                         result.ranges.clone()
                     });
+                if detach
+                    .as_ref()
+                    .is_some_and(|result| result.ranges.is_empty())
+                {
+                    return Ok(empty_range_dual_task(ds, ctx));
+                }
                 let remained_conds = detach.as_ref().map_or_else(
                     || ds.pushed_down_conds.clone(),
                     |result| result.remained_conds.clone(),
