@@ -279,6 +279,10 @@ fn math_functions() {
         e("exp(1000)"),
         "DataOutOfRange { value: \"DOUBLE\", expression: \"exp(1000)\" }"
     );
+    assert_eq!(
+        e("pow(1 + 1, 2000)"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"pow((1 + 1), 2000)\" }"
+    );
     assert_eq!(e("exp(-1000)"), "FLOAT:0"); // underflow to zero is fine
     assert_eq!(e("pow(0, 0)"), "FLOAT:1"); // not an error, matches f64::powf
 }

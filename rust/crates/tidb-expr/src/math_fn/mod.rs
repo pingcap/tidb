@@ -26,7 +26,7 @@ mod go_trig;
 
 use std::cmp::Ordering;
 
-use tidb_ast::{Expr, UnaryOp};
+use tidb_ast::{BinaryOp, Expr, UnaryOp};
 
 use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::{finite_float, to_f64, to_f64_with_mysql_string};
@@ -71,6 +71,38 @@ fn ast_math_overflow_error(name: &str, args: &[Expr], error: EvalError) -> EvalE
             Expr::Column(path) => Some(path.join(".")),
             Expr::Unary(UnaryOp::Plus, expression) => Some(format!("+{}", render(expression)?)),
             Expr::Unary(UnaryOp::Minus, expression) => Some(format!("-{}", render(expression)?)),
+            Expr::Paren(expression) => Some(format!("({})", render(expression)?)),
+            Expr::Binary(operator, left, right) => {
+                let operator = match operator {
+                    BinaryOp::Plus => "+",
+                    BinaryOp::Minus => "-",
+                    BinaryOp::Mul => "*",
+                    BinaryOp::Div => "/",
+                    BinaryOp::Mod => "%",
+                    BinaryOp::IntDiv => "DIV",
+                    BinaryOp::BitOr => "|",
+                    BinaryOp::BitAnd => "&",
+                    BinaryOp::BitXor => "^",
+                    BinaryOp::LeftShift => "<<",
+                    BinaryOp::RightShift => ">>",
+                    BinaryOp::Eq => "=",
+                    BinaryOp::NullEq => "<=>",
+                    BinaryOp::Ge => ">=",
+                    BinaryOp::Gt => ">",
+                    BinaryOp::Le => "<=",
+                    BinaryOp::Lt => "<",
+                    BinaryOp::Ne => "!=",
+                    BinaryOp::LogicAnd => "AND",
+                    BinaryOp::LogicOr => "OR",
+                    BinaryOp::LogicXor => "XOR",
+                };
+                Some(format!(
+                    "({} {} {})",
+                    render(left)?,
+                    operator,
+                    render(right)?
+                ))
+            }
             Expr::Func { name, args, .. } => {
                 let args = args.iter().map(render).collect::<Option<Vec<_>>>()?;
                 Some(format!(

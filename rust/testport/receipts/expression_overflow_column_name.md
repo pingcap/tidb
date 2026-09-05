@@ -186,10 +186,14 @@ COT(0) -> cot(0)
 ```
 
 The AST follow-up changed the value-tier expectations for `ABS(MinInt64)`,
-NaN/infinite `POW`, overflowing `EXP`, and zero `COT`. With the AST adapter
-disabled, the focused ABS regression failed with bare `IntOverflow`; after
-the adapter, the complete 20-test math module and the 27 active
-source-derived math/miscellaneous tests pass with the exact function text.
+NaN/infinite `POW`, overflowing `EXP`, and zero `COT`. It also keeps a
+parenthesized binary operand such as `pow(1 + 1, 2000)` in the same source
+shape instead of falling back to the bare `FloatOverflow` carrier. With the
+AST adapter disabled, the focused ABS regression failed with bare
+`IntOverflow`, and the binary-operand assertion failed with bare
+`FloatOverflow`; after the adapter, the complete 20-test math module and the
+27 active source-derived math/miscellaneous tests pass with the exact
+function text.
 
 Ready validation for this follow-up passed:
 

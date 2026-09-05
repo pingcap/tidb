@@ -8040,6 +8040,6 @@ risks without claiming repository-wide parity.
   nested arithmetic, and nested function arguments before mapping the shared
   `FloatOverflow` carrier. The focused source regression failed before the
   boundary adapter and now pins `exp(100000)`, `pow(10, 700)`, and `cot(0)`;
-  the AST evaluator now uses the same renderer, while the direct values-only
-  helper remains a carrier-only seam. Evidence is recorded in
-  `receipts/expression_overflow_column_name.md`.
+  the AST evaluator now uses the same renderer, including parenthesized and
+  binary arguments, while the direct values-only helper remains a carrier-only
+  seam. Evidence is recorded in `receipts/expression_overflow_column_name.md`.
