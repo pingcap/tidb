@@ -791,6 +791,11 @@ impl GlobalSysvars {
         if is_resource_control_setting(name) {
             self.publish_resource_control_setting(name);
         }
+        if is_stmt_summary_setting(name) {
+            if let Ok(value) = self.get(name) {
+                self.publish_stmt_summary_setting(name, &value);
+            }
+        }
         self.publish_embedding_settings();
         self.refresh_resolved();
     }
@@ -1344,8 +1349,9 @@ impl GlobalSysvars {
             .remove(&key);
         self.refresh_resolved();
         if !def.has_global_scope() {
-            self.record_instance_mutation(InstanceMutation::Reset(key));
+            self.record_instance_mutation(InstanceMutation::Reset(key.clone()));
         }
+        self.publish_stmt_summary_setting(&key, &crate::sysvar::effective_default(def));
         self.publish_memory_arbitration_setting(name);
         Ok(())
     }

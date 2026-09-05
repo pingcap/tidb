@@ -44,7 +44,7 @@ For each bounded behavior cluster:
 - 2026-09-05 (`pkg/sessionctx/variable` statement-summary GLOBAL hooks):
   wired Go's `stmtsummaryv2` setters for enablement, internal-query capture,
   refresh/history sizing, capacity, SQL length, eviction persistence, and
-  user grouping into Rust's live global write/reset/load/replace paths. The
+  user grouping into Rust's live global write/reset/startup/load/replace paths. The
   focused regression verifies the process-wide summary map updates alongside
   SQL writes; the broader singleton initialization and persistent logger
   lifecycle remain outside this session owner.
