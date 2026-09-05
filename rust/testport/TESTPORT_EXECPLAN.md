@@ -619,6 +619,15 @@ For each bounded behavior cluster:
   two focused fail-before/pass-after regressions, existing parallel-sort tests,
   and Ready checks are recorded in
   `receipts/executor_root_distsql_indexjoin.md`.
+- 2026-09-05 (`pkg/executor/sortexec` parallel worker panic recovery): aligned
+  Rust's persistent Sort/TopN worker boundaries with Go's `recover` plus
+  `util.GetRecoverError` contract. Panics in parallel worker tasks, the
+  coordinated sort spill body, and local spill workers now become
+  `ExecError::Internal` with the source panic text instead of dropping a pool
+  result and retiring a persistent worker thread. The focused regression also
+  submits a follow-up task to prove the pool remains usable. Go failpoint-only
+  injection remains a separate explicit boundary; receipt:
+  `receipts/executor_root_distsql_indexjoin.md`.
 - 2026-09-05 (`pkg/executor/sortexec` TopN spill cancellation polling): aligned
   `SpilledRun::write` with Go's `topNSpillHelper.spillHeap` SQL-killer polling.
   The Rust writer now checks the statement killer every 100 original heap

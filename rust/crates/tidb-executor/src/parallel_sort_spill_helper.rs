@@ -94,8 +94,10 @@
 //! * `injectErrorForIssue59655`, `injectParallelSortRandomFail` and
 //!   `injectPanicForIssue63216` are failpoints, i.e. test-only fault injection;
 //!   they are not reproduced.
-//! * Go's `recover()` wrappers turn a panic into an error. Rust panics are not
-//!   caught here; every fallible step already returns [`ExecError`].
+//! * Go's `recover()` wrappers turn a panic into an error. The worker and
+//!   spill-body boundaries use [`crate::sort_util::recover_worker_panic`] for
+//!   the same result-channel contract; failpoint injection itself remains
+//!   unavailable in this Rust build.
 //! * Go's `spill` computes `totalRows` and never uses it. Dead in Go, dropped
 //!   here.
 //! * `storage: Arc<SpillStorage>` has no Go counterpart field. Go's
@@ -139,7 +141,7 @@ use tidb_util::spill_storage::SpillStorage;
 
 use crate::executor::ExecError;
 use crate::multi_way_merge::{MemorySource, MultiWayMerger};
-use crate::sort_util::{RowWithError, SpillStatus, SPILL_CHUNK_SIZE};
+use crate::sort_util::{recover_worker_panic, RowWithError, SpillStatus, SPILL_CHUNK_SIZE};
 
 /// Go `spillInfo`: the message logged when a spill round starts.
 pub const SPILL_INFO: &str = "memory exceeds quota, spill to disk now.";
@@ -359,7 +361,7 @@ where
     /// stream becomes one new file in `sortedRowsInDisk`.
     pub fn spill(&mut self) -> Result<(), ExecError> {
         self.set_in_spilling();
-        let result = self.spill_body();
+        let result = recover_worker_panic(|| self.spill_body());
         // Go registers `defer p.cond.Broadcast()` BEFORE `defer
         // p.setNotSpilled()`, so the status is restored first and the waiters
         // are woken second -- otherwise a woken waiter could observe
@@ -381,7 +383,7 @@ where
         let outcomes = crate::worker_pool::map(
             workers.into_iter().map(|mut worker| {
                 move || {
-                    let result = worker.sort_local_rows();
+                    let result = recover_worker_panic(|| worker.sort_local_rows());
                     (worker, result)
                 }
             }),

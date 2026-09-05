@@ -604,8 +604,9 @@ both `oltp_read_only` and `oltp_read_write`.
   field. The previously missing PointGet disable gate is now enforced.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
-  workers are active; RankTopN, benchmark, comparison-loop cancellation, and
-  upstream failpoint/panic receipts remain.
+  workers are active; RankTopN, benchmark, and the upstream failpoint-only
+  fault-injection matrix remain. Parallel worker panic recovery and
+  comparison-loop cancellation are now covered by focused receipts.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. Previously
   absent MPP probe, cache metrics, and range diagnostics owners are now
   implemented; remaining integration/test rows are still partial.

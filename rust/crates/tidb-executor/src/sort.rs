@@ -52,6 +52,7 @@ use tidb_util::memory::{ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_S
 use crate::mem_quota::StatementMemory;
 use crate::parallel_sort_spill_helper::{LocalSortWorker, ParallelSortSpillHelper};
 use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
+use crate::sort_util::recover_worker_panic;
 
 /// Go `planner/util.ByItems`: one `ORDER BY` item -- the key expression and
 /// its direction.
@@ -699,11 +700,13 @@ where
                 self.tracker.consume(memory_usage);
                 let worker = workers[lane].clone();
                 pending[lane] = Some(crate::worker_pool::spawn(move || {
-                    worker
-                        .0
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .add_chunk(chunk, memory_usage)
+                    recover_worker_panic(|| {
+                        worker
+                            .0
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .add_chunk(chunk, memory_usage)
+                    })
                 }));
 
                 if need_spill.swap(false, SeqCst) {
@@ -735,7 +738,7 @@ where
                 // No spill: each worker locally merges its sorted batches into
                 // one run, then the SortExec heap merges those worker runs.
                 for worker in &mut workers {
-                    let mut run = worker.sort_local_partition()?;
+                    let mut run = recover_worker_panic(|| worker.sort_local_partition())?;
                     let released = LocalSortWorker::take_total_memory_usage(worker);
                     self.tracker.consume(-released);
                     if let Some(run) = &mut run {

@@ -82,6 +82,7 @@ use tidb_util::memory::{ArcAction, Tracker};
 
 use crate::mem_quota::StatementMemory;
 use crate::sort::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
+use crate::sort_util::recover_worker_panic;
 use crate::topn_chunk_heap::TopNChunkHeap;
 use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
 
@@ -683,20 +684,22 @@ where
             let spill_chunk_size = self.spill_chunk_size;
             let spill_state = Arc::clone(&spill_state);
             results.push(crate::worker_pool::spawn(move || {
-                run_parallel_topn_worker(
-                    input,
-                    by_items,
-                    field_types,
-                    init_cap,
-                    max_chunk_size,
-                    total_limit,
-                    ctx,
-                    tracker,
-                    memory,
-                    disk_tracker,
-                    spill_chunk_size,
-                    spill_state,
-                )
+                recover_worker_panic(|| {
+                    run_parallel_topn_worker(
+                        input,
+                        by_items,
+                        field_types,
+                        init_cap,
+                        max_chunk_size,
+                        total_limit,
+                        ctx,
+                        tracker,
+                        memory,
+                        disk_tracker,
+                        spill_chunk_size,
+                        spill_state,
+                    )
+                })
             }));
         }
 

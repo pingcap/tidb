@@ -31,9 +31,9 @@
 //! * `spillChunkSize` is not re-declared here. [`crate::sort_partition`]
 //!   already owns the port's single definition, and this module re-exports it
 //!   so a second, drifting copy cannot appear.
-//! * `processPanicAndLog` is NOT ported: it recovers a Go panic and forwards it
-//!   down a worker channel. This port propagates [`ExecError`] by return value
-//!   and has no worker channels.
+//! * `processPanicAndLog` is represented by [`recover_worker_panic`]: it
+//!   recovers a panic at each parallel worker boundary and forwards the panic
+//!   text as an [`ExecError`] instead of dropping a persistent pool task.
 //! * `injectParallelSortRandomFail`, `injectErrorForIssue59655`, and
 //!   `injectPanicForIssue63216` are NOT ported: they are `failpoint.Inject`
 //!   sites, and this port has no failpoint runtime.
@@ -47,6 +47,9 @@
 //!   `chunk.Row`. A `chunk::Row<'_>` borrows its chunk, so a heap or a channel
 //!   cannot hold one while the source that owns the chunk is advanced; the
 //!   merge in [`crate::multi_way_merge`] therefore parameterizes the row.
+
+use std::any::Any;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
@@ -94,6 +97,31 @@ pub fn err_spill_empty_chunk() -> ExecError {
 #[must_use]
 pub fn err_fail_to_add_chunk() -> ExecError {
     ExecError::SpillFailed("fail to add chunk".to_owned())
+}
+
+/// Recovers one Go-style executor worker panic and turns it into the error
+/// that the worker's result channel would carry.
+///
+/// Go's `processPanicAndLog` calls `util.GetRecoverError`: string panic values
+/// retain their text, while non-string values use a stable formatted fallback.
+/// The Rust task must be caught before it unwinds through the persistent
+/// executor pool, otherwise the pool thread exits and its receiver reports a
+/// misleading "dropped result" error.
+pub(crate) fn recover_worker_panic<T>(
+    operation: impl FnOnce() -> Result<T, ExecError>,
+) -> Result<T, ExecError> {
+    catch_unwind(AssertUnwindSafe(operation))
+        .map_err(|payload| ExecError::internal(worker_panic_message(payload.as_ref())))?
+}
+
+fn worker_panic_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_owned();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "non-string panic payload".to_owned()
 }
 
 /// Go `rowWithPartition`: a row tagged with the partition (sorted run) it came
@@ -347,5 +375,23 @@ mod tests {
         assert!(SpillStatus::NotSpilled < SpillStatus::NeedSpill);
         assert!(SpillStatus::NeedSpill < SpillStatus::InSpilling);
         assert!(SpillStatus::InSpilling < SpillStatus::SpillTriggered);
+    }
+
+    #[test]
+    fn worker_panic_is_recovered_without_poisoning_the_pool() {
+        let recovered = crate::worker_pool::submit(|| {
+            recover_worker_panic(|| -> Result<(), ExecError> {
+                panic!("sort worker boom");
+            })
+        });
+        assert!(matches!(
+            recovered,
+            Err(ExecError::Internal(message)) if message == "sort worker boom"
+        ));
+
+        // Go's recovered worker remains part of the goroutine pool.  A later
+        // task must still run after the panic boundary has converted the
+        // first task to an executor error.
+        assert_eq!(crate::worker_pool::submit(|| 7_u8), 7);
     }
 }

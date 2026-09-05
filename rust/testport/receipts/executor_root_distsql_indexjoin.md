@@ -699,3 +699,48 @@ live SQL execution with offset-only limits, spill interaction, and native
 TiKV behavior were not run. The default Rust 1.95 toolchain remains below the
 workspace's Rust 1.97 minimum; the pinned nightly toolchain was used for the
 focused validation.
+
+## Parallel worker panic recovery alignment
+
+The same complete `pkg/executor/sortexec` inventory above covers this bounded
+Rust fix. Go's `parallelSortWorker.run`, `parallelSortSpillHelper.spill`, and
+the TopN spill workers recover panics with `util.GetRecoverError` and deliver
+the resulting error through their worker channels. Rust's persistent executor
+pool previously let a panic unwind out of a task, which dropped the receiver
+without the panic text and permanently removed that pool thread. The shared
+`recover_worker_panic` boundary now converts string panic payloads to
+`ExecError::Internal`, wraps parallel Sort and TopN worker tasks plus the
+parallel-sort spill body/worker calls, and leaves the persistent pool able to
+run subsequent tasks.
+
+The focused regression is
+`sort_util::tests::worker_panic_is_recovered_without_poisoning_the_pool`.
+It runs the recovery boundary on the real persistent worker pool, asserts the
+original panic text is returned as the executor error, and submits a second
+task to prove the pool remains usable. Before the helper existed, the focused
+test failed to compile because the Rust worker recovery boundary was absent;
+after the implementation the test passed (`1 passed`). The temporary
+workspace compile unblock used only for this test (`driver/errors/exec.rs`
+string literals) was reverted and is not part of this batch.
+
+Rust ownership remains within `tidb-executor`'s sort owners
+(`sort_util.rs`, `sort.rs`, `topn.rs`, and `parallel_sort_spill_helper.rs`);
+no Go, Bazel, generated, fixture, or platform artifact changed. Go failpoint
+injection remains an explicit boundary, but a real worker panic no longer
+silently kills a persistent Rust pool lane.
+
+## Parallel worker panic recovery validation
+
+- Pre-fix focused command failed as expected because
+  `recover_worker_panic` was not defined; the first compile also exposed an
+  unrelated pre-existing `driver/errors/exec.rs` type error on the current
+  remote tip.
+- Post-fix focused command (with that unrelated literal corrected only during
+  the local compile and reverted afterward):
+  `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-executor --lib sort_util::tests::worker_panic_is_recovered_without_poisoning_the_pool -- --exact --nocapture`
+  — passed (`1 passed, 1199 filtered out`).
+- `rustup which rustfmt --toolchain nightly-2026-08-22` followed by
+  `rustfmt --check` on the four changed executor sources passed; the broader
+  workspace `cargo fmt --all -- --check` still reports unrelated pre-existing
+  drift in untouched executor and distsql files. `git diff --check` passed.
+  The full executor suite and live spill/panic integration were not run.
