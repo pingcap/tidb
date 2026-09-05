@@ -394,3 +394,5 @@
 - 下轮恢复点: (1) infoschema/privilege 行为面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 微差异排队。
 - allow_fallback_to_tikv 臂收敛核实: 现行树单臂(并发会话版本: trim/去重/非 tiflash 拒绝, 与我批语义一致且更严格拒绝空 token); 我的回归测试对着统一臂全绿。无重复臂。
 - 下轮恢复点: (1) 新面候选 infoschema(大, 需立项); (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 微差异排队。
+- infoschema 面立项: 架构映射收据 rust/docs/infoschema-parity-audit.md(16 文件/15.4k 行 → 按职责分布映射表+三项范围决策+切片顺序 a/b/c)。
+- 下轮恢复点: (1) 切片 a: DDL reload 版本语义(catalog_reload/catalog_watch vs builder.go); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
