@@ -620,6 +620,23 @@ impl LogicalPlan {
         self.children().first().and_then(Self::schema)
     }
 
+    /// Go's LAZY schema getter for schema producers
+    /// (`logical_schema_producer.go:80-88`): when neither this operator nor a
+    /// child materialized a schema, Go assigns `expression.NewSchema()` — an
+    /// EMPTY but valid schema — and returns it, so a producer's `Schema()` is
+    /// never nil. The FROM-less `TableDual` a `SELECT (subquery)` outer plan
+    /// is built over is the canonical case.
+    ///
+    /// The crate's `None` (the not-yet-materialized representation) maps to
+    /// that empty schema here; callers that must distinguish an
+    /// unmaterialized leaf still use [`Self::schema`].
+    #[must_use]
+    pub fn schema_or_empty(&self) -> Schema {
+        self.schema()
+            .cloned()
+            .unwrap_or_else(|| Schema::new(Vec::new()))
+    }
+
     /// Go `BaseLogicalPlan.OutputNames()` (`base_logical_plan.go:107`), with
     /// the same own-then-first-child rule as [`Self::schema`].
     #[must_use]

@@ -29,6 +29,18 @@ pub enum QueryStmt {
 }
 
 impl QueryStmt {
+    /// Restores this query to canonical SQL.
+    ///
+    /// Public mirror of [`Stmt::restore`](crate::Stmt::restore) for the query
+    /// envelope a scalar subquery carries: a caller evaluating
+    /// `SET @x = (SELECT ..)` needs the INNER query's SQL, which no
+    /// `Stmt`-level restore exposes.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
     /// Appends the query's canonical SQL to `out`.
     pub(crate) fn restore_into(&self, out: &mut String) {
         self.restore_into_with_context(out, &RestoreContext::default());

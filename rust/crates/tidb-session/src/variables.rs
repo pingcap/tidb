@@ -1136,6 +1136,22 @@ impl Session {
                 return Ok(Datum::new_string(word.clone()));
             }
         }
+        // A scalar subquery value runs as its own SELECT: Go's executor
+        // evaluates the subplan and enforces the one-row scalar contract
+        // (1242 on more than one row, NULL on none). The surrounding
+        // `SELECT (subquery)` shape is not plannable here, so the inner
+        // query runs directly over the same catalog.
+        if let tidb_ast::Expr::Subquery(sub) = expr {
+            let sql = sub.restore();
+            let ctx = self.statement_context(false);
+            let rows =
+                self.with_catalog_mut(|catalog| tidb_executor::run_select_on(&sql, catalog, &ctx))?;
+            return match rows.len() {
+                0 => Ok(Datum::Null),
+                1 => Ok(rows[0].first().cloned().unwrap_or(Datum::Null)),
+                _ => Err(DriverError::SubqueryReturnsMoreThanOneRow),
+            };
+        }
         let bound = self.bind_variables_in(expr)?;
         let sql = format!("SELECT {}", bound.restore());
         let ctx = self.statement_context(false);

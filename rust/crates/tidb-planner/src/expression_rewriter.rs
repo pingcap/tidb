@@ -1890,7 +1890,11 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         np: LogicalPlan,
         hint_flags: u64,
     ) -> Result<ScalarSubqueryOutcome, RewriteError> {
-        let outer_schema = outer.schema().ok_or(RewriteError::MissingSchema)?.clone();
+        // Go's schema getter materializes an EMPTY schema for the FROM-less
+        // dual this outer plan is when the statement is `SET @x = (SELECT ..)`
+        // lowered to `SELECT (subquery)` — never nil — so the uncorrelated
+        // subquery takes the evaluate-separately path instead of erroring.
+        let outer_schema = outer.schema_or_empty();
         let mut np = self.build_max_one_row(np);
         let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&mut np, &outer_schema);
         let no_decorrelate = is_no_decorrelate(
