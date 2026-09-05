@@ -93,7 +93,7 @@ fn declared(catalog: &Catalog, db: &str, table: &str) -> Vec<KvForeignKey> {
 //     shared idx_c, in order, all public, and every orphan insert fails
 //     `[planner:1452]ErrNoReferencedRow2`;
 //   * the SAME multi-add with one bad referenced column adds NOTHING
-//     (atomicity — gap test below);
+//     (atomicity — covered by the focused regression below);
 //   * the circular-dependency ADD fails
 //     `[ddl:1452]Cannot add or update a child row: ...` and leaves neither
 //     table's meta touched;
@@ -447,16 +447,55 @@ fn alter_add_foreign_key_refuses_partitioning_on_either_side() {
 // constraints; and `alter table t2 drop index idx_c, add constraint fk_c
 // foreign key (c) references t1(b)` fails `ErrDropIndexNeededInForeignKey`
 // (1553) because the drop would strand the add.
-//
-// go-parity-gap (documented divergence): this tier's ALTER applies its
-// actions in source order WITHOUT staging — fk_c and fk_d land before fk_e
-// fails, and the drop-then-add pair drops first (nothing to strand yet) —
-// so neither the atomic rollback nor the 1553 is reproducible.
 #[test]
-#[ignore = "go-parity-gap: multi-action ALTER is not staged, so Go's add-rollback and 1553 diverge"]
 fn a_failed_multi_add_leaves_no_constraint_behind() {
-    // Contract (foreign_key_test.go:1145-1153): the bad fk_e rolls back
-    // fk_c and fk_d (0 constraints left); drop+add in one statement is 1553.
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    ddl::run_create_table_in(
+        "create table t1 (id int key, b int, index(b));",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t2 (id int key, c int, d int, e int, index idx_c(c,d,e));",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+
+    let error = ddl::run_alter_table_in(
+        "alter table t2 add constraint fk_c foreign key (c) references t1(b), \
+         add constraint fk_d foreign key (d) references t1(b), \
+         add constraint fk_e foreign key (e) references t1(unknown_col)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go rolls back every FK in a failed multi-add");
+    assert_eq!(error.clone().to_mysql_error().code, 3734);
+    assert!(declared(&catalog, "test", "t2").is_empty());
+    let TableEntry::Kv(table) = catalog.table_in("test", "t2").unwrap() else {
+        panic!("expected a storage-backed table")
+    };
+    assert_eq!(table.indexes().len(), 1);
+
+    let error = ddl::run_alter_table_in(
+        "alter table t2 drop index idx_c, add constraint fk_c foreign key (c) references t1(b)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go protects an index needed by the same-statement FK add");
+    assert_eq!(error.clone().to_mysql_error().code, 1553);
+    let TableEntry::Kv(table) = catalog.table_in("test", "t2").unwrap() else {
+        panic!("expected a storage-backed table")
+    };
+    assert!(table.indexes().iter().any(|index| index.name == "idx_c"));
 }
 
 // The partial-index rows of Go's TestAddForeignKey
@@ -491,9 +530,8 @@ fn partial_index_safety_rules_match_go() {
 //     `aa` while `b` stays referenced.
 //
 // The RENAME COLUMN legs of the same Go test assert the same maintenance as
-// CHANGE COLUMN, but use the metadata-only action. The Go self-ref create is
-// accepted with checks ON; this tier still needs the equivalent create-time
-// checks-off setting, which is kept scoped to that setup.
+// CHANGE COLUMN, but use the metadata-only action. Self-reference setup is
+// accepted with checks ON, matching Go's create-time validation.
 #[test]
 fn change_column_renames_follow_the_constraint_meta() {
     let mut catalog = Catalog::default();

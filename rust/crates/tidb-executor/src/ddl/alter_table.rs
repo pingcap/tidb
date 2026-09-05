@@ -58,6 +58,47 @@ pub fn run_alter_table_in(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    // Go submits one ALTER TABLE job for the whole action list and rolls the
+    // job back if any action fails. Stage statements carrying foreign-key
+    // actions on a catalog clone so earlier adds/column changes cannot leak
+    // when a later FK fails validation. Single-action ALTERs retain the
+    // existing fast path.
+    let stmt = ctx.parse(sql)?;
+    let atomic_foreign_key_actions = match &stmt {
+        Stmt::Ddl(ddl) => match &**ddl {
+            DdlStmt::AlterTable(alter) => {
+                alter.actions.len() > 1
+                    && alter.actions.iter().any(|action| match action {
+                        tidb_ast::AlterTableAction::AddForeignKey(_) => true,
+                        tidb_ast::AlterTableAction::AddColumns { constraints, .. } => {
+                            constraints.iter().any(|constraint| {
+                                matches!(constraint, tidb_ast::TableConstraint::ForeignKey(_))
+                            })
+                        }
+                        _ => false,
+                    })
+            }
+            _ => false,
+        },
+        _ => false,
+    };
+    if atomic_foreign_key_actions {
+        let mut staged = catalog.clone();
+        let result = run_alter_table_in_inner(sql, &mut staged, current_db, ctx);
+        if result.is_ok() {
+            *catalog = staged;
+        }
+        return result;
+    }
+    run_alter_table_in_inner(sql, catalog, current_db, ctx)
+}
+
+fn run_alter_table_in_inner(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
     let stmt = ctx.parse(sql)?;
     let alter = match &stmt {
         Stmt::Ddl(ddl) => match &**ddl {
@@ -104,6 +145,7 @@ pub fn run_alter_table_in(
     // blanket refusal was: it lets a nullability change through and refuses
     // an incompatible type with Go's 3780/1832/1833 instead of 1105.
     let participates = crate::foreign_key::participates(catalog, &database, &name);
+    reject_drop_index_used_by_added_foreign_key(catalog, &database, &name, &alter.actions)?;
     for action in &alter.actions {
         if participates && matches!(action, tidb_ast::AlterTableAction::DropColumn { .. }) {
             return Err(DriverError::unsupported(
@@ -1277,6 +1319,68 @@ fn add_foreign_key_action(
     }
     table.add_foreign_key(foreign_key);
     catalog.mark_has_foreign_keys();
+    Ok(())
+}
+
+/// Go's multi-action ALTER validator evaluates a dropped index against an FK
+/// added by the same statement before either action is committed. If the
+/// existing index is the key the new constraint would rely on, dropping it is
+/// refused with 1553 rather than allowing the later ADD to auto-create a
+/// replacement index. This is the exact `drop idx_c, add constraint fk_c`
+/// shape in `TestAddForeignKey`.
+fn reject_drop_index_used_by_added_foreign_key(
+    catalog: &Catalog,
+    database: &str,
+    table_name: &str,
+    actions: &[tidb_ast::AlterTableAction],
+) -> Result<(), DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+        return Ok(());
+    };
+    let drops: Vec<&str> = actions
+        .iter()
+        .filter_map(|action| match action {
+            tidb_ast::AlterTableAction::DropIndex { if_exists: _, name } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if drops.is_empty() {
+        return Ok(());
+    }
+    let added: Vec<&tidb_ast::ForeignKeyConstraintDefinition> = actions
+        .iter()
+        .filter_map(|action| match action {
+            tidb_ast::AlterTableAction::AddForeignKey(definition) => Some(definition),
+            _ => None,
+        })
+        .collect();
+    for index_name in drops {
+        let Some(index) = table
+            .indexes()
+            .iter()
+            .find(|index| index.name.eq_ignore_ascii_case(index_name))
+        else {
+            continue;
+        };
+        let index_offsets = &index.column_offsets;
+        for definition in &added {
+            let fk_names = super::indexes::index_part_names(&definition.parts)?;
+            let fk_offsets: Vec<usize> = fk_names
+                .iter()
+                .filter_map(|column| {
+                    table
+                        .columns
+                        .iter()
+                        .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
+                })
+                .collect();
+            if !fk_offsets.is_empty() && index_offsets.starts_with(&fk_offsets) {
+                return Err(DriverError::DropIndexNeededInForeignKey(
+                    index_name.to_owned(),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

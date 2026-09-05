@@ -70,6 +70,7 @@ GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex make lint
 # READY_LINT_RC=0
 ```
 
-No Go, generated, platform, Bazel, or module file changed. Multi-action ALTER
-atomicity and partial-index predicate safety remain the explicit neighboring
-gaps in the shared `fk_alter_meta_and_privilege_source` ledger.
+No Go, generated, platform, Bazel, or module file changed. Partial-index
+predicate safety remains the explicit neighboring gap in the shared
+`fk_alter_meta_and_privilege_source` ledger; multi-action ALTER atomicity is
+recorded in `receipts/ddl_foreign_key_alter_atomicity.md`.
