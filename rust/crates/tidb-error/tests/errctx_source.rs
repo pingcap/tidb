@@ -250,3 +250,30 @@ fn err_group_map_matches_source_init() {
     assert_eq!(resolve_err_level(false, true), Level::Warn);
     assert_eq!(resolve_err_level(false, false), Level::Error);
 }
+
+// Go permits callers to discard every errctx result. Keep this owner free of
+// a Rust-only diagnostic contract on the source-shaped API.
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    let handler = Arc::new(FuncWarnAppender::default());
+    new_context(Arc::new(FuncWarnAppender::default()));
+    let context = new_context(handler.clone());
+    let levels = LevelMap::strict();
+    let error = plain("error");
+
+    err_group_for_code(0);
+    levels.with_level(ErrGroup::Truncate, Level::Warn);
+    MultiError::new(vec![error.clone()]);
+    let grouped = MultiError::new(vec![error.clone()]);
+    grouped.errors();
+    context.level_map();
+    context.level_for_group(ErrGroup::Truncate);
+    context.with_strict_err_group_level();
+    context.with_err_group_level(ErrGroup::Truncate, Level::Warn);
+    context.with_err_group_levels(levels);
+    context.handle_error(None);
+    context.handle_error_with_alias(None, error.clone(), plain("warning"));
+    new_context_with_levels(levels, handler);
+    resolve_err_level(false, false);
+}

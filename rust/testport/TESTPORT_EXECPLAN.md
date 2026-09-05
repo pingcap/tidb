@@ -8717,6 +8717,11 @@ risks without claiming repository-wide parity.
   `#[must_use]` annotations from `Op::value`, `name`, `literal`, and
   `is_keyword`. The deny-on-discard regression and Ready evidence are recorded
   in `receipts/parser_opcode.md`.
+- 2026-09-05 (`pkg/errctx`): the complete `tidb-error::errctx` owner now
+  matches Go's discardable context contract by removing 14 explicit Rust-only
+  `#[must_use]` annotations from group lookup, level-map, multi-error, context,
+  and level-resolution APIs. The deny-on-discard regression and Ready evidence
+  are recorded in `receipts/errctx_audit.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

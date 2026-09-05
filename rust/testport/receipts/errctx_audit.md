@@ -45,3 +45,28 @@ packages remain outside this leaf audit.
 
 This receipt certifies the bounded `pkg/errctx` inventory and parity check;
 it is not a repository-wide transcreation claim.
+
+## Rust follow-up: Go-discardable context results
+
+The complete three-artifact inventory and source-derived context contract
+above remain unchanged. The Rust owner carried 14 explicit `#[must_use]`
+annotations on the Go-shaped group lookup, level-map copy, `MultiError`,
+`Context`, context-constructor, and level-resolution APIs. Go callers may
+discard all of these return values, so the annotations were Rust-only
+diagnostics and are now removed without changing context state or error
+handling semantics.
+
+The source-derived regression
+`errctx_source::return_values_may_be_ignored_like_go` discards every affected
+result under `#[deny(unused_must_use)]`. On the pre-fix owner it failed to
+compile with 14 unused-return errors; the fixed test passes.
+
+Ready validation:
+
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-error --test all errctx_source::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-error --test all -- --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-error --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-error -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` is not required.
