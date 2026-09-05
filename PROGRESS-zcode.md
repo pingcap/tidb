@@ -484,3 +484,5 @@
 - 下轮恢复点: (1) 跟随兄弟会话增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - 增量同步验证: ddl foreign-key reference errors 合入后全关键面稳定(datatype 重跑 412/0 确认前次 5 失败为并行 flake)。
 - 下轮恢复点: (1) 新面选型或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- 增量同步: 兄弟会话继续 DDL 对齐(foreign key compatibility/auto random alter/JSON selectivity skip/hidden expression-index column skip), 均不在我的审计范围。树稳定。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
