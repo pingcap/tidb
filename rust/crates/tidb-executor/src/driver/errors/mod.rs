@@ -295,6 +295,14 @@ impl DriverError {
                 "Cannot delete or update a parent row: a foreign key constraint fails ({table}, {constraint})"
             ),
         ),
+        // Go reuses ErrTruncateIllegalForeignKey for both TRUNCATE TABLE and
+        // DROP TABLE when the parent is referenced outside the statement.
+        DriverError::ForeignKeyTableReferenced { detail } => MysqlError::new(
+            1701,
+            format!(
+                "Cannot truncate a table referenced in a foreign key constraint ({detail})"
+            ),
+        ),
         // Go: "Foreign key '%s' uses virtual column '%s' which is not
         // supported.". Captured via `gorun`: `[schema:3733]`.
         DriverError::ForeignKeyUsesVirtualColumn {

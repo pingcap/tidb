@@ -2048,8 +2048,15 @@ impl Session {
                 }
                 DdlStmt::TruncateTable(_) => {
                     let current_db = self.current_db.clone();
+                    let foreign_key_checks = self.foreign_key_checks();
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_truncate_table_in(sql, catalog, &current_db, sql_mode)?;
+                        tidb_executor::run_truncate_table_in_with_foreign_key_checks(
+                            sql,
+                            catalog,
+                            &current_db,
+                            sql_mode,
+                            foreign_key_checks,
+                        )?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }

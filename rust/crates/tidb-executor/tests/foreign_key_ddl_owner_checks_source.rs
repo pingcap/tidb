@@ -154,13 +154,9 @@ fn foreign_key_add_then_drop_constraint_round_trip() {
 // both the truncate and the drop of a referenced table
 // (pkg/ddl/foreign_key.go:404-427).
 //
-// go-parity-gap: this tier's truncate (`ddl/table_lifecycle.rs:192`
-// run_truncate_table_in) performs no foreign-key referral check at all, and
-// its drop check (`foreign_key.rs:926` check_drop_tables) renders Go's
-// 1451-shaped parent-row text instead of 1701, so the Go errno is not
-// reproducible here.
+// The synchronous owner now uses the same 1701 DDL error as Go for both
+// statements; the schema-state race itself remains outside this tier.
 #[test]
-#[ignore = "go-parity-gap: no 1701 truncate/drop referral check (run_truncate_table_in has none; check_drop_tables renders 1451 text)"]
 fn truncate_or_drop_referenced_table_reports_1701() {
     let mut catalog = Catalog::default();
     let ctx = StmtContext::for_query();

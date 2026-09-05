@@ -812,6 +812,13 @@ pub enum DriverError {
         /// The constraint as `SHOW CREATE TABLE` would print it.
         constraint: String,
     },
+    /// Go `dbterror.ErrTruncateIllegalForeignKey` (1701): a `TRUNCATE
+    /// TABLE` or `DROP TABLE` would remove a parent still referenced by a
+    /// child outside the same statement.
+    ForeignKeyTableReferenced {
+        /// The child schema, child table and constraint as Go formats them.
+        detail: String,
+    },
     /// Go `ErrFkExceedMaxDepth` (3008): a cascade recursed deeper than
     /// MySQL's 15 levels.
     ForeignKeyCascadeTooDeep,

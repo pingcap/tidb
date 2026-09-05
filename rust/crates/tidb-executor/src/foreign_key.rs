@@ -935,13 +935,46 @@ pub(crate) fn check_drop_tables(
             }) {
                 continue;
             }
-            return Err(violation(
-                Side::Parent,
-                &child_db,
-                &child_table,
-                &foreign_key,
-            ));
+            return Err(table_referenced(&child_db, &child_table, &foreign_key));
         }
     }
     Ok(())
+}
+
+/// Go `checkTruncateTableHasForeignKeyReferredInOwner` and its DROP TABLE
+/// sibling both raise `ErrTruncateIllegalForeignKey` (1701), rather than the
+/// row-level 1451 used by DELETE/UPDATE. `detail` is the child-side text Go
+/// places inside the parentheses.
+pub(crate) fn table_referenced(
+    child_db: &str,
+    child_table: &str,
+    foreign_key: &KvForeignKey,
+) -> DriverError {
+    DriverError::ForeignKeyTableReferenced {
+        detail: format!(
+            "`{child_db}`.`{child_table}` CONSTRAINT `{}`",
+            foreign_key.name
+        ),
+    }
+}
+
+/// Finds the first child outside `ignored` that still references a parent.
+/// The caller supplies the ignored set because TRUNCATE treats a self-
+/// reference as safe, while DROP TABLE uses the complete statement list.
+pub(crate) fn find_table_referred(
+    catalog: &Catalog,
+    database: &str,
+    table: &str,
+    ignored: &[(String, String)],
+) -> Option<DriverError> {
+    referring(catalog, database, table)
+        .into_iter()
+        .find(|(child_db, child_table, _)| {
+            !ignored.iter().any(|(db, name)| {
+                db.eq_ignore_ascii_case(child_db) && name.eq_ignore_ascii_case(child_table)
+            })
+        })
+        .map(|(child_db, child_table, foreign_key)| {
+            table_referenced(&child_db, &child_table, &foreign_key)
+        })
 }

@@ -198,6 +198,20 @@ pub fn run_truncate_table_in(
     // to the session and another here.
     sql_mode: tidb_parser::SqlMode,
 ) -> Result<(), DriverError> {
+    run_truncate_table_in_with_foreign_key_checks(sql, catalog, current_db, sql_mode, true)
+}
+
+/// Runs `TRUNCATE TABLE` with the issuing session's `foreign_key_checks`
+/// switch. Go's owner check is skipped when the switch is OFF, and a
+/// self-referencing constraint is ignored because truncation removes the
+/// child and parent rows together.
+pub fn run_truncate_table_in_with_foreign_key_checks(
+    sql: &str,
+    catalog: &mut Catalog,
+    current_db: &str,
+    sql_mode: tidb_parser::SqlMode,
+    foreign_key_checks: bool,
+) -> Result<(), DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let Stmt::Ddl(ddl) = &stmt else {
@@ -212,6 +226,16 @@ pub fn run_truncate_table_in(
     };
     let (database, name) = crate::driver::split_table_path_pub(truncate, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
+    if foreign_key_checks {
+        if let Some(error) = crate::foreign_key::find_table_referred(
+            catalog,
+            &database,
+            &name,
+            &[(database.clone(), name.clone())],
+        ) {
+            return Err(error);
+        }
+    }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(&database, &name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{name}"),

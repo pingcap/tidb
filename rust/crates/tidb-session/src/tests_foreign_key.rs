@@ -340,9 +340,55 @@ fn foreign_key_checks_rejects_a_non_boolean_value() {
 #[test]
 fn drop_table_is_refused_while_a_foreign_key_still_points_at_it() {
     let mut session = pair("");
-    assert_eq!(code(&mut session, "DROP TABLE p"), Some(1451));
+    let error = session
+        .run("DROP TABLE p")
+        .expect_err("a referenced parent cannot be dropped");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 1701);
+    assert_eq!(
+        mysql_error.message,
+        "Cannot truncate a table referenced in a foreign key constraint (`test`.`c` CONSTRAINT `fk_1`)"
+    );
     assert!(session.run("SELECT id FROM p").is_ok());
     assert_eq!(code(&mut session, "DROP TABLE p, c"), None);
+}
+
+/// `TRUNCATE TABLE` uses the DDL owner error (1701), not the row-level
+/// parent-mutation error (1451), and leaves both tables untouched. A
+/// self-reference is safe because truncation removes the parent and child
+/// rows together; turning the session switch off also bypasses the check.
+#[test]
+fn truncate_table_is_refused_while_a_foreign_key_still_points_at_it() {
+    let mut session = pair("");
+    let error = session
+        .run("TRUNCATE TABLE p")
+        .expect_err("a referenced parent cannot be truncated");
+    let mysql_error = error.to_mysql_error();
+    assert_eq!(mysql_error.code, 1701);
+    assert_eq!(
+        mysql_error.message,
+        "Cannot truncate a table referenced in a foreign key constraint (`test`.`c` CONSTRAINT `fk_1`)"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM p ORDER BY id"),
+        vec![vec!["1"], vec!["2"]]
+    );
+
+    session.run("SET foreign_key_checks = 0").unwrap();
+    assert_eq!(code(&mut session, "TRUNCATE TABLE p"), None);
+    assert!(rows(&mut session, "SELECT id FROM p").is_empty());
+    // The child row remains when checks are disabled, matching Go's owner
+    // gate: no DDL-time referral validation is performed in this mode.
+    assert_eq!(rows(&mut session, "SELECT id FROM c"), vec![vec!["10"]]);
+
+    let mut self_reference = Session::new();
+    self_reference
+        .run("CREATE TABLE tree (id INT PRIMARY KEY, parent INT, FOREIGN KEY (parent) REFERENCES tree(id))")
+        .unwrap();
+    self_reference
+        .run("INSERT INTO tree VALUES (1, NULL)")
+        .unwrap();
+    assert_eq!(code(&mut self_reference, "TRUNCATE TABLE tree"), None);
 }
 
 /// With the checks off, `DROP TABLE` of a referenced parent is allowed --

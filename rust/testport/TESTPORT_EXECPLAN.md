@@ -8395,3 +8395,13 @@ risks without claiming repository-wide parity.
   `SUM(DISTINCT ...)` regression compares the spilled and unspilled pipelines;
   the complete 95-artifact `aggfuncs`/`aggregate`/`chunk` inventory and Ready
   evidence are recorded in `receipts/executor_parallel_distinct_spill.md`.
+- 2026-09-05 (`pkg/ddl` foreign-key table owners): Rust now applies Go's
+  `ErrTruncateIllegalForeignKey` (1701) to both `TRUNCATE TABLE` and
+  `DROP TABLE` when a child outside the statement still refers to the parent.
+  The session route carries the live `foreign_key_checks` switch; self-
+  references and children dropped in the same statement remain allowed, while
+  DELETE/UPDATE keep their 1451 row-level error. Focused session regressions
+  pin exact 1701 messages, failed-truncate atomicity, checks-off bypass, and
+  self-reference behavior. The full 293-artifact `pkg/ddl` inventory and
+  Ready evidence are recorded in `receipts/ddl_foreign_key_owner.md` and
+  `receipts/ddl_foreign_key_owner_inventory.md`.

@@ -354,7 +354,10 @@ use table_constraints::{
 };
 
 use indexes::{index_part_names, is_visible};
-pub use table_lifecycle::{run_drop_table_in, run_rename_table_in, run_truncate_table_in};
+pub use table_lifecycle::{
+    run_drop_table_in, run_rename_table_in, run_truncate_table_in,
+    run_truncate_table_in_with_foreign_key_checks,
+};
 
 use crate::driver::{Catalog, DriverError};
 use crate::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableCharset};
