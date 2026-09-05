@@ -140,3 +140,11 @@ the full Tracker API: `CheckBytesLimit`/`SetBytesLimit`/`GetBytesLimit`,
 the fork's mem-arbitrator integration (`init_mem_arbitrator`,
 `detach_mem_arbitrator`, kill-signal transport). 20 in-module
 regressions pass.
+
+## Adjacent face: pool and action (2026-09-05) — VERIFIED
+
+`memory/pool.rs` (41 public functions vs Go ResourcePool's 33 methods —
+a superset carrying the fork's arbitrator integration) mirrors the
+resource-pool accounting with 25 in-module regressions; `memory/action.rs`
+mirrors the `ActionOnExceed` contract (action, set/get fallback,
+priority, finished lifecycle) with 12 regressions. Both suites green.

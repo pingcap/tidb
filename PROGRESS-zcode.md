@@ -440,3 +440,5 @@
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - memory tracker 切片核实: Tracker 全 API 镜像(限制/动作栈/挂接分离/消费/标签 + arbitrator 集成扩展), 20 模块回归全绿。收据已追加。
 - 下轮恢复点: (1) arbitrator/pool 深读或新面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- pool+action 切片核实: ResourcePool 41 函数(超集含 arbitrator 集成) 25 测试全绿; ActionOnExceed 契约镜像 12 测试全绿。收据已追加。
+- 下轮恢复点: (1) arbitrator 深读或新面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
