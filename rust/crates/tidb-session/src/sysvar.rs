@@ -694,6 +694,25 @@ impl SysVarDef {
         if self.name == "secure_auth" && validated.value == "OFF" {
             return Err(ValidationError::WrongValue);
         }
+        // Go's `tidb_mpp_store_fail_ttl` compatibility variable is always
+        // forced back to its `0s` default. Its Session hook emits a warning,
+        // while the value returned by Validation is what the table stores.
+        if self.name == "tidb_mpp_store_fail_ttl" {
+            return Ok(Validated {
+                value: "0s".to_owned(),
+                truncated: validated.truncated,
+            });
+        }
+        // Go's column-tracking switch is retained as a deprecated global
+        // compatibility variable but is now unconditionally ON. Normalize it
+        // here so the shared table has the same observable value as Go's
+        // custom GetGlobal hook after either boolean spelling.
+        if self.name == "tidb_enable_column_tracking" {
+            return Ok(Validated {
+                value: "ON".to_owned(),
+                truncated: validated.truncated,
+            });
+        }
         // Go's nextgen-only `TestTiDBPessimisticTransactionFairLocking`
         // exercises the variable-specific Validation closure: ON is rejected
         // with ErrNotSupportedInNextGen (1235) and the normalized fallback is

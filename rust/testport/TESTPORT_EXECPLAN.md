@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` deprecated compatibility hooks):
+  matched Go's `tidb_enable_tiflash_pipeline_model` deprecation warning,
+  forced `tidb_mpp_store_fail_ttl` to `0s` with its 1105 warning, and forced
+  `tidb_enable_column_tracking` ON with its 1681 warning. A focused session
+  regression verifies warning code/text and stored GLOBAL/SESSION values.
 - 2026-09-05 (`pkg/sessionctx/variable` enforce-MPP dependency): ported Go's
   session-dependent `tidb_enforce_mpp` validation refusal when
   `tidb_allow_mpp` is OFF, while retaining the normalized ON path after the

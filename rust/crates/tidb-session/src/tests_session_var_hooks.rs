@@ -187,6 +187,64 @@ fn locale_and_charset_compatibility_variables_match_go() {
     assert_eq!(one(&mut session, "SELECT @@lc_time_names"), "en_US");
 }
 
+/// Go's deprecated compatibility variables keep their source-specific
+/// validation side effects: the TiFlash pipeline switch warns but stores the
+/// requested boolean, MPP store-fail TTL is forced to `0s`, and column
+/// tracking is forced to `ON`.
+#[test]
+fn deprecated_compatibility_variables_match_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET GLOBAL tidb_enable_tiflash_pipeline_model = OFF")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][1], "1681");
+    assert_eq!(
+        warnings[0][2],
+        "tidb_enable_tiflash_pipeline_model is deprecated and will be removed in a future release."
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_enable_tiflash_pipeline_model"
+        ),
+        "0"
+    );
+
+    session
+        .run("SET tidb_mpp_store_fail_ttl = '10s'")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1105");
+    assert_eq!(
+        warnings[0][2],
+        "tidb_mpp_store_fail_ttl is always 0s. This variable has been deprecated and will be removed in the future releases"
+    );
+    assert_eq!(one(&mut session, "SELECT @@tidb_mpp_store_fail_ttl"), "0s");
+
+    session
+        .run("SET GLOBAL tidb_enable_column_tracking = OFF")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][1], "1681");
+    assert_eq!(
+        warnings[0][2],
+        "The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now."
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_enable_column_tracking"
+        ),
+        "1"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.

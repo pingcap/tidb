@@ -791,6 +791,21 @@ impl Session {
                 "tidb_enable_list_partition is deprecated and will be removed in a future \
                  release.",
             ))
+        } else if name.eq_ignore_ascii_case("tidb_enable_tiflash_pipeline_model") {
+            Some((
+                1681,
+                "tidb_enable_tiflash_pipeline_model is deprecated and will be removed in a future release.",
+            ))
+        } else if name.eq_ignore_ascii_case("tidb_mpp_store_fail_ttl") {
+            Some((
+                1105,
+                "tidb_mpp_store_fail_ttl is always 0s. This variable has been deprecated and will be removed in the future releases",
+            ))
+        } else if name.eq_ignore_ascii_case("tidb_enable_column_tracking") {
+            Some((
+                1681,
+                "The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now.",
+            ))
         } else if name.eq_ignore_ascii_case("tidb_enable_async_merge_global_stats") {
             // Pinned Go warns for EVERY assignment, in both session and
             // global scope, independent of the normalized boolean value.
