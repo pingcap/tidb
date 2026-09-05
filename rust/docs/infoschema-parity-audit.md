@@ -192,3 +192,12 @@ delivery and partial-write regressions live in that session's tests
 (`placement_delivery_source`, 17 in-module placement tests). Auditing
 the constraint-merging algorithm here would duplicate in-flight work;
 the face is deferred to that owner's receipt.
+
+## Adjacent face: redact (2026-09-05) — VERIFIED
+
+`tidb-util/src/redact.rs` mirrors Go `pkg/util/redact/redact.go`: the
+MARKER/OFF/ON modes (MARKER wraps in the single guillemet pair doubling
+interior markers, ON erases, invalid mode is an intest assertion),
+`NeedRedact` over the redaction-mode atomic, `Value` answering "?" when
+enabled, plus `DeRedact`/`DeRedactFile` for log post-processing.
+Four unit tests and the five planner-side redaction regressions pass.

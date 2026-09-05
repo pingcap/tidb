@@ -454,3 +454,5 @@
 - 下轮恢复点: (1) 新面选型(privilege 余项/其他 crate); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - plan inventory 环核验: explain=4674/explain_analyze=49/total=4723, inventory current 测试通过(--check 模式确认源清单同步)。
 - 下轮恢复点: (1) privilege 余项或其他 crate 面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- redact 面核实: MARKER/OFF/ON 模式(含内部 marker 双写)、NeedRedact、Value("?")、DeRedact/File 日志后处理全镜像; 4 单测+5 planner 回归全绿。收据已追加。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
