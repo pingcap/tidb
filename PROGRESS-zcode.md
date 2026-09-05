@@ -414,3 +414,5 @@
 - 下轮恢复点: (1) 继续跟随并发会话在同一工单的增量(冲突最小化); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - parser-lexer 文档 Unverified 段退役: 工具链恢复后原 worked examples 已全部成为树内测试钉子(parser_root_source.rs 的链式拒绝/pipes_as_concat ring 等), 批次推送。
 - 下轮恢复点: (1) infoschema 切片 b 已闭→下一行为面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- funcdep 邻接面核实: FDSet API 全映射(closure 族/条件 FD/等价/常量/null 化/笛卡尔/AddFrom/唯一 id 注册), 18 模块回归+planner join 规则测试全绿; 边蕴含算法的行级深读列为条件性后续。收据已追加。
+- 下轮恢复点: (1) infoschema 切片 b/c 已闭; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

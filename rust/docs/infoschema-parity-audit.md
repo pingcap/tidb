@@ -73,3 +73,15 @@ delivery to PD runs directly through `placement_delivery.rs` +
 `tidb_placement::Bundle`. The delta builder is architecturally
 subsumed. This closes the infoschema slices a-c: a verified, b and c
 dispositioned as by-design.
+
+## Adjacent face: funcdep (2026-09-05) — VERIFIED at API and suite level
+
+`tidb-funcdep` mirrors Go `pkg/planner/funcdep/fd_graph.go`'s FDSet API:
+the closure family (strict/lax/equivalence), `InClosure`, `ReduceCols`,
+the strict/lax/NC conditional additions, equivalence union, constants,
+null-conditioning (`MakeNotNull`/`MakeNullable`), cartesian product,
+`AddFrom` and unique-id registration. 18 in-module regressions pass and
+the planner's join-elimination rule tests (the FD consumers) are green.
+A line-level read of the edge-implication algorithm remains the deeper
+follow-up if a behavioral divergence ever surfaces in FD-dependent
+rules.
