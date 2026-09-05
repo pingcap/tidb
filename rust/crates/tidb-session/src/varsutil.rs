@@ -204,10 +204,7 @@ pub fn parse_memory_limit(
             // overflow wraps instead of panicking in a debug build. Keep the
             // same arithmetic contract for callers that provide a synthetic
             // near-u64 host total (real host totals are much smaller).
-            (
-                total_mem.wrapping_mul(percentage) / 100,
-                normalized,
-            )
+            (total_mem.wrapping_mul(percentage) / 100, normalized)
         })
     } else {
         None

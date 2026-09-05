@@ -4302,8 +4302,14 @@ mod tests {
 
         vars.set_system("character_set_connection", "latin1".to_owned())
             .unwrap();
-        assert_eq!(vars.get_system("character_set_connection").unwrap(), "latin1");
-        assert_eq!(vars.get_system("collation_connection").unwrap(), "latin1_bin");
+        assert_eq!(
+            vars.get_system("character_set_connection").unwrap(),
+            "latin1"
+        );
+        assert_eq!(
+            vars.get_system("collation_connection").unwrap(),
+            "latin1_bin"
+        );
 
         vars.set_system("collation_connection", "UTF8MB4_GENERAL_CI".to_owned())
             .unwrap();
@@ -4311,7 +4317,10 @@ mod tests {
             vars.get_system("collation_connection").unwrap(),
             "utf8mb4_general_ci"
         );
-        assert_eq!(vars.get_system("character_set_connection").unwrap(), "utf8mb4");
+        assert_eq!(
+            vars.get_system("character_set_connection").unwrap(),
+            "utf8mb4"
+        );
 
         vars.set_system("character_set_database", "utf8mb3".to_owned())
             .unwrap();
@@ -4329,7 +4338,8 @@ mod tests {
             .unwrap();
         assert_eq!(vars.get_system("character_set_server").unwrap(), "utf8mb4");
 
-        vars.set_system("character_set_results", String::new()).unwrap();
+        vars.set_system("character_set_results", String::new())
+            .unwrap();
         assert_eq!(vars.get_system("character_set_results").unwrap(), "");
         assert!(matches!(
             vars.set_system("character_set_connection", "not-a-charset".to_owned()),
@@ -4346,22 +4356,18 @@ mod tests {
     #[test]
     fn enforce_mpp_requires_allow_mpp_like_go() {
         let mut vars = SessionVars::new();
-        vars.set_system("tidb_allow_mpp", "OFF".to_owned())
-            .unwrap();
+        vars.set_system("tidb_allow_mpp", "OFF".to_owned()).unwrap();
         assert_eq!(vars.get_system("tidb_enforce_mpp").unwrap(), "OFF");
         assert_eq!(
             vars.set_system("tidb_enforce_mpp", "ON".to_owned()),
             Err(VarError::WrongValueForVar(
                 "tidb_enforce_mpp".to_owned(),
-                "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first."
-                    .to_owned(),
+                "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.".to_owned(),
             ))
         );
 
-        vars.set_system("tidb_allow_mpp", "ON".to_owned())
-            .unwrap();
-        vars.set_system("tidb_enforce_mpp", "1".to_owned())
-            .unwrap();
+        vars.set_system("tidb_allow_mpp", "ON".to_owned()).unwrap();
+        vars.set_system("tidb_enforce_mpp", "1".to_owned()).unwrap();
         assert_eq!(vars.get_system("tidb_enforce_mpp").unwrap(), "ON");
     }
 
