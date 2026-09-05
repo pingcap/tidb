@@ -41,6 +41,28 @@ use tidb_model::{
 };
 
 #[test]
+#[deny(unused_must_use)]
+fn mutator_source_returns_may_be_ignored_like_go() {
+    let meta = Mutator::new(MemoryTransaction::default());
+    Mutator::new(MemoryTransaction::default());
+    meta.start_ts();
+    meta.global_id_key();
+    meta.encoded_schema_diff_key(1);
+    meta.auto_table_id_key_value(1, 2, 3);
+    meta.auto_ids(1, 2);
+    meta.ddl_job_history_key(1);
+    let accessors = meta.auto_ids(1, 2);
+    accessors.row_id();
+    accessors.increment_id(5);
+    accessors.random_id();
+    accessors.sequence_value();
+    accessors.sequence_cycle();
+
+    Mutator::new_with_options(MemoryTransaction::default(), &mut []);
+    Mutator::new_reader(MemoryTransaction::default());
+}
+
+#[test]
 fn global_ids_are_atomic_contiguous_and_source_limited() {
     let meta = Mutator::new(MemoryTransaction::at_start_ts(42));
     assert_eq!(meta.start_ts(), 42);

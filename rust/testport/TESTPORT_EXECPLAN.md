@@ -41,6 +41,16 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/meta` `Mutator` and auto-ID accessor return contracts):
+  the complete seven-artifact direct package inventory recorded in
+  `receipts/meta_starter_bootstrap.md` remains unchanged and was rechecked
+  before the edit. Fourteen direct Go APIs no longer emit Rust-only discard
+  diagnostics, while `MemoryTransaction` test/fault-injection helpers remain
+  annotated. A focused deny-on-discard regression failed with exactly 14
+  diagnostics on detached pre-fix owner `419c60c4a44807d0c5f69cddb217f43f77262eb`
+  and passes with 61 integration tests (3 ignored), owner all-target checks,
+  formatting, lint, and diff checks. Evidence is recorded in
+  `receipts/b040.md`.
 - 2026-09-06 (`pkg/structure` Go-facing key encoders and reverse iterator
   accessors): the complete eight-artifact structure inventory remains
   unchanged and was rechecked before the edit. Seven direct Go APIs no longer

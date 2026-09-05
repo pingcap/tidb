@@ -703,7 +703,6 @@ impl<T> Mutator<T> {
 impl<T: MetaSnapshot> Mutator<T> {
     /// Go `NewReader`: marks a snapshot as an internal metadata request
     /// without applying the transaction-only mutator configuration.
-    #[must_use]
     pub fn new_reader(mut snapshot: T) -> Self {
         snapshot.mark_internal_meta_request();
         let start_ts = snapshot.start_ts();
@@ -713,7 +712,6 @@ impl<T: MetaSnapshot> Mutator<T> {
 
 impl<T: RawTransaction> Mutator<T> {
     /// Go `NewMutator` without options.
-    #[must_use]
     pub fn new(transaction: T) -> Self {
         let mut options: [MutatorOption<T>; 0] = [];
         Self::new_with_options(transaction, &mut options)
@@ -721,7 +719,6 @@ impl<T: RawTransaction> Mutator<T> {
 
     /// Go `NewMutator(txn, options...)`, including transaction configuration
     /// and source-order option execution.
-    #[must_use]
     pub fn new_with_options(mut transaction: T, options: &mut [MutatorOption<T>]) -> Self {
         transaction.configure_meta_mutator();
         let start_ts = transaction.start_ts();
@@ -733,7 +730,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.StartTS`.
-    #[must_use]
     pub fn start_ts(&self) -> u64 {
         self.start_ts
     }
@@ -795,7 +791,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GlobalIDKey`.
-    #[must_use]
     pub fn global_id_key(&self) -> Vec<u8> {
         key::next_global_id_kv_key()
     }
@@ -863,7 +858,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.EncodeSchemaDiffKey`.
-    #[must_use]
     pub fn encoded_schema_diff_key(&self, schema_version: i64) -> Vec<u8> {
         key::schema_diff_kv_key(schema_version)
     }
@@ -1194,7 +1188,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GenAutoTableIDKeyValue`.
-    #[must_use]
     pub fn auto_table_id_key_value(
         &self,
         database_id: i64,
@@ -1208,7 +1201,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetAutoIDAccessors`.
-    #[must_use]
     pub fn auto_ids(&self, database_id: i64, table_id: i64) -> AutoIdAccessors<T> {
         AutoIdAccessors {
             meta: self.clone(),
@@ -1731,7 +1723,6 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go test-only `DDLJobHistoryKey`.
-    #[must_use]
     pub fn ddl_job_history_key(&self, job_id: i64) -> Vec<u8> {
         key::ddl_job_history_kv_key(job_id)
     }
@@ -1879,13 +1870,11 @@ impl<T: RawTransaction> AutoIdAccessors<T> {
     }
 
     /// Go `RowID`.
-    #[must_use]
     pub fn row_id(&self) -> AutoIdAccessor<T> {
         self.accessor(AutoIdKind::Row)
     }
 
     /// Go `IncrementID`; table versions before 5 share the row-ID field.
-    #[must_use]
     pub fn increment_id(&self, table_version: u16) -> AutoIdAccessor<T> {
         if table_version < tidb_model::table_info::TABLE_INFO_VERSION5 {
             self.row_id()
@@ -1895,19 +1884,16 @@ impl<T: RawTransaction> AutoIdAccessors<T> {
     }
 
     /// Go `RandomID`.
-    #[must_use]
     pub fn random_id(&self) -> AutoIdAccessor<T> {
         self.accessor(AutoIdKind::Random)
     }
 
     /// Go `SequenceValue`.
-    #[must_use]
     pub fn sequence_value(&self) -> AutoIdAccessor<T> {
         self.accessor(AutoIdKind::SequenceValue)
     }
 
     /// Go `SequenceCycle`.
-    #[must_use]
     pub fn sequence_cycle(&self) -> AutoIdAccessor<T> {
         self.accessor(AutoIdKind::SequenceCycle)
     }
