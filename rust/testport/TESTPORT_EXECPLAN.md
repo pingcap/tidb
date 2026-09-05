@@ -8776,3 +8776,14 @@ risks without claiming repository-wide parity.
   Focused rename, CHANGE, default, index, and expression-index regressions
   are live. Evidence is recorded in
   `receipts/ddl_multi_schema_conflicts.md`.
+- 2026-09-05 (`pkg/expression` eval-arm coverage sweep): a behavioral probe
+  over all 309 Rust registry names traced every "not yet ported" fall-through
+  to its build path: 19 are rewriter-special build forms (unit-suffixed
+  DATE_ADD family, TRIM/EXTRACT/POSITION/CONVERT grammar arguments, the
+  case_when/istrue/locate/json_member_of internal names), one is the
+  documented UUID_SHORT refusal, and the six `tidb_*` server-hook classes
+  (decode_sql_digests, encode_index_key, encode_record_key, is_ddl_owner,
+  mvcc_info, row_checksum) are recorded as the server-tier boundary — Go
+  itself answers "not initialized" for them without the executor hooks. The
+  method and per-name triage are recorded in
+  `receipts/eval_arm_coverage_sweep.md`.
