@@ -589,14 +589,30 @@ pub(crate) fn refine_comparison<C: Columns>(
     expr: &mut Expression,
     ctx: &C,
 ) -> Result<(), EvalError> {
-    let ctx_dyn: &dyn Columns = ctx;
-    if refine_comparison_core(expr, ctx_dyn)? {
+    if refine_comparison_core(expr, ctx)? {
         if let Expression::ScalarFunction(function) = expr {
             wrap_comparison_arguments_with_context(
                 &mut function.args,
                 ctx.connection_charset_info(),
                 ctx,
             )?;
+        }
+    }
+    Ok(())
+}
+
+/// Context-erased comparison refinement used by plan rewriters whose resolver
+/// exposes a live statement context as a trait object.
+pub(crate) fn refine_comparison_dyn(
+    expr: &mut Expression,
+    ctx_dyn: &dyn Columns,
+) -> Result<(), EvalError> {
+    if refine_comparison_core(expr, ctx_dyn)? {
+        if let Expression::ScalarFunction(function) = expr {
+            // The plan rewriter's resolver is context-erased. Structural
+            // casts still recover Go's comparison domain; the concrete
+            // executor rebuild performs context-aware folding later.
+            wrap_comparison_arguments(&mut function.args, ctx_dyn.connection_charset_info())?;
         }
     }
     Ok(())

@@ -449,9 +449,13 @@ fn binary_expression(
             }
             if crate::builtin_compare::infer_compare_type(name).is_some() {
                 if let Some(ctx) = resolver.comparison_context() {
-                    crate::builtin_compare::refine_integer_comparison_for_rewrite_with_context(
-                        name, &mut args, ctx,
-                    );
+                    let mut expression = Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new(name),
+                        ret_type.clone(),
+                        args,
+                    ));
+                    crate::builtin_compare::refine_comparison_dyn(&mut expression, ctx)?;
+                    return Ok(expression);
                 } else {
                     crate::builtin_compare::refine_integer_comparison_for_rewrite(name, &mut args);
                 }
