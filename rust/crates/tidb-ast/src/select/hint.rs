@@ -306,7 +306,6 @@ fn restore_leading_elements(out: &mut String, elements: &[LeadingElement]) {
 
 impl Hint {
     /// The hint's canonical SQL text (Go `TableOptimizerHint.Restore`).
-    #[must_use]
     pub fn restore(&self) -> String {
         let mut out = String::new();
         self.restore_into(&mut out);
@@ -716,3 +715,18 @@ impl crate::Visitable for LeadingElement {
     }
 }
 // END GENERATED AST VISITOR IMPLEMENTATIONS
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn restore_return_may_be_ignored_like_go() {
+        let hint = Hint {
+            name: "STRAIGHT_JOIN".to_owned(),
+            kind: HintKind::Nullary { qb_name: None },
+        };
+        hint.restore();
+    }
+}

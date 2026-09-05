@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/parser/ast` optimizer-hint restore): the complete
+  36-artifact Go inventory remains unchanged and was rechecked before the
+  edit. Rust's source-shaped `Hint::restore`, corresponding to Go's
+  `TableOptimizerHint.Restore`, no longer emits a Rust-only `#[must_use]`
+  diagnostic; the Rust-native `TableIdentity::new` annotation remains. A
+  deny-on-discard regression failed with one diagnostic on the detached
+  pre-fix owner and passes with the focused test plus 131/0/8 AST aggregate,
+  affected parser/session all-target checks, formatting, lint, and diff
+  checks. Evidence is recorded in `receipts/parser_ast.md`.
 - 2026-09-05 (`pkg/ddl` CREATE TABLE column-count limit): promoted the
   executable first half of `TestCreateTableTooLarge`. `Catalog` now carries
   Go's default 1017-column limit with a test/embedding setter, and CREATE (as

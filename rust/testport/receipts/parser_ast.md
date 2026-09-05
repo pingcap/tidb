@@ -285,3 +285,36 @@ Risk is limited to test coverage and receipt ownership: parser acceptance and
 AST restore behavior are unchanged by this test-only follow-up. The AST
 crate's documentary ignored carriers remain explicit because cross-crate
 dependency direction has not changed.
+
+## Rust follow-up: Go-shaped optimizer-hint restore ownership
+
+The complete 36-artifact `pkg/parser/ast` inventory above remains the owning
+Go surface; every production, test/support, generated visitor, build, and
+fixture artifact was already read and the inventory is unchanged. The Rust
+owner is `tidb-ast/src/select/hint.rs`, where `Hint::restore` is the direct
+source-shaped counterpart of Go's `TableOptimizerHint.Restore` in
+`pkg/parser/ast/misc.go`. `TableIdentity::new` in `table_ref.rs` remains
+intentionally `#[must_use]`: it is a Rust-only stable identity constructor,
+not a Go API boundary.
+
+`Hint::restore` no longer carries Rust's `#[must_use]` diagnostic, so callers
+may discard its returned SQL text just as Go callers may ignore the
+`error`-returning `Restore` method. The new in-module regression constructs a
+nullary `STRAIGHT_JOIN` hint and discards the return under
+`#[deny(unused_must_use)]`.
+
+Pre-fix proof: the detached pre-fix owner failed to compile the regression
+with one `unused return value of select::hint::Hint::restore` diagnostic.
+After removing the annotation, the focused test passes.
+
+Ready validation:
+
+- `CARGO_TARGET_DIR=... cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-ast --lib 'select::hint::tests::restore_return_may_be_ignored_like_go' -- --exact --nocapture` — passed.
+- `PATH=... OPENSSL_DIR=... OPENSSL_STATIC=1 CARGO_TARGET_DIR=... cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-ast --test all -- --test-threads=1` — passed; 131 passed, 0 failed, 8 ignored.
+- `OPENSSL_DIR=... OPENSSL_STATIC=1 CARGO_TARGET_DIR=... cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-ast -p tidb-parser -p tidb-session --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+Correctness risk is limited to compile-time diagnostics: canonical hint
+restoration is unchanged. Compatibility risk is reduced because the
+source-shaped Rust method now has the same discard tolerance as Go. No
+runtime or performance-sensitive behavior changed.
