@@ -460,7 +460,7 @@ fn create_temporary_like_shard_row_id_source_answers_shard_row_id_bits_error() {
     }
 }
 
-/// Go `serial_test.go:402-407`: `create temporary table if not exists tb12
+/// Go `serial_test.go:352-360`: `create temporary table if not exists tb12
 /// like tb11` over the existing `test.tb12` answers OK with warning[0] ==
 /// `infoschema.ErrTableExists.GenWithStackByArgs("test.tb12").Error()`
 /// ("Table 'test.tb12' already exists").
@@ -470,20 +470,24 @@ fn create_temporary_if_not_exists_over_existing_table_files_a_1050_warning() {
     create(&mut catalog, "create table tb11 (i int primary key, j int)").expect("tb11");
     create(&mut catalog, "create temporary table tb12 like tb11").expect("tb12");
 
-    let context = ctx();
+    let duplicate_ctx = ctx();
     let created = run_create_table_in(
         "create temporary table if not exists tb12 like tb11",
         &mut catalog,
         "test",
         tidb_executor::ddl::CreateTableSettings::default(),
-        &context,
+        &duplicate_ctx,
     )
     .expect("IF NOT EXISTS duplicate is successful");
     assert!(!created);
-    let warnings = context.take_warnings();
-    assert_eq!(warnings.len(), 1, "Go records one duplicate-table warning");
-    assert_eq!(warnings[0].1, 1050);
-    assert_eq!(warnings[0].2, "Table 'test.tb12' already exists");
+    assert_eq!(
+        duplicate_ctx.take_warnings(),
+        vec![(
+            tidb_executor::WarnLevel::Note,
+            1050,
+            "Table 'test.tb12' already exists".to_owned()
+        )]
+    );
 }
 
 /// Go `serial_test.go:225-227` runs `create table t1 like test_not_exist.t`

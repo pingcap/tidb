@@ -8550,3 +8550,7 @@ risks without claiming repository-wide parity.
   Go's exact ErrForbiddenDDL 8267 diagnostic, leaving the bootstrap schema
   available. Evidence is recorded in
   `receipts/ddl_system_database_guard.md`.
+- 2026-09-05 (`pkg/ddl` temporary CREATE TABLE IF NOT EXISTS): the existing
+  local-temporary duplicate path now has a live regression that records Go's
+  Note 1050 warning and `false` result for the `LIKE` form; the remaining
+  pre-split and shard-bit temporary-copy checks stay explicit gaps.
