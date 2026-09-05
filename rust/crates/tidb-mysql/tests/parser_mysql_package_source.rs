@@ -6,7 +6,15 @@
 
 #![allow(non_upper_case_globals)]
 
+use tidb_error::mysql::SqlError;
 use tidb_mysql::*;
+
+#[test]
+#[deny(unused_must_use)]
+fn sql_error_constructors_return_may_be_ignored_like_go() {
+    SqlError::new(0, &[]);
+    SqlError::new_f(0, "customized error", &[], &[]);
+}
 
 #[test]
 fn test_sql_mode() {

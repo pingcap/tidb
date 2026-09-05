@@ -151,3 +151,33 @@ Follow-up validation:
   `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-mysql --test parser_mysql_package_source return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
 - Full `tidb-mysql` source carrier and `--all-targets` test gates — passed.
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --package tidb-mysql -- --check`, `make lint`, and `git diff --check` — passed.
+
+## Follow-up: SQL-error constructor return contract (`2026-09-06`)
+
+The complete `pkg/parser/mysql` inventory above remains the authority for
+this package batch: all 15 Go production, test, generated, fixture, and build
+artifacts were read before editing. The direct Go constructors `NewErr` and
+`NewErrf` return errors that callers may ignore. Their Rust counterparts
+`tidb-error::mysql::SqlError::new` and `SqlError::new_f` therefore no longer
+carry Rust-only `#[must_use]` annotations. Nearby `FormatArg`, catalog,
+redaction, and state helpers remain annotated because they are Rust adapter
+APIs rather than direct Go constructor boundaries.
+
+The active `tidb-mysql` source carrier now includes
+`sql_error_constructors_return_may_be_ignored_like_go`, which discards both
+constructor results under `#[deny(unused_must_use)]`. In detached pre-fix
+worktree `9be5bb19833f7c8de9e0efcc0b198ca08643216b`, the focused test failed
+with exactly two diagnostics (one for each constructor); after the removal it
+passes.
+
+Follow-up validation:
+
+- Focused constructor discard regression — passed after the fix; pre-fix
+  failure recorded above.
+- Full active `tidb-mysql` parser/mysql source carrier — 19 passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-error -p tidb-mysql --all-targets --offline --locked` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `make lint`, and `git diff --check` — passed.
+
+No Go source, Bazel metadata, Cargo manifest, generated input, fixture, or
+platform variant changed in this Rust-only follow-up; `make bazel_prepare` was
+not required.

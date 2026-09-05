@@ -41,6 +41,16 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/parser/mysql` SQL-error constructors): the complete
+  15-artifact parser/mysql inventory remains unchanged and was rechecked
+  before the edit. Rust's `SqlError::new` and `SqlError::new_f`, direct
+  counterparts of Go's `NewErr` and `NewErrf`, no longer emit Rust-only
+  discard diagnostics; nearby Rust adapter helpers remain annotated. A focused
+  deny-on-discard regression failed with exactly two diagnostics on detached
+  pre-fix owner `9be5bb19833f7c8de9e0efcc0b198ca08643216b` and passes with all
+  19 parser/mysql source-carrier tests, both Rust owner all-target checks,
+  formatting, lint, and diff checks. Evidence is recorded in
+  `receipts/parser_mysql_operate_view_audit.md`.
 - 2026-09-06 (`pkg/util/topsql/reporter` Go-shaped datamodel APIs): the
   complete TopSQL inventory was rechecked before the edit. Forty-four direct
   Go-shaped Rust `#[must_use]` diagnostics were removed while the two local

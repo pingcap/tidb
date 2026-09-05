@@ -373,7 +373,6 @@ pub struct SqlError {
 
 impl SqlError {
     /// Source NewErr constructor.
-    #[must_use]
     pub fn new(code: u16, args: &[FormatArg]) -> Self {
         let message = message_by_code(code).map_or_else(
             || sprint(args),
@@ -387,7 +386,6 @@ impl SqlError {
     }
 
     /// Source NewErrf constructor.
-    #[must_use]
     pub fn new_f(code: u16, format: &str, redact_arg_pos: &[usize], args: &[FormatArg]) -> Self {
         Self {
             code,
