@@ -128,3 +128,15 @@ cache, behind the startup cgroup/host decision hook. The module set also
 mirrors the Go package layout (action, arbitrator, pool, tracker,
 membuf, systimemon, servermemorylimit, memoryusagealarm), so the memory
 utility face is covered at both the read path and the module structure.
+
+## Adjacent face: memory tracker (2026-09-05) — VERIFIED
+
+`tidb-util/src/memory/tracker.rs` (1,602 lines vs Go's 1,355) mirrors
+the full Tracker API: `CheckBytesLimit`/`SetBytesLimit`/`GetBytesLimit`,
+`CheckExceed`, the action stack (`SetActionOnExceed`,
+`FallbackOldAndSetNewAction` and the soft-limit variant,
+`GetFallbackForTest`, `UnbindActions`, `UnbindActionFromHardLimit`),
+`AttachTo`/`Detach`/`ReplaceChild`, `Consume`, `SetLabel`/`Label`, plus
+the fork's mem-arbitrator integration (`init_mem_arbitrator`,
+`detach_mem_arbitrator`, kill-signal transport). 20 in-module
+regressions pass.
