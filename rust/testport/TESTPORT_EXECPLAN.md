@@ -8947,4 +8947,10 @@ risks without claiming repository-wide parity.
   exactly where Go's builder applies it. The name previously fell through to
   the generic fallback despite the registry and ETInt mask declaring it.
   Evidence is recorded in `receipts/locate_three_args.md`.
->>>>>>> f5809f0a36 (expr: port the three-argument LOCATE signatures)
+- 2026-09-06 (`pkg/expression` CHAR charset-decode warnings): Rust's
+  executable planner now keeps constant `CHAR(... USING charset)` carriers
+  unfolded until the live statement context evaluates them. Invalid-byte
+  decoding therefore retains Go's single 1300 warning and strict-mode NULL,
+  while the no-USING binary form remains unchanged. Focused planner and
+  charset-introducer regressions plus Ready evidence are recorded in
+  `receipts/expression_char_using_warning.md`.

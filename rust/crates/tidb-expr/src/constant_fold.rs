@@ -59,12 +59,13 @@ pub fn fold_constant_in_mode(
     fold_constant_in_mode_inner(expr, ctx, mode, false);
 }
 
-/// Folds a planner expression while retaining constant casts whose evaluation
-/// can emit a statement warning.  Go builds those casts with the live
-/// statement context, so a planner-side `NoColumns` fold would otherwise
-/// replace them with a value and permanently lose the warning at execution.
-/// The flag is deliberately opt-in: DDL and expression-unit callers that use
-/// an actual warning context retain the ordinary Go construction-time fold.
+/// Folds a planner expression while retaining constant coercions whose
+/// evaluation can emit a statement warning. Go builds those casts and
+/// charset conversions with the live statement context, so a planner-side
+/// `NoColumns` fold would otherwise replace them with a value and permanently
+/// lose the warning at execution. The flag is deliberately opt-in: DDL and
+/// expression-unit callers that use an actual warning context retain the
+/// ordinary Go construction-time fold.
 pub fn fold_constant_in_mode_preserving_warning_casts(
     expr: &mut Expression,
     ctx: &impl crate::Columns,
@@ -179,11 +180,11 @@ fn fold_current_value_in(
     Some(value)
 }
 
-/// Constant integer casts, and builtins that wrap their arguments in Go's
-/// `WrapWithCastAsInt`, use the statement context to report truncation and
-/// out-of-range diagnostics.  A no-column planner context cannot retain those
-/// diagnostics, so callers that are preparing an executable plan keep these
-/// nodes unfolded for runtime.
+/// Constant integer casts, builtins that wrap their arguments in Go's
+/// `WrapWithCastAsInt`, and `CHAR(... USING charset)` use the statement context
+/// to report truncation, out-of-range, or invalid-byte diagnostics. A
+/// no-column planner context cannot retain those diagnostics, so callers that
+/// are preparing an executable plan keep these nodes unfolded for runtime.
 ///
 /// String/byte inputs always go through Go's prefix scanner and may report
 /// truncation.  Real, float32, and decimal inputs are retained too: their
@@ -204,6 +205,18 @@ fn has_runtime_warning_cast(expr: &Expression) -> bool {
         | "tidb_shard" => &[0],
         // `FORMAT(number, decimals)` wraps its second argument to ETInt.
         "format" => &[1],
+        // `builtinCharSig.evalString` appends ErrInvalidCharacterString
+        // (1300) while decoding the bytes produced by CHAR's numeric
+        // arguments. The final constant is NULL for the no-USING form, which
+        // uses the binary signature and has no decode warning to preserve.
+        "char_func" => {
+            return function.args.last().is_some_and(|charset| {
+                matches!(
+                    charset,
+                    Expression::Constant(constant) if !constant.value.is_null()
+                )
+            });
+        }
         _ => return false,
     };
     if !indexes.iter().any(|&index| {

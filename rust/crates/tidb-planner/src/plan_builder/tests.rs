@@ -1475,6 +1475,24 @@ fn plan_scope_resolver_uses_the_statement_connection_collation() {
     );
 }
 
+#[test]
+fn plan_scope_resolver_keeps_char_using_for_runtime_warnings() {
+    let select = parse_select("SELECT CHAR(65, -1, 67.5 USING utf8)");
+    let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
+        panic!("expected CHAR expression")
+    };
+    let schema = Schema::default();
+    let names = [];
+    let markers = BTreeMap::new();
+    let resolver = PlanScopeResolver::new(&schema, &names, &markers, SessionTimeZone::utc());
+    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver)
+        .expect("CHAR expression rewrite");
+    let Expression::ScalarFunction(function) = rewritten else {
+        panic!("CHAR USING must remain executable at statement time")
+    };
+    assert_eq!(function.func_name.lowercase(), "char_func");
+}
+
 impl Harness {
     fn tables_mut(&mut self) -> &mut Vec<SourceTable> {
         &mut self.catalog.tables
