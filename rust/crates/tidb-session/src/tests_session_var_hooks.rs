@@ -213,9 +213,7 @@ fn deprecated_compatibility_variables_match_go() {
         "0"
     );
 
-    session
-        .run("SET tidb_mpp_store_fail_ttl = '10s'")
-        .unwrap();
+    session.run("SET tidb_mpp_store_fail_ttl = '10s'").unwrap();
     let warnings = row_text(session.run("SHOW WARNINGS"));
     assert_eq!(warnings.len(), 1);
     assert_eq!(warnings[0][0], "Warning");
@@ -237,10 +235,7 @@ fn deprecated_compatibility_variables_match_go() {
         "The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now."
     );
     assert_eq!(
-        one(
-            &mut session,
-            "SELECT @@global.tidb_enable_column_tracking"
-        ),
+        one(&mut session, "SELECT @@global.tidb_enable_column_tracking"),
         "1"
     );
 }
@@ -252,9 +247,7 @@ fn deprecated_compatibility_variables_match_go() {
 fn scatter_region_validation_matches_go() {
     let mut session = Session::new();
 
-    session
-        .run("SET tidb_scatter_region = 'TaBlE'")
-        .unwrap();
+    session.run("SET tidb_scatter_region = 'TaBlE'").unwrap();
     assert_eq!(one(&mut session, "SELECT @@tidb_scatter_region"), "table");
 
     session
