@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` compile-platform defaults): replaced
+  captured `darwin`/`arm64` registry literals with target-derived Rust
+  constants for `version_compile_os` and `version_compile_machine`, matching
+  Go's `runtime.GOOS`/`runtime.GOARCH` in cross-compiled builds. A focused
+  registry regression pins both values; the broader historical `TestSysVar`
+  catalog matrix remains outside this owner.
 - 2026-09-05 (`pkg/sessionctx/variable` memory-arbitrator soft limit): matched
   Go's validation grammar for `tidb_mem_arbitrator_soft_limit`, accepting the
   disable sentinel, case-insensitive `auto` (canonicalized), positive ratios

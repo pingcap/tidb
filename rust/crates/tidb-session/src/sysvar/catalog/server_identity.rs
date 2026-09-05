@@ -327,7 +327,9 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     SysVarDef {
         name: "version_compile_machine",
         scope: 0,
-        value: "arm64",
+        // Go uses runtime.GOARCH; use Rust's target constant so generated
+        // builds report the architecture they were actually compiled for.
+        value: std::env::consts::ARCH,
         var_type: VarType::Str,
         read_only: false,
         allow_auto_value: false,
@@ -339,7 +341,9 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
     SysVarDef {
         name: "version_compile_os",
         scope: 0,
-        value: "darwin",
+        // Go uses runtime.GOOS; this keeps platform variants out of the
+        // captured registry and follows the active Rust target.
+        value: std::env::consts::OS,
         var_type: VarType::Str,
         read_only: false,
         allow_auto_value: false,

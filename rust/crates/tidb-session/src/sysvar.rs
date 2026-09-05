@@ -2633,6 +2633,21 @@ mod tests {
         );
     }
 
+    /// Go `TestSysVar` reads `runtime.GOOS` and `runtime.GOARCH` for the
+    /// compile-platform variables; the Rust registry must not retain the
+    /// developer machine's captured values in cross-compiled builds.
+    #[test]
+    fn compile_platform_sysvars_follow_the_target() {
+        assert_eq!(
+            get_sys_var("version_compile_os").unwrap().value,
+            std::env::consts::OS
+        );
+        assert_eq!(
+            get_sys_var("version_compile_machine").unwrap().value,
+            std::env::consts::ARCH
+        );
+    }
+
     /// Go `TestTimeValidation` and `TestDurationValidation`: time values are
     /// expanded to the full offset form, while durations clamp and render with
     /// Go's `time.Duration.String()` spelling.
