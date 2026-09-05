@@ -24,7 +24,8 @@
 //!   partial results out, and restore them later by MERGING partial results
 //!   (`restoreFromOneSpillFile` -> `MergePartialResult`). It needs the merge
 //!   because several partial workers can each hold a partial result for the
-//!   same group key.
+//!   same group key. DISTINCT states serialize their retained value inputs and
+//!   replay only newly admitted values during that merge.
 //! * `AggSpillDiskAction` (this one) belongs to `unparallelExec`. It spills
 //!   NOTHING of the aggregation state. It sets one flag, `inSpillMode`, and
 //!   the serial loop then writes the UNPROCESSED INPUT ROWS of groups it has
@@ -37,7 +38,8 @@
 //! [`crate::hash_agg::HashAggExec`] implements both arms. Serial execution
 //! registers [`AggSpillDiskAction`]; parallel execution registers
 //! [`ParallelAggSpillDiskAction`] under Go's aggregate-memory, temporary
-//! storage, spill-sysvar and non-DISTINCT gate.
+//! storage, spill-sysvar and aggregate-memory gates. DISTINCT is supported
+//! here as well; its value-set payload travels with the serialized state.
 //!
 //! # The soft limit, not the hard one
 //!

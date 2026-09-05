@@ -8378,3 +8378,12 @@ risks without claiming repository-wide parity.
   already-aligned physical stats detector to skip histogram reads. The complete
   43-artifact logical-operator inventory and Ready evidence are recorded in
   `receipts/planner_mem_table_partitions.md`.
+- 2026-09-05 (`pkg/executor/aggregate` parallel DISTINCT spill): Rust's
+  parallel HashAgg spill gate now admits DISTINCT aggregates, serializes each
+  worker's retained DISTINCT inputs (collation key, datum, extra arguments, and
+  local sort key), and rebuilds those value sets before final-worker merging.
+  This prevents duplicate worker-local COUNT/SUM contributions and matches Go
+  `ea373a0d83`. A focused pressured `COUNT(DISTINCT ...)` +
+  `SUM(DISTINCT ...)` regression compares the spilled and unspilled pipelines;
+  the complete 95-artifact `aggfuncs`/`aggregate`/`chunk` inventory and Ready
+  evidence are recorded in `receipts/executor_parallel_distinct_spill.md`.

@@ -88,8 +88,9 @@
 //! `tidb_enable_parallel_hashagg_spill` are enabled, the soft-limit action
 //! drains the in-flight chunks and writes every partial-worker map across
 //! 256 Murmur3 partitions. Final workers restore one partition at a time and
-//! merge its serialized partial states. DISTINCT follows Go's spill gate and
-//! stays in memory because its value sets are not spillable there either.
+//! merge its serialized partial states. DISTINCT partial states carry their
+//! retained value inputs through the spill record so final workers can union
+//! worker-local sets exactly as Go does.
 
 use super::spill::parallel_new_group_bytes;
 use super::*;
@@ -701,7 +702,91 @@ fn read_partial(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<Partial,
     })
 }
 
-fn encode_spill_entry(key: &PipelineMapKey, group: &PipelineGroup) -> Result<Vec<u8>, ExecError> {
+fn write_datum_vec(writer: &mut SpillWriter, values: &[Datum]) -> Result<(), ExecError> {
+    writer.u32(
+        u32::try_from(values.len())
+            .map_err(|_| ExecError::SpillFailed("too many HashAgg spill datums".to_owned()))?,
+    );
+    for value in values {
+        writer.datum(value)?;
+    }
+    Ok(())
+}
+
+fn read_datum_vec(reader: &mut SpillReader<'_>) -> Result<Vec<Datum>, ExecError> {
+    let count = reader.u32()? as usize;
+    let mut values = Vec::with_capacity(count);
+    for _ in 0..count {
+        values.push(reader.datum()?);
+    }
+    Ok(values)
+}
+
+/// Serializes one original DISTINCT input. Go's distinct partial result
+/// stores the value set itself rather than only the folded scalar, because a
+/// final worker must deduplicate values that appeared in multiple partial
+/// workers before applying COUNT/SUM/AVG/etc.
+fn write_distinct_input(writer: &mut SpillWriter, input: &DistinctInput) -> Result<(), ExecError> {
+    writer.bytes(&input.key)?;
+    writer.optional_datum(input.value.as_ref())?;
+    write_datum_vec(writer, &input.extra)?;
+    write_datum_vec(writer, &input.sort_key)?;
+    Ok(())
+}
+
+fn read_distinct_input(reader: &mut SpillReader<'_>) -> Result<DistinctInput, ExecError> {
+    Ok(DistinctInput {
+        key: reader.bytes()?.to_vec(),
+        value: reader.optional_datum()?,
+        extra: read_datum_vec(reader)?,
+        sort_key: read_datum_vec(reader)?,
+    })
+}
+
+fn write_state(
+    writer: &mut SpillWriter,
+    state: &AggState,
+    func: &AggFunc,
+) -> Result<(), ExecError> {
+    if func.distinct {
+        let inputs = state.distinct_inputs.as_ref().ok_or_else(|| {
+            ExecError::SpillFailed(
+                "parallel DISTINCT state did not retain its partial inputs".to_owned(),
+            )
+        })?;
+        writer.u32(u32::try_from(inputs.len()).map_err(|_| {
+            ExecError::SpillFailed("too many HashAgg DISTINCT spill inputs".to_owned())
+        })?);
+        for input in inputs {
+            write_distinct_input(writer, input)?;
+        }
+    }
+    write_partial(writer, &state.partial)
+}
+
+fn read_state(reader: &mut SpillReader<'_>, func: &AggFunc) -> Result<AggState, ExecError> {
+    let mut state = AggState::new_parallel(func);
+    if func.distinct {
+        let count = reader.u32()? as usize;
+        let mut inputs = Vec::with_capacity(count);
+        let mut seen = StringSetWithMemoryUsage::new([]).0;
+        for _ in 0..count {
+            let input = read_distinct_input(reader)?;
+            seen.insert(GoString::from_bytes(input.key.clone()));
+            inputs.push(input);
+        }
+        state.seen = Some(seen);
+        state.distinct_inputs = Some(inputs);
+    }
+    state.partial = read_partial(reader, func)?;
+    Ok(state)
+}
+
+fn encode_spill_entry(
+    key: &PipelineMapKey,
+    group: &PipelineGroup,
+    funcs: &[AggFunc],
+) -> Result<Vec<u8>, ExecError> {
     let mut writer = SpillWriter::new();
     match key {
         PipelineMapKey::Int(value) => {
@@ -720,8 +805,8 @@ fn encode_spill_entry(key: &PipelineMapKey, group: &PipelineGroup) -> Result<Vec
         u32::try_from(group.states.len())
             .map_err(|_| ExecError::SpillFailed("too many HashAgg spill states".to_owned()))?,
     );
-    for state in &group.states {
-        write_partial(&mut writer, &state.partial)?;
+    for (state, func) in group.states.iter().zip(funcs) {
+        write_state(&mut writer, state, func)?;
     }
     Ok(writer.0)
 }
@@ -755,9 +840,7 @@ fn decode_spill_entry(
     }
     let mut states = Vec::with_capacity(funcs.len());
     for func in funcs {
-        let mut state = AggState::new_parallel(func);
-        state.partial = read_partial(&mut reader, func)?;
-        states.push(state);
+        states.push(read_state(&mut reader, func)?);
     }
     reader.finish()?;
     Ok((key, PipelineGroup { states }))
@@ -820,12 +903,12 @@ impl ParallelSpillPartitions {
         Ok(())
     }
 
-    fn spill_maps(&mut self, maps: Vec<PipelineMap>) -> Result<(), ExecError> {
+    fn spill_maps(&mut self, maps: Vec<PipelineMap>, funcs: &[AggFunc]) -> Result<(), ExecError> {
         self.prepare();
         for map in maps {
             for (key, group) in map {
                 let partition = Self::bucket(&key);
-                let encoded = encode_spill_entry(&key, &group)?;
+                let encoded = encode_spill_entry(&key, &group, funcs)?;
                 self.chunks[partition].append_bytes(0, &encoded);
                 if self.chunks[partition].num_rows() >= SPILL_CHUNK_SIZE {
                     self.flush(partition)?;
@@ -1021,7 +1104,6 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// Go `initForParallelExec`'s complete spill gate.
     pub(super) fn parallel_spill_enabled(&self) -> bool {
         self.memory.tmp_storage_on_oom()
-            && !self.agg_funcs.iter().any(|function| function.distinct)
             && resolved_bool(
                 &self.ctx,
                 TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
@@ -1270,7 +1352,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                 let spilled = spilled.as_mut().ok_or_else(|| {
                     ExecError::unsupported("parallel HashAgg spill requested without spill action")
                 })?;
-                spilled.spill_maps(epoch.maps)?;
+                spilled.spill_maps(epoch.maps, &plan.agg_funcs)?;
                 self.tracker.replace_bytes_used(0);
                 if epoch.child_drained {
                     child_drained = true;
@@ -2151,6 +2233,62 @@ mod tests {
         assert_eq!(rows.len(), data.len());
         assert!(exec.spill_times() > 0);
         exec.close().unwrap();
+    }
+
+    /// FAIL-BEFORE/PASS-AFTER: Go's parallel DISTINCT aggregate spill path
+    /// serializes each worker's retained value set, then final workers union
+    /// those sets before applying COUNT. Rust used to disable the parallel
+    /// spill action for every DISTINCT function, so a pressured query fell
+    /// through to cancellation instead of producing the same result as the
+    /// unspilled pipeline.
+    #[test]
+    fn parallel_hashagg_distinct_spill_preserves_value_sets() {
+        let data = (0..20_000_i64)
+            .flat_map(|group| {
+                [
+                    (group, group % 17),
+                    (group, group % 17),
+                    (group, group % 19),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let make_func = || {
+            let mut func = AggFunc::new(AggKind::Count, Some(col(1)));
+            func.distinct = true;
+            let mut sum = AggFunc::new(AggKind::Sum, Some(col(1)));
+            sum.distinct = true;
+            vec![func, sum]
+        };
+
+        let mut expected_exec = HashAggExec::new(
+            out_meta(&[long(), decimal()]),
+            vec![col(0)],
+            make_func(),
+            MultiChunkSource::new(&data, 128),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        let mut expected = run(&mut expected_exec);
+        sort_rows(&mut expected);
+
+        let dir = crate::test_temp_storage::scratch_dir("hashagg-parallel-distinct");
+        let mut exec = HashAggExec::new(
+            out_meta(&[long(), decimal()]),
+            vec![col(0)],
+            make_func(),
+            MultiChunkSource::new(&data, 128),
+            NoColumns,
+            StatementMemory::new(512 * 1024, crate::mem_quota::OomAction::Cancel, 42)
+                .with_tmp_storage_on_oom(true)
+                .with_spill_storage(crate::test_temp_storage::storage(&dir)),
+        );
+        exec.open().unwrap();
+        let mut actual = drain_rows(&mut exec);
+        assert!(exec.spill_times() > 0, "DISTINCT spill never triggered");
+        sort_rows(&mut actual);
+        exec.close().unwrap();
+        assert_eq!(actual, expected);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Empty input with no group-by emits exactly one defaults row through
