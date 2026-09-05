@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` TiFlash preaggregation mode):
+  matched Go's case-sensitive mode lookup for
+  `tiflash_hashagg_preaggregation_mode`, preserving the three accepted
+  spellings and the source 1105 option-list refusal. A focused SQL regression
+  covers accepted readback and preservation after an invalid assignment.
 - 2026-09-05 (`pkg/sessionctx/variable` analyze-column options): matched
   Go's GLOBAL validation and setter by accepting ALL/PREDICATE
   case-insensitively, publishing uppercase values, and refusing unknown

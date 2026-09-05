@@ -382,6 +382,44 @@ fn analyze_column_options_validation_matches_go() {
     );
 }
 
+/// Go's TiFlash hash-aggregation preaggregation mode accepts exactly the
+/// lower-case force_preagg/auto/force_streaming spellings.
+#[test]
+fn tiflash_hashagg_preaggregation_mode_validation_matches_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET tiflash_hashagg_preaggregation_mode = 'auto'")
+        .unwrap();
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@tiflash_hashagg_preaggregation_mode"
+        ),
+        "auto"
+    );
+
+    session
+        .run("SET tiflash_hashagg_preaggregation_mode = 'force_streaming'")
+        .unwrap();
+    let error = session
+        .run("SET tiflash_hashagg_preaggregation_mode = 'AUTO'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "incorrect value: `AUTO`. tiflash_hashagg_preaggregation_mode options: force_preagg, auto, force_streaming"
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@tiflash_hashagg_preaggregation_mode"
+        ),
+        "force_streaming"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.

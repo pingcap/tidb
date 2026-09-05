@@ -1517,6 +1517,21 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        // Go's `tiflash_hashagg_preaggregation_mode` Validation is a
+        // case-sensitive lookup over the three TiFlash modes. Preserve the
+        // user's accepted spelling and refuse a miss with its option-list
+        // error (a bare 1105).
+        if self.name == tidb_vardef::tidb_vars::TIFLASH_HASH_AGG_PRE_AGG_MODE {
+            if matches!(
+                validated.value.as_str(),
+                "force_preagg" | "auto" | "force_streaming"
+            ) {
+                return Ok(validated);
+            }
+            return Err(ValidationError::Refused(format!(
+                "incorrect value: `{original}`. tiflash_hashagg_preaggregation_mode options: force_preagg, auto, force_streaming"
+            )));
+        }
         // Go's tidb_evolve_plan_baselines Validation (`sysvar.go`): ON is
         // refused unless the test-only CheckTableBeforeDrop knob is set,
         // which is false in every deployment (a bare errors.Errorf, 1105).
