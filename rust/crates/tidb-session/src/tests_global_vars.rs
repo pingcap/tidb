@@ -1795,6 +1795,24 @@ fn global_read_only_noop_variables_need_the_global_gate() {
     }
 }
 
+/// Go `SysVar.SkipInit` includes `IsNoop` variables: a fresh session keeps the
+/// compatibility default even when the shared GLOBAL no-op row is ON.
+#[test]
+fn noop_globals_are_not_copied_into_new_sessions() {
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+    session
+        .run("SET GLOBAL tidb_enable_noop_functions = ON")
+        .unwrap();
+    session.run("SET GLOBAL tx_read_only = ON").unwrap();
+    let mut fresh = SessionVars::new();
+    fresh.seed_from_globals(globals).unwrap();
+    assert_eq!(fresh.system_value("tx_read_only").unwrap(), "OFF");
+    assert_eq!(
+        fresh.system_value("tidb_enable_noop_functions").unwrap(),
+        "ON"
+    );
+}
+
 /// Go `TestSecureAuth`: the global compatibility switch cannot be disabled;
 /// the rejected OFF write leaves the default ON intact, while ON remains a
 /// valid global assignment.

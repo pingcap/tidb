@@ -94,6 +94,18 @@ const REMOVED_SYS_VARS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Go's `noopSysVars` entries whose `IsNoop` bit affects session seeding. The
+/// full compatibility catalog remains in the generated registry; these are
+/// the entries exercised by the executable parity tests and by the no-op gate.
+const NOOP_SYS_VARS: &[&str] = &[
+    "tx_read_only",
+    "transaction_read_only",
+    "offline_mode",
+    "super_read_only",
+    "read_only",
+    "innodb_fast_shutdown",
+];
+
 /// Returns Go's removal explanation for a system-variable name, matching the
 /// case-insensitive lookup performed by `GetSysVar` and `IsRemovedSysVar`.
 pub fn removed_sys_var_reason(name: &str) -> Option<&'static str> {
@@ -211,6 +223,13 @@ impl SysVarDef {
     #[must_use]
     pub fn is_internal_session_variable(&self) -> bool {
         self.name == "tidb_redact_log"
+    }
+
+    /// Go `SysVar.IsNoop`: compatibility-only variables retain their value in
+    /// the global registry but skip the initial session copy.
+    #[must_use]
+    pub fn is_noop(&self) -> bool {
+        NOOP_SYS_VARS.contains(&self.name)
     }
 }
 
@@ -2391,6 +2410,17 @@ mod tests {
         }
         assert_eq!(sv.validate("2"), Err(ValidationError::WrongValue));
         assert_eq!(sv.validate("yes"), Err(ValidationError::WrongValue));
+    }
+
+    /// Go `TestIsNoop`: MySQL compatibility variables are marked no-op while
+    /// ordinary optimizer/session variables remain active.
+    #[test]
+    fn noop_metadata_matches_go() {
+        assert!(get_sys_var("tx_read_only").unwrap().is_noop());
+        assert!(get_sys_var("read_only").unwrap().is_noop());
+        assert!(get_sys_var("innodb_fast_shutdown").unwrap().is_noop());
+        assert!(!get_sys_var("tidb_multi_statement_mode").unwrap().is_noop());
+        assert!(!get_sys_var("default_password_lifetime").unwrap().is_noop());
     }
 
     /// Pinned Go `TestEnableAutoAnalyzePriorityQueue`: ON remains accepted,

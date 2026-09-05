@@ -1742,9 +1742,12 @@ impl SessionVars {
         for (name, value) in globals.overrides() {
             // Only a variable this session can actually hold a session copy
             // of inherits the global value; Go's `NewSessionVars` walks the
-            // same `HasSessionScope` guard when copying `GlobalVarsAccessor`
-            // into a fresh session.
-            if get_sys_var(&name).is_some_and(|def| def.has_session_scope()) {
+            // same `HasSessionScope` guard and skips `IsNoop` compatibility
+            // variables when copying `GlobalVarsAccessor` into a fresh
+            // session.
+            if get_sys_var(&name)
+                .is_some_and(|def| def.has_session_scope() && !def.is_noop())
+            {
                 systems.insert(name, value);
             }
         }

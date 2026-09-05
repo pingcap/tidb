@@ -122,6 +122,10 @@ For each bounded behavior cluster:
 - 2026-09-05 (`pkg/sessionctx/variable` deprecated executor concurrency): added
   the Go 1287 replacement warning for `tidb_index_lookup_concurrency` and a
   focused SQL warning/readback regression.
+- 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
+  the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
+  matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session
+  regressions while leaving the larger MySQL compatibility catalog explicit.
 - 2026-09-05 (`pkg/sessionctx/variable` resource-control hooks): published
   Go's process-wide enable and strict-mode switches on named GLOBAL writes,
   startup/cluster/reset paths, and changed resource-group hint admission to
