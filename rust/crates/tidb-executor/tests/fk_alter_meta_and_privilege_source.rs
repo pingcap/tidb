@@ -533,17 +533,38 @@ fn rename_column_follows_the_constraint_meta() {
 // constraint's cover and `b` is ALSO the child's clustered primary handle —
 // Go ALLOWS it because the handle keeps answering the constraint's lookups
 // (Go `checkIndexNeededInForeignKey`'s PKIsHandle escape applies to the
-// child's own constraints too, pkg/ddl/foreign_key.go:459-464 via :476).
-//
-// go-parity-gap (documented divergence): the tier's `check_index_needed`
-// applies the clustered-handle escape only on the REFERRED branch
-// (`foreign_key.rs:902-911`), not on the declared-FK branch — this drop is
-// refused 1553 here where Go allows it.
+// declared-FK branch too, pkg/ddl/foreign_key.go:459-464 via :476).
 #[test]
-#[ignore = "go-parity-gap: the clustered-handle escape is missing on the declared-FK branch of the 1553 check"]
 fn dropping_the_child_handle_cover_is_allowed() {
-    // Contract (foreign_key_test.go:920): `alter table t2 drop index idxb`
-    // succeeds while `b int key` remains the clustered primary handle.
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    ddl::run_create_table_in(
+        "create table t1 (id int key, b int, index idxb (b))",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t2 (a int, b int key, index idxa (a), index idxb (b), \
+         foreign key fk_b(b) references t1(id))",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in("alter table t2 drop index idxb", &mut catalog, "test", &ctx)
+        .expect("Go: the clustered handle still covers the child constraint");
+    let Some(TableEntry::Kv(table)) = catalog.table_in("test", "t2") else {
+        panic!("expected a storage-backed table");
+    };
+    assert!(table
+        .indexes()
+        .iter()
+        .all(|index| !index.name.eq_ignore_ascii_case("idxb")));
+    assert_eq!(table.foreign_keys().len(), 1);
 }
 
 // --- TestCreateTableWithForeignKeyPrivilegeCheck
@@ -715,10 +736,10 @@ fn drop_index_needed_by_a_foreign_key_is_refused_regardless_of_checks() {
     }
 
     // Go's pass shape 1: the parent's cover is replacable by its primary
-    // key, and the child's non-needed index drops freely. The FOURTH drop
-    // of Go's shape — `alter table t2 drop index idxb`, the constraint's own
-    // cover whose column IS the child's clustered primary handle — is a
-    // separate gap test below.
+    // key, and the child's non-needed index drops freely. The FOURTH drop of
+    // Go's shape — `alter table t2 drop index idxb`, the constraint's own
+    // cover whose column IS the child's clustered primary handle — is covered
+    // by the focused regression above.
     ddl::run_drop_table_in(
         "drop table if exists t2, t1",
         &mut catalog,

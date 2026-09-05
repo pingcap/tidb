@@ -826,6 +826,27 @@ fn the_clustered_handle_exemption_does_not_reach_the_child_index() {
     );
 }
 
+/// Go applies the clustered-handle exemption through the CHILD branch too:
+/// dropping an explicit secondary cover is legal when the single referencing
+/// column is itself the child's integer primary handle.
+#[test]
+fn the_clustered_handle_exemption_allows_the_child_cover_drop() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE p (id INT PRIMARY KEY, b INT, INDEX idxb (b))")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE c (a INT, b INT PRIMARY KEY, INDEX idxa (a), INDEX idxb (b), \
+             CONSTRAINT fk FOREIGN KEY (b) REFERENCES p(id))",
+        )
+        .unwrap();
+    session.run("ALTER TABLE c DROP INDEX idxb").unwrap();
+    let indexes = rows(&mut session, "SHOW INDEX FROM c");
+    assert!(indexes.iter().all(|row| row[2] != "idxb"));
+    assert!(rows(&mut session, "SHOW CREATE TABLE c")[0][1].contains("CONSTRAINT `fk`"));
+}
+
 /// Go's 3733: a constraint may not name a VIRTUAL generated column, on
 /// either side. A TRIPWIRE -- both statements were ACCEPTED here.
 #[test]

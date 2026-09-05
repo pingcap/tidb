@@ -8437,3 +8437,9 @@ risks without claiming repository-wide parity.
   indexed control. Evidence is recorded in
   `receipts/ddl_foreign_key_alter_validation.md`; multi-action ALTER
   atomicity and partial-index predicates remain explicit boundaries.
+- 2026-09-05 (`pkg/ddl` DROP INDEX foreign-key clustered-handle exemption):
+  Rust now applies Go's `PKIsHandle && len(cols) == 1` escape on both the
+  declared-child and referred-parent branches of `checkIndexNeededInForeignKey`.
+  The formerly refused child-cover drop now succeeds while the primary handle
+  continues to answer the constraint; the existing parent-side 1553 control
+  remains. Evidence is recorded in `receipts/ddl_foreign_key_child_handle.md`.

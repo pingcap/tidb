@@ -65,7 +65,7 @@
 //!   an orphan is 1452 rather than a silent blessing.
 //! * The **index a constraint relies on may not be dropped** (1553), on
 //!   either side, unless another index still covers the same columns or the
-//!   referenced column is the clustered handle. See [`check_index_needed`].
+//!   constrained column is the clustered handle. See [`check_index_needed`].
 //!
 //! * **`foreign_key_checks = 0`** disables every ROW-level rule above, plus
 //!   the DDL-time checks that RESOLVE a reference (`DROP TABLE` of a
@@ -851,10 +851,10 @@ pub(crate) fn rewrite_column_name(
 ///
 /// * A REMAINING index that also covers the columns makes the drop legal --
 ///   `alter table t1 add index idx2(b)` lets `drop index idx1(b)` through.
-/// * A referenced column that IS the clustered primary key needs no index of
-///   its own (`tbInfo.PKIsHandle && len(cols) == 1`). This is PARENT-side
-///   only: captured, a child's own `index fk(b)` referencing a clustered
-///   `t1(id)` is still 1553.
+/// * A single constrained column that IS the clustered primary key needs no
+///   index of its own (`tbInfo.PKIsHandle && len(cols) == 1`). This applies to
+///   both the table's declared (CHILD) constraints and the constraints that
+///   REFER to it (PARENT), exactly as Go's shared `checkFn` does.
 ///
 /// NOT gated by `foreign_key_checks`. Captured: with the session variable set
 /// to 0, `alter table t1 drop index idx1` is STILL 1553, because Go gates
@@ -899,7 +899,10 @@ pub(crate) fn check_index_needed(
         let Some(child) = child_offsets(&own, foreign_key) else {
             continue;
         };
-        if covers(&child) && !remaining_covers(&child) {
+        if covers(&child)
+            && !remaining_covers(&child)
+            && !(child.len() == 1 && kv.is_clustered_handle_column(child[0]))
+        {
             return Err(refused());
         }
     }
