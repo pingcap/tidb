@@ -763,7 +763,8 @@ func (m *storageClassTransitionManager) observe(
 	allTargetsObserved := true
 	for _, target := range operation.targets {
 		requestCtx, cancel := context.WithTimeout(ctx, storageClassTransitionRequestTimeout)
-		statuses, err := infosync.CollectStorageClassStatus(requestCtx, target.PhysicalID, operation.target, tikvStores)
+		statuses, err := infosync.CollectStorageClassStatus(
+			requestCtx, target.PhysicalID, operation.target, operation.schemaVersion, tikvStores)
 		cancel()
 		if err != nil {
 			return false, errors.Trace(err)

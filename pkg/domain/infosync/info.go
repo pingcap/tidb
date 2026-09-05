@@ -932,7 +932,7 @@ type StorageClassStoreStatus struct {
 
 // CollectStorageClassStatus fans out requests to all TiKV stores. Any failed
 // non-tombstone store makes the whole observation unusable.
-func CollectStorageClassStatus(ctx context.Context, tableID int64, target string, tikvStores map[int64]pdhttp.StoreInfo) ([]StorageClassStoreStatus, error) {
+func CollectStorageClassStatus(ctx context.Context, tableID int64, target string, schemaVersion int64, tikvStores map[int64]pdhttp.StoreInfo) ([]StorageClassStoreStatus, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -943,6 +943,9 @@ func CollectStorageClassStatus(ctx context.Context, tableID int64, target string
 	target = strings.ToUpper(target)
 	if target != model.StorageClassTierIA && target != model.StorageClassTierStandard {
 		return nil, errors.Errorf("invalid storage class target %q", target)
+	}
+	if schemaVersion < 0 {
+		return nil, errors.Errorf("storage class status schema version must be non-negative, got %d", schemaVersion)
 	}
 	requestCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -961,7 +964,7 @@ func CollectStorageClassStatus(ctx context.Context, tableID int64, target string
 		requestCount++
 		go func() {
 			status, err := helper.CollectStorageClassStatusWithCtx(
-				requestCtx, store.Store.StatusAddress, is.tikvCodec.GetKeyspaceID(), tableID, target)
+				requestCtx, store.Store.StatusAddress, is.tikvCodec.GetKeyspaceID(), tableID, target, schemaVersion)
 			resultCh <- result{store: store, status: status, err: err}
 		}()
 	}

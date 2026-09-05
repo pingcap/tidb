@@ -177,6 +177,7 @@ func TestTiFlashManager(t *testing.T) {
 	t.Run("storageClassStatusCancelsPendingRequests", func(t *testing.T) {
 		requestStarted := make(chan struct{})
 		requestCanceled := make(chan struct{})
+		schemaVersionSeen := make(chan string, 1)
 		blockingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			close(requestStarted)
 			<-r.Context().Done()
@@ -184,8 +185,9 @@ func TestTiFlashManager(t *testing.T) {
 		}))
 		defer blockingServer.Close()
 
-		failedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		failedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			<-requestStarted
+			schemaVersionSeen <- r.URL.Query().Get("schema_version")
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		}))
 		defer failedServer.Close()
@@ -209,8 +211,9 @@ func TestTiFlashManager(t *testing.T) {
 			},
 		}
 
-		_, err := CollectStorageClassStatus(requestCtx, 1024, model.StorageClassTierIA, tikvStores)
+		_, err := CollectStorageClassStatus(requestCtx, 1024, model.StorageClassTierIA, 37, tikvStores)
 		require.ErrorContains(t, err, "status 503")
+		require.Equal(t, "37", <-schemaVersionSeen)
 		select {
 		case <-requestCanceled:
 		case <-time.After(time.Second):
