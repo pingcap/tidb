@@ -16,8 +16,9 @@ from `table_lifecycle.rs` and the ALTER rename arm.
 `foreign_key::rewrite_table_references` now walks all catalog tables before the
 source entry is moved, rewriting matching parent names. Both `RENAME TABLE` and
 `ALTER TABLE ... RENAME TO` call the helper; normal duplicate/schema checks and
-multi-pair staging remain unchanged. Column renames and DROP COLUMN still need
-their separate column-name maintenance and remain refused.
+multi-pair staging remain unchanged. Column-name maintenance is covered by the
+separate `ddl_foreign_key_rename_column.md` receipt; DROP COLUMN remains
+refused.
 
 Focused regressions:
 

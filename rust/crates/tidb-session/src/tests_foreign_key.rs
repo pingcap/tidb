@@ -630,6 +630,44 @@ fn rename_table_rewrites_foreign_key_references() {
     assert!(moved_parent_ref.contains("REFERENCES `test3`.`tt1` (`id`)"));
 }
 
+/// Go carries FKInfo column names through `RENAME COLUMN` on either side of a
+/// constraint, including a self-reference and multiple children.
+#[test]
+fn rename_column_rewrites_foreign_key_references() {
+    let mut session = Session::new();
+    session.run("SET foreign_key_checks=0").unwrap();
+    session
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b INT, FOREIGN KEY fk(a) REFERENCES t1(id))")
+        .unwrap();
+    session
+        .run("ALTER TABLE t1 RENAME COLUMN id TO kid")
+        .unwrap();
+    session.run("ALTER TABLE t1 RENAME COLUMN a TO aa").unwrap();
+    session.run("SET foreign_key_checks=1").unwrap();
+    let self_ref = rows(&mut session, "SHOW CREATE TABLE t1")[0][1].clone();
+    assert!(
+        self_ref.contains("FOREIGN KEY (`aa`)") && self_ref.contains("REFERENCES `t1` (`kid`)")
+    );
+
+    session.run("DROP TABLE t1").unwrap();
+    session
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, b INT, INDEX(b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (a INT, b INT, FOREIGN KEY fk_1(a) REFERENCES t1(b), FOREIGN KEY fk_2(b) REFERENCES t1(b))")
+        .unwrap();
+    session.run("ALTER TABLE t2 RENAME COLUMN a TO aa").unwrap();
+    session.run("ALTER TABLE t1 RENAME COLUMN b TO bb").unwrap();
+    session.run("ALTER TABLE t2 RENAME COLUMN b TO bb").unwrap();
+    let child = rows(&mut session, "SHOW CREATE TABLE t2")[0][1].clone();
+    assert!(child.contains("FOREIGN KEY (`aa`)") && child.contains("FOREIGN KEY (`bb`)"));
+    assert_eq!(
+        child.matches("REFERENCES `t1` (`bb`)").count(),
+        2,
+        "{child}"
+    );
+}
+
 /// A parent whose REFERENCED column is a STORED GENERATED column, with a
 /// child that cascades both ways -- the fixture of
 /// `TestForeignKeyAndGeneratedColumn` in
@@ -1657,20 +1695,17 @@ fn adding_a_column_to_a_constrained_table_is_accepted() {
     );
 }
 
-/// A PIN on the two remaining column changes this tier still refuses on a
-/// constrained table, so the refusal is a KNOWN gap rather than a silent one.
+/// DROP COLUMN remains refused on a constrained table, while both Go and this
+/// tier now rewrite metadata for column renames.
 ///
-/// Go accepts all three and rewrites the affected `FKInfo`s; captured:
-/// `alter table c rename column b to bb` succeeds and carries the constraint,
-/// while `alter table c rename to c2` is handled by the table-level metadata
-/// rewrite. `alter table c drop column b`
+/// Go accepts `alter table c rename column b to bb` and carries the constraint;
+/// `alter table c drop column b`
 /// is Go's `[ddl:1828] Cannot drop column 'b': needed in a foreign key
 /// constraint 'fk'` -- a REFUSAL, but under a different code than the 1105
 /// this tier raises.
 ///
-/// Each assertion below flips the day the corresponding column rewrite lands.
 #[test]
-fn drop_column_and_column_rename_are_still_refused_on_a_constrained_table() {
+fn drop_column_is_still_refused_on_a_constrained_table() {
     let mut session = Session::new();
     session
         .run("CREATE TABLE p (a VARCHAR(20) NOT NULL PRIMARY KEY, z INT)")
@@ -1678,12 +1713,10 @@ fn drop_column_and_column_rename_are_still_refused_on_a_constrained_table() {
     session
         .run("CREATE TABLE c (b VARCHAR(20), z INT, FOREIGN KEY fk (b) REFERENCES p(a))")
         .unwrap();
-    for statement in [
-        "ALTER TABLE c DROP COLUMN b",
-        "ALTER TABLE c RENAME COLUMN b TO bb",
-    ] {
-        assert_eq!(code(&mut session, statement), Some(1105), "{statement}");
-    }
+    assert_eq!(
+        code(&mut session, "ALTER TABLE c DROP COLUMN b"),
+        Some(1105)
+    );
     // The UNCONSTRAINED column is not covered by the refusal's blast radius
     // in Go, but it is here: this line records the WIDTH of the gap.
     assert_eq!(

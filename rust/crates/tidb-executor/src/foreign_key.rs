@@ -87,9 +87,10 @@
 //!   anything at that level, so a single-level statement is all-or-nothing,
 //!   but a deeper level that restricts after a shallower one cascaded leaves
 //!   the shallower change applied. Real TiDB rolls the statement back.
-//! * Column renames and multi-action ALTER atomicity remain outside this
-//!   module's metadata model; whole-table renames now rewrite `ref_schema` and
-//!   `ref_table` through [`rewrite_table_references`].
+//! * Multi-action ALTER atomicity remains outside this module's metadata
+//!   model. Whole-table renames rewrite `ref_schema` and `ref_table` through
+//!   [`rewrite_table_references`], and column renames rewrite `cols` and
+//!   `ref_cols` through [`rewrite_column_name`].
 
 use tidb_datatype::Datum;
 
@@ -622,8 +623,8 @@ fn rewrite_rows(
 /// names against the current column list at every use. `RENAME TABLE` is
 /// handled by [`rewrite_table_references`], which follows Go's metadata
 /// rewrite over every child and the moved table itself. `DROP TABLE` still
-/// refuses a participating parent before removal, while a column RENAME is
-/// still refused because `rename_column_action` must rewrite both sides.
+/// refuses a participating parent before removal, while a column RENAME
+/// rewrites both sides through [`rewrite_column_name`].
 ///
 /// `MODIFY`/`CHANGE` is NOT in that group any more: it asks
 /// [`check_modify_column`] the same question Go's

@@ -92,10 +92,9 @@ pub fn run_alter_table_in(
     super::refuse_temporary_table_alter_options(catalog, &database, &name, &alter.actions)?;
     super::table_cache::guard_alter_actions(catalog, &database, &name, &alter.actions)?;
 
-    // A constraint names its columns and its referenced table. A DROP COLUMN
-    // or column RENAME would leave one of those names gone, so each remains
-    // refused rather than corrupted; table RENAME is handled by the same
-    // metadata rewrite as `RENAME TABLE` below.
+    // A constraint names its columns and its referenced table. DROP COLUMN
+    // remains refused rather than corrupted; table and column renames are
+    // handled by the metadata rewrites below.
     //
     // ADD COLUMN is NOT in this set: Go's `AddColumn` asks nothing about
     // foreign keys, and a constraint that resolves its names at every use
@@ -106,15 +105,7 @@ pub fn run_alter_table_in(
     // an incompatible type with Go's 3780/1832/1833 instead of 1105.
     let participates = crate::foreign_key::participates(catalog, &database, &name);
     for action in &alter.actions {
-        if participates
-            && matches!(
-                action,
-                tidb_ast::AlterTableAction::DropColumn { .. }
-                    // A foreign key names its REFERENCED columns by name, so
-                    // renaming one would silently repoint the constraint.
-                    | tidb_ast::AlterTableAction::RenameColumn(_)
-            )
-        {
+        if participates && matches!(action, tidb_ast::AlterTableAction::DropColumn { .. }) {
             return Err(DriverError::unsupported(
                 "changing the columns of a table involved in a FOREIGN KEY is not supported yet",
             ));

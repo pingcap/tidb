@@ -8454,6 +8454,12 @@ risks without claiming repository-wide parity.
   `ref_schema`/`ref_table` on every affected child, including self-references
   on a table moved across schemas and `ALTER TABLE ... RENAME TO`. Focused
   executor and session regressions prove the moved self-reference and the
-  cross-schema parent update; column-renames and DROP COLUMN remain explicit
-  boundaries. Evidence is recorded in
+  cross-schema parent update; DROP COLUMN remains an explicit boundary.
+  Evidence is recorded in
   `receipts/ddl_foreign_key_rename_table.md`.
+- 2026-09-05 (`pkg/ddl` RENAME COLUMN foreign-key metadata): Rust now rewrites
+  the declaring table's `cols` and every child's `ref_cols` through the
+  metadata-only rename action, matching Go for self-references, parent/child
+  renames, and multiple constraints. DROP COLUMN and multi-action ALTER
+  atomicity remain explicit boundaries. Evidence is recorded in
+  `receipts/ddl_foreign_key_rename_column.md`.

@@ -440,12 +440,10 @@ fn partial_index_safety_rules_match_go() {
 //   * t2 referencing t1(b): `change a aa int` moves the REFERENCING side to
 //     `aa` while `b` stays referenced.
 //
-// The RENAME COLUMN legs of the same Go test (which this file records as a
-// gap below) assert the same maintenance; here only CHANGE COLUMN is
-// ported, because the tier refuses RENAME COLUMN on FK-participating tables.
-// The Go self-ref create is accepted with foreign_key_checks off — Go
-// accepts it with checks ON (its create resolves the table's own new
-// TableInfo), which is the divergence recorded at the CREATE runner.
+// The RENAME COLUMN legs of the same Go test assert the same maintenance as
+// CHANGE COLUMN, but use the metadata-only action. The Go self-ref create is
+// accepted with checks ON; this tier still needs the equivalent create-time
+// checks-off setting, which is kept scoped to that setup.
 #[test]
 fn change_column_renames_follow_the_constraint_meta() {
     let mut catalog = Catalog::default();
@@ -511,21 +509,100 @@ fn change_column_renames_follow_the_constraint_meta() {
 // (pkg/ddl/tests/fk/foreign_key_test.go:993, :1029, :1059, :1092):
 // `alter table t1 rename column a to aa` (on a self-referencing table),
 // `alter table t2 rename column a to aa` (on a child), and the two-column
-// finale where both constraints follow `rename b to bb` with the SHOW
-// CREATE output printing KEY fk_1 (aa) / KEY fk_2 (bb).
-//
-// go-parity-gap (documented divergence): the tier REFUSES RENAME COLUMN on
-// any FK-participating table ("changing the columns or name of a table
-// involved in a FOREIGN KEY is not supported yet",
-// `ddl/alter_table.rs:106-122`) where Go accepts it and rewrites the
-// constraint meta — the refusal is a Go-leg behavior this tier does not
-// have, so the maintenance the Go test asserts is not reachable.
+// finale where both constraints follow `rename b to bb`.
 #[test]
-#[ignore = "go-parity-gap: RENAME COLUMN on an FK-participating table is refused instead of rewriting the meta"]
 fn rename_column_follows_the_constraint_meta() {
-    // Contract (foreign_key_test.go:990-1092): after every rename, the
-    // constraint's Cols/RefCols (and the parent's referred Cols) carry the
-    // NEW names, and show create table prints the moved index parts.
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    let create_off = StmtContext::for_query().with_foreign_key_checks(false);
+    ddl::run_create_table_in(
+        "create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))",
+        &mut catalog,
+        "test",
+        CreateTableSettings {
+            foreign_key_checks: false,
+            ..CreateTableSettings::default()
+        },
+        &create_off,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t1 rename column id to kid",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t1 rename column a to aa",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    let keys = declared(&catalog, "test", "t1");
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].cols, vec!["aa".to_owned()]);
+    assert_eq!(keys[0].ref_cols, vec!["kid".to_owned()]);
+    let referred = referred_foreign_keys(&catalog, "test", "t1");
+    assert_eq!(referred.len(), 1);
+    assert_eq!(referred[0].2.ref_cols, vec!["kid".to_owned()]);
+
+    ddl::run_drop_table_in(
+        "drop table t1",
+        &mut catalog,
+        "test",
+        ctx.sql_mode(),
+        ctx.foreign_key_checks(),
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t1 (id int key, b int, index(b))",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t2 (a int, b int, foreign key fk_1(a) references t1(b), \
+         foreign key fk_2(b) references t1(b))",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t2 rename column a to aa",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t1 rename column b to bb",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t2 rename column b to bb",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    let keys = declared(&catalog, "test", "t2");
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].cols, vec!["aa".to_owned()]);
+    assert_eq!(keys[0].ref_cols, vec!["bb".to_owned()]);
+    assert_eq!(keys[1].cols, vec!["bb".to_owned()]);
+    assert_eq!(keys[1].ref_cols, vec!["bb".to_owned()]);
+    let referred = referred_foreign_keys(&catalog, "test", "t1");
+    assert_eq!(referred.len(), 2);
+    assert!(referred.iter().all(|(_, _, fk)| fk.ref_cols == ["bb"]));
 }
 
 // Go's fourth pass drop (`pkg/ddl/tests/fk/foreign_key_test.go:920`, pass
