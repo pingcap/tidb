@@ -1853,6 +1853,44 @@ mod tests {
         }
     }
 
+    /// Go `TestSettersandGetters`: scope metadata must agree with the live
+    /// session/global setter routes, including read-only and internal names.
+    #[test]
+    fn setter_scope_contract_matches_go() {
+        let mut vars = crate::vars::SessionVars::new();
+        for definition in SYS_VARS {
+            if !definition.has_session_scope() {
+                let error = vars
+                    .set_system(definition.name, definition.value.to_owned())
+                    .expect_err("SESSION must reject a non-session variable");
+                assert!(
+                    matches!(
+                        error,
+                        crate::vars::VarError::ReadOnlyVariable(_)
+                            | crate::vars::VarError::GlobalOnlyVariable(_)
+                            | crate::vars::VarError::UnknownSystemVariable(_)
+                    ),
+                    "unexpected SESSION error for {}: {error:?}",
+                    definition.name
+                );
+            }
+            if !definition.has_global_scope() && !definition.has_instance_scope() {
+                let error = vars
+                    .set_global(definition.name, definition.value.to_owned())
+                    .expect_err("GLOBAL must reject a non-global/non-instance variable");
+                assert!(
+                    matches!(
+                        error,
+                        crate::vars::VarError::ReadOnlyVariable(_)
+                            | crate::vars::VarError::SessionOnlyVariable(_)
+                    ),
+                    "unexpected GLOBAL error for {}: {error:?}",
+                    definition.name
+                );
+            }
+        }
+    }
+
     /// Transcreated from Go `sysvar_test.go` `TestSQLSelectLimit`: the
     /// out-of-range value converts rather than erroring.
     #[test]
