@@ -1322,3 +1322,213 @@ pub fn get_index_row_count_for_stats_v2(
     total.clamp(1.0, realtime_row_count as f64);
     total
 }
+
+/// The inputs Go's `getEqualCondSelectivity`
+/// (`pkg/planner/cardinality/selectivity.go`) assembles for one equality
+/// condition over an index: the encoded value, how many equality columns
+/// cover the index prefix, and the per-prefix-column NDV/row-count
+/// estimates the cross validation consults.
+pub struct EqualCondSelectivityInputs<'a> {
+    /// The index the equality condition targets.
+    pub index: &'a IndexStats,
+    /// The encoded equality value (index-key bytes).
+    pub encoded_value: &'a [u8],
+    /// How many of the index's leading columns the equality covers.
+    pub used_cols_len: usize,
+    /// Per used prefix column: `Histogram.NDV`, `None` when that column has
+    /// no loaded histogram.
+    pub prefix_column_ndvs: &'a [Option<i64>],
+    /// Per used prefix column: the column's row-count estimate over the
+    /// point range, `None` when the column has no usable statistics.
+    pub prefix_column_row_counts: &'a [Option<f64>],
+    /// `coll.GetScaledRealtimeAndModifyCnt(idx)`'s realtime half.
+    pub realtime_row_count: i64,
+    /// The modify-count half.
+    pub modify_count: i64,
+    /// Estimator knobs.
+    pub options: EstimatorOptions,
+}
+
+/// Go `getEqualCondSelectivity`
+/// (`pkg/planner/cardinality/selectivity.go`): the selectivity of one
+/// equality condition over an index.
+///
+/// Ordering is the source's:
+/// 1. a UNIQUE index whose equality columns cover the whole index holds at
+///    most one row — `1 / TotalRowCount`;
+/// 2. an OUT-OF-RANGE value cannot be in the CM Sketch, so heuristics apply
+///    — the index NDV when the equality covers everything, else the max NDV
+///    over the used prefix columns;
+/// 3. otherwise the CMSketch/TopN/histogram count competes with the
+///    per-column cross validation: the cross validation wins while its
+///    minimum row count is below the sketch count.
+pub fn get_equal_cond_selectivity(inputs: EqualCondSelectivityInputs<'_>) -> f64 {
+    let index = inputs.index;
+    let cover_all = inputs.used_cols_len >= index.num_columns;
+    if index.unique && cover_all {
+        return 1.0 / index.total_row_count();
+    }
+    let value = Datum::Bytes(inputs.encoded_value.to_vec());
+    if out_of_range_on_index(index, &value) {
+        if index.histogram.ndv > 0 && cover_all {
+            return out_of_range_eq_selectivity(
+                index.histogram.ndv,
+                inputs.realtime_row_count,
+                index.total_row_count() as i64,
+            );
+        }
+        let mut ndv = 0_i64;
+        for position in 0..inputs.used_cols_len.min(inputs.prefix_column_ndvs.len()) {
+            if let Some(Some(column_ndv)) = inputs.prefix_column_ndvs.get(position) {
+                ndv = (*column_ndv).max(ndv);
+            }
+        }
+        return out_of_range_eq_selectivity(
+            ndv,
+            inputs.realtime_row_count,
+            index.total_row_count() as i64,
+        );
+    }
+    let (min_row_count, cross_valid) = crate::selectivity_greedy::cross_validation_selectivity(
+        inputs.prefix_column_row_counts,
+        inputs.used_cols_len,
+        index.total_row_count(),
+    );
+    let idx_count = equal_row_count_on_index(
+        index,
+        inputs.encoded_value,
+        inputs.realtime_row_count,
+        inputs.modify_count,
+        inputs.options,
+    )
+    .est;
+    if min_row_count < idx_count {
+        return cross_valid;
+    }
+    idx_count / index.total_row_count()
+}
+
+#[cfg(test)]
+mod equal_cond_selectivity_tests {
+    use super::{
+        equal_row_count_on_index, get_equal_cond_selectivity, out_of_range_on_index,
+        EqualCondSelectivityInputs, EstimatorOptions, IndexStats,
+    };
+    use tidb_datatype::{Collation, Datum};
+
+    fn index(ndv: i64, num_columns: usize, unique: bool) -> IndexStats {
+        IndexStats {
+            histogram: super::Histogram {
+                id: 7,
+                ndv,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 10,
+                    repeat: 2,
+                    ndv,
+                    lower_bound: Datum::Bytes(b"a".to_vec()),
+                    upper_bound: Datum::Bytes(b"z".to_vec()),
+                }],
+                null_count: 0,
+                ..super::Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            num_columns,
+            unique,
+        }
+    }
+
+    fn inputs<'a>(
+        index: &'a IndexStats,
+        encoded: &'a [u8],
+        used: usize,
+        ndvs: &'a [Option<i64>],
+        row_counts: &'a [Option<f64>],
+    ) -> EqualCondSelectivityInputs<'a> {
+        EqualCondSelectivityInputs {
+            index,
+            encoded_value: encoded,
+            used_cols_len: used,
+            prefix_column_ndvs: ndvs,
+            prefix_column_row_counts: row_counts,
+            realtime_row_count: 20,
+            modify_count: 5,
+            options: EstimatorOptions::default(),
+        }
+    }
+
+    /// Go: a UNIQUE index whose equality columns cover the whole index holds
+    /// at most one row — selectivity is one over the total row count.
+    #[test]
+    fn unique_cover_all_answers_one_over_total() {
+        let index = index(5, 1, true);
+        let value = b"m";
+        let result = get_equal_cond_selectivity(inputs(&index, value, 1, &[], &[]));
+        assert!(
+            (result - 0.1).abs() < 1e-9,
+            "1 / total 10 = 0.1, got {result}"
+        );
+    }
+
+    /// Go: an OUT-OF-RANGE value with the equality covering the whole index
+    /// uses the index NDV heuristic.
+    #[test]
+    fn out_of_range_cover_all_uses_the_index_ndv() {
+        let index = index(5, 1, false);
+        let value = b"zz";
+        assert!(out_of_range_on_index(&index, &Datum::Bytes(value.to_vec())));
+        let result =
+            get_equal_cond_selectivity(inputs(&index, value, 1, &[Some(100)], &[Some(5.0)]));
+        let expected = super::out_of_range_eq_selectivity(5, 20, 10);
+        assert!(
+            (result - expected).abs() < 1e-9,
+            "cover-all out-of-range answers the index-NDV heuristic: {result} vs {expected}"
+        );
+    }
+
+    /// Go: an OUT-OF-RANGE value on a PREFIX of the index uses the max NDV
+    /// over the used prefix columns instead of the index NDV.
+    #[test]
+    fn out_of_range_prefix_uses_the_prefix_ndv() {
+        let index = index(5, 2, false);
+        let value = b"zz";
+        let result = get_equal_cond_selectivity(inputs(&index, value, 1, &[Some(100)], &[]));
+        let expected = super::out_of_range_eq_selectivity(100, 20, 10);
+        assert!(
+            (result - expected).abs() < 1e-9,
+            "prefix out-of-range answers the prefix-NDV heuristic: {result} vs {expected}"
+        );
+    }
+
+    /// Go: when the per-column cross validation's minimum row count is BELOW
+    /// the sketch/histogram count, the cross validation wins.
+    #[test]
+    fn cross_validation_wins_when_its_minimum_is_below_the_index_count() {
+        let index = index(5, 1, false);
+        let result = get_equal_cond_selectivity(inputs(&index, b"m", 1, &[], &[Some(2.0)]));
+        assert!(
+            (result - 0.2).abs() < 1e-9,
+            "cross_valid 2/10 = 0.2 beats the histogram count 3, got {result}"
+        );
+    }
+
+    /// Go: when the cross validation's minimum row count is at or above the
+    /// index count, the index count over the total row count wins.
+    #[test]
+    fn index_count_wins_when_cross_validation_is_above_it() {
+        let mut index = index(5, 1, false);
+        // The value IS in the TopN with count 3 — the sketch-side count the
+        // cross validation competes against.
+        let mut topn = tidb_stats::TopN::new(1);
+        topn.append(b"m", 3);
+        index.topn = Some(topn);
+
+        let result = get_equal_cond_selectivity(inputs(&index, b"m", 1, &[], &[Some(5.0)]));
+        let expected = 3.0 / index.total_row_count();
+        assert!(
+            (result - expected).abs() < 1e-9,
+            "index count 3 over the histogram+TopN total wins, got {result} vs {expected}"
+        );
+    }
+}
