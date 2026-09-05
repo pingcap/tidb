@@ -89,7 +89,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(args.AllDroppedTableIDs), nil
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
 		args, err := model.GetFinishedDropTableArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -251,6 +251,14 @@ func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *mod
 			}
 		case model.ActionCreateMaterializedViewLog:
 			if _, ok := st.(*ast.CreateMaterializedViewLogStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionDropMaterializedView:
+			if _, ok := st.(*ast.DropMaterializedViewStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionDropMaterializedViewLog:
+			if _, ok := st.(*ast.DropMaterializedViewLogStmt); !ok {
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
 		case model.ActionCreateSchema:

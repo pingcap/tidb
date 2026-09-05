@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "ddl_test.go",
         "main_test.go",
+        "materialized_view_basic_test.go",
         "materialized_view_create_test.go",
         "materialized_view_drop_test.go",
     ],

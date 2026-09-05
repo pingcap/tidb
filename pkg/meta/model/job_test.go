@@ -358,6 +358,8 @@ func TestString(t *testing.T) {
 		{ActionDropSchema, "drop schema"},
 		{ActionCreateTable, "create table"},
 		{ActionDropTable, "drop table"},
+		{ActionDropMaterializedView, "drop materialized view"},
+		{ActionDropMaterializedViewLog, "drop materialized view log"},
 		{ActionAddIndex, "add index"},
 		{ActionDropIndex, "drop index"},
 		{ActionAddColumn, "add column"},

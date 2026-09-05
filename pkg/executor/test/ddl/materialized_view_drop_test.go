@@ -32,64 +32,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDropMaterializedViewIfExists(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop materialized view if exists missing_mv")
-	tk.MustExec("drop materialized view if exists missing_schema.missing_mv")
-
-	err := tk.ExecToErr("drop materialized view log if exists on missing_base")
-	require.ErrorContains(t, err, "Table 'test.missing_base' doesn't exist")
-	err = tk.ExecToErr("drop materialized view log if exists on missing_schema.missing_base")
-	require.ErrorContains(t, err, "Table 'missing_schema.missing_base' doesn't exist")
-
-	tk.MustExec("create table t_drop_if_exists (a int not null)")
-	tk.MustExec("create table t_no_mlog_drop_if_exists (a int not null)")
-	tk.MustExec("create materialized view log on t_drop_if_exists (a)")
-	tk.MustExec("create materialized view mv_drop_if_exists (a, cnt) as select a, count(1) from t_drop_if_exists group by a")
-
-	err = tk.ExecToErr("drop materialized view if exists t_drop_if_exists")
-	require.ErrorContains(t, err, "is not MATERIALIZED VIEW")
-	err = tk.ExecToErr("drop materialized view log if exists on mv_drop_if_exists")
-	require.ErrorContains(t, err, "is not BASE TABLE")
-
-	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
-	tk.MustExec("drop materialized view if exists mv_drop_if_exists")
-
-	tk.MustExec("create view v_drop_if_exists as select * from t_drop_if_exists")
-	err = tk.ExecToErr("drop materialized view log if exists on v_drop_if_exists")
-	require.ErrorContains(t, err, "is not BASE TABLE")
-
-	tk.MustExec("drop materialized view log if exists on t_no_mlog_drop_if_exists")
-	tk.MustExec("drop materialized view log if exists on t_drop_if_exists")
-	tk.MustExec("drop materialized view log if exists on t_drop_if_exists")
-}
-
-func TestDropTableMaterializedViewConstraints(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_drop_constraints (a int not null, b int not null)")
-	tk.MustExec("create materialized view log on t_drop_constraints (a, b)")
-	tk.MustExec("create materialized view mv_drop_constraints (a, s, cnt) as select a, sum(b), count(1) from t_drop_constraints group by a")
-
-	err := tk.ExecToErr("drop table mv_drop_constraints")
-	require.ErrorContains(t, err, "DROP TABLE on materialized view table")
-	err = tk.ExecToErr("drop table `$mlog$t_drop_constraints`")
-	require.ErrorContains(t, err, "DROP TABLE on materialized view log table")
-	err = tk.ExecToErr("drop table t_drop_constraints")
-	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view dependencies")
-
-	tk.MustExec("drop materialized view mv_drop_constraints")
-	err = tk.ExecToErr("drop table t_drop_constraints")
-	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view log")
-
-	tk.MustExec("drop materialized view log on t_drop_constraints")
-	tk.MustExec("drop table t_drop_constraints")
-}
-
 func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
@@ -149,27 +91,6 @@ func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *t
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
-func TestDropMaterializedViewLogRemovesPurgeState(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t_drop_mlog_purge_state (a int)")
-	tk.MustExec("create materialized view log on t_drop_mlog_purge_state (a)")
-
-	is := dom.InfoSchema()
-	mlogTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("$mlog$t_drop_mlog_purge_state"))
-	require.NoError(t, err)
-	mlogID := mlogTable.Meta().ID
-
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("1"))
-
-	tk.MustExec("drop materialized view log on t_drop_mlog_purge_state")
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
-		Check(testkit.Rows("0"))
-}
-
 func TestDropMaterializedViewRefreshInfoFailureRollsBackMetadata(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)
@@ -190,7 +111,7 @@ func TestDropMaterializedViewRefreshInfoFailureRollsBackMetadata(t *testing.T) {
 	retryStarted := make(chan struct{})
 	allowRetry := make(chan struct{})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if job.Type == model.ActionDropTable && job.TableID == mvID && job.SchemaState == model.StateDeleteOnly && job.ErrorCount > 0 {
+		if job.Type == model.ActionDropMaterializedView && job.TableID == mvID && job.SchemaState == model.StateDeleteOnly && job.ErrorCount > 0 {
 			select {
 			case <-retryStarted:
 			default:
@@ -237,7 +158,7 @@ func TestDropMaterializedViewLogPurgeInfoFailureRollsBackMetadata(t *testing.T) 
 	retryStarted := make(chan struct{})
 	allowRetry := make(chan struct{})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if job.Type == model.ActionDropTable && job.TableID == mlogID && job.SchemaState == model.StateDeleteOnly && job.ErrorCount > 0 {
+		if job.Type == model.ActionDropMaterializedViewLog && job.TableID == mlogID && job.SchemaState == model.StateDeleteOnly && job.ErrorCount > 0 {
 			select {
 			case <-retryStarted:
 			default:
@@ -534,15 +455,4 @@ func TestDropMaterializedViewPrivilege(t *testing.T) {
 	tkDrop.MustExec("drop materialized view test.mv_drop_priv")
 	tk.MustExec("drop materialized view log on test.t_drop_mv_priv")
 	tk.MustExec("drop table test.t_drop_mv_priv")
-}
-
-func TestDropMaterializedViewLogBeforeBaseTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := newMViewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t_drop_seq (a int)")
-	tk.MustExec("create materialized view log on t_drop_seq (a)")
-	tk.MustExec("drop materialized view log on t_drop_seq")
-	tk.MustExec("drop table if exists t_drop_seq")
 }

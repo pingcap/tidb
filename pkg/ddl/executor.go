@@ -4381,9 +4381,11 @@ const (
 	tableObject objectType = iota
 	viewObject
 	sequenceObject
+	materializedViewObject
+	materializedViewLogObject
 )
 
-// dropTableObject provides common logic to DROP TABLE/VIEW/SEQUENCE.
+// dropTableObject provides common logic to drop table-like objects, views, and sequences.
 func (e *executor) dropTableObject(
 	ctx sessionctx.Context,
 	objects []*ast.TableName,
@@ -4404,18 +4406,26 @@ func (e *executor) dropTableObject(
 		fkCheck      bool
 	)
 	switch tableObjectType {
-	case tableObject:
+	case tableObject, materializedViewObject, materializedViewLogObject:
 		dropExistErr = infoschema.ErrTableDropExists
-		jobType = model.ActionDropTable
 		objectIdents = make([]ast.Ident, len(objects))
-		fkCheck = ctx.GetSessionVars().ForeignKeyChecks
 		for i, tn := range objects {
 			objectIdents[i] = ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		}
-		for _, tn := range objects {
-			if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
-				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
+		if tableObjectType == tableObject {
+			jobType = model.ActionDropTable
+			fkCheck = ctx.GetSessionVars().ForeignKeyChecks
+			for _, tn := range objects {
+				if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
+					return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
+				}
 			}
+		}
+		switch tableObjectType {
+		case materializedViewObject:
+			jobType = model.ActionDropMaterializedView
+		case materializedViewLogObject:
+			jobType = model.ActionDropMaterializedViewLog
 		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
@@ -4452,12 +4462,12 @@ func (e *executor) dropTableObject(
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
-		case tableObject:
+		case tableObject, materializedViewObject, materializedViewLogObject:
 			if !tableInfo.Meta().IsBaseTable() {
 				notExistTables = append(notExistTables, fullti.String())
 				continue
 			}
-			if !allowMaterializedViewRelated {
+			if tableObjectType == tableObject && !allowMaterializedViewRelated {
 				if err := checkTableMaterializedViewConstraints(tableInfo.Meta(), "DROP TABLE"); err != nil {
 					return errors.Trace(err)
 				}
@@ -4517,7 +4527,7 @@ func (e *executor) dropTableObject(
 		}
 
 		// unlock table after drop
-		if tableObjectType != tableObject {
+		if tableObjectType == viewObject || tableObjectType == sequenceObject {
 			continue
 		}
 		if !config.TableLockEnabled() {
