@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` memory-arbitrator soft limit): matched
+  Go's validation grammar for `tidb_mem_arbitrator_soft_limit`, accepting the
+  disable sentinel, case-insensitive `auto` (canonicalized), positive ratios
+  through 1.0, and integer byte limits greater than 1 while refusing invalid
+  and non-positive values. The focused registry regression covers accepted and
+  refused spellings; runtime memory-limit application remains in the existing
+  process-memory owner.
 - 2026-09-05 (`pkg/server` wire result-set terminal metadata): aligned Rust's
   deprecated-EOF OK-shaped packet with Go's `writeEOF`/`writeOkWith` value
   flow. `ResultSetOptions`, `EofPacket`, and `QueryResult` now carry affected

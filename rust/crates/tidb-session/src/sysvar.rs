@@ -1400,9 +1400,9 @@ impl SysVarDef {
         // tidb_mem_arbitrator_* entries): mode lowercases and whitelists
         // disable/standard/priority; wait_averse accepts exactly "0", "1"
         // and "nolimit"; query_reserved accepts "0" or any integer > 1;
-        // soft_limit passes "0" (disable), canonicalizes "auto", and
-        // otherwise needs the byte-size table that is not ported yet --
-        // recorded, not refused here. All refusals are bare errors, 1105.
+        // soft_limit accepts the disable sentinel, `auto`, a positive ratio
+        // through 1.0, or an integer byte count greater than 1. All
+        // refusals are bare errors, 1105.
         if self.name == "tidb_mem_arbitrator_mode" {
             let lowered = validated.value.to_ascii_lowercase();
             if matches!(lowered.as_str(), "disable" | "standard" | "priority") {
@@ -1438,16 +1438,35 @@ impl SysVarDef {
             ));
         }
         if self.name == "tidb_mem_arbitrator_soft_limit" && !validated.value.is_empty() {
-            let lowered = validated.value.to_ascii_lowercase();
-            if lowered == "0" || lowered == "auto" {
+            if validated.value == "0" {
+                return Ok(validated);
+            }
+            if validated.value.eq_ignore_ascii_case("auto") {
                 return Ok(Validated {
-                    value: lowered,
+                    value: "auto".to_owned(),
                     truncated: validated.truncated,
                 });
             }
-            // Other values are byte sizes parsed by Go's SoftLimit table;
-            // until that table is ported the value passes unvalidated here.
-            return Ok(validated);
+            if let Ok(integer) = validated.value.parse::<i64>() {
+                if integer > 1 {
+                    return Ok(validated);
+                }
+                if integer <= 0 {
+                    return Err(ValidationError::Refused(
+                        "tidb_mem_arbitrator_soft_limit: 0 (default); (0, 1.0] float-rate * server-limit; (1, server-limit] integer bytes; auto;"
+                            .to_owned(),
+                    ));
+                }
+            }
+            if let Ok(ratio) = validated.value.parse::<f64>() {
+                if ratio > 0.0 && ratio <= 1.0 {
+                    return Ok(validated);
+                }
+            }
+            return Err(ValidationError::Refused(
+                "tidb_mem_arbitrator_soft_limit: 0 (default); (0, 1.0] float-rate * server-limit; (1, server-limit] integer bytes; auto;"
+                    .to_owned(),
+            ));
         }
         // Go's tidb_opt_index_join_build_v2 (`sysvar.go:2874`): the
         // planner always uses the v2 path, so a falsy set is refused with
@@ -2865,6 +2884,19 @@ mod tests {
             reserved.validate("1"),
             Err(ValidationError::Refused(_))
         ));
+
+        let soft_limit = get_sys_var("tidb_mem_arbitrator_soft_limit").unwrap();
+        assert_eq!(soft_limit.validate("0").unwrap().value, "0");
+        assert_eq!(soft_limit.validate("AUTO").unwrap().value, "auto");
+        assert_eq!(soft_limit.validate("0.8").unwrap().value, "0.8");
+        assert_eq!(soft_limit.validate("1").unwrap().value, "1");
+        assert_eq!(soft_limit.validate("2").unwrap().value, "2");
+        for invalid in ["-1", "0.0", "1.1", "bogus"] {
+            assert!(matches!(
+                soft_limit.validate(invalid),
+                Err(ValidationError::Refused(_))
+            ));
+        }
     }
 
     /// Go's tidb_gogc_tuner_threshold Validation (`sysvar.go:1270`):
