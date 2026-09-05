@@ -123,7 +123,7 @@ func (w *worker) onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job
 		return ver, errors.Trace(err)
 	}
 	if attr.StorageClass != nil && kerneltype.IsNextGen() {
-		pending, err := w.prepareExplicitStorageClassTransition(jobCtx, job, tblInfo, oldState)
+		pending, err := prepareExplicitStorageClassTransition(jobCtx, job, tblInfo, oldState)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -153,7 +153,7 @@ type pendingStorageClassTransition struct {
 	tableName     string
 }
 
-func (w *worker) prepareExplicitStorageClassTransition(
+func prepareExplicitStorageClassTransition(
 	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,

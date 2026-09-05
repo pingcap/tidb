@@ -304,7 +304,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 func (e *ShowExec) fetchShowStorageClassTransitions(ctx context.Context) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM information_schema.tikv_storage_class_transitions`)
+	timeZoneSetup := sqlexec.ExecOptionWithSessionVarsSetup(
+		storageClassTransitionTimeZoneSetup(e.Ctx().GetSessionVars().Location()))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{timeZoneSetup},
+		`SELECT * FROM information_schema.tikv_storage_class_transitions`)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -323,6 +326,16 @@ func (e *ShowExec) fetchShowStorageClassTransitions(ctx context.Context) error {
 		e.result.AppendRow(row)
 	}
 	return nil
+}
+
+func storageClassTransitionTimeZoneSetup(location *time.Location) sqlexec.SessionVarsSetup {
+	return func(vars *variable.SessionVars) func() {
+		originalTimeZone := vars.TimeZone
+		vars.TimeZone = location
+		return func() {
+			vars.TimeZone = originalTimeZone
+		}
+	}
 }
 
 // visibleChecker checks if a stmt is visible for a certain user.
