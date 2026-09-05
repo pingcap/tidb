@@ -418,3 +418,5 @@
 - 下轮恢复点: (1) infoschema 切片 b/c 已闭; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - init_connect 执行缺口记录: 变量定义/SET 校验/回归齐备, 但连接建立时无执行路径(Go 对每个非 root 新连接执行, 失败拒连)——feature 级工单, 已写入 vardef 收据。
 - 下轮恢复点: (1) init_connect 执行面(连接后置钩子)立项或继续他面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- init_connect 立项推进: Go 语义(conn.go:1114-1157)与 Rust 三缝点(pipeline execute/has_dynamic_priv_with_roles/get_global)全部提取并写入收据, 实现面已完备可执行。
+- 下轮恢复点: (1) 按 DESIGN 在握手完成点接线 initConnect 执行; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

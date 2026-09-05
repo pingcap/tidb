@@ -109,3 +109,18 @@ establishment and refuses the connection when they fail. Porting needs
 a post-auth hook with SQL execution available at connect time, the
 root bypass, and the connection-refusal error mapping — a feature-sized
 slice, recorded here as the worklist item rather than improvised.
+
+## init_connect execution: Go semantics and Rust seams extracted (2026-09-05, design complete)
+
+Go `pkg/server/conn.go:1114-1157` (`initConnect`) runs after the
+handshake, per connection: read the global `init_connect` (empty skips);
+skip when the account holds the `CONNECTION_ADMIN` dynamic privilege
+(`skipInitConnect` → `RequestDynamicVerification`); parse the value,
+execute each statement and drain the results; any error refuses the
+connection. The Rust seams for the port are all present and inventoried:
+`pipeline_session.rs::execute` (statement execution with drained
+materialized results), `PrivilegeRegistry::has_dynamic_priv_with_roles`
+(`registry_ops.rs:1156`, the CONNECTION_ADMIN skip), and
+`GlobalSysvars::get_global` (`vars.rs:2678`, the value read). The
+remaining work is wiring these at the handshake-completion point in the
+connection layer — a self-contained slice now that the seams are named.
