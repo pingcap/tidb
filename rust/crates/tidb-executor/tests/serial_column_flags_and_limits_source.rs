@@ -140,13 +140,30 @@ fn lock_tables_with_disabled_config_warns_1235_and_stores_no_lock() {
 /// table ... default collate|convert to charset`/`alter table modify ...
 /// collate`, for `utf8mb4_roman_ci` and `utf8_roman_ci`, while the supported
 /// `utf8mb4_general_ci` builds.
-// go-parity-gap: this tier answers `[1105] unknown collation` for the same
-// statements (measured, `create table ucc ...`), i.e. the refusal exists but
-// neither Go's code (1273) nor its message is carried, and this tier has no
-// ALTER DATABASE / ALTER TABLE collate carrier to drive the remaining arms.
 #[test]
-#[ignore]
 fn unsupported_collations_answer_ddl_1273_on_every_statement_kind() {
+    for (sql, collation) in [
+        (
+            "create table ucc (a varchar(20)) charset utf8mb4 collate utf8mb4_roman_ci",
+            "utf8mb4_roman_ci",
+        ),
+        (
+            "create table ucc (a varchar(20)) charset utf8 collate utf8_roman_ci",
+            "utf8_roman_ci",
+        ),
+    ] {
+        let mut catalog = Catalog::default();
+        let error = run_create_table_on(sql, &mut catalog)
+            .expect_err("Go refuses roman collations when new collation is enabled")
+            .to_mysql_error();
+        assert_eq!(error.code, 1273);
+        assert_eq!(
+            error.message,
+            format!(
+                "Unsupported collation when new collation is enabled: '{collation}'"
+            )
+        );
+    }
 }
 
 /// Go `serial_test.go:1396-1419::TestCheckEnumLength`: an ENUM/SET member

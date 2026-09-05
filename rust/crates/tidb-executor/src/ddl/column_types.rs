@@ -71,6 +71,17 @@ fn charset_named(name: &str) -> Result<Charset, DriverError> {
 
 /// Parses a collation name, rejecting one this tier does not carry.
 fn collation_named(name: &str) -> Result<Collation, DriverError> {
+    // Go's `collate.ErrUnsupportedCollation` rejects these collations when
+    // `new_collation_enabled` is on, even though the charset registry knows
+    // their names. Keep the DDL refusal distinct from an actually unknown
+    // collation: callers receive errno 1273 and Go's exact message.
+    let normalized = name.to_ascii_lowercase();
+    if matches!(normalized.as_str(), "utf8_roman_ci" | "utf8mb4_roman_ci") {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrUnknownCollation,
+            message: format!("Unsupported collation when new collation is enabled: '{normalized}'"),
+        });
+    }
     Collation::from_name(name).ok_or(DriverError::unsupported("unknown collation"))
 }
 

@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` unsupported roman collations): closed the CREATE
+  TABLE error-contract mismatch from the b115 inventory. Rust now preserves
+  the registry entries for non-DDL callers while returning Go's 1273 code and
+  exact lower-case `ErrUnsupportedCollation` message for `utf8_roman_ci` and
+  `utf8mb4_roman_ci`; the promoted regression records fail-before (1105 vs
+  1273) and pass-after evidence. ALTER DATABASE and CONVERT TO carriers remain
+  explicitly unmodeled, and the b115 receipt records that boundary.
 - 2026-09-05 (`pkg/ddl` serial column flags): closed the remaining
   `NO_DEFAULT_VALUE` metadata mismatch from the package's b115 inventory.
   The Rust CREATE, ALTER ADD, and ALTER MODIFY paths now share the Go
