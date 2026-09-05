@@ -379,3 +379,5 @@
 - 下轮恢复点: (1) 新面候选: tidb-domain 已闭环→选 tidb-privilege 已闭环→候选 tidb-config 深层已做→下一候选 tidb-kvcache/tidb-hash 小工具面或 infoschema 面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - kvcache+hash 双面收据(rust/docs/kvcache-hash-parity-audit.md): Put 淘汰循环逐分支对齐(内存重采样规则/探测失败 DeleteAll/quota-0 单次淘汰); IHasher 契约镜像。
 - 下轮恢复点: (1) 新面候选继续; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- fallback+skip_column_types 白名单批: allow_fallback_to_tikv 只接受 tiflash token(trim/去重按 store type/首现顺序, 任意非 tiflash token=1231); analyze_skip_column_types 小写白名单七类型(json/text/mediumtext/longtext/blob/mediumblob/longblob, 规范化存储, 1231 拒绝)。session lib 1326 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) super_read_only 耦合(vars.rs 级, 需兄弟 global 读+StmtType 判定); (2) hook 余项核实(17 未解析条目); (3) F2/F3-seam live 阻塞; (4) F4 低优先级。

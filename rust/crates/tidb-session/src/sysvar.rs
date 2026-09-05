@@ -532,10 +532,7 @@ pub(crate) fn normalize_time_value(
         }
     } else {
         let now = chrono::Utc::now().naive_utc();
-        zone.offset_from_utc_datetime(&now)
-            .fix()
-            .local_minus_utc()
-            / 60
+        zone.offset_from_utc_datetime(&now).fix().local_minus_utc() / 60
     };
     let sign = if offset_minutes < 0 { '-' } else { '+' };
     let absolute = offset_minutes.unsigned_abs();
@@ -969,10 +966,11 @@ impl SysVarDef {
                 || !tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
                     .load(std::sync::atomic::Ordering::SeqCst))
         {
-            let run_auto_analyze = tidb_vardef::RUN_AUTO_ANALYZE
-                .load(std::sync::atomic::Ordering::SeqCst);
-            let enable_auto_analyze_priority_queue = tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
-                .load(std::sync::atomic::Ordering::SeqCst);
+            let run_auto_analyze =
+                tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst);
+            let enable_auto_analyze_priority_queue =
+                tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
+                    .load(std::sync::atomic::Ordering::SeqCst);
             return Err(ValidationError::Refused(format!(
                 "cannot set {}: requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue to be true. Current values: tidb_enable_auto_analyze={}, tidb_enable_auto_analyze_priority_queue={}",
                 self.name, run_auto_analyze, enable_auto_analyze_priority_queue
@@ -1383,6 +1381,63 @@ impl SysVarDef {
                     FormatArg::from(original),
                 ],
             )));
+        }
+        // Go's tidb_allow_fallback_to_tikv Validation (`sysvar.go:2657`):
+        // an empty value passes; every comma-separated token must be
+        // `tiflash` in any case (trimmed, deduplicated, first-occurrence
+        // order), and anything else is `ErrWrongValueForVar` (1231).
+        if self.name == "tidb_allow_fallback_to_tikv" {
+            if validated.value.is_empty() {
+                return Ok(validated);
+            }
+            let mut seen: Vec<String> = Vec::new();
+            for engine in validated.value.split(',') {
+                let engine = engine.trim();
+                if !engine.eq_ignore_ascii_case("tiflash") {
+                    return Err(ValidationError::WrongValue);
+                }
+                let lowered = engine.to_ascii_lowercase();
+                if !seen.contains(&lowered) {
+                    seen.push(lowered);
+                }
+            }
+            return Ok(Validated {
+                value: seen.join(","),
+                truncated: validated.truncated,
+            });
+        }
+        // Go's `ValidAnalyzeSkipColumnTypes` (`varsutil.go:501`): tokens are
+        // lowercased and trimmed, must each be one of the seven column
+        // types, and the joined lower-case list is stored; anything else is
+        // `ErrWrongValueForVar` (1231) carrying the original value.
+        if self.name == "tidb_analyze_skip_column_types" {
+            const ALLOWED: [&str; 7] = [
+                "json",
+                "text",
+                "mediumtext",
+                "longtext",
+                "blob",
+                "mediumblob",
+                "longblob",
+            ];
+            if validated.value.is_empty() {
+                return Ok(Validated {
+                    value: String::new(),
+                    truncated: validated.truncated,
+                });
+            }
+            let mut column_types: Vec<String> = Vec::new();
+            for item in validated.value.split(',') {
+                let column_type = item.trim().to_ascii_lowercase();
+                if !ALLOWED.contains(&column_type.as_str()) {
+                    return Err(ValidationError::WrongValue);
+                }
+                column_types.push(column_type);
+            }
+            return Ok(Validated {
+                value: column_types.join(","),
+                truncated: validated.truncated,
+            });
         }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
@@ -1870,10 +1925,7 @@ mod tests {
                 let validated = definition
                     .validate_in_scope(definition.value, SCOPE_GLOBAL)
                     .unwrap_or_else(|error| {
-                        panic!(
-                            "global default rejected for {}: {error:?}",
-                            definition.name
-                        )
+                        panic!("global default rejected for {}: {error:?}", definition.name)
                     });
                 assert_eq!(validated.value, definition.value, "{}", definition.name);
             }
@@ -2380,7 +2432,10 @@ mod tests {
         };
         assert_eq!(enumeration.validate("oFf").unwrap().value, "OFF");
         assert_eq!(enumeration.validate("2").unwrap().value, "AUTO");
-        assert_eq!(enumeration.validate("randomstring"), Err(ValidationError::WrongValue));
+        assert_eq!(
+            enumeration.validate("randomstring"),
+            Err(ValidationError::WrongValue)
+        );
     }
 
     /// Go `TestTimeValidation` and `TestDurationValidation`: time values are
@@ -2392,10 +2447,7 @@ mod tests {
             var_type: VarType::Time,
             ..SysVarDef::PLACEHOLDER
         };
-        assert_eq!(
-            time.validate("23:59 +0000").unwrap().value,
-            "23:59 +0000"
-        );
+        assert_eq!(time.validate("23:59 +0000").unwrap().value, "23:59 +0000");
         assert_eq!(time.validate("3:00 +0000").unwrap().value, "03:00 +0000");
         assert_eq!(time.validate("0.000"), Err(ValidationError::WrongType));
 
@@ -2558,6 +2610,36 @@ mod tests {
     /// The registry's concrete bool entry follows the same Go conversion
     /// rules as the synthetic `TestBoolValidation` cases above.
     #[test]
+    /// Go's allow-fallback engine whitelist (`sysvar.go:2657`) and the
+    /// analyze skip column types whitelist (`varsutil.go:501`).
+    #[test]
+    fn fallback_and_skip_column_type_whitelists_match_go() {
+        let fallback = get_sys_var("tidb_allow_fallback_to_tikv").unwrap();
+        assert_eq!(fallback.validate("").unwrap().value, "");
+        // Dedup is by store type: the second (any-case) occurrence is a
+        // no-op, so the normalized form lists tiflash once.
+        assert_eq!(
+            fallback.validate(" tiflash , TIFLASH ").unwrap().value,
+            "tiflash"
+        );
+        assert!(matches!(
+            fallback.validate(" TIKV "),
+            Err(ValidationError::WrongValue)
+        ));
+        assert!(matches!(
+            fallback.validate("tiflash,tikv"),
+            Err(ValidationError::WrongValue)
+        ));
+
+        let skip = get_sys_var("tidb_analyze_skip_column_types").unwrap();
+        assert_eq!(skip.validate("").unwrap().value, "");
+        assert_eq!(skip.validate(" JSON , Blob ").unwrap().value, "json,blob");
+        assert!(matches!(
+            skip.validate("varchar"),
+            Err(ValidationError::WrongValue)
+        ));
+    }
+
     fn bool_validation() {
         let sv = get_sys_var("autocommit").unwrap();
         assert_eq!(sv.var_type, VarType::Bool);
