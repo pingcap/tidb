@@ -8782,6 +8782,12 @@ risks without claiming repository-wide parity.
   deny-on-discard regression fails with one diagnostic on the detached pre-fix
   owner and passes with the three-test owner suite; Ready evidence is recorded
   in `receipts/util_table_rule_selector.md`.
+- 2026-09-05 (`pkg/util/promutil`): the complete Prometheus utility owner now
+  matches Go's discardable-return contract by removing three explicit
+  Rust-only `#[must_use]` diagnostics from its factory and registry
+  constructors. The deny-on-discard regression fails with all three
+  diagnostics on the detached pre-fix owner and passes with the two-test owner
+  suite; Ready evidence is recorded in `receipts/util_promutil.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

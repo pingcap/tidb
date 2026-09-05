@@ -31,9 +31,16 @@ unregistration success. A strict-surface re-audit removed the two remaining
 Rust-only option aliases and the `Send + Sync` supertrait restrictions that Go
 does not impose on implementations of either interface.
 
+The three source-shaped constructors (`new_default_factory`,
+`new_noop_registry`, and `new_default_registry`) also carried explicit
+Rust-only `#[must_use]` diagnostics. The focused
+`return_values_may_be_ignored_like_go` regression discards all three under
+`#[deny(unused_must_use)]`: the detached pre-fix owner failed with exactly
+three diagnostics, and the corrected owner passes.
+
 ## Validation
 
-Profile: WIP; this is one completed package in the continuing package-by-
+Profile: Ready for this focused parity fix within the continuing package-by-
 package audit, not a repository-wide readiness claim.
 
 - `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/promutil` — passed.
@@ -41,6 +48,10 @@ package audit, not a repository-wide readiness claim.
 - `cargo test --offline --locked -p tidb-util --lib promutil::tests --no-fail-fast` — passed, 1 test.
 - `cargo check --offline --locked -p tidb-util` — passed.
 - `cargo fmt -p tidb-util -- --check` and `git diff --check` — passed.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib promutil::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed after the three-error pre-fix failure.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib 'promutil::tests' -- --test-threads=1` — passed; 2 tests including the discard-contract regression.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed as the Ready gate.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

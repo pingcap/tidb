@@ -70,7 +70,6 @@ impl Factory for DefaultFactory {
 }
 
 /// Returns the default implementation of [`Factory`].
-#[must_use]
 pub fn new_default_factory() -> Box<dyn Factory> {
     Box::new(DefaultFactory)
 }
@@ -120,13 +119,11 @@ impl Registry for NoopRegistry {
 }
 
 /// Returns a registry that accepts and discards every operation.
-#[must_use]
 pub fn new_noop_registry() -> Box<dyn Registry> {
     Box::new(NoopRegistry)
 }
 
 /// Returns a fresh native Prometheus registry.
-#[must_use]
 pub fn new_default_registry() -> Box<dyn Registry> {
     Box::new(prometheus::Registry::new())
 }

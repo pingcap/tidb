@@ -18,6 +18,14 @@ fn counter(name: &str) -> Counter {
     Counter::with_opts(prometheus::Opts::new(name, "test counter")).unwrap()
 }
 
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    new_default_factory();
+    new_noop_registry();
+    new_default_registry();
+}
+
 // Go TestNoopRegistry.
 #[test]
 fn noop_registry() {
