@@ -233,11 +233,9 @@ fn issue_2293_invalid_string_default_for_int_rejected_1067() {
 
 // --- TestIssue19229 (pkg/ddl/db_integration_test.go:177) ---
 //
-// Bad ENUM/SET inserts report Go's WarnDataTruncated (1265). PORTED for
-// `enum 'xxx'`, `enum -1` and `set 'xxx'`. KNOWN DIVERGENCE, not asserted:
-// `insert into sett values(-1)` also errors 1265 in Go, but this tier's
-// integer→SET cast accepts it (`Ok(1)`, storing 0) — captured during this
-// port, see the receipt.
+// Bad ENUM/SET inserts report Go's WarnDataTruncated (1265), including the
+// numeric `-1` SET conversion whose failed unsigned cast must not be mistaken
+// for the valid zero SET.
 #[test]
 fn issue_19229_enum_set_bad_values_truncate_1265() {
     let mut catalog = Catalog::default();
@@ -255,6 +253,10 @@ fn issue_19229_enum_set_bad_values_truncate_1265() {
     run_create_table_on("CREATE TABLE sett (type set('a', 'b') )", &mut catalog).unwrap();
     assert!(matches!(
         run_insert_on("insert into sett values('xxx')", &mut catalog, &ctx),
+        Err(tidb_executor::DriverError::DataTruncatedAtRow { column, row: 1 }) if column == "type"
+    ));
+    assert!(matches!(
+        run_insert_on("insert into sett values(-1)", &mut catalog, &ctx),
         Err(tidb_executor::DriverError::DataTruncatedAtRow { column, row: 1 }) if column == "type"
     ));
 }

@@ -690,6 +690,11 @@ impl Datum {
         if matches!(self, Self::VectorFloat32(_)) {
             return Err(DatumValueError::Unsupported(self.kind(), "set"));
         }
+        // `convertToMysqlSet` leaves the zero SET beside a failed numeric
+        // `convertToUint` and wraps that failure as `ErrTruncated`.  Keep
+        // that event instead of letting a saturated numeric value of zero
+        // look like the valid SET zero (notably `INSERT ... VALUES (-1)`).
+        let mut numeric_conversion_failed = false;
         let parsed = target.with_elems_visible(|elements| match self {
             Self::String(value) => {
                 parse_set(elements, value.bytes(), target.runtime_collator()).map_err(|_| ())
@@ -708,19 +713,31 @@ impl Datum {
             }
             Self::VectorFloat32(_) => unreachable!("vector returned before borrowing elements"),
             _ => match self.convert_to_unsigned(FieldTypeCode::LongLong, flags) {
-                Ok(number) => parse_set_value(elements, number.value).map_err(|_| ()),
-                Err(_) => Err(()),
+                Ok(number) if number.event.is_none() => {
+                    parse_set_value(elements, number.value).map_err(|_| ())
+                }
+                Ok(_) | Err(_) => {
+                    numeric_conversion_failed = true;
+                    Err(())
+                }
             },
         });
         // Go `convertToMysqlSet` wraps EVERY failure in `ErrTruncated` and
         // still calls `SetMysqlSet`, so the zero set is stored and the caller
         // decides between a 1265 warning and a strict error.
-        Ok(match parsed {
-            Ok(value) => exact(Self::new_set(value, target.collation())),
-            Err(()) => Converted {
+        Ok(if numeric_conversion_failed {
+            Converted {
                 value: Self::new_set(crate::MysqlSet::default(), target.collation()),
                 event: Some(ScalarConversionEvent::Truncated),
-            },
+            }
+        } else {
+            match parsed {
+                Ok(value) => exact(Self::new_set(value, target.collation())),
+                Err(()) => Converted {
+                    value: Self::new_set(crate::MysqlSet::default(), target.collation()),
+                    event: Some(ScalarConversionEvent::Truncated),
+                },
+            }
         })
     }
 

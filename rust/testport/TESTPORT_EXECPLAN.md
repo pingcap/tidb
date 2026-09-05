@@ -8475,3 +8475,9 @@ risks without claiming repository-wide parity.
   `DROP TABLE` returns 3730 with the parent, constraint, and child names;
   both checks are bypassed when `foreign_key_checks=0`. Evidence is recorded
   in `receipts/ddl_foreign_key_table_lifecycle.md`.
+- 2026-09-05 (`pkg/types` ENUM/SET numeric conversion): Rust now preserves a
+  failed numeric-to-SET unsigned conversion as Go's truncation event, so a
+  negative value such as `INSERT INTO sett VALUES(-1)` returns 1265 instead of being
+  mistaken for the valid zero SET. Focused datatype and DDL integration tests
+  cover the zero-value control and exact row error; remaining `IF NOT EXISTS`
+  and generated-column ordering divergences stay documented in `receipts/b102.md`.
