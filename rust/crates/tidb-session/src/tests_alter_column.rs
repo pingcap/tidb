@@ -307,29 +307,21 @@ fn measured_divergences_from_go_test_alter_column() {
         "the captured TiDB answer is NONCLUSTERED: {create}"
     );
 
-    // 2. Go's `ErrTooLongKey` (1071): widening a column an index covers past
-    //    the 3072-byte key limit is refused. Captured, on an `ascii` table:
-    //    `alter table t1 modify column a varchar(3000)` -> ERR, and so do the
-    //    CHANGE COLUMN form and `modify column c bigint`, where the widened
-    //    column is the first half of a composite key whose other half is
-    //    already 3071 bytes. This tier accepts all three, so an index can be
-    //    built over a key wider than the encoder's limit.
+    // 2. CLOSED: Go's `ErrTooLongKey` (1071) is now enforced when widening a
+    //    column pushes any affected composite index past the 3072-byte key
+    //    limit. Both MODIFY forms below are refused before the table changes.
     session
         .run(
             "CREATE TABLE t1 (a VARCHAR(10), b VARCHAR(100), c TINYINT, d VARCHAR(3071),\
              INDEX (a), INDEX (a, b), INDEX (c, d)) CHARSET = ascii",
         )
         .unwrap();
-    assert!(
-        session
-            .run("ALTER TABLE t1 MODIFY COLUMN a VARCHAR(3000)")
-            .is_ok(),
-        "captured TiDB answers 1071 ErrTooLongKey here"
-    );
-    assert!(
-        session.run("ALTER TABLE t1 MODIFY COLUMN c BIGINT").is_ok(),
-        "captured TiDB answers 1071 ErrTooLongKey here"
-    );
+    assert!(session
+        .run("ALTER TABLE t1 MODIFY COLUMN a VARCHAR(3000)")
+        .is_err());
+    assert!(session
+        .run("ALTER TABLE t1 MODIFY COLUMN c BIGINT")
+        .is_err());
 
     // 3. Two inline PRIMARY KEY clauses on one column: captured TiDB folds
     //    them into the single primary key the column already has, so
@@ -341,6 +333,36 @@ fn measured_divergences_from_go_test_alter_column() {
             .is_err(),
         "captured TiDB accepts this and builds one PRIMARY KEY"
     );
+}
+
+/// Go's `checkIndexInModifiableColumns` re-runs the complete running-byte-sum
+/// check for every index that contains the modified column. Each individual
+/// key part below is legal, but the composite index crosses 3072 bytes after
+/// the MODIFY and Go refuses the statement with ErrTooLongKey (1071).
+#[test]
+fn modify_column_rechecks_the_full_affected_index_key_length() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE wide (a VARCHAR(10), b VARCHAR(100), c TINYINT, d VARCHAR(3071),\
+             INDEX ab (a, b), INDEX cd (c, d)) CHARSET = ascii",
+        )
+        .unwrap();
+
+    assert!(matches!(
+        session.run("ALTER TABLE wide MODIFY COLUMN a VARCHAR(3000)"),
+        Err(DriverError::TooLongKey {
+            length: 3100,
+            max: 3072
+        })
+    ));
+    assert!(matches!(
+        session.run("ALTER TABLE wide MODIFY COLUMN c BIGINT"),
+        Err(DriverError::TooLongKey {
+            length: 3079,
+            max: 3072
+        })
+    ));
 }
 
 /// `checkTypeChangeSupported` (Go `pkg/types/field_type.go:1569-1603`, called

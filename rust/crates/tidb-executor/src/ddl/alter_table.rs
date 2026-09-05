@@ -2049,9 +2049,9 @@ fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<Datu
 /// A KEY or UNIQUE option lands in that last group, which is Go's rule too:
 /// MODIFY may keep a constraint but never ADD one.
 ///
-/// NOT ENFORCED (measured, pinned in `tidb-session`'s `tests_alter_column`):
 /// Go's `ErrTooLongKey` (1071) when the new type widens a column an index
-/// covers past the key-length limit.
+/// covers past the key-length limit is checked below for both each key part
+/// and the affected index's running byte sum.
 /// The existing table's default charset/collation, which a column added or
 /// modified by ALTER TABLE inherits just as a CREATE TABLE column does.
 fn existing_table_charset(catalog: &Catalog, database: &str, table_name: &str) -> TableCharset {
@@ -2725,6 +2725,34 @@ fn modify_column_action(
                 true,
             )?;
         }
+    }
+    // Go's `checkIndexInModifiableColumns` also re-runs the running sum for
+    // each affected index. Rechecking only the changed key part misses a
+    // composite index whose parts are individually legal but whose new total
+    // exceeds `MAX_INDEX_LENGTH` (1071).
+    for index in table.indexes() {
+        if !index.column_offsets.contains(&offset) {
+            continue;
+        }
+        let parts = index
+            .column_offsets
+            .iter()
+            .enumerate()
+            .map(|(position, column_offset)| {
+                let field_type = if *column_offset == offset {
+                    &field_type
+                } else {
+                    &table.columns[*column_offset].field_type
+                };
+                (field_type, index.prefix_length(position))
+            });
+        crate::ddl::index_prefix::check_index_key_length(
+            parts,
+            index.column_offsets.len(),
+            index.unique,
+            true,
+        )
+        .map_err(crate::ddl::index_prefix::driver_error)?;
     }
 
     // The second shape of the dependency error, and the one this tier used to

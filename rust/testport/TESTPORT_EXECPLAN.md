@@ -8364,3 +8364,10 @@ risks without claiming repository-wide parity.
   directions. The source-derived analyzed mock-store test remains an explicit
   integration boundary; evidence is recorded in
   `receipts/planner_index_join_skyline.md`.
+- 2026-09-05 (`pkg/ddl` ALTER COLUMN index length): Rust now rechecks the
+  running byte sum for every affected index after a `MODIFY COLUMN`, matching
+  Go's `checkColumnWithIndexConstraint`/`checkIndexPrefixLength` path. The
+  source-shaped composite-index regression proved the old acceptance first,
+  then passed with Go's 1071 errors for sums 3100 and 3079. Evidence and the
+  package inventory boundary are recorded in
+  `receipts/ddl_alter_column_index_length.md`.
