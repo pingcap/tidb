@@ -468,3 +468,5 @@
 - 下轮恢复点: (1) 跟随兄弟会话修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - UnsafeRange 引入点收窄: d5d32d8a49c 为纯重构无害; 与 34d7549bb06(LIKE escape 入 cache keys)的交互最可疑——escape 字节进入 cache key 后, 重载路径对 [Datum::Int(42)] 参数的 range 重算结果与原树不再 range_is_safe 一致。归兄弟会话。
 - 下轮恢复点: (1) 跟随兄弟会话修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- UnsafeRange 探针结果: 重载路径 rebuilt_ranges=0(detacher 对 eq(col,Int(42)) + common-handle 产生空集) — 其余条件(used=1/access=1/remained=0)正常。空集→range_is_safe false→UnsafeRange。归兄弟会话 ranger 重构。
+- 下轮恢复点: (1) 跟随兄弟会话修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
