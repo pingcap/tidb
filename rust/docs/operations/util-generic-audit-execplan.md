@@ -26,9 +26,13 @@ at current Go master.
       tests; all passed.
 - [x] (2026-09-02) Ran the Ready formatting, pinned lint, and diff-hygiene
       gates. No production edit or new regression was warranted.
-- [ ] Push this receipt/plan refresh to `origin/hparser-integration`, verify
-      local/remote SHAs, and fetch the newest target branch before the next
-      package boundary.
+- [x] (2026-09-05) Removed six Rust-only `#[must_use]` diagnostics from the
+      source-shaped heap/map constructors and observers. The deny-on-discard
+      regression failed with exactly six diagnostics on the detached pre-fix
+      owner and passes with nine focused owner tests.
+- [x] (2026-09-05) Published the one-package commit to
+      `origin/hparser-integration`, verified matching local/remote SHAs, and
+      fetched the newest target branch before the next package boundary.
 
 ## Surprises & Discoveries
 
@@ -39,21 +43,21 @@ at current Go master.
 
 ## Decision Log
 
-- Decision: make this a receipt/plan refresh only. Rationale: source and owner
-  are unchanged at current Go master and all prior behavior fixes are already
-  covered by the owner suite. Date/Author: 2026-09-02, Codex.
-- Decision: retain the eight source-derived Rust tests and no new regression.
-  Rationale: they exactly mirror Go's seven heap cases and one map case; this
-  batch introduces no code change. Date/Author: 2026-09-02, Codex.
+- Decision: remove explicit `#[must_use]` from the six source-shaped heap/map
+  methods while retaining the eight source-derived tests and adding one
+  package-level discard-contract regression. Rationale: Go allows callers to
+  discard these results, and the regression verifies the Rust diagnostics are
+  gone without changing runtime behavior. Date/Author: 2026-09-05, Codex.
 
 ## Validation
 
 Exact commands and outcomes are recorded in
-`rust/testport/receipts/util_generic.md`. This batch changes only Markdown, so
-`make bazel_prepare` is not required.
+`rust/testport/receipts/util_generic.md`. The Rust-only source change leaves
+Go/Bazel/module inputs untouched, so `make bazel_prepare` is not required.
 
 ## Outcomes & Retrospective
 
 The generic package inventory is current at Go master with every source, test,
-and build artifact accounted for. Rust remains aligned on heap/map semantics
-and the canonical TopN consumer; continue with the next package.
+and build artifact accounted for. Rust remains aligned on heap/map semantics,
+the discardable-return contract, and the canonical TopN consumer; continue
+with the next package.

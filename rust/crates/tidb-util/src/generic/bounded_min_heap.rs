@@ -95,7 +95,6 @@ impl<T, F: Fn(&T, &T) -> isize> BoundedMinHeap<T, F> {
     /// Creates a new bounded min-heap with the specified maximum size and
     /// comparison function.
     ///
-    #[must_use]
     pub fn new(max_size: isize, cmp_func: Option<F>) -> Self {
         let cmp_func = cmp_func.expect("comparison function cannot be nil");
         assert!(max_size >= 0, "maxSize cannot be negative");
@@ -109,7 +108,6 @@ impl<T, F: Fn(&T, &T) -> isize> BoundedMinHeap<T, F> {
     }
 
     /// Returns the number of items in the heap.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.data.items.len()
     }
@@ -138,7 +136,6 @@ impl<T, F: Fn(&T, &T) -> isize> BoundedMinHeap<T, F> {
     }
 
     /// Returns all items in the heap as a sorted slice (best to worst).
-    #[must_use]
     pub fn to_sorted_slice(&self) -> Vec<T>
     where
         T: Clone,

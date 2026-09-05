@@ -29,7 +29,6 @@ pub struct SyncMap<K, V> {
 
 impl<K: Eq + Hash, V> SyncMap<K, V> {
     /// Returns a new `SyncMap` preallocating room for `capacity` entries.
-    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
             item: RwLock::new(HashMap::with_capacity(capacity)),
@@ -49,7 +48,6 @@ impl<K: Eq + Hash, V> SyncMap<K, V> {
     /// Go returns `(V, bool)` where the value is `V`'s zero value on a miss;
     /// [`Option`] fuses those into the presence signal and drops the zero-value
     /// special case.
-    #[must_use]
     pub fn load(&self, key: &K) -> Option<V>
     where
         V: Clone,
@@ -70,7 +68,6 @@ impl<K: Eq + Hash, V> SyncMap<K, V> {
     }
 
     /// Returns all the keys in the map.
-    #[must_use]
     pub fn keys(&self) -> Vec<K>
     where
         K: Clone,

@@ -8770,6 +8770,12 @@ risks without claiming repository-wide parity.
   deny-on-discard regression fails with all six diagnostics on the detached
   pre-fix owner and passes with the six-test predicate suite; Ready evidence is
   recorded in `receipts/util_sem.md`.
+- 2026-09-05 (`pkg/util/generic`): the complete generic owner now matches
+  Go's discardable-return contract by removing six explicit Rust-only
+  `#[must_use]` diagnostics from heap/map constructors and observers. The
+  deny-on-discard regression fails with all six diagnostics on the detached
+  pre-fix owner and passes with nine focused owner tests; Ready evidence is
+  recorded in `receipts/util_generic.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

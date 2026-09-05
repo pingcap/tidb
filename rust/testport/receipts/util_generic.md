@@ -28,22 +28,29 @@ lock-poison recovery. The owner retains exactly the eight source-derived tests;
 the stats TopN consumer uses this canonical heap rather than a duplicate.
 
 No Go or Rust production delta was found in this rolling audit, so no new
-package-local regression was warranted. The eight existing source-derived
-tests remain the focused proof.
+package-local semantic regression was warranted. The owner did, however,
+carry six Rust-only `#[must_use]` diagnostics on the source-shaped heap/map
+constructors and observers. The focused `return_values_may_be_ignored_like_go`
+regression discards all six under `#[deny(unused_must_use)]`: the detached
+pre-fix owner failed with exactly six diagnostics, and the corrected owner
+passes.
 
 ## Validation (Ready profile)
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/generic -count=1` — passed (eight tests).
 - `(cd /tmp/tidb-go-latest-c605 && PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/generic -count=1)` — passed (eight tests).
 - `env OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_FALLBACK_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib 'generic::' --offline --locked -- --test-threads=1` — passed (eight tests).
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib generic::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed after the six-error pre-fix failure.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib 'generic::' -- --test-threads=1` — passed; 9 tests including the discard-contract regression.
+- `OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` — passed.
 - `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint` — passed in the clean detached Go-master checkout; the active checkout may be temporarily instrumented by the concurrent failpoint test worker.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed as the Ready gate.
 - `git diff --check` — passed for the documentation diff.
 
-This batch changes documentation only; no Go source, import section, test
-function, Bazel file, or module dependency changed, so `make bazel_prepare` is
-not required. The package has no failpoint use, so the failpoint wrapper is not
-applicable.
+No Go, import section, test target, Bazel file, or module dependency changed,
+so `make bazel_prepare` is not required. The package has no failpoint use, so
+the failpoint wrapper is not applicable.
 
 ## Risks and boundaries
 
