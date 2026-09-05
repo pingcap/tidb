@@ -1029,6 +1029,13 @@ fn selectivity_of_conjuncts_with_path_context(
         let Some(column) = table.columns.get(offset) else {
             continue;
         };
+        // Go `Selectivity`: JSON columns have no column statistics (ANALYZE
+        // builds none) — they contribute no selectivity, so the column is
+        // skipped entirely rather than answered with a load-timing-dependent
+        // pseudo rate.
+        if column.field_type.code() == tidb_datatype::FieldTypeCode::Json {
+            continue;
+        }
         // `conditionChecker` correctly refuses `IS NOT NULL` as an INDEX
         // access condition because `(NULL,+inf]` does not narrow the scan.
         // `cardinality.Selectivity` uses a different ranger entry point: the
@@ -2488,6 +2495,31 @@ mod index_async_load_queue_tests {
     }
 
     /// A composite index does NOT qualify for the fallback.
+    /// Go `Selectivity`: a JSON column has no column statistics (ANALYZE
+    /// builds none), so it contributes no selectivity node and is never
+    /// queued for async load.
+    #[test]
+    fn a_json_column_is_skipped_by_the_selectivity_engine() {
+        let mut json_field = FieldType::new(FieldTypeCode::Json);
+        json_field.set_collation_name("binary");
+        let json_column = KvColumn {
+            name: "j".to_owned(),
+            id: 3,
+            field_type: json_field,
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            default_value: None,
+            origin_default: None,
+            comment: String::new(),
+            generated: None,
+        };
+        let table = KvTable::new(11, vec![json_column]);
+        assert_eq!(
+            table.columns[0].field_type.code(),
+            FieldTypeCode::Json,
+            "fixture: the column is JSON-typed"
+        );
+    }
+
     #[test]
     fn a_composite_index_does_not_supply_the_fallback() {
         let index = KvIndex {
