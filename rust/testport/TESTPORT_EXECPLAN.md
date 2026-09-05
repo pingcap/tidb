@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` GOGC tuner bounds): added the
+  cross-bound validation Go applies to `tidb_gogc_tuner_min_value` and
+  `tidb_gogc_tuner_max_value`, using the current GLOBAL image and preserving
+  the source 1105 refusal text. A focused SQL regression covers both crossing
+  directions and prior-value retention.
 - 2026-09-05 (`pkg/sessionctx/variable` TiFlash preaggregation mode):
   matched Go's case-sensitive mode lookup for
   `tiflash_hashagg_preaggregation_mode`, preserving the three accepted

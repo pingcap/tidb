@@ -420,6 +420,48 @@ fn tiflash_hashagg_preaggregation_mode_validation_matches_go() {
     );
 }
 
+/// Go's GOGC tuner min/max closures reject a bound that crosses the sibling
+/// bound and retain the previous GLOBAL values.
+#[test]
+fn gogc_tuner_bounds_validate_against_each_other() {
+    let mut session = Session::new();
+
+    session
+        .run("SET GLOBAL tidb_gogc_tuner_min_value = 300")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_gogc_tuner_max_value = 600")
+        .unwrap();
+
+    let error = session
+        .run("SET GLOBAL tidb_gogc_tuner_max_value = 300")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "tidb_gogc_tuner_max_value should be more than tidb_gogc_tuner_min_value"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@global.tidb_gogc_tuner_max_value"),
+        "600"
+    );
+
+    let error = session
+        .run("SET GLOBAL tidb_gogc_tuner_min_value = 600")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "tidb_gogc_tuner_min_value should be less than tidb_gogc_tuner_max_value"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@global.tidb_gogc_tuner_min_value"),
+        "300"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.

@@ -844,6 +844,37 @@ impl GlobalSysvars {
                 .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
         }
         let stored_value = validated.value;
+        // Go's GOGC tuner bounds are cross-validated against the current
+        // process values: max must stay strictly above min, and min strictly
+        // below max. The Rust registry has no separate tuner singleton, so
+        // use the authoritative GLOBAL image that owns the SQL-visible
+        // values; this also keeps scratch cluster tables self-contained.
+        if key == tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MAX_VALUE {
+            let min_value = self
+                .get(tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MIN_VALUE)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MIN_VALUE);
+            if stored_value.parse::<i64>().unwrap_or_default() <= min_value {
+                return Err(VarError::ValidationRefused(
+                    "tidb_gogc_tuner_max_value should be more than tidb_gogc_tuner_min_value"
+                        .to_owned(),
+                ));
+            }
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MIN_VALUE {
+            let max_value = self
+                .get(tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MAX_VALUE)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MAX_VALUE);
+            if stored_value.parse::<i64>().unwrap_or_default() >= max_value {
+                return Err(VarError::ValidationRefused(
+                    "tidb_gogc_tuner_min_value should be less than tidb_gogc_tuner_max_value"
+                        .to_owned(),
+                ));
+            }
+        }
         // Go's `tidb_super_read_only` Validation (`sysvar.go:999`): turning
         // the flag OFF through a user SET is refused while
         // `tidb_restricted_read_only` is ON.
