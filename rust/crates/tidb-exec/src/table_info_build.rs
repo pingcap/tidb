@@ -1044,7 +1044,7 @@ fn build_column(
     // Go `checkColumnAttributes` -- see the shared helper. This tier reports
     // it as an admission refusal rather than a coded client error, which is
     // the same reduction every other refusal here takes.
-    if let Err(error) = tidb_executor::ddl::column_field_type::check_column_attributes(&field_type)
+    if let Err(error) = tidb_executor::ddl::column_field_type::check_column_attributes(&field_type, true)
     {
         return Err(DdlAdmissionError::with_code(
             GENERIC_ERROR_CODE,
