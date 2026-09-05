@@ -8742,6 +8742,11 @@ risks without claiming repository-wide parity.
   Rust-only `#[must_use]` diagnostics from `DecodedRow::values`, `by_id`, and
   `into_parts`. The source-derived deny-on-discard regression and Ready
   evidence are recorded in `receipts/util_rowdecoder_audit.md`.
+- 2026-09-05 (`pkg/util/timeutil`): the complete timeutil owner now matches
+  Go's discardable-return contract by removing four explicit Rust-only
+  `#[must_use]` diagnostics from `SleepContext` constructors and observers.
+  The deny-on-discard regression and Ready evidence are recorded in
+  `receipts/util_timeutil.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

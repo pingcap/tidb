@@ -63,14 +63,12 @@ pub struct SleepContext {
 
 impl SleepContext {
     /// A context with no deadline, like `context.Background()`.
-    #[must_use]
     pub fn background() -> Self {
         Self::default()
     }
 
     /// A background context canceled after `timeout`, like
     /// `context.WithTimeout(context.Background(), timeout)`.
-    #[must_use]
     pub fn with_timeout(timeout: Duration) -> Self {
         Self {
             state: Arc::new(SleepContextState::default()),
@@ -102,7 +100,6 @@ impl SleepContext {
     }
 
     /// Whether explicit cancellation or the deadline has already fired.
-    #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.state
             .cause
@@ -116,7 +113,6 @@ impl SleepContext {
 
     /// Time remaining until this context's deadline, or `None` when it has
     /// no deadline. An elapsed deadline returns zero.
-    #[must_use]
     pub fn remaining(&self) -> Option<Duration> {
         self.deadline
             .map(|deadline| deadline.saturating_duration_since(Instant::now()))
@@ -183,6 +179,16 @@ pub static ERR_UNKNOWN_TIME_ZONE: LazyLock<TerrorError> =
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        SleepContext::background();
+        SleepContext::with_timeout(Duration::from_millis(1));
+        let context = SleepContext::with_timeout(Duration::from_millis(1));
+        context.is_cancelled();
+        context.remaining();
+    }
 
     /// Source: `pkg/util/timeutil/time_test.go::TestSleep`.
     #[test]
