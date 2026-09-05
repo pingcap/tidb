@@ -859,7 +859,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         if mode != tidb_expr::ConstantFoldMode::Disabled {
             tidb_expr::fold_constant_in_mode_preserving_warning_casts(
                 expression,
-                &tidb_expr::NoColumns,
+                &tidb_expr::ZonedNoColumns(self.time_zone.clone()),
                 mode,
             );
         } else {

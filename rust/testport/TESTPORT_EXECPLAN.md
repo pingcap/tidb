@@ -9025,3 +9025,10 @@ risks without claiming repository-wide parity.
   UPDATE conversion paths retain the internal 8179 transition diagnostic.
   Focused write-cast and timestamp-range regressions plus Ready evidence are
   recorded in `receipts/session_timestamp_dst_insert_error.md`.
+- 2026-09-06 (`pkg/planner/core` session-zone constant folding): Rust's
+  plan-aware resolver now folds closed literal expressions with the statement's
+  session zone, matching Go's `BuildContext` instead of the fixed goeval zone.
+  `UNIX_TIMESTAMP` over literals therefore resolves `America/Los_Angeles`
+  DST/repeated-hour values to the same epoch seconds as stored TIMESTAMP
+  conversion. Focused timezone-storage regression plus Ready evidence are
+  recorded in `receipts/planner_session_zone_constant_fold.md`.
