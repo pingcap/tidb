@@ -2493,7 +2493,11 @@ mod tests {
         assert_eq!(sv.validate("  tiflash  ").unwrap().value, "tiflash");
         assert_eq!(sv.validate("tiflash,tiflash").unwrap().value, "tiflash");
         for value in ["tikv", "tidb", "tiflash,tikv,tidb"] {
-            assert_eq!(sv.validate(value), Err(ValidationError::WrongValue), "{value}");
+            assert_eq!(
+                sv.validate(value),
+                Err(ValidationError::WrongValue),
+                "{value}"
+            );
         }
     }
 
