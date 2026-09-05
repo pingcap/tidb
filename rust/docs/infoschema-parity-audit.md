@@ -62,3 +62,14 @@ opening. The identically-named Rust `cluster_catalog.rs` is a different
 layer — the meta-snapshot persistence and load path whose version
 semantics slice (a) already verified against `builder.go`. No
 divergence to fix in either.
+
+## Slice (c): bundle builder (2026-09-05) — DISPOSITIONED, by architecture
+
+Go's `bundleInfoBuilder` computes which placement-rule bundles need
+updating during an incremental diff. The Rust reload path needs no such
+delta machinery: placement-policy actions fall to the full-reload
+fallback (which re-derives state from the snapshot), and bundle
+delivery to PD runs directly through `placement_delivery.rs` +
+`tidb_placement::Bundle`. The delta builder is architecturally
+subsumed. This closes the infoschema slices a-c: a verified, b and c
+dispositioned as by-design.
