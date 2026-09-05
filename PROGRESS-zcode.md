@@ -381,3 +381,6 @@
 - 下轮恢复点: (1) 新面候选继续; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - fallback+skip_column_types 白名单批: allow_fallback_to_tikv 只接受 tiflash token(trim/去重按 store type/首现顺序, 任意非 tiflash token=1231); analyze_skip_column_types 小写白名单七类型(json/text/mediumtext/longtext/blob/mediumblob/longblob, 规范化存储, 1231 拒绝)。session lib 1326 通过/280 预存, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) super_read_only 耦合(vars.rs 级, 需兄弟 global 读+StmtType 判定); (2) hook 余项核实(17 未解析条目); (3) F2/F3-seam live 阻塞; (4) F4 低优先级。
+- 事故记录与恢复: 裸 `git stash pop` 弹出了共享 stash 列表中并发会话的 "codex-planner-read-only-seam"(stash 跨 worktree 共享!)→ 6 文件 UU 冲突。已用 checkout HEAD 回滚该误应用(其 stash@{0} 条目完整保留, 并发会话工作无损失), 本分支回到干净状态。教训: 永远不裸 pop, pop 必须显式 ref 且核对描述; env 补丁改为手动单行重放。
+- 本轮批次: super_read_only 耦合+overflow 过期钉子刷新(2cb24c6f957 谱系, 终点 f0ec16f6145)。session lib 1331 通过/280 预存。
+- 下轮恢复点: (1) 17 未解析 hook 条目逐个核实; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
