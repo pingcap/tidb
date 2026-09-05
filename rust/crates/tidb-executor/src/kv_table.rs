@@ -2721,6 +2721,20 @@ impl KvTable {
         self.partial_index_conditions.remove(&index_id);
     }
 
+    /// Returns the first partial index whose predicate names `column_name`.
+    /// Go's DROP/MODIFY/CHANGE validator reports the index name in its 8272
+    /// diagnostic rather than allowing the predicate to dangle.
+    pub(crate) fn partial_index_condition_dependency(&self, column_name: &str) -> Option<String> {
+        self.indexes.iter().find_map(|index| {
+            let condition = self.partial_index_conditions.get(&index.id)?;
+            condition
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.eq_ignore_ascii_case(column_name))
+                .then(|| index.name.clone())
+        })
+    }
+
     /// Whether a row belongs in an index's partial predicate. A NULL result
     /// follows Go's `EvalBool` rule for index conditions and is treated as
     /// false, so `WHERE b IS NOT NULL` excludes NULL rows.

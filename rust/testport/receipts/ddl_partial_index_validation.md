@@ -34,5 +34,6 @@ cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.tom
 ```
 
 No Go, generated, platform, Bazel, or build-artifact file changed. The full Go
-literal/type cross-product, affect-column offset maintenance, and reorg job
-state remain explicit follow-up boundaries.
+literal/type cross-product and reorg job state remain explicit follow-up
+boundaries; partial-index key-offset maintenance and 8272 condition-column
+protection are covered by the focused affect-columns carrier.

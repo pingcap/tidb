@@ -145,6 +145,18 @@ pub(crate) fn unsupported_partial_index(reason: impl Into<String>) -> DriverErro
     }
 }
 
+/// Go `dbterror.ErrModifyColumnReferencedByPartialCondition` (8272), emitted
+/// before DROP/MODIFY/CHANGE can leave an index predicate naming a column that
+/// no longer exists.
+pub(crate) fn partial_index_column_dependency(column: &str, index: &str) -> DriverError {
+    DriverError::DdlCoded {
+        errno: tidb_error::tidb::errcode::ErrModifyColumnReferencedByPartialCondition,
+        message: format!(
+            "Cannot drop, change or modify column '{column}': it is referenced in partial index '{index}'"
+        ),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PartialLiteralKind {
     Integer,

@@ -8550,7 +8550,14 @@ risks without claiming repository-wide parity.
   carrier. The same validator is shared by CREATE TABLE, CREATE INDEX, and
   ALTER TABLE ADD INDEX, including the partition guard. Evidence is recorded
   in `receipts/ddl_partial_index_validation.md`; the exhaustive Go literal
-  matrix and DDL reorganization/affect-column lifecycle remain explicit gaps.
+  matrix and DDL reorganization lifecycle remain explicit gaps.
+- 2026-09-05 (`pkg/ddl` partial-index affect-column maintenance): Rust now
+  shifts partial-index key offsets across `ADD COLUMN ... FIRST`, `ADD COLUMN
+  ... AFTER`, and `DROP COLUMN`, while condition dependencies remain name-keyed.
+  Dropping or modifying a condition column returns Go's dedicated 8272 error.
+  The source-shaped `TestMaintainAffectColumns` carrier is live with all four
+  offset checkpoints and the refusal assertion; evidence is recorded in
+  `receipts/ddl_partial_index_validation.md`.
 - 2026-09-05 (`pkg/ddl` DROP INDEX foreign-key clustered-handle exemption):
   Rust now applies Go's `PKIsHandle && len(cols) == 1` escape on both the
   declared-child and referred-parent branches of `checkIndexNeededInForeignKey`.

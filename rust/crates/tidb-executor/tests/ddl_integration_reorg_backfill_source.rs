@@ -19,7 +19,7 @@
 //! documentary gap ports and the nextgen-gated one inherits Go's own skip.
 
 use tidb_executor::ddl::{self, CreateTableSettings};
-use tidb_executor::{Catalog, StmtContext};
+use tidb_executor::{Catalog, StmtContext, TableEntry};
 
 /// GO PORT of `pkg/ddl/integration_test.go:61 TestDDLStatementsBackFill`.
 ///
@@ -159,8 +159,56 @@ fn drop_table_with_check_before_drop_runs_the_fast_check() {}
 /// `drop column col1` brings it back to 1 — index metadata offsets track
 /// column insertion/removal positions.
 #[test]
-#[ignore = "go-parity-gap: affect-column offset maintenance on add/drop column is not transcreated"]
-fn maintain_affect_columns_tracks_offsets_across_column_changes() {}
+fn maintain_affect_columns_tracks_offsets_across_column_changes() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    ddl::run_create_table_in(
+        "create table t (col2 int, key idx_col2 (col2) where col2 > 0)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    let index_offset = |catalog: &Catalog| match catalog.table_in("test", "t") {
+        Some(TableEntry::Kv(table)) => table.indexes()[0].column_offsets[0],
+        _ => panic!("expected a storage-backed table"),
+    };
+    assert_eq!(index_offset(&catalog), 0);
+    ddl::run_alter_table_in(
+        "alter table t add column col1 int first",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(index_offset(&catalog), 1);
+    ddl::run_alter_table_in(
+        "alter table t add column col3 int after col1",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(index_offset(&catalog), 2);
+    ddl::run_alter_table_in(
+        "alter table t drop column col1",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(index_offset(&catalog), 1);
+
+    let error = ddl::run_alter_table_in(
+        "alter table t drop column col2",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go protects columns referenced by a partial predicate");
+    assert_eq!(error.to_mysql_error().code, 8272);
+}
 
 /// GO PORT of `pkg/ddl/integration_test.go:239
 /// TestJobVersionAndGlobalIndexV1SupportForNextGen`.

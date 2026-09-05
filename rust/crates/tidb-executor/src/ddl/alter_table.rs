@@ -2990,6 +2990,12 @@ fn modify_column_action(
         .auto_random()
         .is_some_and(|spec| spec.offset == offset);
     check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
+    if let Some(index_name) = table.partial_index_condition_dependency(old_name) {
+        return Err(super::indexes::partial_index_column_dependency(
+            old_name,
+            &index_name,
+        ));
+    }
     // Go's `checkModifyTypes` runs before `checkAutoRandom`: changing the
     // AUTO_RANDOM column away from BIGINT is the generic 8200 unsupported
     // MODIFY error, not the later 8216 auto-random type diagnostic.
@@ -3613,6 +3619,12 @@ fn drop_column_action(
             });
         }
         invalid_constraint_ids.push(info.id);
+    }
+    if let Some(index_name) = table.partial_index_condition_dependency(column_name) {
+        return Err(super::indexes::partial_index_column_dependency(
+            column_name,
+            &index_name,
+        ));
     }
     let covering: Vec<String> = table
         .indexes()
