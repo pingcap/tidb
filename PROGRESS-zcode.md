@@ -466,3 +466,5 @@
 - 下轮恢复点: (1) 跟随兄弟会话 analyze/stats 修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - tests_analyze 根因定位(推 173e6fbc57b 后): a9c77f181fd(statistics: reconcile analyze metadata after sampling)将 analyze 版本标记改为采样快照 TSO 且把替换推迟到"真实集群边界"——有界会话测试路径无该边界, 存储的统计未被会话识别→伪统计回退→estimates 1.00。修复归其 owner: 在会话测试路径补齐版本替换或调整快照语义。
 - 下轮恢复点: (1) 跟随兄弟会话修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- UnsafeRange 引入点收窄: d5d32d8a49c 为纯重构无害; 与 34d7549bb06(LIKE escape 入 cache keys)的交互最可疑——escape 字节进入 cache key 后, 重载路径对 [Datum::Int(42)] 参数的 range 重算结果与原树不再 range_is_safe 一致。归兄弟会话。
+- 下轮恢复点: (1) 跟随兄弟会话修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
