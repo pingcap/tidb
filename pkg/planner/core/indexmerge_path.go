@@ -68,6 +68,13 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 	for _, expr := range ds.AllConds {
 		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.SCtx().GetExprCtx(), expr))
 	}
+	// Predicates implied by a MATCH ... AGAINST filter, which let it reach a
+	// multi-valued index over the tokenized column through the ordinary paths
+	// below. They are added only to this local set, never to ds.AllConds: they
+	// exist to unlock an access path, and the MATCH they came from already
+	// decides the result, so evaluating them again per row would re-tokenize
+	// the document for nothing.
+	indexMergeConds = append(indexMergeConds, deriveFTSIndexFilters(ds)...)
 
 	sessionAndStmtPermission := (ds.SCtx().GetSessionVars().GetEnableIndexMerge() || len(ds.IndexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
 	if !sessionAndStmtPermission {

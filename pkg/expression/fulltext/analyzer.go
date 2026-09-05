@@ -47,15 +47,42 @@ type AnalyzerConfig struct {
 }
 
 // Equal reports whether two analyzer configurations produce the same token
-// stream. Stopword order does not affect analysis; DDL stores it sorted, so an
+// stream, and so whether index entries built with one can answer a query
+// compiled with the other.
+//
+// Only the settings the parser actually reads are compared, because those are
+// the ones that can change the tokens. Comparing the whole struct would reject
+// a usable index whenever an unrelated session variable happened to differ -
+// an index over STANDARD text carries no ngram size, so a session default of
+// ngram_token_size would make it look incompatible with itself.
+//
+// Stopword order does not affect analysis; DDL stores it sorted, so an
 // order-sensitive comparison also catches malformed or non-canonical metadata.
 func (c AnalyzerConfig) Equal(other AnalyzerConfig) bool {
-	return c.ParserType == other.ParserType &&
-		c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
-		c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
-		c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
-		c.NgramTokenSize == other.NgramTokenSize &&
-		slices.Equal(c.Stopwords, other.Stopwords)
+	if c.ParserType != other.ParserType {
+		return false
+	}
+	switch c.ParserType {
+	case model.FullTextParserTypeStandardV1:
+		// analyzeStandardV1 applies the token-size bounds and the stopword
+		// list, and never reads the ngram size.
+		return c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
+			c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
+			c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
+			slices.Equal(c.Stopwords, other.Stopwords)
+	case model.FullTextParserTypeNgramV1:
+		// analyzeNgramV1 reads only the ngram size: it neither length-filters
+		// nor removes stopwords.
+		return c.NgramTokenSize == other.NgramTokenSize
+	default:
+		// An unknown parser has no known-irrelevant settings, so require the
+		// whole configuration to agree.
+		return c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
+			c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
+			c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
+			c.NgramTokenSize == other.NgramTokenSize &&
+			slices.Equal(c.Stopwords, other.Stopwords)
+	}
 }
 
 // Analyzer analyzes text into fulltext tokens.
@@ -83,6 +110,46 @@ func GetAnalyzer(config AnalyzerConfig) (Analyzer, error) {
 		}), nil
 	default:
 		return nil, fmt.Errorf("unsupported fulltext parser type: %s", config.ParserType)
+	}
+}
+
+// IndexElemLen is the character width an index element must have to hold any
+// token this analyzer can emit.
+//
+// It bounds the longest token: a narrower element truncates, and a truncated
+// entry is not merely a smaller index - a lookup for the full token would miss
+// the row it was built from, so an index narrower than this cannot answer a
+// query compiled with this configuration.
+func IndexElemLen(config AnalyzerConfig) int {
+	if config.ParserType == model.FullTextParserTypeNgramV1 {
+		return max(config.NgramTokenSize, 1)
+	}
+	return max(config.InnodbFtMaxTokenSize, 1)
+}
+
+// DefaultAnalyzerConfig returns the analyzer a default-configured server would
+// resolve from its session variables.
+//
+// It exists for callers that build table metadata offline, with no session to
+// read: Lightning and the importer parse user DDL that may declare a FULLTEXT
+// index, and a dump produced by SHOW CREATE TABLE contains exactly such a
+// declaration. Those callers need a usable analyzer rather than an error, and
+// the settings a fresh server would use are the least surprising choice.
+//
+// TestDefaultAnalyzerConfigMatchesSessionDefaults pins these values against the
+// system-variable defaults, so the two cannot drift apart.
+//
+// A table built this way records the default settings, not those of whichever
+// server produced the dump - SHOW CREATE TABLE does not print them, matching
+// MySQL - so restoring onto a differently configured server tokenizes
+// differently. That is the same cross-server caveat restore already carries.
+func DefaultAnalyzerConfig() AnalyzerConfig {
+	return AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize:   3,
+		InnodbFtMaxTokenSize:   84,
+		InnodbFtEnableStopword: true,
+		NgramTokenSize:         2,
 	}
 }
 
