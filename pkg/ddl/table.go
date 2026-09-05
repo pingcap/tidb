@@ -83,6 +83,12 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 				return ver, err
 			}
 		}
+		if job.Type == model.ActionDropTable || job.Type == model.ActionDropMaterializedViewLog {
+			err = checkDropMaterializedViewLogHasNoDependentMVs(jobCtx, job, tblInfo)
+			if err != nil {
+				return ver, err
+			}
+		}
 		if jobCtx.oldDDLCtx != nil && tblInfo.TTLInfo != nil {
 			if err := jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, tblInfo.ID); err != nil {
 				return ver, cancelJobOnExternalTTLWorkloadError(job, err)
@@ -106,7 +112,11 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		ruleIDs := append(getPartitionRuleIDs(jobCtx.store.GetCodec(), job.SchemaName, tblInfo), label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, ""))
 
 		args.OldPartitionIDs = oldIDs
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
+		extraInfos, extraErr := updateMaterializedViewBaseInfoOnDrop(jobCtx, job, tblInfo)
+		if extraErr != nil {
+			return ver, errors.Trace(extraErr)
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State, extraInfos...)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -127,6 +137,25 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 			if e != nil {
 				logutil.DDLLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+			}
+		}
+		if tblInfo.MaterializedView != nil {
+			if err = w.deleteCreateMaterializedViewRefreshInfo(jobCtx, job.TableID); err != nil {
+				return ver, newRollbackTxnError(errors.Trace(err))
+			}
+			if err = w.deleteCreateMaterializedViewRefreshAlert(jobCtx, job.TableID); err != nil {
+				logutil.DDLLogger().Warn(
+					"drop table/view: failed to delete materialized view refresh alert",
+					zap.String("schemaName", job.SchemaName),
+					zap.String("tableName", tblInfo.Name.O),
+					zap.Int64("mviewID", job.TableID),
+					zap.Error(err),
+				)
+			}
+		}
+		if tblInfo.MaterializedViewLog != nil {
+			if err = w.deleteMaterializedViewLogPurgeInfo(jobCtx, job.TableID); err != nil {
+				return ver, newRollbackTxnError(errors.Trace(err))
 			}
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
