@@ -203,6 +203,8 @@ fn go_test_is_true_or_false() {
         ("istrue", i(0), i(0)),
         ("istrue", i(2), i(1)),
         ("istrue", Datum::Null, i(0)),
+        ("istrue_with_null", i(0), i(0)),
+        ("istrue_with_null", i(2), i(1)),
         ("istrue", r(0.0), i(0)),
         ("istrue", r(0.5), i(1)),
         ("isfalse", i(0), i(1)),
@@ -217,6 +219,9 @@ fn go_test_is_true_or_false() {
             "{name} {operand:?}"
         );
     }
+    assert!(eval_as("istrue_with_null", vec![Datum::Null], int_result())
+        .unwrap()
+        .is_null());
 }
 
 /// Go `TestCeil` (`builtin_math_test.go:61`) and `TestFloor`

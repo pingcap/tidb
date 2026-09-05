@@ -702,6 +702,12 @@ pub(crate) fn eval_func_values(
         "ISTRUE" if vals.len() == 1 => {
             truthy_of(&vals[0]).map(|t| Datum::Int(i64::from(t == Some(true))))
         }
+        // Go's filter wrapper uses `builtinIntIsTrueSig{keepNull:true}` for
+        // predicates whose NULL result must survive a NOT/OR rewrite.  This
+        // is the value-preserving sibling of ISTRUE: NULL stays NULL, while
+        // every other datum follows the same Datum.ToBool truthiness rule.
+        "ISTRUE_WITH_NULL" if vals.len() == 1 => truthy_of(&vals[0])
+            .map(|t| t.map_or(Datum::Null, |truthy| Datum::Int(i64::from(truthy)))),
         // Go `builtinIntIsFalseSig`: 1 only for a non-NULL zero.
         "ISFALSE" if vals.len() == 1 => {
             truthy_of(&vals[0]).map(|t| Datum::Int(i64::from(t == Some(false))))

@@ -8962,3 +8962,10 @@ risks without claiming repository-wide parity.
   while the no-USING binary form remains unchanged. Focused planner and
   charset-introducer regressions plus Ready evidence are recorded in
   `receipts/expression_char_using_warning.md`.
+- 2026-09-06 (`pkg/expression` keep-NULL truth wrapper): Rust now evaluates
+  the registered `istrue_with_null` carrier used by Go's pushed-down `NOT`
+  rewrites. NULL remains NULL and non-NULL values follow `Datum.ToBool`, so
+  string numeric-prefix predicates no longer fail with the generic
+  not-yet-ported error. Focused expression and end-to-end session truthiness
+  regressions plus Ready evidence are recorded in
+  `receipts/expression_istrue_with_null.md`.

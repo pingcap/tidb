@@ -1137,13 +1137,25 @@ impl ScalarFunction {
         // TRUE/FALSE and TRUE for UNKNOWN.
         if matches!(
             &*name,
-            "istrue" | "isnottrue" | "isfalse" | "isnotfalse" | "isunknown" | "isnotunknown"
+            "istrue"
+                | "istrue_with_null"
+                | "isnottrue"
+                | "isfalse"
+                | "isnotfalse"
+                | "isunknown"
+                | "isnotunknown"
         ) {
             if self.args.len() != 1 {
                 return Err(EvalError::WrongParameterCount("is true or false"));
             }
             let operand = self.args[0].eval(ctx, row)?;
             let truthy = crate::truthy_of(&operand)?;
+            if name == "istrue_with_null" {
+                return Ok(match truthy {
+                    Some(value) => Datum::Int(i64::from(value)),
+                    None => Datum::Null,
+                });
+            }
             let result = match &*name {
                 "istrue" => truthy == Some(true),
                 "isnottrue" => truthy != Some(true),
