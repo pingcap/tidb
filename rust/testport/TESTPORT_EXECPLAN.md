@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/chunk` core Go-facing return contracts): the complete
+  29-artifact chunk inventory in `receipts/util_chunk_audit.md` was rechecked
+  before editing. Eighty Rust-only `#[must_use]` annotations were removed
+  from direct `Chunk`, `Column`, `Row`, and `MutRow` APIs, while Rust-only
+  ownership and private storage helpers remain annotated. The focused source
+  regression failed with exactly 56 diagnostics on detached pre-fix owner
+  `3c4cf8ddd49ad001532d318db9c6f224f7872312` and passes after the fix.
 - 2026-09-06 (`pkg/meta` `Mutator` and auto-ID accessor return contracts):
   the complete seven-artifact direct package inventory recorded in
   `receipts/meta_starter_bootstrap.md` remains unchanged and was rechecked

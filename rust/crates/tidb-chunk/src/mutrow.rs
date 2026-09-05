@@ -51,13 +51,11 @@ pub struct MutRow {
 
 impl MutRow {
     /// Go `ToRow`: read the mutable row as an ordinary [`Row`].
-    #[must_use]
     pub fn to_row(&self) -> Row<'_> {
         self.chunk.get_row(0)
     }
 
     /// Go `Len`: the number of columns.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.chunk.num_cols()
     }
@@ -70,13 +68,11 @@ impl MutRow {
 
     /// Go `MutRowFromDatums` (and `MutRowFromValues`, which differs only in
     /// taking Go's `any` where this takes the same value as a [`Datum`]).
-    #[must_use]
     pub fn from_datums(datums: &[Datum]) -> MutRow {
         MutRow::from_columns(datums.iter().map(make_mut_row_column).collect())
     }
 
     /// Go `MutRowFromTypes`: every column initialized to its type's zero value.
-    #[must_use]
     pub fn from_types(field_types: &[FieldType]) -> MutRow {
         MutRow::from_columns(field_types.iter().map(zero_column_for_type).collect())
     }

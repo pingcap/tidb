@@ -106,3 +106,30 @@ failpoints, so the canonical wrapper was used for both Go runs above.
 - Compatibility: additive public Rust API only; no existing call path changes.
 - Performance: one linear pass over columns and their current buffer lengths;
   no allocations and no change to retained-allocation accounting.
+
+## Follow-up: discardable core source-return contract (2026-09-06)
+
+The complete 29-artifact `pkg/util/chunk` inventory above remains the
+authority for this package batch and was rechecked before editing. Go callers
+may discard the direct results of the core `Chunk`, `Column`, `Row`, and
+`MutRow` APIs without a Rust-only diagnostic. This removes 80 source-level
+`#[must_use]` annotations from the four core owner files while retaining
+annotations on Rust-only ownership adapters, private capacity/type helpers,
+selection inspection (`Option`), and other non-Go support surfaces.
+
+`chunk_source_test_contract::source_return_values_may_be_ignored_like_go`
+invokes the discarded constructors, metadata/accessor, copy, formatting, and
+mutable-row returns under `#[deny(unused_must_use)]`. In detached pre-fix
+worktree `3c4cf8ddd49ad001532d318db9c6f224f7872312`, the focused test failed
+with exactly 56 diagnostics; after removing the annotations it passes.
+
+Follow-up validation:
+
+- Focused discard regression — passed after the fix; the pre-fix 56-diagnostic
+  failure is recorded above.
+- The existing complete chunk source carriers remain the package behavior
+  surface; no Go source, fixture, generated input, platform variant, Bazel
+  target, or Cargo manifest changed.
+- Full `tidb-chunk` and spill sweeps are still the broader package gate; their
+  pre-existing temporary-spill/timing failures remain outside this contract
+  slice and are not reclassified as regressions here.

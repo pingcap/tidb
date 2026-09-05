@@ -68,7 +68,6 @@ pub struct Chunk {
 impl Chunk {
     /// Go `New`: a chunk for `fields`, capped at `min(capacity, max_chunk_size)`
     /// rows, with `required_rows = max_chunk_size`.
-    #[must_use]
     pub fn new(fields: &[FieldType], capacity: usize, max_chunk_size: usize) -> Self {
         let capacity = capacity.min(max_chunk_size);
         Chunk {
@@ -87,13 +86,11 @@ impl Chunk {
     }
 
     /// Go `NewChunkWithCapacity`.
-    #[must_use]
     pub fn new_with_capacity(fields: &[FieldType], capacity: usize) -> Self {
         Chunk::new(fields, capacity, capacity)
     }
 
     /// Go `NewEmptyChunk`: columns typed for `fields` with no preallocation.
-    #[must_use]
     pub fn new_empty(fields: &[FieldType]) -> Self {
         Chunk {
             columns: fields
@@ -142,7 +139,6 @@ impl Chunk {
     }
 
     /// Go `NumCols`.
-    #[must_use]
     pub fn num_cols(&self) -> usize {
         self.columns.len()
     }
@@ -153,7 +149,6 @@ impl Chunk {
     /// This is the number Go's memory-tracked operators consume per chunk, so
     /// it is capacity-based rather than length-based: an operator that keeps a
     /// chunk keeps its whole allocation, not just the rows in use.
-    #[must_use]
     pub fn memory_usage(&self) -> i64 {
         self.columns
             .iter()
@@ -163,7 +158,6 @@ impl Chunk {
 
     /// Go `UsedMemoryUsage`: bytes currently occupied by the chunk's columns,
     /// summed over lengths rather than capacities.
-    #[must_use]
     pub fn used_memory_usage(&self) -> i64 {
         self.columns
             .iter()
@@ -172,7 +166,6 @@ impl Chunk {
     }
 
     /// Go `RequiredRows`.
-    #[must_use]
     pub fn required_rows(&self) -> usize {
         self.required_rows
     }
@@ -188,7 +181,6 @@ impl Chunk {
     }
 
     /// Go `IsFull`.
-    #[must_use]
     pub fn is_full(&self) -> bool {
         self.num_rows() >= self.required_rows
     }
@@ -199,14 +191,12 @@ impl Chunk {
     }
 
     /// Go `IsInCompleteChunk`.
-    #[must_use]
     pub fn is_incomplete_chunk(&self) -> bool {
         self.in_complete_chunk
     }
 
     /// Go `NumRows`: the logical row count (selection aware; virtual for a
     /// column-less or incomplete chunk).
-    #[must_use]
     pub fn num_rows(&self) -> usize {
         if let Some(sel) = &self.sel {
             return sel.len();
@@ -218,7 +208,6 @@ impl Chunk {
     }
 
     /// Go `Column`: the column at `col_idx`.
-    #[must_use]
     pub fn column(&self, col_idx: usize) -> ColumnRead<'_> {
         self.columns[col_idx].read()
     }
@@ -232,7 +221,6 @@ impl Chunk {
     /// Duplicate indices remain duplicate aliases. Safe lazy promotion requires
     /// a mutable source borrow, but the source's values and metadata do not
     /// change.
-    #[must_use]
     pub fn prune(&mut self, used_col_idxs: &[usize]) -> Chunk {
         let columns = used_col_idxs
             .iter()
@@ -367,7 +355,6 @@ impl Chunk {
     }
 
     /// Go `GetRow`: the logical row at `idx`, mapped through the selection.
-    #[must_use]
     pub fn get_row(&self, idx: usize) -> Row<'_> {
         let physical = match &self.sel {
             Some(sel) => sel[idx],
@@ -382,7 +369,6 @@ impl Chunk {
     ///
     /// Go reads the last row before searching, so this panics on an empty
     /// chunk exactly as Go does.
-    #[must_use]
     pub fn lower_bound(&self, col_idx: usize, d: &Datum) -> (usize, bool) {
         if compare(self.get_row(self.num_rows() - 1), col_idx, d) == Ordering::Less {
             return (self.num_rows(), false);
@@ -400,7 +386,6 @@ impl Chunk {
 
     /// Go `UpperBound`: on the non-decreasing column `col_idx`, the smallest
     /// index whose value is larger than `d`.
-    #[must_use]
     pub fn upper_bound(&self, col_idx: usize, d: &Datum) -> usize {
         sort_search(self.num_rows(), |i| {
             compare(self.get_row(i), col_idx, d) == Ordering::Greater
@@ -453,7 +438,6 @@ impl Chunk {
     ///
     /// Go's `chk.columns == nil` short-circuit returns a chunk that carries
     /// only `inCompleteChunk`; an empty `columns` vector reproduces it.
-    #[must_use]
     pub fn renew_with_capacity(&self, capacity: usize, required_rows: usize) -> Chunk {
         if !self.columns_initialized {
             return Chunk {
@@ -482,14 +466,12 @@ impl Chunk {
     }
 
     /// Go `Renew`: [`Chunk::renew_with_capacity`] at the grown capacity.
-    #[must_use]
     pub fn renew(&self, max_chunk_size: usize) -> Chunk {
         self.renew_with_capacity(self.re_calc_capacity(max_chunk_size), max_chunk_size)
     }
 
     /// Go `numVirtualRows`: the field itself, which the join copy helpers and
     /// their tests assert on directly.
-    #[must_use]
     pub fn num_virtual_rows(&self) -> usize {
         self.num_virtual_rows
     }
@@ -500,7 +482,6 @@ impl Chunk {
     }
 
     /// Go `Capacity`.
-    #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -1000,7 +981,6 @@ impl Chunk {
     }
 
     /// Go `CopyConstructSel`.
-    #[must_use]
     pub fn copy_construct_sel(&self) -> Chunk {
         let Some(selection) = &self.sel else {
             return self.copy_construct();
@@ -1015,13 +995,11 @@ impl Chunk {
     }
 
     /// Go `CloneEmpty`.
-    #[must_use]
     pub fn clone_empty(&self, max_capacity: usize) -> Chunk {
         self.renew_with_capacity(max_capacity, max_capacity)
     }
 
     /// Go `CopyConstruct`: a new chunk with a deep copy of this chunk's data.
-    #[must_use]
     pub fn copy_construct(&self) -> Chunk {
         Chunk {
             sel: self.sel.clone(),
@@ -1039,7 +1017,6 @@ impl Chunk {
     /// Go `Chunk.ToString`: render every logical row and terminate each row
     /// with one newline. The byte-authoritative result can contain invalid
     /// UTF-8 through source string, ENUM, or SET cells.
-    #[must_use]
     pub fn to_string(&self, field_types: &[FieldType]) -> GoString {
         let mut output = Vec::with_capacity(self.num_rows().saturating_mul(2));
         for row_idx in 0..self.num_rows() {
