@@ -72,8 +72,14 @@ func (c *ftsTokenizeFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	// Reject a non-constant configuration up front: the value would otherwise
 	// be free to differ between the write that populates an index entry and
 	// the read that consults it.
+	//
+	// A prepared-statement parameter and a deferred expression are both carried
+	// as *Constant, so the type alone is not enough. Their values arrive after
+	// this function has resolved and cached an analyzer, which would leave the
+	// signature tokenizing by the settings of whichever execution built it.
 	for i, arg := range args[1:] {
-		if _, ok := arg.(*Constant); !ok {
+		con, ok := arg.(*Constant)
+		if !ok || con.ParamMarker != nil || con.DeferredExpr != nil {
 			return nil, ErrNotSupportedYet.GenWithStackByArgs(
 				"non-constant " + ftsTokenizeArgName(i+1) + " argument to FTS_TOKENIZE()")
 		}
@@ -330,11 +336,18 @@ func ParseFTSTokenizeIndexExpr(exprStr string) (FTSTokenizeIndexOrigin, bool) {
 	if !ok {
 		return FTSTokenizeIndexOrigin{}, false
 	}
+	config := ftsTokenizeConfigFromLiterals(parserType, minTokenSize, maxTokenSize, enableStopword)
+	// The element width is deliberately not compared against
+	// fulltext.IndexElemLen. A narrower element cannot hold truncated entries:
+	// an insert or a backfill that would truncate one fails outright, in strict
+	// and non-strict mode alike, so such an index either holds whole tokens or
+	// holds nothing. Requiring the full width would only refuse an index that
+	// is narrow but complete for the data in it.
+	// TestFTSNarrowIndexCannotHoldTruncatedTokens pins that.
 	return FTSTokenizeIndexOrigin{
-		ColumnName: colExpr.Name.Name,
-		ParserType: parserType,
-		AnalyzerConfig: ftsTokenizeConfigFromLiterals(
-			parserType, minTokenSize, maxTokenSize, enableStopword),
+		ColumnName:     colExpr.Name.Name,
+		ParserType:     parserType,
+		AnalyzerConfig: config,
 	}, true
 }
 

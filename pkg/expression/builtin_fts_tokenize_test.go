@@ -177,3 +177,37 @@ func TestFTSTokenizeAnalyzerConfigRoundTrip(t *testing.T) {
 	_, _, ok = FTSTokenizeAnalyzerConfig(ctx.GetEvalCtx(), &Column{Index: 0, RetType: types.NewFieldType(mysql.TypeVarchar)})
 	require.False(t, ok)
 }
+
+// TestFTSTokenizeRejectsParameterConfig covers the determinism guarantee the
+// constant-argument check exists for. A prepared-statement parameter is carried
+// as a *Constant, so a type assertion alone would accept it - and its value
+// arrives after the analyzer has been resolved and cached, leaving the
+// signature tokenizing by whichever execution happened to build it.
+func TestFTSTokenizeRejectsParameterConfig(t *testing.T) {
+	ctx := createContext(t)
+	textArg := &Constant{Value: types.NewStringDatum("hello world"), RetType: types.NewFieldType(mysql.TypeVarString)}
+	constArgs := []Expression{
+		textArg,
+		&Constant{Value: types.NewStringDatum("STANDARD"), RetType: types.NewFieldType(mysql.TypeVarString)},
+		&Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)},
+		&Constant{Value: types.NewIntDatum(84), RetType: types.NewFieldType(mysql.TypeLonglong)},
+		&Constant{Value: types.NewIntDatum(1), RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+	_, err := funcs[ast.FTSTokenize].getFunction(ctx, constArgs)
+	require.NoError(t, err)
+
+	// Each configuration argument in turn, as a parameter and as a deferred
+	// expression. The text argument is exempt: it varies per row by design.
+	for i := 1; i < len(constArgs); i++ {
+		for _, variable := range []*Constant{
+			{Value: constArgs[i].(*Constant).Value, RetType: constArgs[i].GetType(ctx.GetEvalCtx()), ParamMarker: &ParamMarker{}},
+			{Value: constArgs[i].(*Constant).Value, RetType: constArgs[i].GetType(ctx.GetEvalCtx()), DeferredExpr: constArgs[i]},
+		} {
+			args := make([]Expression, len(constArgs))
+			copy(args, constArgs)
+			args[i] = variable
+			_, err := funcs[ast.FTSTokenize].getFunction(ctx, args)
+			require.ErrorContains(t, err, "non-constant", "argument %d", i)
+		}
+	}
+}
