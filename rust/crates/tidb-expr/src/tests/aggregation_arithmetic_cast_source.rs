@@ -279,10 +279,8 @@ fn test_arithmetic_plus() {
 fn test_decimal_err_overflow() {
     // 8.1e80 converted to MyDecimal then added/subtracted/multiplied with
     // itself, or divided by 0.1, exceeds the decimal word buffer: each op
-    // errors instead of producing a value (Go pins the exact
-    // "[types:1690]DECIMAL value is out of range in '(a OP b)'" message; the
-    // Rust evaluator tier carries the same overflow class without the
-    // rendered expression, see go-parity-gap note in the receipt).
+    // errors instead of producing a value. Go pins the exact 1690 message,
+    // including both rendered decimal operands.
     let cols = NoColumns;
     let big = Decimal::from_f64(8.1e80).expect("decimal");
     let tenth = Decimal::from_f64(0.1).expect("decimal");
@@ -297,16 +295,26 @@ fn test_decimal_err_overflow() {
             dec_ft(),
             vec![
                 const_typed(Datum::Decimal(big.clone()), dec_ft()),
-                const_typed(Datum::Decimal(b), dec_ft()),
+                const_typed(Datum::Decimal(b.clone()), dec_ft()),
             ],
         );
-        assert!(
-            matches!(
-                sf.eval(&cols, tidb_chunk::row::Row::empty()),
-                Err(EvalError::DecimalOverflow)
-            ),
-            "{name} must report decimal overflow"
-        );
+        let error = sf
+            .eval(&cols, tidb_chunk::row::Row::empty())
+            .expect_err("decimal arithmetic must overflow");
+        let symbol = match name {
+            "plus" => "+",
+            "minus" => "-",
+            "mul" => "*",
+            "div" => "/",
+            _ => unreachable!("covered decimal overflow operator"),
+        };
+        match error {
+            EvalError::DataOutOfRange { value, expression } => {
+                assert_eq!(value, "DECIMAL", "{name}");
+                assert_eq!(expression, format!("({big} {symbol} {b})"), "{name}");
+            }
+            other => panic!("{name} must report DECIMAL overflow, got {other:?}"),
+        }
     }
 }
 
@@ -511,7 +519,7 @@ fn test_vectorized_builtin_arithmetic_func() {
 }
 
 #[test]
-#[ignore = "go-parity-gap: two thirds of this test are unobservable in Rust -- there is no separate vectorized evaluator tier (one row-based path covers both), and DECIMAL overflow expression text remains outside the integer/REAL renderer; the constant-operand value half of these four overflow rows IS pinned by test_decimal_err_overflow"]
+#[ignore = "go-parity-gap: the Rust owner has no separate vectorized evaluator tier (one row-based path covers both); scalar DECIMAL overflow expression text is pinned by test_decimal_err_overflow, while this vectorized-only differential remains unobservable"]
 fn test_vectorized_decimal_err_overflow() {
     // Go: plus/minus/mul/div over 8.1e80 DECIMAL columns errors with
     // "[types:1690]DECIMAL value is out of range in '(Column#0 <op> Column#0)'".

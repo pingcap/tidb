@@ -7953,3 +7953,11 @@ risks without claiming repository-wide parity.
   `(t5.col7 + t5.col2) * 9223372036854775807` and `1e300 * 1e300`; their
   fail-before/pass-after evidence and the combined Ready owner validation are
   recorded in `receipts/expression_overflow_column_name.md`.
+- 2026-09-05 (`pkg/expression` DECIMAL arithmetic overflow text): the same
+  `tidb-expr` scalar-function adapter now maps binary `DecimalOverflow` to
+  Go's `DECIMAL` 1690 message with the rendered operands for `+`, `-`, `*`,
+  and `/`. The source-derived regression failed before the adapter change
+  with the bare `DecimalOverflow` class and now asserts all four exact
+  expressions. Scalar DECIMAL parity and the package-level Ready evidence are
+  recorded in `receipts/expression_overflow_column_name.md`; the separate
+  vectorized differential remains an explicit evaluator-tier boundary.

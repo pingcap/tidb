@@ -125,11 +125,35 @@ DOUBLE value is out of range in '(1e+300 * 1e+300)'
 
 The derived-column test failed before recursive rendering with bare
 `IntOverflow`; the REAL test failed before the `FloatOverflow` mapping with
-bare `FloatOverflow`. Both passed after their respective changes. The complete
-The unfiltered `tidb-expr --lib` harness recorded 1,187 passed, 1 known
+bare `FloatOverflow`. Both passed after their respective changes. The
+unfiltered `tidb-expr --lib` harness recorded 1,187 passed, 1 known
 loopback HTTP fixture failure, and 99 ignored tests; the failure is the
 pre-existing `json_schema_valid_resolves_file_and_http_references` listener
 race on `127.0.0.1:50402`. The owner nextest sweep excluding only that named
 fixture completed with 1,205 passed and 100 skipped. Package formatting,
 `git diff --check`, and the Ready `make lint` gate are rerun for the combined
 package commit.
+
+## Follow-up: DECIMAL arithmetic overflow text
+
+The same Go source test also pins the 1690 message for DECIMAL `+`, `-`, `*`,
+and `/` overflow, including the two decimal operands. Before this follow-up,
+Rust returned only `EvalError::DecimalOverflow`, so the focused regression
+failed with the unrendered overflow class. The scalar-function adapter now
+uses the same source-shaped binary renderer as integer and REAL arithmetic and
+maps the result to `DataOutOfRange { value: "DECIMAL", expression }`:
+
+```text
+DECIMAL value is out of range in '(810000...000 + 810000...000)'
+```
+
+The focused test failed before the adapter change (`got DecimalOverflow`) and
+passed after it for all four operators. This closes the scalar DECIMAL
+expression half of the Go contract; the ignored vectorized differential test
+still records the absence of a separate Rust vectorized evaluator tier.
+
+The package-level Ready checks were rerun for this combined commit: the owner
+compile, focused overflow regressions, owner nextest sweep with only the known
+loopback fixture excluded, package formatting, `git diff --check`, and
+`make lint` all passed. No Go, generated, fixture, platform, or Bazel input was
+changed.

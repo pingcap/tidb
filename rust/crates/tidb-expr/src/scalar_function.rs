@@ -372,6 +372,21 @@ fn real_arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::Binar
     }
 }
 
+/// Go's 1690 text for one binary DECIMAL overflow. The decimal signatures
+/// carry the same source-shaped operand expression and name their domain.
+fn decimal_arithmetic_overflow_error(
+    function: &ScalarFunction,
+    op: tidb_ast::BinaryOp,
+) -> EvalError {
+    let Some(operands) = arithmetic_overflow_expression(function, op, false) else {
+        return EvalError::DecimalOverflow;
+    };
+    EvalError::DataOutOfRange {
+        value: "DECIMAL",
+        expression: Box::leak(operands.into_boxed_str()),
+    }
+}
+
 impl ScalarFunction {
     /// Builds a scalar-function node.
     #[must_use]
@@ -1026,6 +1041,7 @@ impl ScalarFunction {
                     // the argument expressions are still at hand.
                     EvalError::IntOverflow => arithmetic_overflow_error(self, op),
                     EvalError::FloatOverflow => real_arithmetic_overflow_error(self, op),
+                    EvalError::DecimalOverflow => decimal_arithmetic_overflow_error(self, op),
                     other => other,
                 });
             }
