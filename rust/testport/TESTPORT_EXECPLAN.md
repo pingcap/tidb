@@ -9085,3 +9085,10 @@ risks without claiming repository-wide parity.
   `UPPER(USER())` therefore read the authenticated session instead of a
   frozen NULL. Focused expression and computed-default regressions plus Ready
   evidence are recorded in `receipts/expression_session_information_context.md`.
+- 2026-09-06 (`pkg/expression` mixed numeric `IN` warning preservation): Rust's
+  planner now retains numeric `IN` lists containing string/byte literals when
+  their candidate casts could emit Go's 1292 truncation warning. Runtime
+  evaluation already checks every candidate, including after a match; the
+  no-session fold can no longer erase that warning. Focused expression and
+  session IN-list regressions plus Ready evidence are recorded in
+  `receipts/expression_in_warning_preservation.md`.
