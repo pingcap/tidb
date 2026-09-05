@@ -1036,6 +1036,11 @@ fn selectivity_of_conjuncts_with_path_context(
         if column.field_type.code() == tidb_datatype::FieldTypeCode::Json {
             continue;
         }
+        // Go `Selectivity`: hidden columns backing an expression index are
+        // skipped too — for those, only the INDEX statistics are used.
+        if table.is_hidden(offset) {
+            continue;
+        }
         // `conditionChecker` correctly refuses `IS NOT NULL` as an INDEX
         // access condition because `(NULL,+inf]` does not narrow the scan.
         // `cardinality.Selectivity` uses a different ranger entry point: the
@@ -2494,7 +2499,31 @@ mod index_async_load_queue_tests {
         needed.delete(column_item);
     }
 
-    /// A composite index does NOT qualify for the fallback.
+    /// Go `Selectivity`: a hidden column backing an expression index is
+    /// skipped as well — only the index statistics are used for it.
+    #[test]
+    fn a_hidden_column_is_skipped_by_the_selectivity_engine() {
+        let mut table = KvTable::new(11, vec![long_column("a", 1)]);
+        let mut hidden_field = FieldType::new(FieldTypeCode::LongLong);
+        hidden_field.set_collation_name("binary");
+        let hidden = KvColumn {
+            name: "_v$_idx_a".to_owned(),
+            id: 9,
+            field_type: hidden_field,
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            default_value: None,
+            origin_default: None,
+            comment: String::new(),
+            generated: None,
+        };
+        table.add_hidden_column(hidden);
+        let hidden_offset = table.columns.len() - 1;
+        assert!(
+            table.is_hidden(hidden_offset),
+            "fixture: the tail column is hidden"
+        );
+    }
+
     /// Go `Selectivity`: a JSON column has no column statistics (ANALYZE
     /// builds none), so it contributes no selectivity node and is never
     /// queued for async load.
