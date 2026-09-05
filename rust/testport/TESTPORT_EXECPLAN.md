@@ -8727,6 +8727,11 @@ risks without claiming repository-wide parity.
   `#[must_use]` annotations from String, Stringer, NeedRedact, Value, and Key.
   The deny-on-discard regression and Ready evidence are recorded in
   `receipts/util_redact.md`.
+- 2026-09-05 (`pkg/tablecodec`): the dependency-closed tablecodec owner now
+  matches Go's discardable-return contract by removing 43 explicit Rust-only
+  `#[must_use]` diagnostics from table-key, row-index, and table-index APIs.
+  The source-derived deny-on-discard regression and Ready evidence are
+  recorded in `receipts/tablecodec_master_audit.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

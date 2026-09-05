@@ -47,6 +47,31 @@ handles, restored values, keyspace behavior, V2 keys, and all current index
 value variants. The removed Go argument is therefore recorded as a caller
 surface cleanup rather than carried as a Rust-only wrapper.
 
+## Rust follow-up: Go-discardable tablecodec returns
+
+The dependency-closed owner carried 43 explicit Rust `#[must_use]` diagnostics
+on Go-shaped table-key, row-index, and table-index APIs. Go callers may discard
+all of these return values, so the diagnostics were Rust-only and did not
+represent a source contract. They were removed from `tidb-codec`'s table-key
+and row-index carriers and from `tidb-tablecodec`'s table-index owner without
+changing encoded bytes, key classification, handle representation, or index
+value behavior.
+
+The source-derived regression
+`tablecodec_package_source::return_values_may_be_ignored_like_go` discards all
+43 affected API families under `#[deny(unused_must_use)]`. On the pre-fix
+owner it failed to compile with 43 unused-return errors; the fixed test passes.
+
+Ready validation for this follow-up:
+
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-tablecodec --test all tablecodec_package_source::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-tablecodec --test all -- --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-tablecodec --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-tablecodec -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` is not required.
+
 ## Validation
 
 Profile: Ready for this package audit; the repository-wide loop remains in

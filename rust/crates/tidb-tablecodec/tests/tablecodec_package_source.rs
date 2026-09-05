@@ -22,6 +22,8 @@ use tidb_codec::{
     cut_one, decode_int, decode_one, decode_table_id, encode_bytes, encode_int, encode_key,
     encode_row, encode_value, ColumnInfo, Encoder, BYTES_FLAG, DECIMAL_FLAG,
 };
+use tidb_codec::get_key_kind;
+use tidb_codec::table_key::{encode_row_key, hex, non_unique_index_value, TableKeyError};
 use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
     FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, UNSPECIFIED_LENGTH,
@@ -35,13 +37,15 @@ use tidb_tablecodec::table_key::{
     RecordHandle, META_PREFIX, RECORD_ROW_KEY_LEN, TABLE_PREFIX,
 };
 use tidb_tablecodec::{
-    cut_index_key, cut_index_key_by_ids, cut_table_row, decode_column_value,
+    common_pk_restored_column_ids, cut_index_key, cut_index_key_by_ids, cut_table_row,
+    decode_column_value,
     decode_handle_in_index_value, decode_index_handle, decode_index_kv, decode_table_row_into_map,
     decode_table_row_to_map, decode_temp_index_value, encode_handle_in_unique_index_value,
     encode_old_table_row, encode_table_row, encode_table_value,
     filter_overwritten_temp_index_values, generate_index_key, generate_index_value,
-    get_table_index_key_range, index_key_to_temp_index_key, index_kv_is_unique, is_index_key,
-    is_record_key, is_table_key, is_temp_index_key, is_untouched_index_kv, split_index_value,
+    get_index_key_buffer, get_table_index_key_range, index_key_to_temp_index_key,
+    index_kv_is_unique, index_value_version, is_index_key, is_record_key, is_table_key,
+    is_temp_index_key, is_untouched_index_kv, split_index_value,
     temp_index_key_to_index_key, temp_index_value_is_untouched, truncate_index_value,
     unflatten_datum, unflatten_datums, verify_table_ids_for_ranges, HandleStatus, IndexColumn,
     IndexInfo, TableColumn, TableInfo, TableKeyRange, TempIndexValue, TempIndexValueElem,
@@ -49,6 +53,61 @@ use tidb_tablecodec::{
     UNCOMMITTED_INDEX_KV_FLAG,
 };
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
+
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    let handle = RecordHandle::Int(1);
+    RecordHandle::partition(7, handle.clone());
+    let partitioned = RecordHandle::partition(7, handle.clone());
+    TableKeyError::InvalidKey.mysql_error_code();
+    partitioned.is_int();
+    partitioned.int_value();
+    partitioned.partition_id();
+    partitioned.inner();
+    partitioned.encoded();
+
+    encode_table_prefix(1);
+    gen_table_prefix(1);
+    gen_table_index_prefix(1);
+    encode_row_key_with_handle(1, &handle);
+    get_table_handle_key_range(1);
+    encode_record_key(&gen_table_record_prefix(1), &handle);
+    encode_table_index_prefix(1, 2);
+    encode_index_seek_key(1, 2, &[]);
+    non_unique_index_value();
+    encode_meta_key(b"k", b"f");
+    encode_meta_key_prefix(b"k");
+    let row_key = encode_row_key(1, &[0]);
+    cut_row_key_prefix(&row_key);
+    let index_key = encode_index_seek_key(1, 2, &[]);
+    cut_index_prefix(&index_key);
+    truncate_to_row_key_len(&index_key);
+    hex(b"bytes");
+    get_key_kind(&index_key);
+    decode_table_id(&row_key);
+    gen_table_record_prefix(1);
+    encode_row_key(1, &[0]);
+
+    TableInfo::default().has_clustered_index();
+    get_table_index_key_range(1, 2);
+    get_index_key_buffer(None, 8);
+    is_temp_index_key(&index_key);
+    is_record_key(&row_key);
+    is_index_key(&index_key);
+    is_table_key(&encode_table_prefix(1));
+    is_untouched_index_kv(&index_key, &[]);
+    encode_handle_in_unique_index_value(&int_handle(1), false);
+    index_value_version(&[]);
+    index_kv_is_unique(&[]);
+    common_pk_restored_column_ids(false, &TableInfo::default());
+    let history = TempIndexValue::default();
+    history.is_empty();
+    history.current();
+    history.filter_overwritten();
+    filter_overwritten_temp_index_values(Vec::new());
+    temp_index_value_is_untouched(&[]);
+}
 
 fn int_handle(value: i64) -> Handle {
     IntHandle::new(value).into()

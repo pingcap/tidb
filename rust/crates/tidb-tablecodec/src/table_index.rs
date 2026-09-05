@@ -210,7 +210,6 @@ impl TableInfo {
     }
 
     /// Mirrors `TableInfo.HasClusteredIndex`.
-    #[must_use]
     pub const fn has_clustered_index(&self) -> bool {
         self.pk_is_handle || self.is_common_handle
     }
@@ -331,7 +330,6 @@ impl From<RowPackageError> for TableIndexError {
 }
 
 /// Returns the exact key range for one table index.
-#[must_use]
 pub fn get_table_index_key_range(table_id: i64, index_id: i64) -> (Vec<u8>, Vec<u8>) {
     (
         encode_index_seek_key(table_id, index_id, &[]),
@@ -362,7 +360,6 @@ pub fn cut_index_key_by_ids<'a>(
 
 /// Reuses an index-key buffer by clearing it, or allocates the requested
 /// default capacity.
-#[must_use]
 pub fn get_index_key_buffer(buffer: Option<Vec<u8>>, default_capacity: usize) -> Vec<u8> {
     match buffer {
         Some(mut buffer) => {
@@ -420,7 +417,6 @@ fn rewrite_index_id(
 }
 
 /// Reports whether the key contains a temporary index ID.
-#[must_use]
 pub fn is_temp_index_key(key: &[u8]) -> bool {
     let bytes: [u8; 8] = key[PREFIX_LEN..PREFIX_LEN + ID_LEN].try_into().unwrap();
     let index_id = tidb_codec::decode_cmp_uint_to_int(u64::from_be_bytes(bytes));
@@ -428,25 +424,21 @@ pub fn is_temp_index_key(key: &[u8]) -> bool {
 }
 
 /// Reports whether a key has the complete record-key prefix shape.
-#[must_use]
 pub fn is_record_key(key: &[u8]) -> bool {
     key.len() > PREFIX_LEN && key.first() == Some(&b't') && key.get(10) == Some(&b'r')
 }
 
 /// Reports whether a key has the complete index-key prefix shape.
-#[must_use]
 pub fn is_index_key(key: &[u8]) -> bool {
     key.len() > PREFIX_LEN && key.first() == Some(&b't') && key.get(10) == Some(&b'i')
 }
 
 /// Reports whether a key is exactly `t{table_id}`.
-#[must_use]
 pub fn is_table_key(key: &[u8]) -> bool {
     key.len() == 9 && key.first() == Some(&b't')
 }
 
 /// Reports whether an index key/value pair represents an untouched write.
-#[must_use]
 pub fn is_untouched_index_kv(key: &[u8], value: &[u8]) -> bool {
     if !is_index_key(key) {
         return false;
@@ -469,7 +461,6 @@ pub fn is_untouched_index_kv(key: &[u8], value: &[u8]) -> bool {
 }
 
 /// Encodes an integer or common handle in a unique-index value.
-#[must_use]
 pub fn encode_handle_in_unique_index_value(handle: &Handle, untouched: bool) -> Vec<u8> {
     match inner_handle(handle) {
         Handle::Int(value) => value.value().to_be_bytes().to_vec(),
@@ -575,7 +566,6 @@ pub fn verify_table_ids_for_ranges(
 }
 
 /// Returns the explicit index-value version, or zero for legacy/extensible V0.
-#[must_use]
 pub fn index_value_version(value: &[u8]) -> u8 {
     if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
         return 0;
@@ -678,7 +668,6 @@ pub fn decode_index_handle(
 }
 
 /// Reports whether an index value carries a unique-index handle.
-#[must_use]
 pub fn index_kv_is_unique(value: &[u8]) -> bool {
     if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
         return value.len() == ID_LEN;
@@ -1026,7 +1015,6 @@ fn generate_index_value_v1(
 }
 
 /// Returns common-primary-key column IDs requiring restored data.
-#[must_use]
 pub fn common_pk_restored_column_ids(use_new_collation: bool, table: &TableInfo) -> Vec<i64> {
     table
         .indices
@@ -1302,19 +1290,16 @@ pub struct TempIndexValue {
 
 impl TempIndexValue {
     /// Reports whether the history has no operations.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.elements.is_empty()
     }
 
     /// Returns the latest operation.
-    #[must_use]
     pub fn current(&self) -> Option<&TempIndexValueElem> {
         self.elements.last()
     }
 
     /// Removes older operations overwritten by the same distinct handle.
-    #[must_use]
     pub fn filter_overwritten(self) -> Self {
         Self {
             elements: filter_overwritten_temp_index_values(self.elements),
@@ -1463,7 +1448,6 @@ pub fn decode_temp_index_value(
 }
 
 /// Removes older operations overwritten by the same distinct handle.
-#[must_use]
 pub fn filter_overwritten_temp_index_values(
     mut values: Vec<TempIndexValueElem>,
 ) -> Vec<TempIndexValueElem> {
@@ -1496,7 +1480,6 @@ fn handle_identity(handle: &Handle) -> Vec<u8> {
 }
 
 /// Reports whether a temporary-index value ends in the untouched marker.
-#[must_use]
 pub fn temp_index_value_is_untouched(value: &[u8]) -> bool {
     value.last() == Some(&UNCOMMITTED_INDEX_KV_FLAG)
 }
