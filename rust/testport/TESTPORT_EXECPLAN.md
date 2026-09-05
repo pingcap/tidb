@@ -8800,6 +8800,13 @@ risks without claiming repository-wide parity.
   fails with one diagnostic on the detached pre-fix owner and passes with the
   versioninfo owner test; Ready evidence is recorded in
   `receipts/util_versioninfo.md`.
+- 2026-09-05 (`pkg/util/printer`): the complete printer owner now matches
+  Go's discardable-return contract by removing three explicit Rust-only
+  `#[must_use]` diagnostics from `get_tidb_info`, `get_print_result_bytes`,
+  and `get_print_result`. The deny-on-discard regression fails with three
+  diagnostics on the detached pre-fix owner and passes with the two-test
+  printer owner plus its integration contract test; Ready evidence is recorded
+  in `receipts/util_printer.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

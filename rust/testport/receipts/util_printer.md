@@ -33,10 +33,18 @@ three test cases. The logging test follows Go's compile-time kernel branch and
 reads the real process-wide deploy mode rather than fabricating a second
 kernel identity inside one binary.
 
+The three source-shaped return APIs also carried explicit Rust-only
+`#[must_use]` diagnostics. The focused
+`return_values_may_be_ignored_like_go` regression discards `get_tidb_info`,
+`get_print_result_bytes`, and `get_print_result` under
+`#[deny(unused_must_use)]`: the detached pre-fix owner failed with exactly
+three diagnostics, while the corrected printer owner passes.
+
 ## Validation
 
-Profile: WIP; this is one completed package in the continuing package-by-
-package audit, not a repository-wide readiness claim.
+Profile: Ready; this is one completed package in the continuing package-by-
+package audit, with the package-scoped Rust checks and repository lint required
+for a completion claim.
 
 - `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/printer` — passed.
 - `go test ./pkg/util/versioninfo ./pkg/util/printer -count=1` — `versioninfo` passed (`[no test files]`); `printer` was blocked before package execution by the existing `google.golang.org/grpc/internal/transport` reference to missing `http2.TrailerPrefix`.
@@ -46,6 +54,12 @@ package audit, not a repository-wide readiness claim.
 - `cargo clippy --offline --locked -p tidb-util --all-targets --no-deps` — passed with existing warnings outside this package.
 - `cargo fmt --all --check` — reports only the pre-existing formatting difference in `tidb-datatype/src/mydecimal.rs`, which this checkpoint does not modify.
 - `git diff --check` — passed.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib printer::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed; the detached pre-fix owner failed with exactly three `unused_must_use` diagnostics.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib printer::tests -- --test-threads=1` — 2 tests passed.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --test printer_contract -- --test-threads=1` — 1 test passed.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util -p tidb-session -p tidb-executor -p tidb-server --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-util -- --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed (Ready profile).
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 

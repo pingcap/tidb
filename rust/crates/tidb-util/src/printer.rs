@@ -32,7 +32,6 @@ fn release_versions_for_display() -> (String, Option<String>) {
 }
 
 /// Returns the build and runtime identity shown by `TIDB_VERSION()` and `-V`.
-#[must_use]
 pub fn get_tidb_info() -> String {
     let (release_version, _) = release_versions_for_display();
     let config = tidb_config::config_tree::config::get_global_config();
@@ -129,7 +128,6 @@ fn tidb_info_fields() -> Vec<Field> {
 ///
 /// Widths are byte counts, and output bytes are copied unchanged. This is the
 /// semantic boundary of Go's `string`, which is not restricted to UTF-8.
-#[must_use]
 pub fn get_print_result_bytes<C, D>(columns: &[C], rows: &[Vec<D>]) -> Option<Vec<u8>>
 where
     C: AsRef<[u8]>,
@@ -178,7 +176,6 @@ fn render_print_row<T: AsRef<[u8]>>(row: &[T], widths: &[usize], output: &mut Ve
 }
 
 /// Formats UTF-8 rows as TiDB's ASCII table and rejects empty or ragged inputs.
-#[must_use]
 pub fn get_print_result(columns: &[String], rows: &[Vec<String>]) -> Option<String> {
     get_print_result_bytes(columns, rows).map(|output| {
         String::from_utf8(output).expect("UTF-8 table inputs produce UTF-8 table output")
@@ -188,6 +185,14 @@ pub fn get_print_result(columns: &[String], rows: &[Vec<String>]) -> Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        get_tidb_info();
+        get_print_result_bytes(&[b"column"], &[vec![b"value"]]);
+        get_print_result(&["column".to_owned()], &[vec!["value".to_owned()]]);
+    }
 
     #[test]
     fn print_result() {
