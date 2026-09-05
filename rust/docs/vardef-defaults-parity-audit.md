@@ -86,3 +86,16 @@ the schema-cache clamp warning); and
 inert on this node. The validation-hook audit is closed: every entry is
 either ported and pinned, covered by generic type/enum validation, or
 has its specific gap recorded.
+
+## Hook worklist dispositions (2026-09-05, tx_isolation_one_shot + warn-only pair)
+
+- `tx_isolation_one_shot` (`checkIsolationLevel`, `varsutil.go:116`):
+  refusing SERIALIZABLE/READ-UNCOMMITTED depends on the session's own
+  `tidb_skip_isolation_level_check` value; the validation dispatch has
+  no session-context parameter yet, so this entry is DEFERRED behind a
+  session-context threading change (the same shape the gogc
+  max/min hooks need for their gctuner atomics).
+- `tidb_enable_exchange_partition` / `tidb_enable_tiflash_read_for_write_stmt`:
+  warn-only hooks (value passes unchanged, a deprecation-style warning
+  the validation boundary has no sink to emit) — closed consistent with
+  the recorded warning-sink gap.

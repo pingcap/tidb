@@ -386,3 +386,5 @@
 - 下轮恢复点: (1) 17 未解析 hook 条目逐个核实; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - max_dist_task_nodes + evolve_plan_baselines 白名单批: 0 节点数拒绝(消息 "-1 or [1, 128]"); evolve ON 拒绝(Cannot enable baseline evolution, 测试旋钮默认 false)。gogc max/min 定性为运行态耦合(gctuner 原子量)归 deferred。session lib 1337 通过/279 预存, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) tx_isolation_one_shot(checkIsolationLevel); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- tx_isolation_one_shot 定性 deferred(checkIsolationLevel 需读会话 skip-check 姊妹值, 验证分派无会话上下文参数——签名穿线改动); exchange_partition/tiflash_read_for_write_stmt 关闭为警告无 sink 型(值透传一致)。
+- 下轮恢复点: (1) 验证分派会话上下文穿线设计(解锁 tx_isolation_one_shot + gogc max/min); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
