@@ -393,6 +393,28 @@ fn cot_zero_overflows_as_double_error() {
     assert!(matches!(got, Err(EvalError::FloatOverflow)));
 }
 
+/// The live scalar-function path retains Go's function-specific 1690 text,
+/// rather than exposing the shared datum-level FloatOverflow carrier.
+#[test]
+fn math_overflow_errors_render_the_source_expression() {
+    for (name, args, expression) in [
+        ("EXP", vec![Datum::Int(100_000)], "exp(100000)"),
+        ("POW", vec![Datum::Int(10), Datum::Int(700)], "pow(10, 700)"),
+        ("COT", vec![Datum::Real(0.0)], "cot(0)"),
+    ] {
+        let error = eval_as(name, args, real_ft(), &WarnCountCtx::new())
+            .expect_err("math overflow must return an error");
+        assert_eq!(
+            error,
+            EvalError::DataOutOfRange {
+                value: "DOUBLE",
+                expression: Box::leak(expression.to_owned().into_boxed_str()),
+            },
+            "{name}"
+        );
+    }
+}
+
 /// Go `pkg/expression/builtin_math_test.go:749 TestPi`: the one row pins the
 /// exact double constant rather than a rounded decimal literal.
 #[test]

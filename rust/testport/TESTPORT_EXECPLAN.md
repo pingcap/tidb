@@ -7978,3 +7978,11 @@ risks without claiming repository-wide parity.
   expressions. Scalar DECIMAL parity and the package-level Ready evidence are
   recorded in `receipts/expression_overflow_column_name.md`; the separate
   vectorized differential remains an explicit evaluator-tier boundary.
+- 2026-09-05 (`pkg/expression` math overflow expression text): the live Rust
+  scalar-function path now retains Go's source-shaped DOUBLE 1690 diagnostics
+  for `EXP`, `POW`/`POWER`, and `COT`, rendering constants, qualified columns,
+  nested arithmetic, and nested function arguments before mapping the shared
+  `FloatOverflow` carrier. The focused source regression failed before the
+  boundary adapter and now pins `exp(100000)`, `pow(10, 700)`, and `cot(0)`;
+  the AST/value-only carrier remains an explicit boundary. Evidence is
+  recorded in `receipts/expression_overflow_column_name.md`.

@@ -387,6 +387,84 @@ fn decimal_arithmetic_overflow_error(
     }
 }
 
+/// Renders the argument expression used by Go's math overflow signatures.
+/// These signatures report their function name and source-shaped arguments,
+/// rather than the datum-only `FloatOverflow` carrier returned by the shared
+/// math implementation.
+fn math_overflow_expression(function: &ScalarFunction) -> Option<String> {
+    fn render(expression: &Expression) -> Option<String> {
+        match expression {
+            Expression::Constant(constant) => match &constant.value {
+                Datum::Int(value) => Some(value.to_string()),
+                Datum::UInt(value) => Some(value.to_string()),
+                Datum::Float32(value) => {
+                    Some(tidb_datatype::format_float_g_shortest(f64::from(*value)))
+                }
+                Datum::Real(value) => Some(tidb_datatype::format_float_g_shortest(*value)),
+                Datum::Decimal(value) => Some(value.to_string()),
+                Datum::Null => Some("NULL".to_owned()),
+                _ => None,
+            },
+            Expression::Column(column) if !column.orig_name.is_empty() => {
+                Some(column.orig_name.clone())
+            }
+            Expression::CorrelatedColumn(column) if !column.column.orig_name.is_empty() => {
+                Some(column.column.orig_name.clone())
+            }
+            Expression::ScalarFunction(function) => {
+                if let Some(op) = binary_op_for_name(function.func_name.lowercase()) {
+                    let symbol = arithmetic_symbol(op)?;
+                    let [left, right] = function.args.as_slice() else {
+                        return None;
+                    };
+                    return Some(format!("({} {symbol} {})", render(left)?, render(right)?));
+                }
+                let args = function
+                    .args
+                    .iter()
+                    .map(render)
+                    .collect::<Option<Vec<_>>>()?;
+                Some(format!(
+                    "{}({})",
+                    function.func_name.lowercase(),
+                    args.join(", ")
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    let args = function
+        .args
+        .iter()
+        .map(render)
+        .collect::<Option<Vec<_>>>()?;
+    Some(format!(
+        "{}({})",
+        function.func_name.lowercase(),
+        args.join(", ")
+    ))
+}
+
+/// Converts the datum-only overflow carriers from math builtins into Go's
+/// function-specific 1690 diagnostics while the argument expressions remain
+/// available on the scalar-function node.
+fn math_overflow_error(function: &ScalarFunction, error: EvalError) -> EvalError {
+    let name = function.func_name.lowercase();
+    let value = match (name, &error) {
+        ("abs", EvalError::IntOverflow) => "BIGINT",
+        ("cot" | "exp" | "pow" | "power", EvalError::FloatOverflow) => "DOUBLE",
+        _ => return error,
+    };
+    let Some(expression) = math_overflow_expression(function) else {
+        return error;
+    };
+    EvalError::DataOutOfRange {
+        value,
+        expression: Box::leak(expression.into_boxed_str()),
+    }
+}
+
 impl ScalarFunction {
     /// Builds a scalar-function node.
     #[must_use]
@@ -2253,6 +2331,9 @@ impl ScalarFunction {
                     .map(|field_type| field_type.eval_type() == tidb_datatype::EvalType::Decimal),
                 ctx,
             );
+        }
+        if let Some(result) = crate::math_fn::dispatch_values(&upper, &vals, ctx) {
+            return result.map_err(|error| math_overflow_error(self, error));
         }
         if let Some(result) = crate::func::eval_func_values_in(&upper, &vals, ctx) {
             return result;

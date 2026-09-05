@@ -157,3 +157,61 @@ compile, focused overflow regressions, owner nextest sweep with only the known
 loopback fixture excluded, package formatting, `git diff --check`, and
 `make lint` all passed. No Go, generated, fixture, platform, or Bazel input was
 changed.
+
+## Follow-up: math-function overflow expression text
+
+Go's `builtin_math.go` attaches the source expression to the DOUBLE 1690
+overflow for `EXP`, `POW`/`POWER`, and `COT` (for example,
+`DOUBLE value is out of range in 'pow(10, 700)'`). The shared Rust math
+implementation intentionally returns the datum-level `FloatOverflow` carrier;
+before this follow-up, the live `ScalarFunction`/chunk path exposed that
+carrier directly even though its argument expressions were still available.
+
+The scalar-function boundary now dispatches the math family while retaining
+the node, renders constants, qualified columns, nested arithmetic, and nested
+function calls in the source shape, and maps those function-owned overflow
+cases to `DataOutOfRange { value: "DOUBLE", expression }`. The AST/value-only
+path continues to expose `FloatOverflow`, matching the existing value-tier
+boundary and avoiding invented names when no expression node is present.
+
+The focused source regression failed before the boundary adapter with
+`FloatOverflow` (the expected `DataOutOfRange` assertion failed on `EXP`) and
+passes for all three functions:
+
+```text
+EXP(100000) -> exp(100000)
+POW(10, 700) -> pow(10, 700)
+COT(0) -> cot(0)
+```
+
+Ready validation for this follow-up passed:
+
+```text
+OPENSSL_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy \\
+OPENSSL_LIB_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy/lib \\
+OPENSSL_INCLUDE_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy/include \\
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \\
+  -p tidb-expr --all-targets
+# passed (existing warnings only)
+
+OPENSSL_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy \\
+OPENSSL_LIB_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy/lib \\
+OPENSSL_INCLUDE_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy/include \\
+cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml \\
+  --offline --locked -p tidb-expr \\
+  -E 'not test(/json_schema_valid_resolves_file_and_http_references/)' \\
+  --no-fail-fast
+# 1,206 passed, 100 skipped
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml \\
+  -p tidb-expr -- --check
+git diff --check
+# both passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \\
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \\
+TMPDIR=/tmp/tidb-codex-go-lint make lint
+# passed
+```
+
+No Go, generated, fixture, platform, or Bazel input changed.
