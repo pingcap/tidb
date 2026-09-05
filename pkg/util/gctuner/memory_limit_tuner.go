@@ -184,12 +184,11 @@ func (t *memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
 	if t.adjustDisabled.Load() > 0 {
 		return initGOMemoryLimitValue
 	}
-	if memory.UsingGlobalMemArbitration() {
-		percentage = min(1, percentage)
-	}
 	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * percentage) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
 	if memoryLimit == 0 {
 		memoryLimit = math.MaxInt64
+	} else if total := memory.GetMemTotalIgnoreErr() * 95 / 100; total > 0 {
+		memoryLimit = min(memoryLimit, int64(total))
 	}
 	return memoryLimit
 }
