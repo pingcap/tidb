@@ -56,19 +56,49 @@ pub fn fold_constant_in_mode(
     ctx: &impl crate::Columns,
     mode: ConstantFoldMode,
 ) {
+    fold_constant_in_mode_inner(expr, ctx, mode, false);
+}
+
+/// Folds a planner expression while retaining constant casts whose evaluation
+/// can emit a statement warning.  Go builds those casts with the live
+/// statement context, so a planner-side `NoColumns` fold would otherwise
+/// replace them with a value and permanently lose the warning at execution.
+/// The flag is deliberately opt-in: DDL and expression-unit callers that use
+/// an actual warning context retain the ordinary Go construction-time fold.
+pub fn fold_constant_in_mode_preserving_warning_casts(
+    expr: &mut Expression,
+    ctx: &impl crate::Columns,
+    mode: ConstantFoldMode,
+) {
+    fold_constant_in_mode_inner(expr, ctx, mode, true);
+}
+
+fn fold_constant_in_mode_inner(
+    expr: &mut Expression,
+    ctx: &impl crate::Columns,
+    mode: ConstantFoldMode,
+    preserve_warning_casts: bool,
+) {
     if mode == ConstantFoldMode::Disabled {
         return;
     }
     let original = (mode == ConstantFoldMode::Try).then(|| expr.clone());
     let warning_bookmark = ctx.warning_count();
-    let _ = fold_current_value_in(expr, ctx);
+    let _ = fold_current_value_in(expr, ctx, preserve_warning_casts);
     if mode == ConstantFoldMode::Try && ctx.warning_count() > warning_bookmark {
         ctx.truncate_warnings(warning_bookmark);
         *expr = original.expect("try-fold mode retained the original expression");
     }
 }
 
-fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Option<Datum> {
+fn fold_current_value_in(
+    expr: &mut Expression,
+    ctx: &impl crate::Columns,
+    preserve_warning_casts: bool,
+) -> Option<Datum> {
+    if preserve_warning_casts && has_runtime_warning_cast(expr) {
+        return None;
+    }
     // Recursively fold sub-expressions FIRST (Go's `FoldConstant` walks
     // bottom-up): a nested `date_add_month("...", "...")` whose args are all
     // constants becomes a Constant before the parent checks its own args.
@@ -88,7 +118,7 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
         let lazy = is_lazy_short_circuit(&name_lc) || is_unfoldable(&name_lc);
         if !lazy {
             for arg in &mut func.args {
-                fold_current_value_in(arg, ctx);
+                fold_current_value_in(arg, ctx, preserve_warning_casts);
             }
         }
     }
@@ -147,6 +177,38 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
     }
     *expr = Expression::Constant(folded);
     Some(value)
+}
+
+/// Constant integer casts, and builtins that wrap their arguments in Go's
+/// `WrapWithCastAsInt`, use the statement context to report truncation and
+/// out-of-range diagnostics.  A no-column planner context cannot retain those
+/// diagnostics, so callers that are preparing an executable plan keep these
+/// nodes unfolded for runtime.
+fn has_runtime_warning_cast(expr: &Expression) -> bool {
+    let Expression::ScalarFunction(function) = expr else {
+        return false;
+    };
+    let name = function.func_name.lowercase();
+    let indexes: &[usize] = match name {
+        "cast_signed"
+        | "cast_unsigned"
+        | "cast_unsigned_in_union"
+        | "vitess_hash"
+        | "tidb_shard" => &[0],
+        // `FORMAT(number, decimals)` wraps its second argument to ETInt.
+        "format" => &[1],
+        _ => return false,
+    };
+    if !indexes.iter().any(|&index| {
+        matches!(
+            function.args.get(index),
+            Some(Expression::Constant(constant))
+                if matches!(constant.value, Datum::String(_) | Datum::Bytes(_))
+        )
+    }) {
+        return false;
+    }
+    true
 }
 
 /// One node of Go's `foldConstant`: folds bottom up, returning the constant

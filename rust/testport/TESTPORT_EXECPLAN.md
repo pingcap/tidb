@@ -8857,3 +8857,11 @@ risks without claiming repository-wide parity.
   This closes the one member of the six `tidb_*` server-hook classes whose
   plumbing was already complete. Evidence is recorded in
   `receipts/tidb_is_ddl_owner_arm.md`.
+- 2026-09-05 (`pkg/expression` planner constant-cast warning preservation):
+  Rust's executable planner now keeps string/byte integer casts and the
+  `VITESS_HASH`, `TIDB_SHARD`, and `FORMAT` integer-coercion carriers unfolded
+  when folding through `NoColumns`, so Go's live statement context can report
+  1292/8030 diagnostics at execution. Explicit construction-time folds retain
+  their existing behavior. Focused warning-multiplicity, signed-overflow, and
+  implicit-hash regressions plus Ready evidence are recorded in
+  `receipts/planner_constant_cast_warning.md`.

@@ -814,7 +814,11 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         // shared folder descends through row-dependent parents and folds only
         // their closed strict children, preserving the parent expression.
         if mode != tidb_expr::ConstantFoldMode::Disabled {
-            tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+            tidb_expr::fold_constant_in_mode_preserving_warning_casts(
+                expression,
+                &tidb_expr::NoColumns,
+                mode,
+            );
         } else {
             tidb_expr::derive_constant_null_flag(expression);
         }

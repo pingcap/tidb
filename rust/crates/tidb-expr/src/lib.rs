@@ -348,7 +348,10 @@ pub mod column;
 pub mod constant;
 pub mod constant_fold;
 pub mod constant_propagation;
-pub use constant_fold::{derive_constant_null_flag, fold_constant_in_mode, ConstantFoldMode};
+pub use constant_fold::{
+    derive_constant_null_flag, fold_constant_in_mode,
+    fold_constant_in_mode_preserving_warning_casts, ConstantFoldMode,
+};
 mod context;
 pub mod convert_charset;
 pub mod evaluator;
