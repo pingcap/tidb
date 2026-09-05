@@ -6,6 +6,13 @@ retain separate atomic receipts.
 
 ## Progress
 
+- [x] (2026-09-06) Removed Rust-only `#[must_use]` diagnostics from the two
+  source-shaped `ErrClass` constructors. The deny-on-discard regression failed
+  with two diagnostics on the detached pre-fix owner and passes with all five
+  Rust dbterror tests, the owner all-target check, formatting, lint, and diff
+  hygiene. The package-scoped commit was rebased onto the latest remote tip,
+  pushed to `hparser-integration`, and local/remote SHAs were verified equal.
+
 - [x] (2026-09-02) Inventoried and read all five root artifacts: `BUILD.bazel`,
   `ddl_terror.go`, `terror.go`, `terror_test.go`, and `main_test.go`. There is
   no package `doc.go`, fixture, generated/platform variant, benchmark, fuzz
@@ -20,8 +27,6 @@ retain separate atomic receipts.
   unchanged Rust dbterror tests, repository lint, Rust formatting, and diff
   hygiene. `make bazel_prepare` was attempted and is blocked only by the
   unavailable local `bazel` binary. This scoped commit is ready to publish.
-- [ ] Push this commit to `hparser-integration`, pull/fetch the latest remote
-  tip, and verify local and remote SHAs.
 
 ## Decision log
 

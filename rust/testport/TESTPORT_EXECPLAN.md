@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/dbterror` Go-shaped constructors): the complete
+  five-artifact root inventory remains unchanged and was rechecked before the
+  edit. Rust's `ErrClass::new_std` and `new_std_err`, direct counterparts of
+  Go's constructors, no longer emit Rust-only `#[must_use]` diagnostics. A
+  deny-on-discard regression failed with exactly two diagnostics on the
+  detached pre-fix owner and passes with all five dbterror tests, the owner
+  all-target check, formatting, lint, and diff checks. Evidence is recorded in
+  `receipts/b019.md`.
 - 2026-09-06 (`pkg/parser/ast` optimizer-hint restore): the complete
   36-artifact Go inventory remains unchanged and was rechecked before the
   edit. Rust's source-shaped `Hint::restore`, corresponding to Go's

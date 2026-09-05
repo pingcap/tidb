@@ -97,14 +97,12 @@ fn catalog_message(code: u16) -> ErrMessage {
 impl ErrClass {
     /// `NewStd`: creates the error with the standard catalog message for the
     /// code. Like the source, intended for global initializers.
-    #[must_use]
     pub fn new_std(&self, code: u16) -> TerrorError {
         self.new_std_err(code, catalog_message(code))
     }
 
     /// `NewStdErr`: creates the error with an explicit catalog message
     /// (retaining its redaction metadata).
-    #[must_use]
     pub fn new_std_err(&self, code: u16, message: ErrMessage) -> TerrorError {
         TerrorError::registered_standard(self.0, TerrorCode::new(code as isize), message)
     }
@@ -338,5 +336,12 @@ mod tests {
             );
         }
         set_redaction_mode(RedactionMode::Disabled);
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn constructors_return_may_be_ignored_like_go() {
+        CLASS_UTIL.new_std(errcode::ErrUnknown);
+        CLASS_UTIL.new_std_err(errcode::ErrUnknown, catalog_message(errcode::ErrUnknown));
     }
 }
