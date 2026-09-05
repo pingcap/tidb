@@ -106,7 +106,6 @@ static CHECK_VERS_FIRST_WAIT_TIME_NS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(50_000_000);
 
 /// Reads Go `CheckVersFirstWaitTime` without losing sub-millisecond values.
-#[must_use]
 pub fn check_vers_first_wait_time() -> Duration {
     let nanos = std::sync::atomic::AtomicU64::load(
         &CHECK_VERS_FIRST_WAIT_TIME_NS,
@@ -185,13 +184,11 @@ struct CtxInner {
 
 impl Context {
     /// Go `context.Background()`.
-    #[must_use]
     pub fn background() -> Self {
         Self::default()
     }
 
     /// Go `context.WithCancel`.
-    #[must_use]
     pub fn with_cancel(parent: &Context) -> Self {
         Self {
             inner: Arc::new(CtxInner {
@@ -203,7 +200,6 @@ impl Context {
     }
 
     /// Go `context.WithTimeout`.
-    #[must_use]
     pub fn with_timeout(parent: &Context, timeout: Duration) -> Self {
         let child = Self::with_cancel(parent);
         *child

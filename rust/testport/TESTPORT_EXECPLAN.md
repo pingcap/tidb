@@ -8836,6 +8836,13 @@ risks without claiming repository-wide parity.
   pre-fix owner and pass with the 20-test owner and 16-test planner consumer
   suites; current Go package build drift is recorded in
   `receipts/planner_funcdep.md`.
+- 2026-09-06 (`pkg/ddl/schemaver`): the complete five-artifact owner now
+  matches Go's discardable-return contract by removing six explicit Rust-only
+  `#[must_use]` diagnostics from the schema-version getter, context
+  constructors, and syncer constructors. A deny-on-discard regression failed
+  with all six diagnostics on the detached pre-fix owner and passes with the
+  eight-test classic and nextgen owner suites plus six schema-sync consumer
+  tests; Ready evidence is recorded in `receipts/ddl_schemaver.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

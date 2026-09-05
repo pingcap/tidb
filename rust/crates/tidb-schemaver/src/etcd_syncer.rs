@@ -520,7 +520,6 @@ pub struct EtcdSyncer {
 
 /// Go `NewEtcdSyncer`. The server-info syncer is supplied later through
 /// [`Syncer::set_server_info_syncer`], exactly like Go.
-#[must_use]
 pub fn new_etcd_syncer(etcd: Arc<dyn EtcdWatchOps>, id: &str) -> EtcdSyncer {
     EtcdSyncer {
         global_ver_watcher: GlobalVerWatcher::new(Arc::clone(&etcd)),
@@ -1918,5 +1917,19 @@ mod tests {
             .store(0, AtomicOrdering::Release);
         put_kv_to_etcd_mono(&ctx, &etcd, 3, "testKey", "1").unwrap();
         assert_eq!(Some(b"1".to_vec()), etcd.get_value("testKey"));
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        // Go permits callers to discard ordinary constructor/getter results;
+        // these Rust-shaped wrappers must not impose a Rust-only diagnostic.
+        Context::background();
+        let parent = Context::background();
+        Context::with_cancel(&parent);
+        Context::with_timeout(&parent, Duration::from_secs(1));
+        crate::check_vers_first_wait_time();
+        crate::mem_syncer::MemSyncer::new();
+        new_etcd_syncer(Arc::new(FakeEtcd::default()), "ignored");
     }
 }

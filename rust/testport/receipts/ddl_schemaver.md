@@ -71,3 +71,42 @@ and nextgen builds exercise their respective branches.
 
 No live PD/TiKV integration test or Ready-profile workspace lint was run in
 this WIP package batch.
+
+## Rust-only diagnostic alignment (`2026-09-06`)
+
+The complete five-artifact Go inventory above was rechecked before this
+follow-up: `BUILD.bazel`, `mem_syncer.go`, `syncer.go`,
+`syncer_nokit_test.go`, and `syncer_test.go` (including all seven mapped Go
+tests and the no-kit test helpers). The Rust owner remains the three source
+modules listed above; no generated, fixture, or platform variant exists.
+
+Rust had six explicit `#[must_use]` annotations on Go-shaped public APIs:
+`check_vers_first_wait_time`, the `Context` constructors, `MemSyncer::new`,
+and `new_etcd_syncer`. Go permits discarding each of these ordinary return
+values, so the annotations were Rust-only diagnostics and were removed.
+The focused `etcd_syncer::tests::return_values_may_be_ignored_like_go`
+regression discards all six results under `#[deny(unused_must_use)]`.
+
+The detached pre-fix probe at `f666ecfa16f92602c6ab869ca379401fc9be7b52`
+failed with exactly six `unused_must_use` diagnostics:
+
+```
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-schemaver --lib return_values_may_be_ignored_like_go -- --exact --nocapture
+```
+
+The corrected focused probe used the fully-qualified test filter and passed:
+
+```
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-schemaver --lib 'etcd_syncer::tests::return_values_may_be_ignored_like_go' -- --exact --nocapture
+```
+
+Ready validation passed:
+
+* `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-schemaver --lib -- --test-threads=1` — 8 passed;
+* the same owner suite with `--features nextgen` — 8 passed;
+* `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-schemaver -p tidb-server --all-targets` — passed;
+* `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-server --lib schema_sync -- --test-threads=1` — 6 passed;
+* pinned Rust formatting, `git diff --check`, and `make lint` — passed.
+
+The only warnings are pre-existing workspace warnings. No Go source was
+edited and no external etcd/TiKV integration was run locally.

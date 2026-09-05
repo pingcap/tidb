@@ -46,7 +46,6 @@ impl Default for MemSyncer {
 
 impl MemSyncer {
     /// Go `NewMemSyncer`.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             self_schema_version: AtomicI64::new(0),
