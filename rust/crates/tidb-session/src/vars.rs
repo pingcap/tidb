@@ -2272,7 +2272,8 @@ impl SessionVars {
     /// Session state is deliberately based on cached session overrides, not
     /// on `get_system`'s registry-default fallback: an untouched variable is
     /// omitted so the destination session can use its own default.  Go's
-    /// timestamp state hook also omits an override equal to the default, and
+    /// timestamp state hook also omits an override equal to the default,
+    /// `max_allowed_packet` is always emitted through its typed getter, and
     /// the last-insert-id/identity hooks are explicitly never migrated.
     pub fn get_session_states_system_var(&self, name: &str) -> Result<(String, bool), VarError> {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
@@ -2285,6 +2286,13 @@ impl SessionVars {
         // their ordinary session getter exposes a value.
         if matches!(key.as_ref(), "last_insert_id" | "identity") {
             return Ok((String::new(), false));
+        }
+
+        // Go's max_allowed_packet definition has a GetSession hook, so its
+        // current typed value is serialized even before an explicit session
+        // override exists.
+        if key == "max_allowed_packet" {
+            return Ok((self.max_allowed_packet.to_string(), true));
         }
 
         let Some(value) = self.systems.get(key.as_ref()) else {
@@ -3661,6 +3669,11 @@ mod tests {
         assert_eq!(
             vars.get_session_states_system_var("timestamp").unwrap(),
             (String::new(), false)
+        );
+        assert_eq!(
+            vars.get_session_states_system_var("max_allowed_packet")
+                .unwrap(),
+            ("67108864".to_owned(), true)
         );
         vars.set_system("timestamp", "1.25".to_owned()).unwrap();
         assert_eq!(
