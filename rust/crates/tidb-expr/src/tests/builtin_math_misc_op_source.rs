@@ -1351,10 +1351,12 @@ fn builtin_unary_minus_int_sig_columns() {
         chunk_row_value("-c0", &[("c0", signed_col.clone(), Datum::Int(233333))]),
         "INT:-233333"
     );
-    // Signed MinInt64 stays a genuine overflow ERROR on the column path.
+    // Signed MinInt64 stays a genuine overflow ERROR on the column path;
+    // Go `builtin_op.go:1121` quotes the negated value (the format prefix
+    // plus the value's own sign yields the double-minus).
     assert!(
         chunk_row_value("-c0", &[("c0", signed_col.clone(), Datum::Int(i64::MIN))])
-            .contains("IntOverflow")
+            .contains(r#"expression: "--9223372036854775808""#)
     );
     assert_eq!(
         chunk_row_value("-c0", &[("c0", signed_col.clone(), Datum::Null)]),
@@ -1365,7 +1367,8 @@ fn builtin_unary_minus_int_sig_columns() {
         chunk_row_value("-c0", &[("c0", unsigned_col.clone(), Datum::UInt(233333))]),
         "INT:-233333"
     );
-    // Unsigned 2^63+1 overflows (Go AppendUint64(-(math.MinInt64)+1)).
+    // Unsigned 2^63+1 overflows (Go `builtin_op.go:1116` quotes `-%v` of
+    // the raw uint64: AppendUint64(-(math.MinInt64)+1)).
     assert!(chunk_row_value(
         "-c0",
         &[(
@@ -1374,7 +1377,7 @@ fn builtin_unary_minus_int_sig_columns() {
             Datum::UInt(9_223_372_036_854_775_809)
         )]
     )
-    .contains("IntOverflow"));
+    .contains(r#"expression: "-9223372036854775809""#));
     assert_eq!(
         chunk_row_value("-c0", &[("c0", unsigned_col, Datum::Null)]),
         "NULL"

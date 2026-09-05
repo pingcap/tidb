@@ -328,16 +328,18 @@ fn a_column_decimal_against_a_constant_string_compares_as_decimal() {
 fn unary_minus_promotes_to_decimal_only_for_a_constant() {
     let bigint = || FieldType::new(FieldTypeCode::LongLong);
     let bigint_unsigned = || flagged(FieldTypeCode::LongLong, FieldTypeFlags::UNSIGNED);
+    // Go `builtin_op.go:1121/1116` quotes the negated value (`-%v`): the
+    // signed branch's format prefix plus its own sign doubles the minus.
     assert_eq!(
         over_columns("-b", columns![("b", bigint(), Datum::Int(i64::MIN))]),
-        "IntOverflow"
+        r#"DataOutOfRange { value: "BIGINT", expression: "--9223372036854775808" }"#
     );
     assert_eq!(
         over_columns(
             "-u",
             columns![("u", bigint_unsigned(), Datum::UInt(9223372036854775809))]
         ),
-        "IntOverflow"
+        r#"DataOutOfRange { value: "BIGINT", expression: "-9223372036854775809" }"#
     );
     assert_eq!(
         over_columns(

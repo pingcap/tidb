@@ -78,7 +78,19 @@ pub(super) fn unary_minus_integer(
         }
     }
     if !arg.is_constant() {
-        return Err(EvalError::IntOverflow);
+        // Go `builtinUnaryMinusIntSig.evalInt` (`builtin_op.go:1116,1121`):
+        // `types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("-%v", val))`
+        // quotes the NEGATED value rather than the source expression, so the
+        // wire text carries `in '-9223372036854775808'`.
+        let expression = if unsigned {
+            format!("-{bits}")
+        } else {
+            format!("-{}", i64::MIN)
+        };
+        return Err(EvalError::DataOutOfRange {
+            value: "BIGINT",
+            expression,
+        });
     }
     Ok(Datum::Decimal(if unsigned {
         Decimal::from_uint(bits).negate()
@@ -386,7 +398,13 @@ mod source_tests {
                 signed_operand,
                 &NoColumns,
             ),
-            Err(EvalError::IntOverflow)
+            // Go `builtin_op.go:1121` renders `GenWithStackByArgs("BIGINT",
+            // fmt.Sprintf("-%v", val))` -- the format prefix plus the value's
+            // own sign yields the double-minus.
+            Err(EvalError::DataOutOfRange {
+                value: "BIGINT",
+                expression: "--9223372036854775808".to_string(),
+            })
         );
         assert_eq!(
             eval_unary(UnaryOp::Minus, Datum::Null, signed_operand, &NoColumns,),
@@ -412,7 +430,11 @@ mod source_tests {
                 unsigned_operand,
                 &NoColumns,
             ),
-            Err(EvalError::IntOverflow)
+            // Go `builtin_op.go:1116`: `"-%v"` over the raw uint64.
+            Err(EvalError::DataOutOfRange {
+                value: "BIGINT",
+                expression: "-9223372036854775809".to_string(),
+            })
         );
         assert_eq!(
             eval_unary(UnaryOp::Minus, Datum::Null, unsigned_operand, &NoColumns,),

@@ -2151,6 +2151,33 @@ mod tests {
         );
     }
 
+    /// Go `builtinUnaryMinusIntSig.evalInt` (`builtin_op.go:1116,1121`)
+    /// reports the overflow through `GenWithStackByArgs("BIGINT",
+    /// fmt.Sprintf("-%v", val))`: the quoted operand is the NEGATED value,
+    /// not the source expression. The wire text therefore carries
+    /// `in '-9223372036854775808'`, which a bare `IntOverflow` loses.
+    #[test]
+    fn unary_minus_overflow_quotes_the_negated_value() {
+        let column = crate::expression::Expression::Column(crate::expression::Column::new(
+            1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ));
+        let error = super::eval_unary(
+            tidb_ast::UnaryOp::Minus,
+            Datum::Int(i64::MIN),
+            super::Operand::Expr(&column),
+            &crate::NoColumns,
+        )
+        .expect_err("-MININT on a column must overflow");
+        assert_eq!(
+            error,
+            EvalError::DataOutOfRange {
+                value: "BIGINT",
+                expression: "--9223372036854775808".to_string(),
+            }
+        );
+    }
+
     /// Direct rows from `builtin_arithmetic_test.go::{TestArithmeticIntDivide,
     /// TestArithmeticMod}`.  The source has separate evaluator signatures for
     /// every signedness pair; these assertions keep that distinction visible
