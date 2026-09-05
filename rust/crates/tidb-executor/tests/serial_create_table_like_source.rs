@@ -27,9 +27,9 @@
 //! schemas (`ctwl_db`, `ctwl_db1`) and region splitting. This tier has no
 //! CREATE DATABASE runner, so every cross-schema arm is ported over
 //! same-schema names, and the `SHOW TABLE REGIONS` arms stay in the
-//! `#[ignore]` gap tests. Nothing is approximated: a measured divergence
-//! (the missing shard/pre-split check arms, the missing IF NOT EXISTS
-//! warning) is recorded as a gap, never rewritten into a pass.
+//! `#[ignore]` gap tests. Nothing is approximated: the remaining region-split
+//! carrier gap is recorded explicitly, while temporary-copy option checks and
+//! duplicate warnings use the ordinary DDL path.
 
 use tidb_executor::{
     run_alter_table_in, run_create_table_in, run_insert_on, run_select_on, Catalog, DriverError,
@@ -413,12 +413,23 @@ fn create_table_like_at_temporary_mode_refusals_match_go() {
 /// pre_split_regions=2): copying it into a GLOBAL temporary table answers
 /// ErrOptOnTemporaryTable("pre split regions") from
 /// `checkReferInfoForTemporaryTable` (pkg/planner/core/preprocess.go:1560).
-// go-parity-gap: this tier's temporary-copy check implements Go's
-// auto_random/partition/placement arms but NOT the PreSplitRegions arm
-// (crate::ddl's like branch), so the copy is accepted where Go refuses.
 #[test]
-#[ignore]
 fn create_global_temporary_like_pre_split_source_answers_pre_split_regions_error() {
+    let mut catalog = Catalog::default();
+    create(
+        &mut catalog,
+        "create table table_pre_split (id int) shard_row_id_bits = 2 pre_split_regions = 2",
+    )
+    .expect("table_pre_split");
+    let error = create_error(
+        &mut catalog,
+        "create global temporary table table_pre_split_tmp like table_pre_split on commit delete rows",
+    );
+    assert_eq!(code_of(&error), 8006);
+    assert_eq!(
+        message_of(&error),
+        "`pre split regions` is unsupported on temporary tables."
+    );
 }
 
 /// Go `serial_test.go:297-303` (`shard_row_id_table`, shard_row_id_bits=5):
@@ -426,23 +437,53 @@ fn create_global_temporary_like_pre_split_source_answers_pre_split_regions_error
 /// ErrOptOnTemporaryTable("shard_row_id_bits")
 /// (pkg/planner/core/preprocess.go:1566-1568), and the same refusal hits a
 /// LOCAL temporary copy (`tmp_shard_row_id`, Go `:446-450`).
-// go-parity-gap: this tier's temporary-copy check implements Go's
-// auto_random/partition/placement arms but NOT the ShardRowIDBits arm, so
-// both copies are accepted where Go refuses.
 #[test]
-#[ignore]
 fn create_temporary_like_shard_row_id_source_answers_shard_row_id_bits_error() {
+    let mut catalog = Catalog::default();
+    create(
+        &mut catalog,
+        "create table shard_row_id_table (id int) shard_row_id_bits = 5",
+    )
+    .expect("shard_row_id_table");
+
+    for sql in [
+        "create global temporary table shard_row_id_global like shard_row_id_table on commit delete rows",
+        "create temporary table shard_row_id_local like shard_row_id_table",
+    ] {
+        let error = create_error(&mut catalog, sql);
+        assert_eq!(code_of(&error), 8006, "{sql}");
+        assert_eq!(
+            message_of(&error),
+            "`shard_row_id_bits` is unsupported on temporary tables.",
+            "{sql}"
+        );
+    }
 }
 
 /// Go `serial_test.go:402-407`: `create temporary table if not exists tb12
 /// like tb11` over the existing `test.tb12` answers OK with warning[0] ==
 /// `infoschema.ErrTableExists.GenWithStackByArgs("test.tb12").Error()`
 /// ("Table 'test.tb12' already exists").
-// go-parity-gap: this tier answers `false` for the IF NOT EXISTS duplicate
-// but raises no warning (measured: `warning_count() == 0`).
 #[test]
-#[ignore]
 fn create_temporary_if_not_exists_over_existing_table_files_a_1050_warning() {
+    let mut catalog = Catalog::default();
+    create(&mut catalog, "create table tb11 (i int primary key, j int)").expect("tb11");
+    create(&mut catalog, "create temporary table tb12 like tb11").expect("tb12");
+
+    let context = ctx();
+    let created = run_create_table_in(
+        "create temporary table if not exists tb12 like tb11",
+        &mut catalog,
+        "test",
+        tidb_executor::ddl::CreateTableSettings::default(),
+        &context,
+    )
+    .expect("IF NOT EXISTS duplicate is successful");
+    assert!(!created);
+    let warnings = context.take_warnings();
+    assert_eq!(warnings.len(), 1, "Go records one duplicate-table warning");
+    assert_eq!(warnings[0].1, 1050);
+    assert_eq!(warnings[0].2, "Table 'test.tb12' already exists");
 }
 
 /// Go `serial_test.go:225-227` runs `create table t1 like test_not_exist.t`

@@ -1118,8 +1118,14 @@ pub fn run_create_table_in(
             if source.auto_random().is_some() {
                 return Err(DriverError::OptOnTemporaryTable("auto_random"));
             }
+            if source.pre_split_regions() != 0 {
+                return Err(DriverError::OptOnTemporaryTable("pre split regions"));
+            }
             if source.partition().is_some() {
                 return Err(DriverError::PartitionNoTemporary);
+            }
+            if source.shard_row_id_bits() != 0 {
+                return Err(DriverError::OptOnTemporaryTable("shard_row_id_bits"));
             }
             if source.placement_policy().is_some() {
                 return Err(DriverError::OptOnTemporaryTable("placement"));

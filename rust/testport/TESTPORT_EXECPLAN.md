@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` temporary `CREATE TABLE ... LIKE` options): closed
+  the inherited `PreSplitRegions` and `ShardRowIDBits` refusal gaps in the
+  ordinary Rust LIKE path, preserving Go's check order and exact 8006 errors;
+  also promoted the existing 1050 `IF NOT EXISTS` warning carrier. The b115
+  receipt now records six active LIKE tests with only region splitting still
+  explicitly unavailable.
 - 2026-09-05 (`pkg/ddl` CREATE TABLE LIKE source ordering): aligned the
   ordinary DDL path with Go's preprocessing order by validating a LIKE source
   before the target-exists gate. The promoted regression now returns exact
