@@ -189,6 +189,12 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 		for {
 			child := finalResult.Children()[0]
 			nextApply, ok := child.(*logicalop.LogicalApply)
+			if ok && nextApply.IsLateral {
+				// The IsLateral guard above only covers the topmost Apply, but this loop drops
+				// every Apply it walks through. A LATERAL Apply nested below a prunable one may
+				// still return several rows per outer row, so pruning the chain would lose them.
+				return nil, false
+			}
 			if !ok {
 				if len(groupByColumn) == 0 {
 					return child, true
@@ -423,7 +429,15 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 						var appendedAggFuncs []*aggregation.AggFuncDesc
 
 						join := &apply.LogicalJoin
-						defaultValueMap := s.aggDefaultValueMap(agg)
+						// The default values only describe a *scalar* aggregation, which yields one row
+						// over an empty input. An aggregation carrying an explicit GROUP BY yields no row
+						// at all for an outer row with no matching group, and the outer join's NULL
+						// extension is then the correct answer. This is reachable from LEFT JOIN LATERAL,
+						// where the inner subquery is not wrapped in a MaxOneRow.
+						var defaultValueMap map[int]*expression.Constant
+						if len(agg.GroupByItems) == 0 {
+							defaultValueMap = s.aggDefaultValueMap(agg)
+						}
 						// `defaultValueMap` means this scalar aggregation subquery should return a non-NULL
 						// default value (e.g. COUNT -> 0) when the subquery's input is empty.
 						//
@@ -598,15 +612,23 @@ func skipDecorrelateProjectionForLeftOuterApply(apply *logicalop.LogicalApply, p
 		}
 	}
 
-	// Pulling the projection above the apply makes it evaluate on the inner side's null-complemented row
-	// when the outer join has no match. It is safe only when every projected expression still returns NULL.
+	// Pulling the projection above the join means it is evaluated on the null-extended rows too,
+	// so an expression over inner columns must still produce NULL once those columns are NULL.
+	// A non-null-preserving expression such as ifnull(b, 'z') or `b IS NULL` would otherwise turn
+	// a non-match into a real value. Reachable from LEFT JOIN LATERAL, whose inner side is not
+	// wrapped in a LogicalMaxOneRow.
+	// proj.Exprs are written against the projection's input, not its own output schema.
 	innerSchema := proj.Children()[0].Schema()
 	for _, expr := range proj.Exprs {
-		nullEvaluatedExpr, err := expression.EvaluateExprWithNull(proj.SCtx().GetExprCtx(), innerSchema, expr, true)
+		if expression.ExtractColumnSet(expr).IsEmpty() {
+			continue
+		}
+		nullResult, err := expression.EvaluateExprWithNull(apply.SCtx().GetExprCtx(), innerSchema, expr, true)
 		if err != nil {
 			return true
 		}
-		if con, ok := nullEvaluatedExpr.(*expression.Constant); !ok || !con.Value.IsNull() {
+		con, ok := nullResult.(*expression.Constant)
+		if !ok || con.DeferredExpr != nil || con.ParamMarker != nil || !con.Value.IsNull() {
 			return true
 		}
 	}

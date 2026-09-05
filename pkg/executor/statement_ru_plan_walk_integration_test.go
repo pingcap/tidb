@@ -113,12 +113,17 @@ func drainStatementRURecordSet(t *testing.T, rs sqlexec.RecordSet) error {
 	}
 }
 
-func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
-	originalCollectExecutionInfo := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+func enableStatementRUExecutionInfo(t *testing.T) {
+	t.Helper()
+	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
 	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
 	t.Cleanup(func() {
-		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(originalCollectExecutionInfo)
+		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(original)
 	})
+}
+
+func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -197,6 +202,8 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 }
 
 func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("producer plans publish only supported operator trees", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
@@ -559,6 +566,8 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 }
 
 func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("successful session outcome is consumed by delayed terminal", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
@@ -705,6 +714,8 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 }
 
 func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -778,6 +789,8 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 }
 
 func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("real scalar SQL", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
@@ -1042,6 +1055,8 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 }
 
 func TestStatementRUCursorExclusion(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("current-session restricted result set", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
@@ -1132,6 +1147,8 @@ func TestStatementRUCursorExclusion(t *testing.T) {
 }
 
 func TestStatementRURetryAndReplay(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("pessimistic retry keeps production owner disabled", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		writer := testkit.NewTestKit(t, store)
