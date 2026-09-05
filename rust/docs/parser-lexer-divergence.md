@@ -540,3 +540,12 @@ claims were compile-verified only.
   consumer of the flat `Selects`/`terms` list. That consumer was **not**
   checked on either side, and a mismatch there would be a rank-1 defect
   invisible to this audit.
+
+## Parser differential ring (2026-09-05)
+
+The integration parser differential ring runs every fixture input
+(51,598) through the Rust parser against the static Go golden:
+51,499 Go-accepted inputs (including the 10 multi-statement cases) are
+matched, the 99 Go-rejected inputs are rejected by Rust too, zero
+restore mismatches and zero accept/reject asymmetries — the parser and
+the golden agree on every input in the corpus.
