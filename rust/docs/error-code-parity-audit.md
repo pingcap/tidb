@@ -340,7 +340,7 @@ complete write-conflict diagnostic parity.
 
 ---
 
-### F8 (rank 3, message) — overflow message drops the offending expression
+### F8 (rank 3, message) — overflow message drops the offending expression — FIXED (verified 2026-09-05)
 
 `rust/crates/tidb-executor/src/driver/errors/exec.rs:134` renders 1690 as
 `"{class} value is out of range"`. Go's message is `"%s value is out of range in '%s'"`.
@@ -350,11 +350,11 @@ complete write-conflict diagnostic parity.
 - TiDB: `ERROR 1690 (22003): BIGINT value is out of range in '(9223372036854775807 + 1)'`
 - Rust: `ERROR 1690 (22003): BIGINT value is out of range`
 
-The code and SQLSTATE are now correct (this is the overflow defect fixed earlier — it
-previously sent 1105 with Rust text). What remains is the `in '<expr>'` tail: no `EvalError`
-carries the rendered expression, because the overflow is raised in arithmetic that never
-sees the expression tree. Closing it needs the expression text threaded to the raise site,
-which is a design change, not a string fix. The in-source comment already says so.
+FIXED: the expression text is now threaded to the raise site via the
+plan scope and the overflow message carries the qualified expression
+(`BIGINT value is out of range in '(test.t.a + test.t.b)'`), matching Go
+exactly. Pinned by the regression at `tests_global_vars.rs` and the
+`an_overflow_names_its_class` test.
 
 ---
 

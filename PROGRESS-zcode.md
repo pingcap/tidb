@@ -486,3 +486,5 @@
 - 下轮恢复点: (1) 新面选型或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - 增量同步: 兄弟会话继续 DDL 对齐(foreign key compatibility/auto random alter/JSON selectivity skip/hidden expression-index column skip), 均不在我的审计范围。树稳定。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- F8 更新: overflow message 现在包含限定表达式(Go 形式), 测试钉住; 审计文档标记 FIXED。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
