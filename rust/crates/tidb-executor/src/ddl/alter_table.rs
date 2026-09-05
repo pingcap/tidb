@@ -92,10 +92,10 @@ pub fn run_alter_table_in(
     super::refuse_temporary_table_alter_options(catalog, &database, &name, &alter.actions)?;
     super::table_cache::guard_alter_actions(catalog, &database, &name, &alter.actions)?;
 
-    // A constraint names its columns and its referenced table, and a DROP
-    // COLUMN, a column RENAME or a table RENAME rewrites neither, so each
-    // would leave the constraint naming something that is gone. Refused
-    // rather than corrupted; see `foreign_key::participates`.
+    // A constraint names its columns and its referenced table. A DROP COLUMN
+    // or column RENAME would leave one of those names gone, so each remains
+    // refused rather than corrupted; table RENAME is handled by the same
+    // metadata rewrite as `RENAME TABLE` below.
     //
     // ADD COLUMN is NOT in this set: Go's `AddColumn` asks nothing about
     // foreign keys, and a constraint that resolves its names at every use
@@ -110,14 +110,13 @@ pub fn run_alter_table_in(
             && matches!(
                 action,
                 tidb_ast::AlterTableAction::DropColumn { .. }
-                    | tidb_ast::AlterTableAction::RenameTable { .. }
                     // A foreign key names its REFERENCED columns by name, so
                     // renaming one would silently repoint the constraint.
                     | tidb_ast::AlterTableAction::RenameColumn(_)
             )
         {
             return Err(DriverError::unsupported(
-                "changing the columns or name of a table involved in a FOREIGN KEY is not supported yet",
+                "changing the columns of a table involved in a FOREIGN KEY is not supported yet",
             ));
         }
         match action {
@@ -246,6 +245,9 @@ pub fn run_alter_table_in(
                         format!("{to_db}.{to_name}"),
                     )));
                 }
+                crate::foreign_key::rewrite_table_references(
+                    catalog, &database, &name, &to_db, &to_name,
+                );
                 catalog.rename_table(&database, &name, &to_db, &to_name);
             }
             tidb_ast::AlterTableAction::DropIndex {

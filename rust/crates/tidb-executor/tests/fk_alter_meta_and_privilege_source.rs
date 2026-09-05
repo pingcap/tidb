@@ -610,19 +610,92 @@ fn alter_table_add_foreign_key_requires_references_privilege() {
 // schema diff carries zero AffectedOpts); renaming the PARENT t1→test3.tt1
 // rewrites the child's RefSchema/RefTable and the SHOW CREATE text.
 //
-// go-parity-gap (documented divergence): the tier REFUSES any RENAME of an
-// FK-participating table ("renaming a table involved in a FOREIGN KEY is
-// not supported yet", `ddl/table_lifecycle.rs:134-139`) where Go accepts it
-// and rewrites the constraint's stored reference — the meta rewrite Go
-// asserts is not reachable. The SHOW CREATE legs additionally need Go's
-// renderer, which this tier lacks.
+// The table-lifecycle owner now rewrites every affected `ref_schema`/
+// `ref_table` before moving the catalog entry, including a self-reference on
+// the moved table and children in another schema.
 #[test]
-#[ignore = "go-parity-gap: RENAME of an FK-participating table is refused; Go rewrites the constraint's reference"]
 fn rename_table_rewrites_the_constraint_reference() {
-    // Contract (foreign_key_test.go:358-474): after each rename the
-    // constraint's RefSchema/RefTable and the referred entries name the NEW
-    // location, the schema diff has zero AffectedOpts, and show create
-    // prints the new reference.
+    let mut catalog = Catalog::default();
+    catalog.create_database("test2");
+    catalog.create_database("test3");
+    let checks_off = StmtContext::for_query().with_foreign_key_checks(false);
+    let settings_off = CreateTableSettings {
+        foreign_key_checks: false,
+        ..CreateTableSettings::default()
+    };
+    ddl::run_create_table_in(
+        "create table t1 (id int key, a int, b int, foreign key fk(a) references t1(id))",
+        &mut catalog,
+        "test",
+        settings_off,
+        &checks_off,
+    )
+    .unwrap();
+    ddl::run_rename_table_in(
+        "rename table test.t1 to test2.t2",
+        &mut catalog,
+        "test",
+        checks_off.sql_mode(),
+    )
+    .unwrap();
+    let keys = declared(&catalog, "test2", "t2");
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].ref_schema, "test2");
+    assert_eq!(keys[0].ref_table, "t2");
+    assert_eq!(referred_foreign_keys(&catalog, "test2", "t2").len(), 1);
+
+    ddl::run_drop_table_in(
+        "drop table test2.t2",
+        &mut catalog,
+        "test",
+        checks_off.sql_mode(),
+        checks_off.foreign_key_checks(),
+    )
+    .unwrap();
+    let checks_on = StmtContext::for_query();
+    ddl::run_create_table_in(
+        "create table t1 (id int key, a int)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &checks_on,
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t2 (id int key, b int, foreign key fk_b(b) references test.t1(id))",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &checks_on,
+    )
+    .unwrap();
+    ddl::run_rename_table_in(
+        "rename table test.t2 to test2.tt2",
+        &mut catalog,
+        "test",
+        checks_on.sql_mode(),
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table test2.tt2 rename to test2.tt3",
+        &mut catalog,
+        "test",
+        &checks_on,
+    )
+    .unwrap();
+    assert_eq!(declared(&catalog, "test2", "tt3")[0].ref_schema, "test");
+    assert_eq!(declared(&catalog, "test2", "tt3")[0].ref_table, "t1");
+    ddl::run_rename_table_in(
+        "rename table test.t1 to test3.tt1",
+        &mut catalog,
+        "test",
+        checks_on.sql_mode(),
+    )
+    .unwrap();
+    let keys = declared(&catalog, "test2", "tt3");
+    assert_eq!(keys[0].ref_schema, "test3");
+    assert_eq!(keys[0].ref_table, "tt1");
+    assert_eq!(referred_foreign_keys(&catalog, "test3", "tt1").len(), 1);
 }
 
 // --- TestTruncateOrDropTableWithForeignKeyReferred

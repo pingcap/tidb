@@ -129,13 +129,6 @@ pub fn run_rename_table_in(
         if source_cached {
             return Err(DriverError::OperationOnCachedTable(cache_operation));
         }
-        // A foreign key names the referenced table, so moving one side would
-        // leave the constraint pointing at a name that no longer resolves.
-        if crate::foreign_key::participates(catalog, &from_db, &from_name) {
-            return Err(DriverError::unsupported(
-                "renaming a table involved in a FOREIGN KEY is not supported yet",
-            ));
-        }
         staged.push(Rename {
             from_db,
             from_name,
@@ -146,6 +139,13 @@ pub fn run_rename_table_in(
     }
 
     for rename in &staged {
+        crate::foreign_key::rewrite_table_references(
+            catalog,
+            &rename.from_db,
+            &rename.from_name,
+            &rename.to_db,
+            &rename.to_name,
+        );
         catalog.rename_table(
             &rename.from_db,
             &rename.from_name,

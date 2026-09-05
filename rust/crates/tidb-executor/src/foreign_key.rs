@@ -87,8 +87,9 @@
 //!   anything at that level, so a single-level statement is all-or-nothing,
 //!   but a deeper level that restricts after a shallower one cascaded leaves
 //!   the shallower change applied. Real TiDB rolls the statement back.
-//! * `RENAME TABLE` does not rewrite the `ref_table` of the constraints that
-//!   pointed at the old name.
+//! * Column renames and multi-action ALTER atomicity remain outside this
+//!   module's metadata model; whole-table renames now rewrite `ref_schema` and
+//!   `ref_table` through [`rewrite_table_references`].
 
 use tidb_datatype::Datum;
 
@@ -618,14 +619,11 @@ fn rewrite_rows(
 /// A constraint stores BOTH sides as names now (Go `FKInfo.Cols` and
 /// `FKInfo.RefTable`), so repositioning a column no longer moves the
 /// constraint off its columns -- `KvTable::foreign_key_offsets` resolves the
-/// names against the current column list at every use. What is still
-/// unmodelled is a DDL that makes one of those names WRONG: `RENAME TABLE`
-/// and `DROP TABLE` leave `ref_table` dangling, so both stay REFUSED on a
-/// participating table rather than silently breaking the reference. Go
-/// rewrites the affected `FKInfo`s instead, which is the graduation path.
-/// A column RENAME is still in that group: `rename_column_action` assigns the
-/// new name and rewrites nothing else, so a constraint over the renamed column
-/// would be left naming a column no table has.
+/// names against the current column list at every use. `RENAME TABLE` is
+/// handled by [`rewrite_table_references`], which follows Go's metadata
+/// rewrite over every child and the moved table itself. `DROP TABLE` still
+/// refuses a participating parent before removal, while a column RENAME is
+/// still refused because `rename_column_action` must rewrite both sides.
 ///
 /// `MODIFY`/`CHANGE` is NOT in that group any more: it asks
 /// [`check_modify_column`] the same question Go's
@@ -636,6 +634,43 @@ fn rewrite_rows(
 pub(crate) fn participates(catalog: &Catalog, database: &str, table: &str) -> bool {
     let (declared_keys, _) = declared(catalog, database, table);
     !declared_keys.is_empty() || !referring(catalog, database, table).is_empty()
+}
+
+/// Rewrites every foreign key that names `from_database.from_table` as its
+/// parent, including a self-reference on the table being moved. This is Go's
+/// `updateFKInfoWhenRenameTable` metadata maintenance, performed before the
+/// catalog key is moved so the source table is included in the same pass.
+pub(crate) fn rewrite_table_references(
+    catalog: &mut Catalog,
+    from_database: &str,
+    from_table: &str,
+    to_database: &str,
+    to_table: &str,
+) {
+    let tables: Vec<(String, String)> = catalog
+        .database_names()
+        .into_iter()
+        .flat_map(|database| {
+            catalog
+                .table_names(&database)
+                .unwrap_or_default()
+                .into_iter()
+                .map(move |table| (database.clone(), table))
+        })
+        .collect();
+    for (database, table) in tables {
+        let Some(TableEntry::Kv(table)) = catalog.table_mut_in(&database, &table) else {
+            continue;
+        };
+        for foreign_key in table.foreign_keys_mut() {
+            if foreign_key.ref_schema.eq_ignore_ascii_case(from_database)
+                && foreign_key.ref_table.eq_ignore_ascii_case(from_table)
+            {
+                foreign_key.ref_schema = to_database.to_owned();
+                foreign_key.ref_table = to_table.to_owned();
+            }
+        }
+    }
 }
 
 /// Go `ddl.isAcceptableForeignKeyColumnChange` (`pkg/ddl/foreign_key.go`).

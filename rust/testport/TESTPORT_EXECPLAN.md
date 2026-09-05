@@ -8443,3 +8443,10 @@ risks without claiming repository-wide parity.
   The formerly refused child-cover drop now succeeds while the primary handle
   continues to answer the constraint; the existing parent-side 1553 control
   remains. Evidence is recorded in `receipts/ddl_foreign_key_child_handle.md`.
+- 2026-09-05 (`pkg/ddl` RENAME TABLE foreign-key metadata): Rust now rewrites
+  `ref_schema`/`ref_table` on every affected child, including self-references
+  on a table moved across schemas and `ALTER TABLE ... RENAME TO`. Focused
+  executor and session regressions prove the moved self-reference and the
+  cross-schema parent update; column-renames and DROP COLUMN remain explicit
+  boundaries. Evidence is recorded in
+  `receipts/ddl_foreign_key_rename_table.md`.
