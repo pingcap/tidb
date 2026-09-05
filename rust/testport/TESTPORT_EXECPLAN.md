@@ -8850,6 +8850,13 @@ risks without claiming repository-wide parity.
   passes with the seven-test owner suite and dependent executor/session
   all-target check; Ready evidence is recorded in
   `receipts/meta_metadef_operate_view.md`.
+- 2026-09-06 (`pkg/util/zeropool`): the complete three-artifact owner now
+  matches Go's discardable-return contract by removing the Rust-only
+  `#[must_use]` diagnostic from `Pool::new`. Its deny-on-discard regression
+  failed with one diagnostic on the detached pre-fix owner and passes with
+  both owner tests and the benchmark-inclusive all-target check; Ready
+  evidence is recorded in `receipts/util_zeropool.md` and the dedicated
+  ExecPlan.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

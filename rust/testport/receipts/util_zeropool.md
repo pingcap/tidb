@@ -88,3 +88,29 @@ No Go or Bazel file changed, so `make bazel_prepare` is not required.
   audit removed only internal supplemental tests.
 - Performance: production is unchanged. Only the intentionally allocating
   comparison benchmark becomes slower and representative of Go.
+
+## Rust-only diagnostic alignment (`2026-09-06`)
+
+The complete three-artifact package inventory, three production methods, one
+four-subtest Go test, four benchmarks, Rust owner, and four Rust benchmark
+translations described above were re-read before this follow-up. No artifact,
+fixture, generated input, or platform variant was added.
+
+Rust's Go-shaped `Pool::new` constructor carried one explicit
+`#[must_use]` diagnostic that Go's `New` does not impose. The annotation was
+removed. The focused
+`zeropool::tests::constructor_return_may_be_ignored_like_go` regression
+discards its result under `#[deny(unused_must_use)]`.
+
+On detached pre-fix `6a3d12a7c4d52145a3a404e1fa809ed52bf3f4e0`, the probe
+failed with exactly one `unused_must_use` diagnostic:
+
+```
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib constructor_return_may_be_ignored_like_go -- --exact --nocapture
+```
+
+The corrected fully-qualified focused probe passed. Ready validation also
+passed the two-test `zeropool::tests::` owner surface, the `tidb-util`
+all-target/benchmark check, pinned Rust formatting, `git diff --check`, and
+`make lint`. No Go source was edited, and no external integration test is
+needed for this constructor diagnostic-only change.

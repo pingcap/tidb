@@ -56,7 +56,6 @@ impl<T: Default> Default for Pool<T> {
 
 impl<T> Pool<T> {
     /// Creates a pool that calls `factory` whenever no pooled value exists.
-    #[must_use]
     pub fn new(factory: impl Fn() -> T + Send + Sync + 'static) -> Self {
         Self {
             items: Mutex::new(Vec::new()),
@@ -170,5 +169,11 @@ mod tests {
             assert!(item.is_empty());
             pool.put(item);
         }
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn constructor_return_may_be_ignored_like_go() {
+        Pool::new(|| Vec::<u8>::new());
     }
 }

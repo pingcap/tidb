@@ -20,6 +20,10 @@ native Rust owner, source test suite, and benchmark translations.
 - [x] Revalidate current and exact detached Go-master tests, the source-owned
   Rust test, all-target/benchmark compilation, formatting, and diff quality.
 - [x] Commit, push, pull, and verify `origin/hparser-integration`.
+- [x] Re-audit the complete package and remove the remaining Rust-only
+  `#[must_use]` diagnostic from the Go-shaped `Pool::new` constructor. Prove
+  the mismatch with a detached pre-fix deny-on-discard regression, then pass
+  the owner, benchmark-target, formatting, diff, and Ready lint gates.
 
 ## Validation gate
 
@@ -34,4 +38,4 @@ source-derived regression. Exact commands and boundaries are recorded in
 Any future pool change must preserve zero-value/default behavior, factory
 construction, concurrent get/put, pointer clearing after get, four source
 subtests, and benchmark identities. Do not reintroduce source-absent APIs or
-pointer-policy diagnostics.
+pointer-policy diagnostics, including a discard-only constructor warning.
