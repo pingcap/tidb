@@ -51,3 +51,14 @@ conservatively widened. The full-reload triggers mirror Go's
 older-version case.
 
 Remaining slices: (b) cluster-table plumbing, (c) bundle builder.
+
+## Slice (b): cluster-table plumbing (2026-09-05) — DISPOSITIONED, no code change
+
+Go's `cluster.go` is the INFORMATION_SCHEMA CLUSTER memory-table
+plumbing (`IsClusterTableByName`, cop-destination routing, host-info
+row appending): it serves the generic memory-table engine this port
+does not expose, so it is N/A by the scope decision recorded at the
+opening. The identically-named Rust `cluster_catalog.rs` is a different
+layer — the meta-snapshot persistence and load path whose version
+semantics slice (a) already verified against `builder.go`. No
+divergence to fix in either.

@@ -398,3 +398,5 @@
 - 下轮恢复点: (1) 切片 a: DDL reload 版本语义(catalog_reload/catalog_watch vs builder.go); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - infoschema 切片 a 核实: DDL reload 版本语义(单快照/7 动作靶向补丁/其余全量回退=Go applyDefaultAction 等价/版本间隙阈值)全对齐, 收据已追加。
 - 下轮恢复点: (1) 切片 b cluster-table plumbing; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- infoschema 切片 b 定性: cluster.go 属 CLUSTER 内存表面(节点不暴露, by-design); Rust cluster_catalog.rs=meta 持久化加载(切片 a 已核)。无代码改动。
+- 下轮恢复点: (1) 切片 c bundle builder; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
