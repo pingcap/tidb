@@ -1135,6 +1135,21 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go's deprecated planner/DDL compatibility switches are now always
+        // enabled. Their Validation closures return `ON` for every boolean
+        // spelling; the matching warning is appended by the session write
+        // path when the caller explicitly requests `OFF`.
+        if matches!(
+            self.name,
+            "tidb_enable_exchange_partition"
+                | "tidb_enable_new_cost_interface"
+                | "tidb_enable_tiflash_read_for_write_stmt"
+        ) {
+            return Ok(Validated {
+                value: "ON".to_owned(),
+                truncated: validated.truncated,
+            });
+        }
         // Go's `tidb_enable_list_partition` validation: list partitioning is
         // also always on, but this one REFUSES anything that is not, with an
         // `errors.Errorf` whose text is the whole error. Captured:

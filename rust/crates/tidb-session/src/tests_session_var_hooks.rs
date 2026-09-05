@@ -280,6 +280,62 @@ fn scatter_region_validation_matches_go() {
     assert_eq!(one(&mut session, "SELECT @@tidb_scatter_region"), "");
 }
 
+/// Go's deprecated exchange, cost-interface, and TiFlash-read switches are
+/// compatibility shims: OFF emits the source warning and every assignment
+/// stores ON.
+#[test]
+fn deprecated_always_on_switches_match_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET tidb_enable_exchange_partition = OFF")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][1], "1105");
+    assert_eq!(
+        warnings[0][2],
+        "tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@tidb_enable_exchange_partition"),
+        "1"
+    );
+
+    session
+        .run("SET tidb_enable_new_cost_interface = OFF")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][1], "1287");
+    assert_eq!(
+        warnings[0][2],
+        "'OFF' is deprecated and will be removed in a future release. Please use ON instead"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@tidb_enable_new_cost_interface"),
+        "1"
+    );
+
+    session
+        .run("SET GLOBAL tidb_enable_tiflash_read_for_write_stmt = OFF")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][1], "1105");
+    assert_eq!(
+        warnings[0][2],
+        "tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_enable_tiflash_read_for_write_stmt"
+        ),
+        "1"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.
