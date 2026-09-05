@@ -59,3 +59,28 @@ No Go or Bazel file changed, so `make bazel_prepare` is not required.
   interfaces; Rust's public parser API is unchanged.
 - No production performance behavior changed; the new test only exercises
   existing traversal short-circuiting.
+
+## Rust follow-up: Go-discardable return values
+
+The complete six-artifact inventory above remains the package authority. The
+Rust owner had nine explicit `#[must_use]` annotations on the Go-shaped
+`GetDefaultDB`, `SimpleCases`, restore, byte-class, and `Space0` APIs (plus
+the private restore-flag helper). Go permits callers to discard all of these
+results, so the annotations were Rust-only diagnostics rather than behavior.
+They are now removed without changing any return types or runtime paths.
+
+The source-derived regression
+`util_parser_package_source::return_values_may_be_ignored_like_go` discards
+each affected public return under `#[deny(unused_must_use)]`. On the pre-fix
+owner it failed to compile with nine unused-return errors; it now compiles and
+passes. The complete owner aggregate remains the validation boundary.
+
+Ready validation for this follow-up:
+
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-parser --test all util_parser_package_source::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-parser --test all -- --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-parser --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-parser -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+No Go, Bazel, generated, fixture, platform, or module artifact changed, so
+`make bazel_prepare` is not required.

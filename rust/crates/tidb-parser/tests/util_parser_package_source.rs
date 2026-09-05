@@ -17,8 +17,9 @@
 //! whose equivalent here is the test runner itself).
 
 use tidb_parser::util_parser::{
-    any_char, any_punct, digit, get_default_db, is_punct_byte, is_space_byte, number, one_char,
-    restore_with_default_db, simple_cases, space, space0, PatternNotMatch,
+    any_char, any_punct, binding_restore_flags, digit, get_default_db, is_digit_byte,
+    is_punct_byte, is_space_byte, number, one_char, restore_with_default_db, restore_without_db,
+    simple_cases, space, space0, PatternNotMatch,
 };
 
 // Go `TestSimpleCases` (pkg/util/parser/ast_test.go:26).
@@ -183,4 +184,22 @@ fn get_default_db_walks_all_table_refs_without_replacement() {
 
     let second_implicit = tidb_parser::parse("select * from db.t join u").unwrap();
     assert_eq!(get_default_db(&second_implicit, "test"), "test");
+}
+
+// Go permits callers to discard every util/parser return value. Keep the
+// Rust owner from adding a diagnostic-only contract at this package boundary.
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    let stmt = tidb_parser::parse("insert into t values (1)").unwrap();
+
+    get_default_db(&stmt, "test");
+    simple_cases(&stmt, "test", "insert into t values (1)");
+    binding_restore_flags();
+    restore_with_default_db(&stmt, "test", "");
+    restore_without_db(&stmt);
+    is_punct_byte(b'!');
+    is_space_byte(b' ');
+    space0(" x");
+    is_digit_byte(b'1');
 }

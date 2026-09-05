@@ -8702,6 +8702,11 @@ risks without claiming repository-wide parity.
   `#[must_use]` annotations (49 expanded helper APIs, including generated flag
   predicates). The deny-on-discard regression and Ready evidence are recorded
   in `receipts/parser_mysql_operate_view_audit.md`.
+- 2026-09-05 (`pkg/util/parser`): the complete `tidb-parser` util owner now
+  matches Go's discardable-return contract by removing nine explicit Rust-only
+  `#[must_use]` annotations from the default-database, restore, byte-class,
+  and `Space0` helpers. The deny-on-discard regression and Ready evidence are
+  recorded in `receipts/util_parser_audit.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
