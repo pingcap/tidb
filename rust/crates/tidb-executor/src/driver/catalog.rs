@@ -160,6 +160,9 @@ pub struct Catalog {
     /// Go's process-global `config.EnableEnumLengthLimit`, likewise carried
     /// with the catalog that owns the DDL metadata in this tier.
     enable_enum_length_limit: bool,
+    /// Go's process-global `config.TableColumnCountLimit`, scoped to this
+    /// catalog for deterministic DDL tests and embedded callers.
+    table_column_count_limit: usize,
     /// Go `infoschema`'s policy map, keyed by the FOLDED policy name.
     ///
     /// A placement policy is a schema object in its own right, not an
@@ -390,6 +393,7 @@ impl Default for Catalog {
             databases,
             max_index_length: crate::ddl::index_prefix::MAX_INDEX_LENGTH,
             enable_enum_length_limit: true,
+            table_column_count_limit: 1017,
             policies: HashMap::new(),
             next_policy_id: 0,
             next_database_id: 3,
@@ -564,6 +568,13 @@ impl Catalog {
         self.enable_enum_length_limit = enabled;
     }
 
+    /// Sets the Go-compatible maximum number of columns for this catalog's
+    /// DDL. Go reads this from the process-global config for every CREATE or
+    /// ADD COLUMN check; keeping it on the catalog avoids cross-test races.
+    pub fn set_table_column_count_limit(&mut self, limit: usize) {
+        self.table_column_count_limit = limit;
+    }
+
     /// Returns the catalog-scoped Go `config.MaxIndexLength`.
     #[must_use]
     pub(crate) const fn max_index_length(&self) -> i64 {
@@ -574,6 +585,12 @@ impl Catalog {
     #[must_use]
     pub(crate) const fn enable_enum_length_limit(&self) -> bool {
         self.enable_enum_length_limit
+    }
+
+    /// Returns the catalog-scoped Go `config.TableColumnCountLimit`.
+    #[must_use]
+    pub(crate) const fn table_column_count_limit(&self) -> usize {
+        self.table_column_count_limit
     }
 
     /// Whether this catalog contains any in-process matrix-backed tables.

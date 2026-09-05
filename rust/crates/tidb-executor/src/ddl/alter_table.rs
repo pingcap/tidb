@@ -3391,6 +3391,7 @@ fn add_column_action(
         tidb_ast::ColumnOption::Generated { expression, .. } => Some(expression),
         _ => None,
     });
+    let column_limit = catalog.table_column_count_limit();
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -3411,6 +3412,12 @@ fn add_column_action(
             return Ok(());
         }
         return Err(duplicate);
+    }
+    if table.columns.len() >= column_limit {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            message: "Too many columns".to_owned(),
+        });
     }
     let index = match position {
         tidb_ast::ColumnPosition::Default => table.columns.len(),

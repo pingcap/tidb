@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` CREATE TABLE column-count limit): promoted the
+  executable first half of `TestCreateTableTooLarge`. `Catalog` now carries
+  Go's default 1017-column limit with a test/embedding setter, and CREATE (as
+  well as ADD COLUMN) returns 1117 before metadata publication when the limit
+  is exceeded. The focused regression records the prior commit's accidental
+  success for 1,018 columns, then passes after raising the catalog limit; the
+  storage-level 8025 `ErrEntryTooLarge` half remains a documented backend gap.
 - 2026-09-05 (`pkg/ddl` ALTER TABLE charset/convert): promoted the
   non-empty, executable half of `TestChangingTableCharset`. Ordinary
   `CHARSET` now validates and updates only the table default; `CONVERT TO`

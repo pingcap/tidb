@@ -1222,6 +1222,18 @@ pub fn run_create_table_in(
         seen_indexes.push(name);
     }
 
+    // Go `checkTooManyColumns` (`pkg/ddl/create_table.go:719`) runs after
+    // duplicate/name checks and before the table metadata is published.
+    // Keep the limit on the owning catalog rather than a process-global so
+    // embedded callers and tests can exercise the same configuration without
+    // racing unrelated catalogs.
+    if create.columns.len() > catalog.table_column_count_limit() {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            message: "Too many columns".to_owned(),
+        });
+    }
+
     // Build the ColumnInfos (ids 1..n, offsets in definition order).
     let database_charset = catalog
         .database_charset(&database)

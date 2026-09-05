@@ -29,8 +29,9 @@
 use tidb_datatype::{Charset, Datum, FieldTypeCode, FieldTypeFlags};
 use tidb_executor::driver::Catalog;
 use tidb_executor::{
-    admin_check, ddl, run_create_table_on, run_insert_on, run_select_on, run_update_on, KvTable,
-    RowDecodeContext, StmtContext, TableEntry,
+    admin_check, ddl, run_create_table_in, run_create_table_on, run_insert_on, run_select_on,
+    run_update_on,
+    CreateTableSettings, KvTable, RowDecodeContext, StmtContext, TableEntry,
 };
 
 /// The text of a string datum, however the codec chose to represent it
@@ -1345,15 +1346,42 @@ fn changing_table_charset_matches_go_validation_and_conversion() {
     );
 }
 
-// go-parity-gap: needs `config.GetGlobalConfig().TableColumnCountLimit`
-// mutation (12 000 columns then a raised limit) and kv.ErrEntryTooLarge
-// from a meta entry over the mem spec limit — config and txn-entry limits
-// are outside this tier
-// (pkg/ddl/db_integration_test.go:948::TestCreateTableTooLarge).
+// The column-count half of Go's TestCreateTableTooLarge is executable here;
+// the later kv.ErrEntryTooLarge assertion still needs a metadata transaction
+// backend, which this catalog deliberately does not model.
+#[test]
+fn create_table_column_limit_matches_go() {
+    let column_count = 1_018;
+    let columns = (1..=column_count)
+        .map(|index| format!("c{index} double"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!("create table t_too_many ({columns})");
+    let mut catalog = Catalog::default();
+    let error = run_create_table_on(&sql, &mut catalog)
+        .expect_err("Go's default TableColumnCountLimit is 1017")
+        .to_mysql_error();
+    assert_eq!(error.code, 1117, "{}", error.message);
+
+    catalog.set_table_column_count_limit(column_count);
+    let sql = sql.replace("t_too_many", "t_with_limit");
+    run_create_table_in(
+        &sql,
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &StmtContext::for_query(),
+    )
+    .expect("raising the Go-compatible limit admits the same column count");
+    assert!(catalog.contains_in("test", "t_with_limit"));
+}
+
+// go-parity-gap: the second half of TestCreateTableTooLarge needs
+// kv.ErrEntryTooLarge from a metadata entry over the mem-spec limit. The
+// in-process catalog has no metadata transaction-size backend to exercise.
 #[test]
 #[ignore]
-fn create_table_too_large() {
-    // Contract to restore: 12 000 columns → ErrTooManyFields (1117); with
-    // TableColumnCountLimit raised, the same CREATE fails with
-    // kv.ErrEntryTooLarge when the meta entry is written.
+fn create_table_too_large_entry_limit() {
+    // Contract to restore: after TableColumnCountLimit is raised, the same
+    // CREATE with 12 000 columns fails while writing the metadata entry.
 }
