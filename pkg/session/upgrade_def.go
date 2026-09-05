@@ -530,6 +530,9 @@ const (
 
 	// version286 adds the OPERATE VIEW static privilege.
 	version286 = 286
+
+	// version287 materializes adaptive LIMIT scan as OFF for upgraded clusters when no persisted value exists.
+	version287 = 287
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -543,7 +546,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version286
+var currentBootstrapVersion int64 = version287
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -734,6 +737,7 @@ var (
 		{version: version284, fn: upgradeToVer284},
 		{version: version285, fn: upgradeToVer285},
 		{version: version286, fn: upgradeToVer286},
+		{version: version287, fn: upgradeToVer287},
 	}
 )
 
@@ -2342,4 +2346,10 @@ func upgradeToVer286(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
+}
+
+func upgradeToVer287(s sessionapi.Session, _ int64) {
+	// Fresh clusters persist ON during initial bootstrap. Preserve old executor
+	// behavior for upgraded clusters without overwriting an explicit value.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)
 }

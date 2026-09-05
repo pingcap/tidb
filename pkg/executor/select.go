@@ -467,6 +467,10 @@ type LimitExec struct {
 	columnIdxsUsedByChild []int
 	columnSwapHelper      *chunk.ColumnSwapHelper
 
+	// The Limit owns the statement-local controller lifecycle. Reaching LIMIT or
+	// EOF stops admission; Open resets it after all prior workers have exited.
+	adaptiveLimitController *exec.AdaptiveLimitController
+
 	// Log the close time when opentracing is enabled.
 	span opentracing.Span
 }
@@ -474,6 +478,11 @@ type LimitExec struct {
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	defer func() {
+		if e.adaptiveLimitController != nil && e.cursor >= e.end {
+			e.adaptiveLimitController.Stop()
+		}
+	}()
 	if e.cursor >= e.end {
 		return nil
 	}
@@ -487,6 +496,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		batchSize := uint64(e.childResult.NumRows())
 		// no more data.
 		if batchSize == 0 {
+			if e.adaptiveLimitController != nil {
+				e.adaptiveLimitController.Stop()
+			}
 			return nil
 		}
 		if newCursor := e.cursor + batchSize; newCursor >= e.begin {
@@ -518,6 +530,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	batchSize := uint64(e.childResult.NumRows())
 	// no more data.
 	if batchSize == 0 {
+		if e.adaptiveLimitController != nil {
+			e.adaptiveLimitController.Stop()
+		}
 		return nil
 	}
 	if e.cursor+batchSize > e.end {
@@ -539,6 +554,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Open implements the Executor Open interface.
 func (e *LimitExec) Open(ctx context.Context) error {
+	if e.adaptiveLimitController != nil {
+		e.adaptiveLimitController.Reset()
+	}
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -558,6 +576,9 @@ func (e *LimitExec) open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *LimitExec) Close() error {
 	start := time.Now()
+	if e.adaptiveLimitController != nil {
+		e.adaptiveLimitController.Stop()
+	}
 
 	e.childResult = nil
 	err := e.BaseExecutor.Close()
