@@ -26,7 +26,7 @@
 //! as gaps. Every divergence found while porting is written in the test's
 //! comment rather than papered over.
 
-use tidb_datatype::{Datum, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Charset, Datum, FieldTypeCode, FieldTypeFlags};
 use tidb_executor::driver::Catalog;
 use tidb_executor::{
     admin_check, ddl, run_create_table_on, run_insert_on, run_select_on, run_update_on, KvTable,
@@ -69,6 +69,13 @@ fn column(catalog: &Catalog, database: &str, table_name: &str, name: &str) -> ti
         .find(|column| column.name.eq_ignore_ascii_case(name))
         .unwrap_or_else(|| panic!("no column {name} in {database}.{table_name}"))
         .clone()
+}
+
+fn expect_alter_error(catalog: &mut Catalog, ctx: &StmtContext, sql: &str, code: u16) {
+    let error = ddl::run_alter_table_in(sql, catalog, "test", ctx)
+        .expect_err("Go rejects this charset operation")
+        .to_mysql_error();
+    assert_eq!(error.code, code, "{sql}: {}", error.message);
 }
 
 // --- TestCreateTableIfNotExistsLike (pkg/ddl/db_integration_test.go:60) ---
@@ -1264,18 +1271,78 @@ fn update_multiple_table_mid_ddl() {
     // final t1 rows read "8 1 9", "8 2 9".
 }
 
-// go-parity-gap: every ALTER TABLE charset/convert form this test drives is
-// refused by this tier as "this ALTER TABLE table option is not supported
-// yet" (captured), and the empty-charset meta mutation halves need a meta
-// Mutator; the coded 8200/1253/1291/1391 contracts cannot be pinned
-// (pkg/ddl/db_integration_test.go:468::TestChangingTableCharset).
 #[test]
-#[ignore]
-fn changing_table_charset() {
-    // Contract to restore: gbk refused 8200; '' charset 1291...; collate
-    // mismatch 1253; convert-to updates table AND column charsets; column
-    // charset survives a table-only `alter charset` (no column rewrite);
-    // empty stored charsets backfill to the table default.
+// The parser rejects empty charset/collation tokens before the executor, so
+// the Go 1115/1273 empty-value halves remain documentary gaps. The accepted
+// non-empty validation and conversion clauses are executable below.
+fn changing_table_charset_matches_go_validation_and_conversion() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    run_create_table_on(
+        "create table t(a varchar(10), index i(a)) charset latin1 collate latin1_bin",
+        &mut catalog,
+    )
+    .expect("create latin1 table");
+    expect_alter_error(&mut catalog, &ctx, "alter table t charset gbk", 8200);
+    expect_alter_error(
+        &mut catalog,
+        &ctx,
+        "alter table t charset utf8 collate latin1_bin",
+        1253,
+    );
+    expect_alter_error(&mut catalog, &ctx, "alter table t charset utf8", 8200);
+    expect_alter_error(
+        &mut catalog,
+        &ctx,
+        "alter table t charset utf8 collate utf8_bin collate utf8mb4_bin collate utf8_bin",
+        1253,
+    );
+    expect_alter_error(
+        &mut catalog,
+        &ctx,
+        "alter table t charset latin1 charset utf8 charset utf8mb4 collate utf8_bin",
+        1302,
+    );
+
+    ddl::run_alter_table_in(
+        "alter table t charset utf8mb4",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect("Go changes the table default charset");
+    let table = kv_table(&catalog, "test", "t");
+    assert_eq!(table.charset().charset, Charset::Utf8Mb4);
+    assert_eq!(table.charset().collation, Charset::Utf8Mb4.default_collation());
+    assert_eq!(column(&catalog, "test", "t", "a").field_type.charset(), Charset::Latin1);
+
+    run_create_table_on(
+        "create table utf8_table(a varchar(10)) charset utf8",
+        &mut catalog,
+    )
+    .expect("create utf8 table");
+    ddl::run_alter_table_in(
+        "alter table utf8_table convert to charset utf8mb4",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect("Go converts table and columns to utf8mb4");
+    let table = kv_table(&catalog, "test", "utf8_table");
+    assert_eq!(table.charset().charset, Charset::Utf8Mb4);
+    assert_eq!(column(&catalog, "test", "utf8_table", "a").field_type.charset(), Charset::Utf8Mb4);
+
+    run_create_table_on(
+        "create table ascii_table(a varchar(10) character set ascii) charset utf8mb4",
+        &mut catalog,
+    )
+    .expect("create ascii column table");
+    expect_alter_error(
+        &mut catalog,
+        &ctx,
+        "alter table ascii_table convert to charset utf8mb4",
+        8200,
+    );
 }
 
 // go-parity-gap: needs `config.GetGlobalConfig().TableColumnCountLimit`

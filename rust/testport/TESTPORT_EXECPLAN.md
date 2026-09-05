@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` ALTER TABLE charset/convert): promoted the
+  non-empty, executable half of `TestChangingTableCharset`. Ordinary
+  `CHARSET` now validates and updates only the table default; `CONVERT TO`
+  updates the table and character-column metadata, with Go's 8200/1253/1302
+  refusal codes pinned. The regression moved b102 from 41 running/18 ignored
+  to 42/17; the prior-commit regression recorded the generic 1105 refusal;
+  empty charset/collation literals remain a parser-level gap.
 - 2026-09-05 (`pkg/ddl` MODIFY COLUMN option clauses): aligned the ordinary
   ALTER path with Go's `TestModifyColumnOption` coded half. `Collate` now
   survives the rebuilt field type for both charset/collation spellings, while

@@ -39,7 +39,7 @@ use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
 use crate::kv_table::KvForeignKey;
 use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Charset, Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 
 /// Runs an `ALTER TABLE`, applying its actions in source order.
 ///
@@ -308,6 +308,15 @@ fn run_alter_table_in_inner(
             }
             tidb_ast::AlterTableAction::SetTableOptions { options } => {
                 set_table_options_action(catalog, &database, &name, options, ctx)?;
+            }
+            tidb_ast::AlterTableAction::ConvertCharacterSet { charset, collation } => {
+                convert_table_charset_action(
+                    catalog,
+                    &database,
+                    &name,
+                    charset.as_deref(),
+                    collation.as_deref(),
+                )?
             }
             tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Truncate {
                 all,
@@ -1510,6 +1519,33 @@ fn set_table_options_action(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     super::validate_table_options(options)?;
+    let current_charset = match catalog.table_in(database, name) {
+        Some(crate::TableEntry::Kv(table)) => table.charset(),
+        _ => {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE needs a storage-backed table",
+            ))
+        }
+    };
+    let mut pending_charset = None;
+    if options.iter().any(|option| {
+        matches!(
+            option,
+            tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_)
+        )
+    }) {
+        let target = alter_table_charset_pair(options, current_charset)?;
+        // Go's ordinary ALTER TABLE CHARSET path only supports the utf8mb4
+        // table default in this executor tier. `utf8` and `gbk` are parsed,
+        // then refused with ErrUnsupportedDDLOperation (8200).
+        if matches!(target.charset, Charset::Utf8 | Charset::Gbk) {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                message: "unsupported alter table charset operation".to_owned(),
+            });
+        }
+        pending_charset = Some(target);
+    }
     // `Some(None)` records Go's `PLACEMENT POLICY=default` reset, while
     // `Some(Some(name))` records a policy to resolve after the mutable table
     // borrow is released. `None` means this ALTER has no placement option.
@@ -1537,6 +1573,7 @@ fn set_table_options_action(
             tidb_ast::TableOption::Comment(comment) => {
                 table.set_comment(super::normalize_table_comment(comment, name, ctx)?);
             }
+            tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_) => {}
             tidb_ast::TableOption::ForceAutoIncrement(value) => {
                 let next = value.parse::<u64>().map_err(|_| {
                     DriverError::unsupported("FORCE AUTO_INCREMENT needs an integer value")
@@ -1615,6 +1652,9 @@ fn set_table_options_action(
             }
         }
     }
+    if let Some(charset) = pending_charset {
+        table.set_charset(charset);
+    }
     if let Some(policy_name) = pending_placement {
         let reference = match policy_name {
             None => None,
@@ -1632,6 +1672,125 @@ fn set_table_options_action(
             unreachable!("the table was resolved above")
         };
         table.set_placement_policy(reference);
+    }
+    Ok(())
+}
+
+fn alter_table_charset_pair(
+    options: &[tidb_ast::TableOption],
+    fallback: TableCharset,
+) -> Result<TableCharset, DriverError> {
+    let mut charset = None;
+    let mut collation = None;
+    for option in options {
+        match option {
+            tidb_ast::TableOption::CharacterSet(name) => {
+                if charset.is_some() {
+                    return Err(DriverError::DdlCoded {
+                        errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                        message: "Conflicting declarations for CHARACTER SET".to_owned(),
+                    });
+                }
+                charset = Some(Charset::from_name(name).ok_or(DriverError::DdlCoded {
+                    errno: tidb_error::tidb::errcode::ErrUnknownCharacterSet,
+                    message: format!("Unknown character set: '{name}'"),
+                })?);
+            }
+            tidb_ast::TableOption::Collate(name) => {
+                let value = Collation::from_name(name).ok_or(DriverError::DdlCoded {
+                    errno: tidb_error::tidb::errcode::ErrUnknownCollation,
+                    message: format!("Unknown collation: '{name}'"),
+                })?;
+                if let Some(charset) = charset {
+                    if value.charset() != charset {
+                        return Err(DriverError::DdlCoded {
+                            errno: tidb_error::tidb::errcode::ErrCollationCharsetMismatch,
+                            message: format!(
+                                "Collation '{}' is not valid for CHARACTER SET '{}'",
+                                value.name(),
+                                charset.name()
+                            ),
+                        });
+                    }
+                }
+                collation = Some(value);
+            }
+            _ => {}
+        }
+    }
+    if let (Some(charset), Some(collation)) = (charset, collation) {
+        if collation.charset() != charset {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrCollationCharsetMismatch,
+                message: format!(
+                    "Collation '{}' is not valid for CHARACTER SET '{}'",
+                    collation.name(),
+                    charset.name()
+                ),
+            });
+        }
+    }
+    Ok(TableCharset {
+        charset: charset.unwrap_or(fallback.charset),
+        collation: collation
+            .unwrap_or_else(|| charset.unwrap_or(fallback.charset).default_collation()),
+    })
+}
+
+fn convert_table_charset_action(
+    catalog: &mut Catalog,
+    database: &str,
+    name: &str,
+    charset: Option<&str>,
+    collation: Option<&str>,
+) -> Result<(), DriverError> {
+    let current = match catalog.table_in(database, name) {
+        Some(crate::TableEntry::Kv(table)) => table.charset(),
+        _ => {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE needs a storage-backed table",
+            ))
+        }
+    };
+    let options = [
+        charset.map(|name| tidb_ast::TableOption::CharacterSet(name.to_owned())),
+        collation.map(|name| tidb_ast::TableOption::Collate(name.to_owned())),
+    ];
+    let options: Vec<_> = options.into_iter().flatten().collect();
+    let target = alter_table_charset_pair(&options, TableCharset::default())?;
+    if target.charset == Charset::Gbk {
+        return Err(DriverError::DdlCoded {
+            errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            message: "unsupported alter table charset operation".to_owned(),
+        });
+    }
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+        return Err(DriverError::unsupported(
+            "ALTER TABLE needs a storage-backed table",
+        ));
+    };
+    for column in table.columns() {
+        if !column.field_type.is_character_string() {
+            continue;
+        }
+        let column_charset = column.field_type.charset();
+        if column_charset == Charset::Ascii
+            || (target.charset == Charset::Utf8
+                && current.charset != Charset::Utf8
+                && column_charset != Charset::Utf8)
+        {
+            return Err(DriverError::DdlCoded {
+                errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                message: "unsupported alter table charset operation".to_owned(),
+            });
+        }
+    }
+    table.set_charset(target);
+    for column in table.columns_mut() {
+        if column.field_type.is_character_string() {
+            column.field_type.set_charset_name(target.charset.name());
+            column.field_type.set_collation(target.collation);
+        }
     }
     Ok(())
 }
