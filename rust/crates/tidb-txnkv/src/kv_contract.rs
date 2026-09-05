@@ -19,7 +19,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use tokio::sync::Notify;
 
@@ -387,6 +388,8 @@ pub struct CoprRequestLimiter {
     capacity: usize,
     in_use: AtomicUsize,
     available: Notify,
+    blocking_wait: Condvar,
+    blocking_guard: Mutex<()>,
 }
 
 impl fmt::Debug for CoprRequestLimiter {
@@ -405,6 +408,8 @@ impl CoprRequestLimiter {
             capacity,
             in_use: AtomicUsize::new(0),
             available: Notify::new(),
+            blocking_wait: Condvar::new(),
+            blocking_guard: Mutex::new(()),
         }
     }
 
@@ -470,10 +475,40 @@ impl CoprRequestLimiter {
             ) {
                 Ok(_) => {
                     self.available.notify_one();
+                    self.blocking_wait.notify_one();
                     return;
                 }
                 Err(observed) => current = observed,
             }
+        }
+    }
+
+    /// Blocks a synchronous coprocessor caller until one request attempt is
+    /// admitted or the supplied cancellation/deadline predicate returns true.
+    ///
+    /// Go's `AcquireWithContext` is synchronous at the client-go request
+    /// boundary. Rust's direct-unary response owner is also synchronous, so a
+    /// small condition-variable wait preserves the same admission contract
+    /// without polling or entering a nested async runtime. Returns `true` when
+    /// the caller should abort, otherwise the caller owns one token and must
+    /// call [`Self::release`].
+    pub fn acquire_blocking_with_context(&self, cancelled: impl Fn() -> bool) -> bool {
+        let mut guard = self
+            .blocking_guard
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        loop {
+            if cancelled() {
+                return true;
+            }
+            if self.try_acquire() {
+                return false;
+            }
+            guard = self
+                .blocking_wait
+                .wait_timeout(guard, Duration::from_millis(1))
+                .map(|(guard, _)| guard)
+                .unwrap_or_else(|poisoned| poisoned.into_inner().0);
         }
     }
 
@@ -708,3 +743,32 @@ pub fn find_keys_in_stage(
 
 /// Default/global replica scope.
 pub const GLOBAL_REPLICA_SCOPE: &str = "global";
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::new_copr_request_limiter;
+
+    #[test]
+    fn blocking_request_limiter_waits_for_release() {
+        let limiter = new_copr_request_limiter(1).expect("positive capacity");
+        assert!(limiter.try_acquire());
+
+        let waiting = std::sync::Arc::clone(&limiter);
+        let (ready, done) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let cancelled = waiting.acquire_blocking_with_context(|| false);
+            ready.send(cancelled).expect("waiting thread is alive");
+            waiting.release();
+        });
+
+        assert!(done.recv_timeout(Duration::from_millis(10)).is_err());
+        limiter.release();
+        assert!(!done
+            .recv_timeout(Duration::from_secs(1))
+            .expect("release wakes the waiting request"));
+        thread.join().expect("waiting thread joins");
+    }
+}

@@ -2534,6 +2534,19 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   `pkg/store/copr` worker owner, so no speculative Rust facade was added.
   Details are in `receipts/store_copr.md`.
 
+- 2026-09-05 (`pkg/store/copr` query-scoped per-store request limiter):
+  refreshed the complete 25-artifact package inventory at Go `origin/master`
+  `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (12,225 lines) and closed the
+  missing Rust execution boundary. `tidb-distsql` now admits every selected
+  TiKV attempt through the query-scoped limiter (or request-local fallback),
+  holds an RAII token through synchronous/BatchCommands/async response
+  settlement, and releases before route retry. The synchronous
+  `tidb-txnkv::CoprRequestLimiter` wait is cancellation/deadline-aware and
+  preserves Go's query-limiter precedence for store ID zero. Focused
+  fail-before/pass-after source and blocking-wait regressions pass; full live
+  copr integration, metrics, and remaining package rows stay explicit.
+  Details are in `receipts/copr_query_limiter.md`.
+
 - 2026-09-02: completed the bounded shared-lock-loss rollback audit for the
   complete Go-master `pkg/session` root package at
   `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (behavior introduced by

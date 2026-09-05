@@ -52,6 +52,24 @@ fn one_region_cop_request_uses_go_synchronous_batch_completion() {
 }
 
 #[test]
+fn every_tikv_attempt_honors_the_query_scoped_store_limiter() {
+    let admission = owner(
+        "fn acquire_request_attempt_limiter(",
+        "fn dispatch_attempt(",
+    );
+    assert!(admission.contains("query_cop_store_limiter"));
+    assert!(admission.contains("get_store_limiter(store_id)"));
+    assert!(admission.contains("acquire_blocking_with_context"));
+
+    let dispatch = owner("fn dispatch_attempt(", "fn complete_batch_attempt(");
+    assert!(dispatch.contains("let request_attempt_permit = self.acquire_request_attempt_limiter"));
+    assert!(dispatch.contains("request_attempt_permit,"));
+
+    let settle = owner("fn settle_dispatch(", "fn record_attempt_result(");
+    assert!(settle.contains("request_attempt_permit: _request_attempt_permit"));
+}
+
+#[test]
 fn only_local_batch_admission_failure_reenters_the_sync_selector_loop() {
     let dispatch = owner("fn dispatch_attempt(", "fn complete_batch_attempt(");
     let compact_dispatch = dispatch.split_whitespace().collect::<String>();

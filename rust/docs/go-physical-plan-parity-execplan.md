@@ -609,7 +609,9 @@ both `oltp_read_only` and `oltp_read_write`.
   comparison-loop cancellation are now covered by focused receipts.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. Previously
   absent MPP probe, cache metrics, and range diagnostics owners are now
-  implemented; remaining integration/test rows are still partial.
+  implemented, and Go master’s query-scoped per-store limiter is enforced by
+  the Rust direct-unary TiKV dispatch; remaining integration, metrics, and
+  package test rows are still partial.
 - [ ] Run correctness, compatibility, performance, and Ready validation.
 
 ## Surprises & Discoveries

@@ -44,8 +44,9 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::{
     rpc::{AsyncRequestDispatcher, CompletionError, CompletionRunLoop, PendingRequest},
-    EndpointType, SharedReadOpener, SharedReadRuntime, SynchronousBatchRequestDispatcher,
-    TraceInfo, UnaryCallContext, UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
+    CoprRequestLimiter, EndpointType, SharedReadOpener, SharedReadRuntime,
+    SynchronousBatchRequestDispatcher, TraceInfo, UnaryCallContext, UnaryCancellation,
+    DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
 pub use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
@@ -866,6 +867,20 @@ struct PreparedRegionDispatch {
     traffic_location: UnaryTrafficLocation,
     batch_attempt: bool,
     pre_batch_network_metrics: Option<UnaryNetworkMetrics>,
+    request_attempt_permit: RequestAttemptPermit,
+}
+
+/// Holds one Go-shaped request-attempt limiter token until the RPC response
+/// has been classified. Retries move through a fresh dispatch and therefore
+/// release the previous store's token before selecting another store.
+struct RequestAttemptPermit(Option<Arc<CoprRequestLimiter>>);
+
+impl Drop for RequestAttemptPermit {
+    fn drop(&mut self) {
+        if let Some(limiter) = self.0.take() {
+            limiter.release();
+        }
+    }
 }
 
 struct PendingBatchAttempt {
@@ -1132,6 +1147,39 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         Ok(())
     }
 
+    fn acquire_request_attempt_limiter(
+        &self,
+        selected: &LeaderRequest,
+    ) -> Result<RequestAttemptPermit, DirectUnaryTransportError> {
+        let store_id = selected.target().store_id;
+        let limiter = if let Some(query) = &self.metadata.query_cop_store_limiter {
+            query.get_store_limiter(store_id)
+        } else {
+            self.metadata.copr_request_limiter.clone()
+        };
+        let Some(limiter) = limiter else {
+            return Ok(RequestAttemptPermit(None));
+        };
+
+        // Go's RequestAttemptLimiter first takes the fast path, then waits
+        // against both the request context and the iterator's finish signal.
+        // The direct-unary response has one canonical cancellation carrier and
+        // one absolute deadline, so the blocking adapter checks those same
+        // two exits while retaining the token through response settlement.
+        if limiter.try_acquire() {
+            return Ok(RequestAttemptPermit(Some(limiter)));
+        }
+        let cancelled = limiter.acquire_blocking_with_context(|| {
+            self.cancellation.is_cancelled() || Instant::now() >= self.call.deadline()
+        });
+        if cancelled {
+            return self
+                .check_retry_active()
+                .map(|_| RequestAttemptPermit(None));
+        }
+        Ok(RequestAttemptPermit(Some(limiter)))
+    }
+
     fn dispatch_attempt(
         &mut self,
         logical_task_id: u64,
@@ -1236,6 +1284,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 "direct unary request selected a non-TiKV endpoint",
             ));
         }
+        let request_attempt_permit = self.acquire_request_attempt_limiter(&selected)?;
         let client_request = DirectUnaryRequest {
             endpoint: request.endpoint,
             replica_read_type: request.replica_read_type,
@@ -1274,6 +1323,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             traffic_location,
             batch_attempt: false,
             pre_batch_network_metrics: None,
+            request_attempt_permit,
         };
         self.check_retry_active()?;
         let dispatch_started = Instant::now();
@@ -1466,6 +1516,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             traffic_location,
             batch_attempt,
             pre_batch_network_metrics,
+            request_attempt_permit: _request_attempt_permit,
         } = dispatch;
         // Go checks ctx.Err after SendRequest returns. Caller cancellation has
         // precedence over a simultaneous transport error or successful reply.
