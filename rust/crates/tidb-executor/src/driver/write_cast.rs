@@ -213,9 +213,22 @@ fn cast_value_shaped(
             converted.event,
             Some(tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition)
         ) {
-            let error = DriverError::TimestampInDSTTransition {
-                value: datum_error_text(&source),
-                timezone: ctx.session_zone().dag_zone().0,
+            // Go's insert caller (`insert_common.go:completeInsertErr` then
+            // `handleErr`) retitles the internal DST-transition diagnostic
+            // as `ErrTruncateWrongInsertValue` (1292), while raw
+            // `table.CastValue` and UPDATE keep the internal 8179 error.
+            let error = if shape == CastShape::InsertRow {
+                DriverError::IncorrectTemporalValue {
+                    type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+                    value: datum_error_text(&source),
+                    column: column.to_owned(),
+                    row: row_index + 1,
+                }
+            } else {
+                DriverError::TimestampInDSTTransition {
+                    value: datum_error_text(&source),
+                    timezone: ctx.session_zone().dag_zone().0,
+                }
             };
             if ctx.strict() {
                 return Err(error);
@@ -766,7 +779,7 @@ mod source_tests {
     }
 
     #[test]
-    fn timestamp_dst_gap_keeps_adjusted_value_and_8179_write_diagnostic() {
+    fn timestamp_dst_gap_keeps_adjusted_value_and_insert_1292_diagnostic() {
         let field_type = FieldType::new(FieldTypeCode::Timestamp);
         let zone = tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
         let input = Datum::new_string("2018-03-11 02:00:16");
@@ -777,19 +790,19 @@ mod source_tests {
         assert_eq!(datum_error_text(&stored), "2018-03-11 03:00:00");
         let warnings = lenient.take_warnings();
         assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].1, 8179);
+        assert_eq!(warnings[0].1, 1292);
         assert!(warnings[0]
             .2
-            .contains("Daylight Saving Time transition '2018-03-11 02:00:16'"));
+            .contains("Incorrect timestamp value: '2018-03-11 02:00:16' for column 'ts' at row 1"));
 
         let strict = crate::StmtContext::for_dml(false, true, false).with_time_zone(zone);
         let error = cast_value_for_column(input, &field_type, "ts", 0, &strict)
-            .expect_err("strict writes surface Go's transition diagnostic");
+            .expect_err("strict inserts surface Go's completed insert diagnostic");
         let reported = error.to_mysql_error();
-        assert_eq!(reported.code, 8179);
+        assert_eq!(reported.code, 1292);
         assert!(reported
             .message
-            .contains("Daylight Saving Time transition '2018-03-11 02:00:16'"));
+            .contains("Incorrect timestamp value: '2018-03-11 02:00:16' for column 'ts' at row 1"));
     }
 
     #[test]

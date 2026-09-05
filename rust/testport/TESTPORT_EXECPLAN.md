@@ -9004,3 +9004,9 @@ risks without claiming repository-wide parity.
   spurious 3637 warning for each occurrence. Focused registry and session hook
   regressions plus Ready evidence are recorded in
   `receipts/session_set_var_hint_warning.md`.
+- 2026-09-06 (`pkg/session` TIMESTAMP DST insert error ownership): Rust now
+  retitles a DST-gap conversion as Go's completed INSERT 1292 diagnostic,
+  including column, row, and strict/non-strict warning behavior, while raw and
+  UPDATE conversion paths retain the internal 8179 transition diagnostic.
+  Focused write-cast and timestamp-range regressions plus Ready evidence are
+  recorded in `receipts/session_timestamp_dst_insert_error.md`.
