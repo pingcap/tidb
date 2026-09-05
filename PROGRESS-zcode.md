@@ -496,3 +496,5 @@
 - 下轮恢复点: (1) 跟随兄弟会话修复; (2) 新面选型; (3) F2/F3-seam live 阻塞; (4) F4 已闭; (5) DST 排队。
 - 增量收敛核查: 树同步至最新, 关键面稳定(session 1321 通过/332 环境集, planner 920 通过/4 UnsafeRange 预存, gcutil 2/0, datatype 412/0)。无新增分歧。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- 增量收敛核查: 同步至最新, 关键面全绿(super_read_only 1/0, tx_isolation_one_shot 1/0, gcutil 2/0, datatype 412/0); planner 4 UnsafeRange 维持。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
