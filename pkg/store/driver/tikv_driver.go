@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metaservice"
@@ -174,6 +175,16 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 	pdCli = util.InterceptedPDClient{Client: pdCli}
 
+	if len(keyspaceName) > 0 {
+		var ksMeta *keyspacepb.KeyspaceMeta
+		if ksMeta, err = pdCli.LoadKeyspace(context.Background(), keyspaceName); err != nil {
+			return nil, errors.Annotatef(err, "load keyspace %s", keyspaceName)
+		}
+		if err = checkKeyspaceEnabled(ksMeta); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	// FIXME: uuid will be a very long and ugly string, simplify it.
 	clusterID := pdCli.GetClusterID(context.TODO())
 	uuid := fmt.Sprintf("tikv-%v/%s", clusterID, keyspaceName)
@@ -256,6 +267,16 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 
 	mc.cache[uuid] = store
 	return store, nil
+}
+
+func checkKeyspaceEnabled(meta *keyspacepb.KeyspaceMeta) error {
+	if meta == nil {
+		return errors.New("keyspace meta is not available")
+	}
+	if state := meta.GetState(); state != keyspacepb.KeyspaceState_ENABLED {
+		return errors.Errorf("keyspace %s is not enabled, current state %s", meta.GetName(), state)
+	}
+	return nil
 }
 
 type safePointKVSetup struct {
