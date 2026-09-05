@@ -834,6 +834,24 @@ fn disable_txn_auto_retry_off_warns_and_stays_on() {
     );
 }
 
+/// Go `TestDeprecation`: executor-concurrency compatibility variables accept
+/// their value but append the replacement warning with MySQL code 1287.
+#[test]
+fn deprecated_index_lookup_concurrency_warns_like_go() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    session
+        .run("SET SESSION tidb_index_lookup_concurrency = 123")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1287".to_owned(),
+            "'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead".to_owned(),
+        ]]
+    );
+}
+
 /// Go `TestTiDBLowResTSOUpdateInterval`: GLOBAL integer bounds clamp to the
 /// declared range and report the original value with warning 1292.
 #[test]

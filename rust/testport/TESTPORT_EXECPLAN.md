@@ -119,6 +119,9 @@ For each bounded behavior cluster:
   session-zone-aware GLOBAL writes, duration parsing, canonical rendering, and
   Min/Max clamping. Added focused numeric, enum, time, duration, and integration
   regressions; the synthetic Go session-only TypeTime shape remains explicit.
+- 2026-09-05 (`pkg/sessionctx/variable` deprecated executor concurrency): added
+  the Go 1287 replacement warning for `tidb_index_lookup_concurrency` and a
+  focused SQL warning/readback regression.
 - 2026-09-05 (`pkg/sessionctx/variable` resource-control hooks): published
   Go's process-wide enable and strict-mode switches on named GLOBAL writes,
   startup/cluster/reset paths, and changed resource-group hint admission to
