@@ -154,6 +154,10 @@ For each bounded behavior cluster:
   resets, and committed image replacement into the process-wide duration used
   by the plan-replayer worker; malformed writes leave the prior atomic intact.
   The b012 `TestSetSysVar` row records this focused partial port.
+- 2026-09-05 (`pkg/sessionctx/variable` instance scope): added a registry-wide
+  assertion that instance variables expose no SESSION scope, plus a real
+  `SET INSTANCE tidb_general_log = ON` canonicalization/readback regression
+  and a SESSION refusal check; removed the stale vardef gap shim.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session

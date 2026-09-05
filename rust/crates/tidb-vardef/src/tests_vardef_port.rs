@@ -1381,12 +1381,6 @@ fn is_noop_unported() {}
 #[ignore]
 fn validate_with_relaxed_validation_unported() {}
 
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestInstanceScope.
-// go-parity-gap: SysVar registration/unregistration + instance-scope hooks not ported
-#[test]
-#[ignore]
-fn instance_scope_unported() {}
-
 /// Go `pkg/sessionctx/variable/tests/variable_test.go::TestSetSysVar.
 // go-parity-gap: GetSysVar/SetSysVar global singleton deliberately replaced by explicit wiring in the rewrite
 #[test]

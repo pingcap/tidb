@@ -4254,6 +4254,32 @@ mod tests {
         ));
     }
 
+    /// Go `TestInstanceScope`: instance-scoped variables have no SESSION
+    /// hooks, accept typed values through the INSTANCE route, and expose the
+    /// node-local value to subsequent reads without touching SESSION state.
+    #[test]
+    fn instance_scope_routes_and_metadata_match_go() {
+        for definition in crate::sysvar::SYS_VARS {
+            if definition.has_instance_scope() {
+                assert!(
+                    !definition.has_session_scope(),
+                    "instance variable {} must not expose SESSION hooks",
+                    definition.name
+                );
+            }
+        }
+
+        let mut vars = SessionVars::new();
+        assert_eq!(vars.get_system("tidb_general_log").unwrap(), "OFF");
+        vars.set_instance("tidb_general_log", "oN".to_owned())
+            .unwrap();
+        assert_eq!(vars.get_system("tidb_general_log").unwrap(), "ON");
+        assert!(matches!(
+            vars.set_system("tidb_general_log", "OFF".to_owned()),
+            Err(VarError::GlobalOnlyVariable(name)) if name == "tidb_general_log"
+        ));
+    }
+
     #[test]
     fn global_memory_arbitration_settings_update_the_running_process_authority() {
         struct NoopRecorder;
