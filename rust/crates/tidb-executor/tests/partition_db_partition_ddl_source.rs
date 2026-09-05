@@ -556,14 +556,26 @@ fn create_table_with_range_column_partition_datetime_int_bounds_are_1654() {
     assert_eq!(err_message(&error), "Partition column values of incorrect type");
 }
 
-/// Go row `db_partition_test.go:683-686` (the check-order row): with BOTH a
-/// bad field type and a misplaced MAXVALUE present, MySQL/Go answer
-/// `ErrPartitionMaxvalue` (1481) first.
-// go-parity-gap: this tier answers 1659 (field type) for that row, so the
-// check ORDER contract has no carrier.
+/// Go `TestPartition` row `db_partition_test.go:249-250`: with BOTH a bad
+/// field type and a misplaced MAXVALUE present, Go answers
+/// `ErrPartitionMaxvalue` (1481) before the later 1659 type check.
 #[test]
-#[ignore]
 fn create_table_with_range_column_partition_check_order_row_is_maxvalue_1481() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::default().with_strict(true);
+    let error = try_create(
+        "create table t (c1 float) partition by range(c1) \
+         (partition p1 values less than maxvalue, \
+          partition p0 values less than (2000))",
+        &mut catalog,
+        &ctx,
+    )
+    .expect_err("Go checks an early MAXVALUE before the field type");
+    assert_eq!(err_code(&error), 1481);
+    assert_eq!(
+        err_message(&error),
+        "MAXVALUE can only be used in last partition definition"
+    );
 }
 
 // --- TestCreateTableWithListPartition
@@ -745,12 +757,30 @@ fn create_table_with_list_partition_valid_shapes() {
 
 /// Go rows `db_partition_test.go:793-810` and :827-834: timestamp, decimal,
 /// text, blob, enum and set partition fields with VALUES IN bounds are
-/// `dbterror.ErrValuesIsNotIntType` (1697).
-// go-parity-gap: this tier answers 1659 (ErrNotAllowedTypeInPartition) for
-// all six rows, so the 1697 split has no carrier.
+/// `dbterror.ErrValuesIsNotIntType` (1697), before the later 1659 expression
+/// type check.
 #[test]
-#[ignore]
 fn create_table_with_list_partition_values_not_int_rows_report_1697() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::default().with_strict(true);
+    let cases = [
+        "create table t (id timestamp) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'))",
+        "create table t (id decimal) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'))",
+        "create table t (id text) partition by list (id) (partition p0 values in ('abc'))",
+        "create table t (id blob) partition by list (id) (partition p0 values in ('abc'))",
+        "create table t (id enum('a','b')) partition by list (id) (partition p0 values in ('a'))",
+        "create table t (id set('a','b')) partition by list (id) (partition p0 values in ('a'))",
+    ];
+    for sql in cases {
+        let error = try_create(sql, &mut catalog, &ctx)
+            .expect_err("Go rejects a non-integer LIST bound before expression type validation");
+        assert_eq!(err_code(&error), 1697, "row {sql}");
+        assert!(
+            err_message(&error).contains("must have type INT"),
+            "row {sql}: {error:?}"
+        );
+        drop_table(&mut catalog, "t");
+    }
 }
 
 /// Go row `db_partition_test.go:811-814`: a bound carrying a COLLATE clause

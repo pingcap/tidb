@@ -376,11 +376,6 @@ fn build_table_partitioning_inner(
         ctx.like_default_escape(),
         PartitionBuildMode::Create,
     )?;
-    // Go `checkPartitionFuncType`: the partition expression must evaluate to
-    // an integer -- asked of the BUILT expression, not re-derived from the
-    // AST (`ddl/partition.go:1895`).
-    check_partition_expression_type(expr, &built)?;
-
     // `deferred` carries the LIST duplicate-constant refusal (1495) that Go
     // raises from `checkPartitionByList`, i.e. after 1517 and 1499.
     let mut written = Vec::with_capacity(partitioning.definitions.len());
@@ -421,6 +416,11 @@ fn build_table_partitioning_inner(
     if definitions.len() as u64 > MAX_PARTITIONS {
         return Err(DriverError::PartitionTooMany);
     }
+    // Go checks the partition definition constraints before
+    // `checkPartitionFuncType` (`create_table.go:517-533`).  Keep the same
+    // order: malformed VALUES (including an early MAXVALUE or a non-integer
+    // LIST bound) must win over a non-integral partition expression.
+    check_partition_expression_type(expr, &built)?;
     // Go's type-specific branch of `checkPartitionDefinitionConstraints`,
     // which runs AFTER 1517 and 1499: `checkPartitionByRange` is where 1493
     // lives, so a duplicate partition name beside a non-increasing bound

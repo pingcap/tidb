@@ -8717,3 +8717,8 @@ risks without claiming repository-wide parity.
   temporal columns. LIST COLUMNS keeps its separate parser/cast path. The
   DATETIME integer-bound regression is live. Evidence is recorded in
   `receipts/ddl_partition_column_value_types.md`.
+- 2026-09-05 (`pkg/ddl` partition definition check order): Rust now validates
+  built partition definitions before checking a scalar partition expression's
+  return type, matching Go's early MAXVALUE 1481 and non-integer LIST-bound
+  1697 precedence. Focused RANGE and LIST regressions are live. Evidence is
+  recorded in `receipts/ddl_partition_definition_check_order.md`.
