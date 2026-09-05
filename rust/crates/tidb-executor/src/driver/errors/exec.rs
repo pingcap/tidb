@@ -242,7 +242,7 @@ mod tests {
             EvalError::IncorrectArguments("bad AES initialization vector".to_owned()),
             EvalError::DataOutOfRange {
                 value: "length",
-                expression: "random_bytes",
+                expression: "random_bytes".to_string(),
             },
         ];
         for error in coded {
@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DataOutOfRange {
                 value: "length",
-                expression: "random_bytes",
+                expression: "random_bytes".to_string(),
             })),
             MysqlError::new(1690, "length value is out of range in 'random_bytes'")
         );
