@@ -411,6 +411,20 @@ fn is_resource_control_setting(name: &str) -> bool {
     )
 }
 
+fn is_stmt_summary_setting(name: &str) -> bool {
+    matches!(
+        name,
+        "tidb_enable_stmt_summary"
+            | "tidb_stmt_summary_internal_query"
+            | "tidb_stmt_summary_refresh_interval"
+            | "tidb_stmt_summary_history_size"
+            | "tidb_stmt_summary_max_stmt_count"
+            | "tidb_stmt_summary_max_sql_length"
+            | "tidb_stmt_summary_persist_evicted"
+            | "tidb_stmt_summary_group_by_user"
+    )
+}
+
 impl GlobalSysvars {
     /// A fresh registry with every variable at its default (Go's state on a
     /// cluster nobody has ever run `SET GLOBAL` against).
@@ -997,6 +1011,7 @@ impl GlobalSysvars {
         if is_resource_control_setting(&key) {
             self.publish_resource_control_setting(&key);
         }
+        self.publish_stmt_summary_setting(&key, &stored_value);
         self.refresh_resolved();
         if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
             self.publish_redaction_mode();
@@ -1142,6 +1157,74 @@ impl GlobalSysvars {
         }
     }
 
+    /// Publishes Go's GLOBAL statement-summary setters into the live v2
+    /// proxy. The SQL table remains the source of truth for reads, while the
+    /// summary map is the process-wide consumer Go's `SetGlobal` callbacks
+    /// update immediately. Scratch cluster images deliberately skip this
+    /// hook and publish only after their committed image becomes live.
+    fn publish_stmt_summary_setting(&self, name: &str, value: &str) {
+        if !self.publishes_runtime_settings || !is_stmt_summary_setting(name) {
+            return;
+        }
+        let bool_value = || value.eq_ignore_ascii_case("ON") || value == "1";
+        match name {
+            "tidb_enable_stmt_summary" => {
+                tidb_stmtsummary::v2::stmtsummary::set_enabled(bool_value())
+            }
+            "tidb_stmt_summary_internal_query" => {
+                tidb_stmtsummary::v2::stmtsummary::set_enable_internal_query(bool_value())
+            }
+            "tidb_stmt_summary_refresh_interval" => {
+                if let Ok(value) = value.parse::<i64>() {
+                    tidb_stmtsummary::v2::stmtsummary::set_refresh_interval(value);
+                }
+            }
+            "tidb_stmt_summary_history_size" => {
+                if let Ok(value) = value.parse::<i32>() {
+                    tidb_stmtsummary::v2::stmtsummary::set_history_size(value);
+                }
+            }
+            "tidb_stmt_summary_max_stmt_count" => {
+                if let Ok(value) = value.parse::<i64>() {
+                    tidb_stmtsummary::v2::stmtsummary::set_max_stmt_count(value);
+                }
+            }
+            "tidb_stmt_summary_max_sql_length" => {
+                if let Ok(value) = value.parse::<i32>() {
+                    tidb_stmtsummary::v2::stmtsummary::set_max_sql_length(value);
+                }
+            }
+            "tidb_stmt_summary_persist_evicted" => {
+                tidb_stmtsummary::v2::stmtsummary::set_persist_evicted(bool_value())
+            }
+            "tidb_stmt_summary_group_by_user" => {
+                tidb_stmtsummary::v2::stmtsummary::set_group_by_user(bool_value())
+            }
+            _ => {}
+        }
+    }
+
+    fn publish_stmt_summary_settings(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        for name in [
+            "tidb_enable_stmt_summary",
+            "tidb_stmt_summary_internal_query",
+            "tidb_stmt_summary_refresh_interval",
+            "tidb_stmt_summary_history_size",
+            "tidb_stmt_summary_max_stmt_count",
+            "tidb_stmt_summary_max_sql_length",
+            "tidb_stmt_summary_persist_evicted",
+            "tidb_stmt_summary_group_by_user",
+        ] {
+            let value = self
+                .get(name)
+                .unwrap_or_else(|_| crate::sysvar::effective_default(get_sys_var(name).unwrap()));
+            self.publish_stmt_summary_setting(name, &value);
+        }
+    }
+
     /// The length floor the `validate_password` coupling requires right now:
     /// `number_count + special_char_count + 2 * mixed_case_count`
     /// (`sysvar.go:717`'s Validation), read from the current global values
@@ -1228,6 +1311,7 @@ impl GlobalSysvars {
         if is_resource_control_setting(&key) {
             self.publish_resource_control_setting(&key);
         }
+        self.publish_stmt_summary_setting(&key, &crate::sysvar::effective_default(def));
         self.refresh_resolved();
         if !def.has_global_scope() {
             self.record_instance_mutation(InstanceMutation::Reset(key.clone()));
@@ -1354,6 +1438,7 @@ impl GlobalSysvars {
                 self.publish_resource_control_setting(name);
             }
         }
+        self.publish_stmt_summary_settings();
         self.publish_embedding_settings();
         self.refresh_resolved();
     }
@@ -1413,6 +1498,7 @@ impl GlobalSysvars {
         self.publish_resource_control_setting(
             tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE,
         );
+        self.publish_stmt_summary_settings();
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
         self.publish_memory_arbitration_settings();

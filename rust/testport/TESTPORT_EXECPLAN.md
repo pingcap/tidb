@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` statement-summary GLOBAL hooks):
+  wired Go's `stmtsummaryv2` setters for enablement, internal-query capture,
+  refresh/history sizing, capacity, SQL length, eviction persistence, and
+  user grouping into Rust's live global write/reset/load/replace paths. The
+  focused regression verifies the process-wide summary map updates alongside
+  SQL writes; the broader singleton initialization and persistent logger
+  lifecycle remain outside this session owner.
 - 2026-09-05 (`pkg/sessionctx/variable` continuous plan-replayer capture
   prerequisite): matched Go's 1105 refusal when
   `tidb_enable_plan_replayer_continuous_capture=ON` is attempted before

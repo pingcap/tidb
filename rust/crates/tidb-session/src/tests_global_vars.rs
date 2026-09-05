@@ -798,6 +798,60 @@ fn async_global_stats_switch_warns_on_every_assignment() {
     assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
 }
 
+/// Go's statement-summary GLOBAL setters update the process-wide summary map
+/// immediately; storing the SQL value alone is not sufficient for readers and
+/// collectors that use the map directly.
+#[test]
+fn stmt_summary_global_hooks_update_runtime_map() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    let map = &tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP;
+    let old_enabled = tidb_stmtsummary::v2::stmtsummary::enabled();
+    let old_internal = tidb_stmtsummary::v2::stmtsummary::enabled_internal();
+    let old_refresh = map.refresh_interval();
+    let old_history = map.history_size();
+    let old_max_stmt_count = map.max_stmt_count();
+    let old_max_sql_length = map.max_sql_length();
+    let old_group_by_user = map.group_by_user();
+
+    session
+        .run("SET GLOBAL tidb_enable_stmt_summary = OFF")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_internal_query = ON")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_refresh_interval = 77")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_history_size = 9")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_max_stmt_count = 41")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_max_sql_length = 1234")
+        .unwrap();
+    session
+        .run("SET GLOBAL tidb_stmt_summary_group_by_user = ON")
+        .unwrap();
+
+    assert!(!tidb_stmtsummary::v2::stmtsummary::enabled());
+    assert!(tidb_stmtsummary::v2::stmtsummary::enabled_internal());
+    assert_eq!(map.refresh_interval(), 77);
+    assert_eq!(map.history_size(), 9);
+    assert_eq!(map.max_stmt_count(), 41);
+    assert_eq!(map.max_sql_length(), 1234);
+    assert!(map.group_by_user());
+
+    tidb_stmtsummary::v2::stmtsummary::set_enabled(old_enabled);
+    tidb_stmtsummary::v2::stmtsummary::set_enable_internal_query(old_internal);
+    tidb_stmtsummary::v2::stmtsummary::set_refresh_interval(old_refresh);
+    tidb_stmtsummary::v2::stmtsummary::set_history_size(old_history as i32);
+    tidb_stmtsummary::v2::stmtsummary::set_max_stmt_count(old_max_stmt_count as i64);
+    tidb_stmtsummary::v2::stmtsummary::set_max_sql_length(old_max_sql_length as i32);
+    tidb_stmtsummary::v2::stmtsummary::set_group_by_user(old_group_by_user);
+}
+
 /// Go `TestTiDBOptTxnAutoRetry`: OFF is a deprecated compatibility spelling
 /// that warns and remains ON for both SESSION and GLOBAL assignments.
 #[test]
