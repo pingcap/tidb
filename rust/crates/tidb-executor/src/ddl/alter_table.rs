@@ -3130,20 +3130,24 @@ fn add_column_action(
         });
     let has_default_value = prepared_default.has_default;
     super::set_no_default_value_flag(&mut field_type, has_default_value);
-    // A generated expression resolves against the columns that will PRECEDE
-    // the new one, which is Go's `verifyColumnGeneration` prior-order rule
-    // and, for the default append position, every column the table has.
+    // Go's `CreateNewColumn` validates generated expressions against the
+    // WHOLE current table first (`checkDependedColExist`), then applies the
+    // position-sensitive `verifyColumnGenerationSingle` check. Resolving
+    // against only `table.columns[..index]` would turn a later generated
+    // dependency into 1054 instead of Go's 3107.
     let generated = match generated_expression {
         Some(expression) => {
-            let names: Vec<String> = table.columns[..index]
+            let names: Vec<String> = table
+                .columns
                 .iter()
                 .map(|column| column.name.clone())
                 .collect();
-            let types: Vec<tidb_datatype::FieldType> = table.columns[..index]
+            let types: Vec<tidb_datatype::FieldType> = table
+                .columns
                 .iter()
                 .map(|column| column.field_type.clone())
                 .collect();
-            Some(
+            let generated =
                 crate::generated_column::build_added_generated_column_with_like_default_escape(
                     &def.name,
                     expression,
@@ -3153,8 +3157,25 @@ fn add_column_action(
                     zone,
                     ctx.like_default_escape(),
                 )
-                .map_err(crate::ddl::generated_column_error)?,
-            )
+                .map_err(crate::ddl::generated_column_error)?;
+            for dependency in &generated.dependencies {
+                let Some(dependency_offset) = table
+                    .columns
+                    .iter()
+                    .position(|column| column.name.eq_ignore_ascii_case(dependency))
+                else {
+                    // The full-table resolver above already turns this into
+                    // Go's 1054, so this is defensive if the resolver ever
+                    // gains a non-column dependency form.
+                    continue;
+                };
+                if table.columns[dependency_offset].generated.is_some()
+                    && dependency_offset >= index
+                {
+                    return Err(DriverError::GeneratedColumnNonPrior);
+                }
+            }
+            Some(generated)
         }
         None => None,
     };

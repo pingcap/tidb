@@ -466,15 +466,11 @@ fn issue_4432_bit_default_spellings() {
 // the second-half defaults row `0 1 2 22 3 33 4`, duplicate drop = 1091,
 // dropping every column (mixed IF EXISTS) = 1090, guarded drops succeed.
 //
-// KNOWN DIVERGENCES, not asserted (all captured during this port):
-// * `add column if not exists (...)` is not consulted by this tier's ADD
-//   COLUMN action, so Go's Note-suppressed forms
-//   (`if not exists (b int, c int)` over existing b/c; the `(d int, e int)`
-//   grouped spelling) error 1060 here, and Go's 8200 for the MIXED
-//   `add column dd int, add column if not exists dd int` surfaces as plain
-//   1060 too;
-// * consequently the final SHOW CREATE TABLE column list (with `ff`) is not
-//   reproduced; the Go-visible row ORDER the test pins is, via `select *`.
+// KNOWN DIVERGENCE, not asserted (captured during this port): the mixed
+// `add column dd int, add column if not exists dd int` form is still a plain
+// 1060 here while Go's multi-schema DDL checker reports 8200. The serial
+// grouped guard itself is exercised below; the final SHOW CREATE TABLE shape
+// remains represented by the catalog order and `select *` rows.
 #[test]
 fn issue_5092_add_drop_column_positions_and_guards() {
     let mut catalog = Catalog::default();
@@ -482,6 +478,13 @@ fn issue_5092_add_drop_column_positions_and_guards() {
     let ctx = StmtContext::for_query();
     ddl::run_alter_table_in(
         "alter table t_issue_5092 add column (b int, c int)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t_issue_5092 add column if not exists (b int, c int)",
         &mut catalog,
         "test",
         &ctx,
@@ -702,12 +705,9 @@ fn null_generated_column_indexed_over_default_nulls() {
 //
 // Order checks for a generated column added by ALTER. PORTED: an unknown
 // dependency anywhere is ErrBadField (1054), the legal AFTER position
-// commits, and the grouped spelling adds too.
-// KNOWN DIVERGENCE, not asserted: Go refuses `add column d int as (c+1)
-// FIRST` with ErrGeneratedColumnNonPrior (3107) — existence is checked
-// against the WHOLE table before prior-ness — while this tier resolves
-// against the columns PRECEDING the new one and reports 1054 for `c`
-// instead. Both refuse; the codes differ. See the receipt.
+// commits, and the grouped spelling adds too. Go refuses `add column d int
+// as (c+1) FIRST` with ErrGeneratedColumnNonPrior (3107) — existence is
+// checked against the WHOLE table before prior-ness.
 #[test]
 fn depended_generated_column_prior2_generated_column_checks() {
     let mut catalog = Catalog::default();
@@ -729,6 +729,18 @@ fn depended_generated_column_prior2_generated_column_checks() {
             Err(tidb_executor::DriverError::UnknownColumnInClause { .. }),
         ),
         "Go: ErrBadField, checked before the prior-order rule"
+    );
+    assert!(
+        matches!(
+            ddl::run_alter_table_in(
+                "alter table t add column d int as (c+1) first",
+                &mut catalog,
+                "test",
+                &ctx
+            ),
+            Err(tidb_executor::DriverError::GeneratedColumnNonPrior),
+        ),
+        "a later generated dependency is Go's 3107 after existence succeeds"
     );
     ddl::run_alter_table_in(
         "alter table t add column d int as (c+1) after c",

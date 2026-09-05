@@ -673,14 +673,14 @@ pub fn build_generated_columns_with_like_default_escape(
 }
 
 /// Builds ONE generated column for `ALTER TABLE ... ADD COLUMN <name> <type>
-/// AS (expr) VIRTUAL`, against the columns that will PRECEDE it.
+/// AS (expr) VIRTUAL`, against the supplied existing-column namespace.
 ///
-/// `names`/`types` are the preceding columns in table order and
-/// `generated_at` says which of them are themselves generated -- the same
-/// three inputs [`build_generated_columns`] derives per position, except that
-/// here every candidate really is earlier, so Go's
-/// `verifyColumnGeneration` prior-order rule can only be satisfied and is
-/// carried by construction rather than re-tested.
+/// `names`/`types` are normally the table's complete current columns. The
+/// caller performs Go's position-sensitive `verifyColumnGenerationSingle`
+/// check after this build, because resolving against the full namespace is
+/// what preserves Go's 1054-before-3107 validation order. Unit callers that
+/// intentionally provide only preceding columns still get the same builder
+/// behavior and can rely on construction to make prior-order valid.
 ///
 /// STORED is the caller's refusal, not this function's: Go answers 3106
 /// `'Adding generated stored column through ALTER TABLE' is not supported for

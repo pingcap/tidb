@@ -8512,3 +8512,8 @@ risks without claiming repository-wide parity.
   columns. ADD/CREATE INDEX guards and the concurrent job matrix remain
   explicit boundaries. Evidence is recorded in
   `receipts/ddl_add_column_if_not_exists.md`.
+- 2026-09-05 (`pkg/ddl` generated-column ADD validation): Rust now resolves
+  ADD COLUMN generated expressions against the full existing table before
+  applying the insertion-position rule, matching Go's 1054-then-3107 error
+  ordering for later generated dependencies. Evidence is recorded in
+  `receipts/ddl_generated_column_prior_order.md`.
