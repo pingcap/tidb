@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` MODIFY COLUMN option clauses): aligned the ordinary
+  ALTER path with Go's `TestModifyColumnOption` coded half. `Collate` now
+  survives the rebuilt field type for both charset/collation spellings, while
+  parsed `REFERENCES` returns exact 8200 `can't modify with references`.
+  The promoted regression recorded the pre-fix generic 1105 refusal and now
+  passes the two accepted forms plus the exact refusal; receipt b102 updates
+  its count from 40 running/19 ignored to 41/18.
 - 2026-09-05 (`pkg/ddl` configurable index and ENUM/SET limits): aligned
   CREATE TABLE, CREATE INDEX, and ALTER index-length checks with Go's
   catalog-scoped `MaxIndexLength`, and aligned CREATE/ALTER ENUM/SET member

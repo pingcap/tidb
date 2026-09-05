@@ -2491,7 +2491,17 @@ fn modify_column_action(
             // Go `ProcessModifyColumnOptions` handles COMMENT here; the new
             // value is read from the option list below, where an ABSENT one
             // keeps the old column's.
-            | tidb_ast::ColumnOption::Comment(_) => {}
+            | tidb_ast::ColumnOption::Comment(_)
+            // Go's ProcessModifyColumnOptions lets MODIFY restamp the
+            // declared CHARACTER SET/COLLATE through the rebuilt FieldType.
+            | tidb_ast::ColumnOption::Collate(_) => {}
+            // Go parses REFERENCES on MODIFY but refuses it with the
+            // dedicated 8200 reason rather than a generic unsupported option.
+            tidb_ast::ColumnOption::Reference(_) => {
+                return Err(DriverError::UnsupportedModifyColumn(
+                    "can't modify with references",
+                ))
+            }
             tidb_ast::ColumnOption::OnUpdate(expr) => {
                 crate::column_default::validate_on_update_current_timestamp(expr, &field_type)
                     .map_err(|_| DriverError::InvalidOnUpdate(def.name.clone()))?;

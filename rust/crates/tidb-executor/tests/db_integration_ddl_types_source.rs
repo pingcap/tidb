@@ -1171,8 +1171,8 @@ fn assert_bit_bytes(value: &Datum, expected: &[u8]) {
 // The ACCEPTED half: CHANGE COLUMN rewrites a column's type through the
 // sequence Go drives (int(11) → varchar(16) → varchar(10) → datetime →
 // int(11) unsigned) and the same widening on a second table's char column.
-// The coded clauses half (CHARACTER SET/COLLATE accepted; REFERENCES
-// refused with "[ddl:8200]") is the #[ignore] documentary below.
+// The coded clauses half also pins CHARACTER SET/COLLATE acceptance and the
+// exact 8200 REFERENCES refusal.
 #[test]
 fn modify_column_option_change_type_sequence() {
     let mut catalog = Catalog::default();
@@ -1189,6 +1189,53 @@ fn modify_column_option_change_type_sequence() {
         ddl::run_alter_table_in(sql, &mut catalog, "test", &ctx)
             .unwrap_or_else(|e| panic!("{sql}: {e:?}"));
     }
+}
+
+#[test]
+fn modify_column_option_charset_and_references_match_go() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    run_create_table_on(
+        "create table t1 (b char(1) default null) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_general_ci",
+        &mut catalog,
+    )
+    .expect("create charset source");
+    ddl::run_alter_table_in(
+        "alter table t1 modify column b char(1) character set utf8mb4 collate utf8mb4_general_ci",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect("Go accepts MODIFY CHARACTER SET/COLLATE");
+
+    run_create_table_on(
+        "create table t2 (b char(1) collate utf8mb4_general_ci)",
+        &mut catalog,
+    )
+    .expect("create collate source");
+    ddl::run_alter_table_in(
+        "alter table t2 modify b char(1) character set utf8mb4 collate utf8mb4_general_ci",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect("Go accepts MODIFY CHARACTER SET/COLLATE after an explicit COLLATE");
+
+    run_create_table_on("create table t3 (a int)", &mut catalog).expect("create parent");
+    run_create_table_on("create table t4 (c int)", &mut catalog).expect("create child");
+    let error = ddl::run_alter_table_in(
+        "alter table t4 modify column c int references t3(a)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go refuses MODIFY REFERENCES")
+    .to_mysql_error();
+    assert_eq!(error.code, 8200);
+    assert_eq!(
+        error.message,
+        "Unsupported modify column: can't modify with references"
+    );
 }
 
 // --- go-parity-gap documentaries -------------------------------------------------
@@ -1229,20 +1276,6 @@ fn changing_table_charset() {
     // mismatch 1253; convert-to updates table AND column charsets; column
     // charset survives a table-only `alter charset` (no column rewrite);
     // empty stored charsets backfill to the table default.
-}
-
-// go-parity-gap: MODIFY COLUMN's CHARACTER SET/COLLATE clause and the
-// REFERENCES clause are refused as unsupported column options here (Go
-// accepts the former and codes the latter [ddl:8200]); the accepted
-// change-type sequence IS pinned above in
-// modify_column_option_change_type_sequence
-// (pkg/ddl/db_integration_test.go:626::TestModifyColumnOption).
-#[test]
-#[ignore]
-fn modify_column_option_charset_and_references_clauses() {
-    // Contract to restore: `modify column b char(1) character set utf8mb4
-    // collate utf8mb4_general_ci` succeeds; `modify column c int references
-    // t1(a)` errors whose text starts "[ddl:8200]".
 }
 
 // go-parity-gap: needs `config.GetGlobalConfig().TableColumnCountLimit`
