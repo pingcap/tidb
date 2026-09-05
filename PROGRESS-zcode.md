@@ -410,3 +410,5 @@
 - 下轮恢复点: (1) 新面候选或 privs 深层; (2) F2/F3-seam live 阻塞; (3) F4 低优先级; (4) DST 排队。
 - F4 后续定案关闭: generic-1105 站点均无 Go 可对应 errno(AUTO_RANDOM_BASE 溢出 Go 静默回绕/AUTO_INCREMENT 非整数属语法层/前缀键等已带 1089/1170), 1105 是边界拒绝的诚实代码。收据已追加。
 - 下轮恢复点: (1) 新面候选; (2) F2/F3-seam live 阻塞; (3) DST 排队。
+- 合流核实: 并发会话已在同一工单落地他们的版本(gogc tuner bounds/tiflash preaggregation/analyze column options/partition prune hooks/super_read_only 耦合+restricted 联动), 与我的批次语义一致或更完整; 注册表计数测试过期(971→973)已修; fmt 漂移归一化。session lib 1348 通过/281 预存。
+- 下轮恢复点: (1) 继续跟随并发会话在同一工单的增量(冲突最小化); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

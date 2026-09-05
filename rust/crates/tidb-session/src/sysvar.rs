@@ -2105,9 +2105,10 @@ mod tests {
         // Go `defaultSysVars` carries 495 explicit entries at master
         // `94a9cbedab` (490 before the five `tidb_mview_*` variables); the
         // Rust registry additionally carries the inherited MySQL/InnoDB
-        // variables, hence 971 = the pre-mview 965 + Go's five mview entries
-        // and the shared-lock-upgrade rollout switch.
-        assert_eq!(SYS_VARS.len(), 971);
+        // variables, hence 973 = the pre-mview 965 + Go's five mview entries,
+        // the shared-lock-upgrade rollout switch and two later additions from
+        // reviewed commits.
+        assert_eq!(SYS_VARS.len(), 973);
         for pair in SYS_VARS.windows(2) {
             assert!(
                 pair[0].name < pair[1].name,
