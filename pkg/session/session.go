@@ -1715,6 +1715,9 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 					metrics.GlobalMemArbitratorSubTasks.ForceKillParse.Inc()
 					return nil, nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixParseSQL, uid)
 				}
+				if err := ctx.Err(); err != nil {
+					return nil, nil, err
+				}
 				time.Sleep(defOOMRiskCheckDur)
 			}
 		}
@@ -2578,6 +2581,9 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 				if globalMemArbitrator.AtOOMRisk() {
 					metrics.GlobalMemArbitratorSubTasks.ForceKillPlan.Inc()
 					return nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixCompilePlan, sessVars.ConnectionID)
+				}
+				if err := ctx.Err(); err != nil {
+					return nil, err
 				}
 				time.Sleep(defOOMRiskCheckDur)
 			}
