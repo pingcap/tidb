@@ -2232,17 +2232,6 @@ impl Session {
                             &ctx,
                         )?))
                     });
-                    // `Done(false)` is `IF NOT EXISTS` finding the table
-                    // already there. Go does not pass over that silently: it
-                    // files the `ErrTableExists` it did not raise as a note --
-                    // `Note | 1050 | Table 'test.tt' already exists`, captured
-                    // from `gorun`.
-                    if let Ok(StmtOutput::Done(false)) = &done {
-                        let (database, name) = self.split_table_path(&create.name)?;
-                        self.append_suppressed(DriverError::Schema(SchemaErrorKind::TableExists(
-                            format!("{database}.{name}"),
-                        )));
-                    }
                     if done.is_ok() {
                         for _ in 0..discarded_checks {
                             self.append_warning(

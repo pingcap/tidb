@@ -80,6 +80,28 @@ fn create_drop_database() {
     ));
 }
 
+/// `CREATE TABLE IF NOT EXISTS` gets one and only one Go `AppendNote` for the
+/// swallowed 1050. The executor owns that note in its statement context; the
+/// session must only drain it once rather than append a second copy at the
+/// dispatch boundary.
+#[test]
+fn create_table_if_not_exists_records_one_note() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE once (a INT)").unwrap();
+    session
+        .run("CREATE TABLE IF NOT EXISTS once (a INT)")
+        .unwrap();
+
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].level, WarningLevel::Note);
+    assert_eq!(session.warnings()[0].code, 1050);
+    assert_eq!(
+        session.warnings()[0].message,
+        "Table 'test.once' already exists"
+    );
+    assert_eq!(session.wire_warning_count(), 1);
+}
+
 #[test]
 fn database_defaults_flow_into_table_metadata() {
     let mut session = Session::new();

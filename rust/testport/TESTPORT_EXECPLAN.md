@@ -8797,3 +8797,9 @@ risks without claiming repository-wide parity.
   itself answers "not initialized" for them without the executor hooks. The
   method and per-name triage are recorded in
   `receipts/eval_arm_coverage_sweep.md`.
+- 2026-09-05 (`pkg/ddl` CREATE TABLE IF NOT EXISTS warning ownership): Rust now
+  drains the executor's `ErrTableExists` note exactly once, matching Go's
+  `CreateTableWithInfo` ignore path. The session dispatch no longer appends a
+  duplicate 1050 when the executor returns `Done(false)`; focused warning
+  and wire-count regressions are recorded in
+  `receipts/session_create_table_if_not_exists_note.md`.
