@@ -59,6 +59,41 @@ run before and after the production edit.
 - `git diff --check` — passed after the package and receipt updates.
 - `make bazel_prepare` is required by the new top-level Go test under repository policy; the local gate is recorded with the package commit and is blocked when `bazel` is unavailable.
 
+## Rust-only diagnostic alignment (`2026-09-06`)
+
+The complete seven-artifact inventory above was re-read before this follow-up:
+`BUILD.bazel`, `OWNERS`, `db.go`, `db_test.go`, `system.go`,
+`system_tables_def.go`, and `system_test.go`, with no fixtures, generated
+inputs, or platform variants. The Rust `tidb-metadef` owner and its source
+tests were also rechecked.
+
+The Go-shaped `is_reserved_id` predicate carried one Rust-only
+`#[must_use]` diagnostic even though Go callers may discard the boolean. The
+annotation was removed and `system::tests::reserved_id_return_may_be_ignored_like_go`
+now enforces the source contract under `#[deny(unused_must_use)]`.
+
+On detached pre-fix `fd4e0f1c8bfdb9dbc59165b5793f26140874d88d`, the focused
+probe failed with exactly one `unused_must_use` diagnostic:
+
+```
+CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-metadef --lib reserved_id_return_may_be_ignored_like_go -- --exact --nocapture
+```
+
+The corrected fully-qualified focused probe passed:
+
+```
+CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-metadef --lib 'system::tests::reserved_id_return_may_be_ignored_like_go' -- --exact --nocapture
+```
+
+Ready validation passed:
+
+* `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-metadef --lib -- --test-threads=1` — 7 passed;
+* `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-metadef -p tidb-executor -p tidb-session --all-targets` with the bundled OpenSSL environment — passed;
+* pinned Rust formatting, `git diff --check`, and `make lint` — passed.
+
+No Go source was edited. No live TiDB integration was needed for this
+constant/predicate diagnostic-only change.
+
 ## Risks and boundaries
 
 - Existing upgraded clusters still require the owning `pkg/session` upgrade

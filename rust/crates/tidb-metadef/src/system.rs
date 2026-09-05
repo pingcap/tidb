@@ -163,7 +163,6 @@ pub const TI_DBMVIEW_REFRESH_ALERT_TABLE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUN
 pub const TI_DBMLOG_PURGE_HIST_TABLE_ID: i64 = RESERVED_GLOBAL_ID_UPPER_BOUND - 67;
 
 /// Go `IsReservedID`: whether `id` is a reserved global ID.
-#[must_use]
 pub fn is_reserved_id(id: i64) -> bool {
     RESERVED_GLOBAL_ID_LOWER_BOUND < id && id <= RESERVED_GLOBAL_ID_UPPER_BOUND
 }
@@ -214,5 +213,11 @@ mod tests {
         ] {
             assert!(is_reserved_id(id));
         }
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn reserved_id_return_may_be_ignored_like_go() {
+        is_reserved_id(123);
     }
 }

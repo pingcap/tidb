@@ -8843,6 +8843,13 @@ risks without claiming repository-wide parity.
   with all six diagnostics on the detached pre-fix owner and passes with the
   eight-test classic and nextgen owner suites plus six schema-sync consumer
   tests; Ready evidence is recorded in `receipts/ddl_schemaver.md`.
+- 2026-09-06 (`pkg/meta/metadef`): the complete seven-artifact owner now
+  matches Go's discardable-return contract by removing the Rust-only
+  `#[must_use]` diagnostic from `is_reserved_id`. Its deny-on-discard
+  regression failed with one diagnostic on the detached pre-fix owner and
+  passes with the seven-test owner suite and dependent executor/session
+  all-target check; Ready evidence is recorded in
+  `receipts/meta_metadef_operate_view.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
