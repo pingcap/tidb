@@ -2738,7 +2738,7 @@ impl KvTable {
     /// Whether a row belongs in an index's partial predicate. A NULL result
     /// follows Go's `EvalBool` rule for index conditions and is treated as
     /// false, so `WHERE b IS NOT NULL` excludes NULL rows.
-    pub(in crate::kv_table) fn index_condition_holds(
+    pub(crate) fn index_condition_holds(
         &self,
         index: &KvIndex,
         row: &[Datum],

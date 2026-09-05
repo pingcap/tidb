@@ -50,7 +50,7 @@ use std::collections::BTreeMap;
 use tidb_codec::table_key::encode_index_seek_key;
 use tidb_datatype::Datum;
 
-use crate::kv_table::{KvTable, RowDecodeContext, TableHandle};
+use crate::kv_table::{KvIndex, KvTable, RowDecodeContext, TableHandle};
 
 /// Why an `ADMIN CHECK` could not answer, or answered that the table is
 /// inconsistent.
@@ -201,6 +201,27 @@ fn index_entries(
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))
 }
 
+/// The subset of table rows that a partial-index predicate admits. Go's
+/// `CheckIndicesCount` compares an index against this set, not against every
+/// record in the table; a NULL/false predicate is deliberately absent.
+fn partial_index_rows<'a>(
+    table: &KvTable,
+    index: &KvIndex,
+    rows: &'a [(TableHandle, Vec<Datum>)],
+    context: &RowDecodeContext,
+) -> Result<Vec<(&'a TableHandle, &'a Vec<Datum>)>, AdminCheckError> {
+    let mut matching = Vec::new();
+    for (handle, row) in rows {
+        let holds = table
+            .index_condition_holds(index, row, context.zone())
+            .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
+        if holds {
+            matching.push((handle, row));
+        }
+    }
+    Ok(matching)
+}
+
 /// Runs Go's `CheckTableExec` over one stored table.
 ///
 /// `only_index` is `Some` for `ADMIN CHECK INDEX`, which checks exactly one
@@ -246,16 +267,15 @@ pub fn check_table(
     let rows = table
         .scan_rows_with_handles_recomputed(context)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
-    let table_count = rows.len() as i64;
-
     // Go `admin.CheckIndicesCount` runs first and, for `ADMIN CHECK INDEX`,
     // is the error the client sees.
     for index in &selected {
         let entries = index_entries(table, index.id)?;
         let index_count = entries.len() as i64;
-        if index_count != table_count && only_index.is_some() {
+        let expected_count = partial_index_rows(table, index, &rows, context)?.len() as i64;
+        if index_count != expected_count && only_index.is_some() {
             return Err(AdminCheckError::CountMismatch {
-                table_count,
+                table_count: expected_count,
                 index: index.name.clone(),
                 index_count,
             });
@@ -269,9 +289,11 @@ pub fn check_table(
         // use IndexLookUp (INDEX -> ROW); only a table-heavy mismatch uses
         // `CheckRecordAndIndex` (ROW -> INDEX).
         let stored = index_entries(table, index.id)?;
-        if table_count > stored.len() as i64 {
+        let matching_rows = partial_index_rows(table, index, &rows, context)?;
+        let expected_count = matching_rows.len() as i64;
+        if expected_count > stored.len() as i64 {
             let mut expected: BTreeMap<Vec<u8>, (TableHandle, &Vec<Datum>)> = BTreeMap::new();
-            for (handle, row) in &rows {
+            for (handle, row) in matching_rows {
                 let (key, _) = table
                     .index_key_for_check(index, row, handle, context.zone())
                     .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
@@ -326,6 +348,18 @@ pub fn check_table(
                         record_values: String::new(),
                     });
                 };
+                if !table
+                    .index_condition_holds(index, row, context.zone())
+                    .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?
+                {
+                    return Err(AdminCheckError::Inconsistent {
+                        table: table_name.clone(),
+                        index: index.name.clone(),
+                        handle: render_handle(handle),
+                        index_values: render_record(handle, &[]),
+                        record_values: String::new(),
+                    });
+                }
                 let indexed = table
                     .index_entry_values_for_check(index, key, value, context.zone())
                     .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;

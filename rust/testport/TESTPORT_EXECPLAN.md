@@ -8558,6 +8558,14 @@ risks without claiming repository-wide parity.
   The source-shaped `TestMaintainAffectColumns` carrier is live with all four
   offset checkpoints and the refusal assertion; evidence is recorded in
   `receipts/ddl_partial_index_validation.md`.
+- 2026-09-05 (`pkg/executor` ADMIN CHECK partial-index accounting): Rust now
+  computes each index's expected row set through its compiled partial
+  predicate, so false/NULL rows do not create count mismatches and stale
+  entries for rows leaving the predicate are detected. The focused admin-check
+  regression covers true, false, and NULL rows through both whole-table and
+  named-index checks; evidence is recorded in
+  `receipts/executor_admin_partial_index.md`. Go's fast-check session toggle
+  and 8273 refusal surface remain an explicit boundary.
 - 2026-09-05 (`pkg/ddl` DROP INDEX foreign-key clustered-handle exemption):
   Rust now applies Go's `PKIsHandle && len(cols) == 1` escape on both the
   declared-child and referred-parent branches of `checkIndexNeededInForeignKey`.

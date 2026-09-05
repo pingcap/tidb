@@ -231,6 +231,33 @@ fn admin_check_passes_over_enum_unique_index_tables_in_every_named_form() {
     );
 }
 
+/// Go's admin checker treats a partial index as a predicate-filtered relation:
+/// rows for which the condition is false or NULL do not count as missing index
+/// entries. The Rust checker must therefore pass both whole-table and named
+/// index checks when only one of three table rows is indexed.
+#[test]
+fn admin_check_counts_only_rows_matching_partial_index_predicate() {
+    let mut catalog = Catalog::default();
+    create(
+        &mut catalog,
+        "create table t (a int, b int, key idx_b (b) where a > 0)",
+    );
+    insert(
+        &mut catalog,
+        "insert into t values (1, 10), (-1, 20), (null, 30)",
+    );
+    let mut table = kv_table_of(&catalog, "t");
+    let context = check_context();
+    assert_eq!(
+        admin_check::check_table(&mut table, None, &context).expect("partial table check"),
+        1
+    );
+    assert_eq!(
+        admin_check::check_table(&mut table, Some("idx_b"), &context).expect("partial index check"),
+        1
+    );
+}
+
 /// Go `admin_test.go:2488::TestFastCheckTableConcurrent`: five sessions run
 /// `admin check table` over a 100-row table concurrently and all pass.
 ///
