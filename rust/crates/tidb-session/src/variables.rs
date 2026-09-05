@@ -827,6 +827,18 @@ impl Session {
                 1105,
                 "tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases",
             ))
+        } else if name.eq_ignore_ascii_case("tidb_enable_clustered_index")
+            && normalized == "INT_ONLY"
+        {
+            Some((
+                1287,
+                "'INT_ONLY' is deprecated and will be removed in a future release. Please use 'ON' or 'OFF' instead",
+            ))
+        } else if name.eq_ignore_ascii_case("tidb_enable_global_index") && normalized == "OFF" {
+            Some((
+                1105,
+                "tidb_enable_global_index is always turned on. This variable has been deprecated and will be removed in the future releases",
+            ))
         } else if name.eq_ignore_ascii_case("tidb_auto_analyze_partition_batch_size") {
             Some((
                 1681,

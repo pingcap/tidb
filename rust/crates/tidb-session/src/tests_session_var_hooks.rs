@@ -527,6 +527,45 @@ fn index_serial_scan_concurrency_warns_like_go() {
     );
 }
 
+/// Go's deprecated clustered/global-index compatibility switches preserve the
+/// requested value but append their respective warning for both scopes.
+#[test]
+fn deprecated_index_switches_warn_like_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET tidb_enable_clustered_index = 'INT_ONLY'")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1287");
+    assert_eq!(
+        warnings[0][2],
+        "'INT_ONLY' is deprecated and will be removed in a future release. Please use 'ON' or 'OFF' instead"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@session.tidb_enable_clustered_index"),
+        "INT_ONLY"
+    );
+
+    session
+        .run("SET GLOBAL tidb_enable_global_index = OFF")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1105");
+    assert_eq!(
+        warnings[0][2],
+        "tidb_enable_global_index is always turned on. This variable has been deprecated and will be removed in the future releases"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT @@global.tidb_enable_global_index"),
+        "0"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.
