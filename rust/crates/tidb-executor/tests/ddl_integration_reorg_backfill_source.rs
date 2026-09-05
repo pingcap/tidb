@@ -18,6 +18,9 @@
 //! metadata directly with no job queue, so the four runnable-in-Go tests are
 //! documentary gap ports and the nextgen-gated one inherits Go's own skip.
 
+use tidb_executor::ddl::{self, CreateTableSettings};
+use tidb_executor::{Catalog, StmtContext};
+
 /// GO PORT of `pkg/ddl/integration_test.go:61 TestDDLStatementsBackFill`.
 ///
 /// Re-derived contract: of `alter table t modify column a bigint`,
@@ -52,6 +55,90 @@ fn ddl_statements_backfill_exactly_when_write_reorganization_is_entered() {}
 #[test]
 #[ignore = "go-parity-gap: partial-index literal/type/shape validation and reorg lifecycle are not fully transcreated; FK IS NOT NULL predicate semantics are covered"]
 fn partial_index_accepts_only_type_matched_where_comparisons() {}
+
+/// Focused shape/type slice of Go `TestPartialIndex`: unsupported conditions
+/// are rejected with the dedicated 8200 errno, while the accepted type-family
+/// combinations remain executable through both CREATE TABLE and ALTER TABLE.
+#[test]
+fn partial_index_condition_validation_matches_go() {
+    let ctx = StmtContext::for_query();
+    let assert_create = |sql: &str, allowed: bool| {
+        let mut catalog = Catalog::default();
+        let result = ddl::run_create_table_in(
+            sql,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        );
+        if allowed {
+            result.unwrap_or_else(|error| panic!("{sql} should be accepted: {error:?}"));
+        } else {
+            let error = result.expect_err("Go rejects this partial-index condition");
+            assert_eq!(error.clone().to_mysql_error().code, 8200, "{sql}: {error:?}");
+        }
+    };
+
+    assert_create("create table t (a int, b int, key idx (b) where a = 1)", true);
+    assert_create("create table t (a int, b int, key idx (b) where a = '1')", false);
+    assert_create("create table t (a float, b int, key idx (b) where a = 1.0)", true);
+    assert_create("create table t (a int, b int, key idx (b) where a = 1.0)", false);
+    assert_create("create table t (a binary(8), b int, key idx (b) where a = 0x01)", true);
+    assert_create("create table t (a varchar(8), b int, key idx (b) where a = 0x01)", false);
+    assert_create("create table t (a text, b int, key idx (b) where a = '1')", true);
+    assert_create(
+        "create table t (a char(8) collate binary, b int, key idx (b) where a = 0x01)",
+        true,
+    );
+    assert_create(
+        "create table t (a char(8) collate binary, b int, key idx (b) where a = '1')",
+        false,
+    );
+    assert_create(
+        "create table t (a datetime, b int, key idx (b) where a = '2025-07-28')",
+        true,
+    );
+    assert_create("create table t (a datetime, b int, key idx (b) where a = 1)", false);
+    assert_create(
+        "create table t (a enum('a','b'), b int, key idx (b) where a = 'a')",
+        true,
+    );
+    assert_create("create table t (a enum('a','b'), b int, key idx (b) where a = null)", false);
+    assert_create("create table t (a int, b int, key idx (b) where missing = 1)", false);
+    assert_create("create table t (a int, b int, primary key (b) where a = 1)", false);
+    assert_create("create table t (a int, b int, key idx (b) where a > b)", false);
+    assert_create("create table t (a int, b int, key idx (b) where a like '1')", false);
+    assert_create("create table t (a int, b int, key idx (b) where a is true)", false);
+    assert_create(
+        "create table t (a int, c int as (a + 1), b int, key idx (b) where c = 1)",
+        false,
+    );
+
+    let mut catalog = Catalog::default();
+    ddl::run_create_table_in(
+        "create table t (a int, b int)",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t add index idx (b) where a = 1",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    let error = ddl::run_alter_table_in(
+        "alter table t add index bad (b) where a = '1'",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go rejects the ALTER partial-index type mismatch");
+    assert_eq!(error.to_mysql_error().code, 8200);
+}
 
 /// GO PORT of `pkg/ddl/integration_test.go:178
 /// TestDropTableAdminCheckTableFastCheckTable`.

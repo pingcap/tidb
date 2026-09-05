@@ -99,8 +99,8 @@ pub fn run_create_index_in(
             Some(crate::TableEntry::Kv(table)) if table.partition().is_some()
         )
     {
-        return Err(DriverError::unsupported(
-            "partial index is not supported on partitioned table",
+        return Err(unsupported_partial_index(
+            "partial index on partitioned table is not supported",
         ));
     }
     let max_index_length = catalog.max_index_length();
@@ -132,6 +132,175 @@ pub fn run_create_index_in(
 /// A key with no visibility clause is visible, which is Go's default.
 pub(crate) fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
     options.visibility != Some(tidb_ast::IndexVisibility::Invisible)
+}
+
+/// Go `dbterror.ErrUnsupportedAddPartialIndex` (8200), including its
+/// user-visible message prefix. Partial-index validation has a dedicated
+/// errno in TiDB; using the generic unsupported (1105) would make otherwise
+/// correct accept/refuse decisions observably different.
+pub(crate) fn unsupported_partial_index(reason: impl Into<String>) -> DriverError {
+    DriverError::DdlCoded {
+        errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+        message: format!("Unsupported add partial index: {}", reason.into()),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PartialLiteralKind {
+    Integer,
+    Floating,
+    String,
+    Binary,
+    Null,
+    Unsupported,
+}
+
+fn partial_literal_kind(expression: &tidb_ast::Expr) -> PartialLiteralKind {
+    match expression {
+        tidb_ast::Expr::Int(_) | tidb_ast::Expr::Bool(_) => PartialLiteralKind::Integer,
+        tidb_ast::Expr::Decimal(_) | tidb_ast::Expr::Float(_) => PartialLiteralKind::Floating,
+        tidb_ast::Expr::String(_)
+        | tidb_ast::Expr::RawString(_)
+        | tidb_ast::Expr::CharsetString { .. } => PartialLiteralKind::String,
+        tidb_ast::Expr::Hex(_) | tidb_ast::Expr::Bit(_) => PartialLiteralKind::Binary,
+        tidb_ast::Expr::CharsetBinary { value, .. } => match value.as_ref() {
+            tidb_ast::Expr::Hex(_) | tidb_ast::Expr::Bit(_) => PartialLiteralKind::Binary,
+            _ => PartialLiteralKind::Unsupported,
+        },
+        tidb_ast::Expr::Null => PartialLiteralKind::Null,
+        _ => PartialLiteralKind::Unsupported,
+    }
+}
+
+/// Mirrors Go `checkIndexCondition` (`pkg/ddl/index.go:4090-4240`). Only a
+/// visible, non-generated column may appear in an `IS [NOT] NULL` predicate or
+/// on one side of a supported comparison; the other side must be a literal
+/// whose type family is compatible with that column.
+pub(crate) fn validate_partial_index_condition(
+    columns: &[KvColumn],
+    expression: &tidb_ast::Expr,
+) -> Result<(), DriverError> {
+    let column_for = |expr: &tidb_ast::Expr| -> Result<&KvColumn, DriverError> {
+        let tidb_ast::Expr::Column(path) = expr else {
+            return Err(unsupported_partial_index(
+                "partial index condition must include a column name",
+            ));
+        };
+        let Some(name) = path.last() else {
+            return Err(unsupported_partial_index(
+                "partial index condition must include a column name",
+            ));
+        };
+        let Some(column) = columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(name))
+        else {
+            return Err(unsupported_partial_index(format!(
+                "column name `{name}` referenced in partial index condition is not found in table"
+            )));
+        };
+        if column.generated.is_some() {
+            return Err(unsupported_partial_index(format!(
+                "generated column {name} cannot be used in partial index condition"
+            )));
+        }
+        Ok(column)
+    };
+
+    match expression {
+        tidb_ast::Expr::Is {
+            expr,
+            target: tidb_ast::IsTarget::Null,
+            ..
+        } => {
+            column_for(expr)?;
+            Ok(())
+        }
+        tidb_ast::Expr::Is { .. } => Err(unsupported_partial_index(
+            "only IS NULL and IS NOT NULL are supported",
+        )),
+        tidb_ast::Expr::Binary(op, left, right)
+            if matches!(
+                op,
+                tidb_ast::BinaryOp::Eq
+                    | tidb_ast::BinaryOp::Ne
+                    | tidb_ast::BinaryOp::Gt
+                    | tidb_ast::BinaryOp::Lt
+                    | tidb_ast::BinaryOp::Ge
+                    | tidb_ast::BinaryOp::Le
+            ) =>
+        {
+            let (column, literal) = match (left.as_ref(), right.as_ref()) {
+                (tidb_ast::Expr::Column(_), other) => (column_for(left)?, other),
+                (other, tidb_ast::Expr::Column(_)) => (column_for(right)?, other),
+                _ => {
+                    return Err(unsupported_partial_index(
+                        "partial index condition must include a column name in the binary operation",
+                    ));
+                }
+            };
+            let literal_kind = partial_literal_kind(literal);
+            let code = column.field_type.code();
+            let compatible = match literal_kind {
+                PartialLiteralKind::Integer => {
+                    code.is_type_integer()
+                        || matches!(
+                            code,
+                            tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+                        )
+                }
+                PartialLiteralKind::Floating => matches!(
+                    code,
+                    tidb_datatype::FieldTypeCode::Float
+                        | tidb_datatype::FieldTypeCode::Double
+                        | tidb_datatype::FieldTypeCode::NewDecimal
+                ),
+                PartialLiteralKind::String => {
+                    (code.is_string()
+                        && !column
+                            .field_type
+                            .charset_name()
+                            .eq_ignore_ascii_case("binary"))
+                        || code.is_type_temporal()
+                        || matches!(
+                            code,
+                            tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+                        )
+                }
+                PartialLiteralKind::Binary => {
+                    code.is_type_blob()
+                        || ((code.is_type_char() || code.is_type_varchar())
+                            && column
+                                .field_type
+                                .charset_name()
+                                .eq_ignore_ascii_case("binary"))
+                }
+                PartialLiteralKind::Null | PartialLiteralKind::Unsupported => false,
+            };
+            if compatible {
+                Ok(())
+            } else {
+                let reason = if literal_kind == PartialLiteralKind::Null {
+                    "= NULL is not supported in partial index condition because it is always false"
+                        .to_owned()
+                } else if literal_kind == PartialLiteralKind::Unsupported {
+                    "partial index condition must include a literal value on the other side of the binary operation".to_owned()
+                } else {
+                    format!(
+                        "the type of column `{}` is not compatible with the literal value",
+                        column.name
+                    )
+                };
+                Err(unsupported_partial_index(reason))
+            }
+        }
+        tidb_ast::Expr::Binary(op, ..) => Err(unsupported_partial_index(format!(
+            "binary operation {op:?} is not supported"
+        ))),
+        _ => Err(unsupported_partial_index(
+            "the kind of partial index condition is not supported",
+        )),
+    }
 }
 
 /// The column names an index's key parts name, rejecting the forms this tier
@@ -229,6 +398,9 @@ pub(crate) fn add_index_to_table(
             format!("{database}.{table_name}"),
         )));
     };
+    if let Some(condition) = condition {
+        validate_partial_index_condition(table.columns(), condition)?;
+    }
     if table
         .indexes()
         .iter()

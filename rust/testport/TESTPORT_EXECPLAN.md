@@ -8542,6 +8542,15 @@ risks without claiming repository-wide parity.
   `receipts/ddl_foreign_key_partial_index.md`; the broader literal/type,
   generated-column, primary-key, partition, affect-column, and reorg matrix
   remains an explicit boundary.
+- 2026-09-05 (`pkg/ddl` partial-index shape/type validation): Rust now returns
+  Go's dedicated 8200 `Unsupported add partial index` error for unsupported
+  predicates, unknown/generated columns, primary-key conditions, NULL and
+  incompatible literal families, while accepting the integer, floating,
+  binary, temporal-string, and enum/set controls covered by the focused
+  carrier. The same validator is shared by CREATE TABLE, CREATE INDEX, and
+  ALTER TABLE ADD INDEX, including the partition guard. Evidence is recorded
+  in `receipts/ddl_partial_index_validation.md`; the exhaustive Go literal
+  matrix and DDL reorganization/affect-column lifecycle remain explicit gaps.
 - 2026-09-05 (`pkg/ddl` DROP INDEX foreign-key clustered-handle exemption):
   Rust now applies Go's `PKIsHandle && len(cols) == 1` escape on both the
   declared-child and referred-parent branches of `checkIndexNeededInForeignKey`.

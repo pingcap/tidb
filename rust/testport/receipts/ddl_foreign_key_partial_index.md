@@ -49,10 +49,11 @@ cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.tom
 ```
 
 The broader `TestPartialIndex` carrier remains ignored because the complete
-literal/type compatibility matrix, generated-column and primary-key checks,
-affect-column offset maintenance, and DDL reorganization lifecycle are not
-fully transcreated. The focused FK predicate semantics are no longer an
-ignored gap.
+literal/type cross-product, affect-column offset maintenance, and DDL
+reorganization lifecycle are not fully transcreated; the focused
+shape/type/8200 slice is recorded in
+`receipts/ddl_partial_index_validation.md`. The focused FK predicate
+semantics are no longer an ignored gap.
 
 ## Ready profile
 

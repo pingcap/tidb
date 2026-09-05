@@ -178,7 +178,7 @@ pub(crate) fn table_indexes(
         if index.kind == tidb_ast::IndexConstraintKind::PrimaryKey
             && index.options.condition.is_some()
         {
-            return Err(DriverError::unsupported(
+            return Err(crate::ddl::indexes::unsupported_partial_index(
                 "partial index is not supported on a primary key",
             ));
         }

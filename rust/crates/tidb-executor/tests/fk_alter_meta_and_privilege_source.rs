@@ -670,9 +670,10 @@ fn partial_index_safety_rules_match_go() {
         &ctx,
     )
     .expect_err("Go rejects partial indexes on partitioned tables");
+    assert_eq!(error.clone().to_mysql_error().code, 8200);
     assert!(error
         .to_string()
-        .contains("partial index is not supported on partitioned table"));
+        .contains("partial index on partitioned table is not supported"));
 }
 
 // --- TestRenameColumnWithForeignKeyMetaInfo

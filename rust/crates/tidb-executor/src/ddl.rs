@@ -1687,6 +1687,7 @@ pub fn run_create_table_in(
         table.add_index(index, clustered_primary);
     }
     for (index_id, index_name, condition) in &partial_conditions {
+        crate::ddl::indexes::validate_partial_index_condition(table.columns(), condition)?;
         table
             .add_partial_index_condition(
                 *index_id,
@@ -1847,8 +1848,8 @@ pub fn run_create_table_in(
         }
         table.set_partition(partition);
         if !partial_conditions.is_empty() {
-            return Err(DriverError::unsupported(
-                "partial index is not supported on partitioned table",
+            return Err(crate::ddl::indexes::unsupported_partial_index(
+                "partial index on partitioned table is not supported",
             ));
         }
     }

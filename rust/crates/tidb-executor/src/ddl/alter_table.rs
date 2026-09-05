@@ -1146,8 +1146,8 @@ fn add_index_constraint_action(
             |entry| matches!(entry, crate::TableEntry::Kv(table) if table.partition().is_some()),
         )
     {
-        return Err(DriverError::unsupported(
-            "partial index is not supported on partitioned table",
+        return Err(crate::ddl::indexes::unsupported_partial_index(
+            "partial index on partitioned table is not supported",
         ));
     }
     // Go `GetName4AnonymousIndex`: an unnamed index takes its first key
