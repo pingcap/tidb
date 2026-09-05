@@ -1197,6 +1197,7 @@ fn add_foreign_key_action(
         catalog,
         database,
         ctx.foreign_key_checks(),
+        table.partition().is_some(),
     )?;
     validate_alter_foreign_key_parent(catalog, database, name, &foreign_key)?;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {

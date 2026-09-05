@@ -452,14 +452,46 @@ fn fk_create_name_shape_rows_match_go() {
 // partitioning` — a child referencing a partitioned parent, and a
 // partitioned child.
 //
-// go-parity-gap (documented divergence): the tier's CREATE lowers both the
-// FK and the partitioning without cross-checking, so both rows succeed
-// where Go refuses them.
 #[test]
-#[ignore = "go-parity-gap: the 1506 FK-vs-partitioning cross-check is absent"]
 fn fk_create_refuses_partitioning_on_either_side() {
-    // Contract (foreign_key_test.go:612-618): [schema:1506] on the
-    // partitioned parent row and on the partitioned child row.
+    let cases = [
+        (
+            "create table t1 (id int key) partition by hash(id) partitions 3;",
+            "create table t2 (id int key, constraint fk foreign key (id) references t1(id));",
+        ),
+        (
+            "create table t1 (id int key);",
+            "create table t2 (id int key, constraint fk foreign key (id) references t1(id)) partition by hash(id) partitions 3;",
+        ),
+    ];
+    for (refer, create) in cases {
+        let mut catalog = Catalog::default();
+        let ctx = StmtContext::for_query();
+        ddl::run_create_table_in(
+            refer,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .unwrap();
+        let error = ddl::run_create_table_in(
+            create,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .expect_err("Go's partitioned FK row must fail");
+        assert_eq!(
+            err(&error),
+            (
+                1506,
+                "Foreign key clause is not yet supported in conjunction with partitioning".to_owned()
+            ),
+            "{create}"
+        );
+    }
 }
 
 // Go's pass matrix (`pkg/ddl/tests/fk/foreign_key_test.go:645-747`): nine

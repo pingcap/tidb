@@ -8573,14 +8573,21 @@ risks without claiming repository-wide parity.
   (1830), and type/unsigned/charset/collation (3780) checks in the shared
   CREATE/ALTER builder, including prefix-index rejection. Evidence is recorded
   in `receipts/ddl_foreign_key_create_compatibility.md`; self-reference,
-  deferred-parent, temporary-table, name, and partition rows remain explicit
-  boundaries in `b111.md`.
+  deferred-parent, and temporary-table rows remain explicit boundaries in
+  `b111.md`.
 - 2026-09-05 (`pkg/ddl` CREATE FOREIGN KEY names and shapes): Rust now matches
   Go's empty-name (1280), duplicate-child-column (1060), duplicate-reference
   index (1822), support-index collision (1061), and over-length identifier
   (1059) diagnostics before metadata mutation. Evidence is recorded in
   `receipts/ddl_foreign_key_create_name_shape.md`; self-reference,
-  deferred-parent, temporary-table, and partition rows remain explicit
+  deferred-parent, and temporary-table rows remain explicit boundaries in
+  `b111.md`.
+- 2026-09-05 (`pkg/ddl` CREATE FOREIGN KEY partitioning): Rust now rejects a
+  foreign key when either the child statement or referenced parent is
+  partitioned with Go's exact schema 1506 diagnostic, while preserving the
+  checks-off deferral for unresolved parents. Evidence is recorded in
+  `receipts/ddl_foreign_key_create_partitioning.md`; self-reference,
+  deferred-parent, temporary-table, and pass-matrix rows remain explicit
   boundaries in `b111.md`.
 - 2026-09-05 (`pkg/ddl` temporary CREATE TABLE LIKE options and duplicate
   warning): Rust now refuses temporary copies that inherit pre-split or

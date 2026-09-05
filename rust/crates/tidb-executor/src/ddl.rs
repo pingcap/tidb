@@ -1670,8 +1670,14 @@ pub fn run_create_table_in(
         let clustered_primary = index.clustered_primary;
         table.add_index(index, clustered_primary);
     }
-    let foreign_keys =
-        table_foreign_keys(create, &columns, catalog, &database, foreign_key_checks)?;
+    let foreign_keys = table_foreign_keys(
+        create,
+        &columns,
+        catalog,
+        &database,
+        foreign_key_checks,
+        create.partitioning.is_some(),
+    )?;
     if enable_check_constraint {
         let checks = check_constraint::create_inputs(create);
         let check_foreign_keys = foreign_keys

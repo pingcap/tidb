@@ -296,6 +296,11 @@ impl DriverError {
                 "Failed to add the foreign key constraint. Missing index for constraint '{constraint}' in the referenced table '{table}'"
             ),
         ),
+        // Go `infoschema.ErrForeignKeyOnPartitioned`.
+        DriverError::ForeignKeyOnPartitioned => MysqlError::new(
+            1506,
+            "Foreign key clause is not yet supported in conjunction with partitioning".to_owned(),
+        ),
         // Go: "Cannot add or update a child row: a foreign key constraint
         // fails (%.192s)".
         DriverError::ForeignKeyNoReferencedRow { table, constraint } => MysqlError::new(

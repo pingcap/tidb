@@ -390,6 +390,56 @@ fn alter_add_foreign_key_refuses_missing_parent_index_and_self_reference() {
     assert_eq!(declared(&catalog, "test", "t2").len(), 1);
 }
 
+// Go's TestAddForeignKey partition rows (`pkg/ddl/tests/fk/foreign_key_test.go:
+// 1427-1435`): ALTER TABLE ... ADD FOREIGN KEY rejects a partitioned parent or
+// child with schema 1506 before staging the constraint or its support index.
+#[test]
+fn alter_add_foreign_key_refuses_partitioning_on_either_side() {
+    let cases = [
+        (
+            "create table t1 (id int key) partition by hash(id) partitions 3;",
+            "create table t2 (id int key);",
+        ),
+        (
+            "create table t1 (id int key);",
+            "create table t2 (id int key) partition by hash(id) partitions 3;",
+        ),
+    ];
+    for (parent, child) in cases {
+        let mut catalog = Catalog::default();
+        let ctx = StmtContext::for_query();
+        ddl::run_create_table_in(
+            parent,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .unwrap();
+        ddl::run_create_table_in(
+            child,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .unwrap();
+        let error = ddl::run_alter_table_in(
+            "alter table t2 add constraint fk foreign key (id) references t1(id)",
+            &mut catalog,
+            "test",
+            &ctx,
+        )
+        .expect_err("Go's partitioned ALTER FK row must fail");
+        let mysql = error.to_mysql_error();
+        assert_eq!(mysql.code, 1506);
+        assert_eq!(
+            mysql.message,
+            "Foreign key clause is not yet supported in conjunction with partitioning"
+        );
+    }
+}
+
 // The multi-add atomicity rows of Go's TestAddForeignKey
 // (pkg/ddl/tests/fk/foreign_key_test.go:1145-1153): one ALTER adding
 // fk_c/fk_d/fk_e where fk_e names `t1(unknown_col)` fails with

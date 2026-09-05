@@ -831,6 +831,9 @@ pub enum DriverError {
         /// The parent table named in REFERENCES.
         table: String,
     },
+    /// Go `infoschema.ErrForeignKeyOnPartitioned` (1506): foreign keys are
+    /// not supported when either the child or parent table is partitioned.
+    ForeignKeyOnPartitioned,
     /// Go `ErrNoReferencedRow2` (1452): a child-side `INSERT`/`UPDATE` named
     /// a parent row that does not exist.
     ForeignKeyNoReferencedRow {

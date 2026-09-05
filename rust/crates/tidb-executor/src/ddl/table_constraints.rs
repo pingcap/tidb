@@ -375,6 +375,7 @@ pub(crate) fn table_foreign_keys(
     catalog: &Catalog,
     database: &str,
     foreign_key_checks: bool,
+    child_partitioned: bool,
 ) -> Result<Vec<KvForeignKey>, DriverError> {
     // The generated-ness of each column, read off the written definitions;
     // the `ColumnInfo` vector carries the resolved names and is in the same
@@ -415,6 +416,7 @@ pub(crate) fn table_foreign_keys(
             catalog,
             database,
             foreign_key_checks,
+            child_partitioned,
         )?);
     }
     Ok(keys)
@@ -452,6 +454,7 @@ pub(crate) fn build_foreign_key(
     catalog: &Catalog,
     database: &str,
     foreign_key_checks: bool,
+    child_partitioned: bool,
 ) -> Result<KvForeignKey, DriverError> {
     {
         if definition.reference.match_type == tidb_ast::ForeignKeyMatch::Partial {
@@ -501,11 +504,20 @@ pub(crate) fn build_foreign_key(
             });
         }
         child_generated_column_rules(columns, &cols, definition, &fk_name)?;
+        // Go's owner check still rejects a partitioned relationship when the
+        // parent exists even if `foreign_key_checks=0`; only an unresolved
+        // parent is deferred by that switch. Probe the existing parent first
+        // so both CREATE and ALTER preserve that ordering.
+        let existing_parent = catalog.get_in(&ref_schema, &ref_table);
+        if let Some(crate::TableEntry::Kv(parent)) = existing_parent {
+            if child_partitioned || parent.partition().is_some() {
+                return Err(DriverError::ForeignKeyOnPartitioned);
+            }
+        }
         if foreign_key_checks {
             // Go `checkTableInfoValid`: an unresolvable reference is
             // `ErrNoReferencedRow`-adjacent at DDL time, not at write time.
-            let parent = catalog
-                .get_in(&ref_schema, &ref_table)
+            let parent = existing_parent
                 .ok_or_else(|| DriverError::ForeignKeyReferencedTableMissing(ref_table.clone()))?;
             // Go `checkTableForeignKey`: the REFERENCED column may not be
             // virtual either. Unlike the child-side rule above this one sits
