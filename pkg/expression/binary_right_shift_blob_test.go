@@ -1,6 +1,16 @@
 // Copyright 2026 PingCAP, Inc.
 //
-// Licensed under the Apache License, Version 2.0.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package expression_test
 
@@ -30,7 +40,13 @@ func TestBinaryRightShiftBlob(t *testing.T) {
 			tk.MustQuery("select hex(b >> shift_count), hex(vb >> shift_count), hex(fixed >> shift_count) from shift_source where id = 2").Check(
 				testkit.Rows("<nil> <nil> <nil>"),
 			)
-			tk.MustQuery("select hex(t2.a), hex(t3.a) from t2, t3 where (t2.a >> 4) = t3.a").Check(testkit.Rows())
+			for _, query := range []string{
+				"select hex(t2.a), hex(t3.a) from t2, t3 where (t2.a >> 4) = t3.a",
+				"select hex(t2.a), hex(t3.a) from t2, t3 where (t2.a >> 8) = t3.a",
+			} {
+				tk.MustQuery(query).Check(testkit.Rows())
+				tk.MustQuery("show warnings").Check(testkit.Rows())
+			}
 			tk.MustQuery("select 123 >> 2, 0xC2A0 >> 4, text_value >> 2 from shift_source where id = 1").Check(
 				testkit.Rows("30 3114 4"),
 			)
