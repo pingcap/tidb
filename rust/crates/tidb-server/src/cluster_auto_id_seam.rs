@@ -132,6 +132,7 @@ where
             ClusterSequenceCounter::new(self.opener.clone(), db_id, table.id, self.timeout);
         let def = SequenceDef {
             name: table.name.original().to_owned(),
+            comment: stored_sequence.comment,
             allocator: SequenceAllocator::over_counter(info, counter.shared()),
         };
         sequences.insert(table.id, def.clone());

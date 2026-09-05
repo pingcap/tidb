@@ -114,25 +114,37 @@ fn create_sequence_space_terminated_name_reports_1103() {
 }
 
 /// Go row `pkg/ddl/sequence_test.go:61`: `create sequence seq CHARSET=utf8`
-/// fails with `ErrSequenceUnsupportedTableOption` (4159). The Rust carrier
-/// refuses every table option (`src/ddl_sequence.rs:166`), so the refusal is
-// carried but reports the generic 1105 "unsupported" error instead of 4159.
-// go-parity-gap: Go's 4159 error code for an unsupported sequence table
-// option is not carried; the carrier reports 1105.
+/// fails with `ErrSequenceUnsupportedTableOption` (8227), rendered as
+/// `Unsupported sequence table-option utf8`. The Rust carrier previously
+/// refused every table option (`src/ddl_sequence.rs:166`) with generic 1105.
 #[test]
-#[ignore]
-fn create_sequence_unsupported_table_option_reports_4159() {
+fn create_sequence_unsupported_table_option_reports_8227() {
+    let mut catalog = Catalog::default();
+    assert_eq!(
+        error_of(&mut catalog, "create sequence seq charset=utf8"),
+        (
+            8227,
+            "Unsupported sequence table-option utf8".to_owned()
+        )
+    );
 }
 
 /// Go row `pkg/ddl/sequence_test.go:63`: `create sequence seq comment="test"`
 /// SUCCEEDS -- Go rejects every table option EXCEPT `COMMENT` and `ENGINE`
-/// (`pkg/ddl/sequence.go`'s option loop). The Rust carrier refuses any table
-/// option at all (`src/ddl_sequence.rs:166`).
-// go-parity-gap: documented divergence -- Rust refuses a CREATE SEQUENCE
-// with a COMMENT option where Go accepts it.
+/// (`pkg/ddl/sequence.go`'s option loop). The comment is stored in
+/// `SequenceInfo.Comment` and is included by `SHOW CREATE SEQUENCE`.
 #[test]
-#[ignore]
 fn create_sequence_accepts_a_comment_option() {
+    let mut catalog = Catalog::default();
+    run(&mut catalog, "create sequence seq comment='test'")
+        .expect("Go accepts COMMENT on CREATE SEQUENCE");
+    let sequence = catalog.sequence_in("test", "seq").expect("sequence");
+    assert_eq!(sequence.comment, "test");
+    assert_eq!(
+        tidb_executor::show_create_sequence(sequence),
+        "CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 \
+         increment by 1 cache 1000 nocycle ENGINE=InnoDB COMMENT='test'"
+    );
 }
 
 /// Go rows `pkg/ddl/sequence_test.go:77-93`: a user granted only `select` on

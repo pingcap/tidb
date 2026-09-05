@@ -768,6 +768,10 @@ impl DriverError {
         DriverError::ApproxPercentileArgument(message) => {
             MysqlError::new(1105, (*message).to_owned())
         }
+        DriverError::SequenceUnsupportedTableOption(option) => MysqlError::new(
+            8227,
+            format!("Unsupported sequence table-option {option}"),
+        ),
         DriverError::PercentageOutOfRange(percent) => MysqlError::new(
             1105,
             format!("Percentage value {percent} is out of range [1, 100]"),

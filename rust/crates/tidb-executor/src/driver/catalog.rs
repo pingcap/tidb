@@ -469,7 +469,8 @@ pub enum TableEntry {
     Sequence(SequenceDef),
 }
 
-/// A sequence in the catalog: the name as written plus its allocator.
+/// A sequence in the catalog: the name, Go `SequenceInfo.Comment`, and its
+/// allocator.
 ///
 /// The allocator is `Arc`-shared inside, so cloning this entry (as a staged
 /// catalog copy does) shares the counter rather than forking it.
@@ -477,6 +478,10 @@ pub enum TableEntry {
 pub struct SequenceDef {
     /// The name as written, for `SHOW CREATE SEQUENCE` and `SHOW TABLES`.
     pub name: String,
+    /// Go `model.SequenceInfo.Comment`, retained for sequence metadata and
+    /// appended to `SHOW CREATE SEQUENCE` when non-empty. The separate
+    /// information-schema sequence reader remains outside this catalog seam.
+    pub comment: String,
     /// The value source. See [`crate::sequence`].
     pub allocator: crate::sequence::SequenceAllocator,
 }

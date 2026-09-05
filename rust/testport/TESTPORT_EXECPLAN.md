@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` sequence table options): aligned Rust with Go's
+  CREATE SEQUENCE table-option contract. COMMENT and ENGINE are accepted;
+  comments are retained on the sequence catalog entry and rendered by SHOW
+  CREATE, while unsupported options now return Go's exact 8227 code/message.
+  The focused regression recorded the generic-1105/comment-loss fail-before
+  state and passes after the fix. The complete inventory and remaining
+  sequence gaps are recorded in `receipts/b110.md`.
 - 2026-09-05 (`pkg/ddl` unsupported roman collations): closed the CREATE
   TABLE error-contract mismatch from the b115 inventory. Rust now preserves
   the registry entries for non-DDL callers while returning Go's 1273 code and

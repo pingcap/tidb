@@ -160,6 +160,73 @@ fn qualified(database: &str, name: &str) -> String {
     format!("{}.{}", database.to_lowercase(), name.to_lowercase())
 }
 
+/// Go passes `TableOption.StrValue` to
+/// `ErrSequenceUnsupportedTableOption`; table-option variants backed by
+/// another AST field therefore contribute the empty string.
+fn sequence_table_option_string_value(option: &tidb_ast::TableOption) -> String {
+    match option {
+        tidb_ast::TableOption::CharacterSet(value) | tidb_ast::TableOption::Collate(value) => {
+            value.to_ascii_lowercase()
+        }
+        tidb_ast::TableOption::Engine(value)
+        | tidb_ast::TableOption::AutoIncrement(value)
+        | tidb_ast::TableOption::ForceAutoIncrement(value)
+        | tidb_ast::TableOption::Comment(value)
+        | tidb_ast::TableOption::RowFormat(value)
+        | tidb_ast::TableOption::KeyBlockSize(value)
+        | tidb_ast::TableOption::Compression(value)
+        | tidb_ast::TableOption::Tablespace(value)
+        | tidb_ast::TableOption::StorageMedia(value)
+        | tidb_ast::TableOption::StorageClass(value)
+        | tidb_ast::TableOption::ShardRowIdBits(value)
+        | tidb_ast::TableOption::PreSplitRegions(value)
+        | tidb_ast::TableOption::AutoIdCache(value)
+        | tidb_ast::TableOption::MaxRows(value)
+        | tidb_ast::TableOption::MinRows(value)
+        | tidb_ast::TableOption::AvgRowLength(value)
+        | tidb_ast::TableOption::Checksum(value)
+        | tidb_ast::TableOption::DelayKeyWrite(value)
+        | tidb_ast::TableOption::AutoRandomBase(value)
+        | tidb_ast::TableOption::ForceAutoRandomBase(value)
+        | tidb_ast::TableOption::Connection(value)
+        | tidb_ast::TableOption::Password(value)
+        | tidb_ast::TableOption::StatsAutoRecalc(value)
+        | tidb_ast::TableOption::StatsSamplePages(value)
+        | tidb_ast::TableOption::Nodegroup(value)
+        | tidb_ast::TableOption::DataDirectory(value)
+        | tidb_ast::TableOption::IndexDirectory(value)
+        | tidb_ast::TableOption::AutoextendSize(value)
+        | tidb_ast::TableOption::PageChecksum(value)
+        | tidb_ast::TableOption::PageCompressed(value)
+        | tidb_ast::TableOption::PageCompressionLevel(value)
+        | tidb_ast::TableOption::Transactional(value)
+        | tidb_ast::TableOption::IetfQuotes(value)
+        | tidb_ast::TableOption::Sequence(value)
+        | tidb_ast::TableOption::InsertMethod(value)
+        | tidb_ast::TableOption::Encryption(value)
+        | tidb_ast::TableOption::SecondaryEngine(value)
+        | tidb_ast::TableOption::SecondaryEngineAttribute(value)
+        | tidb_ast::TableOption::EngineAttribute(value)
+        | tidb_ast::TableOption::TableChecksum(value)
+        | tidb_ast::TableOption::PlacementPolicy(value)
+        | tidb_ast::TableOption::StatsBuckets(value)
+        | tidb_ast::TableOption::StatsTopN(value)
+        | tidb_ast::TableOption::StatsSampleRate(value)
+        | tidb_ast::TableOption::StatsColChoice(value)
+        | tidb_ast::TableOption::StatsColList(value)
+        | tidb_ast::TableOption::TtlJobInterval(value)
+        | tidb_ast::TableOption::Affinity(value) => value.clone(),
+        tidb_ast::TableOption::StatsPersistent
+        | tidb_ast::TableOption::PackKeys
+        | tidb_ast::TableOption::SecondaryEngineNull
+        | tidb_ast::TableOption::StatsColChoiceDefault
+        | tidb_ast::TableOption::StatsColListDefault
+        | tidb_ast::TableOption::Union(_)
+        | tidb_ast::TableOption::Ttl { .. }
+        | tidb_ast::TableOption::TtlEnable(_) => String::new(),
+    }
+}
+
 /// `CREATE SEQUENCE`. Returns whether a sequence was created (`false` only for
 /// `IF NOT EXISTS` over an existing name).
 ///
@@ -186,13 +253,20 @@ pub fn run_create_sequence_in(
             qualified(&database, &name),
         )));
     }
-    // Go rejects every table option but COMMENT and ENGINE; neither reaches a
-    // value, and this tier stores neither, so any option at all is refused
-    // rather than silently dropped.
-    if !create.table_options.is_empty() {
-        return Err(DriverError::unsupported(
-            "a table option on CREATE SEQUENCE is not supported yet",
-        ));
+    // Go rejects every table option but COMMENT and ENGINE. ENGINE is the
+    // parser's implicit InnoDB spelling and does not become sequence
+    // metadata; COMMENT is retained on SequenceDef like Go's SequenceInfo.
+    let mut comment = String::new();
+    for option in &create.table_options {
+        match option {
+            tidb_ast::TableOption::Comment(value) => comment = value.clone(),
+            tidb_ast::TableOption::Engine(_) => {}
+            _ => {
+                return Err(DriverError::SequenceUnsupportedTableOption(
+                    sequence_table_option_string_value(option),
+                ));
+            }
+        }
     }
     // RESTART is an ALTER-only option, and the PARSER already refuses it on a
     // CREATE -- as real TiDB does (captured: `create sequence s restart with 5`
@@ -203,6 +277,7 @@ pub fn run_create_sequence_in(
         &name,
         SequenceDef {
             name: name.clone(),
+            comment,
             allocator: SequenceAllocator::new(info),
         },
     )?;
@@ -302,10 +377,26 @@ pub fn show_create_sequence(sequence: &SequenceDef) -> String {
         "nocache".to_owned()
     };
     let cycle = if info.cycle { "cycle" } else { "nocycle" };
-    format!(
+    let mut text = format!(
         "CREATE SEQUENCE `{}` start with {} minvalue {} maxvalue {} increment by {} {} {} ENGINE=InnoDB",
         sequence.name, info.start, info.min_value, info.max_value, info.increment, cache, cycle
-    )
+    );
+    if !sequence.comment.is_empty() {
+        let mut escaped = String::with_capacity(sequence.comment.len());
+        for character in sequence.comment.chars() {
+            match character {
+                '\0' => escaped.push_str("\\0"),
+                '\'' => escaped.push_str("''"),
+                '\n' => escaped.push_str("\\n"),
+                '\r' => escaped.push_str("\\r"),
+                other => escaped.push(other),
+            }
+        }
+        text.push_str(" COMMENT='");
+        text.push_str(&escaped);
+        text.push('\'');
+    }
+    text
 }
 
 #[cfg(test)]

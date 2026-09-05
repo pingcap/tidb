@@ -76,9 +76,9 @@ pub enum SequenceError {
 
 /// Go `model.SequenceInfo`, reduced to the fields that decide values.
 ///
-/// NOT MODELLED (documented): `Comment`, and the `Charset`/`Collate` a
-/// sequence carries as a `TableInfo` -- neither reaches a value or the
-/// `SHOW CREATE SEQUENCE` text this tier prints.
+/// The non-value `Comment` is retained by [`crate::driver::SequenceDef`],
+/// because the allocator is copied into session snapshots and therefore must
+/// remain `Copy` for the value path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SequenceInfo {
     /// `START WITH`.
