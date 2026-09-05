@@ -301,6 +301,27 @@ func TestConstantFoldingCaseWithoutElse(t *testing.T) {
 			require.Equal(t, expectedType, constant.RetType)
 		})
 	}
+
+	t.Run("deferred condition", func(t *testing.T) {
+		sctx := mock.NewContext()
+		ctx := sctx.GetExprCtx()
+		sctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(0))
+		condition := &Constant{ParamMarker: &ParamMarker{order: 0}, RetType: newIntFieldType()}
+		caseExpr := newFunction(ctx, ast.Case, condition, newLonglong(1))
+
+		folded := FoldConstant(ctx, caseExpr)
+		require.Same(t, caseExpr, folded)
+		_, isNull, err := folded.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
+		require.NoError(t, err)
+		require.True(t, isNull)
+
+		sctx.GetSessionVars().PlanCacheParams.Reset()
+		sctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
+		value, isNull, err := folded.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, int64(1), value)
+	})
 }
 
 func TestConstantFoldingCharsetConvert(t *testing.T) {
