@@ -149,6 +149,11 @@ For each bounded behavior cluster:
   Rust `GetJSONConfig` output into a source-shaped check requiring every
   serialized `[instance]` option to resolve to a same-named sysvar, and removed
   the stale vardef gap shim.
+- 2026-09-05 (`pkg/sessionctx/variable` plan-replayer GLOBAL hook): wired
+  `tidb_plan_replayer_file_retention_time` writes, startup loads, cluster loads,
+  resets, and committed image replacement into the process-wide duration used
+  by the plan-replayer worker; malformed writes leave the prior atomic intact.
+  The b012 `TestSetSysVar` row records this focused partial port.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session

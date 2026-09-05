@@ -758,6 +758,9 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE) {
             self.publish_ttl_job_enable();
         }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME) {
+            self.publish_plan_replayer_file_retention_time();
+        }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
             if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
                 self.publish_schema_cache_size(&value);
@@ -917,6 +920,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
             self.publish_ttl_job_enable();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME {
+            self.publish_plan_replayer_file_retention_time();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE {
             self.publish_schema_cache_size(&stored_value);
         }
@@ -960,6 +966,27 @@ impl GlobalSysvars {
                 value.eq_ignore_ascii_case("ON") || value == "1"
             });
         tidb_vardef::ENABLE_TTL_JOB.store(enabled, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Publishes Go's process-wide plan-replayer retention duration from the
+    /// validated GLOBAL table. Scratch cluster images defer this until their
+    /// committed values replace the live table.
+    fn publish_plan_replayer_file_retention_time(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        let Some(value) = self
+            .values
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .get(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME)
+            .cloned()
+        else {
+            return;
+        };
+        if let Ok(nanoseconds) = tidb_config::configtypes::parse_go_duration(&value) {
+            tidb_vardef::set_plan_replayer_file_retention_time(nanoseconds);
+        }
     }
 
     /// Publishes Go's `vardef.SchemaCacheSize` byte counter from a validated
@@ -1119,6 +1146,9 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE {
             self.publish_ttl_job_enable();
         }
+        if key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME {
+            self.publish_plan_replayer_file_retention_time();
+        }
         if key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE {
             self.publish_schema_cache_size(
                 tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE
@@ -1191,6 +1221,7 @@ impl GlobalSysvars {
         let mut loaded_memory_arbitration = false;
         let mut loaded_require_secure_transport = false;
         let mut loaded_ttl_job_enable = false;
+        let mut loaded_plan_replayer_retention = false;
         let mut loaded_schema_cache_size = false;
         let mut loaded_auto_analyze = false;
         let mut loaded_circuit_breaker_ratio = false;
@@ -1205,6 +1236,8 @@ impl GlobalSysvars {
                 loaded_require_secure_transport |=
                     key == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT;
                 loaded_ttl_job_enable |= key == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE;
+                loaded_plan_replayer_retention |=
+                    key == tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME;
                 loaded_schema_cache_size |= key == tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE;
                 loaded_auto_analyze |= is_auto_analyze_setting(&key);
                 loaded_circuit_breaker_ratio |= key
@@ -1230,6 +1263,9 @@ impl GlobalSysvars {
         }
         if loaded_ttl_job_enable {
             self.publish_ttl_job_enable();
+        }
+        if loaded_plan_replayer_retention {
+            self.publish_plan_replayer_file_retention_time();
         }
         if loaded_schema_cache_size {
             if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
@@ -1299,6 +1335,7 @@ impl GlobalSysvars {
         self.refresh_resolved();
         self.publish_require_secure_transport();
         self.publish_ttl_job_enable();
+        self.publish_plan_replayer_file_retention_time();
         if let Ok(value) = self.get(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE) {
             self.publish_schema_cache_size(&value);
         }
@@ -4145,6 +4182,57 @@ mod tests {
             .load_from_cluster([("tidb_redact_log".to_owned(), "ON".to_owned())]);
         assert!(tidb_util::redact::need_redact());
         vars.globals.reset("tidb_redact_log").unwrap();
+    }
+
+    /// Go `TestSetSysVar`: GLOBAL plan-replayer retention writes update the
+    /// process duration, while malformed values and scratch cluster images do
+    /// not publish until commit replacement.
+    #[test]
+    fn plan_replayer_retention_global_hook_updates_process_authority() {
+        let original = tidb_vardef::plan_replayer_file_retention_time();
+        let mut vars = SessionVars::new();
+        vars.set_global(
+            tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
+            "2h".to_owned(),
+        )
+        .unwrap();
+        assert_eq!(
+            tidb_vardef::plan_replayer_file_retention_time(),
+            2 * 60 * 60 * 1_000_000_000
+        );
+        assert_eq!(
+            vars.get_global(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME)
+                .unwrap(),
+            "2h0m0s"
+        );
+        assert!(vars
+            .set_global(
+                tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME,
+                "2hours".to_owned()
+            )
+            .is_err());
+        assert_eq!(
+            tidb_vardef::plan_replayer_file_retention_time(),
+            2 * 60 * 60 * 1_000_000_000
+        );
+
+        let scratch = GlobalSysvars::from_cluster_rows([(
+            tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME.to_owned(),
+            "3h".to_owned(),
+        )]);
+        assert_eq!(
+            tidb_vardef::plan_replayer_file_retention_time(),
+            2 * 60 * 60 * 1_000_000_000
+        );
+        vars.globals.replace_from(&scratch);
+        assert_eq!(
+            tidb_vardef::plan_replayer_file_retention_time(),
+            3 * 60 * 60 * 1_000_000_000
+        );
+        vars.globals
+            .reset(tidb_vardef::tidb_vars::TIDB_PLAN_REPLAYER_FILE_RETENTION_TIME)
+            .unwrap();
+        tidb_vardef::set_plan_replayer_file_retention_time(original);
     }
 
     /// Go `TestValidateInternalSessionVariable`: explicit session writes hide
