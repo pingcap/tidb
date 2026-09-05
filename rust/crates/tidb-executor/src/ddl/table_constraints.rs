@@ -388,6 +388,7 @@ pub(crate) fn table_foreign_keys(
                 tidb_ast::ColumnOption::Generated { stored, .. } => Some(*stored),
                 _ => None,
             }),
+            field_type: info.field_type.clone(),
         })
         .collect();
     let mut keys = Vec::new();
@@ -423,6 +424,9 @@ pub(crate) struct FkColumn {
     /// `Some(stored)` when the table computes the column's value, `None` when
     /// the column is written.
     pub(crate) generated_stored: Option<bool>,
+    /// The resolved type and flags used by CREATE-time FK compatibility
+    /// checks (Go `ColumnInfo.GetType`/`GetFlag`/charset/collation).
+    pub(crate) field_type: tidb_datatype::FieldType,
 }
 
 /// Go `ddl.buildFKInfo` for ONE `FOREIGN KEY` clause, resolved against the
@@ -452,9 +456,7 @@ pub(crate) fn build_foreign_key(
             let offset = columns
                 .iter()
                 .position(|column| column.name.eq_ignore_ascii_case(&name))
-                .ok_or(DriverError::unsupported(
-                    "a foreign key names a column the table does not define",
-                ))?;
+                .ok_or_else(|| DriverError::ForeignKeyChildColumnMissing(name.clone()))?;
             cols.push(offset);
         }
         let Some(path) = &definition.reference.table else {
@@ -484,19 +486,6 @@ pub(crate) fn build_foreign_key(
             let parent = catalog
                 .get_in(&ref_schema, &ref_table)
                 .ok_or_else(|| DriverError::ForeignKeyReferencedTableMissing(ref_table.clone()))?;
-            let parent_columns = parent.column_names();
-            for name in &ref_cols {
-                if !parent_columns
-                    .iter()
-                    .any(|column| column.eq_ignore_ascii_case(name))
-                {
-                    return Err(DriverError::ForeignKeyReferencedColumnMissing {
-                        column: name.clone(),
-                        constraint: fk_name.clone(),
-                        table: ref_table.clone(),
-                    });
-                }
-            }
             // Go `checkTableForeignKey`: the REFERENCED column may not be
             // virtual either. Unlike the child-side rule above this one sits
             // behind the switch, because it is the parent lookup that reaches
@@ -506,12 +495,23 @@ pub(crate) fn build_foreign_key(
                     "a foreign key may not reference a view",
                 ));
             };
-            for name in &ref_cols {
-                let virtual_generated = parent
+            let mut parent_offsets = Vec::with_capacity(ref_cols.len());
+            for (child_offset, name) in cols.iter().zip(&ref_cols) {
+                let Some(parent_offset) = parent
                     .columns
                     .iter()
-                    .find(|column| column.name.eq_ignore_ascii_case(name))
-                    .and_then(|column| column.generated.as_ref())
+                    .position(|column| column.name.eq_ignore_ascii_case(name))
+                else {
+                    return Err(DriverError::ForeignKeyReferencedColumnMissing {
+                        column: name.clone(),
+                        constraint: fk_name.clone(),
+                        table: ref_table.clone(),
+                    });
+                };
+                parent_offsets.push(parent_offset);
+                let virtual_generated = parent.columns[parent_offset]
+                    .generated
+                    .as_ref()
                     .is_some_and(|generated| !generated.stored);
                 if virtual_generated {
                     return Err(DriverError::ForeignKeyUsesVirtualColumn {
@@ -519,6 +519,54 @@ pub(crate) fn build_foreign_key(
                         column: name.clone(),
                     });
                 }
+                let child_column = &columns[*child_offset];
+                if (matches!(
+                    definition.reference.on_delete,
+                    Some(tidb_ast::ReferentialAction::SetNull)
+                ) || matches!(
+                    definition.reference.on_update,
+                    Some(tidb_ast::ReferentialAction::SetNull)
+                )) && child_column
+                    .field_type
+                    .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                {
+                    return Err(DriverError::ForeignKeyColumnNotNull {
+                        column: child_column.name.clone(),
+                        constraint: fk_name.clone(),
+                    });
+                }
+                let parent_column = &parent.columns[parent_offset];
+                let child_type = &child_column.field_type;
+                let parent_type = &parent_column.field_type;
+                if child_type.code() != parent_type.code()
+                    || child_type.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
+                        != parent_type.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
+                    || child_type.charset() != parent_type.charset()
+                    || child_type.collation() != parent_type.collation()
+                {
+                    return Err(DriverError::FkIncompatibleColumns {
+                        referencing: child_column.name.clone(),
+                        referenced: parent_column.name.clone(),
+                        constraint: fk_name.clone(),
+                    });
+                }
+            }
+            let single_clustered_handle =
+                parent_offsets.len() == 1 && parent.is_clustered_handle_column(parent_offsets[0]);
+            let parent_index_covers = parent.indexes().iter().any(|index| {
+                index.column_offsets.len() >= parent_offsets.len()
+                    && index.column_offsets[..parent_offsets.len()] == parent_offsets[..]
+                    && parent_offsets.iter().enumerate().all(|(position, offset)| {
+                        let length = index.prefix_length(position);
+                        length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+                            || length == parent.columns[*offset].field_type.flen()
+                    })
+            });
+            if !single_clustered_handle && !parent_index_covers {
+                return Err(DriverError::ForeignKeyNoIndexInParent {
+                    constraint: fk_name.clone(),
+                    table: ref_table.clone(),
+                });
             }
         }
         Ok(KvForeignKey {

@@ -1183,6 +1183,7 @@ fn add_foreign_key_action(
         .map(|column| super::table_constraints::FkColumn {
             name: column.name.clone(),
             generated_stored: column.generated.as_ref().map(|generated| generated.stored),
+            field_type: column.field_type.clone(),
         })
         .collect();
     let clustered: Vec<usize> = match table.pk_handle_offset() {

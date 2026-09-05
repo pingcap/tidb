@@ -8568,6 +8568,13 @@ risks without claiming repository-wide parity.
   Evidence is recorded in
   `receipts/ddl_foreign_key_create_missing_refs.md`; the remaining CREATE
   validation matrix stays explicitly bounded in `b111.md`.
+- 2026-09-05 (`pkg/ddl` CREATE FOREIGN KEY compatibility validation): Rust now
+  enforces Go's child-column (1072), parent-index (1822), SET NULL/nullability
+  (1830), and type/unsigned/charset/collation (3780) checks in the shared
+  CREATE/ALTER builder, including prefix-index rejection. Evidence is recorded
+  in `receipts/ddl_foreign_key_create_compatibility.md`; self-reference,
+  deferred-parent, temporary-table, name, and partition rows remain explicit
+  boundaries in `b111.md`.
 - 2026-09-05 (`pkg/ddl` temporary CREATE TABLE LIKE options and duplicate
   warning): Rust now refuses temporary copies that inherit pre-split or
   shard-row-bit options with Go's exact 8006 diagnostic, and records the

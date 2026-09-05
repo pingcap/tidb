@@ -203,15 +203,92 @@ fn fk_create_missing_referenced_table_and_column_report_fk_errnos() {
 //     vs int, signed vs unsigned, int vs bigint, charset utf8 vs utf8mb4,
 //     collate utf8_bin vs utf8mb4_bin).
 //
-// go-parity-gap (documented divergence): the tier's `build_foreign_key`
-// checks NEITHER the referenced table's index coverage, NOR the SET NULL/
-// NOT NULL interaction, NOR type compatibility at CREATE time — every one of
-// these rows SUCCEEDS here where Go refuses it.
 #[test]
-#[ignore = "go-parity-gap: 1072/1822/1830/3780 create-time checks are absent; the rows succeed here"]
 fn fk_create_reference_compatibility_rows_match_go() {
-    // Contract (foreign_key_test.go:492-528): each row's exact errno and
-    // message; row 14's `index (a(5))` prefix does not count as coverage.
+    let cases = [
+        (
+            "create table t1 (id int key, a int, b int);",
+            "create table t2 (a int, b int, foreign key fk(c_unknown) references t1(id));",
+            1072,
+            "Key column 'c_unknown' doesn't exist in table",
+        ),
+        (
+            "create table t1 (id int, a int, b int);",
+            "create table t2 (a int, b int, foreign key fk_b(b) references t1(b));",
+            1822,
+            "Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+        ),
+        (
+            "create table t1 (id int key, a int, b int not null, index(b));",
+            "create table t2 (a int, b int not null, foreign key fk_b(b) references t1(b) on update set null);",
+            1830,
+            "Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+        ),
+        (
+            "create table t1 (id int key, a int, b int not null, index(b));",
+            "create table t2 (a int, b int not null, foreign key fk_b(b) references t1(b) on delete set null);",
+            1830,
+            "Column 'b' cannot be NOT NULL: needed in a foreign key constraint 'fk_b' SET NULL",
+        ),
+        (
+            "create table t1 (id int key, a int);",
+            "create table t2 (a int, b varchar(10), foreign key fk(b) references t1(id));",
+            3780,
+            "Referencing column 'b' and referenced column 'id' in foreign key constraint 'fk' are incompatible.",
+        ),
+        (
+            "create table t1 (id int key, a int not null, index(a));",
+            "create table t2 (a int, b int unsigned, foreign key fk_b(b) references t1(a));",
+            3780,
+            "Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+        ),
+        (
+            "create table t1 (id int key, a bigint, index(a));",
+            "create table t2 (a int, b int, foreign key fk_b(b) references t1(a));",
+            3780,
+            "Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+        ),
+        (
+            "create table t1 (id int key, a varchar(10) charset utf8, index(a));",
+            "create table t2 (a int, b varchar(10) charset utf8mb4, foreign key fk_b(b) references t1(a));",
+            3780,
+            "Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+        ),
+        (
+            "create table t1 (id int key, a varchar(10) collate utf8_bin, index(a));",
+            "create table t2 (a int, b varchar(10) collate utf8mb4_bin, foreign key fk_b(b) references t1(a));",
+            3780,
+            "Referencing column 'b' and referenced column 'a' in foreign key constraint 'fk_b' are incompatible.",
+        ),
+        (
+            "create table t1 (id int key, a varchar(10), index (a(5)));",
+            "create table t2 (a int, b varchar(10), foreign key fk_b(b) references t1(a));",
+            1822,
+            "Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+        ),
+    ];
+
+    for (refer, create, code, message) in cases {
+        let mut catalog = Catalog::default();
+        let ctx = StmtContext::for_query();
+        ddl::run_create_table_in(
+            refer,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .unwrap();
+        let error = ddl::run_create_table_in(
+            create,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .expect_err("Go's compatibility matrix row must fail");
+        assert_eq!(err(&error), (code, message.to_owned()), "{create}");
+    }
 }
 
 // Go rows 16-18 (`pkg/ddl/tests/fk/foreign_key_test.go:530-538`): a table

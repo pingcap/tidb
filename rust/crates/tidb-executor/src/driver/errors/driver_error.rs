@@ -230,6 +230,9 @@ pub enum DriverError {
         /// The parent table being inspected.
         table: String,
     },
+    /// Go `ErrKeyColumnDoesNotExits` (1072): a FOREIGN KEY names a child
+    /// column that is absent from the table being created or altered.
+    ForeignKeyChildColumnMissing(String),
     /// Go `ErrBlobKeyWithoutLength` (1170).
     BlobKeyWithoutLength(String),
     /// Go `ErrWrongSubKey` / `dbterror.ErrIncorrectPrefixKey` (1089): an
@@ -811,6 +814,22 @@ pub enum DriverError {
         name: String,
         /// Go's `%s` reason clause.
         reason: String,
+    },
+    /// Go `ErrForeignKeyColumnNotNull` (1830): SET NULL would write a child
+    /// column declared NOT NULL.
+    ForeignKeyColumnNotNull {
+        /// The child column that would receive NULL.
+        column: String,
+        /// The constraint carrying the SET NULL action.
+        constraint: String,
+    },
+    /// Go `ErrForeignKeyNoIndexInParent` (1822): no full-length leading index
+    /// covers the referenced columns in the parent table.
+    ForeignKeyNoIndexInParent {
+        /// The constraint whose parent lookup failed.
+        constraint: String,
+        /// The parent table named in REFERENCES.
+        table: String,
     },
     /// Go `ErrNoReferencedRow2` (1452): a child-side `INSERT`/`UPDATE` named
     /// a parent row that does not exist.

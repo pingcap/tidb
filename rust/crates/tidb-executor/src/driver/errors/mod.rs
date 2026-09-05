@@ -279,6 +279,23 @@ impl DriverError {
             1239,
             format!("Incorrect foreign key definition for '{name}': {reason}"),
         ),
+        // Go `ErrForeignKeyColumnNotNull`.
+        DriverError::ForeignKeyColumnNotNull {
+            column,
+            constraint,
+        } => MysqlError::new(
+            1830,
+            format!(
+                "Column '{column}' cannot be NOT NULL: needed in a foreign key constraint '{constraint}' SET NULL"
+            ),
+        ),
+        // Go `ErrForeignKeyNoIndexInParent`.
+        DriverError::ForeignKeyNoIndexInParent { constraint, table } => MysqlError::new(
+            1822,
+            format!(
+                "Failed to add the foreign key constraint. Missing index for constraint '{constraint}' in the referenced table '{table}'"
+            ),
+        ),
         // Go: "Cannot add or update a child row: a foreign key constraint
         // fails (%.192s)".
         DriverError::ForeignKeyNoReferencedRow { table, constraint } => MysqlError::new(
@@ -637,6 +654,11 @@ impl DriverError {
             format!(
                 "Failed to add the foreign key constraint. Missing column '{column}' for constraint '{constraint}' in the referenced table '{table}'"
             ),
+        ),
+        // Go `ErrKeyColumnDoesNotExits`.
+        DriverError::ForeignKeyChildColumnMissing(column) => MysqlError::new(
+            1072,
+            format!("Key column '{column}' doesn't exist in table"),
         ),
         // Go: "BLOB/TEXT column '%-.192s' used in key specification without a
         // key length".
