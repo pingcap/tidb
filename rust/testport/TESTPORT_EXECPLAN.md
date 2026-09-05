@@ -8051,4 +8051,5 @@ risks without claiming repository-wide parity.
   boundary adapter and now pins `exp(100000)`, `pow(10, 700)`, and `cot(0)`;
   the AST evaluator now uses the same renderer, including parenthesized and
   binary arguments, while the direct values-only helper remains a carrier-only
-  seam. Evidence is recorded in `receipts/expression_overflow_column_name.md`.
+  seam. The AST binary evaluator now applies the same DOUBLE/DECIMAL overflow
+  shaping. Evidence is recorded in `receipts/expression_overflow_column_name.md`.

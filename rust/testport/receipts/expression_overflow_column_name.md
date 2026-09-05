@@ -195,24 +195,26 @@ AST adapter disabled, the focused ABS regression failed with bare
 27 active source-derived math/miscellaneous tests pass with the exact
 function text.
 
+The AST binary evaluator now applies the same boundary to `1e300 * 1e300`:
+before the adapter the source regression observed bare `FloatOverflow`; after
+it the result is `DataOutOfRange { value: "DOUBLE", expression: "(1e+300 *
+1e+300)" }`. The direct `apply_binary`/values-only helpers remain carrier-only
+because they do not retain an expression node.
+
 Ready validation for this follow-up passed:
 
 ```text
-OPENSSL_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy \\
-OPENSSL_LIB_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy/lib \\
-OPENSSL_INCLUDE_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy/include \\
+OPENSSL_DIR=rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install \\
 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \\
   -p tidb-expr --all-targets
 # passed (existing warnings only)
 
-OPENSSL_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy \\
-OPENSSL_LIB_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy/lib \\
-OPENSSL_INCLUDE_DIR=/usr/local/corplink/mdm/opt/corplink-mdm/policy/include \\
+OPENSSL_DIR=rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install \\
 cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml \\
   --offline --locked -p tidb-expr \\
   -E 'not test(/json_schema_valid_resolves_file_and_http_references/)' \\
   --no-fail-fast
-# 1,206 passed, 100 skipped
+# 1,207 passed, 100 skipped
 
 cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml \\
   -p tidb-expr -- --check
@@ -220,7 +222,7 @@ git diff --check
 # both passed
 
 PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \\
-GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \\
+GOPATH=/Users/chenhuansheng/go \\
 TMPDIR=/tmp/tidb-codex-go-lint make lint
 # passed
 ```

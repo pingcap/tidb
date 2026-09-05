@@ -62,64 +62,85 @@ fn ast_math_overflow_error(name: &str, args: &[Expr], error: EvalError) -> EvalE
         ("COT" | "EXP" | "POW" | "POWER", EvalError::FloatOverflow) => "DOUBLE",
         _ => return error,
     };
-    fn render(expression: &Expr) -> Option<String> {
-        match expression {
-            Expr::Int(value) => Some(value.clone()),
-            Expr::Float(value) => Some(tidb_datatype::format_float_g_shortest(*value)),
-            Expr::Decimal(value) => Some(value.clone()),
-            Expr::Null => Some("NULL".to_owned()),
-            Expr::Column(path) => Some(path.join(".")),
-            Expr::Unary(UnaryOp::Plus, expression) => Some(format!("+{}", render(expression)?)),
-            Expr::Unary(UnaryOp::Minus, expression) => Some(format!("-{}", render(expression)?)),
-            Expr::Paren(expression) => Some(format!("({})", render(expression)?)),
-            Expr::Binary(operator, left, right) => {
-                let operator = match operator {
-                    BinaryOp::Plus => "+",
-                    BinaryOp::Minus => "-",
-                    BinaryOp::Mul => "*",
-                    BinaryOp::Div => "/",
-                    BinaryOp::Mod => "%",
-                    BinaryOp::IntDiv => "DIV",
-                    BinaryOp::BitOr => "|",
-                    BinaryOp::BitAnd => "&",
-                    BinaryOp::BitXor => "^",
-                    BinaryOp::LeftShift => "<<",
-                    BinaryOp::RightShift => ">>",
-                    BinaryOp::Eq => "=",
-                    BinaryOp::NullEq => "<=>",
-                    BinaryOp::Ge => ">=",
-                    BinaryOp::Gt => ">",
-                    BinaryOp::Le => "<=",
-                    BinaryOp::Lt => "<",
-                    BinaryOp::Ne => "!=",
-                    BinaryOp::LogicAnd => "AND",
-                    BinaryOp::LogicOr => "OR",
-                    BinaryOp::LogicXor => "XOR",
-                };
-                Some(format!(
-                    "({} {} {})",
-                    render(left)?,
-                    operator,
-                    render(right)?
-                ))
-            }
-            Expr::Func { name, args, .. } => {
-                let args = args.iter().map(render).collect::<Option<Vec<_>>>()?;
-                Some(format!(
-                    "{}({})",
-                    name.to_ascii_lowercase(),
-                    args.join(", ")
-                ))
-            }
-            _ => None,
-        }
-    }
-    let args = args.iter().map(render).collect::<Option<Vec<_>>>();
+    let args = args
+        .iter()
+        .map(render_ast_expression)
+        .collect::<Option<Vec<_>>>();
     let Some(args) = args else {
         return error;
     };
     let expression = format!("{}({})", name.to_ascii_lowercase(), args.join(", "));
     EvalError::DataOutOfRange { value, expression }
+}
+
+/// Renders the expression text Go includes in a function-owned overflow.
+/// The value-tier helper has no AST and therefore cannot use this boundary.
+pub(crate) fn render_ast_expression(expression: &Expr) -> Option<String> {
+    match expression {
+        Expr::Int(value) => Some(value.clone()),
+        Expr::Float(value) => Some(tidb_datatype::format_float_g_shortest(*value)),
+        Expr::Decimal(value) => Some(value.clone()),
+        Expr::Null => Some("NULL".to_owned()),
+        Expr::Column(path) => Some(path.join(".")),
+        Expr::Unary(UnaryOp::Plus, expression) => {
+            Some(format!("+{}", render_ast_expression(expression)?))
+        }
+        Expr::Unary(UnaryOp::Minus, expression) => {
+            Some(format!("-{}", render_ast_expression(expression)?))
+        }
+        Expr::Paren(expression) => Some(format!("({})", render_ast_expression(expression)?)),
+        Expr::Binary(operator, left, right) => render_ast_binary_expression(*operator, left, right),
+        Expr::Func { name, args, .. } => {
+            let args = args
+                .iter()
+                .map(render_ast_expression)
+                .collect::<Option<Vec<_>>>()?;
+            Some(format!(
+                "{}({})",
+                name.to_ascii_lowercase(),
+                args.join(", ")
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Renders a binary AST expression with the same parenthesized source shape
+/// used by Go's arithmetic overflow signatures.
+pub(crate) fn render_ast_binary_expression(
+    operator: BinaryOp,
+    left: &Expr,
+    right: &Expr,
+) -> Option<String> {
+    let operator = match operator {
+        BinaryOp::Plus => "+",
+        BinaryOp::Minus => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Mod => "%",
+        BinaryOp::IntDiv => "DIV",
+        BinaryOp::BitOr => "|",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitXor => "^",
+        BinaryOp::LeftShift => "<<",
+        BinaryOp::RightShift => ">>",
+        BinaryOp::Eq => "=",
+        BinaryOp::NullEq => "<=>",
+        BinaryOp::Ge => ">=",
+        BinaryOp::Gt => ">",
+        BinaryOp::Le => "<=",
+        BinaryOp::Lt => "<",
+        BinaryOp::Ne => "!=",
+        BinaryOp::LogicAnd => "AND",
+        BinaryOp::LogicOr => "OR",
+        BinaryOp::LogicXor => "XOR",
+    };
+    Some(format!(
+        "({} {} {})",
+        render_ast_expression(left)?,
+        operator,
+        render_ast_expression(right)?
+    ))
 }
 
 /// The values-only subset of [`dispatch`]: every math builtin whose result is

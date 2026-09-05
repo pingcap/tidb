@@ -422,6 +422,28 @@ fn is_signed_binary_literal(expr: &Expr) -> bool {
         _ => false,
     }
 }
+
+/// Go's arithmetic signatures include the source-shaped binary expression in
+/// DOUBLE and DECIMAL overflow errors. The AST evaluator retains that syntax
+/// until this boundary; the values-only operator helper intentionally keeps
+/// returning its datum-level carrier.
+fn ast_binary_overflow_error(
+    operator: tidb_ast::BinaryOp,
+    left: &Expr,
+    right: &Expr,
+    error: EvalError,
+) -> EvalError {
+    let value = match error {
+        EvalError::FloatOverflow => "DOUBLE",
+        EvalError::DecimalOverflow => "DECIMAL",
+        _ => return error,
+    };
+    let Some(expression) = crate::math_fn::render_ast_binary_expression(operator, left, right)
+    else {
+        return error;
+    };
+    EvalError::DataOutOfRange { value, expression }
+}
 use coerce::{bool_int, coerce_str, coerce_str_bytes};
 use func::{eval_func, eval_in_list, negate_if};
 use like::like_match;
@@ -890,6 +912,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                 signed,
             );
             eval_binary_with_div_precision(*op, left, right, cols.div_precision_increment(), cols)
+                .map_err(|error| ast_binary_overflow_error(*op, l, r, error))
         }
         // A constant `RAND(N)` has state per function occurrence for the
         // whole statement. The function node's address is stable while this

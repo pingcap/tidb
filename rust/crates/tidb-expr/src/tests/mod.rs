@@ -1920,7 +1920,10 @@ fn floats() {
     // the one case the differential corpus can't itself assert
     // (`ERR` goldens are skipped, not compared), so it's covered
     // directly here instead.
-    assert_eq!(e("1e300 * 1e300"), "FloatOverflow");
+    assert_eq!(
+        e("1e300 * 1e300"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"(1e+300 * 1e+300)\" }"
+    );
     assert_eq!(e("1e-300 * 1e-300"), "FLOAT:0"); // underflow to zero is fine
                                                  // Bitwise/shift rounds to the nearest i64 first — but TIES TO
                                                  // EVEN, the OPPOSITE tie-breaking rule from Decimal's own `~`
