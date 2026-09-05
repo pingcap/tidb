@@ -26,7 +26,7 @@ mod go_trig;
 
 use std::cmp::Ordering;
 
-use tidb_ast::Expr;
+use tidb_ast::{Expr, UnaryOp};
 
 use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::{finite_float, to_f64, to_f64_with_mysql_string};
@@ -50,6 +50,44 @@ pub(crate) fn dispatch(
         return Some(eval_rand(args, vals, cols, function_key));
     }
     dispatch_values(name, vals, cols)
+        .map(|result| result.map_err(|error| ast_math_overflow_error(name, args, error)))
+}
+
+/// Go's math signatures attach the source expression to their 1690 overflow.
+/// The AST evaluator has the original nodes, so it can preserve that text
+/// before the values-only implementation returns its datum-level carrier.
+fn ast_math_overflow_error(name: &str, args: &[Expr], error: EvalError) -> EvalError {
+    let value = match (name, &error) {
+        ("ABS", EvalError::IntOverflow) => "BIGINT",
+        ("COT" | "EXP" | "POW" | "POWER", EvalError::FloatOverflow) => "DOUBLE",
+        _ => return error,
+    };
+    fn render(expression: &Expr) -> Option<String> {
+        match expression {
+            Expr::Int(value) => Some(value.clone()),
+            Expr::Float(value) => Some(tidb_datatype::format_float_g_shortest(*value)),
+            Expr::Decimal(value) => Some(value.clone()),
+            Expr::Null => Some("NULL".to_owned()),
+            Expr::Column(path) => Some(path.join(".")),
+            Expr::Unary(UnaryOp::Plus, expression) => Some(format!("+{}", render(expression)?)),
+            Expr::Unary(UnaryOp::Minus, expression) => Some(format!("-{}", render(expression)?)),
+            Expr::Func { name, args, .. } => {
+                let args = args.iter().map(render).collect::<Option<Vec<_>>>()?;
+                Some(format!(
+                    "{}({})",
+                    name.to_ascii_lowercase(),
+                    args.join(", ")
+                ))
+            }
+            _ => None,
+        }
+    }
+    let args = args.iter().map(render).collect::<Option<Vec<_>>>();
+    let Some(args) = args else {
+        return error;
+    };
+    let expression = format!("{}({})", name.to_ascii_lowercase(), args.join(", "));
+    EvalError::DataOutOfRange { value, expression }
 }
 
 /// The values-only subset of [`dispatch`]: every math builtin whose result is

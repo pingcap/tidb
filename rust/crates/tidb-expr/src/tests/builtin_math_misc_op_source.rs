@@ -381,13 +381,16 @@ fn math_string_coercion_raises_one_truncate_warning_each() {
 /// inside the signature and surfaces
 /// `[types:1690]DOUBLE value is out of range in 'cot(0)'`
 /// (`builtin_math.go:1774` GenWithStackByArgs("DOUBLE", "cot(...)")). The
-/// Rust evaluator reports the same DOUBLE-overflow EVENT
-/// (`EvalError::FloatOverflow`); reproducing Go's argument-carrying message
-/// text is recorded as a display-shape gap in the receipt. Remaining rows'
-/// values live in `tests::math::transcendental_source_vectors`.
+/// AST and live scalar-function paths now retain that source expression; the
+/// direct values-only helper below still intentionally exposes the shared
+/// `EvalError::FloatOverflow` carrier. Remaining rows' values live in
+/// `tests::math::transcendental_source_vectors`.
 #[test]
 fn cot_zero_overflows_as_double_error() {
-    assert_eq!(e("cot(0)"), "FloatOverflow");
+    assert_eq!(
+        e("cot(0)"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"cot(0)\" }"
+    );
     let ctx = WarnCountCtx::new();
     let got = math_dispatch_values("COT", &[Datum::Real(0.0)], &ctx).unwrap();
     assert!(matches!(got, Err(EvalError::FloatOverflow)));
@@ -544,7 +547,10 @@ fn vectorized_builtin_math_func() {
     // produce (covered as a genuine error by `trig_functions`).
     assert_eq!(chunk_e("pow(0, 0)"), "FLOAT:1");
     assert_eq!(chunk_e("pow(10, 50)"), e("pow(10, 50)"));
-    assert_eq!(e("pow(10, 400)"), "FloatOverflow");
+    assert_eq!(
+        e("pow(10, 400)"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"pow(10, 400)\" }"
+    );
     // ROUND scale bounds -100..100 behave like any far scale.
     assert_eq!(chunk_e("round(5, -100)"), "INT:0");
     assert_eq!(chunk_e("round(5, 100)"), "INT:5");

@@ -170,9 +170,10 @@ carrier directly even though its argument expressions were still available.
 The scalar-function boundary now dispatches the math family while retaining
 the node, renders constants, qualified columns, nested arithmetic, and nested
 function calls in the source shape, and maps those function-owned overflow
-cases to `DataOutOfRange { value: "DOUBLE", expression }`. The AST/value-only
-path continues to expose `FloatOverflow`, matching the existing value-tier
-boundary and avoiding invented names when no expression node is present.
+cases to `DataOutOfRange { value: "DOUBLE", expression }`. The AST dispatch
+now applies the same mapping from its original syntax tree; only the direct
+values-only helper remains a datum-level carrier because it has no expression
+node from which to recover source text.
 
 The focused source regression failed before the boundary adapter with
 `FloatOverflow` (the expected `DataOutOfRange` assertion failed on `EXP`) and
@@ -183,6 +184,12 @@ EXP(100000) -> exp(100000)
 POW(10, 700) -> pow(10, 700)
 COT(0) -> cot(0)
 ```
+
+The AST follow-up changed the value-tier expectations for `ABS(MinInt64)`,
+NaN/infinite `POW`, overflowing `EXP`, and zero `COT`. With the AST adapter
+disabled, the focused ABS regression failed with bare `IntOverflow`; after
+the adapter, the complete 20-test math module and the 27 active
+source-derived math/miscellaneous tests pass with the exact function text.
 
 Ready validation for this follow-up passed:
 

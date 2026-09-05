@@ -163,7 +163,10 @@ fn abs_source_vectors_preserve_uint() {
 /// observable contract and guards the Rust `checked_abs` boundary.
 #[test]
 fn abs_signed_minimum_reports_overflow() {
-    assert_eq!(e("abs(-9223372036854775808)"), "IntOverflow");
+    assert_eq!(
+        e("abs(-9223372036854775808)"),
+        "DataOutOfRange { value: \"BIGINT\", expression: \"abs(-9223372036854775808)\" }"
+    );
 }
 
 /// Exact representable source table from `TestSign` in
@@ -260,10 +263,22 @@ fn math_functions() {
                                          // this is the one case the differential corpus can't itself
                                          // assert (`ERR` goldens are skipped, not compared), so it's
                                          // covered directly here.
-    assert_eq!(e("pow(-2, 0.5)"), "FloatOverflow"); // sqrt(-2), NaN
-    assert_eq!(e("pow(2, 2000)"), "FloatOverflow"); // overflows to infinity
-    assert_eq!(e("pow(0, -1)"), "FloatOverflow"); // 1/0, also infinity
-    assert_eq!(e("exp(1000)"), "FloatOverflow");
+    assert_eq!(
+        e("pow(-2, 0.5)"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"pow(-2, 0.5)\" }"
+    ); // sqrt(-2), NaN
+    assert_eq!(
+        e("pow(2, 2000)"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"pow(2, 2000)\" }"
+    ); // overflows to infinity
+    assert_eq!(
+        e("pow(0, -1)"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"pow(0, -1)\" }"
+    ); // 1/0, also infinity
+    assert_eq!(
+        e("exp(1000)"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"exp(1000)\" }"
+    );
     assert_eq!(e("exp(-1000)"), "FLOAT:0"); // underflow to zero is fine
     assert_eq!(e("pow(0, 0)"), "FLOAT:1"); // not an error, matches f64::powf
 }
@@ -284,7 +299,10 @@ fn exp_matches_go_source_vectors_and_arity() {
         ("exp('0')", "FLOAT:1"),
         ("exp('tidb')", "FLOAT:1"),
         ("exp(-1000)", "FLOAT:0"),
-        ("exp(100000)", "FloatOverflow"),
+        (
+            "exp(100000)",
+            "DataOutOfRange { value: \"DOUBLE\", expression: \"exp(100000)\" }",
+        ),
         ("exp(1, 2)", "Unsupported(\"bad function arity\")"),
     ] {
         assert_eq!(e(sql), want, "{sql}");
@@ -317,7 +335,10 @@ fn trig_functions() {
     // already use — this is the one case the differential corpus
     // can't itself assert (`ERR` goldens are skipped, not compared),
     // so it's covered directly here.
-    assert_eq!(e("cot(0)"), "FloatOverflow");
+    assert_eq!(
+        e("cot(0)"),
+        "DataOutOfRange { value: \"DOUBLE\", expression: \"cot(0)\" }"
+    );
 }
 
 /// Full scalar result table from the transcendental portions of
@@ -670,7 +691,10 @@ fn pow_source_vectors() {
         ("pow(4, -2)", "FLOAT:0.0625"),
         ("pow('test', 'test')", "FLOAT:1"),
         ("pow(1, 'test')", "FLOAT:1"),
-        ("pow(10, 700)", "FloatOverflow"),
+        (
+            "pow(10, 700)",
+            "DataOutOfRange { value: \"DOUBLE\", expression: \"pow(10, 700)\" }",
+        ),
     ] {
         assert_eq!(e(sql), want, "{sql}");
     }

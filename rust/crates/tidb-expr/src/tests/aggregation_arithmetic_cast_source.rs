@@ -390,8 +390,8 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
 fn test_real_arithmetic_overflow_error_message() {
     // Go's real arithmetic signatures attach the same operand expression to
     // the DOUBLE overflow, rather than returning only a generic overflow
-    // class. This is the scalar-function path (the value-only AST evaluator
-    // intentionally retains its FloatOverflow carrier).
+    // class. Both the scalar-function and AST paths now use the source-shaped
+    // renderer; the direct values-only math helper remains carrier-only.
     let function = ScalarFunction::new(
         CiString::new("mul"),
         real_ft(),
