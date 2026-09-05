@@ -365,3 +365,5 @@
 - 下轮恢复点: (1) 新面候选继续(tidb-domain); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
 - charset 数据新鲜度校验: generate-parser-charset.py 重跑零 diff(生成层与 Go master 字节同步); 收据措辞修正=宽 MySQL 列表由 known_charsets.rs 生成镜像承载, 非"范围边界"。
 - 下轮恢复点: (1) tidb-domain 面; (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
+- domain 面开篇: 13 个 Go 文件全部有 Rust 镜像模块; sysvar_cache 切片核实(6 函数语义+SetGlobal 前写全局视图的顺序细节均在位)。收据 rust/docs/domain-sysvar-cache-parity-audit.md。
+- 下轮恢复点: (1) domain 余模块逐个行为审计(schema_checker/ru_stats/plan_replayer 优先); (2) F2/F3-seam live 阻塞; (3) F4 低优先级。
