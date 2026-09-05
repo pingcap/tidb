@@ -462,3 +462,5 @@
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - planner 4 失败诊断(cached_plan_rebuilds_*): rebase 并入的 ranger/cache-key 增量使重载后 range_is_safe 拒绝 → UnsafeRange{plan_id}; 候选引入点=34d7549bb06(LIKE escape 入 plan scope)或后续 ranger 改动。归属 DDL/planner 会话(活跃区), 已记录待其修复; 深挖二分属其领域。
 - 下轮恢复点: (1) 兄弟会话修复 4 测试; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队; (5) session lib +36 失败同批溯源。
+- tests_analyze 5 失败 A/B 定案: stash sysvar.rs 后失败依旧→与我的 sysvar.rs 无关, 属兄弟会话 stats/analyze 在途区(estimates 1.00 vs 7.00 = 伪统计回退)。已通知性记录, 修复归其 owner。
+- 下轮恢复点: (1) 跟随兄弟会话 analyze/stats 修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
