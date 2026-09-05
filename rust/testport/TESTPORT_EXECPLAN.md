@@ -8706,3 +8706,9 @@ risks without claiming repository-wide parity.
   missing-column + malformed-tuple ordering; focused RANGE and LIST COLUMNS
   regressions are live. Evidence is recorded in
   `receipts/ddl_partition_column_list_errors.md`.
+- 2026-09-05 (`pkg/ddl` RANGE COLUMNS bound kinds): Rust now checks the raw
+  evaluated literal kind before converting a RANGE COLUMNS bound, matching
+  Go's 1654 `Partition column values of incorrect type` for integer bounds on
+  temporal columns. LIST COLUMNS keeps its separate parser/cast path. The
+  DATETIME integer-bound regression is live. Evidence is recorded in
+  `receipts/ddl_partition_column_value_types.md`.

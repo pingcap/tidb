@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 
 use tidb_ast::{Expr, PartitionDefinition, PartitionDefinitionClause, PartitionValue};
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, DatumKind, FieldType, FieldTypeCode};
 
 use crate::partition_routing::PartitionKind;
 use crate::DriverError;
@@ -152,6 +152,31 @@ pub(super) fn fold_column_value(
     field_type: &FieldType,
     ctx: &crate::StmtContext,
 ) -> Result<Datum, DriverError> {
+    let value = eval_column_value(expr, ctx)?;
+    convert_column_value(value, field_type, ctx)
+}
+
+/// Folds a RANGE COLUMNS bound with Go's source-kind compatibility check.
+///
+/// `checkAndGetColumnsTypeAndValuesMatch` in `pkg/ddl/partition.go` checks
+/// the result of `EvalSimpleAst` before `ConvertTo`.  A conversion that looks
+/// harmless to the datatype layer is therefore still rejected when the
+/// written literal belongs to a different kind (for example, an integer for
+/// a DATETIME column).  LIST COLUMNS uses a different parser path and keeps
+/// the broader conversion behavior of [`fold_column_value`].
+pub(super) fn fold_range_column_value(
+    expr: &Expr,
+    field_type: &FieldType,
+    ctx: &crate::StmtContext,
+) -> Result<Datum, DriverError> {
+    let value = eval_column_value(expr, ctx)?;
+    if !range_column_value_kind_allowed(value.kind(), field_type.code()) {
+        return Err(DriverError::PartitionColumnValueWrongType);
+    }
+    convert_column_value(value, field_type, ctx)
+}
+
+fn eval_column_value(expr: &Expr, ctx: &crate::StmtContext) -> Result<Datum, DriverError> {
     let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
         expr,
         &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
@@ -162,9 +187,16 @@ pub(super) fn fold_column_value(
     .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);
-    let value = rewritten
+    rewritten
         .eval(ctx, dual.get_row(0))
-        .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
+        .map_err(|_| DriverError::PartitionColumnValueWrongType)
+}
+
+fn convert_column_value(
+    value: Datum,
+    field_type: &FieldType,
+    ctx: &crate::StmtContext,
+) -> Result<Datum, DriverError> {
     let converted = value
         .convert_to_in(
             field_type,
@@ -176,6 +208,29 @@ pub(super) fn fold_column_value(
         return Err(DriverError::PartitionColumnValueWrongType);
     }
     Ok(converted.value)
+}
+
+fn range_column_value_kind_allowed(kind: DatumKind, code: FieldTypeCode) -> bool {
+    match code {
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Duration => {
+            matches!(kind, DatumKind::String | DatumKind::Bytes | DatumKind::Null)
+        }
+        FieldTypeCode::Tiny
+        | FieldTypeCode::Short
+        | FieldTypeCode::Int24
+        | FieldTypeCode::Long
+        | FieldTypeCode::LongLong => {
+            matches!(kind, DatumKind::Int | DatumKind::UInt | DatumKind::Null)
+        }
+        FieldTypeCode::Float | FieldTypeCode::Double => {
+            matches!(kind, DatumKind::Float32 | DatumKind::Real | DatumKind::Null)
+        }
+        FieldTypeCode::String | FieldTypeCode::VarString => matches!(
+            kind,
+            DatumKind::String | DatumKind::Bytes | DatumKind::Null | DatumKind::BinaryLiteral
+        ),
+        _ => true,
+    }
 }
 
 pub(super) fn list_columns_type_allowed(field_type: &FieldType) -> bool {

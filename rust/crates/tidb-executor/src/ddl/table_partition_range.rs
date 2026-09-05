@@ -236,7 +236,7 @@ pub(super) fn build_range_columns_bounds(
                     // not. A bound that reads a column, or anything else the
                     // fold cannot reduce, is not a bound.
                     let value =
-                        super::table_partition_list::fold_column_value(expr, field_type, ctx)
+                        super::table_partition_list::fold_range_column_value(expr, field_type, ctx)
                             .map_err(|error| {
                                 if mode.validates() {
                                     error

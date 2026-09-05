@@ -539,11 +539,21 @@ fn create_table_with_range_column_partition_value_count_rows_report_1653() {
 /// Go row `db_partition_test.go:677-681`: a DATETIME column partitioned by
 /// `range columns (col)` with integer bounds (20190905) is
 /// `dbterror.ErrWrongTypeColumnValue` (1654).
-// go-parity-gap: this tier ACCEPTS that create, so the Go refusal has no
-// carrier to pin.
 #[test]
-#[ignore]
 fn create_table_with_range_column_partition_datetime_int_bounds_are_1654() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::default().with_strict(true);
+    let error = try_create(
+        "create table t (col datetime not null default '2000-01-01') \
+         partition by range columns (col) \
+         (partition p0 values less than (20190905), \
+          partition p1 values less than (20190906))",
+        &mut catalog,
+        &ctx,
+    )
+    .expect_err("Go rejects an integer RANGE COLUMNS bound for DATETIME");
+    assert_eq!(err_code(&error), 1654);
+    assert_eq!(err_message(&error), "Partition column values of incorrect type");
 }
 
 /// Go row `db_partition_test.go:683-686` (the check-order row): with BOTH a
