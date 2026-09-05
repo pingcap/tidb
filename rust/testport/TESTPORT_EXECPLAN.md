@@ -8304,3 +8304,12 @@ risks without claiming repository-wide parity.
   complete package inventory and Ready validation remain in
   `receipts/server_connection.md`; Go's profiling/status-listener owners stay
   explicit boundaries.
+- 2026-09-05 (`pkg/planner/core` LIKE default escape): Rust's plan-scope
+  resolver now carries the statement-selected implicit LIKE escape into
+  lowered expressions, restoring Go's `NO_BACKSLASH_ESCAPES` +
+  `tidb_enable_no_backslash_escapes_in_like` behavior on forced index paths.
+  The prepared-plan cache environment also keys this switch, matching Go's
+  `NewPlanCacheKey`; focused planner/session regressions cover the lowered
+  escape byte, table-index row visibility, and cache invalidation. Complete
+  tree inventory and Ready evidence are recorded in
+  `receipts/planner_like_escape.md`.

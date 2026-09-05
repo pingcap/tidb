@@ -160,6 +160,14 @@ impl Session {
                         .as_deref()
                         != Ok("OFF"),
                 )
+                .with_no_backslash_escapes_in_like(
+                    self.vars
+                        .get_system(
+                            tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE,
+                        )
+                        .as_deref()
+                        != Ok("OFF"),
+                )
                 .with_cache_admission(
                     self.vars
                         .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_MAX_PLAN_SIZE)

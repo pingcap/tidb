@@ -391,6 +391,11 @@ struct CachedSelectPlanEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedPlanCacheEnvironment {
     sql_mode: tidb_mysql::SqlMode,
+    /// Go's `EnableNoBackslashEscapesInLike` plan-cache key bit. The
+    /// statement's implicit LIKE escape changes both the rewritten expression
+    /// and any index range derived from it, so plans built under different
+    /// values must never share a cache entry.
+    enable_no_backslash_escapes_in_like: bool,
     time_zone: String,
     pushdown_blacklist_generation: u64,
     connection_charset: String,
@@ -423,6 +428,7 @@ impl PreparedPlanCacheEnvironment {
     ) -> Self {
         Self {
             sql_mode,
+            enable_no_backslash_escapes_in_like: true,
             time_zone,
             pushdown_blacklist_generation,
             connection_charset: String::new(),
@@ -439,6 +445,14 @@ impl PreparedPlanCacheEnvironment {
                 as u64,
             enable_generated_columns: true,
         }
+    }
+
+    /// Adds the session switch that controls the implicit LIKE escape under
+    /// `NO_BACKSLASH_ESCAPES`, matching Go's `NewPlanCacheKey`.
+    #[must_use]
+    pub const fn with_no_backslash_escapes_in_like(mut self, enabled: bool) -> Self {
+        self.enable_no_backslash_escapes_in_like = enabled;
+        self
     }
 
     /// Adds the session facts that Go's `NewPlanCacheKey` hashes because they

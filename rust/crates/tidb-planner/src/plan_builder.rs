@@ -706,6 +706,13 @@ pub struct PlanScopeResolver<'a> {
     outer_schemas: &'a [Schema],
     outer_names: &'a [Vec<FieldName>],
     time_zone: SessionTimeZone,
+    /// The session-selected implicit escape byte for LIKE expressions.
+    ///
+    /// Go's expression rewriter reads this from the statement context while
+    /// lowering an AST `LIKE`. Keeping it on the plan scope ensures the
+    /// planner's third `like(expr, pattern, escape)` argument agrees with the
+    /// evaluator and ranger under `NO_BACKSLASH_ESCAPES`.
+    like_default_escape: u8,
 }
 
 impl<'a> PlanScopeResolver<'a> {
@@ -724,6 +731,7 @@ impl<'a> PlanScopeResolver<'a> {
             outer_schemas: &[],
             outer_names: &[],
             time_zone,
+            like_default_escape: b'\\',
         }
     }
 
@@ -745,7 +753,15 @@ impl<'a> PlanScopeResolver<'a> {
             outer_schemas,
             outer_names,
             time_zone,
+            like_default_escape: b'\\',
         }
+    }
+
+    /// Attach the statement's implicit LIKE escape to this resolver.
+    #[must_use]
+    pub const fn with_like_default_escape(mut self, escape: u8) -> Self {
+        self.like_default_escape = escape;
+        self
     }
 }
 
@@ -784,6 +800,10 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
+    fn like_default_escape(&self) -> u8 {
+        self.like_default_escape
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let column = self.resolve_column(path)?;
         Some((
@@ -1173,7 +1193,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             &self.outer_schemas,
             &self.outer_names,
             self.time_zone.clone(),
-        );
+        )
+        .with_like_default_escape(self.ctx.like_default_escape());
         Ok(rewrite_expr_resolved(expr, &resolver)?)
     }
 

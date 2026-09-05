@@ -131,6 +131,23 @@ impl Columns for WarningColumns {
     }
 }
 
+#[derive(Clone, Copy)]
+struct LikeEscapeColumns(u8);
+
+impl Columns for LikeEscapeColumns {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn time_zone(&self) -> SessionTimeZone {
+        SessionTimeZone::utc()
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.0
+    }
+}
+
 impl Harness {
     fn new() -> Self {
         Self {
@@ -154,6 +171,16 @@ impl Harness {
 
 fn parse_select(sql: &str) -> SelectStmt {
     match tidb_parser::parse(sql).expect("the seam's SQL parses") {
+        Stmt::Query(query) => match query.into_inner() {
+            tidb_ast::QueryStmt::Select(select) => *select,
+            other => panic!("expected a SELECT, got {other:?}"),
+        },
+        other => panic!("expected a SELECT, got {other:?}"),
+    }
+}
+
+fn parse_select_with_sql_mode(sql: &str, sql_mode: tidb_parser::SqlMode) -> SelectStmt {
+    match tidb_parser::parse_with_sql_mode(sql, sql_mode).expect("the seam's SQL parses") {
         Stmt::Query(query) => match query.into_inner() {
             tidb_ast::QueryStmt::Select(select) => *select,
             other => panic!("expected a SELECT, got {other:?}"),
@@ -280,6 +307,43 @@ fn test_expression_rewriter_is_callable_from_the_builder_unchanged() {
     let max_one_row = rewriter.build_max_one_row(inner);
     assert_eq!(max_one_row.tp(), "MaxOneRow");
     assert_eq!(max_one_row.base().children().len(), 1);
+}
+
+#[test]
+fn test_like_rewrite_uses_the_statement_default_escape() {
+    let catalog = catalog();
+    let context = LikeEscapeColumns(0);
+    let plan_ids = PlanIdAllocator::default();
+    let column_ids = ColumnIdAllocator::new();
+    let mut builder = PlanBuilder::new(
+        &catalog,
+        &context,
+        &plan_ids,
+        &column_ids,
+        SessionTimeZone::utc(),
+    );
+    let select = parse_select_with_sql_mode(
+        r"SELECT a FROM t WHERE b LIKE 'a\b'",
+        tidb_parser::SqlMode {
+            no_backslash_escapes: true,
+            ..tidb_parser::SqlMode::default()
+        },
+    );
+    let (plan, _) = builder.build_select(&select).expect("the LIKE plan builds");
+    let mut like_escape = None;
+    plan.walk_preorder(&mut |node| {
+        let LogicalPlan::Selection(selection) = node else {
+            return;
+        };
+        let Expression::ScalarFunction(like) = &selection.conditions[0] else {
+            return;
+        };
+        let tidb_expr::expression::Expression::Constant(constant) = &like.args[2] else {
+            return;
+        };
+        like_escape = Some(constant.value.clone());
+    });
+    assert_eq!(like_escape, Some(Datum::Int(0)));
 }
 
 // ***** each spine piece *****
