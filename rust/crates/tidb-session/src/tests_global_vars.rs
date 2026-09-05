@@ -2428,6 +2428,11 @@ fn super_read_only_cannot_be_turned_off_under_restricted_read_only() {
     globals
         .set("tidb_restricted_read_only", "ON".to_owned())
         .unwrap();
+    assert_eq!(
+        globals.get("tidb_super_read_only").unwrap(),
+        "ON",
+        "restricted read-only must promote super read-only"
+    );
 
     let refused = globals.set("tidb_super_read_only", "OFF".to_owned());
     assert!(refused.is_err(), "the OFF set must be refused");

@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` restricted read-only promotion):
+  matched Go's GLOBAL hook that promotes `tidb_super_read_only=ON` whenever
+  `tidb_restricted_read_only` is enabled, while clearing restricted mode leaves
+  super-read-only unchanged. The focused global-table regression now checks
+  promotion, refusal of an immediate OFF, and the explicit-clear path.
 - 2026-09-05 (`pkg/sessionctx/variable` session memory minimum parser):
   removed the broader Rust `RAMInBytes` acceptance from
   `tidb_server_memory_limit_sess_min_size` and matched Go's exact integer
