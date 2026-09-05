@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` memory-limit error/arithmetic parity):
+  `tidb_server_memory_limit` now returns Go's `ErrTruncatedWrongValue` (1292)
+  with the original variable/value text for malformed input, instead of
+  collapsing the parser error into 1231. The percentage-of-total path uses
+  wrapping `uint64` multiplication like Go, avoiding a Rust debug panic on
+  near-maximum synthetic totals; focused validation and varsutil regressions
+  pin both contracts.
 - 2026-09-05 (`pkg/sessionctx/variable` charset/collation validation and
   session hooks): aligned Rust's mutable `character_set_*` and
   `collation_*` validation with Go's `checkCharacterSet`/`checkCollation`,

@@ -758,7 +758,15 @@ impl SysVarDef {
         if self.name == "tidb_server_memory_limit" {
             let total = tidb_util::memory::mem_total().unwrap_or_default();
             let parsed = crate::varsutil::parse_memory_limit(total, &validated.value, original)
-                .map_err(|_| ValidationError::WrongValue)?;
+                .map_err(|_| {
+                    ValidationError::SqlError(SqlError::new(
+                        tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+                        &[
+                            FormatArg::from(self.name),
+                            FormatArg::from(original),
+                        ],
+                    ))
+                })?;
             return Ok(Validated {
                 value: parsed.normalized,
                 truncated: parsed.clamped || validated.truncated,
@@ -2249,7 +2257,16 @@ mod tests {
             "18446744073709551615"
         );
         assert_eq!(sv.validate("1073741824").unwrap().value, "1073741824");
-        assert_eq!(sv.validate("123aaa123"), Err(ValidationError::WrongValue));
+        match sv.validate("123aaa123") {
+            Err(ValidationError::SqlError(error)) => {
+                assert_eq!(error.code, tidb_error::mysql::errcode::ErrTruncatedWrongValue);
+                assert_eq!(
+                    error.message,
+                    "Truncated incorrect tidb_server_memory_limit value: '123aaa123'"
+                );
+            }
+            other => panic!("expected Go's 1292 error, got {other:?}"),
+        }
     }
 
     /// Transcreated from Go `TestTiDBServerMemoryLimitGCTrigger`: decimal
