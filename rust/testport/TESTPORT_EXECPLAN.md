@@ -8903,3 +8903,10 @@ risks without claiming repository-wide parity.
   their existing behavior. Focused warning-multiplicity, signed-overflow, and
   implicit-hash regressions plus Ready evidence are recorded in
   `receipts/planner_constant_cast_warning.md`.
+- 2026-09-06 (`pkg/expression` real-to-UNSIGNED cast warnings): Rust now routes
+  Float32 values through Go's real conversion, reports positive real overflow
+  as 1690 while retaining the upper-bound value, and keeps numeric integer
+  casts unfolded in the executable planner so the live statement context owns
+  both positive and negative diagnostics. Focused direct and session
+  regressions plus Ready evidence are recorded in
+  `receipts/expression_real_unsigned_cast_warning.md`.

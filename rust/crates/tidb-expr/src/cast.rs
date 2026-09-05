@@ -608,7 +608,7 @@ fn to_u64_unsigned(v: &Datum, ctx: &dyn crate::Columns) -> u64 {
         // A real rounds half-to-even then converts across the full u64 range
         // (Go `ConvertFloatToUint`), so its own upper half is kept too -- and
         // its NEGATIVE half is kept as the low 64 bits rather than clamped.
-        Datum::Real(f) => real_to_u64_saturating(*f, ctx),
+        Datum::Real(f) | Datum::Float32(f) => real_to_u64_saturating(*f, ctx),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
         other => other
             .to_decimal()
@@ -619,9 +619,9 @@ fn to_u64_unsigned(v: &Datum, ctx: &dyn crate::Columns) -> u64 {
 /// `CAST(real AS UNSIGNED)`: round half to even (Go `RoundFloat` =
 /// `math.RoundToEven`, the same rounding the signed real path uses), then Go
 /// `ConvertFloatToUint` across the full `u64` range. A magnitude past
-/// `u64::MAX` saturates to `u64::MAX` (`ConvertFloatToUint`'s `upperBound`
-/// clamp). Routing through the signed path instead would lose the upper half
-/// of `UNSIGNED BIGINT` at `i64::MAX`.
+/// `u64::MAX` saturates to `u64::MAX` and reports overflow
+/// (`ConvertFloatToUint`'s `upperBound` clamp). Routing through the signed
+/// path instead would lose the upper half of `UNSIGNED BIGINT` at `i64::MAX`.
 ///
 /// A NEGATIVE rounded value takes Go's `AllowNegativeToUnsigned` arm
 /// (`convert.go:171-176`): `uint64(int64(val))`, the SAME low-64-bit
@@ -648,10 +648,22 @@ fn real_to_u64_saturating(f: f64, ctx: &dyn crate::Columns) -> u64 {
         // landing on `i64::MIN`, which is what makes `cast(-1e300 as
         // unsigned)` 9223372036854775808 rather than 0.
         (rounded as i64) as u64
+    } else if !rounded.is_finite() || rounded >= (u64::MAX as f64) {
+        // Go's big.Float.Uint64 returns the upper bound and an overflow
+        // status for +Inf and every rounded value at or beyond 2^64.  The
+        // statement context turns that status into the 1690 warning used by
+        // `builtinCastRealAsIntSig`.
+        ctx.append_warning(
+            1690,
+            &format!(
+                "constant {} overflows bigint",
+                tidb_datatype::format_float_g_shortest(rounded)
+            ),
+        );
+        u64::MAX
     } else {
-        // Rust's float-to-int cast saturates: an in-range integral float is
-        // exact, a magnitude past `u64::MAX` clamps to `u64::MAX`, and `NaN`
-        // maps to 0 (already excluded by the caller's NULL guard).
+        // Rust's float-to-int cast is exact for the remaining in-range
+        // integral values, including the full upper half of UNSIGNED BIGINT.
         rounded as u64
     }
 }
@@ -1900,6 +1912,32 @@ mod tests {
                 &NoColumns
             ),
             0
+        );
+    }
+
+    #[test]
+    fn float32_unsigned_cast_reports_negative_overflow() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        assert_eq!(
+            eval_cast(&CastType::Unsigned, Datum::Float32(-1.5), None, &ctx).unwrap(),
+            Datum::UInt(18_446_744_073_709_551_614)
+        );
+        assert_eq!(
+            ctx.0.borrow().as_slice(),
+            &[(1690, "constant -2 overflows bigint".to_owned())]
+        );
+    }
+
+    #[test]
+    fn real_unsigned_cast_reports_positive_overflow() {
+        let ctx = WarningContext(RefCell::new(Vec::new()));
+        assert_eq!(
+            eval_cast(&CastType::Unsigned, Datum::Real(1.0e30), None, &ctx).unwrap(),
+            Datum::UInt(u64::MAX)
+        );
+        assert_eq!(
+            ctx.0.borrow().as_slice(),
+            &[(1690, "constant 1e+30 overflows bigint".to_owned())]
         );
     }
 

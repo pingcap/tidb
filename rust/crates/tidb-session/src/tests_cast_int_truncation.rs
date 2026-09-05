@@ -395,3 +395,20 @@ fn a_negative_real_cast_to_unsigned_keeps_its_low_64_bits() {
         );
     }
 }
+
+/// `CAST(<positive real outside UNSIGNED BIGINT> AS UNSIGNED)` keeps Go's
+/// upper-bound value and emits its 1690 overflow warning.  The planner must
+/// leave this numeric cast for the statement context just as it does the
+/// negative-real cases above.
+#[test]
+fn a_positive_real_unsigned_overflow_warns_at_runtime() {
+    let mut session = Session::new();
+    assert_eq!(
+        row_text(session.run("SELECT CAST(1e30 AS UNSIGNED)"))[0][0],
+        "18446744073709551615"
+    );
+    assert_eq!(
+        warnings(&session),
+        [(1690, "constant 1e+30 overflows bigint".to_owned())]
+    );
+}

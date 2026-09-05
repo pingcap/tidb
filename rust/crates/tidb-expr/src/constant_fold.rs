@@ -184,6 +184,13 @@ fn fold_current_value_in(
 /// out-of-range diagnostics.  A no-column planner context cannot retain those
 /// diagnostics, so callers that are preparing an executable plan keep these
 /// nodes unfolded for runtime.
+///
+/// String/byte inputs always go through Go's prefix scanner and may report
+/// truncation.  Real, float32, and decimal inputs are retained too: their
+/// range checks report overflow through the same statement context, and
+/// deciding whether a particular value is in range here would duplicate the
+/// type-specific conversion rules.  Keeping the numeric carriers unfolded is
+/// value-preserving and makes the runtime warning owner unambiguous.
 fn has_runtime_warning_cast(expr: &Expression) -> bool {
     let Expression::ScalarFunction(function) = expr else {
         return false;
@@ -203,7 +210,14 @@ fn has_runtime_warning_cast(expr: &Expression) -> bool {
         matches!(
             function.args.get(index),
             Some(Expression::Constant(constant))
-                if matches!(constant.value, Datum::String(_) | Datum::Bytes(_))
+                if matches!(
+                    constant.value,
+                    Datum::String(_)
+                        | Datum::Bytes(_)
+                        | Datum::Real(_)
+                        | Datum::Float32(_)
+                        | Datum::Decimal(_)
+                )
         )
     }) {
         return false;
