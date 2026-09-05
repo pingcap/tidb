@@ -279,22 +279,10 @@ func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 						(*i.elemFromHotspot).cloneInnerFields()
 						i.elemFromHotspot = nil
 					}
-					// Release the old reader's buffers before the new hotspot starts
-					// allocating from their shared memory budget.
-					if oldHotspotIdx >= 0 && i.readers[oldHotspotIdx] != nil {
-						err := (*i.readers[oldHotspotIdx]).switchConcurrentMode(false)
-						if err != nil {
-							i.err = err
-							return closeReaderIdx, false
-						}
-					}
 				}
 
 				for idx, rp := range i.readers {
 					if rp == nil {
-						continue
-					}
-					if oldHotspotIdx != i.lastHotspotIdx && idx == oldHotspotIdx {
 						continue
 					}
 					isHotspot := i.lastHotspotIdx == idx
