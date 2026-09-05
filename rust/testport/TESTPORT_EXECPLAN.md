@@ -41,6 +41,10 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` auto-analyze partition batch
+  warning): matched Go's unconditional 1681 deprecation warning for
+  `tidb_auto_analyze_partition_batch_size` while retaining its normalized
+  value. A focused GLOBAL SQL regression verifies warning text and readback.
 - 2026-09-05 (`pkg/sessionctx/variable` GOGC tuner bounds): added the
   cross-bound validation Go applies to `tidb_gogc_tuner_min_value` and
   `tidb_gogc_tuner_max_value`, using the current GLOBAL image and preserving

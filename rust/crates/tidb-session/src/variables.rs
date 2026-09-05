@@ -827,6 +827,11 @@ impl Session {
                 1105,
                 "tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases",
             ))
+        } else if name.eq_ignore_ascii_case("tidb_auto_analyze_partition_batch_size") {
+            Some((
+                1681,
+                "Updating 'tidb_auto_analyze_partition_batch_size' is deprecated. It will be made read-only in a future release.",
+            ))
         } else if name.eq_ignore_ascii_case("tidb_enable_async_merge_global_stats") {
             // Pinned Go warns for EVERY assignment, in both session and
             // global scope, independent of the normalized boolean value.

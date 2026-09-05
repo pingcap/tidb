@@ -462,6 +462,32 @@ fn gogc_tuner_bounds_validate_against_each_other() {
     );
 }
 
+/// Go's deprecated auto-analyze partition batch-size validation appends the
+/// standard 1681 warning while retaining the normalized integer value.
+#[test]
+fn auto_analyze_partition_batch_size_warns_like_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET GLOBAL tidb_auto_analyze_partition_batch_size = 16")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1681");
+    assert_eq!(
+        warnings[0][2],
+        "Updating 'tidb_auto_analyze_partition_batch_size' is deprecated. It will be made read-only in a future release."
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_auto_analyze_partition_batch_size"
+        ),
+        "16"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.
