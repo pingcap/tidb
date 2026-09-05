@@ -59,7 +59,6 @@ fn runtime_version_state() -> &'static RwLock<RuntimeVersions> {
 }
 
 /// Returns one coherent snapshot of the mutable process-wide versions.
-#[must_use]
 pub fn runtime_versions() -> RuntimeVersions {
     runtime_version_state()
         .read()
@@ -81,7 +80,6 @@ pub fn set_runtime_versions(release_version: impl Into<String>, server_version: 
 }
 
 /// Rewrites only the classic development placeholder into its next-gen form.
-#[must_use]
 pub fn normalize_tidb_release_version_for_next_gen(version: &str) -> &str {
     if version == LEGACY_TIDB_RELEASE_VERSION_PLACEHOLDER {
         TIDBX_PLACEHOLDER_RELEASE_VERSION
@@ -190,7 +188,6 @@ constants! { u16;
     ServerStatusWasSlow = 0x0800; ServerPSOutParams = 0x1000;
 }
 /// Returns whether a server-status word advertises an existing cursor.
-#[must_use]
 pub const fn has_cursor_exists_flag(status: u16) -> bool {
     status & ServerStatusCursorExists != 0
 }
@@ -316,7 +313,6 @@ pub const COMMAND_NAMES: &[(u8, &str)] = &[
     (ComResetConnection, "Reset connect"),
 ];
 /// Returns a command's source diagnostic name.
-#[must_use]
 pub fn command_name(command: u8) -> Option<&'static str> {
     COMMAND_NAMES
         .iter()
@@ -346,7 +342,6 @@ pub const DEFAULT_LENGTH_OF_TIME_FRACTION: &[(i32, usize)] =
     &[(0, 0), (1, 1), (2, 1), (3, 2), (4, 2), (5, 3), (6, 3)];
 
 /// Returns the default physical storage length for a MySQL type.
-#[must_use]
 pub const fn default_mysql_type_length(tp: u8) -> Option<usize> {
     use crate::types::*;
     match tp {
@@ -360,7 +355,6 @@ pub const fn default_mysql_type_length(tp: u8) -> Option<usize> {
     }
 }
 /// Returns the storage bytes for a fractional-seconds precision.
-#[must_use]
 pub const fn default_time_fraction_length(fsp: i32) -> Option<usize> {
     match fsp {
         0 => Some(0),
@@ -484,12 +478,10 @@ impl SqlMode {
     }
 }
 /// Deletes bits from an SQL mode.
-#[must_use]
 pub const fn delete_sql_mode(original: SqlMode, delete: SqlMode) -> SqlMode {
     SqlMode(original.0 & !delete.0)
 }
 /// Adds bits to an SQL mode.
-#[must_use]
 pub const fn set_sql_mode(original: SqlMode, add: SqlMode) -> SqlMode {
     SqlMode(original.0 | add.0)
 }
@@ -532,7 +524,6 @@ pub const SQL_MODE_NAMES: &[(&str, SqlMode)] = &[
 ];
 
 /// Resolves a source combination mode to its ordered expansion.
-#[must_use]
 pub fn combination_sql_mode(name: &str) -> Option<&'static [&'static str]> {
     match name {
         "ANSI" => Some(&[
@@ -575,7 +566,6 @@ pub fn combination_sql_mode(name: &str) -> Option<&'static [&'static str]> {
 }
 
 /// Uppercases, expands combinations, and removes duplicates in source order.
-#[must_use]
 pub fn format_sql_mode_str(input: &str) -> String {
     let upper = crate::to_uppercase(input.trim_end_matches(' '));
     let mut seen = HashSet::new();
@@ -655,7 +645,6 @@ pub enum Priority {
 }
 impl Priority {
     /// Source map spelling, including `NO_PRIORITY` for the zero value.
-    #[must_use]
     pub const fn as_name(self) -> &'static str {
         match self {
             Self::None => "NO_PRIORITY",
@@ -665,7 +654,6 @@ impl Priority {
         }
     }
     /// SQL text emitted by Restore.
-    #[must_use]
     pub const fn restore(self) -> &'static str {
         match self {
             Self::None => "",
@@ -676,7 +664,6 @@ impl Priority {
     }
 }
 /// Parses a priority case-insensitively, defaulting to no priority.
-#[must_use]
 pub fn priority_from_str(value: &str) -> Priority {
     match crate::to_uppercase(value).as_str() {
         "HIGH_PRIORITY" => Priority::High,

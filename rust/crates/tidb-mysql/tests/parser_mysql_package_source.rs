@@ -443,3 +443,60 @@ fn locale_unicode_edges_and_source_panics_follow_go() {
     assert!(std::panic::catch_unwind(|| format_by_locale("1", "", "en_US")).is_err());
     assert!(std::panic::catch_unwind(|| format_by_locale("-", "2", "en_US")).is_err());
 }
+
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    // Go does not add a compile-time must-use rule to these helpers. This
+    // regression keeps the Rust owner from growing diagnostics that callers
+    // of the source package cannot observe.
+    locale_format_style("en_US");
+    charset_name_to_id("utf8mb4");
+    is_utf8_charset("utf8mb4");
+    collation_name(45);
+    collation_id("utf8mb4_bin");
+    is_range_graph('A');
+    is_unicode_decimal_digit('1');
+    is_unicode_uppercase_letter('A');
+    is_unicode_lowercase_letter('a');
+    is_integer_type(TypeLonglong);
+    default_field_length_and_decimal(TypeLonglong);
+    default_field_length_and_decimal_for_cast(TypeJSON);
+    is_auth_plugin_clear_text(AuthCachingSha2Password);
+    has_flag(UnsignedFlag, UnsignedFlag);
+    has_drop_column_with_index_flag(DropColumnIndexFlag);
+    has_not_null_flag(NotNullFlag);
+    has_no_default_value_flag(NoDefaultValueFlag);
+    has_auto_increment_flag(AutoIncrementFlag);
+    has_unsigned_flag(UnsignedFlag);
+    has_zerofill_flag(ZerofillFlag);
+    has_binary_flag(BinaryFlag);
+    has_pri_key_flag(PriKeyFlag);
+    has_uni_key_flag(UniqueKeyFlag);
+    has_multiple_key_flag(MultipleKeyFlag);
+    has_timestamp_flag(TimestampFlag);
+    has_on_update_now_flag(OnUpdateNowFlag);
+    has_parse_to_json_flag(ParseToJSONFlag);
+    has_is_boolean_flag(IsBooleanFlag);
+    has_prevent_null_insert_flag(PreventNullInsertFlag);
+    has_enum_set_as_int_flag(EnumSetAsIntFlag);
+    runtime_versions();
+    normalize_tidb_release_version_for_next_gen("v26.3.0");
+    has_cursor_exists_flag(ServerStatusCursorExists);
+    command_name(ComQuery);
+    default_mysql_type_length(TypeLonglong);
+    default_time_fraction_length(6);
+    delete_sql_mode(ModeANSI, ModeANSIQuotes);
+    set_sql_mode(ModeNone, ModeANSIQuotes);
+    combination_sql_mode("ANSI");
+    format_sql_mode_str("ANSI");
+    Priority::None.as_name();
+    Priority::None.restore();
+    priority_from_str("LOW_PRIORITY");
+    SelectPriv.as_str();
+    SelectPriv.column_string();
+    SelectPriv.set_string();
+    privilege_from_column("Select_priv");
+    privilege_from_set_enum("Select");
+    has_privilege(&[SelectPriv], SelectPriv);
+}

@@ -185,17 +185,14 @@ pub const PRIVILEGE_USER_COLUMNS: &[(PrivilegeType, &str)] = &[
 
 impl PrivilegeType {
     /// SQL identifier used by GRANT/SHOW output, or empty for an unknown bit.
-    #[must_use]
     pub fn as_str(self) -> &'static str {
         lookup_forward(PRIVILEGE_NAMES, self)
     }
     /// mysql.user/mysql.db column name, or empty for an unknown bit.
-    #[must_use]
     pub fn column_string(self) -> &'static str {
         lookup_forward(PRIVILEGE_USER_COLUMNS, self)
     }
     /// SET enum spelling, or empty for a privilege excluded by the source map.
-    #[must_use]
     pub fn set_string(self) -> &'static str {
         lookup_forward(PRIVILEGE_SET_NAMES, self)
     }
@@ -218,7 +215,6 @@ fn lookup_forward(
 }
 
 /// Constructs a privilege from an exact privilege-table column name.
-#[must_use]
 pub fn privilege_from_column(column: &str) -> Option<PrivilegeType> {
     PRIVILEGE_USER_COLUMNS
         .iter()
@@ -226,7 +222,6 @@ pub fn privilege_from_column(column: &str) -> Option<PrivilegeType> {
 }
 
 /// Constructs a privilege from an exact privilege SET spelling.
-#[must_use]
 pub fn privilege_from_set_enum(value: &str) -> Option<PrivilegeType> {
     SET_ENUM_PRIVILEGES
         .iter()
@@ -234,7 +229,6 @@ pub fn privilege_from_set_enum(value: &str) -> Option<PrivilegeType> {
 }
 
 /// Returns whether `privileges` contains `privilege`.
-#[must_use]
 pub fn has_privilege(privileges: &[PrivilegeType], privilege: PrivilegeType) -> bool {
     privileges.contains(&privilege)
 }

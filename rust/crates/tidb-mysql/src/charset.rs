@@ -81,7 +81,6 @@ pub const CHARSET_IDS: &[(&str, u8)] = &[
 ];
 
 /// Source `CharsetNameToID`; unknown and differently-cased names map to zero.
-#[must_use]
 pub fn charset_name_to_id(charset: &str) -> u8 {
     CHARSET_IDS
         .iter()
@@ -89,7 +88,6 @@ pub fn charset_name_to_id(charset: &str) -> u8 {
         .unwrap_or(0)
 }
 /// Tests exact source spellings `utf8` and `utf8mb4`.
-#[must_use]
 pub fn is_utf8_charset(charset: &str) -> bool {
     charset == UTF8Charset || charset == UTF8MB4Charset
 }
@@ -323,14 +321,12 @@ pub const COLLATIONS: &[(u16, &str)] = &[
 ];
 
 /// Resolves a collation id to its exact source name.
-#[must_use]
 pub fn collation_name(id: u16) -> Option<&'static str> {
     COLLATIONS
         .iter()
         .find_map(|(key, name)| (*key == id).then_some(*name))
 }
 /// Resolves an exact, case-sensitive collation name to its id.
-#[must_use]
 pub fn collation_id(name: &str) -> Option<u16> {
     COLLATIONS
         .iter()
@@ -1200,13 +1196,11 @@ fn contains_codepoint(ranges: &[(u32, u32)], character: char) -> bool {
 
 /// Mirrors `unicode.IsOneOf(RangeGraph, character)` using the source Go
 /// Unicode tables, including letters, marks, numbers, punctuation, and symbols.
-#[must_use]
 pub fn is_range_graph(character: char) -> bool {
     contains_codepoint(RANGE_GRAPH_CODEPOINTS, character)
 }
 
 /// Mirrors Go `unicode.IsDigit` for password and locale classification.
-#[must_use]
 pub fn is_unicode_decimal_digit(character: char) -> bool {
     contains_codepoint(UNICODE_DECIMAL_DIGITS, character)
 }

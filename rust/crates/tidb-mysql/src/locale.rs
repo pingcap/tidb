@@ -90,7 +90,6 @@ const NONE_COMMA_LOCALES: &[&str] = &[
 
 /// Returns a locale's rules and whether the case-insensitive locale was found.
 /// Unknown locales use the source `en_US` fallback while returning false.
-#[must_use]
 pub fn locale_format_style(locale: &str) -> (LocaleFormatStyle, bool) {
     let locale = crate::to_lowercase(locale);
     let key = locale.as_str();

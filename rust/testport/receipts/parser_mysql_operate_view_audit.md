@@ -129,3 +129,25 @@ installed. No Bazel metadata could be regenerated.
   intentionally not fabricated in this batch.
 - The scoped Rust session gate retains the unrelated infoschema header failure
   described above.
+
+## Follow-up: Go discardable-return contract
+
+The complete `tidb-mysql` owner also carried 34 explicit Rust `#[must_use]`
+annotations (49 public APIs after expanding the flag-predicate macro). Go
+callers may discard every one of these helper results, so the annotations were
+removed from `locale`, `charset`, Unicode-category, type-flag, constant,
+utility, and privilege helpers. This changes compile-time diagnostics only;
+all source values and runtime behavior remain unchanged.
+
+`parser_mysql_package_source::return_values_may_be_ignored_like_go` invokes
+the affected helper families under `#[deny(unused_must_use)]`. In a detached
+pre-fix worktree it failed with 49 compiler errors; after the cleanup it passes.
+The package inventory and ownership decision above remain the atomic scope for
+this follow-up.
+
+Follow-up validation:
+
+- Focused discard regression:
+  `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-mysql --test parser_mysql_package_source return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- Full `tidb-mysql` source carrier and `--all-targets` test gates — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --package tidb-mysql -- --check`, `make lint`, and `git diff --check` — passed.

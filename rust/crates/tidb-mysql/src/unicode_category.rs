@@ -1340,13 +1340,11 @@ fn contains_codepoint(ranges: &[(u32, u32)], character: char) -> bool {
 }
 
 /// Mirrors Go `unicode.IsUpper`, whose domain is category `Lu`.
-#[must_use]
 pub fn is_unicode_uppercase_letter(character: char) -> bool {
     contains_codepoint(UNICODE_UPPERCASE_LETTERS, character)
 }
 
 /// Mirrors Go `unicode.IsLower`, whose domain is category `Ll`.
-#[must_use]
 pub fn is_unicode_lowercase_letter(character: char) -> bool {
     contains_codepoint(UNICODE_LOWERCASE_LETTERS, character)
 }

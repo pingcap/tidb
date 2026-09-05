@@ -45,7 +45,6 @@ pub const MaxInt24: i32 = (1 << 23) - 1;
 pub const MinInt24: i32 = -(1 << 23);
 
 /// Returns whether every bit in `flag_item` is present in `flag`.
-#[must_use]
 pub const fn has_flag(flag: usize, flag_item: usize) -> bool {
     flag & flag_item != 0
 }
@@ -53,7 +52,6 @@ pub const fn has_flag(flag: usize, flag_item: usize) -> bool {
 macro_rules! predicate {
     ($($go:ident, $rust:ident, $flag:ident;)+) => {$(
         #[doc = concat!("Source-compatible `", stringify!($go), "` predicate.")]
-        #[must_use]
         pub const fn $rust(value: usize) -> bool { has_flag(value, $flag) }
     )+};
 }
