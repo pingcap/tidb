@@ -76,8 +76,16 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
     // not evaluate -- `SELECT IF(1, 1, 1/0)` runs without dividing, so
     // plan-time folding inside them would fabricate both warnings and
     // errors the runtime never reaches.
+    //
+    // Unfoldable functions get the same treatment, for the reason Go's
+    // `expression_rewriter.go:662/1912` encodes with `disableFoldCounter`:
+    // inside `BENCHMARK`'s scope every function is built with
+    // `NewFunctionBase`, which never folds -- not even its own constant
+    // sub-expressions. Descending into their arguments here would fold a
+    // subtree the source keeps runtime-only.
     if let Expression::ScalarFunction(func) = expr {
-        let lazy = is_lazy_short_circuit(func.func_name.lowercase());
+        let name_lc = func.func_name.lowercase();
+        let lazy = is_lazy_short_circuit(&name_lc) || is_unfoldable(&name_lc);
         if !lazy {
             for arg in &mut func.args {
                 fold_current_value_in(arg, ctx);
@@ -337,6 +345,52 @@ mod deferred_function_tests {
         }
         fn now(&self) -> Option<(i64, u32, i32)> {
             Some((self.0 as i64, 0, 0))
+        }
+    }
+
+    /// Go `expression_rewriter.go:662/1912`: entering a `BENCHMARK` call
+    /// increments `disableFoldCounter`, and functions inside that scope are
+    /// built with `NewFunctionBase` -- the fold never touches them, not even
+    /// their own constant sub-expressions. The tree-walk mirror is: the
+    /// recursion must not descend into an unfoldable function's arguments.
+    #[test]
+    fn benchmark_scope_keeps_its_subtree_unfolded() {
+        // BENCHMARK(1, CAST('x' AS SIGNED)): the inner cast folds only if the
+        // walk descends into the unfoldable parent's children.
+        let inner = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            vec![
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(1),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(2),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+            ],
+        ));
+        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("benchmark"),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            vec![
+                Expression::Constant(crate::constant::Constant::new(
+                    Datum::Int(1),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )),
+                inner,
+            ],
+        ));
+        fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
+
+        // The benchmark's cast argument must still be a scalar function.
+        match &expr {
+            Expression::ScalarFunction(benchmark) => match &benchmark.get_args()[1] {
+                Expression::ScalarFunction(_) => {}
+                other => panic!("the cast argument was folded: {other:?}"),
+            },
+            other => panic!("benchmark itself was folded: {other:?}"),
         }
     }
 
