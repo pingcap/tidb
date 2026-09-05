@@ -608,8 +608,23 @@ fn aggregate_function(
     child_schema: &Schema,
     _ctx: &crate::StmtContext,
 ) -> Result<AggFunc, DriverError> {
-    let mut args = resolve_expressions(&descriptor.base.args, child_schema)?;
     let upper = descriptor.base.name.to_ascii_uppercase();
+    // The planner represents COUNT(*) as a synthetic, id-less Column when
+    // the aggregate is pushed below an index reader. That slot is not a
+    // stored child column; COUNT(*) must therefore resolve with no argument,
+    // just like COUNT(1), instead of trying to bind column id 0 to the scan.
+    let count_star_synthetic = upper == "COUNT"
+        && descriptor.base.args.len() == 1
+        && child_schema.is_empty()
+        && matches!(
+            &descriptor.base.args[0],
+            Expression::Column(column) if column.id == 0 && column.orig_name.is_empty()
+        );
+    let mut args = if count_star_synthetic {
+        Vec::new()
+    } else {
+        resolve_expressions(&descriptor.base.args, child_schema)?
+    };
     let separator = if upper == "GROUP_CONCAT" {
         Some(super::agg_build::separator_text(args.last().ok_or_else(
             || DriverError::unsupported("GROUP_CONCAT has no separator argument"),
@@ -844,6 +859,41 @@ fn build_reader(
     )
 }
 
+/// Extracts the partial aggregation carried by an index-lookup table plan.
+/// Go's `PhysicalIndexLookUpReader` executes this cop aggregate on the table
+/// side before the root final aggregate consumes its partial rows. The Rust
+/// reader owns both sides of that plan, so it must hand the descriptor to the
+/// index source rather than silently discarding `table_plan`.
+fn reader_partial_aggregate(
+    table_plan: &PhysicalPlan,
+    child_schema: &Schema,
+    ctx: &crate::StmtContext,
+) -> Result<Option<PushdownPartialAggregate>, DriverError> {
+    let (descriptors, group_by, stream) = match table_plan {
+        PhysicalPlan::HashAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, false),
+        PhysicalPlan::StreamAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, true),
+        _ => return Ok(None),
+    };
+    if !descriptors
+        .iter()
+        .all(|descriptor| descriptor.mode == AggFunctionMode::Partial1)
+    {
+        return Ok(None);
+    }
+    let functions = descriptors
+        .iter()
+        .map(|descriptor| aggregate_function(descriptor, child_schema, ctx))
+        .collect::<Result<Vec<_>, _>>()?;
+    let group_by = resolve_expressions(group_by, child_schema)?;
+    pushed_partial_aggregation(
+        &functions,
+        &group_by,
+        stream,
+        child_schema,
+        &plan_schema(table_plan)?,
+    )
+}
+
 fn embedded_index_scan(plan: &PhysicalPlan) -> Option<&PhysicalIndexScan> {
     match plan {
         PhysicalPlan::IndexScan(scan) => Some(scan),
@@ -899,44 +949,59 @@ fn reader_output_offsets(
     schema: &Schema,
     scan: &PhysicalIndexScan,
     table: &crate::KvTable,
-) -> Result<(Vec<usize>, Option<usize>), DriverError> {
+) -> Result<(Schema, Vec<usize>, Option<usize>), DriverError> {
     let extra_handle = schema.columns.iter().position(|column| {
         column.id == tidb_model::column::EXTRA_HANDLE_ID
             || column.orig_name.rsplit('.').next().is_some_and(|name| {
                 name.eq_ignore_ascii_case(tidb_model::column::EXTRA_HANDLE_NAME)
             })
     });
-    let offsets = schema
-        .columns
-        .iter()
-        .enumerate()
-        .filter(|(slot, _)| Some(*slot) != extra_handle)
-        .map(|(_, output)| {
-            let source = scan
-                .cost_columns
-                .iter()
-                .find(|column| column.unique_id == output.unique_id)
-                .unwrap_or(output);
-            table
-                .columns
-                .iter()
-                .position(|column| column.id == source.id)
-                .or_else(|| {
-                    source.orig_name.rsplit('.').next().and_then(|name| {
-                        table
-                            .columns
-                            .iter()
-                            .position(|column| column.name.eq_ignore_ascii_case(name))
-                    })
+    let mut source_columns = Vec::with_capacity(schema.columns.len());
+    let mut offsets = Vec::with_capacity(schema.columns.len());
+    let mut extra_handle_slot = None;
+    for (slot, output) in schema.columns.iter().enumerate() {
+        if Some(slot) == extra_handle {
+            if extra_handle_slot.is_some() {
+                return Err(DriverError::unsupported(
+                    "a physical index reader has multiple _tidb_rowid outputs",
+                ));
+            }
+            extra_handle_slot = Some(source_columns.len());
+            continue;
+        }
+        let source = scan
+            .cost_columns
+            .iter()
+            .find(|column| column.unique_id == output.unique_id)
+            .unwrap_or(output);
+        let Some(offset) = table
+            .columns
+            .iter()
+            .position(|column| column.id == source.id)
+            .or_else(|| {
+                source.orig_name.rsplit('.').next().and_then(|name| {
+                    table
+                        .columns
+                        .iter()
+                        .position(|column| column.name.eq_ignore_ascii_case(name))
                 })
-                .ok_or_else(|| {
-                    DriverError::unsupported(
-                        "a physical index reader output is absent from its table",
-                    )
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((offsets, extra_handle))
+            })
+        else {
+            // A COUNT(*) child can carry a synthetic, id-less aggregate slot
+            // in the physical index plan. It is not a stored column and the
+            // index source must emit zero data columns so the parent aggregate
+            // can count rows. Real unresolved columns remain hard errors.
+            if output.id == 0 && source.id == 0 && source.orig_name.is_empty() {
+                continue;
+            }
+            return Err(DriverError::unsupported(
+                "a physical index reader output is absent from its table",
+            ));
+        };
+        source_columns.push(output.clone());
+        offsets.push(offset);
+    }
+    Ok((Schema::new(source_columns), offsets, extra_handle_slot))
 }
 
 fn build_index_reader(
@@ -968,14 +1033,14 @@ fn build_index_reader(
         ));
     }
     let schema = plan_schema(plan)?;
-    let (keep, extra_handle) = reader_output_offsets(&schema, scan, &table)?;
+    let (source_schema, keep, extra_handle) = reader_output_offsets(&schema, scan, &table)?;
     let ranges = if scan.ranges.is_empty() {
         vec![IndexRange::full()]
     } else {
         executor_ranges(&scan.ranges)
     };
     let mut source = IndexRangeSourceExec::new_with_statement(
-        meta(plan, schema.clone()),
+        meta(plan, source_schema),
         table.clone(),
         scan.index_id,
         ranges,
@@ -1014,6 +1079,13 @@ fn build_index_reader(
     // only to show the TiDB-side zero-row branch, so do not lower them again.
     if let Some(table_plan) = table_plan.filter(|_| !lookup_pushdown) {
         lower_index_lookup_selections(table_plan, &mut source, ctx)?;
+    }
+    if let Some(table_plan) = table_plan {
+        if let Some(partial) = reader_partial_aggregate(table_plan, source.schema(), ctx)? {
+            if source.accept_partial_aggregate(&partial, ctx) {
+                source.set_partial_output_schema(plan_schema(table_plan)?);
+            }
+        }
     }
     if let Some(limit) = pushed_limit {
         if !source.accept_embedded_lookup_limit(limit.offset, limit.count) {

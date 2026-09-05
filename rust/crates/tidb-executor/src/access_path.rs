@@ -2940,6 +2940,22 @@ impl IndexRangeSourceExec {
 }
 
 impl IndexRangeSourceExec {
+    /// Restores the planner-owned partial output columns after an
+    /// index-lookup table plan accepts aggregate pushdown. The generated
+    /// source columns carry implementation-local ids; the root final
+    /// aggregate still resolves its descriptors against the table plan's
+    /// stable unique ids.
+    pub(crate) fn set_partial_output_schema(&mut self, schema: Schema) {
+        if self.partial_aggregate.is_some() {
+            self.meta = ExecutorMeta::new(
+                schema,
+                self.meta.id(),
+                self.meta.init_cap(),
+                self.meta.max_chunk_size(),
+            );
+        }
+    }
+
     /// Appends rows from a clean remote lookup chunk directly into `req`.
     ///
     /// The source chunk carries the table projection plus an optional

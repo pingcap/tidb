@@ -8494,3 +8494,9 @@ risks without claiming repository-wide parity.
   mistaken for the valid zero SET. Focused datatype and DDL integration tests
   cover the zero-value control and exact row error; remaining `IF NOT EXISTS`
   and generated-column ordering divergences stay documented in `receipts/b102.md`.
+- 2026-09-05 (`pkg/executor` clustered index lookup partial aggregate): Rust now
+  retains synthetic zero-column `COUNT(*)` index scans and executes an
+  `IndexLookUpReader` table-side `Partial1` aggregate before the root final
+  aggregate. The clustered composite-PK/nullable-unique-index regression now
+  returns both rows and passes table/index consistency checks; evidence is
+  recorded in `receipts/executor_index_lookup_partial_aggregate.md`.
