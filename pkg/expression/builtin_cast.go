@@ -1613,7 +1613,7 @@ func (b *builtinCastDecimalAsStringSig) evalString(ctx EvalContext, row chunk.Ro
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, typeCtx(ctx), false)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
