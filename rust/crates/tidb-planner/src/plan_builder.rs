@@ -864,6 +864,16 @@ impl ColumnResolver for PlanScopeResolver<'_> {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        // A live statement context owns warning emission. Defer value folding
+        // until `PlanBuilder::rewrite_scalar` can invoke the folder with that
+        // concrete context; the zone-only fallback below intentionally drops
+        // warnings and must not run first for session-backed plans.
+        if self.warning_context.is_some() {
+            if mode != tidb_expr::ConstantFoldMode::Disabled {
+                tidb_expr::derive_constant_null_flag(expression);
+            }
+            return;
+        }
         // Go's expression rewriter folds strict literal subtrees as each
         // builtin is constructed.  The planner resolver historically only
         // refreshed NULL metadata, leaving shapes such as
@@ -1277,7 +1287,18 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_like_default_escape(self.ctx.like_default_escape())
         .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
         .with_warning_context(self.ctx);
-        Ok(rewrite_expr_resolved(expr, &resolver)?)
+        let mut rewritten = rewrite_expr_resolved(expr, &resolver)?;
+        // The resolver's structural pass intentionally preserves warning-
+        // producing casts while it has only a zone-only no-column context.
+        // Go's `NewFunction` still folds those closed casts with the live
+        // statement context, so warnings from constants such as `'abc' + 1`
+        // and `1 / 0` belong to this construction boundary, not execution.
+        tidb_expr::fold_constant_in_mode(
+            &mut rewritten,
+            self.ctx,
+            tidb_expr::ConstantFoldMode::Normal,
+        );
+        Ok(rewritten)
     }
 
     /// Go `expressionRewriter.buildSubquery` plus

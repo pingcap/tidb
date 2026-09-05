@@ -201,6 +201,12 @@ fn has_runtime_warning_cast(expr: &Expression) -> bool {
         "cast_signed"
         | "cast_unsigned"
         | "cast_unsigned_in_union"
+        | "cast_real"
+        | "cast_decimal"
+        | "cast_datetime"
+        | "cast_timestamp"
+        | "cast_date"
+        | "cast_duration"
         | "vitess_hash"
         | "tidb_shard" => &[0],
         // `FORMAT(number, decimals)` wraps its second argument to ETInt.

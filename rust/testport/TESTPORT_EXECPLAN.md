@@ -9138,3 +9138,11 @@ risks without claiming repository-wide parity.
   Computed arguments retain the internal-column fallback. Focused aggregate
   regression and Ready evidence are recorded in
   `receipts/executor_group_concat_orig_name.md`.
+- 2026-09-06 (`pkg/planner/core` live constant-fold warning ownership): Rust's
+  session-backed plan resolver now defers closed-subtree folding until the
+  concrete statement context is available, preserving Go's conversion and
+  division-by-zero warnings for constant ABS/arithmetic/comparison forms while
+  leaving row-dependent expressions runtime-bound. REAL/DECIMAL and temporal
+  warning casts are covered alongside the existing integer cases. Focused
+  builtin/numeric/comparison regressions and Ready evidence are recorded in
+  `receipts/planner_live_constant_warning.md`.
