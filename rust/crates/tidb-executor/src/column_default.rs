@@ -354,6 +354,17 @@ pub(crate) fn validate_on_update_current_timestamp(
     expr: &Expr,
     field_type: &FieldType,
 ) -> Result<(), DefaultError> {
+    // Go's ADD/MODIFY COLUMN paths reject ON UPDATE for every destination
+    // other than TIMESTAMP or DATETIME before consulting the expression
+    // helper (`pkg/ddl/add_column.go` and `modify_column.go`).  The shared
+    // expression predicate intentionally knows only about CURRENT_TIMESTAMP
+    // syntax and FSP consistency, so keep this DDL-only type gate here.
+    if !matches!(
+        field_type.code(),
+        FieldTypeCode::Timestamp | FieldTypeCode::Datetime
+    ) {
+        return Err(DefaultError::InvalidDefault);
+    }
     if !tidb_expr::is_valid_current_timestamp_expr(expr, Some(field_type)) {
         return Err(DefaultError::InvalidDefault);
     }
@@ -887,6 +898,11 @@ mod tests {
             &timestamp_fsp3,
         )
         .is_ok());
+        assert!(validate_on_update_current_timestamp(
+            &current("CURRENT_TIMESTAMP", vec![]),
+            &FieldType::new(FieldTypeCode::Long),
+        )
+        .is_err());
         assert!(
             validate_on_update_current_timestamp(&current("NOW", vec![]), &timestamp,).is_err()
         );

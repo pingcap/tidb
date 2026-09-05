@@ -9056,3 +9056,9 @@ risks without claiming repository-wide parity.
   no-session `NULL`, while the one-argument publication side effect remains
   intact. Focused expression and auto-increment regressions plus Ready
   evidence are recorded in `receipts/expression_last_insert_id_state.md`.
+- 2026-09-06 (`pkg/ddl` ON UPDATE destination type validation): Rust now
+  rejects `ON UPDATE CURRENT_TIMESTAMP` on non-TIMESTAMP/DATETIME columns
+  before applying the shared function/FSP predicate, matching Go's 1294
+  `ErrInvalidOnUpdate` boundary for CREATE, ADD COLUMN, and MODIFY COLUMN.
+  Focused DDL validator and session regressions plus Ready evidence are
+  recorded in `receipts/session_on_update_type_validation.md`.
