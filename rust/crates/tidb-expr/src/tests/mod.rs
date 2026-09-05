@@ -68,6 +68,10 @@ mod vectorized_filter_consider_null_gap_source;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {
+    e_with(expr, &NoColumns)
+}
+
+fn e_with(expr: &str, cols: &dyn Columns) -> String {
     let stmt = tidb_parser::parse(&format!("select {expr}")).expect("parse");
     let Stmt::Query(query) = stmt else {
         panic!("not query")
@@ -76,7 +80,7 @@ pub(super) fn e(expr: &str) -> String {
         panic!("not select")
     };
     match &s.fields[0] {
-        SelectField::Expr { expr, .. } => match eval(expr) {
+        SelectField::Expr { expr, .. } => match eval_in(expr, cols) {
             Ok(v) => v.label(),
             Err(err) => format!("{err:?}"),
         },
@@ -1786,6 +1790,34 @@ fn bitwise_and_div_by_zero() {
     // DIV / MOD by zero are NULL in MySQL.
     assert_eq!(e("10 DIV 0"), "NULL");
     assert_eq!(e("10 MOD 0"), "NULL");
+}
+
+#[test]
+fn ast_integer_overflow_preserves_go_error_shape() {
+    struct NoUnsignedSubtraction;
+
+    impl Columns for NoUnsignedSubtraction {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn no_unsigned_subtraction(&self) -> bool {
+            true
+        }
+    }
+
+    assert_eq!(
+        e("9223372036854775807 + 1"),
+        "DataOutOfRange { value: \"BIGINT\", expression: \"(9223372036854775807 + 1)\" }"
+    );
+    assert_eq!(
+        e("18446744073709551615 + 1"),
+        "DataOutOfRange { value: \"BIGINT UNSIGNED\", expression: \"(18446744073709551615 + 1)\" }"
+    );
+    assert_eq!(
+        e_with("0 - 18446744073709551615", &NoUnsignedSubtraction,),
+        "DataOutOfRange { value: \"BIGINT\", expression: \"(0 - 18446744073709551615)\" }"
+    );
 }
 
 #[test]

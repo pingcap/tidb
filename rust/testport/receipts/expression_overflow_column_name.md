@@ -228,3 +228,43 @@ TMPDIR=/tmp/tidb-codex-go-lint make lint
 ```
 
 No Go, generated, fixture, platform, or Bazel input changed.
+
+## Follow-up: AST integer arithmetic overflow text
+
+The AST/value evaluator previously left integer arithmetic overflow as the
+bare `IntOverflow` carrier even though Go's arithmetic signatures attach both
+the result domain and source-shaped operands to error 1690. The boundary now
+uses the evaluated integer signedness (and the session's
+`NO_UNSIGNED_SUBTRACTION` setting) to emit `BIGINT` or `BIGINT UNSIGNED`, while
+reusing the existing AST binary renderer. The focused regression covers both
+`9223372036854775807 + 1` and `18446744073709551615 + 1`; before the adapter
+both cases returned `IntOverflow`, and after it they return the exact Go-shaped
+`DataOutOfRange` values.
+
+This remains an AST-tier fix only: the direct values-only arithmetic helper
+continues to return its carrier because it has no source expression node.
+
+Ready validation for this AST integer follow-up passed:
+
+```text
+OPENSSL_DIR=rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install \\
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked \\
+  -p tidb-expr --all-targets
+# passed (existing warnings only)
+
+OPENSSL_DIR=rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install \\
+cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml \\
+  --offline --locked -p tidb-expr \\
+  -E 'not test(/json_schema_valid_resolves_file_and_http_references/)' \\
+  --no-fail-fast --status-level fail --final-status-level pass
+# 1,209 passed, 100 skipped
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-expr
+git diff --check
+# both passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \\
+GOPATH=/Users/chenhuansheng/go \\
+TMPDIR=/tmp/tidb-codex-go-lint make lint
+# passed
+```

@@ -431,9 +431,12 @@ fn ast_binary_overflow_error(
     operator: tidb_ast::BinaryOp,
     left: &Expr,
     right: &Expr,
+    integer_unsigned: bool,
     error: EvalError,
 ) -> EvalError {
     let value = match error {
+        EvalError::IntOverflow if integer_unsigned => "BIGINT UNSIGNED",
+        EvalError::IntOverflow => "BIGINT",
         EvalError::FloatOverflow => "DOUBLE",
         EvalError::DecimalOverflow => "DECIMAL",
         _ => return error,
@@ -911,8 +914,12 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                 eval_in(r, cols)?,
                 signed,
             );
+            let unsigned_result =
+                !matches!(*op, tidb_ast::BinaryOp::Minus) || !cols.no_unsigned_subtraction();
+            let integer_unsigned = unsigned_result
+                && (matches!(&left, Datum::UInt(_)) || matches!(&right, Datum::UInt(_)));
             eval_binary_with_div_precision(*op, left, right, cols.div_precision_increment(), cols)
-                .map_err(|error| ast_binary_overflow_error(*op, l, r, error))
+                .map_err(|error| ast_binary_overflow_error(*op, l, r, integer_unsigned, error))
         }
         // A constant `RAND(N)` has state per function occurrence for the
         // whole statement. The function node's address is stable while this

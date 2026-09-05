@@ -8065,3 +8065,10 @@ risks without claiming repository-wide parity.
   binary arguments, while the direct values-only helper remains a carrier-only
   seam. The AST binary evaluator now applies the same DOUBLE/DECIMAL overflow
   shaping. Evidence is recorded in `receipts/expression_overflow_column_name.md`.
+- 2026-09-05 (`pkg/expression` AST integer arithmetic overflow text): the Rust
+  AST/value evaluator now maps integer overflow carriers to Go-shaped 1690
+  `BIGINT` or `BIGINT UNSIGNED` errors, preserving rendered binary operands and
+  honoring `NO_UNSIGNED_SUBTRACTION`. Focused signed and unsigned literal
+  regressions record fail-before/pass-after evidence in
+  `receipts/expression_overflow_column_name.md`; the values-only arithmetic
+  helper remains carrier-only because it has no source expression node.
