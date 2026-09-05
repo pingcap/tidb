@@ -873,10 +873,7 @@ impl GlobalSysvars {
         // than a process singleton.
         if key == "tidb_enable_plan_replayer_continuous_capture"
             && validated.value == "ON"
-            && !self.global_bool_value(
-                "tidb_enable_historical_stats",
-                false,
-            )
+            && !self.global_bool_value("tidb_enable_historical_stats", false)
         {
             return Err(VarError::ValidationRefused(
                 "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
@@ -979,8 +976,8 @@ impl GlobalSysvars {
         // promotion is one-way: clearing restricted mode leaves super-read-
         // only enabled until it is explicitly cleared by a later SET.
         if key == "tidb_restricted_read_only" && stored_value == "ON" {
-            let super_def = get_sys_var("tidb_super_read_only")
-                .expect("tidb_super_read_only is registered");
+            let super_def =
+                get_sys_var("tidb_super_read_only").expect("tidb_super_read_only is registered");
             self.store(super_def)
                 .lock()
                 .expect("global sysvar lock poisoned")

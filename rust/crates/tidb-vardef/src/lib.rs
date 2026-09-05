@@ -86,8 +86,7 @@ pub static CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO.to_bits());
 
 /// Go `vardef.RunAutoAnalyze`, the process-wide auto-analyze enable switch.
-pub static RUN_AUTO_ANALYZE: AtomicBool =
-    AtomicBool::new(defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE);
+pub static RUN_AUTO_ANALYZE: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE);
 
 /// Go `vardef.EnableAutoAnalyzePriorityQueue`, the process-wide scheduler
 /// mode switch consulted by auto-analyze concurrency validation.
@@ -127,9 +126,7 @@ pub fn set_memory_usage_alarm_ratio(value: f64) {
 /// Loads Go's PD metadata circuit-breaker error-rate threshold ratio.
 #[must_use]
 pub fn circuit_breaker_pd_metadata_error_rate_threshold_ratio() -> f64 {
-    f64::from_bits(
-        CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO.load(Ordering::SeqCst),
-    )
+    f64::from_bits(CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO.load(Ordering::SeqCst))
 }
 
 /// Stores Go's PD metadata circuit-breaker error-rate threshold ratio after

@@ -517,7 +517,9 @@ fn shared_lock_promotion_bypasses_noop_share_gate() {
         .run("SET tidb_enable_shared_lock_promotion = ON")
         .unwrap();
     assert!(session.vars().shared_lock_promotion_enabled());
-    session.run("SELECT b FROM t WHERE a = 1 FOR SHARE").unwrap();
+    session
+        .run("SELECT b FROM t WHERE a = 1 FOR SHARE")
+        .unwrap();
     assert!(session.warnings().is_empty());
 
     session

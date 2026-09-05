@@ -2176,9 +2176,7 @@ impl StmtContext {
 
     /// Returns the query-scoped per-store coprocessor limiter, if enabled.
     #[must_use]
-    pub fn query_cop_store_limiter(
-        &self,
-    ) -> Option<Arc<tidb_txnkv::QueryCopStoreLimiter>> {
+    pub fn query_cop_store_limiter(&self) -> Option<Arc<tidb_txnkv::QueryCopStoreLimiter>> {
         self.query_cop_store_limiter.clone()
     }
 

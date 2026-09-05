@@ -829,14 +829,15 @@ impl OwnedRewrite for InitStats<'_> {
                     .map(|column| (column.name.clone(), column.field_type.clone()))
                     .collect(),
             );
-            let selectivity = crate::access_cost::selectivity_with_default_string_match_selectivity_and_factor(
-                predicate,
-                table,
-                &crate::driver::from::scope_resolver(&scope),
-                statistics,
-                self.default_string_match_selectivity,
-                self.selectivity_factor,
-            );
+            let selectivity =
+                crate::access_cost::selectivity_with_default_string_match_selectivity_and_factor(
+                    predicate,
+                    table,
+                    &crate::driver::from::scope_resolver(&scope),
+                    statistics,
+                    self.default_string_match_selectivity,
+                    self.selectivity_factor,
+                );
             source.base.base.set_stats(Some(table_stats.scale(
                 selectivity,
                 tidb_planner::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,

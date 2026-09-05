@@ -773,10 +773,7 @@ fn selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
         table,
         resolver,
         stats,
-        SelectivityDefaults::from_session(
-            default_string_match_selectivity,
-            selectivity_factor,
-        ),
+        SelectivityDefaults::from_session(default_string_match_selectivity, selectivity_factor),
     )
 }
 

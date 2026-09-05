@@ -800,9 +800,7 @@ impl SysVarDef {
         // same-scope read-only/no-op variable remains ON. The lookup is
         // supplied by the session or GLOBAL writer; direct registry callers
         // fall back to each variable's declared default.
-        if self.name == tidb_vardef::tidb_vars::TIDB_ENABLE_NOOP_FUNCS
-            && validated.value == "OFF"
-        {
+        if self.name == tidb_vardef::tidb_vars::TIDB_ENABLE_NOOP_FUNCS && validated.value == "OFF" {
             for incompatible in [
                 "tx_read_only",
                 "transaction_read_only",
@@ -822,10 +820,7 @@ impl SysVarDef {
                         tidb_error::mysql::errcode::ErrNotSupportedYet,
                         "%s = OFF is not supported when %s = ON",
                         &[],
-                        &[
-                            FormatArg::from(self.name),
-                            FormatArg::from(incompatible),
-                        ],
+                        &[FormatArg::from(self.name), FormatArg::from(incompatible)],
                     )));
                 }
             }
@@ -2556,9 +2551,8 @@ mod tests {
             Err(ValidationError::Refused(message))
                 if message.contains("gogc_tuner_threshold + 0.05")
         ));
-        let threshold_low = |name: &str| {
-            (name == "tidb_gogc_tuner_threshold").then(|| "0.4".to_owned())
-        };
+        let threshold_low =
+            |name: &str| (name == "tidb_gogc_tuner_threshold").then(|| "0.4".to_owned());
         assert_eq!(
             sv.validate_in_scope_with_lookup("51%", SCOPE_GLOBAL, Some(&threshold_low))
                 .unwrap()

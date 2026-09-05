@@ -63,8 +63,7 @@ pub struct ReadRequestMetadata {
     /// Shared statement-wide accumulator, when enabled.
     pub max_keys_read_counter: Option<Arc<AtomicU64>>,
     /// Query-scoped per-store coprocessor limiter.
-    pub query_cop_store_limiter:
-        Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    pub query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
 }
 
 impl ReadRequestMetadata {

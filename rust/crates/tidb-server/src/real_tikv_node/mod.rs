@@ -865,17 +865,9 @@ where
             self.write_sli.add_read_keys(report.processed_keys);
         }
         self.last_affected_rows = report.affected_rows;
+        self.statement_message =
+            tidb_exec::real_tikv_dml::compose_configured_write_message(&bound, &report);
         self.statement_warnings = report.warnings;
-        // Go `ReplaceExec.setMessage` / `InsertExec.setMessage`: the message
-        // appears once the statement attempted more than one row (or ran as
-        // INSERT ... SELECT, which this narrow tier does not lower). The
-        // duplicates count is the affected rows beyond the attempted ones --
-        // two per replaced row, one per plain insert.
-        self.statement_message = tidb_planner::prepared_dml::compose_insert_ok_message(
-            tidb_planner::prepared_dml::configured_write_record_rows(&bound),
-            report.affected_rows,
-            u64::try_from(self.statement_warnings.len()).unwrap_or(u64::MAX),
-        );
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
             // This node has no auto-increment allocator.

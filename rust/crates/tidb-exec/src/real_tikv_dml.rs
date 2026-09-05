@@ -1861,6 +1861,45 @@ impl ConfiguredWriteReport {
     }
 }
 
+/// Composes the OK-packet info text Go's statement contexts answer DML with
+/// (Go `StmtCtx.SetMessage`), dispatching on the write family:
+///
+/// * INSERT/REPLACE — `Records: <records>  Duplicates: <dups>  Warnings:
+///   <warnings>` once the statement attempted more than one row or ran as
+///   INSERT ... SELECT (Go `InsertExec.setMessage` / `ReplaceExec.setMessage`);
+/// * UPDATE — `Rows matched: <matched>  Changed: <changed>  Warnings:
+///   <warnings>` unconditionally (Go `UpdateExec.setMessage`), where this
+///   tier's point update knows the pair exactly from the plan outcome;
+/// * DELETE — none (Go's DELETE sets no message).
+#[must_use]
+pub fn compose_configured_write_message(
+    write: &ConfiguredPreparedWrite,
+    report: &ConfiguredWriteReport,
+) -> Option<String> {
+    let warnings = u64::try_from(report.warnings.len()).unwrap_or(u64::MAX);
+    match write {
+        ConfiguredPreparedWrite::UpdatePoint { .. } => {
+            let matched = match report.no_write {
+                Some(NoWriteReason::MissingRow) => 0,
+                _ => 1,
+            };
+            tidb_planner::prepared_dml::compose_update_ok_message(
+                matched,
+                report.affected_rows,
+                warnings,
+            )
+        }
+        _ => {
+            let records = tidb_planner::prepared_dml::configured_write_record_rows(write);
+            tidb_planner::prepared_dml::compose_insert_ok_message(
+                records,
+                report.affected_rows,
+                warnings,
+            )
+        }
+    }
+}
+
 /// Opens one transaction on the shared authority, publishes a bound write, and
 /// reports affected rows only for a determinate commit.
 ///
@@ -2139,5 +2178,92 @@ mod commit_error_tests {
             Err(ConfiguredWriteError::Commit(error))
                 if error.code == tidb_error::tidb::errcode::ErrTiKVMaxTimestampNotSynced
         ));
+    }
+}
+
+#[cfg(test)]
+mod write_message_tests {
+    use super::{compose_configured_write_message, ConfiguredWriteReport, NoWriteReason};
+    use tidb_planner::prepared_dml::{
+        configured_write_record_rows, ConfiguredAssignment, ConfiguredPreparedWrite,
+        PreparedBindValue,
+    };
+    use tidb_planner::read_only_scan::ConfiguredTable;
+
+    fn table() -> ConfiguredTable {
+        ConfiguredTable::new("u6", "t", 11, std::iter::empty())
+    }
+
+    /// Go `UpdateExec.setMessage` answers every UPDATE unconditionally, with
+    /// the pair derived from the plan outcome: a vanished row matched nothing,
+    /// a no-op value still matched, and a published write matched and changed.
+    #[test]
+    fn update_point_composes_the_matched_changed_text() {
+        let write = ConfiguredPreparedWrite::UpdatePoint {
+            table: table(),
+            handle: 1,
+            column_index: 0,
+            assignment: ConfiguredAssignment::Set(PreparedBindValue::Null),
+        };
+
+        let missing = ConfiguredWriteReport {
+            affected_rows: 0,
+            no_write: Some(NoWriteReason::MissingRow),
+            warnings: Vec::new(),
+            write_size: 0,
+            write_keys: 0,
+            processed_keys: 0,
+        };
+        assert_eq!(
+            compose_configured_write_message(&write, &missing),
+            Some("Rows matched: 0  Changed: 0  Warnings: 0".to_owned())
+        );
+
+        let unchanged = ConfiguredWriteReport {
+            affected_rows: 0,
+            no_write: Some(NoWriteReason::UnchangedRow),
+            warnings: vec![],
+            write_size: 0,
+            write_keys: 0,
+            processed_keys: 0,
+        };
+        assert_eq!(
+            compose_configured_write_message(&write, &unchanged),
+            Some("Rows matched: 1  Changed: 0  Warnings: 0".to_owned())
+        );
+    }
+
+    /// DELETE composes no message (Go's DELETE sets none).
+    #[test]
+    fn delete_point_composes_nothing() {
+        let report = ConfiguredWriteReport {
+            affected_rows: 1,
+            no_write: None,
+            warnings: Vec::new(),
+            write_size: 0,
+            write_keys: 0,
+            processed_keys: 0,
+        };
+        assert_eq!(
+            compose_configured_write_message(
+                &ConfiguredPreparedWrite::DeletePoint {
+                    table: table(),
+                    handle: 1,
+                },
+                &report
+            ),
+            None
+        );
+    }
+
+    /// The attempted-row counter still drives the insert gate.
+    #[test]
+    fn insert_rows_drive_the_record_count() {
+        let write = ConfiguredPreparedWrite::ReplaceRows {
+            table: table(),
+            rows: Vec::new(),
+        };
+        // Zero rows attempt zero records; the count tracks the family's rows.
+        assert_eq!(configured_write_record_rows(&write), 0);
     }
 }

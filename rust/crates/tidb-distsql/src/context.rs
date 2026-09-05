@@ -140,8 +140,7 @@ pub struct RequestContext {
     pub max_keys_read: u64,
     /// Query-scoped per-store coprocessor limiter, when enabled by the
     /// session's `tidb_query_cop_store_limit` value.
-    pub query_cop_store_limiter:
-        Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
 }
 
 impl Default for RequestContext {

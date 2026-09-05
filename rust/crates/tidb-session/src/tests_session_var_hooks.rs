@@ -383,10 +383,7 @@ fn analyze_column_options_validation_matches_go() {
         .run("SET GLOBAL tidb_analyze_column_options = 'predicate'")
         .unwrap();
     assert_eq!(
-        one(
-            &mut session,
-            "SELECT @@global.tidb_analyze_column_options"
-        ),
+        one(&mut session, "SELECT @@global.tidb_analyze_column_options"),
         "PREDICATE"
     );
 
@@ -400,10 +397,7 @@ fn analyze_column_options_validation_matches_go() {
         "invalid value for tidb_analyze_column_options, it should be either 'ALL' or 'PREDICATE'"
     );
     assert_eq!(
-        one(
-            &mut session,
-            "SELECT @@global.tidb_analyze_column_options"
-        ),
+        one(&mut session, "SELECT @@global.tidb_analyze_column_options"),
         "PREDICATE"
     );
 
@@ -411,10 +405,7 @@ fn analyze_column_options_validation_matches_go() {
         .run("SET GLOBAL tidb_analyze_column_options = 'all'")
         .unwrap();
     assert_eq!(
-        one(
-            &mut session,
-            "SELECT @@global.tidb_analyze_column_options"
-        ),
+        one(&mut session, "SELECT @@global.tidb_analyze_column_options"),
         "ALL"
     );
 }
@@ -429,10 +420,7 @@ fn tiflash_hashagg_preaggregation_mode_validation_matches_go() {
         .run("SET tiflash_hashagg_preaggregation_mode = 'auto'")
         .unwrap();
     assert_eq!(
-        one(
-            &mut session,
-            "SELECT @@tiflash_hashagg_preaggregation_mode"
-        ),
+        one(&mut session, "SELECT @@tiflash_hashagg_preaggregation_mode"),
         "auto"
     );
 
@@ -449,10 +437,7 @@ fn tiflash_hashagg_preaggregation_mode_validation_matches_go() {
         "incorrect value: `AUTO`. tiflash_hashagg_preaggregation_mode options: force_preagg, auto, force_streaming"
     );
     assert_eq!(
-        one(
-            &mut session,
-            "SELECT @@tiflash_hashagg_preaggregation_mode"
-        ),
+        one(&mut session, "SELECT @@tiflash_hashagg_preaggregation_mode"),
         "force_streaming"
     );
 }
@@ -590,7 +575,10 @@ fn deprecated_plan_cache_sizes_warn_like_go() {
         ]]
     );
     assert_eq!(
-        one(&mut session, "SELECT @@session.tidb_prepared_plan_cache_size"),
+        one(
+            &mut session,
+            "SELECT @@session.tidb_prepared_plan_cache_size"
+        ),
         "120"
     );
 

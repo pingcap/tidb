@@ -827,8 +827,7 @@ impl Session {
         let Ok(normalized) = definition.validate_in_scope(value, sysvar::SCOPE_SESSION) else {
             return;
         };
-        let Some(mode) = tidb_vardef::modes::to_exchange_compression_mode(&normalized.value)
-        else {
+        let Some(mode) = tidb_vardef::modes::to_exchange_compression_mode(&normalized.value) else {
             return;
         };
         if mode == tidb_vardef::modes::ExchangeCompressionMode::UNSPECIFIED {
@@ -932,15 +931,13 @@ impl Session {
                 1681,
                 "The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now.",
             ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_exchange_partition")
-            && normalized == "OFF"
+        } else if name.eq_ignore_ascii_case("tidb_enable_exchange_partition") && normalized == "OFF"
         {
             Some((
                 1105,
                 "tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases",
             ))
-        } else if name.eq_ignore_ascii_case("tidb_enable_new_cost_interface")
-            && normalized == "OFF"
+        } else if name.eq_ignore_ascii_case("tidb_enable_new_cost_interface") && normalized == "OFF"
         {
             Some((
                 1287,

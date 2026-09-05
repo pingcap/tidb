@@ -899,6 +899,19 @@ pub fn lower_text_write(
     lower_write(statement, catalog, ValueMode::Literal)
 }
 
+/// Go `UpdateExec.setMessage` (`pkg/executor/update.go:597`): every UPDATE
+/// answers with `Rows matched: <matched>  Changed: <changed>  Warnings:
+/// <warnings>` — unconditionally, no row-count gate. This tier's point
+/// update knows the pair exactly: the planned handle either existed (matched
+/// 1; changed only when the assigned value differed) or it did not
+/// (matched 0, changed 0).
+#[must_use]
+pub fn compose_update_ok_message(matched: u64, changed: u64, warnings: u64) -> Option<String> {
+    Some(format!(
+        "Rows matched: {matched}  Changed: {changed}  Warnings: {warnings}"
+    ))
+}
+
 /// Go `InsertExec.setMessage` / `ReplaceExec.setMessage`
 /// (`pkg/executor/insert.go` / `replace.go`): after an INSERT or REPLACE the
 /// statement context carries

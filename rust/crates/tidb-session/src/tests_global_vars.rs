@@ -344,12 +344,11 @@ fn merge_partition_stats_concurrency_is_fixed_at_one_like_go() {
 
     // Startup/upgrade images may contain an old persisted value; Go's fixed
     // GetGlobal hook still masks it on read.
-    globals.set_startup(
-        "tidb_merge_partition_stats_concurrency",
-        "99".to_owned(),
-    );
+    globals.set_startup("tidb_merge_partition_stats_concurrency", "99".to_owned());
     assert_eq!(
-        globals.get("tidb_merge_partition_stats_concurrency").unwrap(),
+        globals
+            .get("tidb_merge_partition_stats_concurrency")
+            .unwrap(),
         "1"
     );
 }
