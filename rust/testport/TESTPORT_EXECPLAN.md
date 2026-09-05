@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/trxevents` discardable event API returns): the
+  complete two-artifact Go inventory and Rust owner were rechecked before
+  editing. Both direct Go-shaped operations no longer emit Rust-only
+  `#[must_use]` diagnostics. A focused source regression failed with exactly
+  two diagnostics on detached pre-fix owner `8bb2478f18b` and passes after the
+  fix; the wrapped-nil behavior remains covered. Owner all-target checks,
+  formatting, lint, and diff checks pass; the 424-test aggregate reaches an
+  existing stack-overflow baseline in `tikv_commit_outcome_parity_source`.
+  Evidence is recorded in `receipts/util_trxevents.md`.
 - 2026-09-06 (`pkg/util/chunk` core Go-facing return contracts): the complete
   29-artifact chunk inventory in `receipts/util_chunk_audit.md` was rechecked
   before editing. Eighty Rust-only `#[must_use]` annotations were removed

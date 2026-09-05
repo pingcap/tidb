@@ -49,3 +49,42 @@ No Go or Bazel file changed, so `make bazel_prepare` is not required.
   the wrapper now accepts the native equivalent of Go's pointer argument.
 - Performance: replaces deep event/protobuf clones with atomic reference-count
   increments on the infrequent locked-response callback path.
+
+## Follow-up: discardable event API return contract (2026-09-06)
+
+The complete package inventory was rechecked before editing. It now includes
+the source-derived `rust/crates/tidb-txnkv/tests/trxevents_source_test_contract.rs`
+carrier in addition to the two original Go artifacts; the aggregate test
+harness discovers this file without a Cargo-manifest or Bazel-target change.
+The Rust owner still has the same two direct Go-shaped operations:
+`TransactionEvent::get_cop_meet_lock` and `wrap_cop_meet_lock`.
+
+Both Rust-only `#[must_use]` annotations were removed. Go callers may discard
+either result, and the source-shaped regression invokes both operations under
+`#[deny(unused_must_use)]` while retaining the wrapped-nil `None` behavior.
+The detached pre-fix owner at `8bb2478f18b` failed with exactly two diagnostics;
+the focused post-fix test passes.
+
+No Go, fixture, generated/platform, Bazel, or Cargo build metadata changed.
+
+## Follow-up validation (2026-09-06)
+
+The focused post-fix regression passed, and the Ready checks for this Rust-only
+batch passed:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p
+  tidb-txnkv --test all
+  trxevents_source_test_contract::source_return_values_may_be_ignored_like_go
+  --offline --locked -- --exact` — passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p
+  tidb-txnkv --all-targets --offline --locked` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all --
+  --check` — passed.
+- `make lint` with the repository Go 1.25.10 toolchain — passed.
+- `git diff --check` — passed.
+
+The package aggregate suite was also attempted with one test thread. It ran
+424 tests (with the expected environment-gated ignores) before the existing
+`tikv_commit_outcome_parity_source::every_mutation_kind_stages_with_its_source_op_and_assertion`
+test aborted with a stack overflow; this unrelated baseline failure remains
+outside the focused contract change and is not reclassified as a regression.

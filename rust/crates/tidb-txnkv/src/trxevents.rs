@@ -61,7 +61,6 @@ impl TransactionEvent {
     ///
     /// A wrapped nil pointer returns `None`. The default value panics exactly
     /// like Go's failed `e.inner.(*CopMeetLock)` assertion on a nil interface.
-    #[must_use]
     pub fn get_cop_meet_lock(&self) -> Option<&CopMeetLock> {
         if self.event_type != EVENT_TYPE_COP_MEET_LOCK {
             return None;
@@ -76,7 +75,6 @@ impl TransactionEvent {
 }
 
 /// Wraps a coprocessor-lock event, preserving a typed nil pointer.
-#[must_use]
 pub fn wrap_cop_meet_lock(event: Option<Arc<CopMeetLock>>) -> TransactionEvent {
     TransactionEvent {
         inner: TransactionEventInner::CopMeetLock(event),
