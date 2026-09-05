@@ -432,3 +432,5 @@
 - 开放项总台账(全部阻塞于外部输入或大面决策): F2 事务写簇 9007 路由(需冲突文本捕获)/F3-seam(需连接循环)/DST 微差异(需 registry 时区)/D11 info 生产者(需 engine-trait 扩展)/partition 裁剪(需用户对照查询)/tpcds(需 dsdgen)/#202、CHAR coercibility(需架构决策)。可自主执行的机械对照与行为核验均已闭环。
 - 竞写事故收敛: 我与兄弟会话在同一 exec.rs 修复上并行提交, rebase 冲突后按"远端已在"原则 reset 取其树(faa39df4ee4, 语义相同); 冗余本地提交丢弃, env 单行补丁重放, executor 编译恢复。教训补充: push 前 rebase 遇"Could not apply"时先核对是否与远端内容重复, 重复则 reset 而非手工解决。
 - 下轮恢复点: (1) 新面选型或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- 收敛核查(mererge 后): 兄弟会话 random_bytes 修复形态=.to_string()(与我丢弃的 .to_owned() 等价); executor lib 在合并树 1077 通过/123 预存环境失败(基线 ±1 flake), 编译恢复确认。
+- 下轮恢复点: (1) 静默期→新面候选(infoschema 深层/其他 crate)或收敛复查; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
