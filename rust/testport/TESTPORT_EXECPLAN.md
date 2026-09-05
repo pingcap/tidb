@@ -179,6 +179,10 @@ For each bounded behavior cluster:
   reconciled `TestNewSessionVars` and `TestConcurrencyVariables` with the
   executable `tidb-session::session_vars` default, setter, and executor
   fallback tests; these rows no longer remain ignored-gap markers.
+- 2026-09-05 (`pkg/sessionctx/variable` helper conversions): reconciled the
+  numeric, clustered-index, and ON/OFF helper assertions with their executable
+  `tidb-session::varsutil`, `tidb-session::session_vars`, and `tidb-exec`
+  owners; the `TestHelperFuncs` row is no longer a partial gap marker.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session
