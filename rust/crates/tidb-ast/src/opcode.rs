@@ -176,7 +176,6 @@ impl Op {
     ];
 
     /// Returns the source numeric value.
-    #[must_use]
     pub const fn value(self) -> u8 {
         self as u8
     }
@@ -186,13 +185,11 @@ impl Op {
     }
 
     /// Returns the scalar-function name used by `Op.String()`.
-    #[must_use]
     pub fn name(self) -> &'static str {
         self.info().name
     }
 
     /// Returns the literal emitted by source `Op.Format()`.
-    #[must_use]
     pub fn literal(self) -> &'static str {
         self.info().literal
     }
@@ -203,7 +200,6 @@ impl Op {
     }
 
     /// Returns whether restore treats this operator as a keyword.
-    #[must_use]
     pub fn is_keyword(self) -> bool {
         self.info().is_keyword
     }

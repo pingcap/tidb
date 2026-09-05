@@ -44,3 +44,28 @@ make bazel_prepare (blocked: bazel executable is unavailable)
 
 Because only an existing Go test changed, the package has no new production
 API or runtime risk. Bazel regeneration remains the only unavailable gate.
+
+## Rust follow-up: Go-discardable operator helpers
+
+The complete three-artifact inventory and dependency-closed operator table
+above remain unchanged. The Rust owner had four explicit `#[must_use]`
+annotations on the public `Op::value`, `Op::name`, `Op::literal`, and
+`Op::is_keyword` helpers. These correspond directly to Go's `Op` methods,
+whose return values are freely discardable; the annotations therefore added
+Rust-only diagnostics and are now removed. Operator values, names, literals,
+keyword bits, and formatting are unchanged.
+
+The source-derived regression
+`parser_opcode_package_source::return_values_may_be_ignored_like_go` discards
+all four helper results under `#[deny(unused_must_use)]`. On the pre-fix owner
+it failed to compile with four unused-return errors; the fixed test passes.
+
+Ready validation:
+
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-ast --test all parser_opcode_package_source::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-ast --test all -- --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-ast --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-ast -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` is not required.

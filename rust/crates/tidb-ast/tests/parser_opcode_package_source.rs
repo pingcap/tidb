@@ -99,10 +99,7 @@ impl io::Write for ErrorWriter {
 #[test]
 fn format_reports_writer_errors() {
     assert_eq!(
-        Op::LogicAnd
-            .format(&mut ErrorWriter)
-            .unwrap_err()
-            .kind(),
+        Op::LogicAnd.format(&mut ErrorWriter).unwrap_err().kind(),
         io::ErrorKind::Other
     );
 }
@@ -192,4 +189,17 @@ fn expression_operator_adapters_delegate_to_the_opcode_authority() {
     }
 
     assert_eq!(UnaryOp::NotKeyword.canonical_literal(), "NOT ");
+}
+
+// Go permits callers to discard all operator helper results. Keep the Rust
+// owner from adding a diagnostic-only contract at this package boundary.
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    let op = Op::Plus;
+
+    op.value();
+    op.name();
+    op.literal();
+    op.is_keyword();
 }

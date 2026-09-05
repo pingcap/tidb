@@ -8712,6 +8712,11 @@ risks without claiming repository-wide parity.
   explicit Rust-only `#[must_use]` annotations from `Arena::new`, `alloc`,
   `alloc_slice`, and `SlabHandle::as_ptr`. The deny-on-discard regression and
   branch/master inventory note are recorded in `receipts/parser_root.md`.
+- 2026-09-05 (`pkg/parser/opcode`): the complete `tidb-ast` operator owner now
+  matches Go's discardable helper contract by removing four explicit Rust-only
+  `#[must_use]` annotations from `Op::value`, `name`, `literal`, and
+  `is_keyword`. The deny-on-discard regression and Ready evidence are recorded
+  in `receipts/parser_opcode.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
