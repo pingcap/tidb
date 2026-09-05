@@ -9121,3 +9121,10 @@ risks without claiming repository-wide parity.
   preserving the refined `gt(column, 10)` plan shape. Context-free resolver
   fixtures remain warning-free. Focused planner and session regressions plus
   Ready evidence are recorded in `receipts/planner_compare_warning_context.md`.
+- 2026-09-06 (`pkg/executor` GROUP_CONCAT truncation source name): Rust's
+  aggregate builder now carries a resolved bare column's `OrigName` into the
+  runtime `GROUP_CONCAT` state, so the once-per-function 1260 truncation
+  diagnostic names `test.g.s` like Go rather than an internal `Column#1`.
+  Computed arguments retain the internal-column fallback. Focused aggregate
+  regression and Ready evidence are recorded in
+  `receipts/executor_group_concat_orig_name.md`.

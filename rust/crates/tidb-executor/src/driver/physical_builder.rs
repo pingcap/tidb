@@ -642,6 +642,18 @@ fn aggregate_function(
     if upper == "APPROX_PERCENTILE" {
         args.truncate(1);
     }
+    let arg_orig_name = if upper == "GROUP_CONCAT" {
+        args.first()
+            .and_then(|expression| match expression {
+                Expression::Column(column) if !column.orig_name.is_empty() => {
+                    Some(column.orig_name.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let arg = (!args.is_empty()).then(|| args.remove(0));
     Ok(AggFunc {
         kind,
@@ -656,7 +668,7 @@ fn aggregate_function(
             })
             .collect::<Result<Vec<_>, _>>()?,
         distinct: descriptor.has_distinct,
-        arg_orig_name: String::new(),
+        arg_orig_name,
     })
 }
 
