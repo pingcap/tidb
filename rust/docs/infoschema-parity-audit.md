@@ -85,3 +85,14 @@ the planner's join-elimination rule tests (the FD consumers) are green.
 A line-level read of the edge-implication algorithm remains the deeper
 follow-up if a behavioral divergence ever surfaces in FD-dependent
 rules.
+
+## Adjacent face: funcdep algorithm deep read (2026-09-05) — VERIFIED
+
+The conditional deeper follow-up is done: `implies`,
+`add_functional_dependency`, `reduce_cols`, `add_constants` and
+`add_equivalence_closure` are line-equivalent to Go's fd_graph.go —
+including the replace-vs-drop discipline in the addition loop, the
+lax-lax special case in implies, the skip-the-appended-edge iteration
+bounds, the equivalence-driven constant propagation, the dependency-side
+simplification and the not-null inheritance of a merged equivalence
+class. The funcdep receipt's conditional follow-up is closed.

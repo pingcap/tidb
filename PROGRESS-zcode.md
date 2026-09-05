@@ -422,3 +422,5 @@
 - 下轮恢复点: (1) 按 DESIGN 在握手完成点接线 initConnect 执行; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - init_connect 执行面定性更新: 连接层仅有 auth 状态机+执行管线脚手架, **逐连接 run loop 尚未建成**→钩子点属未来基础设施, 该缺口与连接循环一起落地(收据已更新)。
 - 下轮恢复点: (1) 选与连接循环无关的新面(如 perfschema/metrics 表面或 planner 行为面); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- funcdep 算法深读完成: implies/add_functional_dependency/reduce_cols/add_constants/add_equivalence_closure 五个核心与 Go fd_graph.go 行级等价(替换-vs-丢弃纪律/lax-lax 特例/跳过新边迭代界/等价常量传播/not-null 继承)。条件性后续关闭, 收据已追加。
+- 下轮恢复点: (1) 新面选型或文档重扫; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
