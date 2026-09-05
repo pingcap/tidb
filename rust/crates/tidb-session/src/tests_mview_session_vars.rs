@@ -30,6 +30,7 @@ use super::vars::{
 #[test]
 fn mview_enable_roundtrip() {
     let mut vars = SessionVars::new();
+    assert!(!vars.mview_enabled(), "Go EnableMView defaults to false");
     assert_eq!(
         vars.get_system("tidb_mview_enable").expect("registered"),
         "OFF",
@@ -37,10 +38,25 @@ fn mview_enable_roundtrip() {
     );
     vars.set_system("tidb_mview_enable", "on".to_owned())
         .expect("set on");
+    assert!(vars.mview_enabled(), "SetSession updates Go's typed field");
     assert_eq!(vars.get_system("tidb_mview_enable").unwrap(), "ON");
     vars.set_system("tidb_mview_enable", "off".to_owned())
         .expect("set off");
+    assert!(!vars.mview_enabled(), "typed field follows OFF");
     assert_eq!(vars.get_system("tidb_mview_enable").unwrap(), "OFF");
+
+    // The production path must carry the hook through the cached statement
+    // snapshot into the executor context, as Go's ResetContextOfStmt does.
+    let mut session = crate::Session::new();
+    assert!(!session.statement_context(false).enable_mview());
+    session
+        .run("set session tidb_mview_enable = on")
+        .expect("enable mview for the next statement");
+    assert!(session.statement_context(false).enable_mview());
+    session
+        .run("set session tidb_mview_enable = off")
+        .expect("disable mview again");
+    assert!(!session.statement_context(false).enable_mview());
 }
 
 /// Go's `tidb_mview_maintain_mem_quota` validation: a positive value below

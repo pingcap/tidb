@@ -1789,6 +1789,10 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.EnableWindowFunction`, maintained by the
     /// `tidb_enable_window_function` sysvar's `SetSession` hook.
     enable_window_function: bool,
+    /// Go's typed `SessionVars.EnableMView`, maintained by the
+    /// `tidb_mview_enable` sysvar's `SetSession` hook and consumed by
+    /// materialized-view DDL statement contexts.
+    enable_mview: bool,
     /// Go's typed `SessionVars.TiFlashMaxBytesBeforeExternalJoin`, maintained
     /// by the corresponding TiFlash threshold `SetSession` hook.
     ti_flash_max_bytes_before_ext_join: i64,
@@ -1903,6 +1907,7 @@ impl Default for SessionVars {
             enable_shared_lock_upgrade: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_UPGRADE,
             shared_lock_promotion: tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION,
             enable_window_function: tidb_vardef::defaults::DEF_ENABLE_WINDOW_FUNCTION,
+            enable_mview: tidb_vardef::defaults::DEF_TIDB_MVIEW_ENABLE,
             ti_flash_max_bytes_before_ext_join:
                 tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN,
             ti_flash_max_bytes_before_ext_agg:
@@ -1988,6 +1993,7 @@ impl SessionVars {
         let enable_shared_lock_upgrade = Self::shared_lock_upgrade_from_systems(&systems);
         let shared_lock_promotion = Self::shared_lock_promotion_from_systems(&systems);
         let enable_window_function = Self::enable_window_function_from_systems(&systems);
+        let enable_mview = Self::mview_enabled_from_systems(&systems);
         let ti_flash_max_bytes_before_ext_join =
             Self::ti_flash_max_bytes_before_ext_join_from_systems(&systems);
         let ti_flash_max_bytes_before_ext_agg =
@@ -2021,6 +2027,7 @@ impl SessionVars {
         self.enable_shared_lock_upgrade = enable_shared_lock_upgrade;
         self.shared_lock_promotion = shared_lock_promotion;
         self.enable_window_function = enable_window_function;
+        self.enable_mview = enable_mview;
         self.ti_flash_max_bytes_before_ext_join = ti_flash_max_bytes_before_ext_join;
         self.ti_flash_max_bytes_before_ext_agg = ti_flash_max_bytes_before_ext_agg;
         self.ti_flash_max_bytes_before_ext_sort = ti_flash_max_bytes_before_ext_sort;
@@ -2221,6 +2228,12 @@ impl SessionVars {
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE)
     }
 
+    fn mview_enabled_from_systems(systems: &HashMap<String, String>) -> bool {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE)
+            .is_some_and(|value| value.eq_ignore_ascii_case("ON"))
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -2369,6 +2382,12 @@ impl SessionVars {
     #[must_use]
     pub const fn analyze_store_batch_size(&self) -> i64 {
         self.analyze_store_batch_size
+    }
+
+    /// Go `SessionVars.EnableMView`, set by `tidb_mview_enable`.
+    #[must_use]
+    pub const fn mview_enabled(&self) -> bool {
+        self.enable_mview
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -2907,6 +2926,9 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION {
             self.enable_window_function = validated.value == "ON";
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE {
+            self.enable_mview = validated.value == "ON";
         }
         if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN {
             self.ti_flash_max_bytes_before_ext_join = validated

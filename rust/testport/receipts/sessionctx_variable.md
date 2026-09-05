@@ -309,3 +309,29 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
+
+## 2026-09-05 Rust MView session-hook propagation
+
+Go's `tidb_mview_enable` `SetSession` hook updates the typed
+`SessionVars.EnableMView` field, and every statement context consumes that
+field for materialized-view DDL admission. Rust already had the executor
+carrier but dropped the session hook. Rust now stores the typed bool, includes
+it in the cached `StatementVarSnapshot`, and supplies it to both query and DML
+statement-context builders. The regression exercises the real Session setter
+and observes the resulting context value.
+
+```text
+cargo test -p tidb-session --lib mview_enable_roundtrip -- --nocapture
+# passed
+
+git diff --check
+# passed
+
+cargo fmt --all -- --check
+# pre-existing formatting drift in unrelated Rust files (no batch changes)
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+```

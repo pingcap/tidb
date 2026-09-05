@@ -70,6 +70,7 @@ pub(crate) struct StatementVarSnapshot {
     allow_in_subq_to_join_and_agg: bool,
     enable_no_decorrelate_in_select: bool,
     enable_skew_distinct_agg: bool,
+    enable_mview: bool,
     max_execution_time_ms: u64,
     advanced_join_reorder: bool,
     constraint_check_in_place: bool,
@@ -678,6 +679,7 @@ impl Session {
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
             ),
             enable_skew_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT_SKEW_DISTINCT_AGG),
+            enable_mview: self.vars.mview_enabled(),
             max_execution_time_ms: self.vars.max_execution_time(),
             advanced_join_reorder: not_off(
                 tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
@@ -846,6 +848,7 @@ impl Session {
             };
         let enable_no_decorrelate_in_select = snapshot.enable_no_decorrelate_in_select;
         let enable_skew_distinct_agg = snapshot.enable_skew_distinct_agg;
+        let enable_mview = snapshot.enable_mview;
         let max_execution_time_ms = if self.stmt_hints.has_max_execution_time {
             self.stmt_hints.max_execution_time
         } else {
@@ -1011,6 +1014,7 @@ impl Session {
                 .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
                 .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
                 .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
+                .with_enable_mview(enable_mview)
                 .with_enable_check_constraint(self.enable_check_constraint())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
@@ -1105,6 +1109,7 @@ impl Session {
         .with_allow_in_subq_to_join_and_agg(allow_in_subq_to_join_and_agg)
         .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
         .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
+        .with_enable_mview(enable_mview)
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
         .with_foreign_key_checks(self.foreign_key_checks())

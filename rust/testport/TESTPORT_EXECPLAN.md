@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` MView hook propagation): matched
+  Go's `tidb_mview_enable` SessionVars.SetSession hook by storing a typed
+  session value and threading it through the cached StatementVarSnapshot into
+  both query and DML StmtContext builders. Added a focused regression against
+  the real Session setter and statement-context value.
 - 2026-09-05 (`pkg/sessionctx/variable` foreign-key shared-lock gate):
   matched Go's kernel/config Validation for
   `tidb_foreign_key_check_in_shared_lock`: Classic accepts ON, while NextGen
