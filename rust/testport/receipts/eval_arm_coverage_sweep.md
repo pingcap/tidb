@@ -40,6 +40,10 @@ Every miss was traced to its build path. None is an eval gap:
 
 ## The genuine boundary: six `tidb_*` server-hook functions
 
+UPDATE 2026-09-05: `tidb_is_ddl_owner` has since been closed — its expropt
+plumbing was already complete, so only the eval arm was needed; see
+`receipts/tidb_is_ddl_owner_arm.md`. The other five remain the boundary.
+
 `tidb_decode_sql_digests`, `tidb_encode_index_key`, `tidb_encode_record_key`,
 `tidb_is_ddl_owner`, `tidb_mvcc_info`, `tidb_row_checksum` are Go classes
 whose evals consume server-level optional eval props — latest infoschema,

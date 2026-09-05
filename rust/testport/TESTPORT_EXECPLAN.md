@@ -8832,3 +8832,10 @@ risks without claiming repository-wide parity.
   temporary pkg/session probe (wire text, datum frac, and result-type decimal
   for column, mixed, and all-constant shapes). Evidence is recorded in
   `receipts/extremum_decimal_scale_rung.md`.
+- 2026-09-05 (`pkg/expression` `tidb_is_ddl_owner`): the DDL-owner arm now
+  reads the existing `DDLOwnerInfo` optional eval prop and answers 1/0,
+  never NULL; a context without the provider fails with Go's verbatim
+  `getPropProvider` error instead of the generic not-yet-ported fallback.
+  This closes the one member of the six `tidb_*` server-hook classes whose
+  plumbing was already complete. Evidence is recorded in
+  `receipts/tidb_is_ddl_owner_arm.md`.

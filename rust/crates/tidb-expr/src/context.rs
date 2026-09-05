@@ -617,6 +617,16 @@ pub trait Columns {
         0
     }
 
+    /// Go `DDLOwnerPropReader.IsDDLOwner`: whether this node is the DDL
+    /// owner. A context that does not carry the `OptPropDDLOwnerInfo`
+    /// provider fails exactly as Go's `getPropProvider` does; a session that
+    /// registers `DdlOwnerInfoProvider` answers 1/0.
+    fn ddl_owner_info(&self) -> Result<bool, EvalError> {
+        Err(EvalError::Unsupported(
+            "optional property: 'OptPropDDLOwnerInfo' not exists in EvalContext",
+        ))
+    }
+
     /// Reads a supported system variable.
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         let _ = (scope, name);

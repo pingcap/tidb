@@ -2037,6 +2037,17 @@ impl ScalarFunction {
                 Datum::Int(0)
             });
         }
+        // Go `builtinTiDBIsDDLOwnerSig.evalInt` (`builtin_info.go:627`):
+        // reads the `DDLOwnerInfo` optional eval prop and answers 1/0, never
+        // NULL. A context without the provider fails exactly as Go's
+        // `getPropProvider` does.
+        if name == "tidb_is_ddl_owner" {
+            if !self.args.is_empty() {
+                return Err(EvalError::WrongParameterCount("tidb_is_ddl_owner"));
+            }
+            let is_owner = ctx.ddl_owner_info()?;
+            return Ok(Datum::Int(i64::from(is_owner)));
+        }
         // The collation-aware string builtins. Go gives each of these a
         // `baseBuiltinFunc.collator` taken from the derived result collation
         // (`builtinLocate2ArgsUTF8Sig`, `builtinInstrUTF8Sig`,
@@ -3501,5 +3512,50 @@ mod tests {
             "the constant winner keeps its own scale 0 too"
         );
         assert_eq!(dec.to_string(), "1");
+    }
+
+    fn empty_row() -> tidb_chunk::row::Row<'static> {
+        let chunk = Box::leak(Box::new(tidb_chunk::chunk::Chunk::new_empty(&[])));
+        chunk.get_row(0)
+    }
+
+    /// Go `builtinTiDBIsDDLOwnerSig.evalInt` (`builtin_info.go:627`) reads
+    /// the `DDLOwnerInfo` optional eval prop and answers 1/0, never NULL.
+    /// A context without the provider fails with Go's `getPropProvider`
+    /// error -- NOT the generic not-yet-ported fallback -- and an extra
+    /// argument is 1582, the same refusal the other zero-arg builtins raise.
+    #[test]
+    fn tidb_is_ddl_owner_reports_the_missing_provider_like_go() {
+        let function = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("tidb_is_ddl_owner"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![],
+        ));
+        let error = function
+            .eval(&crate::context::NoColumns, empty_row())
+            .unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                EvalError::Unsupported(message)
+                    if message.contains(
+                        "optional property: 'OptPropDDLOwnerInfo' not exists in EvalContext"
+                    )
+            ),
+            "{error:?}"
+        );
+
+        let function = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("tidb_is_ddl_owner"),
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![Expression::Constant(Constant::new(
+                Datum::Int(1),
+                FieldType::new(FieldTypeCode::LongLong),
+            ))],
+        ));
+        assert_eq!(
+            function.eval(&crate::context::NoColumns, empty_row()),
+            Err(EvalError::WrongParameterCount("tidb_is_ddl_owner"))
+        );
     }
 }
