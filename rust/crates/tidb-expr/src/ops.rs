@@ -215,11 +215,14 @@ pub(crate) const DERIVATION_FREE_COLLATION: tidb_datatype::Collation =
 /// bytes, lossily decoded here for the same reason [`bytes_to_f64`] scans
 /// them raw -- the message is diagnostic text, not a value.
 fn string_operand_text(d: &Datum) -> String {
-    match d {
+    // The subject of the 1292 message is byte-capped at 128 by Go's
+    // `ErrTruncatedWrongVal` template (`'%-.128s'`).
+    let text = match d {
         Datum::String(s) => String::from_utf8_lossy(s.bytes()).into_owned(),
         Datum::Bytes(s) => String::from_utf8_lossy(s).into_owned(),
         _ => String::new(),
-    }
+    };
+    tidb_datatype::warning_subject_byte_cap(&text).to_owned()
 }
 
 pub(crate) fn eval_binary_full(

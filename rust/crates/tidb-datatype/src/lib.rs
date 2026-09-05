@@ -135,8 +135,9 @@ pub use convert::{
     integer_signed_lower_bound, integer_signed_upper_bound, integer_unsigned_upper_bound,
     json_to_decimal, json_to_float, json_to_int, json_to_int64, number_to_duration,
     round_integer_string, scalar_to_string, str_to_datetime, str_to_duration, str_to_float,
-    str_to_int, str_to_uint, valid_float_prefix, valid_integer_prefix, Converted, DurationOrTime,
-    NumericPrefix, ScalarConversionError, ScalarConversionEvent, ScalarStringValue,
+    str_to_int, str_to_uint, valid_float_prefix, valid_integer_prefix, warning_subject_byte_cap,
+    Converted, DurationOrTime, NumericPrefix, ScalarConversionError, ScalarConversionEvent,
+    ScalarStringValue,
 };
 pub use core_time::{
     calc_daynr, calc_days_in_year, calc_weekday, get_date_from_daynr, get_last_day, is_leap_year,

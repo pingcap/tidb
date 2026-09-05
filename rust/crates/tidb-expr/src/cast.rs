@@ -786,7 +786,7 @@ pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Resu
         {
             ctx.handle_truncate(&format!(
                 "Truncated incorrect INTEGER value: '{}'",
-                text.trim()
+                tidb_datatype::warning_subject_byte_cap(text.trim())
             ))
         }
         _ => Ok(()),
@@ -846,7 +846,10 @@ pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Column
     ) {
         ctx.append_warning(
             1292,
-            &format!("Truncated incorrect DECIMAL value: '{trimmed}'"),
+            &format!(
+                "Truncated incorrect DECIMAL value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&trimmed)
+            ),
         );
     }
 }

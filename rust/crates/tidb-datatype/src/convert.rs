@@ -356,16 +356,20 @@ pub struct NumericPrefix {
 /// first NUL byte before formatting the error.
 pub fn float_warning_input(input: &str) -> &str {
     let nul_cut = input.trim().split('\0').next().unwrap_or_default();
-    // Go's `ErrTruncatedWrongVal` template caps the quoted subject at 128
-    // bytes (`"Truncated incorrect %-.64s value: '%-.128s'"`). The cut rounds
-    // down to a char boundary: identical for ASCII, multi-byte input loses
-    // the partial rune Go's byte cut would have split.
-    let end = nul_cut.len().min(128);
+    warning_subject_byte_cap(nul_cut)
+}
+
+/// Go's `ErrTruncatedWrongVal` template caps the quoted subject at 128 bytes
+/// (`"Truncated incorrect %-.64s value: '%-.128s'"`). The cut rounds down to
+/// a char boundary: identical for ASCII, multi-byte input loses the partial
+/// rune Go's byte cut would have split.
+pub fn warning_subject_byte_cap(input: &str) -> &str {
+    let end = input.len().min(128);
     let mut cut = end;
-    while cut > 0 && !nul_cut.is_char_boundary(cut) {
+    while cut > 0 && !input.is_char_boundary(cut) {
         cut -= 1;
     }
-    &nul_cut[..cut]
+    &input[..cut]
 }
 
 impl NumericPrefix {
