@@ -1027,6 +1027,33 @@ impl SysVarDef {
                 })
                 .map_err(|()| ValidationError::WrongValue);
         }
+        // Go's `tidb_allow_fallback_to_tikv` closure accepts an empty list or
+        // a comma-separated list containing only TiFlash, trims each token,
+        // deduplicates it, and rejects every other engine.
+        if self.name == tidb_vardef::tidb_vars::TIDB_ALLOW_FALLBACK_TO_TIKV {
+            if validated.value.is_empty() {
+                return Ok(validated);
+            }
+            let mut normalized = String::new();
+            let mut seen_tiflash = false;
+            for token in validated.value.split(',') {
+                let token = token.trim();
+                if token.is_empty() {
+                    return Err(ValidationError::WrongValue);
+                }
+                if !token.eq_ignore_ascii_case("tiflash") {
+                    return Err(ValidationError::WrongValue);
+                }
+                if !seen_tiflash {
+                    normalized.push_str("tiflash");
+                    seen_tiflash = true;
+                }
+            }
+            return Ok(Validated {
+                value: normalized,
+                truncated: validated.truncated,
+            });
+        }
         // Go's `tidb_mview_maintain_mem_quota` validation: a positive value
         // below 128 is clamped to 128 with Go's `ErrTruncatedWrongValue`
         // warning riding the SET.
@@ -2388,6 +2415,26 @@ mod tests {
             "8760h0m0s",
             "Go caps plan-replayer retention at one year"
         );
+    }
+
+    /// Go `TestValidate`'s fallback-engine matrix: only TiFlash is accepted,
+    /// with whitespace trimming and duplicate suppression.
+    #[test]
+    fn allow_fallback_to_tikv_validation_matches_go() {
+        let sv = get_sys_var(tidb_vardef::tidb_vars::TIDB_ALLOW_FALLBACK_TO_TIKV).unwrap();
+        assert_eq!(
+            sv.validate(""),
+            Ok(Validated {
+                value: String::new(),
+                truncated: false,
+            })
+        );
+        assert_eq!(sv.validate("tiflash").unwrap().value, "tiflash");
+        assert_eq!(sv.validate("  tiflash  ").unwrap().value, "tiflash");
+        assert_eq!(sv.validate("tiflash,tiflash").unwrap().value, "tiflash");
+        for value in ["tikv", "tidb", "tiflash,tikv,tidb"] {
+            assert_eq!(sv.validate(value), Err(ValidationError::WrongValue), "{value}");
+        }
     }
 
     /// Go's mpp_exchange_compression_mode Validation (`sysvar.go:3308`):

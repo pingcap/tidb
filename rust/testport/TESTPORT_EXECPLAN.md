@@ -162,6 +162,10 @@ For each bounded behavior cluster:
   `TestTiDBOptOn`, `TestOnOffHelpers`, and `TestAssertionLevel` with their
   executable Rust owners (`tidb-exec::option_values` and
   `tidb-session::varsutil`) and removed the stale vardef gap shims.
+- 2026-09-05 (`pkg/sessionctx/variable` fallback-engine validation): ported
+  `tidb_allow_fallback_to_tikv`'s Go closure, including whitespace trimming,
+  TiFlash-only acceptance, duplicate suppression, and invalid-engine refusal;
+  the focused source matrix is recorded as a partial `TestValidate` port.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session
