@@ -1275,15 +1275,15 @@ def go_deps():
         name = "com_github_decred_dcrd_crypto_blake256",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/decred/dcrd/crypto/blake256",
-        sum = "h1:7PltbUIQB7u/FfZ39+DGa/ShuMyJ5ilcvdfma9wOH6Y=",
-        version = "v1.0.1",
+        sum = "h1:zPMNGQCm0g4QTY27fOCorQW7EryeQ/U0x++OzVrdms8=",
+        version = "v1.1.0",
     )
     go_repository(
         name = "com_github_decred_dcrd_dcrec_secp256k1_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/decred/dcrd/dcrec/secp256k1/v4",
-        sum = "h1:8UrgZ3GkP4i/CLijOJx79Yu+etlyjdBU4sfcs2WYQMs=",
-        version = "v4.2.0",
+        sum = "h1:5RVFMOWjMyRy8cARdy79nAmgYw3hK/4HUq48LQ6Wwqo=",
+        version = "v4.4.1",
     )
     go_repository(
         name = "com_github_denis_tingaikin_go_header",
@@ -3105,8 +3105,22 @@ def go_deps():
         name = "com_github_lestrrat_go_blackmagic",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/lestrrat-go/blackmagic",
-        sum = "h1:Cg2gVSc9h7sz9NOByczrbUvLopQmXrfFx//N+AkAr5k=",
-        version = "v1.0.2",
+        sum = "h1:IwQibdnf8l2KoO+qC3uT4OaTWsW7tuRQXy9TRN9QanA=",
+        version = "v1.0.4",
+    )
+    go_repository(
+        name = "com_github_lestrrat_go_dsig",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/lestrrat-go/dsig",
+        sum = "h1:phjMOCXvYzhuIgn7Voe2rex8z166vGfxRxmqM25P9/Q=",
+        version = "v1.3.0",
+    )
+    go_repository(
+        name = "com_github_lestrrat_go_dsig_secp256k1",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/lestrrat-go/dsig-secp256k1",
+        sum = "h1:JpDe4Aybfl0soBvoVwjqDbp+9S1Y2OM7gcrVVMFPOzY=",
+        version = "v1.0.0",
     )
     go_repository(
         name = "com_github_lestrrat_go_httpcc",
@@ -3116,32 +3130,30 @@ def go_deps():
         version = "v1.0.1",
     )
     go_repository(
-        name = "com_github_lestrrat_go_httprc",
+        name = "com_github_lestrrat_go_httprc_v3",
         build_file_proto_mode = "disable_global",
-        importpath = "github.com/lestrrat-go/httprc",
-        sum = "h1:bsTfiH8xaKOJPrg1R+E3iE/AWZr/x0Phj9PBTG/OLUk=",
-        version = "v1.0.5",
+        importpath = "github.com/lestrrat-go/httprc/v3",
+        sum = "h1:4FpLQ18KK/ypPbVU3NLWJNRvH3kcYiqKqWfKGqNWxxI=",
+        version = "v3.0.6",
     )
     go_repository(
-        name = "com_github_lestrrat_go_iter",
+        name = "com_github_lestrrat_go_jwx_v3",
+        build_file_generation = "on",
         build_file_proto_mode = "disable_global",
-        importpath = "github.com/lestrrat-go/iter",
-        sum = "h1:gMXo1q4c2pHmC3dn8LzRhJfP1ceCbgSiT9lUydIzltI=",
-        version = "v1.0.2",
+        importpath = "github.com/lestrrat-go/jwx/v3",
+        patch_cmds = [
+            "find . -name 'BUILD*' -exec sed -i.bak -e 's|@rules_go//|@io_bazel_rules_go//|g' -e 's|@gazelle//|@bazel_gazelle//|g' {} +",
+            "find . -name 'BUILD*.bak' -delete",
+        ],
+        sum = "h1:Jb3zBASTSZXz7gzzSAfYqxXF8KejvKC4xWoePLQqXCA=",
+        version = "v3.2.0",
     )
     go_repository(
-        name = "com_github_lestrrat_go_jwx_v2",
+        name = "com_github_lestrrat_go_option_v2",
         build_file_proto_mode = "disable_global",
-        importpath = "github.com/lestrrat-go/jwx/v2",
-        sum = "h1:jAPKupy4uHgrHFEdjVjNkUgoBKtVDgrQPB/h55FHrR0=",
-        version = "v2.0.21",
-    )
-    go_repository(
-        name = "com_github_lestrrat_go_option",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/lestrrat-go/option",
-        sum = "h1:oAzP2fvZGQKWkvHa1/SAcFolBEca1oN+mQ7eooNBEYU=",
-        version = "v1.0.1",
+        importpath = "github.com/lestrrat-go/option/v2",
+        sum = "h1:XxrcaJESE1fokHy3FpaQ/cXW8ZsIdWcdFzzLOcID3Ss=",
+        version = "v2.0.0",
     )
     go_repository(
         name = "com_github_linode_linodego",
@@ -4148,8 +4160,8 @@ def go_deps():
         name = "com_github_segmentio_asm",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/segmentio/asm",
-        sum = "h1:9BQrFxC+YOHJlTlHGkTrFWf59nbL3XnCoFLTwDCI7ys=",
-        version = "v1.2.0",
+        sum = "h1:DTNbBqs57ioxAD4PrArqftgypG4/qNpXoJx8TVXxPR0=",
+        version = "v1.2.1",
     )
     go_repository(
         name = "com_github_segmentio_fasthash",
@@ -4670,6 +4682,13 @@ def go_deps():
         importpath = "github.com/valyala/fasthttp",
         sum = "h1:CRq/00MfruPGFLTQKY8b+8SfdK60TxNztjRMnH0t1Yc=",
         version = "v1.40.0",
+    )
+    go_repository(
+        name = "com_github_valyala_fastjson",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/valyala/fastjson",
+        sum = "h1:/yjJg8jaVQdYR3arGxPE2X5z89xrlhS0eGXdv+ADTh4=",
+        version = "v1.6.10",
     )
     go_repository(
         name = "com_github_valyala_fasttemplate",
@@ -6386,8 +6405,8 @@ def go_deps():
         name = "org_golang_x_crypto",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/crypto",
-        sum = "h1:QZ4Muo8THX6CizN2vPPd5fBGHyogrdK9fG4wLPFUsto=",
-        version = "v0.53.0",
+        sum = "h1:YLIA59K4fiNzHzjnZt2tUJQjQtUWfWbeHBqKtk3eScw=",
+        version = "v0.54.0",
     )
     go_repository(
         name = "org_golang_x_exp",
@@ -6477,15 +6496,15 @@ def go_deps():
         name = "org_golang_x_term",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/term",
-        sum = "h1:0rLvDRCtNj0gZkyIXhCyOb2OAzEhLVqc4B+hrsBhrmc=",
-        version = "v0.44.0",
+        sum = "h1:NwWyBmoJCbfTHpxrWoZ9C6/VxOf7ic219I8xZZFdrf0=",
+        version = "v0.45.0",
     )
     go_repository(
         name = "org_golang_x_text",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/text",
-        sum = "h1:UbZz4pLOvn600D6Oh6GGEI6VAmndrEBLv8/6BEXzyus=",
-        version = "v0.39.0",
+        sum = "h1:Ub2Z6/xjgF1WrYQz2nuITOEegKFtiIy+rieRJ5lHZKs=",
+        version = "v0.40.0",
     )
     go_repository(
         name = "org_golang_x_time",
