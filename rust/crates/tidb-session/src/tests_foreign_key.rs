@@ -335,8 +335,9 @@ fn foreign_key_checks_rejects_a_non_boolean_value() {
 }
 
 /// `DROP TABLE` is refused while a table OUTSIDE the statement still
-/// references the parent, all-or-nothing over the whole statement -- and
-/// dropping the pair together succeeds whichever order they are listed in.
+/// references the parent with Go's dedicated 3730 diagnostic, all-or-nothing
+/// over the whole statement -- and dropping the pair together succeeds
+/// whichever order they are listed in.
 #[test]
 fn drop_table_is_refused_while_a_foreign_key_still_points_at_it() {
     let mut session = pair("");
@@ -344,10 +345,10 @@ fn drop_table_is_refused_while_a_foreign_key_still_points_at_it() {
         .run("DROP TABLE p")
         .expect_err("a referenced parent cannot be dropped");
     let mysql_error = error.to_mysql_error();
-    assert_eq!(mysql_error.code, 1701);
+    assert_eq!(mysql_error.code, 3730);
     assert_eq!(
         mysql_error.message,
-        "Cannot truncate a table referenced in a foreign key constraint (`test`.`c` CONSTRAINT `fk_1`)"
+        "Cannot drop table 'p' referenced by a foreign key constraint 'fk_1' on table 'c'."
     );
     assert!(session.run("SELECT id FROM p").is_ok());
     assert_eq!(code(&mut session, "DROP TABLE p, c"), None);

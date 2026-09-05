@@ -295,12 +295,22 @@ impl DriverError {
                 "Cannot delete or update a parent row: a foreign key constraint fails ({table}, {constraint})"
             ),
         ),
-        // Go reuses ErrTruncateIllegalForeignKey for both TRUNCATE TABLE and
-        // DROP TABLE when the parent is referenced outside the statement.
+        // Go's ErrTruncateIllegalForeignKey is the TRUNCATE TABLE diagnostic;
+        // DROP TABLE has the distinct ErrForeignKeyCannotDrop below.
         DriverError::ForeignKeyTableReferenced { detail } => MysqlError::new(
             1701,
             format!(
                 "Cannot truncate a table referenced in a foreign key constraint ({detail})"
+            ),
+        ),
+        DriverError::ForeignKeyTableCannotDrop {
+            parent_table,
+            constraint,
+            child_table,
+        } => MysqlError::new(
+            3730,
+            format!(
+                "Cannot drop table '{parent_table}' referenced by a foreign key constraint '{constraint}' on table '{child_table}'."
             ),
         ),
         // Go `ErrForeignKeyCannotDrop`: DROP DATABASE reports the parent and

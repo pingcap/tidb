@@ -788,17 +788,68 @@ fn rename_table_rewrites_the_constraint_reference() {
 //     constraint 'fk_b' on table 't2'.`;
 //   * both succeed with `@@foreign_key_checks=0`.
 //
-// go-parity-gap (documented divergence): the tier's truncate performs NO
-// referral check at all (`ddl/table_lifecycle.rs:192`), and its drop check
-// answers the child-side 1451 text ("Cannot delete or update a parent row:
-// a foreign key constraint fails (...)") where Go answers 3730 — neither
-// Go errno is reproducible (the b105 receipt recorded the same divergence
-// for the pkg/ddl-level sibling test).
 #[test]
-#[ignore = "go-parity-gap: truncate has no referral check; drop renders 1451 text where Go uses 3730"]
 fn truncate_or_drop_of_a_referenced_table_reports_go_errnos() {
-    // Contract (foreign_key_test.go:801-887): 1701 per truncate, 3730 per
-    // drop, both cleared by foreign_key_checks=0.
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::for_query();
+    ddl::run_create_table_in(
+        "create table t1 (id int key, b int, index(b))",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_create_table_in(
+        "create table t2 (a int, b int, foreign key fk_b(b) references t1(b))",
+        &mut catalog,
+        "test",
+        CreateTableSettings::default(),
+        &ctx,
+    )
+    .unwrap();
+
+    let error = ddl::run_truncate_table_in("truncate table t1", &mut catalog, "test", ctx.sql_mode())
+        .expect_err("Go: [ddl:1701]Cannot truncate a referenced parent");
+    let mysql = error.to_mysql_error();
+    assert_eq!(mysql.code, 1701);
+    assert_eq!(
+        mysql.message,
+        "Cannot truncate a table referenced in a foreign key constraint (`test`.`t2` CONSTRAINT `fk_b`)"
+    );
+
+    let error = ddl::run_drop_table_in(
+        "drop table t1",
+        &mut catalog,
+        "test",
+        ctx.sql_mode(),
+        ctx.foreign_key_checks(),
+    )
+    .expect_err("Go: [ddl:3730]Cannot drop a referenced parent");
+    let mysql = error.to_mysql_error();
+    assert_eq!(mysql.code, 3730);
+    assert_eq!(
+        mysql.message,
+        "Cannot drop table 't1' referenced by a foreign key constraint 'fk_b' on table 't2'."
+    );
+
+    let checks_off = StmtContext::for_query().with_foreign_key_checks(false);
+    ddl::run_truncate_table_in_with_foreign_key_checks(
+        "truncate table t1",
+        &mut catalog,
+        "test",
+        checks_off.sql_mode(),
+        false,
+    )
+    .unwrap();
+    ddl::run_drop_table_in(
+        "drop table t1",
+        &mut catalog,
+        "test",
+        checks_off.sql_mode(),
+        false,
+    )
+    .unwrap();
 }
 
 // --- TestDropIndexNeededInForeignKey

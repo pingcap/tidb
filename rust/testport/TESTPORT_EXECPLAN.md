@@ -8463,3 +8463,8 @@ risks without claiming repository-wide parity.
   renames, and multiple constraints. DROP COLUMN and multi-action ALTER
   atomicity remain explicit boundaries. Evidence is recorded in
   `receipts/ddl_foreign_key_rename_column.md`.
+- 2026-09-05 (`pkg/ddl` table-lifecycle foreign-key errors): Rust now keeps
+  Go's distinct owner diagnostics: `TRUNCATE TABLE` returns 1701 while
+  `DROP TABLE` returns 3730 with the parent, constraint, and child names;
+  both checks are bypassed when `foreign_key_checks=0`. Evidence is recorded
+  in `receipts/ddl_foreign_key_table_lifecycle.md`.

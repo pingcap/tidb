@@ -962,7 +962,8 @@ pub(crate) fn check_index_needed(
 }
 
 /// Go `checkDropTableHasForeignKeyReferredInOwner`: a table may not be
-/// dropped while a table OUTSIDE this statement still references it.
+/// dropped while a table OUTSIDE this statement still references it. Unlike
+/// TRUNCATE, DROP uses the dedicated 3730 `ErrForeignKeyCannotDrop` diagnostic.
 pub(crate) fn check_drop_tables(
     catalog: &Catalog,
     dropping: &[(String, String)],
@@ -974,16 +975,20 @@ pub(crate) fn check_drop_tables(
             }) {
                 continue;
             }
-            return Err(table_referenced(&child_db, &child_table, &foreign_key));
+            return Err(DriverError::ForeignKeyTableCannotDrop {
+                parent_table: table.clone(),
+                constraint: foreign_key.name,
+                child_table,
+            });
         }
     }
     Ok(())
 }
 
-/// Go `checkTruncateTableHasForeignKeyReferredInOwner` and its DROP TABLE
-/// sibling both raise `ErrTruncateIllegalForeignKey` (1701), rather than the
-/// row-level 1451 used by DELETE/UPDATE. `detail` is the child-side text Go
-/// places inside the parentheses.
+/// Go `checkTruncateTableHasForeignKeyReferredInOwner` raises
+/// `ErrTruncateIllegalForeignKey` (1701), rather than the row-level 1451 used
+/// by DELETE/UPDATE. `detail` is the child-side text Go places inside the
+/// parentheses. DROP TABLE uses the dedicated 3730 variant above.
 pub(crate) fn table_referenced(
     child_db: &str,
     child_table: &str,

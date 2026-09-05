@@ -154,10 +154,10 @@ fn foreign_key_add_then_drop_constraint_round_trip() {
 // both the truncate and the drop of a referenced table
 // (pkg/ddl/foreign_key.go:404-427).
 //
-// The synchronous owner now uses the same 1701 DDL error as Go for both
-// statements; the schema-state race itself remains outside this tier.
+// The synchronous owner now uses Go's 1701 TRUNCATE and 3730 DROP diagnostics;
+// the schema-state race itself remains outside this tier.
 #[test]
-fn truncate_or_drop_referenced_table_reports_1701() {
+fn truncate_or_drop_referenced_table_reports_go_errnos() {
     let mut catalog = Catalog::default();
     let ctx = StmtContext::for_query();
     ddl::run_create_table_in(
@@ -193,8 +193,12 @@ fn truncate_or_drop_referenced_table_reports_1701() {
         ctx.sql_mode(),
         ctx.foreign_key_checks(),
     )
-    .expect_err("Go: the same 1701 for the DROP of a referenced table");
-    assert_eq!(err_code(&error), 1701);
+    .expect_err("Go: [ddl:3730]Cannot drop a referenced parent");
+    assert_eq!(err_code(&error), 3730);
+    assert_eq!(
+        err_message(&error),
+        "Cannot drop table 't1' referenced by a foreign key constraint 'fk' on table 't2'."
+    );
 }
 
 // --- TestDropIndexNeededInForeignKey2 (pkg/ddl/foreign_key_test.go:261) ---

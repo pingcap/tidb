@@ -815,12 +815,22 @@ pub enum DriverError {
         /// The constraint as `SHOW CREATE TABLE` would print it.
         constraint: String,
     },
-    /// Go `dbterror.ErrTruncateIllegalForeignKey` (1701): a `TRUNCATE
-    /// TABLE` or `DROP TABLE` would remove a parent still referenced by a
-    /// child outside the same statement.
+    /// Go `dbterror.ErrTruncateIllegalForeignKey` (1701): `TRUNCATE TABLE`
+    /// would remove a parent still referenced by a child outside the same
+    /// statement.
     ForeignKeyTableReferenced {
         /// The child schema, child table and constraint as Go formats them.
         detail: String,
+    },
+    /// Go `dbterror.ErrForeignKeyCannotDrop` (3730): `DROP TABLE` would remove
+    /// a parent still referenced by a child outside the same statement.
+    ForeignKeyTableCannotDrop {
+        /// The parent table being removed.
+        parent_table: String,
+        /// The referring constraint name.
+        constraint: String,
+        /// The child table that owns the constraint.
+        child_table: String,
     },
     /// Go `dbterror.ErrForeignKeyCannotDrop` (3730): `DROP DATABASE` would
     /// remove a parent table still referenced by a child in another schema.
