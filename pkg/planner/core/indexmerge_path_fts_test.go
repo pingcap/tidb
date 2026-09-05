@@ -296,3 +296,42 @@ func TestFTSMatchAgainstComparisonIsRejected(t *testing.T) {
 	tk.MustQuery("select count(*) from articles where not match(body) against('+rareone' in boolean mode)").
 		Check([][]any{{"1001"}})
 }
+
+// TestFTSNarrowIndexCannotHoldTruncatedTokens pins why the access path does not
+// compare an index's element width against the analyzer's longest token. A
+// narrower element would be a problem if it held truncated entries, because a
+// lookup for the whole token would miss the row the entry came from - but no
+// write can put one there. Both paths that could refuse instead of truncating.
+func TestFTSNarrowIndexCannotHoldTruncatedTokens(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_local_match_against=ON")
+	tk.MustExec(`create table articles (
+		id int primary key,
+		body varchar(255),
+		key idx_narrow ((cast(fts_tokenize(body, 'STANDARD', 3, 84, 1) as char(3) array)))
+	)`)
+
+	// Writing a row whose tokens exceed the element width fails, in strict mode
+	// and in non-strict mode alike.
+	require.ErrorContains(t,
+		tk.ExecToErr("insert into articles values (1, 'rareone alone here')"),
+		"Data too long for expression index")
+	tk.MustExec("set @@sql_mode=''")
+	require.ErrorContains(t,
+		tk.ExecToErr("insert into articles values (1, 'rareone alone here')"),
+		"Data too long for expression index")
+
+	// Building such an index over existing rows fails too, rather than
+	// backfilling truncated entries.
+	tk.MustExec("create table backfilled (id int primary key, body varchar(255))")
+	tk.MustExec("insert into backfilled values (1, 'rareone alone here')")
+	require.ErrorContains(t,
+		tk.ExecToErr("alter table backfilled add key idx_narrow ((cast(fts_tokenize(body, 'STANDARD', 3, 84, 1) as char(3) array)))"),
+		"Data Too Long")
+
+	// A narrow index whose data does fit is complete, and stays usable.
+	tk.MustExec("insert into articles values (2, 'abc def')")
+	tk.MustQuery("select count(*) from articles").Check([][]any{{"1"}})
+}

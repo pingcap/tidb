@@ -180,6 +180,14 @@ func ftsTokenizeIndexColumn(
 		if !isTokenize {
 			continue
 		}
+		// Tokens are looked up as strings, so the element type must be one.
+		// Its width is not checked: a narrow element cannot hold a truncated
+		// entry, because any write that would truncate fails instead, so such
+		// an index is narrow but complete rather than lossy. See
+		// ParseFTSTokenizeIndexExpr.
+		if !types.IsString(idxCol.GetStaticType().GetType()) {
+			continue
+		}
 		return expr, col, cfg, true
 	}
 	return nil, nil, fulltext.AnalyzerConfig{}, false

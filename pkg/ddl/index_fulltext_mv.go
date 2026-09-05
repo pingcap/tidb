@@ -167,15 +167,7 @@ func buildFullTextTokenizeExprString(colName pmodel.CIStr, config fulltext.Analy
 	// The element width bounds the longest token the analyzer can emit. A
 	// narrower cast would silently truncate tokens and make index lookups
 	// disagree with the matcher that produced the search terms.
-	return fmt.Sprintf("cast(%s as char(%d) array)", sb.String(), ftsTokenizeElemLen(config)), nil
-}
-
-// ftsTokenizeElemLen is the CHAR(n) element width of the multi-valued index.
-func ftsTokenizeElemLen(config fulltext.AnalyzerConfig) int {
-	if config.ParserType == model.FullTextParserTypeNgramV1 {
-		return max(config.NgramTokenSize, 1)
-	}
-	return max(config.InnodbFtMaxTokenSize, 1)
+	return fmt.Sprintf("cast(%s as char(%d) array)", sb.String(), fulltext.IndexElemLen(config)), nil
 }
 
 // parseIndexExpr parses an expression string into the AST node an index part

@@ -113,6 +113,20 @@ func GetAnalyzer(config AnalyzerConfig) (Analyzer, error) {
 	}
 }
 
+// IndexElemLen is the character width an index element must have to hold any
+// token this analyzer can emit.
+//
+// It bounds the longest token: a narrower element truncates, and a truncated
+// entry is not merely a smaller index - a lookup for the full token would miss
+// the row it was built from, so an index narrower than this cannot answer a
+// query compiled with this configuration.
+func IndexElemLen(config AnalyzerConfig) int {
+	if config.ParserType == model.FullTextParserTypeNgramV1 {
+		return max(config.NgramTokenSize, 1)
+	}
+	return max(config.InnodbFtMaxTokenSize, 1)
+}
+
 // DefaultAnalyzerConfig returns the analyzer a default-configured server would
 // resolve from its session variables.
 //
