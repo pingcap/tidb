@@ -175,6 +175,10 @@ For each bounded behavior cluster:
   `TestValidateStmtSummary` to the executable `tidb-session::sysvar` owner;
   its global-scope empty-value and integer-clamping matrix now guards the
   registry's existing Go-compatible type validation.
+- 2026-09-05 (`pkg/sessionctx/variable` session defaults/concurrency):
+  reconciled `TestNewSessionVars` and `TestConcurrencyVariables` with the
+  executable `tidb-session::session_vars` default, setter, and executor
+  fallback tests; these rows no longer remain ignored-gap markers.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session
