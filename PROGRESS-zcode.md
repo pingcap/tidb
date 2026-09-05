@@ -452,3 +452,5 @@
 - 下轮恢复点: (1) placement/infoschema 深层或新面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - placement rules 面处置: 由 DDL 会话活跃持有(17 模块测试+bundle 投递回归在位), 避免重复审计; 其收据归属 DDL 会话。
 - 下轮恢复点: (1) 新面选型(privilege 余项/其他 crate); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- plan inventory 环核验: explain=4674/explain_analyze=49/total=4723, inventory current 测试通过(--check 模式确认源清单同步)。
+- 下轮恢复点: (1) privilege 余项或其他 crate 面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
