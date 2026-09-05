@@ -2547,6 +2547,18 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   copr integration, metrics, and remaining package rows stay explicit.
   Details are in `receipts/copr_query_limiter.md`.
 
+- 2026-09-05 (`pkg/distsql` limiter-wait evidence): refreshed the complete
+  17-artifact/5,682-line Go package inventory at `origin/master`
+  `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`. Rust `tidb-distsql` now
+  measures blocking TiKV request-limiter waits in the direct unary response,
+  exposes them through the response contract, and transfers the total/max
+  aggregate into `SelectResponseIter`, matching Go's close-time
+  `HasLimiterWaitStats` merge. The focused regression failed before the
+  transfer (`0` versus `17` ns) and passes after it; direct transport source
+  coverage pins timing and exposure. Details are in
+  `receipts/distsql_audit.md`. Remaining ExecDetails/RU/read-pool and live
+  transport owners remain explicit boundaries.
+
 - 2026-09-02: completed the bounded shared-lock-loss rollback audit for the
   complete Go-master `pkg/session` root package at
   `a74cc596996d8a4c940b4d64fca46ac1c6d5c0d7` (behavior introduced by

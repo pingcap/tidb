@@ -32,8 +32,8 @@ use crate::query_runtime::{
     QueryTransport,
 };
 use crate::{
-    CancelHandle, CoprCache, CoprCacheConfig, ResponseChannelEvent, TransportRequest,
-    TransportRequestError,
+    CancelHandle, CoprCache, CoprCacheConfig, LimiterWaitStats, ResponseChannelEvent,
+    TransportRequest, TransportRequestError,
 };
 use tidb_txnkv::region::{
     KeyRange as RegionKeyRange, LeaderRequest, ReadPolicy, RegionBackoffBudget, RegionBackoffKind,
@@ -700,6 +700,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             unordered_inflight: BTreeSet::new(),
             unordered_ready: VecDeque::new(),
             network_metrics: UnaryNetworkMetrics::default(),
+            limiter_wait: LimiterWaitStats::default(),
             snapshot_locks: tidb_txnkv::lock::SnapshotLockSet::default(),
         }))
     }
@@ -849,6 +850,10 @@ pub struct DirectUnaryQueryResponse<C, L> {
     /// Settled tasks whose response channels still need to be drained.
     unordered_ready: VecDeque<u64>,
     network_metrics: UnaryNetworkMetrics,
+    /// Blocking request-attempt limiter waits observed by this response.
+    /// Go exposes the same aggregate through `HasLimiterWaitStats` when the
+    /// select result closes.
+    limiter_wait: LimiterWaitStats,
     /// Transactions this response already classified while resolving locks.
     ///
     /// Go `KVSnapshot.resolvedLocks`/`committedLocks`, reached through
@@ -1148,7 +1153,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
     }
 
     fn acquire_request_attempt_limiter(
-        &self,
+        &mut self,
         selected: &LeaderRequest,
     ) -> Result<RequestAttemptPermit, DirectUnaryTransportError> {
         let store_id = selected.target().store_id;
@@ -1169,6 +1174,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if limiter.try_acquire() {
             return Ok(RequestAttemptPermit(Some(limiter)));
         }
+        let wait_start = Instant::now();
         let cancelled = limiter.acquire_blocking_with_context(|| {
             self.cancellation.is_cancelled() || Instant::now() >= self.call.deadline()
         });
@@ -1177,6 +1183,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 .check_retry_active()
                 .map(|_| RequestAttemptPermit(None));
         }
+        self.limiter_wait
+            .record(u64::try_from(wait_start.elapsed().as_nanos()).unwrap_or(u64::MAX));
         Ok(RequestAttemptPermit(Some(limiter)))
     }
 
@@ -2083,6 +2091,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> QueryResponse
         required_rows: usize,
     ) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         self.pull(required_rows)
+    }
+
+    fn limiter_wait_stats(&self) -> LimiterWaitStats {
+        self.limiter_wait
     }
 
     fn close(&mut self) {

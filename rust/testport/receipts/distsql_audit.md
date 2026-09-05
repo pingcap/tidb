@@ -8,11 +8,13 @@ remain an explicit boundary: the Rust response owner does not yet own Go's
 `ExecDetails`, TiKV scan/read-pool evidence, RU accounting, or percentile
 collector, so those behaviors were not guessed or partially duplicated.
 
-Comparison source: Go `origin/master` at
-`0bc44483e3e41a8ea917d4382dc202369468d200` (2026-09-01). The package has
-15 tracked Go artifacts and 5,455 lines. No package `doc.go`, fixture or
-testdata directory, generated Go source, platform variant, benchmark fixture,
-or nested Go package exists beyond the listed `bench_test.go`.
+The latest package re-audit below supersedes the historical snapshots in this
+receipt. Comparison source: Go `origin/master` at
+`f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (2026-09-05). The complete root
+package plus `context` subpackage has 17 tracked artifacts and 5,682 lines;
+all production, test, benchmark, fixture/harness, ownership, and Bazel files
+were read before editing. No package `doc.go`, generated Go source, platform
+variant, or separate testdata tree exists.
 
 ## Complete Go inventory
 
@@ -164,3 +166,45 @@ Latest validation evidence:
   required by the BUILD/test changes and remains blocked locally because no
   Bazel executable is installed. No Rust source changed, so pinned Rust
   formatting is not applicable to this Go consumer batch.
+
+## Current Go-master Rust alignment batch: limiter-wait evidence
+
+The 2026-09-05 re-audit covers all 17 tracked `pkg/distsql` artifacts and
+5,682 lines at Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
+The Rust gap was bounded to the already-owned response lifecycle: Go's
+`selectResult.closeImpl` reads `copr.HasLimiterWaitStats` and merges the
+blocking total/max after response consumption, while Rust enforced the
+request limiter but discarded the measured wait and had no response-to-result
+transfer seam.
+
+Rust now measures every blocking TiKV attempt admission in
+`DirectUnaryQueryResponse`, exposes the aggregate through the `QueryResponse`
+contract, and merges it into `SelectResponseIter` during the one-way
+`QuerySelectResult::into_select_iter` conversion. Fast-path admissions and
+cancelled/deadline-aborted waits remain zero, matching Go's callback (which
+records only a successfully acquired blocked permit). The aggregate uses the
+existing saturating `LimiterWaitStats` total/max contract; raw Analyze and
+Checksum ownership is unchanged.
+
+Regression evidence:
+
+- Before the transfer call, `query_runtime_source::select_conversion_transfers_limiter_wait_stats_to_the_result_iterator`
+  failed with `left: 0, right: 17`.
+- After the transfer, the same focused test passed; the direct transport source
+  regression also pins wait timing/recording and response exposure.
+- `cargo +nightly-2026-08-22 test -p tidb-distsql --test all query_runtime_source::select_conversion_transfers_limiter_wait_stats_to_the_result_iterator -- --exact`
+  passed after the fix.
+- `cargo +nightly-2026-08-22 test -p tidb-distsql --test all -- --test-threads=1`
+  passed with 255 tests and 2 documented ignored parity gaps.
+
+Ready validation for this Rust-only package batch:
+
+- package-scoped Rust formatting check, `git diff --check`, and the pinned
+  `make lint` gate are required before the package commit;
+- no `make bazel_prepare` is required because no Go/Bazel/module file changed;
+- no live TiKV/PD transport or Go test execution was claimed locally.
+
+The remaining Go runtime-stat fields (`ExecDetails`, RU/read-pool evidence,
+percentiles, and concrete coprocessor response plumbing) stay explicit
+boundaries; this batch only closes the limiter-wait evidence path already
+owned by the Rust distsql response/result lifecycle.

@@ -60,6 +60,9 @@ fn every_tikv_attempt_honors_the_query_scoped_store_limiter() {
     assert!(admission.contains("query_cop_store_limiter"));
     assert!(admission.contains("get_store_limiter(store_id)"));
     assert!(admission.contains("acquire_blocking_with_context"));
+    assert!(admission.contains("let wait_start = Instant::now()"));
+    let compact_admission = admission.split_whitespace().collect::<String>();
+    assert!(compact_admission.contains("self.limiter_wait.record"));
 
     let dispatch = owner("fn dispatch_attempt(", "fn complete_batch_attempt(");
     assert!(dispatch.contains("let request_attempt_permit = self.acquire_request_attempt_limiter"));
@@ -67,6 +70,7 @@ fn every_tikv_attempt_honors_the_query_scoped_store_limiter() {
 
     let settle = owner("fn settle_dispatch(", "fn record_attempt_result(");
     assert!(settle.contains("request_attempt_permit: _request_attempt_permit"));
+    assert!(SOURCE.contains("fn limiter_wait_stats(&self) -> LimiterWaitStats"));
 }
 
 #[test]

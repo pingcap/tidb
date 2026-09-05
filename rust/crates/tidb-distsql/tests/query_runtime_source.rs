@@ -83,6 +83,7 @@ impl QueryTransport for ScriptedTransport {
 struct TrackingResponse {
     subsets: VecDeque<QueryResultSubset>,
     closed: Rc<Cell<bool>>,
+    limiter_wait: tidb_distsql::LimiterWaitStats,
 }
 
 impl QueryResponse for TrackingResponse {
@@ -93,6 +94,10 @@ impl QueryResponse for TrackingResponse {
     fn close(&mut self) {
         self.closed.set(true);
         self.subsets.clear();
+    }
+
+    fn limiter_wait_stats(&self) -> tidb_distsql::LimiterWaitStats {
+        self.limiter_wait
     }
 }
 
@@ -319,6 +324,7 @@ fn query_result_has_one_close_owner() {
             runtime: None,
         }]),
         closed: Rc::clone(&closed),
+        limiter_wait: tidb_distsql::LimiterWaitStats::default(),
     };
     let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
     let mut result = runtime
@@ -417,6 +423,7 @@ fn raw_then_select_conversion_consumes_each_subset_once() {
             },
         ]),
         closed: Rc::clone(&closed),
+        limiter_wait: tidb_distsql::LimiterWaitStats::default(),
     };
     let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
     let mut result = runtime
@@ -431,6 +438,33 @@ fn raw_then_select_conversion_consumes_each_subset_once() {
     let mut iter = result.into_select_iter(Vec::new());
     assert!(iter.next_row().unwrap().is_none());
     assert!(closed.get());
+}
+
+#[test]
+fn select_conversion_transfers_limiter_wait_stats_to_the_result_iterator() {
+    let response = TrackingResponse {
+        subsets: VecDeque::from([QueryResultSubset {
+            data: Vec::new(),
+            runtime: None,
+        }]),
+        closed: Rc::new(Cell::new(false)),
+        limiter_wait: tidb_distsql::LimiterWaitStats {
+            total_ns: 17,
+            max_ns: 11,
+        },
+    };
+    let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
+    let result = runtime
+        .select(
+            &request(StoreType::TiKv),
+            input(),
+            QueryResultContext::new(field_types(2), WarningCollector::new()),
+        )
+        .expect("select response");
+
+    let iter = result.into_select_iter(Vec::new());
+    assert_eq!(iter.runtime_stats().limiter_wait.total_ns, 17);
+    assert_eq!(iter.runtime_stats().limiter_wait.max_ns, 11);
 }
 
 #[test]
