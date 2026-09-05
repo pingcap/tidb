@@ -8353,3 +8353,14 @@ risks without claiming repository-wide parity.
   common-handle cases, EXPLAIN ranges, and result rows. The complete Go tree
   inventory and Ready evidence are recorded in
   `receipts/planner_common_handle_tuple.md`.
+- 2026-09-05 (`pkg/planner/core` IndexJoin skyline row counts): Rust's
+  `find_best_task` path loop now applies Go's `Fix45132` ratio preference to
+  proven IndexJoin secondary-index candidates, dividing ordinary access rows
+  by a stable single runtime-key NDV while keeping the compare-only estimate
+  separate from physical execution statistics. Prefix/multi-key/pseudo and
+  invalid-stat paths fail closed; the 1000 default, non-positive disable value,
+  strict `>100` floor, and LIMIT bypass are carried by `DispatchContext`.
+  Focused planner regressions pin the NDV division and both winner/skip
+  directions. The source-derived analyzed mock-store test remains an explicit
+  integration boundary; evidence is recorded in
+  `receipts/planner_index_join_skyline.md`.

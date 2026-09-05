@@ -124,6 +124,10 @@ pub struct DispatchContext<'a> {
     /// join keys. The source default is enabled; callers that resolve the
     /// session fix-control map can turn it off explicitly.
     pub index_join_probe_row_count_fix: bool,
+    /// Go `fixcontrol.Fix45132`: the row-count ratio at which skyline pruning
+    /// prefers one IndexJoin inner access path over another. A non-positive
+    /// value disables the empirical rule, matching Go's fix-control getter.
+    pub index_join_skyline_threshold: f64,
     /// Go `SessionVars.IsMPPAllowed()`, which controls MPP candidates.
     pub mpp_allowed: bool,
     /// Go `BaseLogicalPlan.taskMap`, keyed by the logical plan object and
@@ -157,6 +161,7 @@ impl<'a> DispatchContext<'a> {
             hash_join_concurrency: 5,
             apply_cache_capacity: 0,
             index_join_probe_row_count_fix: true,
+            index_join_skyline_threshold: 1_000.0,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
             task_map: HashMap::new(),
@@ -211,6 +216,14 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_index_join_probe_row_count_fix(mut self, enabled: bool) -> Self {
         self.index_join_probe_row_count_fix = enabled;
+        self
+    }
+
+    /// Uses the session's resolved Fix45132 ratio for IndexJoin skyline
+    /// pruning. Values at or below zero disable the empirical comparison.
+    #[must_use]
+    pub const fn with_index_join_skyline_threshold(mut self, threshold: f64) -> Self {
+        self.index_join_skyline_threshold = threshold;
         self
     }
 
@@ -1171,6 +1184,90 @@ fn index_join_probe_access_rows_floor(
     floor.is_finite().then_some(floor.max(0.0))
 }
 
+/// Computes Go's `indexJoinPathCountAfterAccess4Compare` for one secondary
+/// index candidate. IndexJoin's runtime equality is invisible while ordinary
+/// access statistics are derived, so a stable single-column NDV lets the
+/// skyline comparison divide that estimate by the per-probe key cardinality.
+/// Multiple runtime keys, prefix columns, pseudo statistics, and invalid NDVs
+/// fail closed just as Go's helper does.
+fn index_join_skyline_count_for_index(
+    ds: &crate::logical::DataSource,
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    index_prefix: &[(tidb_expr::column::Column, i64)],
+    count_after_access: Option<f64>,
+) -> Option<f64> {
+    let count_after_access = count_after_access?;
+    if !count_after_access.is_finite() || count_after_access <= 0.0 {
+        return None;
+    }
+    let table_stats = ds
+        .table_stats
+        .as_ref()
+        .or_else(|| ds.base.base.stats_info())?;
+    if table_stats.stats_version() == 0 {
+        return None;
+    }
+    let runtime_ids = runtime
+        .inner_join_keys
+        .iter()
+        .map(|column| column.unique_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    if runtime_ids.is_empty() {
+        return None;
+    }
+    let fixed = equality_fixed_ids(ds)
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut runtime_column = None;
+    for (column, length) in index_prefix {
+        if runtime_ids.contains(&column.unique_id) {
+            if *length != tidb_datatype::UNSPECIFIED_LENGTH || runtime_column.is_some() {
+                return None;
+            }
+            runtime_column = Some(column.unique_id);
+        } else if fixed.contains(&column.unique_id) {
+            continue;
+        } else {
+            break;
+        }
+    }
+    let runtime_column = runtime_column?;
+    let ndv = table_stats.col_ndv(runtime_column);
+    if !ndv.is_finite() || ndv <= 0.0 {
+        return None;
+    }
+    let adjusted = count_after_access / ndv;
+    adjusted.is_finite().then_some(adjusted)
+}
+
+/// Applies Go's `Fix45132` ratio rule to two IndexJoin inner candidates.
+/// `Some(true)` means the current candidate wins, `Some(false)` means the
+/// existing best wins, and `None` delegates to ordinary task costing.
+fn index_join_skyline_prefers_current(
+    current: Option<f64>,
+    best: Option<f64>,
+    expected_cnt: f64,
+    threshold: f64,
+) -> Option<bool> {
+    let (current, best) = (current?, best?);
+    if expected_cnt != f64::MAX
+        || threshold <= 0.0
+        || !current.is_finite()
+        || !best.is_finite()
+        || current <= 100.0
+        || best <= 100.0
+    {
+        return None;
+    }
+    if current / best > threshold {
+        return Some(false);
+    }
+    if best / current > threshold {
+        return Some(true);
+    }
+    None
+}
+
 /// The path admission half of Go's
 /// `buildDataSource2{Table,Index}ScanByIndexJoinProp`: a table-range
 /// candidate must probe the clustered handle; an index-range candidate must
@@ -1534,6 +1631,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     let ordered = !prop.is_sort_item_empty();
     let desc = ordered && prop.sort_items[0].desc;
     let mut best = Task::invalid_task();
+    let mut best_index_join_skyline_count = None;
     'paths: for path in &ds.enumerated_paths {
         if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
             && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
@@ -1547,6 +1645,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 continue;
             }
         }
+        let mut index_join_skyline_count = None;
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
                 if (!ordered && ds.force_keep_order_table_path)
@@ -2250,6 +2349,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             ))
                         });
                 }
+                index_join_skyline_count = prop.index_join_prop.as_ref().and_then(|runtime| {
+                    index_join_skyline_count_for_index(
+                        ds,
+                        runtime,
+                        &resolved_index_prefix,
+                        count_after_access,
+                    )
+                });
                 if let (Some(count), Some(floor)) =
                     (count_after_access.as_mut(), probe_access_rows_floor)
                 {
@@ -2475,8 +2582,23 @@ fn find_best_task_4_logical_data_source_without_enforcer(
         } else {
             cop.convert_to_root_task(ctx.allocator)?
         };
-        if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
+        let skyline_choice = if prop.index_join_prop.is_some() {
+            index_join_skyline_prefers_current(
+                index_join_skyline_count,
+                best_index_join_skyline_count,
+                prop.expected_cnt,
+                ctx.index_join_skyline_threshold,
+            )
+        } else {
+            None
+        };
+        let current_wins = match skyline_choice {
+            Some(wins) => wins,
+            None => best.invalid() || compare_task_cost(ctx.coster, &cur, &best)?,
+        };
+        if current_wins {
             best = cur;
+            best_index_join_skyline_count = index_join_skyline_count;
         }
     }
     Ok(best)
@@ -3660,6 +3782,110 @@ mod tests {
                 &runtime,
                 true,
             ),
+            None
+        );
+    }
+
+    #[test]
+    fn index_join_skyline_count_uses_one_stable_runtime_key() {
+        use crate::logical::DataSource;
+        use crate::physical_property::IndexJoinRuntimeProp;
+        use tidb_datatype::{FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
+        use tidb_expr::column::Column;
+
+        let first = Column::new(11, FieldType::new(FieldTypeCode::LongLong));
+        let second = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
+        let source = DataSource {
+            table_stats: Some(
+                StatsInfo::new(200_000.0, [(11, 100.0), (12, 200.0)]).with_stats_version(1),
+            ),
+            ..DataSource::default()
+        };
+        let runtime = IndexJoinRuntimeProp {
+            other_conditions: Vec::new(),
+            outer_join_keys: vec![Column::new(21, FieldType::new(FieldTypeCode::LongLong))],
+            inner_join_keys: vec![first.clone()],
+            avg_inner_row_count: 1.0,
+            table_range_scan: false,
+        };
+
+        // Go divides the ordinary access estimate by the one runtime-key NDV
+        // before applying Fix45132: 200000 / 100 = 2000.
+        assert_eq!(
+            index_join_skyline_count_for_index(
+                &source,
+                &runtime,
+                &[
+                    (first.clone(), UNSPECIFIED_LENGTH),
+                    (second.clone(), UNSPECIFIED_LENGTH)
+                ],
+                Some(200_000.0),
+            ),
+            Some(2_000.0)
+        );
+        // Prefix-index runtime keys, multiple runtime keys, pseudo statistics,
+        // and absent NDV all decline the strong skyline comparison.
+        assert_eq!(
+            index_join_skyline_count_for_index(
+                &source,
+                &runtime,
+                &[(first.clone(), 4)],
+                Some(200_000.0),
+            ),
+            None
+        );
+        let two_keys = IndexJoinRuntimeProp {
+            inner_join_keys: vec![first.clone(), second.clone()],
+            ..runtime.clone()
+        };
+        assert_eq!(
+            index_join_skyline_count_for_index(
+                &source,
+                &two_keys,
+                &[
+                    (first.clone(), UNSPECIFIED_LENGTH),
+                    (second, UNSPECIFIED_LENGTH)
+                ],
+                Some(200_000.0),
+            ),
+            None
+        );
+        let pseudo = DataSource {
+            table_stats: Some(StatsInfo::new(200_000.0, [(11, 100.0)])),
+            ..source.clone()
+        };
+        assert_eq!(
+            index_join_skyline_count_for_index(
+                &pseudo,
+                &runtime,
+                &[(first, UNSPECIFIED_LENGTH)],
+                Some(200_000.0),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn index_join_skyline_ratio_respects_fix_control_and_row_floor() {
+        assert_eq!(
+            index_join_skyline_prefers_current(Some(200.0), Some(2_000_000.0), f64::MAX, 1_000.0),
+            Some(true)
+        );
+        assert_eq!(
+            index_join_skyline_prefers_current(Some(2_000_000.0), Some(200.0), f64::MAX, 1_000.0),
+            Some(false)
+        );
+        // Go's strict `> 100` guard and non-positive Fix45132 disable value.
+        assert_eq!(
+            index_join_skyline_prefers_current(Some(100.0), Some(200_000.0), f64::MAX, 1_000.0),
+            None
+        );
+        assert_eq!(
+            index_join_skyline_prefers_current(Some(200.0), Some(2_000_000.0), f64::MAX, 0.0),
+            None
+        );
+        assert_eq!(
+            index_join_skyline_prefers_current(Some(200.0), Some(2_000_000.0), 1.0, 1_000.0),
             None
         );
     }
