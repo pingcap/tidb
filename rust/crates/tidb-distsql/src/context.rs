@@ -214,7 +214,6 @@ impl DistSqlContext {
     /// handle remain shared. Owned strings, CPU samples, and KV scalar fields
     /// are copied. A present max-keys accumulator is fresh and zeroed, exactly
     /// like Go's `new(atomic.Uint64)` in `DistSQLContext.Detach`.
-    #[must_use]
     pub fn detach(&self) -> Self {
         Self {
             request: self.request.clone(),

@@ -208,3 +208,34 @@ The remaining Go runtime-stat fields (`ExecDetails`, RU/read-pool evidence,
 percentiles, and concrete coprocessor response plumbing) stay explicit
 boundaries; this batch only closes the limiter-wait evidence path already
 owned by the Rust distsql response/result lifecycle.
+
+## Current Rust alignment batch: discardable context detach (2026-09-06)
+
+The complete 17-artifact Go inventory (including the nested
+`pkg/distsql/context` package), its production/test/benchmark/build files, and
+the Rust context owner were rechecked before editing. Go's
+`DistSQLContext.Detach` returns a new context but does not require callers to
+use that value. Rust now removes the one corresponding Rust-only
+`#[must_use]` annotation from `DistSqlContext::detach`; the unrelated Rust
+constructors and warning snapshots remain annotated because they have no
+direct Go return contract.
+
+`context_return_contract::detach_result_may_be_ignored_like_go` invokes the
+discarded result under `#[deny(unused_must_use)]`. The detached pre-fix owner
+at `821ca535dc6` failed with exactly one diagnostic, and the focused test passes
+after the fix. The full distsql aggregate passes 256 tests with two documented
+ignored parity gaps.
+
+Ready validation for this Rust-only package batch:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p
+  tidb-distsql --test all --offline --locked -- --test-threads=1` — 256
+  passed, 2 ignored.
+- Focused `context_return_contract` regression — passed after the fix.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all --
+  --check` — passed.
+- `make lint` with the repository Go 1.25.10 toolchain — passed.
+- `git diff --check` — passed.
+
+No Go, fixture, generated/platform, Bazel, or Cargo metadata changed, so
+`make bazel_prepare` is not required.

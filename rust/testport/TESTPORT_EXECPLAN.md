@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/distsql/context` discardable detach result): the complete
+  17-artifact distsql/context-inclusive inventory and Rust owner were
+  rechecked before editing. `DistSqlContext::detach` no longer emits the one
+  Rust-only `#[must_use]` diagnostic; a focused source regression failed with
+  exactly one diagnostic on detached pre-fix owner `821ca535dc6` and passes
+  after the fix. The distsql aggregate passes 256 tests with two documented
+  ignored gaps, and Ready formatting/lint/diff checks pass. Evidence is
+  recorded in `receipts/distsql_audit.md`.
 - 2026-09-06 (`pkg/util/trxevents` discardable event API returns): the
   complete two-artifact Go inventory and Rust owner were rechecked before
   editing. Both direct Go-shaped operations no longer emit Rust-only
