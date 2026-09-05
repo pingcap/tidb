@@ -780,10 +780,7 @@ impl SysVarDef {
                 .map_err(|_| {
                     ValidationError::SqlError(SqlError::new(
                         tidb_error::mysql::errcode::ErrTruncatedWrongValue,
-                        &[
-                            FormatArg::from(self.name),
-                            FormatArg::from(original),
-                        ],
+                        &[FormatArg::from(self.name), FormatArg::from(original)],
                     ))
                 })?;
             return Ok(Validated {
@@ -1474,6 +1471,31 @@ impl SysVarDef {
                 value: column_types.join(","),
                 truncated: validated.truncated,
             });
+        }
+        // Go's tidb_max_dist_task_nodes Validation (`sysvar.go`): zero is
+        // not a legal node count — the message names the legal domain
+        // (-1 or [1, 128]); other in-range values pass (a bare
+        // errors.New, so it reports as 1105).
+        if self.name == tidb_vardef::tidb_vars::TIDB_MAX_DIST_TASK_NODES {
+            if let Ok(nodes) = validated.value.parse::<i64>() {
+                if nodes == 0 {
+                    return Err(ValidationError::Refused(
+                        "max_dist_task_nodes should be -1 or [1, 128]".to_owned(),
+                    ));
+                }
+            }
+            return Ok(validated);
+        }
+        // Go's tidb_evolve_plan_baselines Validation (`sysvar.go`): ON is
+        // refused unless the test-only CheckTableBeforeDrop knob is set,
+        // which is false in every deployment (a bare errors.Errorf, 1105).
+        if self.name == tidb_vardef::tidb_vars::TIDB_EVOLVE_PLAN_BASELINES
+            && validated.value == "ON"
+        {
+            return Err(ValidationError::Refused(
+                "Cannot enable baseline evolution feature, it is not generally available now"
+                    .to_owned(),
+            ));
         }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
@@ -2296,7 +2318,10 @@ mod tests {
         assert_eq!(sv.validate("1073741824").unwrap().value, "1073741824");
         match sv.validate("123aaa123") {
             Err(ValidationError::SqlError(error)) => {
-                assert_eq!(error.code, tidb_error::mysql::errcode::ErrTruncatedWrongValue);
+                assert_eq!(
+                    error.code,
+                    tidb_error::mysql::errcode::ErrTruncatedWrongValue
+                );
                 assert_eq!(
                     error.message,
                     "Truncated incorrect tidb_server_memory_limit value: '123aaa123'"
@@ -2778,6 +2803,33 @@ mod tests {
             skip.validate("varchar"),
             Err(ValidationError::WrongValue)
         ));
+    }
+
+    /// Go's max_dist_task_nodes zero refusal and the evolve-plan-baselines
+    /// ON refusal (bare errors, 1105).
+    #[test]
+    fn max_dist_task_nodes_and_evolve_baselines_match_go() {
+        let nodes = get_sys_var("tidb_max_dist_task_nodes").unwrap();
+        assert_eq!(nodes.validate("-1").unwrap().value, "-1");
+        assert_eq!(nodes.validate("128").unwrap().value, "128");
+        match nodes.validate("0") {
+            Err(ValidationError::Refused(message)) => {
+                assert!(message.contains("-1 or [1, 128]"), "{message}");
+            }
+            other => panic!("expected a refused error, got {other:?}"),
+        }
+
+        let evolve = get_sys_var("tidb_evolve_plan_baselines").unwrap();
+        assert_eq!(evolve.validate("OFF").unwrap().value, "OFF");
+        match evolve.validate("ON") {
+            Err(ValidationError::Refused(message)) => {
+                assert!(
+                    message.contains("Cannot enable baseline evolution"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected a refused error, got {other:?}"),
+        }
     }
 
     fn bool_validation() {
