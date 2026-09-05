@@ -122,6 +122,11 @@ For each bounded behavior cluster:
 - 2026-09-05 (`pkg/sessionctx/variable` deprecated executor concurrency): added
   the Go 1287 replacement warning for `tidb_index_lookup_concurrency` and a
   focused SQL warning/readback regression.
+- 2026-09-05 (`pkg/sessionctx/variable` relaxed validation): added the Go
+  `ValidateWithRelaxedValidation` carrier, preserving normalization while
+  returning original text on type or variable-specific refusal. Focused
+  coverage pins secure auth, analyze version, default auth plugin, and
+  `init_connect` behavior.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session

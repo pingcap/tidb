@@ -588,6 +588,15 @@ impl SysVarDef {
         self.validate_in_scope(value, SCOPE_SESSION)
     }
 
+    /// Go `SysVar.ValidateWithRelaxedValidation`: normalize values when
+    /// possible, but squash both type and variable-specific validation errors
+    /// and return the caller's original text when validation refuses it.
+    #[must_use]
+    pub fn validate_with_relaxed_validation(&self, value: &str, scope: u8) -> String {
+        self.validate_in_scope(value, scope)
+            .map_or_else(|_| value.to_owned(), |validated| validated.value)
+    }
+
     /// Go `SysVar.ValidateFromType` including its `scope` argument, which only
     /// the empty-value escape hatch reads.
     pub fn validate_in_scope(&self, value: &str, scope: u8) -> Result<Validated, ValidationError> {
@@ -2421,6 +2430,36 @@ mod tests {
         assert!(get_sys_var("innodb_fast_shutdown").unwrap().is_noop());
         assert!(!get_sys_var("tidb_multi_statement_mode").unwrap().is_noop());
         assert!(!get_sys_var("default_password_lifetime").unwrap().is_noop());
+    }
+
+    /// Go `TestValidateWithRelaxedValidation`: normalization survives while
+    /// type/closure errors are swallowed and the original text is returned.
+    #[test]
+    fn relaxed_validation_matches_go() {
+        assert_eq!(
+            get_sys_var("secure_auth")
+                .unwrap()
+                .validate_with_relaxed_validation("1", SCOPE_GLOBAL),
+            "ON"
+        );
+        assert_eq!(
+            get_sys_var("tidb_analyze_version")
+                .unwrap()
+                .validate_with_relaxed_validation("1", SCOPE_SESSION),
+            "1"
+        );
+        assert_eq!(
+            get_sys_var("default_authentication_plugin")
+                .unwrap()
+                .validate_with_relaxed_validation("RandomText", SCOPE_GLOBAL),
+            "RandomText"
+        );
+        assert_eq!(
+            get_sys_var("init_connect")
+                .unwrap()
+                .validate_with_relaxed_validation("RandomText - should be valid SQL", SCOPE_GLOBAL),
+            "RandomText - should be valid SQL"
+        );
     }
 
     /// Pinned Go `TestEnableAutoAnalyzePriorityQueue`: ON remains accepted,
