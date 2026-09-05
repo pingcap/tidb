@@ -82,6 +82,8 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			if err != nil {
 				return ver, err
 			}
+		}
+		if job.Type == model.ActionDropTable || job.Type == model.ActionDropMaterializedViewLog {
 			err = checkDropMaterializedViewLogHasNoDependentMVs(jobCtx, job, tblInfo)
 			if err != nil {
 				return ver, err

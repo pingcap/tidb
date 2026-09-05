@@ -1691,6 +1691,24 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 					State:   model.JobStateRollbackDone,
 					TableID: tableID,
 				}
+			} else if strings.HasPrefix(x, "drop-mview:") || strings.HasPrefix(x, "drop-mlog:") {
+				prefix := "drop-mview:"
+				jobType := model.ActionDropMaterializedView
+				if strings.HasPrefix(x, "drop-mlog:") {
+					prefix = "drop-mlog:"
+					jobType = model.ActionDropMaterializedViewLog
+				}
+				tableID, convErr := strconv.ParseInt(strings.TrimPrefix(x, prefix), 10, 64)
+				if convErr != nil {
+					return
+				}
+				mockJ = &model.Job{
+					Version: model.GetJobVerInUse(),
+					ID:      dr.JobID,
+					Type:    jobType,
+					TableID: tableID,
+				}
+				mockJ.FillFinishedArgs(&model.DropTableArgs{})
 			}
 		default:
 			return
@@ -1721,7 +1739,7 @@ func doGCPlacementRules(se sessionapi.Session, _ uint64,
 	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
 	var physicalTableIDs []int64
 	switch historyJob.Type {
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
 		var args *model.DropTableArgs
 		args, err = model.GetFinishedDropTableArgs(historyJob)
 		if err != nil {
@@ -1822,7 +1840,9 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 		}
 	}
 
-	if historyJob.Type == model.ActionDropTable {
+	if historyJob.Type == model.ActionDropTable ||
+		historyJob.Type == model.ActionDropMaterializedView ||
+		historyJob.Type == model.ActionDropMaterializedViewLog {
 		var (
 			args  *model.DropTableArgs
 			rules map[string]*label.Rule

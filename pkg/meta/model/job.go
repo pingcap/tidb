@@ -127,6 +127,8 @@ const (
 	ActionAlterTableSetRegionSplitPolicy        ActionType = 84
 	ActionCreateMaterializedViewLog             ActionType = 85
 	ActionCreateMaterializedView                ActionType = 86
+	ActionDropMaterializedViewLog               ActionType = 87
+	ActionDropMaterializedView                  ActionType = 88
 
 	// range [200, 256) is reserved for a downstream fork
 )
@@ -214,6 +216,8 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTableSetRegionSplitPolicy:        "alter table set region split policy",
 	ActionCreateMaterializedViewLog:             "create materialized view log",
 	ActionCreateMaterializedView:                "create materialized view",
+	ActionDropMaterializedViewLog:               "drop materialized view log",
+	ActionDropMaterializedView:                  "drop materialized view",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -887,6 +891,7 @@ func (job *Job) IsRollbackable() bool {
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
+		ActionDropMaterializedView, ActionDropMaterializedViewLog,
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
 	case ActionTruncateTablePartition:
