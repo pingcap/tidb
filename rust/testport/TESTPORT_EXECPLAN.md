@@ -5863,7 +5863,8 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       detached callback wrapper: its sole behavior requires the ordinary
       session value store, failpoint registry, and both executor injection
       sites. The two-artifact inventory is in
-      `receipts/util_breakpoint_audit.md` and remains unclaimed.
+      `receipts/util_breakpoint_audit.md` (since superseded by
+      `receipts/util_breakpoint.md`; the package is now claimed).
 - [x] Complete the complete pinned `pkg/util/compress` package in `tidb-util`:
       preserve both process-wide pools, reset/close lifecycle, discard-bound
       writer, invalid-header errors, and unfinished-reset behavior; route the
