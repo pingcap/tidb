@@ -218,3 +218,15 @@ func TestAnalyzerConfigEqualComparesWhatTheParserReads(t *testing.T) {
 	differentNgram.NgramTokenSize = 3
 	require.False(t, ngram.Equal(differentNgram))
 }
+
+// TestDefaultAnalyzerConfigMatchesSessionDefaults keeps the offline defaults
+// and the system-variable defaults from drifting apart. A table built offline
+// must tokenize the way a default-configured server does, or an imported table
+// and the server that later queries it would disagree about its own index.
+func TestDefaultAnalyzerConfigMatchesSessionDefaults(t *testing.T) {
+	sctx := newFulltextTestContext(t)
+	sessionDefaults, err := AnalyzerConfigFromSessionVars(
+		sctx.GetSessionVars(), model.FullTextParserTypeStandardV1)
+	require.NoError(t, err)
+	require.Equal(t, sessionDefaults, DefaultAnalyzerConfig())
+}

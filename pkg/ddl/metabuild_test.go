@@ -197,21 +197,56 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 	deeptest.AssertRecursivelyNotEqual(t, &metabuild.Context{}, &metabuild.Context{}, deeptest.WithIgnorePath(allFields))
 }
 
-// TestBuildFullTextIndexWithoutAnalyzerFails covers what the analyzer error
-// exists to prevent. A context that never resolved the settings would otherwise
-// hand out a zero-valued configuration, whose token-size bounds are 0..0: the
-// index would be created without complaint and hold no tokens at all, and every
-// MATCH compiled against it would then match nothing.
-func TestBuildFullTextIndexWithoutAnalyzerFails(t *testing.T) {
+// TestBuildFullTextIndexOfflineUsesDefaultAnalyzer covers the callers that build
+// table metadata with no session to read: Lightning and the importer parse user
+// DDL, and a dump produced by SHOW CREATE TABLE contains a FULLTEXT
+// declaration, so refusing to build one would make such a dump unimportable.
+func TestBuildFullTextIndexOfflineUsesDefaultAnalyzer(t *testing.T) {
+	p := parser.New()
+	// BuildTableInfoFromAST rewrites the statement it is given - the FULLTEXT
+	// constraint becomes an expression index, and the expression is then
+	// replaced by a reference to the generated column it created - so each call
+	// needs its own parse. Reusing one makes the second call fail with
+	// "column does not exist: _V$_idx_0", which looks like a context problem
+	// and is not.
+	fresh := func() *ast.CreateTableStmt {
+		stmt, err := p.ParseOneStmt(
+			"create table t(a text, fulltext index idx(a))", mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+		require.NoError(t, err)
+		return stmt.(*ast.CreateTableStmt)
+	}
+
+	// NewNonStrictContext is what lightning/pkg/importer and cmd/importer build
+	// table metadata with; NewContext is used by bootstrap and test helpers.
+	for name, ctx := range map[string]*metabuild.Context{
+		"NewContext":          metabuild.NewContext(),
+		"NewNonStrictContext": metabuild.NewNonStrictContext(),
+	} {
+		tblInfo, err := BuildTableInfoFromAST(ctx, fresh())
+		require.NoError(t, err, name)
+		idx := tblInfo.FindIndexByName("idx")
+		require.NotNil(t, idx, name)
+		// The index must carry the settings a default-configured server would
+		// use, not a zero-valued configuration - whose 0..0 token-size bounds
+		// would build an index holding nothing at all.
+		hidden := tblInfo.Columns[idx.Columns[0].Offset]
+		require.True(t, hidden.Hidden, name)
+		require.Contains(t, hidden.GeneratedExprString, "'STANDARD', 3, 84, 1", name)
+	}
+}
+
+// TestBuildFullTextIndexReportsAnalyzerFailure covers a session whose analyzer
+// settings could not be read. That is a genuine fault and is reported, rather
+// than quietly substituting defaults the session never asked for.
+func TestBuildFullTextIndexReportsAnalyzerFailure(t *testing.T) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(
 		"create table t(a text, fulltext index idx(a))", mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
 	require.NoError(t, err)
 
-	_, err = BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
-	require.ErrorContains(t, err, "no fulltext analyzer configuration was resolved")
-
-	// A resolution failure reaches the same place, carrying its cause.
+	// A failure to read the settings from a session is reported rather than
+	// replaced by defaults: an index built from settings the session did not
+	// ask for would tokenize differently than that session expects.
 	cause := errors.New("read innodb_ft_min_token_size")
 	_, err = BuildTableInfoFromAST(
 		metabuild.NewContext(metabuild.WithFullTextAnalyzerError(cause)), stmt.(*ast.CreateTableStmt))

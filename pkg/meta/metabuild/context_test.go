@@ -138,11 +138,13 @@ func TestMetaBuildContext(t *testing.T) {
 				return config
 			},
 			checkDefault: func(ctx *metabuild.Context) {
-				// Unset is an error rather than a zero configuration. A zero
-				// one bounds tokens to length zero, so an index built from it
-				// would be created successfully and index nothing.
-				_, err := ctx.GetFullTextAnalyzer()
-				require.ErrorContains(t, err, "no fulltext analyzer configuration was resolved")
+				// A context built without a session carries the settings a
+				// default-configured server would use, never a zero-valued
+				// configuration - whose 0..0 token-size bounds would build an
+				// index holding nothing.
+				config, err := ctx.GetFullTextAnalyzer()
+				require.NoError(t, err)
+				require.Equal(t, fulltext.DefaultAnalyzerConfig(), config)
 			},
 			option: func(val any) metabuild.Option {
 				return metabuild.WithFullTextAnalyzer(val.(fulltext.AnalyzerConfig))
@@ -168,7 +170,7 @@ func TestMetaBuildContext(t *testing.T) {
 			},
 			checkDefault: func(ctx *metabuild.Context) {
 				_, err := ctx.GetFullTextAnalyzer()
-				require.ErrorContains(t, err, "no fulltext analyzer configuration was resolved")
+				require.NoError(t, err)
 			},
 			option: func(val any) metabuild.Option {
 				return metabuild.WithFullTextAnalyzerError(val.(error))
@@ -224,6 +226,12 @@ func TestFullTextAnalyzerResolutionFailureIsReported(t *testing.T) {
 	ctx := metabuild.NewContext(metabuild.WithFullTextAnalyzerError(cause))
 	_, err := ctx.GetFullTextAnalyzer()
 	require.ErrorIs(t, err, cause)
+
+	// A context with no session carries the defaults instead, so building table
+	// metadata offline works.
+	offlineConfig, err := metabuild.NewNonStrictContext().GetFullTextAnalyzer()
+	require.NoError(t, err)
+	require.Equal(t, fulltext.DefaultAnalyzerConfig(), offlineConfig)
 
 	// A later successful resolution clears the failure, so a context is not
 	// permanently poisoned by the order its options are applied in.

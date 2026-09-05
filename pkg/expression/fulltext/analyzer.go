@@ -113,6 +113,32 @@ func GetAnalyzer(config AnalyzerConfig) (Analyzer, error) {
 	}
 }
 
+// DefaultAnalyzerConfig returns the analyzer a default-configured server would
+// resolve from its session variables.
+//
+// It exists for callers that build table metadata offline, with no session to
+// read: Lightning and the importer parse user DDL that may declare a FULLTEXT
+// index, and a dump produced by SHOW CREATE TABLE contains exactly such a
+// declaration. Those callers need a usable analyzer rather than an error, and
+// the settings a fresh server would use are the least surprising choice.
+//
+// TestDefaultAnalyzerConfigMatchesSessionDefaults pins these values against the
+// system-variable defaults, so the two cannot drift apart.
+//
+// A table built this way records the default settings, not those of whichever
+// server produced the dump - SHOW CREATE TABLE does not print them, matching
+// MySQL - so restoring onto a differently configured server tokenizes
+// differently. That is the same cross-server caveat restore already carries.
+func DefaultAnalyzerConfig() AnalyzerConfig {
+	return AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize:   3,
+		InnodbFtMaxTokenSize:   84,
+		InnodbFtEnableStopword: true,
+		NgramTokenSize:         2,
+	}
+}
+
 // AnalyzerConfigFromSessionContext builds an AnalyzerConfig from the current
 // session/global sysvars. Local index-backed MATCH should prefer index-bound
 // config once it is persisted in table metadata.
