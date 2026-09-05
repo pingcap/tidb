@@ -750,6 +750,16 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go's `tidb_enable_shared_lock_upgrade` gate is unavailable on the
+        // classic kernel. Its Validation closure sees the normalized ON
+        // value (including a typed `1`) and refuses it with
+        // ErrWrongValueForVar; OFF remains the ordinary boolean default.
+        if self.name == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE
+            && !tidb_config::kerneltype::is_next_gen()
+            && validated.value == "ON"
+        {
+            return Err(ValidationError::WrongValue);
+        }
         // Go's nextgen-only `TestTiDBPessimisticTransactionFairLocking`
         // exercises the variable-specific Validation closure: ON is rejected
         // with ErrNotSupportedInNextGen (1235) and the normalized fallback is

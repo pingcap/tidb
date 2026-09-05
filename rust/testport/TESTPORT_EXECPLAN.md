@@ -668,6 +668,13 @@ For each bounded behavior cluster:
   test-helper mismatch and tempfile lock split. The SQL executor consumer that
   constructs lock contexts for `SELECT ... FOR UPDATE` remains a separate
   unported boundary. Receipt: `receipts/shared_lock_upgrade_gate.md`.
+- 2026-09-05 (`pkg/sessionctx/variable` shared-lock upgrade kernel gate):
+  matched Go's variable-specific Validation closure for
+  `tidb_enable_shared_lock_upgrade`: classic builds refuse normalized `ON`
+  (including typed `1`) with 1231 for both SESSION and GLOBAL writes, while
+  NextGen accepts the opt-in switch. Focused SQL and typed-state regressions
+  cover both compile-time branches; the package receipt records the complete
+  owner inventory and Ready evidence.
 - 2026-09-05 (`pkg/planner/core/operator/logicalop` LATERAL Apply stats):
   removed the Rust-only recursive `unported_stats` refusal for keyed LATERAL
   Apply nodes. Rust now uses the existing full-join NDV estimator for explicit

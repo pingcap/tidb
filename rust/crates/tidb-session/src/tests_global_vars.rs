@@ -496,7 +496,8 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
 
 /// Go `TestTiDBEnableSharedLockUpgradeGate`: the new transaction switch is a
 /// normal GLOBAL|SESSION boolean, defaults OFF, and keeps the session/global
-/// copies independent after either tier is changed.
+/// copies independent after either tier is changed. Classic builds reject
+/// enabling the switch; NextGen builds accept it, matching Go's kernel gate.
 #[test]
 fn shared_lock_upgrade_variable_has_go_scope_and_default() {
     let (mut first, mut second, globals) = two_sessions_sharing_globals();
@@ -510,52 +511,78 @@ fn shared_lock_upgrade_variable_has_go_scope_and_default() {
             .unwrap(),
         StmtResult::Rows(vec![vec![Datum::Int(0)]])
     );
-    first
-        .run("SET tidb_enable_shared_lock_upgrade = ON")
-        .unwrap();
-    assert_eq!(
+    if tidb_config::kerneltype::is_next_gen() {
         first
-            .run("SELECT @@tidb_enable_shared_lock_upgrade")
-            .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(1)]])
-    );
-    assert!(first.vars().shared_lock_upgrade_enabled());
-    assert!(!second.vars().shared_lock_upgrade_enabled());
-    assert_eq!(
-        second
-            .run("SELECT @@tidb_enable_shared_lock_upgrade")
-            .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(0)]])
-    );
-    assert!(!second.vars().shared_lock_upgrade_enabled());
+            .run("SET tidb_enable_shared_lock_upgrade = ON")
+            .unwrap();
+        assert_eq!(
+            first
+                .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        assert!(first.vars().shared_lock_upgrade_enabled());
+        assert!(!second.vars().shared_lock_upgrade_enabled());
+        assert_eq!(
+            second
+                .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(0)]])
+        );
+        assert!(!second.vars().shared_lock_upgrade_enabled());
 
-    first
-        .run("SET GLOBAL tidb_enable_shared_lock_upgrade = ON")
-        .unwrap();
-    assert_eq!(
-        second
-            .run("SELECT @@global.tidb_enable_shared_lock_upgrade")
-            .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(1)]])
-    );
-    // A connected session keeps its own copy until reconnect, matching Go's
-    // NewSessionVars inheritance rule.
-    assert_eq!(
-        second
-            .run("SELECT @@tidb_enable_shared_lock_upgrade")
-            .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(0)]])
-    );
+        first
+            .run("SET GLOBAL tidb_enable_shared_lock_upgrade = ON")
+            .unwrap();
+        assert_eq!(
+            second
+                .run("SELECT @@global.tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        // A connected session keeps its own copy until reconnect, matching
+        // Go's NewSessionVars inheritance rule.
+        assert_eq!(
+            second
+                .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(0)]])
+        );
 
-    let mut fresh = Session::new();
-    fresh.attach_globals(globals).unwrap();
-    assert!(fresh.vars().shared_lock_upgrade_enabled());
-    assert_eq!(
-        fresh
-            .run("SELECT @@tidb_enable_shared_lock_upgrade")
-            .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(1)]])
-    );
+        let mut fresh = Session::new();
+        fresh.attach_globals(globals).unwrap();
+        assert!(fresh.vars().shared_lock_upgrade_enabled());
+        assert_eq!(
+            fresh
+                .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+    } else {
+        for value in ["ON", "1"] {
+            let error = first
+                .run(&format!("SET tidb_enable_shared_lock_upgrade = {value}"))
+                .unwrap_err();
+            assert_eq!(error.to_mysql_error().code, 1231);
+            assert!(!first.vars().shared_lock_upgrade_enabled());
+            assert_eq!(
+                first
+                    .run("SELECT @@tidb_enable_shared_lock_upgrade")
+                    .unwrap(),
+                StmtResult::Rows(vec![vec![Datum::Int(0)]])
+            );
+        }
+        let error = first
+            .run("SET GLOBAL tidb_enable_shared_lock_upgrade = ON")
+            .unwrap_err();
+        assert_eq!(error.to_mysql_error().code, 1231);
+        assert_eq!(
+            second
+                .run("SELECT @@global.tidb_enable_shared_lock_upgrade")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(0)]])
+        );
+    }
 }
 
 /// Go's transport-sensitive validator runs only on SQL `SET GLOBAL`: a

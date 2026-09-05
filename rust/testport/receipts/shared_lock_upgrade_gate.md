@@ -54,6 +54,12 @@ unported consumer boundary. Therefore this batch closes the lock-context and
 session-variable behavior without pretending that the higher-level SQL
 executor already constructs a locking context for every statement.
 
+The variable-specific Go Validation closure is also now matched: on the
+classic kernel, `ON` and `1` are refused with `ErrWrongValueForVar` (1231) for
+both SESSION and GLOBAL writes, while the NextGen build accepts them. The
+Rust registry applies this gate after boolean normalization, so the two input
+spellings have the same kernel-dependent result as Go.
+
 ## Regression evidence
 
 Before the change, the vendored transaction guard rejected every exclusive
@@ -68,6 +74,10 @@ and reconnect-time inheritance; it also checks the typed Rust session field.
 ```text
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
   -p tidb-session --lib shared_lock_upgrade_variable_has_go_scope_and_default -- --nocapture
+# passed: 1 test
+
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-session --lib shared_lock_upgrade_switch_uses_go_typed_state -- --nocapture
 # passed: 1 test
 
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
@@ -94,6 +104,14 @@ cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --lock
   -p tidb-vardef -p tidb-session -p tidb-txnkv
 # passed; existing warnings only
 
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-session --features tidb-config/nextgen --lib shared_lock_upgrade -- --nocapture
+# passed: 2 tests (NextGen acceptance branch)
+
+cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+# reports pre-existing formatting drift in unrelated workspace files and
+# earlier parity edits; no formatter changes are included in this batch
+
 git diff --check
 # passed
 
@@ -111,6 +129,8 @@ ordering test pass in isolation.
 ## Boundary and follow-up
 
 The admission bit is deliberately opt-in and defaults OFF, preserving Go's
-rollout gate. The remaining parity unit is the SQL session/executor consumer
+rollout gate. Classic builds additionally refuse attempts to turn it on,
+while NextGen builds retain the enabled path. The remaining parity unit is the
+SQL session/executor consumer
 that must copy `SessionVars.EnableSharedLockUpgrade` into a `LockContext` for
 real locking statements; that owner requires its own complete package audit.

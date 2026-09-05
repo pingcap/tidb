@@ -4305,25 +4305,46 @@ mod tests {
     fn shared_lock_upgrade_switch_uses_go_typed_state() {
         let mut vars = SessionVars::new();
         assert!(!vars.shared_lock_upgrade_enabled());
-        let restore = vars.snapshot_system(tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE);
-        vars.set_system(
-            tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
-            "ON".to_owned(),
-        )
-        .unwrap();
-        assert!(vars.shared_lock_upgrade_enabled());
-        vars.restore_system(restore);
-        assert!(!vars.shared_lock_upgrade_enabled());
-
-        let globals = GlobalSysvars::new();
-        globals
-            .set(
+        if tidb_config::kerneltype::is_next_gen() {
+            let restore =
+                vars.snapshot_system(tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE);
+            vars.set_system(
                 tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
                 "ON".to_owned(),
             )
             .unwrap();
-        vars.seed_from_globals(globals).unwrap();
-        assert!(vars.shared_lock_upgrade_enabled());
+            assert!(vars.shared_lock_upgrade_enabled());
+            vars.restore_system(restore);
+            assert!(!vars.shared_lock_upgrade_enabled());
+
+            let globals = GlobalSysvars::new();
+            globals
+                .set(
+                    tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
+                    "ON".to_owned(),
+                )
+                .unwrap();
+            vars.seed_from_globals(globals).unwrap();
+            assert!(vars.shared_lock_upgrade_enabled());
+        } else {
+            assert!(vars
+                .set_system(
+                    tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
+                    "ON".to_owned(),
+                )
+                .is_err());
+            assert!(!vars.shared_lock_upgrade_enabled());
+
+            let globals = GlobalSysvars::new();
+            assert!(globals
+                .set(
+                    tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_UPGRADE,
+                    "ON".to_owned(),
+                )
+                .is_err());
+            vars.seed_from_globals(globals).unwrap();
+            assert!(!vars.shared_lock_upgrade_enabled());
+        }
     }
 
     #[test]
