@@ -572,6 +572,31 @@ fn multi_schema_modify_column_positions_keep_column_identity() {
     );
 }
 
+/// Go `checkModifyTypes` refuses a clustered-handle type change once the
+/// integer family itself changes, even when both the origin and target are
+/// integer types.  Display-width-only edits keep the same type code and are
+/// still accepted; the reorganization guard is specifically for the value
+/// domain/encoding change (`int` -> `mediumint` here).
+#[test]
+fn clustered_handle_integer_type_changes_are_refused() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut catalog).unwrap();
+
+    let error = alter(&mut catalog, "ALTER TABLE t MODIFY COLUMN id MEDIUMINT")
+        .expect_err("Go: [ddl:8200]Unsupported modify column: this column has primary key flag");
+    assert_eq!(code_of(&error), 8200);
+    assert_eq!(
+        message_of(&error),
+        "Unsupported modify column: this column has primary key flag"
+    );
+
+    // The metadata-only display-width spelling remains valid, matching Go's
+    // integer normalization in needReorgToChange.
+    alter(&mut catalog, "ALTER TABLE t MODIFY COLUMN id INT(5)")
+        .expect("Go accepts an integer display-width-only primary-key change");
+    assert_eq!(column_flen(&catalog, "t", "id"), 5);
+}
+
 fn column_flen(catalog: &Catalog, table: &str, column: &str) -> i64 {
     column_of(catalog, table, column).field_type.flen()
 }

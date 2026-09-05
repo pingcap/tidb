@@ -2413,7 +2413,7 @@ fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<Datu
 /// definition in place, keeping the column id so indexes and handles survive.
 ///
 /// NOT MODELLED (documented, and rejected rather than ignored): a type change
-/// on a clustered handle column to anything but another integer type (Go 8200
+/// on a clustered handle column that requires reorganization (Go 8200
 /// "this column has primary key flag"), a BLOB/TEXT column that an index
 /// covers (Go 1170), generated columns, and the column options beyond
 /// NULL/NOT NULL/DEFAULT/AUTO_INCREMENT that CREATE TABLE also rejects here.
@@ -3093,10 +3093,17 @@ fn modify_column_action(
                 | tidb_datatype::FieldTypeCode::LongLong
         )
     };
-    // Go refuses to move a clustered handle off the integer domain, because
-    // the handle IS the row key.
+    // Go refuses a clustered-handle type change whenever
+    // CheckModifyTypeCompatible says that reorganization is required,
+    // because the handle IS the row key.  Integer display-width changes with
+    // the same signedness are the one exception: Go normalizes their default
+    // widths and treats those as metadata-only.
     let is_handle = table.pk_handle_offset() == Some(offset);
-    if is_handle && !integer_type(field_type.code()) {
+    let origin_code = table.columns[offset].field_type.code();
+    let origin_unsigned = table.columns[offset].field_type.is_unsigned();
+    let reorg_type_change =
+        origin_code != field_type.code() || origin_unsigned != field_type.is_unsigned();
+    if is_handle && (!integer_type(field_type.code()) || reorg_type_change) {
         return Err(DriverError::UnsupportedModifyColumn(
             "this column has primary key flag",
         ));

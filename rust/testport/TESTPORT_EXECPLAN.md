@@ -8692,3 +8692,10 @@ risks without claiming repository-wide parity.
   The focused `TestFix59705` missing-parent regression asserts the exact
   table error; evidence is recorded in
   `receipts/ddl_foreign_key_modify_missing_parent.md`.
+- 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
+  clustered primary-key handle changes that require reorganization, including
+  integer-family and signedness changes, with Go's exact 8200
+  `this column has primary key flag` diagnostic. Same-code integer
+  display-width edits remain accepted. Evidence is recorded in
+  `receipts/ddl_modify_column_pk_handle.md`; online reorganization and
+  generated-column failpoint rows remain explicit boundaries.
