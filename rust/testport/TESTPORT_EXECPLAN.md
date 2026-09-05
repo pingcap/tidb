@@ -8931,3 +8931,12 @@ risks without claiming repository-wide parity.
   `COLLATION 'latin1_bin' is not valid for CHARACTER SET 'utf8mb4'`. Focused
   planner-kind and end-to-end session regressions plus Ready evidence are
   recorded in `receipts/session_collation_error_mapping.md`.
+- 2026-09-06 (`pkg/planner/core` connection collation propagation): Rust's
+  plan-aware expression resolver now receives the statement's selected
+  charset/collation pair, matching Go's `BuildContext.GetCharsetInfo` after
+  `SET NAMES`. Coercible literals, string casts, and folded string builtins
+  therefore keep `utf8mb4_general_ci` (or the selected connection collation)
+  instead of falling back to `utf8mb4_bin`; server constants such as
+  `VERSION()` remain on the default. Focused resolver and 13-case session
+  collation regressions plus Ready evidence are recorded in
+  `receipts/planner_connection_collation.md`.

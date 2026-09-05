@@ -24,13 +24,14 @@ use std::collections::BTreeMap;
 use tidb_ast::{Expr, SelectStmt, Stmt};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, SessionTimeZone};
 use tidb_expr::expression::Expression;
+use tidb_expr::schema::Schema;
 use tidb_expr::{Columns, EvalError, ZonedNoColumns};
 
 use super::catalog::{SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, TableSource};
 use super::marker::{MarkerKind, PlanMarker};
 use super::{
-    constant_is_always_false, snapshot_schema_and_names, PlanBuilder, EXTRA_COMMIT_TS_ID,
-    EXTRA_COMMIT_TS_NAME,
+    constant_is_always_false, snapshot_schema_and_names, PlanBuilder, PlanScopeResolver,
+    EXTRA_COMMIT_TS_ID, EXTRA_COMMIT_TS_NAME,
 };
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::logical::rule::flags;
@@ -1453,6 +1454,25 @@ fn an_eval_error_keeps_its_typed_plan_kind() {
     };
     let error: PlanError = eval.clone().into();
     assert_eq!(error.kind(), &PlanErrorKind::Eval(eval));
+}
+
+#[test]
+fn plan_scope_resolver_uses_the_statement_connection_collation() {
+    let schema = Schema::default();
+    let names = [];
+    let markers = BTreeMap::new();
+    let resolver = PlanScopeResolver::new(&schema, &names, &markers, SessionTimeZone::utc())
+        .with_connection_charset_info(("utf8mb4", "utf8mb4_general_ci"));
+    let expression =
+        tidb_expr::rewriter::rewrite_expr_resolved(&Expr::String("a".to_owned()), &resolver)
+            .expect("literal rewrite");
+    assert_eq!(
+        expression
+            .static_type()
+            .expect("literal type")
+            .collation_name(),
+        "utf8mb4_general_ci"
+    );
 }
 
 impl Harness {

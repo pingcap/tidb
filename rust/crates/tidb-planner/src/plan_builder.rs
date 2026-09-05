@@ -705,6 +705,11 @@ pub struct PlanScopeResolver<'a> {
     outer_schemas: &'a [Schema],
     outer_names: &'a [Vec<FieldName>],
     time_zone: SessionTimeZone,
+    /// The session-selected charset/collation for coercible string literals.
+    /// Go's expression rewriter reads this from `BuildContext.GetCharsetInfo`;
+    /// it must not fall back to the server default after `SET NAMES`.
+    connection_charset: String,
+    connection_collation: String,
     /// The session-selected implicit escape byte for LIKE expressions.
     ///
     /// Go's expression rewriter reads this from the statement context while
@@ -717,12 +722,14 @@ pub struct PlanScopeResolver<'a> {
 impl<'a> PlanScopeResolver<'a> {
     /// A resolver over one plan's schema and names, with no markers bound.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         schema: &'a Schema,
         names: &'a [FieldName],
         marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
         time_zone: SessionTimeZone,
     ) -> Self {
+        let (connection_charset, connection_collation) =
+            tidb_expr::collation_derive::connection_charset_info();
         Self {
             schema,
             names,
@@ -730,6 +737,8 @@ impl<'a> PlanScopeResolver<'a> {
             outer_schemas: &[],
             outer_names: &[],
             time_zone,
+            connection_charset: connection_charset.to_owned(),
+            connection_collation: connection_collation.to_owned(),
             like_default_escape: b'\\',
         }
     }
@@ -737,7 +746,7 @@ impl<'a> PlanScopeResolver<'a> {
     /// A resolver at Go's plan-aware query-block seam, with enclosing scopes
     /// searched from innermost to outermost after the local schema.
     #[must_use]
-    pub const fn with_outer_scopes(
+    pub fn with_outer_scopes(
         schema: &'a Schema,
         names: &'a [FieldName],
         marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
@@ -745,6 +754,8 @@ impl<'a> PlanScopeResolver<'a> {
         outer_names: &'a [Vec<FieldName>],
         time_zone: SessionTimeZone,
     ) -> Self {
+        let (connection_charset, connection_collation) =
+            tidb_expr::collation_derive::connection_charset_info();
         Self {
             schema,
             names,
@@ -752,8 +763,19 @@ impl<'a> PlanScopeResolver<'a> {
             outer_schemas,
             outer_names,
             time_zone,
+            connection_charset: connection_charset.to_owned(),
+            connection_collation: connection_collation.to_owned(),
             like_default_escape: b'\\',
         }
+    }
+
+    /// Attach the statement's implicit charset/collation pair to this
+    /// resolver, preserving `SET NAMES` through planning.
+    #[must_use]
+    pub fn with_connection_charset_info(mut self, info: (&str, &str)) -> Self {
+        self.connection_charset = info.0.to_owned();
+        self.connection_collation = info.1.to_owned();
+        self
     }
 
     /// Attach the statement's implicit LIKE escape to this resolver.
@@ -801,6 +823,10 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
 impl ColumnResolver for PlanScopeResolver<'_> {
     fn like_default_escape(&self) -> u8 {
         self.like_default_escape
+    }
+
+    fn connection_charset_info(&self) -> (&str, &str) {
+        (&self.connection_charset, &self.connection_collation)
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -1213,6 +1239,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             &self.outer_names,
             self.time_zone.clone(),
         )
+        .with_connection_charset_info(self.ctx.connection_charset_info())
         .with_like_default_escape(self.ctx.like_default_escape());
         Ok(rewrite_expr_resolved(expr, &resolver)?)
     }
