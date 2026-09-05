@@ -434,7 +434,7 @@ func TestDropMaterializedViewPrivilege(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_drop_mv_priv (a int)")
 	tk.MustExec("create materialized view log on t_drop_mv_priv (a)")
-	tk.MustExec("create materialized view mv_drop_priv (a) as select a from t_drop_mv_priv")
+	tk.MustExec("create materialized view mv_drop_priv (a, cnt) as select a, count(1) from t_drop_mv_priv group by a")
 
 	tk.MustExec("create user 'u_drop_mv_select'@'%'")
 	tk.MustExec("create user 'u_drop_mv_ok'@'%'")
