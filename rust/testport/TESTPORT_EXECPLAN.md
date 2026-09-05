@@ -8763,3 +8763,11 @@ risks without claiming repository-wide parity.
   the DDL layer regressed the ported `TestTablePartition` rows Go marks
   `ok: false`). Evidence is recorded in
   `receipts/partition_values_arity_parse_errors.md`.
+- 2026-09-05 (`pkg/ddl` multi-schema conflict preflight): Rust now mirrors
+  Go's `checkOperateSameColAndIdx` category ordering for multi-spec ALTER
+  statements. Conflicting column/index names, including generated and
+  expression-index dependencies, return exact 8200 diagnostics before any
+  metadata mutation; independent action lists retain synchronous execution.
+  Focused rename, CHANGE, default, index, and expression-index regressions
+  are live. Evidence is recorded in
+  `receipts/ddl_multi_schema_conflicts.md`.

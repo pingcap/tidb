@@ -33,6 +33,8 @@
 //! actions an ALTER can also carry are in the sibling `indexes` module, and
 //! the type/charset resolution both share lives in the parent.
 
+use std::collections::HashSet;
+
 use super::column_types::{field_type_of, NOT_NULL_FLAG};
 use super::indexes::{add_index_to_table, drop_index_from_table, is_visible};
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
@@ -93,6 +95,235 @@ pub fn run_alter_table_in(
     run_alter_table_in_inner(sql, catalog, current_db, ctx)
 }
 
+/// Mirrors Go `checkOperateSameColAndIdx` for one multi-spec ALTER.
+///
+/// Go turns every specification into a sub-job, collects the affected names
+/// by category, and rejects a name that appears in two incompatible
+/// categories before any sub-job runs. The synchronous Rust runner used to
+/// apply the actions in source order instead, which both exposed a later
+/// 1054/1091 and left earlier actions committed. Keep the category ordering
+/// (ADD, DROP, POSITION, MODIFY, relative columns, then ADD/DROP/ALTER index)
+/// exactly as Go does so the first conflicting name and its 8200 diagnostic
+/// are stable.
+fn reject_multi_schema_same_column_or_index(
+    actions: &[tidb_ast::AlterTableAction],
+) -> Result<(), DriverError> {
+    let mut add_columns = Vec::new();
+    let mut drop_columns = Vec::new();
+    let mut position_columns = Vec::new();
+    let mut modify_columns = Vec::new();
+    let mut relative_columns = Vec::new();
+    let mut add_indexes = Vec::new();
+    let mut drop_indexes = Vec::new();
+    let mut alter_indexes = Vec::new();
+
+    fn add_column_spec(
+        column: &tidb_ast::ColumnDef,
+        position: &tidb_ast::ColumnPosition,
+        add_columns: &mut Vec<String>,
+        position_columns: &mut Vec<String>,
+        relative_columns: &mut Vec<String>,
+    ) {
+        add_columns.push(column.name.clone());
+        if let tidb_ast::ColumnPosition::After(name) = position {
+            position_columns.push(name.clone());
+        }
+        // `fillMultiSchemaInfo` records generated-column dependencies as
+        // RelativeColumns. Defaults and ON UPDATE expressions do not name
+        // table columns in Go's dependency map, so only GENERATED is walked.
+        for option in &column.options {
+            let tidb_ast::ColumnOption::Generated { expression, .. } = option else {
+                continue;
+            };
+            collect_expression_columns(expression, relative_columns);
+        }
+    }
+
+    fn add_index_spec(
+        index: &tidb_ast::IndexConstraintDefinition,
+        add_indexes: &mut Vec<String>,
+        relative_columns: &mut Vec<String>,
+    ) {
+        // Named indexes are the normal path. For an anonymous index Go picks
+        // the first column (or `expression_index`) before filling the
+        // MultiSchemaInfo; using the same seed is enough for conflict checks.
+        let name = index.name.clone().unwrap_or_else(|| {
+            index
+                .parts
+                .first()
+                .map(|part| match part {
+                    tidb_ast::IndexPart::Column { name, .. } => name.clone(),
+                    tidb_ast::IndexPart::Expr { .. } => "expression_index".to_owned(),
+                })
+                .unwrap_or_default()
+        });
+        add_indexes.push(name);
+        for part in &index.parts {
+            match part {
+                tidb_ast::IndexPart::Column { name, .. } => relative_columns.push(name.clone()),
+                tidb_ast::IndexPart::Expr { expr, .. } => {
+                    collect_expression_columns(expr, relative_columns)
+                }
+            }
+        }
+    }
+
+    for action in actions {
+        match action {
+            tidb_ast::AlterTableAction::AddColumn {
+                column, position, ..
+            } => add_column_spec(
+                column,
+                position,
+                &mut add_columns,
+                &mut position_columns,
+                &mut relative_columns,
+            ),
+            tidb_ast::AlterTableAction::AddColumns {
+                columns,
+                constraints,
+                ..
+            } => {
+                for column in columns {
+                    add_column_spec(
+                        column,
+                        &tidb_ast::ColumnPosition::Default,
+                        &mut add_columns,
+                        &mut position_columns,
+                        &mut relative_columns,
+                    );
+                }
+                for constraint in constraints {
+                    if let tidb_ast::TableConstraint::Index(index) = constraint {
+                        add_index_spec(index, &mut add_indexes, &mut relative_columns);
+                    }
+                }
+            }
+            tidb_ast::AlterTableAction::DropColumn { name, .. } => drop_columns.push(name.clone()),
+            tidb_ast::AlterTableAction::DropPrimaryKey(_) => {
+                drop_indexes.push("PRIMARY".to_owned())
+            }
+            tidb_ast::AlterTableAction::DropIndex { name, .. } => drop_indexes.push(name.clone()),
+            tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
+                add_index_spec(index, &mut add_indexes, &mut relative_columns)
+            }
+            tidb_ast::AlterTableAction::ModifyColumn {
+                column, position, ..
+            } => {
+                modify_columns.push(column.name.clone());
+                if let tidb_ast::ColumnPosition::After(name) = position {
+                    position_columns.push(name.clone());
+                }
+            }
+            tidb_ast::AlterTableAction::ChangeColumn {
+                old_name,
+                column,
+                position,
+                ..
+            } => {
+                let old_name = old_name.last().cloned().unwrap_or_default();
+                if old_name.eq_ignore_ascii_case(&column.name) {
+                    modify_columns.push(column.name.clone());
+                } else {
+                    add_columns.push(column.name.clone());
+                    drop_columns.push(old_name);
+                }
+                if let tidb_ast::ColumnPosition::After(name) = position {
+                    position_columns.push(name.clone());
+                }
+            }
+            tidb_ast::AlterTableAction::RenameColumn(rename) => {
+                add_columns.push(rename.to.clone());
+                drop_columns.push(rename.from.clone());
+            }
+            tidb_ast::AlterTableAction::RenameIndex(rename) => {
+                // Go's fillMultiSchemaInfo treats RENAME INDEX as an ADD of
+                // the source name plus a DROP of the target name. This makes
+                // both `DROP INDEX i, RENAME INDEX i TO j` and
+                // `ADD INDEX j(...), RENAME INDEX i TO j` collide in the
+                // same category order as the Go checker.
+                add_indexes.push(rename.from.clone());
+                drop_indexes.push(rename.to.clone());
+            }
+            tidb_ast::AlterTableAction::AlterIndexVisibility(alter) => {
+                alter_indexes.push(alter.name.clone())
+            }
+            tidb_ast::AlterTableAction::AlterColumnDefault(alter) => {
+                if let Some(name) = alter.name.last() {
+                    modify_columns.push(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn check_names(
+        names: &[String],
+        add_to_seen: bool,
+        seen: &mut HashSet<String>,
+        kind: &str,
+    ) -> Result<(), DriverError> {
+        for name in names {
+            let canonical = name.to_lowercase();
+            if seen.contains(&canonical) {
+                return Err(DriverError::DdlCoded {
+                    errno: 8200,
+                    message: format!(
+                        "Unsupported modify column: operate same {kind} '{canonical}'"
+                    ),
+                });
+            }
+            if add_to_seen {
+                seen.insert(canonical);
+            }
+        }
+        Ok(())
+    }
+
+    let mut columns = HashSet::new();
+    check_names(&add_columns, true, &mut columns, "column")?;
+    check_names(&drop_columns, true, &mut columns, "column")?;
+    check_names(&position_columns, false, &mut columns, "column")?;
+    check_names(&modify_columns, true, &mut columns, "column")?;
+    check_names(&relative_columns, false, &mut columns, "column")?;
+
+    let mut indexes = HashSet::new();
+    check_names(&add_indexes, true, &mut indexes, "index")?;
+    check_names(&drop_indexes, true, &mut indexes, "index")?;
+    check_names(&alter_indexes, true, &mut indexes, "index")?;
+    Ok(())
+}
+
+/// Collects the leaf column names from an expression, as Go's generated
+/// column/index dependency map does while filling a multi-schema job.
+fn collect_expression_columns(expression: &tidb_ast::Expr, output: &mut Vec<String>) {
+    use std::any::Any;
+    use tidb_ast::{Visitable, Visitor};
+
+    struct Collector<'a> {
+        output: &'a mut Vec<String>,
+    }
+
+    impl Visitor for Collector<'_> {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if let Some(tidb_ast::Expr::Column(path)) = node.downcast_ref::<tidb_ast::Expr>() {
+                if let Some(name) = path.last() {
+                    self.output.push(name.clone());
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
+        }
+    }
+
+    let mut expression = expression.clone();
+    let mut collector = Collector { output };
+    expression.accept(&mut collector);
+}
+
 fn run_alter_table_in_inner(
     sql: &str,
     catalog: &mut Catalog,
@@ -122,6 +353,7 @@ fn run_alter_table_in_inner(
             format!("{database}.{name}"),
         )));
     }
+    reject_multi_schema_same_column_or_index(&alter.actions)?;
     super::refuse_local_temporary_table_ddl(catalog, &database, &name, "ALTER TABLE")?;
     // Go's ALTER path checks the two guards in THIS order, and the corpus
     // asserts the difference: `ddl/db_integration`'s

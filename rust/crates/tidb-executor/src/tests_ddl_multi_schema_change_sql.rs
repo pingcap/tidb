@@ -24,10 +24,8 @@
 //! `pkg/ddl/multi_schema_change.go:350`, error template
 //! `pkg/util/dbterror/ddl_terror.go:45`) answer
 //! `[ddl:8200] Unsupported ... operate same column/index` for the whole
-//! statement, atomically. This tier applies the actions in order instead, so
-//! each such statement below observes the SEQUENTIAL outcome -- measured on
-//! this engine in this session and pinned per arm with Go's expectation
-//! cited. These divergence cases are not Go-parity evidence.
+//! statement, atomically. The Rust dispatcher now performs the same
+//! preflight, so conflicting action lists fail before any metadata mutation.
 
 use crate::{
     run_alter_table_in, run_create_table_on, run_insert_on, run_rename_table_in, run_select_on,
@@ -120,14 +118,10 @@ fn multi_schema_change_rename_columns_applies_both_actions() {
 /// Go `multi_schema_change_test.go:170-197::TestMultiSchemaChangeRenameColumns`
 /// unsupported-combination block. Go refuses all four statements at job
 /// build with 8200 (`multi_schema_change.go:350` +
-/// `dbterror/ddl_terror.go:45`), atomically. This tier applies in order, so
-/// each arm answers the sequential outcome (all measured here):
-/// rename-then-add-duplicate is 1060; rename-then-add-after-the-old-name is
-/// 1091 (`add_column_action`'s missing AFTER anchor); drop-then-rename is
-/// 1054 (`rename_column_action`'s missing source); rename-then-index-the-old
-/// name is 1091 (`add_index_to_table`'s missing key part).
+/// `dbterror/ddl_terror.go:45`), atomically. The Rust preflight now reports
+/// the same first conflicting column and leaves the original table intact.
 #[test]
-fn multi_schema_change_rename_columns_combinations_answer_sequential_outcomes() {
+fn multi_schema_change_rename_columns_combinations_refuse_conflicting_operations() {
     // add and rename to the same column name
     let mut catalog = Catalog::default();
     run_create_table_on(
@@ -141,12 +135,12 @@ fn multi_schema_change_rename_columns_combinations_answer_sequential_outcomes() 
         "alter table t rename column b to c, add column c int",
     )
     .expect_err("Go: 8200 Unsupported operate same column 'c'");
+    assert_eq!(code_of(&error), 8200);
     assert_eq!(
-        code_of(&error),
-        1060,
-        "sequential: rename lands, add collides"
+        message_of(&error),
+        "Unsupported modify column: operate same column 'c'"
     );
-    assert_eq!(message_of(&error), "Duplicate column name 'c'");
+    assert_eq!(column_order(&catalog, "t"), vec!["a", "b"]);
 
     // add a column positioned AFTER the renamed-away column
     let mut catalog = Catalog::default();
@@ -160,15 +154,12 @@ fn multi_schema_change_rename_columns_combinations_answer_sequential_outcomes() 
         "alter table t rename column b to c, add column e int after b",
     )
     .expect_err("Go: 8200 Unsupported operate same column");
-    assert_eq!(
-        code_of(&error),
-        1091,
-        "sequential: AFTER anchor 'b' is gone"
-    );
+    assert_eq!(code_of(&error), 8200);
     assert_eq!(
         message_of(&error),
-        "Can't DROP 'b'; check that column/key exists"
+        "Unsupported modify column: operate same column 'b'"
     );
+    assert_eq!(column_order(&catalog, "t"), vec!["a", "b"]);
 
     // drop and rename the same column
     let mut catalog = Catalog::default();
@@ -182,12 +173,12 @@ fn multi_schema_change_rename_columns_combinations_answer_sequential_outcomes() 
         "alter table t drop column b, rename column b to c",
     )
     .expect_err("Go: 8200 Unsupported operate same column 'b'");
+    assert_eq!(code_of(&error), 8200);
     assert_eq!(
-        code_of(&error),
-        1054,
-        "sequential: rename source 'b' is gone"
+        message_of(&error),
+        "Unsupported modify column: operate same column 'b'"
     );
-    assert_eq!(message_of(&error), "Unknown column 'b' in 't'");
+    assert_eq!(column_order(&catalog, "t"), vec!["a", "b"]);
 
     // add an index over a column the same statement renames away
     let mut catalog = Catalog::default();
@@ -201,11 +192,12 @@ fn multi_schema_change_rename_columns_combinations_answer_sequential_outcomes() 
         "alter table t rename column b to c, add index t1(a, b)",
     )
     .expect_err("Go: 8200 Unsupported operate same column");
-    assert_eq!(code_of(&error), 1091, "sequential: key part 'b' is gone");
+    assert_eq!(code_of(&error), 8200);
     assert_eq!(
         message_of(&error),
-        "Can't DROP 'b'; check that column/key exists"
+        "Unsupported modify column: operate same column 'b'"
     );
+    assert_eq!(column_order(&catalog, "t"), vec!["a", "b"]);
 }
 
 /// Go `multi_schema_change_test.go:273-279::TestMultiSchemaChangeAlterColumns`
@@ -241,12 +233,10 @@ fn multi_schema_change_alter_columns_applies_rename_and_default() {
 /// Go `multi_schema_change_test.go:245-266::TestMultiSchemaChangeAlterColumns`
 /// unsupported-combination block: Go refuses alter+drop, alter+rename and
 /// alter+modify naming the same column with 8200
-/// (`multi_schema_change.go:350`). This tier applies in order (all three
-/// measured): the default lands and the drop/rename/modify proceeds, so each
-/// statement SUCCEEDS -- the divergence is that nothing checks the
-/// combination.
+/// (`multi_schema_change.go:350`). The Rust preflight now rejects all three
+/// before the default or type change can mutate the table.
 #[test]
-fn multi_schema_change_alter_columns_combinations_apply_sequentially() {
+fn multi_schema_change_alter_columns_combinations_refuse_conflicts() {
     for sql in [
         "alter table t alter column b set default 3, drop column b",
         "alter table t alter column b set default 3, rename column b to c",
@@ -259,9 +249,13 @@ fn multi_schema_change_alter_columns_combinations_apply_sequentially() {
         )
         .unwrap();
         run_insert_on("insert into t values ()", &mut catalog, &ctx()).unwrap();
-        alter(&mut catalog, sql).unwrap_or_else(|error| {
-            panic!("Go refuses {sql} with 8200; sequential apply failed: {error:?}")
-        });
+        let error = alter(&mut catalog, sql).expect_err("Go: 8200 Unsupported operate same column");
+        assert_eq!(code_of(&error), 8200);
+        assert!(message_of(&error).contains("operate same column 'b'"));
+        assert_eq!(
+            text_rows(&catalog, "select * from t"),
+            vec![vec!["1".to_owned(), "2".to_owned()]]
+        );
     }
 }
 
@@ -298,11 +292,10 @@ fn multi_schema_change_change_columns_applies_rename_and_change() {
 
 /// Go `multi_schema_change_test.go:295-315::TestMultiSchemaChangeChangeColumns`
 /// unsupported-combination block. Go refuses all three with 8200
-/// (`multi_schema_change.go:350`); this tier applies in order (measured):
-/// change-then-drop names the renamed-away column and is 1091;
-/// change-then-add-same-name is 1060; change-then-index-the-old-name is 1091.
+/// (`multi_schema_change.go:350`); the Rust preflight now reports the same
+/// first conflicting column before any CHANGE action runs.
 #[test]
-fn multi_schema_change_change_columns_combinations_answer_sequential_outcomes() {
+fn multi_schema_change_change_columns_combinations_refuse_conflicts() {
     // change and drop the same column
     let mut catalog = Catalog::default();
     run_create_table_on(
@@ -315,10 +308,10 @@ fn multi_schema_change_change_columns_combinations_answer_sequential_outcomes() 
         "alter table t change column b c double, drop column b",
     )
     .expect_err("Go: 8200 Unsupported operate same column 'b'");
-    assert_eq!(code_of(&error), 1091, "sequential: 'b' was renamed to 'c'");
+    assert_eq!(code_of(&error), 8200);
     assert_eq!(
         message_of(&error),
-        "Can't DROP 'b'; check that column/key exists"
+        "Unsupported modify column: operate same column 'b'"
     );
 
     // change and add the same column name
@@ -333,8 +326,11 @@ fn multi_schema_change_change_columns_combinations_answer_sequential_outcomes() 
         "alter table t change column b c double, add column c int",
     )
     .expect_err("Go: 8200 Unsupported operate same column 'c'");
-    assert_eq!(code_of(&error), 1060);
-    assert_eq!(message_of(&error), "Duplicate column name 'c'");
+    assert_eq!(code_of(&error), 8200);
+    assert_eq!(
+        message_of(&error),
+        "Unsupported modify column: operate same column 'c'"
+    );
 
     // change a column and add an index over its old name
     let mut catalog = Catalog::default();
@@ -348,10 +344,10 @@ fn multi_schema_change_change_columns_combinations_answer_sequential_outcomes() 
         "alter table t change column b c double, add index t1(a, b)",
     )
     .expect_err("Go: 8200 Unsupported operate same column");
-    assert_eq!(code_of(&error), 1091, "sequential: key part 'b' is gone");
+    assert_eq!(code_of(&error), 8200);
     assert_eq!(
         message_of(&error),
-        "Can't DROP 'b'; check that column/key exists"
+        "Unsupported modify column: operate same column 'b'"
     );
 }
 
@@ -511,12 +507,9 @@ fn multi_schema_change_drop_indexes_removes_all_and_use_index_answers_1176() {
 /// Go `multi_schema_change_test.go:501-549::TestMultiSchemaChangeRenameIndexes`.
 /// `rename index t to x, rename index t1 to x1` applies both; the old names
 /// stop resolving (1176) and the new ones serve reads. The combination arms
-/// Go refuses with 8200 / silently tolerates are pinned at their measured
-/// sequential outcomes: drop-then-rename-same-index is 1176 (missing source,
-/// `rename_index_action`'s first check, vs Go's 8200
-/// `multi_schema_change.go:350`); add-then-rename-to-the-new-name is 1061
-/// `Duplicate key name 't1'` (vs Go's 8200); drop-column-then-rename-its-index
-/// is 1176 (the covering index went with the column, vs Go's silent success).
+/// Go refuses with 8200 are rejected by the Rust preflight before either
+/// index mutation. The drop-column/rename-index arm remains a separate
+/// no-op-vs-missing-index compatibility boundary.
 #[test]
 fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
     // rename index
@@ -555,8 +548,11 @@ fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
         "alter table t drop index t, rename index t to t1",
     )
     .expect_err("Go: 8200 Unsupported operate same index 't'");
-    assert_eq!(code_of(&error), 1176, "sequential: source 't' was dropped");
-    assert_eq!(message_of(&error), "Key 't' doesn't exist in table 't'");
+    assert_eq!(code_of(&error), 8200);
+    assert_eq!(
+        message_of(&error),
+        "Unsupported modify column: operate same index 't'"
+    );
 
     // add and rename to the same index name
     let mut catalog = Catalog::default();
@@ -570,8 +566,11 @@ fn multi_schema_change_rename_indexes_applies_and_combinations_measured() {
         "alter table t add index t1(b), rename index t to t1",
     )
     .expect_err("Go: 8200 Unsupported operate same index");
-    assert_eq!(code_of(&error), 1061, "sequential: target 't1' now exists");
-    assert_eq!(message_of(&error), "Duplicate key name 't1'");
+    assert_eq!(code_of(&error), 8200);
+    assert_eq!(
+        message_of(&error),
+        "Unsupported modify column: operate same index 't1'"
+    );
 
     // drop a column with its covering index and rename that index
     let mut catalog = Catalog::default();
@@ -627,15 +626,11 @@ fn multi_schema_change_alter_index_mixed_with_modify_applies() {
 }
 
 /// Go `multi_schema_change_test.go:584-601::TestMultiSchemaChangeAlterIndex`
-/// unsupported-combination block. Go refuses alter-the-same-index and
-/// drop+alter-the-same-index with 8200 and answers add+alter-the-same-index
-/// with 1176 (`errno.ErrKeyDoesNotExist`). Sequential outcomes (measured):
-/// visible-then-invisible applies BOTH (final state invisible, no error);
-/// drop-then-alter is 1176 (missing index); add-then-alter SUCCEEDS (the
-/// added index is altered) where Go's 1176 shows its planner resolution
-/// never sees the new index.
+/// unsupported-combination block. Go refuses all three alter/drop/add
+/// combinations naming the same index with 8200. The Rust preflight now
+/// rejects them before visibility or index metadata changes.
 #[test]
-fn multi_schema_change_alter_index_combinations_answer_sequential_outcomes() {
+fn multi_schema_change_alter_index_combinations_refuse_conflicts() {
     // alter the same index twice
     let mut catalog = Catalog::default();
     run_create_table_on(
@@ -643,20 +638,16 @@ fn multi_schema_change_alter_index_combinations_answer_sequential_outcomes() {
         &mut catalog,
     )
     .unwrap();
-    alter(
+    let error = alter(
         &mut catalog,
         "alter table t alter index idx visible, alter index idx invisible",
     )
-    .expect("Go: 8200; sequential: both apply, final state invisible");
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
-        panic!("table t missing");
-    };
-    let idx = table
-        .indexes()
-        .iter()
-        .find(|index| index.name == "idx")
-        .expect("idx present");
-    assert!(!idx.visible, "final state is the LAST alter");
+    .expect_err("Go: 8200 Unsupported operate same index 'idx'");
+    assert_eq!(code_of(&error), 8200);
+    assert_eq!(
+        message_of(&error),
+        "Unsupported modify column: operate same index 'idx'"
+    );
 
     // drop and alter the same index
     let mut catalog = Catalog::default();
@@ -670,26 +661,25 @@ fn multi_schema_change_alter_index_combinations_answer_sequential_outcomes() {
         "alter table t drop index idx, alter index idx visible",
     )
     .expect_err("Go: 8200 Unsupported operate same index");
-    assert_eq!(code_of(&error), 1176, "sequential: 'idx' was dropped");
-    assert_eq!(message_of(&error), "Key 'idx' doesn't exist in table 't'");
+    assert_eq!(code_of(&error), 8200);
+    assert_eq!(
+        message_of(&error),
+        "Unsupported modify column: operate same index 'idx'"
+    );
 
     // add and alter the same index
     let mut catalog = Catalog::default();
     run_create_table_on("create table t (a int, b int)", &mut catalog).unwrap();
-    alter(
+    let error = alter(
         &mut catalog,
         "alter table t add index idx(a, b), alter index idx invisible",
     )
-    .expect("Go: 1176 ErrKeyDoesNotExist; sequential: the added index is altered");
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
-        panic!("table t missing");
-    };
-    let idx = table
-        .indexes()
-        .iter()
-        .find(|index| index.name == "idx")
-        .expect("idx present");
-    assert!(!idx.visible);
+    .expect_err("Go: 8200 Unsupported operate same index 'idx'");
+    assert_eq!(code_of(&error), 8200);
+    assert_eq!(
+        message_of(&error),
+        "Unsupported modify column: operate same index 'idx'"
+    );
 }
 
 /// Go `multi_schema_change_test.go:849-868::TestMultiSchemaChangeModifyColumnOrderByStates`:
@@ -753,6 +743,7 @@ fn multi_schema_change_modify_column_order_by_states_all_orders_apply() {
         &mut catalog,
     )
     .unwrap();
+    run_insert_on("insert into t1 values (1, 1, 1)", &mut catalog, &ctx()).unwrap();
     alter(
         &mut catalog,
         "alter table t1 modify column c2 int, drop column id",
@@ -816,17 +807,10 @@ fn multi_schema_change_rename_table_then_alter_leaves_consistent_table() {
 
 /// Go `multi_schema_change_test.go:699-737::TestMultiSchemaChangeWithExpressionIndex`.
 /// The refusals and the duplicate-detection arm, minus the failpoint:
-/// this tier's ALTER ADD INDEX path builds expression-index hidden columns
-/// (`ddl/indexes.rs::add_index_to_table`), so the arms are testable. Two
-/// divergences are pinned as measured against Go's expectations:
-/// - Go refuses `drop column a, add unique index idx((a + b))` and
-///   `add column c int, change column a d bigint, add index idx((a + a))`
-///   at job build with 8200, atomically. Sequentially the statement answers
-///   the expression resolution failure (1054) with the earlier actions left
-///   applied.
-/// - The dup-entry arm matches Go's code: the unique index over `(a + b)`
-///   collides on rows `1 2` and `2 1` (both sum to 3) and answers 1062,
-///   though sequentially `c` and the non-unique `idx1` it already added stay.
+/// expression-index dependencies now participate in the same preflight as
+/// ordinary index columns. Go refuses the two dependency conflicts at job
+/// build with 8200, atomically; the duplicate-entry arm remains a later
+/// 1062 backfill error and keeps its successful earlier column/index changes.
 #[test]
 fn multi_schema_change_expression_index_combinations_measured() {
     // drop column a, add unique index idx((a + b))
@@ -838,10 +822,10 @@ fn multi_schema_change_expression_index_combinations_measured() {
         "alter table t drop column a, add unique index idx((a + b))",
     )
     .expect_err("Go: 8200 Unsupported operate same column");
+    assert_eq!(code_of(&error), 8200);
     assert_eq!(
-        code_of(&error),
-        1054,
-        "sequential: expression reads dropped 'a'"
+        message_of(&error),
+        "Unsupported modify column: operate same column 'a'"
     );
 
     // add column c, change column a d bigint, add index idx((a + a))
@@ -853,10 +837,10 @@ fn multi_schema_change_expression_index_combinations_measured() {
         "alter table t add column c int, change column a d bigint, add index idx((a + a))",
     )
     .expect_err("Go: 8200 Unsupported operate same column");
+    assert_eq!(code_of(&error), 8200);
     assert_eq!(
-        code_of(&error),
-        1054,
-        "sequential: expression reads renamed-away 'a'"
+        message_of(&error),
+        "Unsupported modify column: operate same column 'a'"
     );
 
     // add column c default 10, add index idx1((a + b)), add unique index idx2((a + b))

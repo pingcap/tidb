@@ -545,11 +545,9 @@ fn issue_4432_bit_default_spellings() {
 // the second-half defaults row `0 1 2 22 3 33 4`, duplicate drop = 1091,
 // dropping every column (mixed IF EXISTS) = 1090, guarded drops succeed.
 //
-// KNOWN DIVERGENCE, not asserted (captured during this port): the mixed
-// `add column dd int, add column if not exists dd int` form is still a plain
-// 1060 here while Go's multi-schema DDL checker reports 8200. The serial
-// grouped guard itself is exercised below; the final SHOW CREATE TABLE shape
-// remains represented by the catalog order and `select *` rows.
+// The mixed `add column if not exists d int, add column d int` form is
+// rejected by Go's multi-schema DDL checker with 8200 before either duplicate
+// column sub-job runs.
 #[test]
 fn issue_5092_add_drop_column_positions_and_guards() {
     let mut catalog = Catalog::default();
@@ -595,15 +593,18 @@ fn issue_5092_add_drop_column_positions_and_guards() {
         ["h", "e", "a", "b", "d", "b1", "c", "c1", "f", "g"],
         "Go's SHOW CREATE TABLE column order"
     );
-    assert!(matches!(
-        ddl::run_alter_table_in(
-            "alter table t_issue_5092 add column if not exists d int, add column d int",
-            &mut catalog,
-            "test",
-            &ctx
-        ),
-        Err(tidb_executor::DriverError::DuplicateColumnName(_)),
-    ), "Go: [schema:1060] duplicate column, exactly this statement errors");
+    let error = ddl::run_alter_table_in(
+        "alter table t_issue_5092 add column if not exists d int, add column d int",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go: [ddl:8200] operate same column 'd'");
+    assert_eq!(error.clone().to_mysql_error().code, 8200);
+    assert_eq!(
+        error.to_mysql_error().message,
+        "Unsupported modify column: operate same column 'd'"
+    );
 
     // The defaults half: every new column settles its default and row order
     // follows the placements, "0 1 2 22 3 33 4".
@@ -654,15 +655,18 @@ fn issue_5092_add_drop_column_positions_and_guards() {
         &ctx,
     )
     .unwrap();
-    assert!(matches!(
-        ddl::run_alter_table_in(
-            "alter table t_issue_5092 drop column c, drop column c",
-            &mut catalog3,
-            "test",
-            &ctx
-        ),
-        Err(tidb_executor::DriverError::UnknownColumnInAlter(_))
-    ), "Go: ErrCantDropFieldOrKey (1091)");
+    let error = ddl::run_alter_table_in(
+        "alter table t_issue_5092 drop column c, drop column c",
+        &mut catalog3,
+        "test",
+        &ctx,
+    )
+    .expect_err("Go: [ddl:8200] operate same column 'c'");
+    assert_eq!(error.clone().to_mysql_error().code, 8200);
+    assert_eq!(
+        error.to_mysql_error().message,
+        "Unsupported modify column: operate same column 'c'"
+    );
     ddl::run_alter_table_in(
         "alter table t_issue_5092 drop column if exists b,drop column if exists c",
         &mut catalog3,
