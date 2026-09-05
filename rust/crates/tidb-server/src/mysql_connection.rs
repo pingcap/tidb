@@ -122,16 +122,23 @@ fn open_prepared_cursor<O: ConnectionPacketOutput + ?Sized>(
 ) -> Result<CursorState, PreparedCursorOpenError> {
     let warnings = result.warning_count();
     let status = result.wire_status();
+    let affected_rows = result.affected_rows();
+    let last_insert_id = result.last_insert_id();
+    let info = result.info().to_vec();
     let cursor = CursorState::materialize_result(result).map_err(PreparedCursorOpenError::Query)?;
-    let options = framing.result_set(
+    let options = framing.result_set_with_output(
         status.with(SERVER_STATUS_CURSOR_EXISTS),
         warnings,
+        affected_rows,
+        last_insert_id,
+        info,
         result_encoder,
     );
-    let mut stream = tidb_protocol::BinaryResultSetStream::new(cursor.columns().to_vec(), options)
-        .map_err(|error| {
-            PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
-        })?;
+    let mut stream =
+        tidb_protocol::BinaryResultSetStream::new(cursor.columns().to_vec(), options.clone())
+            .map_err(|error| {
+                PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
+            })?;
     let metadata = stream.metadata_packets().map_err(|error| {
         PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
     })?;
@@ -1580,9 +1587,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         }
                     };
                     let (write_result, next_sequence) = {
-                        let statement_options = framing.result_set(
+                        let statement_options = framing.result_set_with_output(
                             stamp(result.wire_status()),
                             result.warning_count(),
+                            result.affected_rows(),
+                            result.last_insert_id(),
+                            result.info().to_vec(),
                             result_encoder,
                         );
                         let mut sink = TcpResultSetSink::new(&mut output, sequence);
@@ -1918,9 +1928,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             continue;
                         }
                         let write_result = {
-                            let statement_options = framing.result_set(
+                            let statement_options = framing.result_set_with_output(
                                 result.wire_status(),
                                 result.warning_count(),
+                                result.affected_rows(),
+                                result.last_insert_id(),
+                                result.info().to_vec(),
                                 result_encoder,
                             );
                             let mut sink = TcpResultSetSink::new(&mut output, 1);
@@ -2017,9 +2030,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         match engine.execute_general(general, &values) {
                             Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                 let write_result = {
-                                    let statement_options = framing.result_set(
+                                    let statement_options = framing.result_set_with_output(
                                         result.wire_status(),
                                         result.warning_count(),
+                                        result.affected_rows(),
+                                        result.last_insert_id(),
+                                        result.info().to_vec(),
                                         result_encoder,
                                     );
                                     let mut sink = TcpResultSetSink::new(&mut output, 1);

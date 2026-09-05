@@ -6637,6 +6637,11 @@ impl QuerySession for ClusterServerSession {
                 .with_statement_status(
                     self.session.wire_warning_count(),
                     WireStatus::of_session(&self.session),
+                )
+                .with_statement_output(
+                    0,
+                    self.session.statement_insert_id(),
+                    Vec::new(),
                 );
                 GeneralExecuteOutcome::Rows(match process_statement {
                     Some(statement) => result.with_process_statement(statement),
@@ -6750,10 +6755,12 @@ impl QuerySession for ClusterServerSession {
                     StmtOutput::Done(_) => crate::pipeline_session::affected_rows_source(0),
                 })
             })?;
-        let result = QueryResult::new(Box::new(source)).with_statement_status(
-            self.session.wire_warning_count(),
-            WireStatus::of_session(&self.session),
-        );
+        let result = QueryResult::new(Box::new(source))
+            .with_statement_status(
+                self.session.wire_warning_count(),
+                WireStatus::of_session(&self.session),
+            )
+            .with_statement_output(0, self.session.statement_insert_id(), Vec::new());
         Ok(match process_statement {
             Some(statement) => result.with_process_statement(statement),
             None => result,

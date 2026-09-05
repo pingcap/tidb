@@ -208,6 +208,9 @@ pub(crate) fn shape_prepared_point_read_result<'a>(
 
     let warnings = result.warning_count();
     let status = result.wire_status();
+    let affected_rows = result.affected_rows();
+    let last_insert_id = result.last_insert_id();
+    let info = result.info().to_vec();
     if let Some(aggregate) = aggregate {
         let kind = match aggregate.kind() {
             PreparedAggregateKind::Sum => AggregateKind::Sum,
@@ -218,7 +221,8 @@ pub(crate) fn shape_prepared_point_read_result<'a>(
             aggregate.source_offset(),
             statement.result_columns().to_vec(),
         )))
-        .with_statement_status(warnings, status);
+        .with_statement_status(warnings, status)
+        .with_statement_output(affected_rows, last_insert_id, info);
     }
 
     let output_width = statement.result_columns().len();
@@ -233,7 +237,9 @@ pub(crate) fn shape_prepared_point_read_result<'a>(
     if distinct {
         source = Box::new(DistinctResultSetSource::new(source));
     }
-    QueryResult::new(source).with_statement_status(warnings, status)
+    QueryResult::new(source)
+        .with_statement_status(warnings, status)
+        .with_statement_output(affected_rows, last_insert_id, info)
 }
 
 impl ActiveQueryCancellation for CancelHandle {

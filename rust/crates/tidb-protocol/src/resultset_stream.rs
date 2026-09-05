@@ -437,11 +437,13 @@ impl ResultSetStream {
 
     fn eof(&self) -> EofPacket {
         EofPacket {
+            affected_rows: self.options.affected_rows,
+            last_insert_id: self.options.last_insert_id,
             warnings: self.options.warnings,
             status_flags: self.options.status_flags,
             deprecate_eof: self.options.deprecate_eof,
             protocol_41: self.options.protocol_41,
-            info: Vec::new(),
+            info: self.options.info.clone(),
         }
     }
 }

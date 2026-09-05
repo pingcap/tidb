@@ -99,11 +99,13 @@ pub(crate) fn write_eof_or_ok<O: ConnectionPacketOutput + ?Sized>(
     options: ResultSetOptions,
 ) -> Result<(), MysqlConnectionError> {
     let payload = tidb_protocol::encode_eof_packet(&tidb_protocol::EofPacket {
+        affected_rows: options.affected_rows,
+        last_insert_id: options.last_insert_id,
         warnings: options.warnings,
         status_flags: options.status_flags,
         deprecate_eof: options.deprecate_eof,
         protocol_41: options.protocol_41,
-        info: Vec::new(),
+        info: options.info,
     });
     write_packet_to(output, sequence, &payload)
 }
@@ -181,7 +183,24 @@ impl WireFraming {
         warnings: u16,
         encoder: ResultEncoder,
     ) -> ResultSetOptions {
+        self.result_set_with_output(status, warnings, 0, 0, Vec::new(), encoder)
+    }
+
+    /// Builds result-set framing while preserving the statement values that
+    /// Go's `writeEOF` forwards to its deprecated-EOF OK packet.
+    pub(crate) fn result_set_with_output(
+        self,
+        status: WireStatus,
+        warnings: u16,
+        affected_rows: u64,
+        last_insert_id: u64,
+        info: Vec<u8>,
+        encoder: ResultEncoder,
+    ) -> ResultSetOptions {
         ResultSetOptions {
+            affected_rows,
+            last_insert_id,
+            info,
             status_flags: status.bits(),
             warnings,
             deprecate_eof: self.deprecate_eof,

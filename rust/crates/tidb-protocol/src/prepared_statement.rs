@@ -622,7 +622,7 @@ pub fn encode_prepared_statement_prepare_response(
         result_count,
         parameter_count,
     ));
-    append_metadata_packets(&mut packets, parameter_columns, options);
+    append_metadata_packets(&mut packets, parameter_columns, options.clone());
     append_metadata_packets(&mut packets, result_columns, options);
     Ok(packets)
 }
@@ -1244,11 +1244,13 @@ impl BinaryResultSetStream {
 
     fn eof(&self) -> EofPacket {
         EofPacket {
+            affected_rows: self.options.affected_rows,
+            last_insert_id: self.options.last_insert_id,
             warnings: self.options.warnings,
             status_flags: self.options.status_flags,
             deprecate_eof: self.options.deprecate_eof,
             protocol_41: self.options.protocol_41,
-            info: Vec::new(),
+            info: self.options.info.clone(),
         }
     }
 }
@@ -1354,11 +1356,13 @@ fn append_metadata_packets(
     }
     if !options.deprecate_eof {
         packets.push(encode_eof_packet(&EofPacket {
+            affected_rows: options.affected_rows,
+            last_insert_id: options.last_insert_id,
             warnings: options.warnings,
             status_flags: options.status_flags,
             deprecate_eof: options.deprecate_eof,
             protocol_41: options.protocol_41,
-            info: Vec::new(),
+            info: options.info.clone(),
         }));
     }
 }

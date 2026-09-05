@@ -16,7 +16,10 @@ client or production-cluster packet capture has been run. Line numbers on the
 Rust side are refreshed only where a batch touched the entry.
 
 Counts: **12 audited divergence entries**: 8 fixed, 4 remaining (1 rank-2,
-1 rank-3, 2 rank-4), plus **11 verified-equal areas**.
+1 rank-3, 2 rank-4), plus **11 verified-equal areas**. D11's packet encoder
+and statement-value plumbing are now aligned; the Rust session still has no
+Go-equivalent `LastMessage` producer, so the item remains explicitly partial
+instead of being counted as fixed.
 
 ---
 
@@ -217,15 +220,27 @@ separate command-owner reason recorded in D6.
 
 ## Rank 4 — cosmetic field differences
 
-### D11. The `CLIENT_DEPRECATE_EOF` terminal packet zeroes `affected_rows`/`last_insert_id` and carries no info string
+### D11. The `CLIENT_DEPRECATE_EOF` terminal packet zeroes `affected_rows`/`last_insert_id` and carries no info string (PARTIALLY FIXED 2026-09-05)
 
 - Go: `pkg/server/conn.go:1770-1772` — `writeEOF` under `ClientDeprecateEOF`
   delegates to `writeOkWith(mysql.EOFHeader, ...)`, which fills
   `cc.ctx.AffectedRows()`, `cc.ctx.LastInsertID()` and the length-encoded
   `cc.ctx.LastMessage()` (`conn.go:1688-1721`).
-- Rust: `rust/crates/tidb-protocol/src/resultset.rs:145-157` hardcodes
-  `affected_rows: 0, last_insert_id: 0`, and every server call site passes
-  `info: Vec::new()` (`mysql_connection.rs:1576-1583`).
+- Rust before this batch: `rust/crates/tidb-protocol/src/resultset.rs:145-157`
+  hardcoded `affected_rows: 0, last_insert_id: 0`, and every server call site
+  passed `info: Vec::new()` (`mysql_connection.rs:1576-1583`).
+- Rust after this batch: `ResultSetOptions`, `EofPacket`, and
+  `QueryResult` preserve the statement's affected rows, last-insert id, and
+  info bytes through text, binary, prepared, and cursor result writers
+  (`tidb-protocol/src/resultset.rs`, `tidb-server/src/sql_node.rs`,
+  `connection_writers.rs`, `mysql_connection.rs`). Pipeline and cluster
+  sessions now publish their live `last_insert_id` into that snapshot. A
+  focused protocol regression proves non-zero values and info bytes survive
+  the deprecated-EOF encoding.
+- Remaining boundary: Rust has no session-owned equivalent of Go's
+  `StatementContext.LastMessage()`, so current SQL producers intentionally
+  publish an empty info field. The transport no longer discards a value if a
+  producer supplies one; the missing producer is tracked rather than hidden.
 
 Distinguishing case: after a statement that set `LastMessage` (e.g. an
 `UPDATE`'s `"Rows matched: 1  Changed: 0  Warnings: 0"`), the next result set's

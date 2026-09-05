@@ -486,6 +486,12 @@ pub struct QueryResult<'a> {
     /// holds the session's mutable borrow while it is being written and
     /// nothing can change the transaction state under it in the meantime.
     status: WireStatus,
+    /// Statement affected-row value carried by a deprecated-EOF OK packet.
+    affected_rows: u64,
+    /// Statement last-insert-id value carried by a deprecated-EOF OK packet.
+    last_insert_id: u64,
+    /// Statement informational text carried by a deprecated-EOF OK packet.
+    info: Vec<u8>,
 }
 
 /// Typed statement policy retained only when a prepared cursor materializes
@@ -823,6 +829,9 @@ impl<'a> QueryResult<'a> {
             cursor_materialization: None,
             warnings: 0,
             status: WireStatus::AUTOCOMMIT,
+            affected_rows: 0,
+            last_insert_id: 0,
+            info: Vec::new(),
         }
     }
 
@@ -866,6 +875,21 @@ impl<'a> QueryResult<'a> {
         self
     }
 
+    /// Attaches the statement values Go's `writeEOF` forwards to its
+    /// deprecated-EOF OK packet. Legacy EOF clients ignore these fields.
+    #[must_use]
+    pub fn with_statement_output(
+        mut self,
+        affected_rows: u64,
+        last_insert_id: u64,
+        info: Vec<u8>,
+    ) -> Self {
+        self.affected_rows = affected_rows;
+        self.last_insert_id = last_insert_id;
+        self.info = info;
+        self
+    }
+
     /// The status word for the EOF packets that frame this result set.
     #[must_use]
     pub fn wire_status(&self) -> WireStatus {
@@ -876,6 +900,24 @@ impl<'a> QueryResult<'a> {
     #[must_use]
     pub fn warning_count(&self) -> u16 {
         self.warnings
+    }
+
+    /// Statement affected rows preserved for deprecated-EOF framing.
+    #[must_use]
+    pub const fn affected_rows(&self) -> u64 {
+        self.affected_rows
+    }
+
+    /// Statement last insert id preserved for deprecated-EOF framing.
+    #[must_use]
+    pub const fn last_insert_id(&self) -> u64 {
+        self.last_insert_id
+    }
+
+    /// Statement info preserved for deprecated-EOF framing.
+    #[must_use]
+    pub fn info(&self) -> &[u8] {
+        &self.info
     }
 
     /// Returns the sole mutable result-set owner.
@@ -904,6 +946,9 @@ impl<'a> QueryResult<'a> {
             cursor_materialization,
             warnings,
             status,
+            affected_rows,
+            last_insert_id,
+            info,
         } = self;
         Self {
             source: BoxedResultSetSource {
@@ -915,6 +960,9 @@ impl<'a> QueryResult<'a> {
             cursor_materialization,
             warnings,
             status,
+            affected_rows,
+            last_insert_id,
+            info,
         }
     }
 }

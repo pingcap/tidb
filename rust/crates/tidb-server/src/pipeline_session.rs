@@ -456,6 +456,11 @@ impl QuerySession for PipelineServerSession {
                 .with_statement_status(
                     self.session.wire_warning_count(),
                     WireStatus::of_session(&self.session),
+                )
+                .with_statement_output(
+                    0,
+                    self.session.statement_insert_id(),
+                    Vec::new(),
                 );
                 GeneralExecuteOutcome::Rows(match process_statement {
                     Some(statement) => result.with_process_statement(statement),
@@ -488,10 +493,12 @@ impl QuerySession for PipelineServerSession {
         };
         // The rows are already materialized, so the buffer this reads is the
         // finished statement's -- the same one Go's terminal `writeEOF` reads.
-        let result = QueryResult::new(Box::new(source)).with_statement_status(
-            self.session.wire_warning_count(),
-            WireStatus::of_session(&self.session),
-        );
+        let result = QueryResult::new(Box::new(source))
+            .with_statement_status(
+                self.session.wire_warning_count(),
+                WireStatus::of_session(&self.session),
+            )
+            .with_statement_output(0, self.session.statement_insert_id(), Vec::new());
         Ok(match process_statement {
             Some(statement) => result.with_process_statement(statement),
             None => result,

@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/server` wire result-set terminal metadata): aligned Rust's
+  deprecated-EOF OK-shaped packet with Go's `writeEOF`/`writeOkWith` value
+  flow. `ResultSetOptions`, `EofPacket`, and `QueryResult` now carry affected
+  rows, last-insert id, and info bytes through text, binary, prepared, and
+  cursor writers; pipeline and cluster sessions publish the live insert id.
+  Added a focused non-zero packet regression and source guard. The Go
+  `LastMessage` producer has no Rust session owner yet, so the receipt records
+  that info-source boundary explicitly.
 - 2026-09-05 (`pkg/sessionctx/variable` statement-summary GLOBAL hooks):
   wired Go's `stmtsummaryv2` setters for enablement, internal-query capture,
   refresh/history sizing, capacity, SQL length, eviction persistence, and

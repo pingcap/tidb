@@ -75,6 +75,40 @@ fn test_ok_info_is_length_encoded() {
 }
 
 #[test]
+fn deprecate_eof_preserves_statement_output_like_go_write_eof() {
+    let packet = encode_eof_packet(&EofPacket {
+        affected_rows: 7,
+        last_insert_id: 9,
+        status_flags: 2,
+        deprecate_eof: true,
+        info: b"done".to_vec(),
+        ..EofPacket::default()
+    });
+    assert_eq!(
+        packet,
+        vec![0xfe, 7, 9, 2, 0, 0, 0, 4, b'd', b'o', b'n', b'e']
+    );
+
+    let legacy = encode_eof_packet(&EofPacket {
+        affected_rows: 7,
+        last_insert_id: 9,
+        status_flags: 2,
+        deprecate_eof: false,
+        info: b"done".to_vec(),
+        ..EofPacket::default()
+    });
+    assert_eq!(legacy, vec![0xfe, 0, 0, 2, 0]);
+}
+
+#[test]
+fn eof_encoder_uses_the_statement_snapshot_instead_of_zero_literals() {
+    let source = include_str!("../src/resultset.rs");
+    assert!(source.contains("affected_rows: packet.affected_rows"));
+    assert!(source.contains("last_insert_id: packet.last_insert_id"));
+    assert!(source.contains("info: packet.info.clone()"));
+}
+
+#[test]
 fn text_result_set_sequence_matches_write_chunks() {
     let packets = encode_text_result_set(
         &[source_column()],

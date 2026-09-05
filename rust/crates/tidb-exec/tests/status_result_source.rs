@@ -48,6 +48,9 @@ fn dml_status_maps_to_ok_and_text_result_options() {
     assert!(snapshot.ok_packet.protocol_41);
     assert_eq!(snapshot.result_set_options.status_flags, 2);
     assert_eq!(snapshot.result_set_options.warnings, 1);
+    assert_eq!(snapshot.result_set_options.affected_rows, 3);
+    assert_eq!(snapshot.result_set_options.last_insert_id, 17);
+    assert_eq!(snapshot.result_set_options.info, b"Records: 3  Warnings: 1");
     assert!(snapshot.result_set_options.deprecate_eof);
     assert!(snapshot.result_set_options.protocol_41);
     assert_eq!(snapshot.published.row_count, 3);
@@ -92,6 +95,18 @@ fn warning_count_is_protocol_sized_and_warning_payload_is_not_reinterpreted() {
 
     assert_eq!(snapshot.ok_packet.warnings, 2);
     assert_eq!(snapshot.result_set_options.warnings, 2);
+    assert_eq!(
+        snapshot.result_set_options.affected_rows,
+        published.affected_rows
+    );
+    assert_eq!(
+        snapshot.result_set_options.last_insert_id,
+        published.last_insert_id
+    );
+    assert_eq!(
+        snapshot.result_set_options.info,
+        published.message.as_bytes()
+    );
     assert_eq!(snapshot.published.warnings, published.warnings);
     assert_eq!(snapshot.ok_packet.info, b"TEXT:message");
 }

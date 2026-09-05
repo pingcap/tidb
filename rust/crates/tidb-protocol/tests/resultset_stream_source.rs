@@ -68,7 +68,7 @@ fn owned_text_row_matches_borrowed_go_framing_and_encoding() {
         result_encoder: tidb_protocol::ResultEncoder::new("utf8mb4").unwrap(),
         ..ResultSetOptions::default()
     };
-    let mut borrowed = ResultSetStream::new(vec![column()], options);
+    let mut borrowed = ResultSetStream::new(vec![column()], options.clone());
     let mut owned = ResultSetStream::new(vec![column()], options);
     borrowed.metadata_packets().unwrap();
     owned.metadata_packets().unwrap();
