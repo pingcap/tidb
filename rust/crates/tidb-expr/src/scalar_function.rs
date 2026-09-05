@@ -207,11 +207,6 @@ pub fn is_unfoldable_function(name: &str) -> bool {
                 | "row_count"
                 | "version"
                 | "tidb_version"
-                // Reads/writes the statement's previous publication through
-                // Go's SessionVarsPropReader. Keep both LAST_INSERT_ID forms
-                // runtime-bound so a planner fold cannot freeze NULL (or
-                // erase the one-argument side effect) in a no-session scope.
-                | "last_insert_id"
                 | "nextval"
                 | "lastval"
                 | "setval"
@@ -959,7 +954,7 @@ impl ScalarFunction {
     /// return a value in the eval-type family of the function's own result
     /// type -- see [`Self::coerce_to_ret_type`] for why that is the whole
     /// point of Go's `Eval` and not an afterthought.
-    pub fn eval(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    pub fn eval(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         if let Some(value) = self.eval_fast_integer_binary(ctx, row)? {
             return self.coerce_to_ret_type(value);
         }
@@ -986,7 +981,7 @@ impl ScalarFunction {
     /// ladder as their behavior contract.
     fn eval_fast_integer_binary(
         &self,
-        ctx: &impl Columns,
+        ctx: &dyn Columns,
         row: Row<'_>,
     ) -> Result<Option<Datum>, EvalError> {
         if self.args.len() != 2 {
@@ -1041,7 +1036,7 @@ impl ScalarFunction {
     /// Datum-level implementations. Each returns whatever its operand kinds
     /// produced; reconciling that with the declared result type is
     /// [`Self::eval`]'s job, done once for all of them.
-    fn eval_by_signature(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    fn eval_by_signature(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         let name = self.func_name.lowercase();
         // Go `builtinValues*Sig` reads the statement's current insert row,
         // not its (zero) expression arguments. The offset is immutable build
@@ -2453,7 +2448,7 @@ impl ScalarFunction {
 /// call declared. NULL stays NULL, and a value already of that kind passes
 /// through untouched -- the conversion only matters when an assignment made
 /// during this same statement changed the kind out from under the plan.
-fn uservar_as_kind(kind: &str, value: Datum, ctx: &impl Columns) -> Result<Datum, EvalError> {
+fn uservar_as_kind(kind: &str, value: Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     use tidb_ast::CastType;
     if value.is_null() {
         return Ok(Datum::Null);

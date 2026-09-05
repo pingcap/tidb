@@ -64,7 +64,7 @@ impl JsonSchemaCache {
     pub(crate) fn eval(
         &self,
         args: &[Expression],
-        ctx: &impl Columns,
+        ctx: &dyn Columns,
         row: Row<'_>,
     ) -> Result<Datum, EvalError> {
         let [schema_arg, document_arg] = args else {

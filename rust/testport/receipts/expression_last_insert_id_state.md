@@ -1,7 +1,8 @@
 # Rust LAST_INSERT_ID session-state receipt
 
 Status: bounded Rust-only alignment batch; this receipt covers constant-fold
-ownership for `LAST_INSERT_ID()` and `LAST_INSERT_ID(expr)`.
+ownership for `LAST_INSERT_ID()` and `LAST_INSERT_ID(expr)`, including the
+construction-time side effect of the one-argument form.
 
 Comparison source: Go `origin/master` at
 `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` (2026-09-06).
@@ -22,7 +23,10 @@ The Rust owners were inventoried before editing: `tidb-expr` has 176 tracked
 files and `tidb-session` has 222, including every production source, inline and
 standalone test, generated test harness input, fixture, platform variant,
 Cargo/build artifact, and package metadata. The changed Rust files are
-`tidb-expr/src/scalar_function.rs` and `tidb-expr/src/constant_fold.rs`.
+`tidb-expr/src/scalar_function.rs`, `tidb-expr/src/constant_fold.rs`,
+`tidb-expr/src/expression.rs`, `tidb-expr/src/lib.rs`,
+`tidb-expr/src/builtin_ext/json/report.rs`, and
+`tidb-planner/src/plan_builder.rs`.
 
 ## Alignment
 
@@ -39,20 +43,28 @@ replaced `LAST_INSERT_ID()` with `NULL` and could erase
 `LAST_INSERT_ID(expr)`'s publication. SQL auto-increment tests consequently
 read `NULL` after successful inserts instead of the generated id.
 
-Both Rust unfoldable registries now include `last_insert_id`. A planner or
-construction-time fold therefore leaves either signature intact until a real
-statement context evaluates it, preserving Go's previous-id read and
-one-argument publication semantics.
+Go's `unFoldableFunctions` deliberately does *not* include this name. The
+zero-argument reader must stay runtime-bound because it reads the previous
+statement, while `LAST_INSERT_ID(expr)` is folded by `NewFunction` and its
+construction-time evaluation publishes through `SessionVars`. Rust now keeps
+only the zero-argument call runtime-bound at the arity-aware fold gate. The
+plan resolver also evaluates one-argument calls immediately with the live
+statement context, so a later sibling-resolution error (including in HAVING)
+cannot erase the publication. The scalar-function unfoldable table now
+matches Go's source table as well.
 
 ## Validation
 
 Focused validation:
 
 - `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-expr --lib constant_fold::deferred_function_tests::last_insert_id_requires_runtime_session_state -- --exact --nocapture --test-threads=1`
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-expr --lib constant_fold::deferred_function_tests::last_insert_id_argument_folds_and_publishes_during_construction -- --exact --nocapture --test-threads=1`
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_core::status_values::a_folded_last_insert_id_publishes_even_when_a_later_expression_fails_to_resolve -- --exact --nocapture --test-threads=1`
 - `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-session --lib tests_auto_increment:: -- --nocapture --test-threads=1`
 
-The direct fold regression and all 33 auto-increment/session publication tests
-passed.
+The direct zero-argument and construction-side-effect regressions, the
+left-to-right sibling/HAVING failure regression, and all 33
+auto-increment/session publication tests passed.
 
 Ready validation for this batch:
 

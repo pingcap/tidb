@@ -53,7 +53,7 @@ pub fn derive_constant_null_flag(expr: &mut Expression) {
 /// recursively evaluating them here would duplicate warnings and side effects.
 pub fn fold_constant_in_mode(
     expr: &mut Expression,
-    ctx: &impl crate::Columns,
+    ctx: &dyn crate::Columns,
     mode: ConstantFoldMode,
 ) {
     fold_constant_in_mode_inner(expr, ctx, mode, false);
@@ -68,7 +68,7 @@ pub fn fold_constant_in_mode(
 /// ordinary Go construction-time fold.
 pub fn fold_constant_in_mode_preserving_warning_casts(
     expr: &mut Expression,
-    ctx: &impl crate::Columns,
+    ctx: &dyn crate::Columns,
     mode: ConstantFoldMode,
 ) {
     fold_constant_in_mode_inner(expr, ctx, mode, true);
@@ -76,7 +76,7 @@ pub fn fold_constant_in_mode_preserving_warning_casts(
 
 fn fold_constant_in_mode_inner(
     expr: &mut Expression,
-    ctx: &impl crate::Columns,
+    ctx: &dyn crate::Columns,
     mode: ConstantFoldMode,
     preserve_warning_casts: bool,
 ) {
@@ -94,7 +94,7 @@ fn fold_constant_in_mode_inner(
 
 fn fold_current_value_in(
     expr: &mut Expression,
-    ctx: &impl crate::Columns,
+    ctx: &dyn crate::Columns,
     preserve_warning_casts: bool,
 ) -> Option<Datum> {
     if preserve_warning_casts && (has_runtime_warning_cast(expr) || has_runtime_warning_in(expr)) {
@@ -116,7 +116,7 @@ fn fold_current_value_in(
     // subtree the source keeps runtime-only.
     if let Expression::ScalarFunction(func) = expr {
         let name_lc = func.func_name.lowercase();
-        let lazy = is_lazy_short_circuit(&name_lc) || is_unfoldable(&name_lc);
+        let lazy = is_lazy_short_circuit(&name_lc) || is_unfoldable_call(&name_lc, func.args.len());
         if !lazy {
             for arg in &mut func.args {
                 fold_current_value_in(arg, ctx, preserve_warning_casts);
@@ -133,7 +133,7 @@ fn fold_current_value_in(
     // such as COERCIBILITY and enclosing collation aggregation inspect it
     // after folding.
     let original_collation = func.collation.clone();
-    let unfoldable = is_unfoldable(func.func_name.lowercase());
+    let unfoldable = is_unfoldable_call(func.func_name.lowercase(), func.args.len());
     let mut has_null_arg = false;
     let mut has_deferred_arg = false;
     let mut all_const_arg = true;
@@ -290,7 +290,7 @@ fn fold_value(expr: &mut Expression) -> Option<Datum> {
         Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,
         Expression::ScalarFunction(func) => func,
     };
-    if is_unfoldable(func.func_name.lowercase()) {
+    if is_unfoldable_call(func.func_name.lowercase(), func.args.len()) {
         // Go still folds this node's ARGUMENTS -- `foldConstant` recurses
         // through `NewFunction` as each level is built -- it only refuses to
         // fold the unfoldable node itself.
@@ -359,7 +359,8 @@ pub(crate) fn folds_to_constant(expr: &Expression) -> bool {
         Expression::Constant(_) => true,
         Expression::Column(_) | Expression::CorrelatedColumn(_) => false,
         Expression::ScalarFunction(func) => {
-            !is_unfoldable(func.func_name.lowercase()) && func.args.iter().all(folds_to_constant)
+            !is_unfoldable_call(func.func_name.lowercase(), func.args.len())
+                && func.args.iter().all(folds_to_constant)
         }
     }
 }
@@ -427,10 +428,6 @@ pub fn is_unfoldable(name: &str) -> bool {
             | "row_count"
             | "version"
             | "tidb_version"
-            // Go's LAST_INSERT_ID signatures require SessionVarsPropReader;
-            // a no-session fold must stay deferred rather than replacing the
-            // zero-argument form with NULL or dropping its one-argument write.
-            | "last_insert_id"
             // Reads the SESSION transaction context at evaluation: folding
             // it at plan time would freeze the zero the statement had before
             // its first read opened a snapshot.
@@ -440,6 +437,19 @@ pub fn is_unfoldable(name: &str) -> bool {
             | "setval"
             | "any_value"
     )
+}
+
+/// Go does not classify `LAST_INSERT_ID` in `unFoldableFunctions`: the
+/// one-argument form is folded by `NewFunction`, and that construction-time
+/// evaluation publishes its value through `SessionVars`. Only the zero-
+/// argument reader must remain runtime-bound because its result comes from
+/// the previous statement. Keep that arity distinction at the fold gate while
+/// leaving [`is_unfoldable`] as the source-name table used by other callers.
+fn is_unfoldable_call(name: &str, arg_count: usize) -> bool {
+    if name == "last_insert_id" {
+        return arg_count == 0;
+    }
+    is_unfoldable(name)
 }
 
 /// Go `IsDeferredFunctions` (`pkg/expression/function_traits.go:159-171`),
@@ -569,10 +579,9 @@ mod deferred_function_tests {
         );
     }
 
-    /// Go's LAST_INSERT_ID signatures read/write `SessionVarsPropReader`.
+    /// Go's zero-argument LAST_INSERT_ID reads `SessionVarsPropReader`.
     /// Folding in a planner scope without session properties must therefore
-    /// leave both forms runtime-bound instead of freezing NULL or erasing the
-    /// one-argument publication side effect.
+    /// leave that reader runtime-bound rather than freezing NULL.
     #[test]
     fn last_insert_id_requires_runtime_session_state() {
         let mut expr = Expression::ScalarFunction(ScalarFunction::new(
@@ -582,6 +591,40 @@ mod deferred_function_tests {
         ));
         fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
         assert!(matches!(expr, Expression::ScalarFunction(_)));
+    }
+
+    /// Go's one-argument LAST_INSERT_ID is intentionally absent from
+    /// `unFoldableFunctions`: `NewFunction` folds it immediately and the fold
+    /// publishes the value through the live statement context. Keep that
+    /// side effect when the generic folder is called with a session context.
+    #[test]
+    fn last_insert_id_argument_folds_and_publishes_during_construction() {
+        struct RecordingColumns(std::cell::Cell<Option<u64>>);
+
+        impl Columns for RecordingColumns {
+            fn get(&self, _path: &[String]) -> Option<Datum> {
+                None
+            }
+
+            fn set_last_insert_id(&self, value: u64) {
+                self.0.set(Some(value));
+            }
+        }
+
+        let int_type = FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("last_insert_id"),
+            int_type.clone(),
+            vec![Expression::Constant(crate::constant::Constant::new(
+                Datum::Int(42),
+                int_type,
+            ))],
+        ));
+        let context = RecordingColumns(std::cell::Cell::new(None));
+        fold_constant_in_mode(&mut expr, &context, ConstantFoldMode::Normal);
+
+        assert!(matches!(expr, Expression::Constant(_)));
+        assert_eq!(context.0.get(), Some(42));
     }
 
     /// Go's information builtins carry `CurrentDB`, `CurrentUserPropReader`,

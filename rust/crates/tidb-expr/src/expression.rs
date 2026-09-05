@@ -721,7 +721,7 @@ impl Expression {
     /// unit and is reported as unsupported until then.
     pub fn eval(
         &self,
-        ctx: &impl crate::context::Columns,
+        ctx: &dyn crate::context::Columns,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<tidb_datatype::Datum, crate::context::EvalError> {
         let value = match self {

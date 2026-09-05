@@ -672,7 +672,7 @@ fn current_date_value(
 /// fold uses the same row shape instead of inventing a second evaluator.
 pub fn eval_expression_once(
     expression: &expression::Expression,
-    ctx: &impl Columns,
+    ctx: &dyn Columns,
 ) -> Result<Datum, EvalError> {
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);

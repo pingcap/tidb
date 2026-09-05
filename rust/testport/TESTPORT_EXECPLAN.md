@@ -9156,3 +9156,14 @@ risks without claiming repository-wide parity.
   warning casts are covered alongside the existing integer cases. Focused
   builtin/numeric/comparison regressions and Ready evidence are recorded in
   `receipts/planner_live_constant_warning.md`.
+- 2026-09-06 (`pkg/expression`/`pkg/planner/core` LAST_INSERT_ID fold
+  ownership): Rust's arity-aware constant-fold gate now matches Go's split:
+  `LAST_INSERT_ID()` remains runtime-bound, while `LAST_INSERT_ID(expr)` folds
+  with the live statement context and publishes its side effect during
+  construction. The plan resolver performs that narrow fold before returning
+  from each child rewrite, so a later unknown function or HAVING-resolution
+  error cannot erase the earlier publication. The scalar-function unfoldable
+  table no longer incorrectly lists this Go-foldable name, and dyn-context
+  evaluation support keeps the shared folder usable from the resolver. Focused
+  expression and session status regressions plus Ready evidence are recorded in
+  `receipts/expression_last_insert_id_state.md`.

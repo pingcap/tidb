@@ -871,6 +871,21 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         if self.warning_context.is_some() {
             if mode != tidb_expr::ConstantFoldMode::Disabled {
                 tidb_expr::derive_constant_null_flag(expression);
+                // `LAST_INSERT_ID(expr)` is the one foldable session builtin
+                // whose construction has an observable side effect. Go's
+                // `NewFunction` evaluates it as soon as the node is built,
+                // so a later sibling-resolution error must not erase the
+                // publication. Keep the broad live fold deferred for warning
+                // ownership, but replay this narrow source seam immediately.
+                if let Expression::ScalarFunction(function) = expression {
+                    if function.func_name.lowercase() == "last_insert_id"
+                        && function.args.len() == 1
+                    {
+                        if let Some(context) = self.warning_context {
+                            tidb_expr::fold_constant_in_mode(expression, context, mode);
+                        }
+                    }
+                }
             }
             return;
         }
@@ -952,6 +967,11 @@ impl ColumnResolver for PlanScopeResolver<'_> {
 
     fn time_zone(&self) -> SessionTimeZone {
         self.time_zone.clone()
+    }
+
+    fn current_database(&self) -> Option<String> {
+        self.warning_context
+            .and_then(tidb_expr::Columns::current_database)
     }
 }
 
