@@ -64,3 +64,18 @@ its per-path duration rules, the plan-replayer status records
 directory walking, file deletion) keep the file-system and SQL effects
 injectable. Next slices: `historical_stats`, `topn_slow_query`,
 `serverinfo_syncer`.
+
+## historical_stats + topn_slow_query slices (2026-09-05, fifth pass) — VERIFIED
+
+`historical_stats.rs` mirrors the worker end to end: the enable flag,
+the non-blocking channel send that silently discards when full (Go's
+warn-and-drop), the TableByID-then-FindTableByPartitionID lookup whose
+order decides the dump's is_partition flag (documented as decisive),
+`SchemaByTable`, the stats-enable gate, `RecordHistoricalStatsToStorage`
+and both metric counters, with infoschema and metrics injected through
+traits.
+
+`topn_slow_query.rs` mirrors the manual heap (less/push/pop/up/down/
+init reproducing Go's container/heap), `RemoveExpired`, `Query`, and
+the ring queue's Enqueue — the same arithmetic over the same ordering.
+Next slice: `serverinfo_syncer`.
