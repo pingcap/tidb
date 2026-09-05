@@ -36,6 +36,7 @@ impl TestStorage {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("create test spill directory");
         let authority = Arc::new(
             SpillStorage::open(SpillStorageSpec {
                 path: path.clone(),

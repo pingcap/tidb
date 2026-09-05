@@ -31,6 +31,7 @@ fn sorted_container_orders_rows_across_spill_and_rejects_late_adds() {
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).expect("create test spill directory");
     let storage = Arc::new(
         SpillStorage::open(SpillStorageSpec {
             path,

@@ -122,6 +122,10 @@ pub(crate) mod test_temp_storage {
             encryption.as_config_value()
         ));
         let _ = std::fs::remove_dir_all(&dir);
+        // Production guarantees `tidb_spill_dir` exists (the server owns it);
+        // a fresh test process starts with nothing, so create the scratch
+        // directory here or every writer's first `create` fails NotFound.
+        std::fs::create_dir_all(&dir).expect("create test spill directory");
         Arc::new(
             SpillStorage::open(SpillStorageSpec {
                 path: dir,
