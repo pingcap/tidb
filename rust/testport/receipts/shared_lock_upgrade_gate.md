@@ -60,6 +60,13 @@ both SESSION and GLOBAL writes, while the NextGen build accepts them. The
 Rust registry applies this gate after boolean normalization, so the two input
 spellings have the same kernel-dependent result as Go.
 
+The adjacent `tidb_enable_shared_lock_promotion` SetSession hook is now
+represented by a typed Rust session field. `checkNoopFuncs` removes shared-lock
+clauses from its refusal/warning list when promotion is enabled, matching Go's
+preprocessor rewrite to the real `FOR UPDATE` path; disabling promotion restores
+the original no-op gate. Global seeding and statement restore recompute the
+typed field just like the other transaction switches.
+
 ## Regression evidence
 
 Before the change, the vendored transaction guard rejected every exclusive
@@ -107,6 +114,14 @@ cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --lock
 cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
   -p tidb-session --features tidb-config/nextgen --lib shared_lock_upgrade -- --nocapture
 # passed: 2 tests (NextGen acceptance branch)
+
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-session --lib shared_lock_promotion_bypasses_noop_share_gate -- --nocapture
+# passed: 1 test
+
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked \
+  -p tidb-session --lib shared_lock_promotion_switch_uses_go_typed_state -- --nocapture
+# passed: 1 test
 
 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 # reports pre-existing formatting drift in unrelated workspace files and

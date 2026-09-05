@@ -410,10 +410,9 @@ fn sql_mode_is_normalized_when_it_is_set() {
 /// against captured TiDB output with `tidb_enable_noop_functions` at its
 /// `OFF` default.
 ///
-/// NOT PORTED from Go's own suites: `tidb_enable_shared_lock_promotion`
-/// (no locking layer here to promote to) and the `READ ONLY` /
-/// `OFFLINE MODE` / `sql_auto_is_null` gates, which belong to variable
-/// and transaction surfaces this tier does not have.
+/// The real locking executor is still outside this tier, but the
+/// `tidb_enable_shared_lock_promotion` admission rewrite is covered by the
+/// focused regression below.
 #[test]
 fn noop_function_gate() {
     let mut session = Session::new();
@@ -496,6 +495,38 @@ fn noop_function_gate() {
     assert!(matches!(
         session.run("SELECT b FROM t INTO OUTFILE '/tmp/x'"),
         Err(DriverError::Unsupported(_))
+    ));
+}
+
+/// Go `preprocess.checkSelectNoopFuncs`: enabling shared-lock promotion turns
+/// `FOR SHARE` into the real `FOR UPDATE` path before the no-op gate, so the
+/// clause is accepted even while `tidb_enable_noop_functions` remains OFF.
+#[test]
+fn shared_lock_promotion_bypasses_noop_share_gate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b BIGINT)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1, 10)").unwrap();
+
+    assert!(matches!(
+        session.run("SELECT b FROM t WHERE a = 1 FOR SHARE"),
+        Err(DriverError::FunctionsNoopImpl("LOCK IN SHARE MODE"))
+    ));
+    session
+        .run("SET tidb_enable_shared_lock_promotion = ON")
+        .unwrap();
+    assert!(session.vars().shared_lock_promotion_enabled());
+    session.run("SELECT b FROM t WHERE a = 1 FOR SHARE").unwrap();
+    assert!(session.warnings().is_empty());
+
+    session
+        .run("SET tidb_enable_shared_lock_promotion = OFF")
+        .unwrap();
+    assert!(!session.vars().shared_lock_promotion_enabled());
+    assert!(matches!(
+        session.run("SELECT b FROM t WHERE a = 1 LOCK IN SHARE MODE"),
+        Err(DriverError::FunctionsNoopImpl("LOCK IN SHARE MODE"))
     ));
 }
 

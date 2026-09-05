@@ -139,10 +139,10 @@ impl Session {
     /// `SELECT SQL_CALC_FOUND_ROWS ...`, `... FOR SHARE` and `... LOCK IN
     /// SHARE MODE` all raise 1235; `FOR UPDATE` does not.
     ///
-    /// DEFERRED (documented): `tidb_enable_shared_lock_promotion`, which
-    /// turns `FOR SHARE` into `FOR UPDATE` before this check, and the
-    /// `ForShareLockEnabledByNoop` statement flag that only a real locking
-    /// layer would read.
+    /// `tidb_enable_shared_lock_promotion` turns `FOR SHARE` into `FOR UPDATE`
+    /// before this check. The eventual lock executor still owns the
+    /// `ForShareLockEnabledByNoop` statement flag, but admission must already
+    /// skip the no-op gate when promotion is enabled.
     pub(crate) fn check_noop_functions(
         &mut self,
         query: &tidb_ast::QueryStmt,
@@ -150,6 +150,12 @@ impl Session {
         let mode = self.noop_funcs_mode(false);
         let mut gated: Vec<&'static str> = Vec::new();
         collect_noop_clauses(query, &mut gated);
+        if self.vars.shared_lock_promotion_enabled() {
+            // Go's preprocessor rewrites the shared-lock clause to the real
+            // FOR UPDATE path before `checkNoopFuncs`; it must not warn or
+            // refuse the source-shaped `FOR SHARE` spelling here.
+            gated.retain(|clause| *clause != "LOCK IN SHARE MODE");
+        }
         if gated.is_empty() || mode == NoopFuncsMode::On {
             return Ok(());
         }

@@ -675,6 +675,12 @@ For each bounded behavior cluster:
   NextGen accepts the opt-in switch. Focused SQL and typed-state regressions
   cover both compile-time branches; the package receipt records the complete
   owner inventory and Ready evidence.
+- 2026-09-05 (`pkg/sessionctx/variable` shared-lock promotion admission):
+  added the typed `SharedLockPromotion` session hook and matched Go's
+  preprocessor rewrite that removes `FOR SHARE` from the no-op refusal/warning
+  path when promotion is enabled. The focused regression verifies OFF refusal,
+  ON acceptance, warning-free execution, and restoration after disabling; the
+  real lock executor remains a separate downstream boundary in the receipt.
 - 2026-09-05 (`pkg/planner/core/operator/logicalop` LATERAL Apply stats):
   removed the Rust-only recursive `unported_stats` refusal for keyed LATERAL
   Apply nodes. Rust now uses the existing full-join NDV estimator for explicit
