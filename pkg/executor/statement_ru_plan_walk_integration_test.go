@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -34,12 +35,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 const (
@@ -721,7 +724,37 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
 	tk.MustExec("create table t(id int primary key, v int)")
-	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	// UniStore's Get and BatchGet handlers do not populate ExecDetailsV2. Add
+	// deterministic details to the otherwise real responses so this test
+	// exercises client-go's response accounting and TiDB's terminal retrieval.
+	responseHook := func(req *tikvrpc.Request, resp *tikvrpc.Response) {
+		if req == nil || resp == nil {
+			return
+		}
+		newExecDetails := func(totalKeys, processedKeys, processedKeysSize uint64) *kvrpcpb.ExecDetailsV2 {
+			return &kvrpcpb.ExecDetailsV2{ScanDetailV2: &kvrpcpb.ScanDetailV2{
+				TotalVersions:         totalKeys,
+				ProcessedVersions:     processedKeys,
+				ProcessedVersionsSize: processedKeysSize,
+			}}
+		}
+		switch typedResp := resp.Resp.(type) {
+		case *kvrpcpb.GetResponse:
+			typedResp.ExecDetailsV2 = newExecDetails(2, 1, 37)
+		case *kvrpcpb.BatchGetResponse:
+			typedResp.ExecDetailsV2 = newExecDetails(5, 2, 74)
+		}
+	}
+	unistore.UnistoreRPCClientResponseHook.Store(&responseHook)
+	t.Cleanup(func() {
+		unistore.UnistoreRPCClientResponseHook.Store(nil)
+	})
+	testfailpoint.Enable(t,
+		"github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook",
+		"return(true)",
+	)
 
 	var observation *statementRUObservation
 	testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
@@ -729,6 +762,27 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 			return
 		}
 		observation = observeInstalledStatementRUOwner(stmt)
+	})
+	type calibrationObservation struct {
+		state     string
+		scanBytes float64
+		netBytes  float64
+	}
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	calibrations := make([]calibrationObservation, 0, 2)
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64,
+		state string,
+		_, scanBytes, netBytes, _, _, _ float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		calibrations = append(calibrations, calibrationObservation{
+			state:     state,
+			scanBytes: scanBytes,
+			netBytes:  netBytes,
+		})
 	})
 
 	rs, err := tk.Exec("select v from t where id = ?", 1)
@@ -742,13 +796,28 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 	stmtCtx.SetPlan(nil)
 	stmtCtx.SetFlatPlan(nil)
 	require.NoError(t, rs.Close())
-	flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
-	require.NotEmpty(t, flat.Main)
-	require.Same(t, observation.stmt.Plan, flat.Main[0].Origin)
 	require.True(t, observation.owner.ConsumedForTest())
-	// FinishExecuteStmt publishes the effective plan to StmtCtx before the RU
-	// terminal. This does not prove that an independently cached flat plan owns it.
+	// FinishExecuteStmt publishes the effective plan before the RU terminal, but
+	// concrete point plans no longer populate or traverse the flat-plan cache.
 	require.Same(t, observation.stmt.Plan, stmtCtx.GetPlan())
+	require.Nil(t, stmtCtx.GetFlatPlan())
+	require.Len(t, calibrations, 1)
+	require.Equal(t, "incomplete", calibrations[0].state)
+	require.Equal(t, float64(74), calibrations[0].scanBytes)
+	require.Positive(t, calibrations[0].netBytes)
+
+	observation = nil
+	rs, err = tk.Exec("select v from t where id in (1, 2)")
+	require.NoError(t, err)
+	require.NotNil(t, observation)
+	require.IsType(t, &physicalop.BatchPointGetPlan{}, observation.stmt.Plan)
+	require.NoError(t, drainStatementRURecordSet(t, rs))
+	require.NoError(t, rs.Close())
+	require.True(t, observation.owner.ConsumedForTest())
+	require.Len(t, calibrations, 2)
+	require.Equal(t, "incomplete", calibrations[1].state)
+	require.Equal(t, float64(185), calibrations[1].scanBytes)
+	require.Positive(t, calibrations[1].netBytes)
 
 	t.Run("post-execution panic consumes owner", func(t *testing.T) {
 		observation = nil
