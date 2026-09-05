@@ -1082,6 +1082,24 @@ impl SysVarDef {
                 truncated: validated.truncated,
             });
         }
+        // Go's `tidb_scatter_region` Validation lowercases the requested
+        // mode and admits only the empty (off), `table`, and `global` forms.
+        // The registry's TypeStr normalization otherwise accepts any text,
+        // so keep the source closure here rather than relying on metadata's
+        // possible-values list (which is descriptive only).
+        if self.name == tidb_vardef::tidb_vars::TIDB_SCATTER_REGION {
+            let lowered = validated.value.to_ascii_lowercase();
+            if matches!(lowered.as_str(), "" | "table" | "global") {
+                return Ok(Validated {
+                    value: lowered,
+                    truncated: validated.truncated,
+                });
+            }
+            return Err(ValidationError::Refused(format!(
+                "invalid value for '{}', it should be either '', 'table' or 'global'",
+                lowered
+            )));
+        }
         // Go's `tidb_mview_maintain_mem_quota` validation: a positive value
         // below 128 is clamped to 128 with Go's `ErrTruncatedWrongValue`
         // warning riding the SET.

@@ -245,6 +245,41 @@ fn deprecated_compatibility_variables_match_go() {
     );
 }
 
+/// Go's `tidb_scatter_region` Validation accepts only the empty, `table`, and
+/// `global` modes, stores the mode lowercased, and leaves the previous value
+/// untouched after a refusal.
+#[test]
+fn scatter_region_validation_matches_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET tidb_scatter_region = 'TaBlE'")
+        .unwrap();
+    assert_eq!(one(&mut session, "SELECT @@tidb_scatter_region"), "table");
+
+    session
+        .run("SET GLOBAL tidb_scatter_region = 'GLOBAL'")
+        .unwrap();
+    assert_eq!(
+        one(&mut session, "SELECT @@global.tidb_scatter_region"),
+        "global"
+    );
+
+    let error = session
+        .run("SET tidb_scatter_region = 'invalid'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "invalid value for 'invalid', it should be either '', 'table' or 'global'"
+    );
+    assert_eq!(one(&mut session, "SELECT @@tidb_scatter_region"), "table");
+
+    session.run("SET tidb_scatter_region = ''").unwrap();
+    assert_eq!(one(&mut session, "SELECT @@tidb_scatter_region"), "");
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.
