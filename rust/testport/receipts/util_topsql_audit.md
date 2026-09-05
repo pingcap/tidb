@@ -117,6 +117,34 @@ No Rust-only TopSQL behavior was found that could be removed without deleting
 the only executable owner of a Go contract. The Rust mutex-backed maps and
 process counters are representation choices, not extra wire or SQL behavior.
 
+## Rust-only diagnostic alignment (`2026-09-06`)
+
+The complete `pkg/util/topsql/state` inventory above was rechecked before
+editing. Its Rust owner, `rust/crates/tidb-util/src/topsql_state.rs`, carried
+four `#[must_use]` annotations on the direct Go-shaped queries
+`top_sql_enabled`, `top_profiling_enabled`, `top_ru_enabled`, and
+`get_top_ru_item_interval`. Go permits callers to inspect these package-level
+flags and interval values without using the result, so the annotations were
+removed without changing state transitions or synchronization.
+
+The focused `#[deny(unused_must_use)]` regression
+`topsql_state::tests::source_api_returns_may_be_ignored_like_go` discards all
+four results. On a detached pre-fix worktree at `043654a5908`, it failed with
+exactly four `unused_must_use` diagnostics; after the fix it passes. The
+existing five state tests continue to pass.
+
+Validation for this bounded Rust-only batch:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib topsql_state::tests::source_api_returns_may_be_ignored_like_go --offline --locked -- --exact` — passed after the fix; the detached pre-fix owner failed with the four expected diagnostics.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib topsql_state::tests --offline --locked -- --test-threads=1` — passed; all five state tests.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-util --all-targets --offline --locked` — passed.
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `make lint` — passed under the Ready profile.
+- `git diff --check` — passed.
+
+No Go, Bazel, module, or Cargo manifest file changed, so `make
+bazel_prepare` was not required.
+
 ## Validation (Ready profile)
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/topsql/reporter/metrics -run '^TestIgnoreReportDataByBackpressureCounter$' -count=1` — passed after the implementation; before it the test failed to compile because the counter was undefined.

@@ -114,13 +114,11 @@ pub fn disable_top_sql() {
 }
 
 /// Go `TopSQLEnabled`.
-#[must_use]
 pub fn top_sql_enabled() -> bool {
     GLOBAL_STATE.enable.load(Ordering::SeqCst)
 }
 
 /// Go `TopProfilingEnabled`: true when either Top-SQL or Top-RU is on.
-#[must_use]
 pub fn top_profiling_enabled() -> bool {
     top_sql_enabled() || top_ru_enabled()
 }
@@ -158,7 +156,6 @@ pub fn disable_top_ru() {
 }
 
 /// Go `TopRUEnabled`: on while any subscriber remains.
-#[must_use]
 pub fn top_ru_enabled() -> bool {
     GLOBAL_STATE.ru_consumer_count.load(Ordering::SeqCst) > 0
 }
@@ -207,7 +204,6 @@ pub fn set_top_ru_item_interval(interval: ItemInterval) -> Result<(), InvalidTop
 }
 
 /// Go `GetTopRUItemInterval`.
-#[must_use]
 pub fn get_top_ru_item_interval() -> i64 {
     GLOBAL_STATE
         .top_ru_item_interval_seconds
@@ -349,5 +345,16 @@ mod tests {
         assert!(top_profiling_enabled());
         disable_top_ru();
         assert!(!top_profiling_enabled());
+    }
+
+    // Go callers may inspect these package-level flags without using the
+    // returned value. The Rust owner must preserve that discardable contract.
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_api_returns_may_be_ignored_like_go() {
+        top_sql_enabled();
+        top_profiling_enabled();
+        top_ru_enabled();
+        get_top_ru_item_interval();
     }
 }
