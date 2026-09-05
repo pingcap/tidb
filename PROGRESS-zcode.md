@@ -464,3 +464,5 @@
 - 下轮恢复点: (1) 兄弟会话修复 4 测试; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队; (5) session lib +36 失败同批溯源。
 - tests_analyze 5 失败 A/B 定案: stash sysvar.rs 后失败依旧→与我的 sysvar.rs 无关, 属兄弟会话 stats/analyze 在途区(estimates 1.00 vs 7.00 = 伪统计回退)。已通知性记录, 修复归其 owner。
 - 下轮恢复点: (1) 跟随兄弟会话 analyze/stats 修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- tests_analyze 根因定位(推 173e6fbc57b 后): a9c77f181fd(statistics: reconcile analyze metadata after sampling)将 analyze 版本标记改为采样快照 TSO 且把替换推迟到"真实集群边界"——有界会话测试路径无该边界, 存储的统计未被会话识别→伪统计回退→estimates 1.00。修复归其 owner: 在会话测试路径补齐版本替换或调整快照语义。
+- 下轮恢复点: (1) 跟随兄弟会话修复; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
