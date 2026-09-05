@@ -127,6 +127,11 @@ For each bounded behavior cluster:
   returning original text on type or variable-specific refusal. Focused
   coverage pins secure auth, analyze version, default auth plugin, and
   `init_connect` behavior.
+- 2026-09-05 (`pkg/sessionctx/variable` internal session visibility): enforced
+  Go's `InternalSessionVariable` rule in the Rust session setter so explicit
+  `SET SESSION tidb_redact_log` returns 1193 while its unqualified read path
+  remains available; the GLOBAL-only plan-cache companion remains 1229.
+  Added focused regression coverage and removed the stale vardef gap shim.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session

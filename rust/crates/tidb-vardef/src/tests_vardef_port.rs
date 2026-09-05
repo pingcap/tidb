@@ -1393,12 +1393,6 @@ fn settersandgetters_unported() {}
 #[ignore]
 fn validate_with_relaxed_validation_unported() {}
 
-/// Go `pkg/sessionctx/variable/tests/variable_test.go::TestValidateInternalSessionVariable.
-// go-parity-gap: SysVar registry + InternalSessionVariable flag not ported
-#[test]
-#[ignore]
-fn validate_internal_session_variable_unported() {}
-
 /// Go `pkg/sessionctx/variable/tests/variable_test.go::TestInstanceConfigHasMatchingSysvar.
 // go-parity-gap: depends on pkg/config JSON config + SysVar registry, neither ported here
 #[test]

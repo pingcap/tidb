@@ -2456,6 +2456,12 @@ impl SessionVars {
         if def.is_read_only() {
             return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
         }
+        // Go's `InternalSessionVariable` marker hides this name from explicit
+        // `SET SESSION` while retaining its unqualified/internal read path.
+        // Keep the SQL setter from bypassing that visibility rule.
+        if def.is_internal_session_variable() {
+            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+        }
         if !def.has_session_scope() {
             return Err(VarError::GlobalOnlyVariable(name.to_ascii_lowercase()));
         }
@@ -4139,6 +4145,25 @@ mod tests {
             .load_from_cluster([("tidb_redact_log".to_owned(), "ON".to_owned())]);
         assert!(tidb_util::redact::need_redact());
         vars.globals.reset("tidb_redact_log").unwrap();
+    }
+
+    /// Go `TestValidateInternalSessionVariable`: explicit session writes hide
+    /// internal variables, while a GLOBAL-only variable reports its scope.
+    #[test]
+    fn internal_session_variable_rejects_explicit_set_like_go() {
+        let mut vars = SessionVars::new();
+        assert!(matches!(
+            vars.set_system("tidb_redact_log", "ON".to_owned()),
+            Err(VarError::UnknownSystemVariable(name)) if name == "tidb_redact_log"
+        ));
+        let instance_error = vars
+            .set_system("tidb_instance_plan_cache_max_size", "1".to_owned())
+            .expect_err("instance plan cache max size is GLOBAL-only");
+        assert!(matches!(
+            instance_error,
+            VarError::GlobalOnlyVariable(name)
+                if name == "tidb_instance_plan_cache_max_size"
+        ));
     }
 
     #[test]
