@@ -348,7 +348,7 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
         error,
         EvalError::DataOutOfRange {
             value: "BIGINT",
-            expression: "(test.t.col1 * -1)",
+            expression: "(test.t.col1 * -1)".to_string(),
         }
     );
 
@@ -381,7 +381,7 @@ fn test_arithmetic_overflow_error_message_with_column_name() {
         error,
         EvalError::DataOutOfRange {
             value: "BIGINT",
-            expression: "((t5.col7 + t5.col2) * 9223372036854775807)",
+            expression: "((t5.col7 + t5.col2) * 9223372036854775807)".to_string(),
         }
     );
 }
@@ -408,7 +408,7 @@ fn test_real_arithmetic_overflow_error_message() {
         error,
         EvalError::DataOutOfRange {
             value: "DOUBLE",
-            expression: "(1e+300 * 1e+300)",
+            expression: "(1e+300 * 1e+300)".to_string(),
         }
     );
 }

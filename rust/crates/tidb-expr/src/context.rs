@@ -85,7 +85,7 @@ pub enum EvalError {
         /// The value class printed before "value is out of range".
         value: &'static str,
         /// The expression/function printed inside quotes.
-        expression: &'static str,
+        expression: String,
     },
     /// A binary operation reached the evaluator with an operand pair that no
     /// domain dispatch claims.

@@ -408,7 +408,7 @@ fn math_overflow_errors_render_the_source_expression() {
             error,
             EvalError::DataOutOfRange {
                 value: "DOUBLE",
-                expression: Box::leak(expression.to_owned().into_boxed_str()),
+                expression: expression.to_string(),
             },
             "{name}"
         );

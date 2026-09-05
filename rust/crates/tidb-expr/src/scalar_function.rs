@@ -356,7 +356,7 @@ fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) 
     };
     EvalError::DataOutOfRange {
         value: class,
-        expression: Box::leak(operands.into_boxed_str()),
+        expression: operands,
     }
 }
 
@@ -368,7 +368,7 @@ fn real_arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::Binar
     };
     EvalError::DataOutOfRange {
         value: "DOUBLE",
-        expression: Box::leak(operands.into_boxed_str()),
+        expression: operands,
     }
 }
 
@@ -383,7 +383,7 @@ fn decimal_arithmetic_overflow_error(
     };
     EvalError::DataOutOfRange {
         value: "DECIMAL",
-        expression: Box::leak(operands.into_boxed_str()),
+        expression: operands,
     }
 }
 
@@ -459,10 +459,7 @@ fn math_overflow_error(function: &ScalarFunction, error: EvalError) -> EvalError
     let Some(expression) = math_overflow_expression(function) else {
         return error;
     };
-    EvalError::DataOutOfRange {
-        value,
-        expression: Box::leak(expression.into_boxed_str()),
-    }
+    EvalError::DataOutOfRange { value, expression }
 }
 
 impl ScalarFunction {

@@ -562,7 +562,7 @@ fn random_bytes(length: &Datum) -> Result<Datum, EvalError> {
     if !(1..=1024).contains(&length) {
         return Err(EvalError::DataOutOfRange {
             value: "length",
-            expression: "random_bytes",
+            expression: "random_bytes".to_string(),
         });
     }
 
@@ -865,7 +865,7 @@ mod tests {
                 dispatch("RANDOM_BYTES", &[length], &crate::NoColumns).unwrap(),
                 Err(EvalError::DataOutOfRange {
                     value: "length",
-                    expression: "random_bytes",
+                    expression: "random_bytes".to_string(),
                 })
             );
         }
