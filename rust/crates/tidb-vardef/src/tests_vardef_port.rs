@@ -1393,12 +1393,6 @@ fn set_sys_var_unported() {}
 #[ignore]
 fn time_validation_with_timezone_unported() {}
 
-/// Go `pkg/sessionctx/variable/varsutil_test.go::TestTiDBOptOn`
-// go-parity-gap: Go TiDBOptOn helper (varsutil.go) not ported to this crate
-#[test]
-#[ignore]
-fn tidb_opt_on_unported() {}
-
 /// Go `pkg/sessionctx/variable/varsutil_test.go::TestNewSessionVars`
 // go-parity-gap: SessionVars runtime state deferred from this crate by design
 #[test]
@@ -1434,18 +1428,6 @@ fn concurrency_variables_unported() {}
 #[test]
 #[ignore]
 fn session_states_system_var_unported() {}
-
-/// Go `pkg/sessionctx/variable/varsutil_test.go::TestOnOffHelpers`
-// go-parity-gap: trueFalseToOnOff / OnOffToTrueFalse helpers (varsutil.go) not ported
-#[test]
-#[ignore]
-fn on_off_helpers_unported() {}
-
-/// Go `pkg/sessionctx/variable/varsutil_test.go::TestAssertionLevel`
-// go-parity-gap: tidbOptAssertionLevel helper + AssertionLevel enum (varsutil.go) not ported
-#[test]
-#[ignore]
-fn assertion_level_unported() {}
 
 /// The four defaults this port originally lacked, re-verified against
 /// `pkg/sessionctx/vardef/tidb_vars.go` (2026-09-05): `DefTiDBServerMemoryLimit`

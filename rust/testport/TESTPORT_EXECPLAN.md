@@ -158,6 +158,10 @@ For each bounded behavior cluster:
   assertion that instance variables expose no SESSION scope, plus a real
   `SET INSTANCE tidb_general_log = ON` canonicalization/readback regression
   and a SESSION refusal check; removed the stale vardef gap shim.
+- 2026-09-05 (`pkg/sessionctx/variable` pure varsutil helpers): reconciled
+  `TestTiDBOptOn`, `TestOnOffHelpers`, and `TestAssertionLevel` with their
+  executable Rust owners (`tidb-exec::option_values` and
+  `tidb-session::varsutil`) and removed the stale vardef gap shims.
 - 2026-09-05 (`pkg/sessionctx/variable` no-op compatibility variables): marked
   the tested read-only no-op entries and skipped their GLOBAL-to-session copy,
   matching Go's `IsNoop`/`SkipInit` behavior; added metadata and fresh-session
