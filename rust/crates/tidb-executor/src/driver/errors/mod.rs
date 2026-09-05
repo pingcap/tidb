@@ -622,6 +622,22 @@ impl DriverError {
             1054,
             format!("Unknown column '{column}' in '{table}'"),
         ),
+        // Go `ErrNoReferencedTable`.
+        DriverError::ForeignKeyReferencedTableMissing(table) => MysqlError::new(
+            1824,
+            format!("Failed to open the referenced table '{table}'"),
+        ),
+        // Go `ErrForeignKeyNoColumn`.
+        DriverError::ForeignKeyReferencedColumnMissing {
+            column,
+            constraint,
+            table,
+        } => MysqlError::new(
+            3734,
+            format!(
+                "Failed to add the foreign key constraint. Missing column '{column}' for constraint '{constraint}' in the referenced table '{table}'"
+            ),
+        ),
         // Go: "BLOB/TEXT column '%-.192s' used in key specification without a
         // key length".
         DriverError::BlobKeyWithoutLength(column) => MysqlError::new(

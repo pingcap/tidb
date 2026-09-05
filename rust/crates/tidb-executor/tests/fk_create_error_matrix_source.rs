@@ -137,13 +137,7 @@ fn fk_create_error_rows_the_tier_answers_like_go() {
 // fails `[schema:3734]Failed to add the foreign key constraint. Missing
 // column 'c_unknown' for constraint 'fk_b' in the referenced table 't1'`.
 //
-// go-parity-gap (documented divergence): the tier answers the same two
-// situations with Go's GENERIC errors — 1146 "Table 'T_unknown' doesn't
-// exist" (`SchemaErrorKind::UnknownTable`) and 1054 "Unknown column
-// 'c_unknown' in 't1'" (`DriverError::UnknownColumnInTable`) — where Go
-// renders the FK-specific 1824/3734 texts.
 #[test]
-#[ignore = "go-parity-gap: missing referenced table/column answer Go's generic 1146/1054, not 1824/3734"]
 fn fk_create_missing_referenced_table_and_column_report_fk_errnos() {
     let mut catalog = Catalog::default();
     let ctx = StmtContext::for_query();
@@ -165,7 +159,13 @@ fn fk_create_missing_referenced_table_and_column_report_fk_errnos() {
         &ctx,
     )
     .expect_err("Go row 1");
-    assert_eq!(err(&error).0, 1824);
+    assert_eq!(
+        err(&error),
+        (
+            1824,
+            "Failed to open the referenced table 'T_unknown'".to_owned()
+        )
+    );
 
     // Go row 2: "[schema:3734]Failed to add the foreign key constraint.
     // Missing column 'c_unknown' for constraint 'fk_b' in the referenced
@@ -178,7 +178,13 @@ fn fk_create_missing_referenced_table_and_column_report_fk_errnos() {
         &ctx,
     )
     .expect_err("Go row 2");
-    assert_eq!(err(&error).0, 3734);
+    assert_eq!(
+        err(&error),
+        (
+            3734,
+            "Failed to add the foreign key constraint. Missing column 'c_unknown' for constraint 'fk_b' in the referenced table 't1'".to_owned()
+        )
+    );
 }
 
 // Go rows 3-6, 9-14 (`pkg/ddl/tests/fk/foreign_key_test.go:492-528`):

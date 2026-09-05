@@ -8550,7 +8550,17 @@ risks without claiming repository-wide parity.
   Go's exact ErrForbiddenDDL 8267 diagnostic, leaving the bootstrap schema
   available. Evidence is recorded in
   `receipts/ddl_system_database_guard.md`.
-- 2026-09-05 (`pkg/ddl` temporary CREATE TABLE IF NOT EXISTS): the existing
-  local-temporary duplicate path now has a live regression that records Go's
-  Note 1050 warning and `false` result for the `LIKE` form; the remaining
-  pre-split and shard-bit temporary-copy checks stay explicit gaps.
+- 2026-09-05 (`pkg/ddl` CREATE FOREIGN KEY missing references): Rust now
+  distinguishes a missing referenced table (1824) and missing referenced
+  column (3734), preserving Go's exact FK-specific diagnostics through the
+  shared CREATE/ALTER builder while leaving checks-off references deferred.
+  Evidence is recorded in
+  `receipts/ddl_foreign_key_create_missing_refs.md`; the remaining CREATE
+  validation matrix stays explicitly bounded in `b111.md`.
+- 2026-09-05 (`pkg/ddl` temporary CREATE TABLE LIKE options and duplicate
+  warning): Rust now refuses temporary copies that inherit pre-split or
+  shard-row-bit options with Go's exact 8006 diagnostic, and records the
+  duplicate local-temporary `IF NOT EXISTS` Note 1050 with a false result.
+  Only physical region splitting/SHOW TABLE REGIONS remains an explicit
+  carrier boundary; evidence is recorded in `receipts/b115.md` and
+  `receipts/ddl_temporary_create_like_warning.md`.

@@ -16,8 +16,10 @@ The regression
 `serial_create_table_like_source::create_temporary_if_not_exists_over_existing_table_files_a_1050_warning`
 now builds a permanent source and local temporary copy, reruns the guarded
 `LIKE`, and asserts the false result plus the exact single Note tuple. The
-pre-split and shard-row-bit temporary-copy checks remain ignored because their
-physical-region and preprocess carriers are not transcreated.
+neighboring pre-split and shard-row-bit temporary-copy checks are also live:
+the shared `CREATE TABLE ... LIKE` path refuses each option with Go's exact
+8006 diagnostic before temporary-copy creation. Only the physical-region
+split/SHOW TABLE REGIONS carrier remains outside this tier.
 
 ## Ready validation
 
@@ -27,6 +29,10 @@ cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.tom
   serial_create_table_like_source::create_temporary_if_not_exists_over_existing_table_files_a_1050_warning \
   -- --exact --nocapture
 # 1 passed; 0 failed
+
+cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml \
+  -p tidb-executor --test all serial_create_table_like_source -- --test-threads=1
+# 6 passed; 1 ignored; 0 failed
 
 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml \
   -p tidb-executor --all-targets

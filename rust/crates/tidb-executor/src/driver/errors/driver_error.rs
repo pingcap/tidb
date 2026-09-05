@@ -217,6 +217,19 @@ pub enum DriverError {
         /// The table it looked in.
         table: String,
     },
+    /// Go `ErrNoReferencedTable` (1824): a CREATE/ALTER FOREIGN KEY names a
+    /// table that cannot be opened while foreign-key checks are enabled.
+    ForeignKeyReferencedTableMissing(String),
+    /// Go `ErrForeignKeyNoColumn` (3734): a referenced column is absent from
+    /// the parent table while adding a FOREIGN KEY.
+    ForeignKeyReferencedColumnMissing {
+        /// The missing parent-side column.
+        column: String,
+        /// The constraint name Go includes in the diagnostic.
+        constraint: String,
+        /// The parent table being inspected.
+        table: String,
+    },
     /// Go `ErrBlobKeyWithoutLength` (1170).
     BlobKeyWithoutLength(String),
     /// Go `ErrWrongSubKey` / `dbterror.ErrIncorrectPrefixKey` (1089): an

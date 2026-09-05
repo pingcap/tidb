@@ -31,8 +31,7 @@
 //! charset half is in the sibling `column_types` module.
 
 use super::{
-    index_part_names, is_visible, Catalog, ColumnInfo, DriverError, FkAction, KvForeignKey,
-    KvIndex, SchemaErrorKind,
+    index_part_names, is_visible, Catalog, ColumnInfo, DriverError, FkAction, KvForeignKey, KvIndex,
 };
 use crate::expression_index::HiddenIndexColumn;
 use tidb_datatype::FieldTypeCode;
@@ -482,19 +481,18 @@ pub(crate) fn build_foreign_key(
         if foreign_key_checks {
             // Go `checkTableInfoValid`: an unresolvable reference is
             // `ErrNoReferencedRow`-adjacent at DDL time, not at write time.
-            let parent = catalog.get_in(&ref_schema, &ref_table).ok_or_else(|| {
-                DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                    "{ref_schema}.{ref_table}"
-                )))
-            })?;
+            let parent = catalog
+                .get_in(&ref_schema, &ref_table)
+                .ok_or_else(|| DriverError::ForeignKeyReferencedTableMissing(ref_table.clone()))?;
             let parent_columns = parent.column_names();
             for name in &ref_cols {
                 if !parent_columns
                     .iter()
                     .any(|column| column.eq_ignore_ascii_case(name))
                 {
-                    return Err(DriverError::UnknownColumnInTable {
+                    return Err(DriverError::ForeignKeyReferencedColumnMissing {
                         column: name.clone(),
+                        constraint: fk_name.clone(),
                         table: ref_table.clone(),
                     });
                 }
