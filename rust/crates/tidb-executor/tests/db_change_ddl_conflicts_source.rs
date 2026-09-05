@@ -668,10 +668,12 @@ fn create_db_if_not_exists_parallel_no_error() {
     // test_not_exists` — neither session errors.
 }
 
-// go-parity-gap: ADD COLUMN's per-spec `IF NOT EXISTS` flag is not consulted
-// by this tier's ADD COLUMN action (a duplicate still errors 1060 where Go
-// files a note), so the add/add-columns/add-index if-not-exists matrix
-// cannot be pinned (pkg/ddl/db_change_test.go:1556::TestDDLIfNotExists).
+// go-parity-gap: the ADD COLUMN and grouped ADD COLUMNS guards are modeled by
+// `db_integration_ddl_types_source::add_column_if_not_exists_skips_duplicates_and_continues_grouped_adds`.
+// This concurrency documentary remains ignored because the same Go matrix
+// also exercises ADD INDEX and CREATE INDEX IF NOT EXISTS, whose job/Note
+// machinery is outside this serial catalog tier (pkg/ddl/db_change_test.go:
+// 1556::TestDDLIfNotExists).
 #[test]
 #[ignore]
 fn ddl_if_not_exists_parallel_no_error() {

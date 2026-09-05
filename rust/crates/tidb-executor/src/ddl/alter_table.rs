@@ -115,18 +115,28 @@ pub fn run_alter_table_in(
                 super::table_cache::alter_cache_action(catalog, &database, &name, *mode)?
             }
             tidb_ast::AlterTableAction::AddColumn {
-                column, position, ..
+                if_not_exists,
+                column,
+                position,
             } => {
-                add_column_action(catalog, &database, &name, column, position, ctx)?;
+                add_column_action(
+                    catalog,
+                    &database,
+                    &name,
+                    column,
+                    position,
+                    *if_not_exists,
+                    ctx,
+                )?;
                 // Pinned Go `CreateNewColumn` retains only the column returned
                 // by `buildColumnAndConstraint` and discards its constraint
                 // slice. `add_column_action` mirrors that builder, including
                 // the OFF warning, so an inline CHECK is not installed here.
             }
             tidb_ast::AlterTableAction::AddColumns {
+                if_not_exists,
                 columns,
                 constraints,
-                ..
             } => {
                 // Go `resolveAlterTableAddColumns` expands the parenthesized
                 // form into all columns first, then all constraints. Keeping
@@ -139,6 +149,7 @@ pub fn run_alter_table_in(
                         &name,
                         column,
                         &tidb_ast::ColumnPosition::Default,
+                        *if_not_exists,
                         ctx,
                     )?;
                 }
@@ -2983,6 +2994,7 @@ fn add_column_action(
     table_name: &str,
     def: &ColumnDef,
     position: &tidb_ast::ColumnPosition,
+    if_not_exists: bool,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let zone = &ctx.session_zone();
@@ -3065,7 +3077,16 @@ fn add_column_action(
         .iter()
         .any(|column| column.name.eq_ignore_ascii_case(&def.name))
     {
-        return Err(DriverError::DuplicateColumnName(def.name.clone()));
+        // Go's checkAndCreateNewColumn reports ErrColumnExists after the
+        // column definition has passed its own option checks, then lets an
+        // individual IF NOT EXISTS guard demote that 1060 to a Note and
+        // continue the ALTER (including the grouped ADD COLUMNS form).
+        let duplicate = DriverError::DuplicateColumnName(def.name.clone());
+        if if_not_exists {
+            ctx.append_suppressed(&duplicate);
+            return Ok(());
+        }
+        return Err(duplicate);
     }
     let index = match position {
         tidb_ast::ColumnPosition::Default => table.columns.len(),

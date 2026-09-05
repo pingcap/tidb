@@ -8506,3 +8506,9 @@ risks without claiming repository-wide parity.
   aggregate. The clustered composite-PK/nullable-unique-index regression now
   returns both rows and passes table/index consistency checks; evidence is
   recorded in `receipts/executor_index_lookup_partial_aggregate.md`.
+- 2026-09-05 (`pkg/ddl` ADD COLUMN IF NOT EXISTS): Rust now honors the
+  per-action guard for single and grouped `ADD COLUMN` forms, suppressing
+  duplicate 1060 errors as Note-level warnings while continuing with new
+  columns. ADD/CREATE INDEX guards and the concurrent job matrix remain
+  explicit boundaries. Evidence is recorded in
+  `receipts/ddl_add_column_if_not_exists.md`.

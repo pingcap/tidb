@@ -116,6 +116,58 @@ fn create_table_with_keyword_column_names() {
     }
 }
 
+// Go's `checkAndCreateNewColumn` demotes a duplicate ADD COLUMN guarded by
+// IF NOT EXISTS to a Note 1060, and the grouped form continues with every
+// non-duplicate column. This is the serial form of the owner behavior from
+// `pkg/ddl/db_change_test.go:1556::TestDDLIfNotExists`.
+#[test]
+fn add_column_if_not_exists_skips_duplicates_and_continues_grouped_adds() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t(a int, b int)", &mut catalog).unwrap();
+    let ctx = StmtContext::for_query();
+
+    ddl::run_alter_table_in(
+        "alter table t add column if not exists b int",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t add column if not exists c int",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+    ddl::run_alter_table_in(
+        "alter table t add column if not exists (b int, d int)",
+        &mut catalog,
+        "test",
+        &ctx,
+    )
+    .unwrap();
+
+    let table = kv_table(&catalog, "test", "t");
+    assert_eq!(
+        table
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a", "b", "c", "d"],
+    );
+    let warnings = ctx.take_warnings();
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|(_, code, _)| *code == 1060)
+            .count(),
+        2,
+        "each guarded duplicate files one Note 1060: {warnings:?}"
+    );
+}
+
 // --- TestUniqueKeyNullValue (pkg/ddl/db_integration_test.go:98) ---
 //
 // Two rows with NULL in `b`, then `add unique index b(b)`: NULLs never
