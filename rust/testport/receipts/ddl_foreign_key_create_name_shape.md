@@ -45,7 +45,6 @@ GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex-tmp make lint
 # READY_LINT_RC=0
 ```
 
-No Go, generated, platform, Bazel, or module file changed. Temporary-table FK
-refusals remain the only explicit ignored boundary in
-`fk_create_error_matrix_source.rs`; self-reference, deferred-parent,
-partition, and pass-matrix rows are live.
+No Go, generated, platform, Bazel, or module file changed. The complete FK
+CREATE matrix is live in `fk_create_error_matrix_source.rs`, including
+self-reference, deferred-parent, temporary-table, partition, and pass rows.

@@ -51,7 +51,7 @@ GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex-tmp make lint
 # READY_LINT_RC=0
 ```
 
-No Go, generated, platform, Bazel, or module file changed. Temporary-table
-FK refusals remain the only explicit CREATE-matrix ignored family in the
-source-shaped test; self-reference, deferred-parent, constraint-name,
-partitioning, and pass-matrix rows are live carriers.
+No Go, generated, platform, Bazel, or module file changed. The complete FK
+CREATE matrix is live in the source-shaped test; self-reference,
+deferred-parent, temporary-table, constraint-name, partitioning, and pass
+rows all run with Go's exact diagnostics or success outcomes.

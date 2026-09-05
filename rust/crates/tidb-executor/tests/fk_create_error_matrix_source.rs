@@ -377,16 +377,55 @@ fn fk_create_with_checks_off_defers_validation_to_the_parent() {
 // 596-606`): FOREIGN KEY is refused on TEMPORARY tables in every
 // direction — a reference TO a (global) temporary table is 1824 or 1215,
 // and a temporary table (local or global) DECLARING one is 1215.
-//
-// go-parity-gap: this tier's runners do not lower `CREATE TEMPORARY TABLE`
-// through the FK builder at all (temporary-table registration lives behind
-// the session overlay, `Catalog::register_local_temporary_in`), so the
-// temporary-table FK refusals are unreachable from the CREATE path.
 #[test]
-#[ignore = "go-parity-gap: temporary-table FK refusals are unreachable from the create runner"]
 fn fk_create_refuses_temporary_tables_in_both_directions() {
-    // Contract (foreign_key_test.go:553-575, 596-606): FK to a temp parent
-    // is 1824 (local) / 1215 (global); a temp child declaring an FK is 1215.
+    let cases = [
+        (
+            "create temporary table t1 (id int key, b int, index(b));",
+            "create table t2 (a int, b int, foreign key fk(b) references t1(b));",
+            1824,
+            "Failed to open the referenced table 't1'",
+        ),
+        (
+            "create global temporary table t1 (id int key, b int, index(b)) on commit delete rows;",
+            "create table t2 (a int, b int, foreign key fk(b) references t1(b));",
+            1215,
+            "Cannot add foreign key constraint",
+        ),
+        (
+            "create table t1 (id int key, b int, index(b));",
+            "create temporary table t2 (a int, b int, foreign key fk(b) references t1(b));",
+            1215,
+            "Cannot add foreign key constraint",
+        ),
+        (
+            "create table t1 (id int key, b int, index(b));",
+            "create global temporary table t2 (a int, b int, foreign key fk(b) references t1(b)) on commit delete rows;",
+            1215,
+            "Cannot add foreign key constraint",
+        ),
+    ];
+    for (refer, create, code, message) in cases {
+        let mut catalog = Catalog::default();
+        let ctx = StmtContext::for_query();
+        ddl::run_create_table_in(
+            refer,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .expect("Go's temporary FK setup must succeed");
+        let error = ddl::run_create_table_in(
+            create,
+            &mut catalog,
+            "test",
+            CreateTableSettings::default(),
+            &ctx,
+        )
+        .expect_err("Go refuses every temporary-table FK direction");
+        assert_eq!(err(&error), (code, message.to_owned()), "{create}");
+    }
 }
 
 // Go rows 25-28, 31, 34-35 (`pkg/ddl/tests/fk/foreign_key_test.go:577-611`):

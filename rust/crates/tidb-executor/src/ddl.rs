@@ -1029,6 +1029,21 @@ pub fn run_create_table_in(
     // `create global temporary table t (a int) shard_row_id_bits = 4
     //  on commit preserve rows` is 8006, not 8200.
     let temporary = validate_temporary_table_create(create)?;
+    // Go's `checkReferInfoForTemporaryTable` refuses a FOREIGN KEY declared
+    // by either LOCAL or GLOBAL temporary table with ErrCannotAddForeign
+    // (1215). This must happen before normal column/parent resolution so a
+    // temporary child cannot publish a constraint into the session overlay.
+    if temporary != tidb_model::TempTableType::NONE
+        && create
+            .table_constraints
+            .iter()
+            .any(|constraint| matches!(constraint, tidb_ast::TableConstraint::ForeignKey(_)))
+    {
+        return Err(DriverError::DdlCoded {
+            errno: 1215,
+            message: "Cannot add foreign key constraint".to_owned(),
+        });
+    }
     validate_table_options(&create.table_options)?;
     // Go refuses CTAS outright and has never implemented it:
     // `preprocess.go` -> `checkCreateTableGrammar` does

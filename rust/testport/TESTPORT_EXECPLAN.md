@@ -8575,8 +8575,7 @@ risks without claiming repository-wide parity.
   column (3734), preserving Go's exact FK-specific diagnostics through the
   shared CREATE/ALTER builder while leaving checks-off references deferred.
   Evidence is recorded in
-  `receipts/ddl_foreign_key_create_missing_refs.md`; the remaining CREATE
-  validation matrix stays explicitly bounded in `b111.md`.
+  `receipts/ddl_foreign_key_create_missing_refs.md`.
 - 2026-09-05 (`pkg/ddl` CREATE FOREIGN KEY compatibility validation): Rust now
   enforces Go's child-column (1072), parent-index (1822), SET NULL/nullability
   (1830), and type/unsigned/charset/collation (3780) checks in the shared
@@ -8608,6 +8607,12 @@ risks without claiming repository-wide parity.
   before publishing the parent. Evidence is recorded in
   `receipts/ddl_foreign_key_create_deferred_parent.md`; temporary-table rows
   remain the only explicit CREATE-matrix boundary in `b111.md`.
+- 2026-09-05 (`pkg/ddl` CREATE FOREIGN KEY temporary tables): Rust now rejects
+  foreign keys declared by LOCAL or GLOBAL temporary children with Go's exact
+  1215 diagnostic, treats a LOCAL temporary parent as invisible (1824), and
+  refuses a GLOBAL temporary parent relationship (1215). Evidence is recorded
+  in `receipts/ddl_foreign_key_create_temporary.md`; the CREATE FK error and
+  pass matrices now have no ignored rows.
 - 2026-09-05 (`pkg/ddl` temporary CREATE TABLE LIKE options and duplicate
   warning): Rust now refuses temporary copies that inherit pre-split or
   shard-row-bit options with Go's exact 8006 diagnostic, and records the

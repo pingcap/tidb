@@ -713,6 +713,28 @@ pub(crate) fn build_foreign_key(
             // unresolved parent is deferred by that switch.
             let existing_parent = catalog.get_in(&ref_schema, &ref_table);
             match existing_parent {
+                Some(crate::TableEntry::Kv(parent))
+                    if parent.temp_table_type() == tidb_model::TempTableType::LOCAL =>
+                {
+                    // LOCAL temporary tables live only in the session
+                    // overlay and are invisible to the shared infoschema.
+                    // A normal child therefore sees the same missing-parent
+                    // 1824 that Go reports, even though this catalog slot is
+                    // temporarily occupied by the local table.
+                    return Err(DriverError::ForeignKeyReferencedTableMissing(
+                        ref_table.clone(),
+                    ));
+                }
+                Some(crate::TableEntry::Kv(parent))
+                    if parent.temp_table_type() == tidb_model::TempTableType::GLOBAL =>
+                {
+                    // GLOBAL temporary metadata is shared, but Go refuses a
+                    // foreign-key relationship to it outright (1215).
+                    return Err(DriverError::DdlCoded {
+                        errno: 1215,
+                        message: "Cannot add foreign key constraint".to_owned(),
+                    });
+                }
                 Some(crate::TableEntry::Kv(parent)) => validate_parent(parent)?,
                 Some(_) if foreign_key_checks => {
                     return Err(DriverError::unsupported(
