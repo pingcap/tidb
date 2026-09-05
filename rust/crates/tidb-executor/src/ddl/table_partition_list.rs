@@ -89,7 +89,11 @@ pub(super) fn build_list_columns_values(
                             std::slice::from_ref(expr)
                         }
                         PartitionValue::Tuple(exprs) if exprs.len() == field_types.len() => exprs,
-                        _ => return Err(DriverError::PartitionColumnValueWrongType),
+                        // Go's DDL validator owns tuple-shape errors and
+                        // reports ErrPartitionColumnList (1653), including
+                        // the scalar value supplied for a multi-column LIST
+                        // COLUMNS key.
+                        _ => return Err(DriverError::PartitionColumnList),
                     };
                     let tuple = exprs
                         .iter()

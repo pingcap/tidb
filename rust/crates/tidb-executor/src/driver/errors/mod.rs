@@ -1334,6 +1334,10 @@ impl DriverError {
             1654,
             "Partition column values of incorrect type".to_owned(),
         ),
+        DriverError::PartitionColumnList => MysqlError::new(
+            1653,
+            "Inconsistency in usage of column lists for partitioning".to_owned(),
+        ),
         DriverError::PartitionTooMany => MysqlError::new(
             1499,
             "Too many partitions (including subpartitions) were defined".to_owned(),

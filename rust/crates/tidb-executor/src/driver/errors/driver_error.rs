@@ -569,6 +569,9 @@ pub enum DriverError {
     PartitionDuplicateField(String),
     /// Go `dbterror.ErrWrongTypeColumnValue` (1654).
     PartitionColumnValueWrongType,
+    /// Go `ast.ErrPartitionColumnList` (1653): a RANGE/LIST COLUMNS bound
+    /// tuple has a different arity from the partition column list.
+    PartitionColumnList,
     /// Go `dbterror.ErrGlobalIndexNotExplicitlySet` (8264), carrying the
     /// index name: a unique index that does not include every partitioning
     /// column, without `GLOBAL`.

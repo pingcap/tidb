@@ -163,6 +163,21 @@ pub(super) fn build_range_columns_bounds(
     if columns.is_empty() || definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("RANGE"));
     }
+    // Go checks the bound tuple arity before resolving the named partition
+    // columns.  That ordering is observable for a missing column paired with
+    // a malformed tuple: both shapes report ErrPartitionColumnList (1653),
+    // rather than the later 1488 missing-field error.
+    if mode.validates()
+        && definitions.iter().any(|definition| {
+            matches!(
+                &definition.clause,
+                PartitionDefinitionClause::LessThan(values)
+                    if values.len() != columns.len()
+            )
+        })
+    {
+        return Err(DriverError::PartitionColumnList);
+    }
     let mut dependency_names = Vec::with_capacity(columns.len());
     let mut field_types = Vec::with_capacity(columns.len());
     for path in columns {
@@ -209,11 +224,6 @@ pub(super) fn build_range_columns_bounds(
                 _ => Err(DriverError::PartitionsMustBeDefined("RANGE")),
             };
         };
-        // Go `ErrPartitionColumnList` is CREATE-only (`ddl/partition.go:5326`);
-        // the loader does not re-check arity on metadata it did not write.
-        if mode.validates() && values.len() != field_types.len() {
-            return Err(DriverError::PartitionColumnValueWrongType);
-        }
         let bound = values
             .iter()
             .zip(&field_types)

@@ -409,21 +409,20 @@ fn validate_definition(
     definition: &PartitionDefinition,
     parser: &Parser,
 ) -> PResult<()> {
-    let columns = method.columns.len();
     // `PartitionType` is a value-preserving newtype, so its named constants
     // are ordinary constant patterns: they need the kind by value, not by
     // reference.
     match (method.kind, &definition.clause) {
         (PartitionType::HASH | PartitionType::KEY, PartitionDefinitionClause::None) => Ok(()),
         (PartitionType::RANGE, PartitionDefinitionClause::LessThan(values)) => {
-            if columns == 0 && values.len() != 1 || columns > 0 && values.len() != columns {
-                Err(parser.err_here("RANGE partition value count does not match columns"))
-            } else {
-                Ok(())
-            }
+            // Go's parser preserves RANGE COLUMNS tuple shape for the DDL
+            // validator, which reports the coded 1653
+            // ErrPartitionColumnList.  Keep this syntactic pass permissive;
+            // `build_range_columns_bounds` owns the semantic check.
+            let _ = values;
+            Ok(())
         }
         (PartitionType::LIST, PartitionDefinitionClause::In(values)) => {
-            let mut expected = None;
             for value in values {
                 match value {
                     PartitionValue::MaxValue => {
@@ -431,20 +430,12 @@ fn validate_definition(
                     }
                     PartitionValue::Default => continue,
                     PartitionValue::Expr(_) => {
-                        // Go's AST accepts a scalar value for one-column
-                        // LIST COLUMNS; only multi-column methods require a
-                        // tuple payload.
-                        if columns > 1 {
-                            return Err(parser.err_here("LIST COLUMNS values require tuples"));
-                        }
-                        expected.get_or_insert(1usize);
+                        // Go's AST accepts scalar/tuple shape mismatches and
+                        // lets the DDL validator return ErrPartitionColumnList
+                        // (1653), including the multi-column scalar case.
                     }
                     PartitionValue::Tuple(tuple) => {
-                        if columns == 0 || tuple.len() != columns {
-                            return Err(parser
-                                .err_here("LIST partition value count does not match columns"));
-                        }
-                        expected.get_or_insert(tuple.len());
+                        let _ = tuple;
                     }
                 }
             }

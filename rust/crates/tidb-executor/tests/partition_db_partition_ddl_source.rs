@@ -516,12 +516,24 @@ fn create_table_with_range_column_partition_valid_shapes() {
 /// lists for partitioning"): `range columns (id)` with
 /// `values less than (1, 2)`, and `range columns (b)` with the same tuple
 /// (`pkg/ddl/tests/partition/db_partition_test.go:551-559`).
-// go-parity-gap: this tier reports both rows from the parser as
-// "RANGE partition value count does not match columns" with no errno,
-// so the Go 1653 code cannot be pinned.
 #[test]
-#[ignore]
 fn create_table_with_range_column_partition_value_count_rows_report_1653() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::default().with_strict(true);
+    for sql in [
+        "create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2))",
+        // Go checks tuple arity before resolving the missing `b` column, so
+        // this malformed pair is also 1653 rather than 1488.
+        "create table t (a int) partition by range columns (b) (partition p0 values less than (1, 2))",
+    ] {
+        let error = try_create(sql, &mut catalog, &ctx).expect_err("Go rejects tuple arity");
+        assert_eq!(err_code(&error), 1653, "row {sql}");
+        assert_eq!(
+            err_message(&error),
+            "Inconsistency in usage of column lists for partitioning"
+        );
+        drop_table(&mut catalog, "t");
+    }
 }
 
 /// Go row `db_partition_test.go:677-681`: a DATETIME column partitioned by
@@ -923,12 +935,22 @@ fn create_table_with_list_columns_partition_valid_shapes() {
 /// `ast.ErrPartitionColumnList` (1653) for tuple-shape mismatches:
 /// `values in (1)` against two partition columns, and `values in ((1))`
 /// against two partition columns.
-// go-parity-gap: this tier reports both rows from the parser ("LIST COLUMNS
-// values require tuples" / "LIST partition value count does not match
-// columns") with no errno, so the Go 1653 code cannot be pinned.
 #[test]
-#[ignore]
 fn create_table_with_list_columns_partition_column_list_rows_report_1653() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::default().with_strict(true);
+    for sql in [
+        "create table t (a int, b int) partition by list columns (a, b) (partition p0 values in (1))",
+        "create table t (a int, b int) partition by list columns (a, b) (partition p0 values in ((1)))",
+    ] {
+        let error = try_create(sql, &mut catalog, &ctx).expect_err("Go rejects tuple arity");
+        assert_eq!(err_code(&error), 1653, "row {sql}");
+        assert_eq!(
+            err_message(&error),
+            "Inconsistency in usage of column lists for partitioning"
+        );
+        drop_table(&mut catalog, "t");
+    }
 }
 
 // --- TestAlterTableTruncatePartitionByList

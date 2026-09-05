@@ -8699,3 +8699,10 @@ risks without claiming repository-wide parity.
   display-width edits remain accepted. Evidence is recorded in
   `receipts/ddl_modify_column_pk_handle.md`; online reorganization and
   generated-column failpoint rows remain explicit boundaries.
+- 2026-09-05 (`pkg/ddl` partition column-list arity): Rust's parser now
+  preserves malformed RANGE/LIST COLUMNS tuples for DDL validation, which
+  returns Go's coded 1653 `Inconsistency in usage of column lists for
+  partitioning`. RANGE checks arity before resolving names, matching Go's
+  missing-column + malformed-tuple ordering; focused RANGE and LIST COLUMNS
+  regressions are live. Evidence is recorded in
+  `receipts/ddl_partition_column_list_errors.md`.
