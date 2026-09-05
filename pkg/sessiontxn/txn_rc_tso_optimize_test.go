@@ -805,6 +805,7 @@ func TestRcWaitTSInSlowLog(t *testing.T) {
 	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
 	tk.MustExec("begin pessimistic")
+	sctx.GetSessionVars().DurationWaitTS = 0
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
 	pointUpdateWaitTS := sctx.GetSessionVars().DurationWaitTS
 	secondDelay := pointUpdateWaitTS + time.Millisecond
@@ -812,7 +813,7 @@ func TestRcWaitTSInSlowLog(t *testing.T) {
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 > 3 and id1 < 6")
 	rangeUpdateWaitTS := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("commit")
-	require.Greater(t, pointUpdateWaitTS, time.Duration(0))
+	require.Greater(t, pointUpdateWaitTS, time.Millisecond)
 	require.GreaterOrEqual(t, rangeUpdateWaitTS, secondDelay)
 }
 
