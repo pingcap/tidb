@@ -2573,14 +2573,36 @@ impl SessionVars {
                 validated.value
             )));
         }
-        // Go's `collation_server.SetSession` hook mirrors the selected
-        // collation's owning charset into `character_set_server`. Keep both
-        // names in the session image so a later `@@character_set_server` read
-        // observes the same side effect as the source SessionVars map.
-        let collation_server_charset = (key == "collation_server")
-            .then(|| tidb_datatype::get_collation_by_name(&validated.value).ok())
-            .flatten()
-            .map(|collation| collation.charset_name);
+        // Go's charset/collation hooks keep each pair in lockstep. A charset
+        // write selects that charset's default collation (except
+        // `character_set_client`/`character_set_results`), while a collation
+        // write mirrors its owning charset into the corresponding charset
+        // variable. Keep the derived names in the session image so all later
+        // reads observe the same side effects as Go's `SessionVars.systems`.
+        let charset_default_collation = match key.as_str() {
+            "character_set_connection" => tidb_datatype::get_charset_info(&validated.value)
+                .ok()
+                .map(|charset| ("collation_connection", charset.default_collation)),
+            "character_set_database" => tidb_datatype::get_charset_info(&validated.value)
+                .ok()
+                .map(|charset| ("collation_database", charset.default_collation)),
+            "character_set_server" => tidb_datatype::get_charset_info(&validated.value)
+                .ok()
+                .map(|charset| ("collation_server", charset.default_collation)),
+            _ => None,
+        };
+        let collation_charset = match key.as_str() {
+            "collation_connection" => tidb_datatype::get_collation_by_name(&validated.value)
+                .ok()
+                .map(|collation| ("character_set_connection", collation.charset_name)),
+            "collation_database" => tidb_datatype::get_collation_by_name(&validated.value)
+                .ok()
+                .map(|collation| ("character_set_database", collation.charset_name)),
+            "collation_server" => tidb_datatype::get_collation_by_name(&validated.value)
+                .ok()
+                .map(|collation| ("character_set_server", collation.charset_name)),
+            _ => None,
+        };
         // Go `SetSessionFromHook`: the alias takes the SAME stored value, with
         // its own validation skipped -- `tx_isolation` and
         // `transaction_isolation` are one value under two spellings.
@@ -2593,10 +2615,13 @@ impl SessionVars {
         if let Some(other) = alias_of(&key) {
             self.note_system_change(other);
         }
-        if let Some(charset) = collation_server_charset {
-            self.systems
-                .insert("character_set_server".to_owned(), charset);
-            self.note_system_change("character_set_server");
+        if let Some((name, value)) = charset_default_collation {
+            self.systems.insert(name.to_owned(), value);
+            self.note_system_change(name);
+        }
+        if let Some((name, value)) = collation_charset {
+            self.systems.insert(name.to_owned(), value);
+            self.note_system_change(name);
         }
         if key == "autocommit" {
             self.autocommit = validated.value == "ON";
@@ -4236,6 +4261,55 @@ mod tests {
         );
         // SET NAMES leaves the server-side character set alone.
         assert_eq!(vars.get_system("character_set_server").unwrap(), "utf8mb4");
+    }
+
+    /// Go's charset/collation `SetSession` hooks are reciprocal: changing a
+    /// charset picks its default collation, while changing a collation picks
+    /// its owning charset. The client/results pair keeps its independent
+    /// behavior, including the empty results escape hatch.
+    #[test]
+    fn charset_and_collation_hooks_match_go() {
+        let mut vars = SessionVars::new();
+
+        vars.set_system("character_set_connection", "latin1".to_owned())
+            .unwrap();
+        assert_eq!(vars.get_system("character_set_connection").unwrap(), "latin1");
+        assert_eq!(vars.get_system("collation_connection").unwrap(), "latin1_bin");
+
+        vars.set_system("collation_connection", "UTF8MB4_GENERAL_CI".to_owned())
+            .unwrap();
+        assert_eq!(
+            vars.get_system("collation_connection").unwrap(),
+            "utf8mb4_general_ci"
+        );
+        assert_eq!(vars.get_system("character_set_connection").unwrap(), "utf8mb4");
+
+        vars.set_system("character_set_database", "utf8mb3".to_owned())
+            .unwrap();
+        assert_eq!(vars.get_system("character_set_database").unwrap(), "utf8");
+        assert_eq!(vars.get_system("collation_database").unwrap(), "utf8_bin");
+
+        vars.set_system("collation_database", "latin1_bin".to_owned())
+            .unwrap();
+        assert_eq!(vars.get_system("character_set_database").unwrap(), "latin1");
+
+        vars.set_system("character_set_server", "ascii".to_owned())
+            .unwrap();
+        assert_eq!(vars.get_system("collation_server").unwrap(), "ascii_bin");
+        vars.set_system("collation_server", "utf8mb4_bin".to_owned())
+            .unwrap();
+        assert_eq!(vars.get_system("character_set_server").unwrap(), "utf8mb4");
+
+        vars.set_system("character_set_results", String::new()).unwrap();
+        assert_eq!(vars.get_system("character_set_results").unwrap(), "");
+        assert!(matches!(
+            vars.set_system("character_set_connection", "not-a-charset".to_owned()),
+            Err(VarError::SqlError(error)) if error.code == 1115
+        ));
+        assert!(matches!(
+            vars.set_system("collation_connection", "not-a-collation".to_owned()),
+            Err(VarError::SqlError(error)) if error.code == 1273
+        ));
     }
 
     #[test]

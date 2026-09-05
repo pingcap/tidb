@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` charset/collation validation and
+  session hooks): aligned Rust's mutable `character_set_*` and
+  `collation_*` validation with Go's `checkCharacterSet`/`checkCollation`,
+  including canonical names, the empty `character_set_results` escape hatch,
+  and SQL error codes 1115/1273. `SessionVars::set_system` now mirrors Go's
+  reciprocal charset↔collation defaults for connection, database, and server
+  variables; the focused regression covers aliases, canonicalization, and
+  invalid names. `TestVarsutil` is promoted from an ignored gap to a partial
+  receipt with the remaining generic varsutil matrix explicitly bounded.
 - 2026-09-05 (`pkg/sessionctx/variable` instance-scoped getters): added the
   live config/atomic read-through used by Go's `GetSessionOrGlobalSystemVar`
   for the `TestInstanceScopedVars` matrix, preserving explicit `SET INSTANCE`

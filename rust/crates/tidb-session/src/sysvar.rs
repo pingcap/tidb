@@ -881,15 +881,18 @@ impl SysVarDef {
                 "invalid TTL job schedule window time: {original}"
             )));
         }
-        // Go's `collation_server` validation (`sysvar.go`'s `checkCollation`)
+        // Go's mutable collation validation (`sysvar.go`'s `checkCollation`)
         // resolves names through the parser registry, stores the canonical
         // spelling, and returns `ErrUnknownCollation` (1273) for a missing
         // entry.  The registry lookup is case-insensitive and also knows the
         // UTF8MB3 aliases, matching `collate.GetCollationByName`.
-        // Go routes both `collation_server` and `collation_database` through
+        // Go routes connection, server, and database collations through
         // `checkCollation` (`varsutil.go:57`): resolve the name case-insensitively,
         // store the canonical spelling, refuse a miss with 1273.
-        if matches!(self.name, "collation_server" | "collation_database") {
+        if matches!(
+            self.name,
+            "collation_connection" | "collation_database" | "collation_server"
+        ) {
             let collation =
                 tidb_datatype::get_collation_by_name(&validated.value).map_err(|_| {
                     ValidationError::SqlError(SqlError::new(
@@ -1190,22 +1193,34 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
-        // Go's `checkCharacterSet` (`varsutil.go:76`): an empty value is
-        // `ErrWrongValueForVar` (1231) with NULL, an unknown name is
-        // `ErrUnknownCharacterSet` (1115), and a hit stores the canonical
-        // charset name.
-        if self.name == "character_set_database" {
+        // Go's `checkCharacterSet` (`varsutil.go:76`) covers every mutable
+        // character-set variable. An empty `character_set_results` is the
+        // sole exception (it means no result conversion); all other empty
+        // values are `ErrWrongValueForVar` (1231) with NULL. Unknown names
+        // are `ErrUnknownCharacterSet` (1115), and a hit stores the
+        // canonical charset name.
+        if matches!(
+            self.name,
+            "character_set_client"
+                | "character_set_connection"
+                | "character_set_database"
+                | "character_set_results"
+                | "character_set_server"
+        ) {
+            if self.name == "character_set_results" && validated.value.is_empty() {
+                return Ok(validated);
+            }
             if validated.value.is_empty() {
                 return Err(ValidationError::WrongValue);
             }
-            let charset = tidb_datatype::Charset::from_name(&validated.value).ok_or_else(|| {
+            let charset = tidb_datatype::get_charset_info(&validated.value).map_err(|_| {
                 ValidationError::SqlError(SqlError::new(
                     tidb_error::mysql::errcode::ErrUnknownCharacterSet,
                     &[FormatArg::from(original)],
                 ))
             })?;
             return Ok(Validated {
-                value: charset.name().to_owned(),
+                value: charset.name,
                 truncated: validated.truncated,
             });
         }
