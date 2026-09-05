@@ -204,10 +204,10 @@ pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
         Datum::BinaryLiteral(literal) => {
             let bit_literal = literal.to_bit_literal_string(true);
             let digits = &bit_literal[2..];
-            let Some(converted) = conv_text(digits, 2, from) else {
-                return Ok(Datum::Null);
-            };
-            converted
+            match conv_text(digits, 2, from)? {
+                Some(text) => text,
+                None => return Ok(Datum::Null),
+            }
         }
         value => {
             let Some(text) = coerce_str(value)? else {
@@ -216,10 +216,13 @@ pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
             text
         }
     };
-    Ok(conv_text(&n, from, to).map_or(Datum::Null, Datum::new_string))
+    match conv_text(&n, from, to)? {
+        Some(text) => Ok(Datum::new_string(text)),
+        None => Ok(Datum::Null),
+    }
 }
 
-fn conv_text(n: &str, mut from: i64, mut to: i64) -> Option<String> {
+fn conv_text(n: &str, mut from: i64, mut to: i64) -> Result<Option<String>, EvalError> {
     let signed = from < 0;
     let ignore_sign = to < 0;
     if signed {
@@ -229,11 +232,11 @@ fn conv_text(n: &str, mut from: i64, mut to: i64) -> Option<String> {
         to = -to;
     }
     if !(2..=36).contains(&from) || !(2..=36).contains(&to) {
-        return None;
+        return Ok(None);
     }
     let prefix = conv_valid_prefix(n.trim(), from as u32);
     if prefix.is_empty() {
-        return Some("0".to_owned());
+        return Ok(Some("0".to_owned()));
     }
     let (mut negative, digits) = match prefix.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -242,9 +245,22 @@ fn conv_text(n: &str, mut from: i64, mut to: i64) -> Option<String> {
     let mut val: u64 = 0;
     for c in digits.chars() {
         // `c` is guaranteed a valid `from`-base digit by `conv_valid_prefix`.
-        val = val
-            .wrapping_mul(u64::from(from as u32))
-            .wrapping_add(u64::from(c.to_digit(from as u32).unwrap()));
+        // Go's `conv` helper parses the digits through `strconv.ParseUint`,
+        // whose range failure becomes a 1690 quoting the digit string
+        // (sign already stripped) -- not a wrapped value.
+        let digit = u64::from(c.to_digit(from as u32).unwrap());
+        val = match val
+            .checked_mul(u64::from(from as u32))
+            .and_then(|partial| partial.checked_add(digit))
+        {
+            Some(next) => next,
+            None => {
+                return Err(EvalError::DataOutOfRange {
+                    value: "BIGINT UNSIGNED",
+                    expression: digits.to_string(),
+                })
+            }
+        };
     }
     // Signed clamping to the i64 range, mirroring the Go `conv` helper.
     if signed {
@@ -268,7 +284,7 @@ fn conv_text(n: &str, mut from: i64, mut to: i64) -> Option<String> {
     if negative && ignore_sign {
         out.insert(0, '-');
     }
-    Some(out)
+    Ok(Some(out))
 }
 
 /// The longest valid `CONV` prefix in `base` (a port of

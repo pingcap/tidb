@@ -286,6 +286,31 @@ fn crc32_gbk_charset_connection_rows() {
 /// conversion table, the direct `getValidPrefix` unit rows, and the
 /// VarString result-type assertions every table row carries alongside its
 /// value assertion.
+/// Go `builtinConvSig.evalString` -> `conv` helper: the digit accumulation
+/// goes through `strconv.ParseUint(str, fromBase, 64)`, whose range failure
+/// becomes `types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", str)` --
+/// a 1690 quoting the digit string (sign already stripped), not a wrapped
+/// value and not NULL.
+#[test]
+fn conv_digit_overflow_above_u64_errors_with_the_digits() {
+    // u64::MAX + 1, unsigned source base.
+    let error = eval_as(
+        "CONV",
+        vec![
+            Datum::new_string("18446744073709551616".to_owned()),
+            Datum::Int(10),
+            Datum::Int(16),
+        ],
+        real_ft(),
+        &WarnCountCtx::new(),
+    )
+    .expect_err("a digit string above u64::MAX must overflow");
+    assert!(
+        format!("{error:?}").contains(r#"expression: "18446744073709551616""#),
+        "{error:?}"
+    );
+}
+
 #[test]
 fn conv_source_table_type_and_valid_prefix_rows() {
     for (input, expected) in [
