@@ -163,7 +163,6 @@ where
     W: CloseWrite,
 {
     /// Creates an encrypting writer over `underlying`.
-    #[must_use]
     pub fn new(underlying: W, cipher: &CtrCipher) -> Self {
         let buffer_size =
             usize::try_from(cipher.encrypt_block_size).expect("negative encrypt block size");
@@ -178,13 +177,11 @@ where
     }
 
     /// Returns unused bytes in the current buffer.
-    #[must_use]
     pub fn available_size(&self) -> usize {
         self.buffer.len() - self.used
     }
 
     /// Returns buffered plaintext bytes.
-    #[must_use]
     pub fn buffered(&self) -> usize {
         self.used
     }
@@ -218,13 +215,11 @@ where
     }
 
     /// Returns plaintext not yet flushed to the underlying object.
-    #[must_use]
     pub fn get_cache(&self) -> &[u8] {
         &self.buffer[..self.used]
     }
 
     /// Returns the logical offset of the cached plaintext.
-    #[must_use]
     pub const fn get_cache_data_offset(&self) -> i64 {
         self.flushed_user_data_count
     }
@@ -295,7 +290,6 @@ where
     R: ReadAt,
 {
     /// Creates a decrypting positional reader.
-    #[must_use]
     pub fn new(underlying: R, cipher: &CtrCipher) -> Self {
         Self {
             underlying,
@@ -459,5 +453,23 @@ mod tests {
             Reader::new(Reader::new(file, &cipher1), &cipher2),
             logical_length,
         );
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        crate::encrypt::pkcs7_pad(&[], 16);
+        crate::encrypt::derive_key_mysql(&[], 16);
+        crate::encrypt::sql_decode(b"value", b"password");
+        crate::encrypt::sql_encode(b"value", b"password");
+
+        let cipher = CtrCipher::new().expect("create cipher");
+        Writer::new(MemoryFile::default(), &cipher);
+        let writer = Writer::new(MemoryFile::default(), &cipher);
+        writer.available_size();
+        writer.buffered();
+        writer.get_cache();
+        writer.get_cache_data_offset();
+        Reader::new(MemoryFile::default(), &cipher);
     }
 }

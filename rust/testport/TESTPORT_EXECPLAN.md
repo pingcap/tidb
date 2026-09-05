@@ -8821,6 +8821,13 @@ risks without claiming repository-wide parity.
   22 diagnostics on the detached pre-fix owner and passes with the seven-test
   owner suite; the server consumer and affected targets pass, while the session
   consumer's unrelated planner panic is recorded in `receipts/util_sem_v2.md`.
+- 2026-09-06 (`pkg/util/encrypt`): the complete eight-artifact owner now
+  matches Go's discardable-return contract by removing ten explicit Rust-only
+  `#[must_use]` diagnostics from PKCS#7/key helpers, SQL codec functions, and
+  buffered reader/writer APIs. The deny-on-discard regression fails with all
+  ten diagnostics on the detached pre-fix owner and passes with the 18-test
+  owner suite and benchmark-target check; Ready evidence is recorded in
+  `receipts/util_encrypt.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

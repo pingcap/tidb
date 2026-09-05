@@ -92,7 +92,6 @@ impl AesCipher {
 }
 
 /// Pads `data` using the PKCS#7 algorithm.
-#[must_use]
 pub fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
     let pad_len = block_size - data.len() % block_size;
     let mut padded = Vec::with_capacity(data.len() + pad_len);
@@ -179,7 +178,6 @@ pub fn aes_decrypt_with_ecb(data: &[u8], key: &[u8]) -> Result<Vec<u8>, EncryptE
 }
 
 /// Derives an AES key using MySQL's historical XOR-folding algorithm.
-#[must_use]
 pub fn derive_key_mysql(key: &[u8], block_size: usize) -> Vec<u8> {
     let mut derived = vec![0; block_size];
     let mut index = 0;

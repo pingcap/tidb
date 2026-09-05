@@ -113,7 +113,6 @@ impl SqlCrypt {
 }
 
 /// Applies MySQL's historical `DECODE()` transformation to arbitrary bytes.
-#[must_use]
 pub fn sql_decode(value: &[u8], password: &[u8]) -> Vec<u8> {
     let mut crypt = SqlCrypt::default();
     crypt.init(password);
@@ -123,7 +122,6 @@ pub fn sql_decode(value: &[u8], password: &[u8]) -> Vec<u8> {
 }
 
 /// Applies MySQL's historical `ENCODE()` inverse transformation.
-#[must_use]
 pub fn sql_encode(value: &[u8], password: &[u8]) -> Vec<u8> {
     let mut crypt = SqlCrypt::default();
     crypt.init(password);
