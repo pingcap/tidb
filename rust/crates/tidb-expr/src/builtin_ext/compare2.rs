@@ -65,7 +65,15 @@ fn extremum(vals: &[Datum], want: Ordering, ctx: &dyn crate::Columns) -> Result<
     // evaluator's ([`extremum_with_signature`]'s other caller,
     // `ScalarFunction::eval_by_signature`) -- this tier asks for the
     // value-derived signature and the connection default collation.
-    extremum_with_signature(vals, want, None, crate::ops::DERIVATION_FREE_COLLATION, ctx)
+    extremum_with_signature(
+        vals,
+        want,
+        None,
+        &[],
+        false,
+        crate::ops::DERIVATION_FREE_COLLATION,
+        ctx,
+    )
 }
 
 /// Go `GLCmpStringMode` (`pkg/expression/builtin_compare.go`): which of the
@@ -231,6 +239,8 @@ pub(crate) fn extremum_with_signature(
     vals: &[Datum],
     want: Ordering,
     signature: Option<GlSignature>,
+    arg_decimals: &[i64],
+    all_constant: bool,
     collation: tidb_datatype::Collation,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
@@ -257,7 +267,7 @@ pub(crate) fn extremum_with_signature(
         ) {
             return extremum_time(vals, want, signature.ret_date, ctx);
         }
-        return extremum_numeric(vals, want);
+        return extremum_numeric(vals, want, arg_decimals, all_constant);
     }
     if mode != GlCmpStringMode::Directly {
         let cmp_as_date = mode == GlCmpStringMode::AsDate;
@@ -359,18 +369,24 @@ fn extremum_time(
 /// The domain that the aggregate named is reproduced here from the arguments
 /// rather than from the winner: which argument wins must not decide the
 /// result's type.
-fn extremum_numeric(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> {
+fn extremum_numeric(
+    vals: &[Datum],
+    want: Ordering,
+    arg_decimals: &[i64],
+    all_constant: bool,
+) -> Result<Datum, EvalError> {
     let op = if want == Ordering::Greater {
         BinaryOp::Gt
     } else {
         BinaryOp::Lt
     };
-    let mut best = vals[0].clone();
-    for v in &vals[1..] {
-        if eval_binary(op, v.clone(), best.clone())? == Datum::Int(1) {
-            best = v.clone();
+    let mut best_index = 0usize;
+    for (index, v) in vals[1..].iter().enumerate() {
+        if eval_binary(op, v.clone(), vals[best_index].clone())? == Datum::Int(1) {
+            best_index = index + 1;
         }
     }
+    let best = &vals[best_index];
     // The RESULT promotes to the widest type among ALL arguments (Float >
     // Decimal > Int, same hierarchy `+`/`-` use) — not just whichever raw
     // value happened to win the comparison (a real bug caught by the
@@ -381,26 +397,28 @@ fn extremum_numeric(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> 
         .iter()
         .any(|v| matches!(v, Datum::Real(_) | Datum::Float32(_)))
     {
-        return Ok(Datum::Real(to_f64(best)));
+        return Ok(Datum::Real(to_f64(best.clone())));
     }
     if vals.iter().any(|v| matches!(v, Datum::Decimal(_))) {
-        // The result carries the SIGNATURE's scale, not the winning value's
-        // own. Go aggregates the arguments' FieldTypes into one return type
-        // whose `Decimal` is the MAX over them, then wraps every argument in
-        // `WrapWithCastAsDecimal` to it -- so which argument wins cannot
-        // change the scale. Reading the runtime datum instead lets an integer
-        // winner keep scale 0. CAPTURED from real TiDB:
+        // Go casts every argument to DECIMAL at that argument's OWN scale
+        // (`WrapWithCastAsDecimal`: an integer argument is `SetDecimal(0)`, a
+        // decimal argument passes through as-is) and returns the winner RAW
+        // -- so the winning argument's own scale survives. The ONE exception
+        // is a fully-constant call: the planner folds it and the folded
+        // constant carries the RETURN type's scale, which
+        // `fixFlenAndDecimalForGreatestAndLeast` set to the MAX over the
+        // argument decimals. CAPTURED from real TiDB (column `i int`, column
+        // `d decimal(10,3)`, row `(-5, 2.500)`):
         //
-        //   least(1, 2.5)      1.0     least(2.5, 1)         1.0
-        //   least(1, 2.555)    1.000   least(1, 2.5, 3.25)   1.00
-        //   least(1, 2.50)     1.00    greatest(3, 2.55, 1)  3.00
-        //   greatest(3, 2.5)   3.0     greatest(2.5, 1.234)  2.500
+        //   least(i, d)        -5      greatest(i, d)        2.500
+        //   least(1, d)        1       least(i, 2.5)         -5
+        //   least(1, 2.5)      1.0     greatest(1, 2.5)      2.5
+        //   least(1, 2.5, 3.25) 1.00   greatest(3, 2.55, 1)  3.00
         //
-        // `least(2.5, 1)` and `greatest(2.5, 1.234)` are the two that pin the
-        // rule: in the first the winner is an INT and still prints a
-        // fraction, in the second the winner's own scale is 1 and the printed
-        // one is 3.
-        let scale = vals
+        // The all-literal rows are both all-constant AND typed, so the
+        // value-derived fallback below (no argument types at all) keeps the
+        // same max-scale answer they were pinned with.
+        let max_datum_scale = vals
             .iter()
             .map(|value| match value {
                 Datum::Decimal(value) => value.scale(),
@@ -408,7 +426,21 @@ fn extremum_numeric(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> 
             })
             .max()
             .unwrap_or(0);
-        return Ok(Datum::Decimal(to_decimal(best).cast_to_precision(0, scale)));
+        let scale = if all_constant && arg_decimals.iter().any(|dec| *dec >= 0) {
+            arg_decimals
+                .iter()
+                .copied()
+                .filter(|dec| *dec >= 0)
+                .max()
+                .unwrap_or(0i64)
+        } else if arg_decimals.get(best_index).is_some_and(|dec| *dec >= 0) {
+            arg_decimals[best_index]
+        } else {
+            max_datum_scale as i64
+        };
+        return Ok(Datum::Decimal(
+            to_decimal(best.clone()).cast_to_precision(0, scale as u32),
+        ));
     }
     // TiDB's common numeric type for a mixed signed/unsigned integer list is
     // DECIMAL. Preserve that result domain even when the winning value is an
@@ -416,9 +448,9 @@ fn extremum_numeric(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> 
     if vals.iter().any(|v| matches!(v, Datum::Int(_)))
         && vals.iter().any(|v| matches!(v, Datum::UInt(_)))
     {
-        return Ok(Datum::Decimal(to_decimal(best)));
+        return Ok(Datum::Decimal(to_decimal(best.clone())));
     }
-    Ok(best)
+    Ok(best.clone())
 }
 
 /// The signature for a caller with no argument `FieldType`s at all.

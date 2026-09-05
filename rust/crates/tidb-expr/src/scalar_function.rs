@@ -2078,10 +2078,39 @@ impl ScalarFunction {
                     } else {
                         std::cmp::Ordering::Less
                     };
+                    // Go casts every argument to DECIMAL at that argument's
+                    // OWN decimal (integers at 0), returns the winner raw,
+                    // and folds a fully-constant call to the return type's
+                    // max-argument scale. The per-argument decimals and the
+                    // constness are what the chunk evaluator knows that the
+                    // values alone cannot say.
+                    let arg_decimals: Vec<i64> = self
+                        .args
+                        .iter()
+                        .map(|a| {
+                            a.static_type()
+                                .map_or(tidb_datatype::UNSPECIFIED_LENGTH, |ft| {
+                                    // Go `WrapWithCastAsDecimal` pins integer
+                                    // arguments to scale 0 regardless of the
+                                    // field type's own (often unspecified) value.
+                                    if ft.eval_type() == tidb_datatype::EvalType::Int {
+                                        0
+                                    } else {
+                                        ft.decimal()
+                                    }
+                                })
+                        })
+                        .collect();
+                    let all_constant = self
+                        .args
+                        .iter()
+                        .all(|a| a.const_level() == crate::expression::ConstLevel::STRICT);
                     return crate::builtin_ext::extremum_with_signature(
                         &vals,
                         want,
                         crate::rewriter::result_type::gl_signature(&self.args),
+                        &arg_decimals,
+                        all_constant,
                         collation,
                         ctx,
                     );
@@ -3399,5 +3428,78 @@ mod tests {
             vec![konst(Datum::new_string("a")), konst(Datum::new_string("b"))],
         );
         assert_eq!(function.eval(&NoColumns, row).unwrap(), Datum::Int(0));
+    }
+
+    /// TiDB capture over `create table g (i int, d decimal(10,3))` holding
+    /// `(-5, 2.500)`: `select least(i, d)` is `-5` with datum frac 0 -- the
+    /// winner keeps the winning ARGUMENT's own decimal (Go casts integers to
+    /// `SetDecimal(0)`), not the aggregated max (3), and `select least(1, d)`
+    /// is `1` the same way. A fully-constant call is the one exception: the
+    /// planner folds it to the RETURN type's scale, so `select least(1, 2.5)`
+    /// is `1.0` (max argument decimal).
+    #[test]
+    fn extremum_over_typed_columns_keeps_the_winner_own_scale() {
+        let int_ft = FieldType::new(FieldTypeCode::LongLong);
+        let mut dec_ft = FieldType::new(FieldTypeCode::NewDecimal);
+        dec_ft.set_flen(10);
+        dec_ft.set_decimal(3);
+        let mut ret_ft = FieldType::new(FieldTypeCode::NewDecimal);
+        ret_ft.set_flen(11);
+        ret_ft.set_decimal(3);
+
+        let mut col_i = crate::column::Column::new(1, int_ft.clone());
+        col_i.index = 0;
+        let mut col_d = crate::column::Column::new(2, dec_ft.clone());
+        col_d.index = 1;
+        let least = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("least"),
+            ret_ft.clone(),
+            vec![Expression::Column(col_i), Expression::Column(col_d)],
+        ));
+
+        let mut chunk =
+            tidb_chunk::chunk::Chunk::new_with_capacity(&[int_ft.clone(), dec_ft.clone()], 1);
+        chunk.append_datum(0, &Datum::Int(-5));
+        chunk.append_datum(
+            1,
+            &Datum::Decimal(tidb_datatype::Decimal::from_literal("2.500")),
+        );
+        let datum = least
+            .eval(&crate::context::NoColumns, chunk.get_row(0))
+            .unwrap();
+        let Datum::Decimal(dec) = &datum else {
+            panic!("least over a decimal aggregate answers a decimal");
+        };
+        assert_eq!(dec.scale(), 0, "the integer winner keeps its own scale 0");
+        assert_eq!(dec.to_string(), "-5");
+
+        // Mixed constant + column: `least(1, d)` is `1` (frac 0), not `1.000`.
+        let mut col_d = crate::column::Column::new(2, dec_ft.clone());
+        col_d.index = 0;
+        let least_mixed = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("least"),
+            ret_ft,
+            vec![
+                Expression::Constant(Constant::new(Datum::Int(1), int_ft.clone())),
+                Expression::Column(col_d),
+            ],
+        ));
+        let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[dec_ft], 1);
+        chunk.append_datum(
+            0,
+            &Datum::Decimal(tidb_datatype::Decimal::from_literal("2.500")),
+        );
+        let datum = least_mixed
+            .eval(&crate::context::NoColumns, chunk.get_row(0))
+            .unwrap();
+        let Datum::Decimal(dec) = &datum else {
+            panic!("least over a decimal aggregate answers a decimal");
+        };
+        assert_eq!(
+            dec.scale(),
+            0,
+            "the constant winner keeps its own scale 0 too"
+        );
+        assert_eq!(dec.to_string(), "1");
     }
 }

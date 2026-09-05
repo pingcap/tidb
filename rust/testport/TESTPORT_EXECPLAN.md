@@ -8813,3 +8813,11 @@ risks without claiming repository-wide parity.
   duplicate 1050 when the executor returns `Done(false)`; focused warning
   and wire-count regressions are recorded in
   `receipts/session_create_table_if_not_exists_note.md`.
+- 2026-09-05 (`pkg/expression` extremum decimal scale): GREATEST/LEAST now
+  keeps the winning argument's own decimal scale in non-folded evaluation —
+  an integer argument wins at scale 0 (`least(i, d)` is `-5`, not `-5.000`)
+  — while a fully-constant call folds to the max argument decimal
+  (`least(1, 2.5)` stays `1.0`). Decided by full-stack Go captures through a
+  temporary pkg/session probe (wire text, datum frac, and result-type decimal
+  for column, mixed, and all-constant shapes). Evidence is recorded in
+  `receipts/extremum_decimal_scale_rung.md`.
