@@ -33,7 +33,7 @@ use crate::kv_table::{KvTable, TableHandle};
 use crate::mem_quota;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tidb_ast::{JoinNode, QueryStmt, SelectField, SelectFieldList, Stmt};
+use tidb_ast::{JoinNode, QueryStmt, SelectField, SelectFieldList, Stmt, Visitable, Visitor};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
@@ -353,6 +353,56 @@ pub fn run_select_meta_in(
     run_query_stmt(query, catalog, current_db, ctx)
 }
 
+/// Go's expression builder resolves the name argument of every sequence
+/// builtin before it constructs a physical executor. Keep that ordering for
+/// Rust's row/chunk evaluators: a later invalid projection item must not allow
+/// an earlier `NEXTVAL` item to consume a value first.
+fn validate_query_sequence_names(
+    query: &QueryStmt,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    struct SequenceNameValidator<'a> {
+        ctx: &'a crate::StmtContext,
+        error: Option<DriverError>,
+    }
+
+    impl Visitor for SequenceNameValidator<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return self.error.is_some();
+            };
+            let (tidb_ast::Expr::Func { name, args, .. }
+            | tidb_ast::Expr::GenericFuncCall { name, args, .. }) = expr
+            else {
+                return self.error.is_some();
+            };
+            if !matches!(
+                name.to_ascii_lowercase().as_str(),
+                "nextval" | "lastval" | "setval"
+            ) {
+                return self.error.is_some();
+            }
+            let Some(tidb_ast::Expr::Column(path)) = args.first() else {
+                return self.error.is_some();
+            };
+            if let Err(error) = self.ctx.validate_sequence_path(path) {
+                self.error = Some(DriverError::Exec(crate::ExecError::Eval(error)));
+                return true;
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            self.error.is_none()
+        }
+    }
+
+    let mut query = query.clone();
+    let mut validator = SequenceNameValidator { ctx, error: None };
+    query.accept(&mut validator);
+    validator.error.map_or(Ok(()), Err)
+}
+
 /// Runs a `QueryStmt` of either shape against the catalog: the same dispatch
 /// [`build_derived_source`] makes over a derived table's subquery, factored
 /// out so the lateral-over-set-operation path can share it.
@@ -362,6 +412,7 @@ pub(crate) fn run_query_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
+    validate_query_sequence_names(query, ctx)?;
     set_opr::validate_query_usage(query)?;
     let mut physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
     physical_builder::execute_query(query, &mut physical, catalog, ctx)
@@ -487,6 +538,7 @@ pub fn run_query_meta_stmt_with_physical(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
+    validate_query_sequence_names(query, ctx)?;
     match physical {
         Some(physical) => physical_builder::execute_query(query, physical, catalog, ctx),
         None => run_query_stmt(query, catalog, current_db, ctx),
@@ -504,6 +556,7 @@ pub fn plan_query_meta_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    validate_query_sequence_names(query, ctx)?;
     planner_bridge::physical_query_plan(query, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
 }

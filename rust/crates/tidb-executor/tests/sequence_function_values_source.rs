@@ -762,14 +762,30 @@ fn nextval_in_a_projection_consumes_one_value_per_row() {
 /// fails with 1347, the next bare `select nextval(seq)` draws 3. Go fails at
 /// PLAN-BUILD time (`buildSimpleExpression`'s sequence resolution), before
 /// any row is evaluated.
-// go-parity-gap: documented divergence -- this tier resolves sequence names
-// during ROW EVALUATION, so the failing mixed statement consumes ONE value
-// (from `nextval(seq)` on the first row) before erroring; the next bare
-// draw is 4, not 3. The per-row projection consumption itself IS pinned by
-// `nextval_in_a_projection_consumes_one_value_per_row`.
 #[test]
-#[ignore]
 fn an_errored_projection_consumes_no_sequence_values() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t(a int)", &mut catalog).expect("create t");
+    run_insert_on("insert into t values(1),(2)", &mut catalog, &StmtContext::default())
+        .expect("insert two rows");
+    run_seq(&mut catalog, "create sequence seq");
+    let ctx = session(&catalog, "test");
+
+    let rows = run_select_on("select nextval(seq), t.a from t", &catalog, &ctx)
+        .expect("projection select runs");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(cell(&rows[0], 0), Some(1));
+    assert_eq!(cell(&rows[1], 0), Some(2));
+
+    assert_eq!(
+        query_error(
+            &catalog,
+            &ctx,
+            "select nextval(seq), nextval(t), t.a from t"
+        ),
+        (1347, "'test.t' is not SEQUENCE".to_owned())
+    );
+    assert_eq!(one_column(&catalog, &ctx, "select nextval(seq)"), vec![Some(3)]);
 }
 
 /// Go rows `pkg/ddl/sequence_test.go:437-464`: `nextval`/`lastval`/`setval`

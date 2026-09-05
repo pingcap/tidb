@@ -809,6 +809,13 @@ impl SequenceSnapshot {
             )),
         }
     }
+
+    /// Resolves `path` without touching the allocator or session `LASTVAL`
+    /// state. This is the plan-build counterpart to the value-consuming
+    /// sequence methods below.
+    pub fn validate_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
+        self.resolve(path).map(|_| ())
+    }
 }
 
 impl StmtContext {
@@ -1742,6 +1749,13 @@ impl StmtContext {
     pub fn with_sequences(mut self, sequences: Arc<SequenceSnapshot>) -> Self {
         self.sequences = sequences;
         self
+    }
+
+    /// Validates a sequence name without consuming or otherwise mutating its
+    /// allocator. Go resolves sequence builtins while building the expression
+    /// tree, before an executor can evaluate an earlier projection item.
+    pub fn validate_sequence_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
+        self.sequences.validate_path(path)
     }
 
     /// Sets `@@cte_max_recursion_depth`; a non-positive session value clamps

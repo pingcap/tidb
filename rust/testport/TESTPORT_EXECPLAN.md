@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` errored sequence projection): aligned sequence-name
+  resolution with Go's expression-build phase. The ordinary AST visitor now
+  validates every parser-shaped sequence function before fresh, cached, or
+  information-schema physical execution, so a later wrong-object reference
+  cannot consume an earlier `NEXTVAL`; the promoted regression records the
+  old evaluation-time draw and passes with the exact 1347 error and unchanged
+  counter. The b110 receipt records the complete owner inventory and leaves
+  only the private cache-inspection gap in this sequence carrier.
 - 2026-09-05 (`pkg/ddl` sequence identifier validation): aligned CREATE
   SEQUENCE with Go's preprocessor rule for empty or final-space identifiers.
   Rust now returns exact 1103 `Incorrect table name 'seq  '` before catalog
