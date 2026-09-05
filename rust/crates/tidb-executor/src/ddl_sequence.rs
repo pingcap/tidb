@@ -240,6 +240,12 @@ pub fn run_create_sequence_in(
 ) -> Result<bool, DriverError> {
     let (database, name) = split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
+    // Go's CREATE SEQUENCE preprocessor applies IsInCorrectIdentifierName
+    // before DDL execution: empty identifiers and names whose final byte is a
+    // space are rejected with ErrWrongTableName (1103).
+    if name.is_empty() || name.as_bytes().last() == Some(&b' ') {
+        return Err(DriverError::Schema(SchemaErrorKind::WrongTableName(name)));
+    }
     if !catalog.has_database(&database) {
         return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
             database,

@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` sequence identifier validation): aligned CREATE
+  SEQUENCE with Go's preprocessor rule for empty or final-space identifiers.
+  Rust now returns exact 1103 `Incorrect table name 'seq  '` before catalog
+  mutation; the promoted regression records acceptance before the fix and
+  rejection afterward. The b110 receipt records the complete owner boundary.
 - 2026-09-05 (`pkg/ddl` sequence wrong-object errors): aligned sequence
   builtins with Go's infoschema lookup. Existing tables/views now return
   exact 1347 (`'<db>.<name>' is not SEQUENCE`) while absent names retain

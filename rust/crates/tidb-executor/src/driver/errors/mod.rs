@@ -704,6 +704,9 @@ impl DriverError {
         DriverError::Schema(crate::SchemaErrorKind::TableExists(name)) => {
             MysqlError::new(1050, format!("Table '{name}' already exists"))
         }
+        DriverError::Schema(crate::SchemaErrorKind::WrongTableName(name)) => {
+            MysqlError::new(1103, format!("Incorrect table name '{name}'"))
+        }
         // Go: "Unknown table '%-.129s'" -- DROP TABLE's own code, distinct
         // from the 1146 a read of a missing table reports.
         DriverError::Schema(crate::SchemaErrorKind::BadTable(name)) => {

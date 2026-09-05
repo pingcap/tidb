@@ -104,13 +104,13 @@ fn create_sequence_stores_the_positive_default_options() {
 /// the planner preprocessor rejects a name whose last byte is a space
 /// (`resolveCreateSequenceStmt`, `pkg/planner/core/preprocess.go:2091`, via
 /// `util.IsInCorrectIdentifierName`, `pkg/util/util.go:280`).
-// go-parity-gap: documented divergence -- this tier has no preprocessor
-// carrier, so the statement is ACCEPTED (the sequence is created) where Go
-// refuses with 1103. Nothing is approximated; the acceptance is not pinned
-// as if it were Go behavior.
 #[test]
-#[ignore]
 fn create_sequence_space_terminated_name_reports_1103() {
+    let mut catalog = Catalog::default();
+    assert_eq!(
+        error_of(&mut catalog, "create sequence `seq  `"),
+        (1103, "Incorrect table name 'seq  '".to_owned())
+    );
 }
 
 /// Go row `pkg/ddl/sequence_test.go:61`: `create sequence seq CHARSET=utf8`
