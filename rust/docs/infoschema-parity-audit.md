@@ -107,3 +107,15 @@ rendering single values as `label="v"` and multiple as
 `label=~"a|b"` over the sorted value set (`metrics_schema.go:117-141`,
 `GenLabelConditionValues`), and the range duration appends `s`. The
 `BTreeSet` ordering matches Go's explicitly sorted StringSet keys.
+
+## Adjacent face: funcdep_misc helpers (2026-09-05) — LOCATED AND COVERED
+
+Go's `pkg/planner/util/funcdep_misc.go` trio (`ExtractNotNullFromConds`,
+`ExtractConstantCols`, `ExtractEquivalenceCols`) lives in the Rust
+logical planner as `add_not_null_facts` / `add_constant_facts` /
+`add_equivalence_facts` (`logical/functional_dependencies.rs`), feeding
+`add_condition_facts`. The not-null arm reproduces Go's
+null-rejection-per-column test (`tidb_funcdep::null_reject`), the
+constant and equivalence arms use the shared expression extractors, and
+16 FD-extraction regressions plus the 914-test planner suite pass. The
+funcdep face (fd_graph + misc helpers) is fully covered.

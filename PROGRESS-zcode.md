@@ -434,3 +434,5 @@
 - 下轮恢复点: (1) 新面选型或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - 收敛核查(mererge 后): 兄弟会话 random_bytes 修复形态=.to_string()(与我丢弃的 .to_owned() 等价); executor lib 在合并树 1077 通过/123 预存环境失败(基线 ±1 flake), 编译恢复确认。
 - 下轮恢复点: (1) 静默期→新面候选(infoschema 深层/其他 crate)或收敛复查; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- funcdep 面收尾: funcdep_misc.go 三助手定位为 functional_dependencies.rs 的 add_not_null/constant/equivalence_facts(not-null 逐列 null-reject 测试与 Go 一致); 16 FD 提取回归+914 planner 全绿。funcdep 面(fd_graph+misc)全覆盖, 收据已追加。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
