@@ -389,6 +389,38 @@ pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
 /// Go `getIndexRowCountForStatsV2` over the index's ranges, falling back to
 /// the pseudo formula when the table -- or just this index -- has no
 /// analyzed histogram.
+/// Go `ColumnStatsIsInvalid`'s async-load queueing half
+/// (`pkg/statistics/column.go`): a column whose statistics are missing,
+/// uninitialized, or not fully loaded is queued into
+/// `AsyncLoadHistogramNeededItems` so the async loader can fetch them; the
+/// current estimate still answers the pseudo rate. Internal pseudo columns
+/// (`_tidb_rowid`, ID <= 0) have no persisted stats and are never queued.
+fn queue_column_stats_load_if_invalid(
+    table: &KvTable,
+    stats: &TableStatistics,
+    column_id: i64,
+    column_stats: Option<&ColumnStats>,
+) {
+    if column_id <= 0 {
+        return;
+    }
+    // Go: `colStats == nil || !colStats.IsStatsInitialized() ||
+    // colStats.IsLoadNeeded()`. The reduced column shape makes "missing"
+    // stand in for both nil and uninitialized.
+    let unloaded = column_stats.is_none() || stats.column_is_load_needed(column_id, true);
+    if unloaded {
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(
+            tidb_model::TableItemID {
+                table_id: table.table_id,
+                id: column_id,
+                is_index: false,
+                is_sync_load_failed: false,
+            },
+            true,
+        );
+    }
+}
+
 fn index_row_count(
     index: &KvIndex,
     table: &KvTable,
@@ -522,6 +554,16 @@ fn partial_stats_index_row_count(
         .collect();
     if columns.iter().all(|(stats, _)| stats.is_none()) {
         return None;
+    }
+    // Go `ColumnStatsIsInvalid`: every indexed column that is missing or not
+    // fully loaded is queued for the async loader while the estimate proceeds.
+    for (offset, (column_stats, _)) in columns.iter().enumerate() {
+        let column_id = table
+            .columns
+            .get(index.column_offsets[offset])
+            .map(|column| column.id)
+            .unwrap_or(0);
+        queue_column_stats_load_if_invalid(table, stats, column_id, *column_stats);
     }
     if ranges.iter().any(|range| range.is_full_range(false)) {
         return None;
@@ -979,6 +1021,12 @@ fn selectivity_of_conjuncts_with_path_context(
         let is_handle = table.pk_handle_offset() == Some(offset);
         let row_count = match loaded {
             Some(stats) => {
+                queue_column_stats_load_if_invalid(
+                    table,
+                    stats,
+                    column.id,
+                    stats.columns.get(&column.id),
+                );
                 get_row_count_by_column_ranges(
                     stats.columns.get(&column.id),
                     &ranges,
@@ -2111,6 +2159,7 @@ mod index_async_load_queue_tests {
     use crate::kv_table::KvTable;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_model::TableItemID;
+    use tidb_stats::Histogram;
 
     fn long_column(name: &str, id: i64) -> KvColumn {
         KvColumn {
@@ -2179,6 +2228,99 @@ mod index_async_load_queue_tests {
 
     /// An index whose statistics ARE fully loaded is not queued: the gate
     /// fires only on the unloaded half of Go's condition.
+    /// Go `ColumnStatsIsInvalid`'s queueing half: a column whose statistics
+    /// are missing or not fully loaded is queued for the async loader.
+    #[test]
+    fn an_unloaded_column_is_queued_for_async_load() {
+        let table = KvTable::new(11, vec![long_column("a", 1)]);
+        let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        stats.column_stats_existence.insert(1, true);
+        let item = TableItemID {
+            table_id: 11,
+            id: 1,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        needed.delete(item);
+
+        queue_column_stats_load_if_invalid(&table, &stats, 1, None);
+        assert!(
+            needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == item),
+            "the unloaded column is queued for the async loader"
+        );
+        needed.delete(item);
+    }
+
+    /// A fully loaded column is not queued.
+    #[test]
+    fn a_fully_loaded_column_is_not_queued() {
+        let table = KvTable::new(11, vec![long_column("a", 1)]);
+        let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
+        stats.pseudo = false;
+        stats.cache_pseudo = false;
+        stats.column_stats_existence.insert(1, true);
+        stats
+            .column_load_status
+            .insert(1, tidb_stats::StatsLoadedStatus::full_load());
+        let item = TableItemID {
+            table_id: 11,
+            id: 1,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        needed.delete(item);
+
+        // The column's stats are present AND fully loaded.
+        let loaded = ColumnStats {
+            histogram: Histogram::default(),
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        };
+        queue_column_stats_load_if_invalid(&table, &stats, 1, Some(&loaded));
+        assert!(
+            !needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == item),
+            "a fully loaded column needs no async load"
+        );
+        needed.delete(item);
+    }
+
+    /// Internal pseudo columns (`_tidb_rowid`, ID <= 0) are never queued.
+    #[test]
+    fn internal_pseudo_columns_are_never_queued() {
+        let table = KvTable::new(11, Vec::new());
+        let stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());
+        let item = TableItemID {
+            table_id: 11,
+            id: -1,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        needed.delete(item);
+
+        queue_column_stats_load_if_invalid(&table, &stats, -1, None);
+        assert!(
+            !needed
+                .all_items()
+                .iter()
+                .any(|loaded| loaded.table_item_id == item),
+            "internal pseudo columns never reach the loader"
+        );
+        needed.delete(item);
+    }
+
     #[test]
     fn a_fully_loaded_index_is_not_queued() {
         let index = KvIndex {
