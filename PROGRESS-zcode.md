@@ -412,3 +412,5 @@
 - 下轮恢复点: (1) 新面候选; (2) F2/F3-seam live 阻塞; (3) DST 排队。
 - 合流核实: 并发会话已在同一工单落地他们的版本(gogc tuner bounds/tiflash preaggregation/analyze column options/partition prune hooks/super_read_only 耦合+restricted 联动), 与我的批次语义一致或更完整; 注册表计数测试过期(971→973)已修; fmt 漂移归一化。session lib 1348 通过/281 预存。
 - 下轮恢复点: (1) 继续跟随并发会话在同一工单的增量(冲突最小化); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- parser-lexer 文档 Unverified 段退役: 工具链恢复后原 worked examples 已全部成为树内测试钉子(parser_root_source.rs 的链式拒绝/pipes_as_concat ring 等), 批次推送。
+- 下轮恢复点: (1) infoschema 切片 b 已闭→下一行为面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

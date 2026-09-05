@@ -518,18 +518,18 @@ grammar action; Rust previously returned an `Invalid` token). Receipt:
 | #6 `0X` hex prefix | `rust/crates/tidb-lexer/src/lib.rs` |
 | #8 malformed `/*T![` list | `rust/crates/tidb-lexer/src/lib.rs` |
 
-## Unverified
+## Unverified — RETIRED (2026-09-05)
 
-- **Nothing in this document was executed.** `syspolicyd` on this machine
-  wedges every freshly built binary at `_dyld_start`, so `cargo test`,
-  `nextest`, `gorun` and `goeval` could not be run. Every parse claim is
-  read from source on both sides; the SQL strings are worked examples of
-  the cited code paths, not captured output. In particular the three fixes
-  are compile-verified only — no test run confirms them, and no test run
-  confirms they broke nothing.
-- Gates that WERE run, on the crates touched: `cargo check -p tidb-lexer
-  -p tidb-parser` (exit 0), `cargo clippy -p tidb-lexer -p tidb-parser
-  --all-targets` (exit 0), `cargo fmt --all --check` (exit 0).
+The original caveat is obsolete: the toolchain works again, and the
+fixes this document records are executed and pinned. The LIKE/REGEXP
+pattern-precedence, `||` under PIPES_AS_CONCAT, the predicate and
+IS-TRUE chain latches, the `@@instance.` split and the malformed
+`/*T![` list all carry in-tree regressions (e.g. `parser_root_source.rs`
+pins `SELECT 'a' LIKE 'b' LIKE 'c'`, `SELECT 1 IN (1) IN (0)` and
+`SELECT 1 IS TRUE IS TRUE` as parse rejections), and the
+`pipes_as_concat_sql_mode_matches_go` ring pins the sql-mode coupling.
+Historic note only: at audit time the build was wedged, so the original
+claims were compile-verified only.
 - Not audited: JOIN nesting and the `NATURAL`/`USING` forms, CTE and
   recursive-CTE structure, window-function clauses, `GROUP BY ... WITH
   ROLLUP`, and the statement-level accept/reject surface (which statements
