@@ -715,7 +715,20 @@ fn clock_fsp(args: &[Expression]) -> Option<i64> {
         [] => 0,
         [Expression::Constant(constant)] => match &constant.value {
             Datum::Null => 0,
-            Datum::Int(value) => *value,
+            // Go `types.CheckFsp` (`pkg/types/fsp.go:38`), run at BUILD time
+            // on the constant by `nowFunctionClass.getFunction`: above
+            // `MaxFsp` CLAMPS to 6 (`now(7)` answers as `now(6)`), -1 is the
+            // unspecified marker mapping to 0, and any other negative is a
+            // build error surfacing as this tier's None.
+            Datum::Int(value) => {
+                if *value > 6 {
+                    6
+                } else if *value < 0 {
+                    return None;
+                } else {
+                    *value
+                }
+            }
             Datum::UInt(value) => i64::try_from(*value).ok()?,
             value => value.sql_string().ok()?.parse().ok()?,
         },

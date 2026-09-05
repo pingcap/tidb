@@ -404,7 +404,7 @@ impl Columns for FractionalClock {
 fn current_time_truncates_to_microseconds_before_fsp_rounding() {
     let clock = FractionalClock;
     assert_eq!(
-        current_time(&[Datum::Int(6)], &clock).unwrap(),
+        current_time(&[Datum::Int(6)], "curtime", &clock).unwrap(),
         Datum::new_string("22:13:20.654320".to_string())
     );
     assert_eq!(
@@ -427,8 +427,8 @@ fn current_clock_null_fsp_follows_each_go_signature() {
         utc_timestamp(&[Datum::Int(0)], &clock)
     );
     assert_eq!(
-        current_time(&[Datum::Null], &clock),
-        current_time(&[Datum::Int(0)], &clock)
+        current_time(&[Datum::Null], "curtime", &clock),
+        current_time(&[Datum::Int(0)], "curtime", &clock)
     );
     assert_eq!(utc_time(&[Datum::Null], &clock), Ok(Datum::Null));
 }

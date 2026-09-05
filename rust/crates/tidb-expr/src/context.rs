@@ -73,6 +73,15 @@ pub enum EvalError {
     /// Go `ErrWrongArguments` (1210), with the source-formatted argument
     /// description.
     IncorrectArguments(String),
+    /// Go `types.ErrTooBigPrecision` (1426): a clock function's
+    /// fractional-seconds argument exceeds `MaxFsp`, raised at evaluation
+    /// time (`pkg/expression/builtin_time.go:2730` and siblings).
+    TooBigFsp {
+        /// The requested fractional-seconds precision.
+        fsp: i64,
+        /// The clock function's own name (`now`, `curtime`, ...).
+        function: &'static str,
+    },
     /// A source-owned advisory-lock error with its exact MySQL code/message.
     AdvisoryLock {
         /// MySQL error number (3057, 3058, or a backend error code).

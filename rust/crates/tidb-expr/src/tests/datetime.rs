@@ -128,7 +128,7 @@ fn now_current_timestamp() {
     // valid precision.
     assert_eq!(
         e_at("now(8)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 8, function: \"now\" }"
     );
     assert_eq!(
         e_at("now(-2)", &clock),
@@ -137,7 +137,7 @@ fn now_current_timestamp() {
     // Additional boundary neighbors retain the same contract.
     assert_eq!(
         e_at("now(7)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 7, function: \"now\" }"
     );
     assert_eq!(
         e_at("now(-1)", &clock),
@@ -191,7 +191,7 @@ fn test_current_time() {
     assert!(tidb_parser::parse("select current_time(-1)").is_err());
     assert_eq!(
         e_at("current_time(7)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 7, function: \"current_time\" }"
     );
     assert_eq!(e_at("curtime(3)", &clock), "STR:03:43:20.654");
 
@@ -233,7 +233,7 @@ fn utc_timestamp_rounding() {
     );
     assert_eq!(
         e_at("utc_timestamp(8)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 8, function: \"utc_timestamp\" }"
     );
     // Signed precision is a parse error in Go's FuncDatetimePrecListOpt.
     assert!(tidb_parser::parse("select utc_timestamp(-2)").is_err());
@@ -251,7 +251,7 @@ fn test_utc_time() {
     assert!(tidb_parser::parse("select utc_time(-1)").is_err());
     assert_eq!(
         e_at("utc_time(7)", &clock),
-        "Unsupported(\"bad fractional-seconds-precision argument\")"
+        "TooBigFsp { fsp: 7, function: \"utc_time\" }"
     );
 }
 

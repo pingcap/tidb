@@ -146,6 +146,13 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             format!("Incorrect parameter count in the call to native function '{function}'"),
         ),
         EvalError::IncorrectArguments(message) => MysqlError::coded(1210, message),
+        // Go `types.ErrTooBigPrecision` (1426): the clock signatures raise it
+        // at evaluation time, not at parse time
+        // (`pkg/expression/builtin_time.go:2730` and siblings).
+        EvalError::TooBigFsp { fsp, function } => MysqlError::coded(
+            1426,
+            format!("Too-big precision {fsp} specified for '{function}'. Maximum is 6."),
+        ),
         EvalError::AdvisoryLock { code, message } => MysqlError::coded(code, message),
         EvalError::DataOutOfRange { value, expression } => MysqlError::new(
             ER_DATA_OUT_OF_RANGE,

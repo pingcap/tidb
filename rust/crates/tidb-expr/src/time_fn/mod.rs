@@ -50,7 +50,8 @@ pub(crate) fn dispatch(
         "UTC_TIMESTAMP" => utc_timestamp(vals, cols),
         "CURDATE" | "CURRENT_DATE" => current_date(vals, cols),
         "UTC_DATE" => utc_date(vals, cols),
-        "CURTIME" | "CURRENT_TIME" => current_time(vals, cols),
+        "CURTIME" => current_time(vals, "curtime", cols),
+        "CURRENT_TIME" => current_time(vals, "current_time", cols),
         "UTC_TIME" => utc_time(vals, cols),
         "DATE" => date(vals, cols),
         "MICROSECOND" => microsecond(vals),
@@ -207,7 +208,7 @@ fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// (`time_zone`-adjusted) statement time, always truncating fractional
 /// seconds. `CURRENT_TIMESTAMP` is the same function class.
 fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let fsp = parse_fsp_with_null_as_zero(vals)?.unwrap_or(0);
+    let fsp = parse_fsp_with_null_as_zero(vals, "now")?.unwrap_or(0);
     let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
     Ok(Datum::new_string(format_datetime(
         utc_secs + i64::from(tz_offset),
@@ -220,7 +221,7 @@ fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// `builtinUTCTimestampWithArgSig` / `builtinUTCTimestampWithoutArgSig`:
 /// raw UTC statement time, always rounding fractional seconds half-up.
 fn utc_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let fsp = parse_fsp_with_null_as_zero(vals)?.unwrap_or(0);
+    let fsp = parse_fsp_with_null_as_zero(vals, "utc_timestamp")?.unwrap_or(0);
     let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
     Ok(Datum::new_string(format_datetime(
         utc_secs, nanos, fsp, true,
@@ -251,8 +252,12 @@ fn utc_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// `builtinCurrentTime0ArgSig` / `builtinCurrentTime1ArgSig`: local
 /// statement time. The zero-argument signature truncates; an explicit FSP,
 /// including zero, rounds half-up. `CURTIME` and `CURRENT_TIME` are aliases.
-fn current_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let fsp = parse_fsp_with_null_as_zero(vals)?;
+fn current_time(
+    vals: &[Datum],
+    function: &'static str,
+    cols: &dyn Columns,
+) -> Result<Datum, EvalError> {
+    let fsp = parse_fsp_with_null_as_zero(vals, function)?;
     let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
     // builtinCurrentTime1ArgSig first renders TimeFSPFormat (six digits,
     // truncating sub-microsecond nanoseconds) and only then ParseDuration
@@ -274,7 +279,7 @@ fn utc_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if matches!(vals, [Datum::Null]) {
         return Ok(Datum::Null);
     }
-    let fsp = parse_fsp(vals)?;
+    let fsp = parse_fsp_for(vals, "utc_time")?;
     let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
     // builtinUTCTimeWithArgSig has the identical TimeFSPFormat-then-parse
     // conversion as CURRENT_TIME's explicit signature.
@@ -333,24 +338,33 @@ fn no_clock_err() -> EvalError {
 }
 
 /// Parses the source family's optional 0-6 fractional-seconds precision.
-/// `None` means the zero-argument signature and remains distinguishable from
-/// an explicit zero for CURRENT_TIME/UTC_TIME rounding.
-fn parse_fsp(vals: &[Datum]) -> Result<Option<u32>, EvalError> {
+fn parse_fsp_for(vals: &[Datum], function: &'static str) -> Result<Option<u32>, EvalError> {
     match vals {
         [] => Ok(None),
         [Datum::Int(i)] if (0..=6).contains(i) => Ok(Some(*i as u32)),
         [Datum::UInt(i)] if *i <= 6 => Ok(Some(*i as u32)),
+        // Go `types.ErrTooBigPrecision` (1426), raised at evaluation time by
+        // the clock signatures themselves
+        // (`pkg/expression/builtin_time.go:2730` and siblings).
+        [Datum::Int(i)] if *i > 6 => Err(EvalError::TooBigFsp { fsp: *i, function }),
+        [Datum::UInt(i)] => Err(EvalError::TooBigFsp {
+            fsp: *i as i64,
+            function,
+        }),
         _ => Err(EvalError::Unsupported(
             "bad fractional-seconds-precision argument",
         )),
     }
 }
 
-fn parse_fsp_with_null_as_zero(vals: &[Datum]) -> Result<Option<u32>, EvalError> {
+fn parse_fsp_with_null_as_zero(
+    vals: &[Datum],
+    function: &'static str,
+) -> Result<Option<u32>, EvalError> {
     if matches!(vals, [Datum::Null]) {
         Ok(Some(0))
     } else {
-        parse_fsp(vals)
+        parse_fsp_for(vals, function)
     }
 }
 
@@ -1336,6 +1350,36 @@ mod clock_source_tests {
 
     fn string(value: &str) -> Datum {
         Datum::new_string(value.to_owned())
+    }
+
+    /// Go raises `types.ErrTooBigPrecision` (1426) at EVALUATION time for an
+    /// fsp above `MaxFsp` (`builtin_time.go:2730` and siblings) -- a coded
+    /// diagnostic, not the generic fallback, and NULL args still mean fsp 0.
+    #[test]
+    fn clock_fsp_above_max_reports_coded_1426() {
+        let ctx = WarningContext::default();
+        let err = source_eval("NOW", &[Datum::Int(7)], &ctx).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                EvalError::TooBigFsp {
+                    fsp: 7,
+                    function: "now"
+                }
+            ),
+            "{err:?}"
+        );
+        let err = source_eval("CURTIME", &[Datum::Int(8)], &ctx).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                EvalError::TooBigFsp {
+                    fsp: 8,
+                    function: "curtime"
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     /// Exact Go `TestClock`: HOUR, MINUTE, SECOND, MICROSECOND and TIME over

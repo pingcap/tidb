@@ -2046,13 +2046,21 @@ fn test_now_utc_timestamp_fixed_clock() {
     assert_eq!(got_text(&utc6), "1970-01-01 00:20:34.500000");
 
     for name in ["NOW", "UTC_TIMESTAMP"] {
-        for bad in [-2_i64, 8] {
-            let result = time_fn::dispatch(name, &[Datum::Int(bad)], &ctx);
-            match result {
-                Some(Err(EvalError::Unsupported(_))) => {}
-                other => panic!("{name}({bad}) must fail construction, got {other:?}"),
-            }
+        // Negative fsp keeps the refusing form...
+        let result = time_fn::dispatch(name, &[Datum::Int(-2)], &ctx);
+        match result {
+            Some(Err(EvalError::Unsupported(_))) => {}
+            other => panic!("{name}(-2) must fail construction, got {other:?}"),
         }
+        // ...while above `MaxFsp` the coded `types.ErrTooBigPrecision`
+        // (1426) is raised (`builtin_time.go:2730`/:2600).
+        let err = time_fn::dispatch(name, &[Datum::Int(8)], &ctx)
+            .unwrap()
+            .unwrap_err();
+        assert!(
+            matches!(&err, EvalError::TooBigFsp { fsp: 8, function } if function.eq_ignore_ascii_case(name)),
+            "{err:?}"
+        );
         let null_fsp = time_fn::dispatch(name, &[Datum::Null], &ctx)
             .unwrap()
             .unwrap();
@@ -2574,18 +2582,39 @@ fn test_current_date_current_time_utc_time_clocks() {
         assert_eq!(text.chars().count(), want_len, "{text}");
         assert!(text.starts_with("00:20:"), "{text}");
     }
-    for bad in [-1_i64, 7] {
-        let result = time_fn::dispatch("CURRENT_TIME", &[Datum::Int(bad)], &ctx);
-        match result {
-            Some(Err(EvalError::Unsupported(_))) => {}
-            other => panic!("CURRENT_TIME({bad}) must fail construction, got {other:?}"),
-        }
-        let result = time_fn::dispatch("UTC_TIME", &[Datum::Int(bad)], &ctx);
-        match result {
-            Some(Err(EvalError::Unsupported(_))) => {}
-            other => panic!("UTC_TIME({bad}) must fail construction, got {other:?}"),
-        }
+    // Negative fsp keeps the refusing form; above `MaxFsp` the coded
+    // `types.ErrTooBigPrecision` (1426) is raised (`builtin_time.go:7219`).
+    let result = time_fn::dispatch("CURRENT_TIME", &[Datum::Int(-1)], &ctx);
+    match result {
+        Some(Err(EvalError::Unsupported(_))) => {}
+        other => panic!("CURRENT_TIME(-1) must fail construction, got {other:?}"),
     }
+    let err = time_fn::dispatch("CURRENT_TIME", &[Datum::Int(7)], &ctx)
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            EvalError::TooBigFsp {
+                fsp: 7,
+                function: "current_time"
+            }
+        ),
+        "{err:?}"
+    );
+    let err = time_fn::dispatch("UTC_TIME", &[Datum::Int(7)], &ctx)
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            EvalError::TooBigFsp {
+                fsp: 7,
+                function: "utc_time"
+            }
+        ),
+        "{err:?}"
+    );
 
     // UTC_TIME mirrors the fsp ladder against raw UTC nanoseconds.
     for (vals, want_len) in [

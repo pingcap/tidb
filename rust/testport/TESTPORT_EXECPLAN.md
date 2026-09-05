@@ -9032,3 +9032,11 @@ risks without claiming repository-wide parity.
   DST/repeated-hour values to the same epoch seconds as stored TIMESTAMP
   conversion. Focused timezone-storage regression plus Ready evidence are
   recorded in `receipts/planner_session_zone_constant_fold.md`.
+- 2026-09-06 (`pkg/expression` clock FSP above MaxFsp): `NOW`/`CURTIME`/
+  `UTC_TIME`/`UTC_TIMESTAMP`/`SYSDATE` with an fsp above 6 now raise Go's
+  coded `types.ErrTooBigPrecision` (1426) at evaluation time — each naming
+  its own function spelling — instead of the generic refusing fallback; the
+  new `EvalError::TooBigFsp` carrier maps to the 1426 wire diagnostic in the
+  executor bridge. Negative fsp keeps the refusing form (Go's CheckFsp
+  build-time split). Evidence is recorded in
+  `receipts/clock_fsp_too_big_precision.md`.
