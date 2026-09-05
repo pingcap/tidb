@@ -267,20 +267,17 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.EncodeStringDataKey` under this structure's prefix.
-    #[must_use]
     pub fn encode_string_data_key(&self, key: &[u8]) -> Vec<u8> {
         self.string_data_key(key)
     }
 
     /// Go `TxStructure.EncodeHashMetaKey` under this structure's prefix
     /// (written by v5.1 and earlier; exported for tests).
-    #[must_use]
     pub fn encode_hash_meta_key(&self, key: &[u8]) -> Vec<u8> {
         encode_head_with(&self.prefix, key, HASH_META)
     }
 
     /// Go `TxStructure.EncodeHashDataKey` under this structure's prefix.
-    #[must_use]
     pub fn encode_hash_data_key(&self, key: &[u8], field: &[u8]) -> Vec<u8> {
         self.hash_data_key(key, field)
     }
@@ -363,7 +360,6 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.EncodeHashAutoIDKeyValue`.
-    #[must_use]
     pub fn encode_hash_auto_id_key_value(
         &self,
         key: &[u8],
@@ -752,20 +748,17 @@ pub struct ReverseHashIterator {
 
 impl ReverseHashIterator {
     /// Go `ReverseHashIterator.Valid`.
-    #[must_use]
     pub fn valid(&self) -> bool {
         self.iterator.valid()
     }
 
     /// Go `ReverseHashIterator.Key`: the decoded field of the entry `next`
     /// last landed on.
-    #[must_use]
     pub fn key(&self) -> &[u8] {
         &self.field
     }
 
     /// Go `ReverseHashIterator.Value`.
-    #[must_use]
     pub fn value(&self) -> &[u8] {
         self.iterator.value()
     }

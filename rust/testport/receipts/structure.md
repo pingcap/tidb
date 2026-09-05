@@ -89,3 +89,31 @@ Ready gate, and `git diff --check` pass for the committed tree.
   transaction adapter contracts.
 - Not verified locally: Bazel analysis and the full Go `pkg/structure` test
   target (the Rust source suite is the deterministic package gate).
+
+## Follow-up: discardable source-return contract (`2026-09-06`)
+
+The complete eight-artifact `pkg/structure` inventory above remains the
+authority for this package batch and was rechecked before editing. Go callers
+may discard the results of `TxStructure.EncodeStringDataKey`,
+`EncodeHashMetaKey`, `EncodeHashDataKey`, and
+`EncodeHashAutoIDKeyValue`, as well as `ReverseHashIterator.Valid`, `Key`, and
+`Value`. Rust no longer imposes Rust-only `#[must_use]` diagnostics on those
+seven direct source APIs. Internal key encoders and transaction/test helpers
+remain annotated because they are not Go's exported structure boundary.
+
+`structure_source::source_return_values_may_be_ignored_like_go` invokes all
+seven APIs under `#[deny(unused_must_use)]`. In detached pre-fix worktree
+`bba5e367cd29f7768ce901a6acea423d66fbbd79`, the focused test failed with
+exactly seven diagnostics; after removing the annotations it passes.
+
+Follow-up validation:
+
+- Focused discard regression — passed after the fix; pre-fix failure recorded
+  above.
+- Full active `tidb-meta` integration carrier — 60 passed, 3 ignored.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-meta --all-targets --offline --locked` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check`, `make lint`, and `git diff --check` — passed.
+
+No Go source, Bazel metadata, Cargo manifest, generated input, fixture, or
+platform variant changed in this Rust-only follow-up; `make bazel_prepare` was
+not required.

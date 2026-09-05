@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/structure` Go-facing key encoders and reverse iterator
+  accessors): the complete eight-artifact structure inventory remains
+  unchanged and was rechecked before the edit. Seven direct Go APIs no longer
+  emit Rust-only discard diagnostics, while internal key and transaction test
+  helpers remain annotated. A focused deny-on-discard regression failed with
+  exactly seven diagnostics on detached pre-fix owner
+  `bba5e367cd29f7768ce901a6acea423d66fbbd79` and passes with 60 integration
+  tests (3 ignored), owner all-target checks, formatting, lint, and diff
+  checks. Evidence is recorded in `receipts/structure.md`.
 - 2026-09-06 (`pkg/parser/mysql` SQL-error constructors): the complete
   15-artifact parser/mysql inventory remains unchanged and was rechecked
   before the edit. Rust's `SqlError::new` and `SqlError::new_f`, direct
