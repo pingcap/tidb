@@ -2692,10 +2692,18 @@ fn modify_column_action(
     // below never runs when there are zero rows, so without this table-level
     // check every one of Go's five outright refusals would be silently
     // accepted on an empty table.
-    check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
     let had_auto_random = table
         .auto_random()
         .is_some_and(|spec| spec.offset == offset);
+    check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
+    // Go's `checkModifyTypes` runs before `checkAutoRandom`: changing the
+    // AUTO_RANDOM column away from BIGINT is the generic 8200 unsupported
+    // MODIFY error, not the later 8216 auto-random type diagnostic.
+    if had_auto_random && field_type.code() != FieldTypeCode::LongLong {
+        return Err(DriverError::UnsupportedModifyColumn(
+            "Unsupported modify column",
+        ));
+    }
     if (had_auto_random || auto_random_option.is_some())
         && field_type.code() != FieldTypeCode::LongLong
     {
@@ -2931,7 +2939,7 @@ fn modify_column_action(
         unreachable!("the table was found above and nothing here removes it");
     };
     table
-        .alter_auto_random_spec(new_auto_random, &def.name)
+        .alter_auto_random_spec(new_auto_random, offset, &def.name)
         .map_err(super::auto_random::rebase_error)?;
     // Go `updateFKInfoWhenModifyColumn` +
     // `adjustForeignKeyChildTableInfoAfterModifyColumn`: a CHANGE that also
@@ -3049,6 +3057,15 @@ fn add_column_action(
                 ))
             }
             tidb_ast::ColumnOption::Generated { stored: false, .. } => {}
+            tidb_ast::ColumnOption::AutoRandom(_) => {
+                // Go's `checkAddColumn` reports the dedicated auto-random
+                // error instead of the generic unsupported-column-option
+                // refusal used by the other unsupported ADD options.
+                return Err(DriverError::InvalidAutoRandom(format!(
+                    "unsupported add column '{}' constraint AUTO_RANDOM when altering '{}.{}'",
+                    def.name, database, table_name
+                )));
+            }
             tidb_ast::ColumnOption::Check(_) => {
                 // Pinned Go `buildColumnAndConstraint` emits this warning
                 // while disabled, then `CreateNewColumn` discards the

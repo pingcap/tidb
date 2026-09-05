@@ -157,11 +157,12 @@ impl KvTable {
     pub(crate) fn alter_auto_random_spec(
         &mut self,
         next: Option<AutoRandomSpec>,
+        column_offset: usize,
         column_name: &str,
     ) -> Result<(), AutoRandomError> {
         let previous = self.auto_random;
         let Some(next) = next else {
-            return if previous.is_some() {
+            return if previous.is_some_and(|spec| spec.offset == column_offset) {
                 Err(AutoRandomError::InvalidDefinition(
                     "adding/dropping/modifying auto_random is not supported".to_owned(),
                 ))

@@ -483,15 +483,50 @@ fn auto_random_create_raises_the_available_allocation_note() {
 /// `checkAutoRandom`; the sibling modifications of the PLAIN column `b`
 /// (`... modify column b int`, `... b bigint`) succeed, and re-modifying `a`
 /// with `bigint auto_random(3)` succeeds.
-// go-parity-gap: this tier runs its auto_random validation FIRST, so the
-// three narrowing MODIFYs answer 8216 with the bigint-only message (Go:
-// 8200), and modifying the plain column `b` is refused with 8216
-// ("adding/dropping/modifying auto_random is not supported") where Go's
-// checkAutoRandom (pkg/ddl/modify_column.go:2374, oldShardBits=0 for a
-// non-auto_random origin column) allows it.
 #[test]
-#[ignore]
 fn auto_random_modify_column_type_and_sibling_column_follow_go_check_order() {
+    let mut catalog = Catalog::default();
+    run_create_table_on(
+        "create table t (a bigint auto_random(3) primary key, b int)",
+        &mut catalog,
+    )
+    .unwrap();
+
+    for ty in ["int", "mediumint", "smallint"] {
+        let error = alter_error(
+            &mut catalog,
+            &format!("alter table t modify column a {ty} auto_random(3)"),
+        );
+        let mysql = error.to_mysql_error();
+        assert_eq!(mysql.code, 8200, "Go checkModifyTypes for {ty}");
+        assert!(
+            mysql.message.starts_with("Unsupported modify column"),
+            "Go's ErrUnsupportedDDLOperation: {}",
+            mysql.message
+        );
+    }
+
+    run_alter_table_in(
+        "alter table t modify column b int",
+        &mut catalog,
+        "test",
+        &ctx(),
+    )
+    .expect("Go allows modifying a plain sibling column");
+    run_alter_table_in(
+        "alter table t modify column b bigint",
+        &mut catalog,
+        "test",
+        &ctx(),
+    )
+    .expect("Go allows changing a plain sibling column's type");
+    run_alter_table_in(
+        "alter table t modify column a bigint auto_random(3)",
+        &mut catalog,
+        "test",
+        &ctx(),
+    )
+    .expect("Go allows re-modifying the same auto_random definition");
 }
 
 /// Go `serial_test.go:1225-1233`: with the allocator step at 1 and an
@@ -513,14 +548,18 @@ fn auto_random_increase_overlap_boundary_answers_go_overflow_message() {
 /// `unsupported add column '<col>' constraint AUTO_RANDOM when altering
 /// 'auto_random_db.t'` (autoid.AutoRandomAlterAddColumn,
 /// pkg/meta/autoid/errors.go:63, raised from pkg/ddl/add_column.go:204).
-// go-parity-gap: this tier refuses ADD COLUMN with the AUTO_RANDOM option
-// via its own generic option gate ("this column option is not supported in
-// ALTER TABLE ADD COLUMN", 1105) rather than Go's 8216 message, and it has
-// no CREATE DATABASE runner so the qualifying schema is `test`, not
-// `auto_random_db`.
 #[test]
-#[ignore]
 fn auto_random_add_column_answers_go_alter_add_message() {
+    let mut catalog = Catalog::default();
+    run_create_table_on("create table t (a bigint primary key)", &mut catalog).unwrap();
+    let error = alter_error(
+        &mut catalog,
+        "alter table t add column b bigint auto_random(3)",
+    );
+    assert_invalid_auto_random(
+        &error,
+        "unsupported add column 'b' constraint AUTO_RANDOM when altering 'test.t'",
+    );
 }
 
 /// Go `serial_test.go:1304-1339::TestAutoRandomWithPreSplitRegion`: with

@@ -41,6 +41,17 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` AUTO_RANDOM ADD/MODIFY ordering): aligned Rust's
+  ALTER behavior with Go `origin/master`
+  `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`. The promoted ADD regression
+  now returns the dedicated 8216 `AutoRandomAlterAddColumn` reason instead of
+  the generic 1105 option refusal. The MODIFY regression now checks Go's
+  `checkModifyTypes` precedence (8200 for narrowing the AUTO_RANDOM BIGINT),
+  permits unrelated sibling-column changes, and preserves successful
+  re-specification of the same AUTO_RANDOM definition by scoping allocator
+  transitions to the modified column. The focused tests recorded 1105/8216
+  fail-before results and pass-after Go codes/controls; b115 records the
+  complete owner inventory and remaining AUTO_RANDOM carriers.
 - 2026-09-05 (`pkg/ddl` temporary `CREATE TABLE ... LIKE` options): closed
   the inherited `PreSplitRegions` and `ShardRowIDBits` refusal gaps in the
   ordinary Rust LIKE path, preserving Go's check order and exact 8006 errors;
