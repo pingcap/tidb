@@ -43,6 +43,10 @@ type KVReader struct {
 	byteReader *byteReader
 }
 
+func (r *KVReader) getFileSize() (int64, error) {
+	return r.byteReader.storageReader.GetFileSize()
+}
+
 // NewKVReader creates a KV reader.
 func NewKVReader(
 	ctx context.Context,

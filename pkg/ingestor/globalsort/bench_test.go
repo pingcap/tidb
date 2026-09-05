@@ -374,7 +374,15 @@ func readMergeIter(t *testing.T, s *readTestSuite) {
 	var totalSize int
 	readBufSize := s.memoryLimit / len(files)
 	zeroOffsets := make([]uint64, len(files))
-	iter, err := simplesst.NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 1)
+	iter, err := simplesst.NewMergeKVIter(
+		ctx,
+		files,
+		zeroOffsets,
+		s.store,
+		readBufSize,
+		s.mergeIterHotspot,
+		maxMergeReaderMemoryPerCore,
+	)
 	intest.AssertNoError(err)
 
 	kvCnt := 0
@@ -529,7 +537,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 	op := NewMergeOperator(
 		wctx,
 		s.store,
-		int64(5*size.MB),
+		5*maxMergeReaderMemoryPerCore,
 		mergeOutput,
 		simplesst.DefaultBlockSize,
 		onClose,
