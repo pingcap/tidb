@@ -169,6 +169,13 @@ pub(super) fn fold_range_column_value(
     field_type: &FieldType,
     ctx: &crate::StmtContext,
 ) -> Result<Datum, DriverError> {
+    if contains_collate(expr) {
+        // Go's `buildRangePartitionDefinitions` runs the partition-expression
+        // allowlist over each bound after folding.  COLLATE is not one of the
+        // allowed value forms, even though the evaluator can otherwise pass
+        // the string through unchanged.
+        return Err(DriverError::PartitionFunctionNotAllowed);
+    }
     let value = eval_column_value(expr, ctx)?;
     if !range_column_value_kind_allowed(value.kind(), field_type.code()) {
         return Err(DriverError::PartitionColumnValueWrongType);
@@ -230,6 +237,17 @@ fn range_column_value_kind_allowed(kind: DatumKind, code: FieldTypeCode) -> bool
             DatumKind::String | DatumKind::Bytes | DatumKind::Null | DatumKind::BinaryLiteral
         ),
         _ => true,
+    }
+}
+
+fn contains_collate(expr: &Expr) -> bool {
+    match expr {
+        Expr::Collate { .. } => true,
+        Expr::Paren(inner) | Expr::Unary(_, inner) => contains_collate(inner),
+        Expr::Binary(_, left, right) => contains_collate(left) || contains_collate(right),
+        Expr::Extract { value, .. } => contains_collate(value),
+        Expr::Func { args, .. } => args.iter().any(contains_collate),
+        _ => false,
     }
 }
 

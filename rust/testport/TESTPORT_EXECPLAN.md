@@ -8727,3 +8727,8 @@ risks without claiming repository-wide parity.
   return type, matching Go's early MAXVALUE 1481 and non-integer LIST-bound
   1697 precedence. Focused RANGE and LIST regressions are live. Evidence is
   recorded in `receipts/ddl_partition_definition_check_order.md`.
+- 2026-09-05 (`pkg/ddl` RANGE COLUMNS bound COLLATE): Rust now rejects
+  COLLATE nodes inside RANGE COLUMNS bounds with Go's exact 1564
+  `This partition function is not allowed` diagnostic. The focused bound
+  regression is live. Evidence is recorded in
+  `receipts/ddl_partition_bound_collate.md`.

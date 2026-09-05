@@ -783,14 +783,22 @@ fn create_table_with_list_partition_values_not_int_rows_report_1697() {
     }
 }
 
-/// Go row `db_partition_test.go:811-814`: a bound carrying a COLLATE clause
-/// (`'G' collate utf8mb4_unicode_ci`) is
+/// Go row `db_partition_test.go:842-845`: a RANGE COLUMNS bound carrying a
+/// COLLATE clause (`'G' collate utf8mb4_unicode_ci`) is
 /// `dbterror.ErrPartitionFunctionIsNotAllowed` (1564).
-// go-parity-gap: this tier ACCEPTS that create, so the Go refusal has no
-// carrier to pin.
 #[test]
-#[ignore]
-fn create_table_with_list_partition_collate_bound_is_1564() {
+fn create_table_with_range_column_partition_collate_bound_is_1564() {
+    let mut catalog = Catalog::default();
+    let ctx = StmtContext::default().with_strict(true);
+    let error = try_create(
+        "create table t (b char(10)) partition by range columns (b) \
+         (partition p1 values less than ('G' collate utf8mb4_unicode_ci))",
+        &mut catalog,
+        &ctx,
+    )
+    .expect_err("Go rejects COLLATE in a RANGE COLUMNS bound");
+    assert_eq!(err_code(&error), 1564);
+    assert_eq!(err_message(&error), "This partition function is not allowed");
 }
 
 // --- TestCreateTableWithListColumnsPartition
