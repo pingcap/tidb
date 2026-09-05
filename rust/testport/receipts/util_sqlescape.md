@@ -26,10 +26,32 @@ both panic messages exactly; the Rust source test now does the same instead of
 checking only that `MustFormatSQL` panicked. Rust now has exactly the five
 pinned unit tests and four pinned benchmarks.
 
+## Rust follow-up: Go-discardable escape helpers
+
+The Rust owner carried two explicit `#[must_use]` diagnostics on the direct Go
+helpers `escape_string` and `must_escape_sql`. Go callers may discard either
+string result, so these diagnostics were Rust-only and are now removed without
+changing escaping, formatting, panic, or argument handling behavior.
+
+The focused `return_values_may_be_ignored_like_go` regression discards both
+results under `#[deny(unused_must_use)]`. On the pre-fix owner it failed to
+compile with exactly two unused-return errors; the fixed test passes.
+
+Ready validation for this follow-up:
+
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib sqlescape::tests::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib sqlescape::tests -- --test-threads=1` — passed; 6 tests.
+- `cargo +nightly-2026-08-22 bench --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --bench sqlescape --no-run` — passed.
+- `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-util -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` is not required.
+
 ## Validation
 
-Profile: WIP; this is one package checkpoint in the continuing repository
-audit, not a repository-wide readiness claim.
+Profile: WIP for the original package checkpoint; the follow-up above was
+validated with the Ready profile within the continuing repository audit.
 
 - `git diff --exit-code e2788410d8d696605e8cb002585877a063ccc909 -- pkg/util/sqlescape` — passed.
 - `GOCACHE=/private/tmp/tidb-go-cache GOTOOLCHAIN=go1.25.10 go test -tags=intest,deadlock -count=1 ./pkg/util/sqlescape` — passed.

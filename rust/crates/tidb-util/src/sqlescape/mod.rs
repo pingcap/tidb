@@ -214,7 +214,6 @@ fn escape_string_backslash(buffer: Vec<u8>, value: &[u8]) -> Vec<u8> {
 }
 
 /// Escapes one Go string using MySQL backslash sequences.
-#[must_use]
 pub fn escape_string(value: impl AsRef<[u8]>) -> Vec<u8> {
     let value = value.as_ref();
     escape_string_backslash(Vec::with_capacity(value.len()), value)
@@ -497,7 +496,6 @@ pub fn escape_sql(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Result<Vec
 /// # Panics
 ///
 /// Panics when [`escape_sql`] returns an error.
-#[must_use]
 pub fn must_escape_sql(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Vec<u8> {
     escape_sql(sql, arguments).unwrap_or_else(|error| panic!("{error}"))
 }
@@ -968,5 +966,12 @@ mod tests {
         ] {
             assert_eq!(escape_string(input), expected.as_bytes());
         }
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        escape_string("ignored");
+        must_escape_sql("ignored", &[]);
     }
 }

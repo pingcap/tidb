@@ -8747,6 +8747,11 @@ risks without claiming repository-wide parity.
   `#[must_use]` diagnostics from `SleepContext` constructors and observers.
   The deny-on-discard regression and Ready evidence are recorded in
   `receipts/util_timeutil.md`.
+- 2026-09-05 (`pkg/util/sqlescape`): the complete sqlescape owner now matches
+  Go's discardable-return contract by removing two explicit Rust-only
+  `#[must_use]` diagnostics from `escape_string` and `must_escape_sql`. The
+  deny-on-discard regression, benchmark compilation, and Ready evidence are
+  recorded in `receipts/util_sqlescape.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
