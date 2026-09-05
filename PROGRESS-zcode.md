@@ -460,3 +460,5 @@
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - collate charset.go 补记: switchDefaultCollation 的行为由 Rust 条件式 default_collation 架构性吸收(变异 vs 计算), 可观察默认 collation 在两种状态下均一致。收据已追加。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- planner 4 失败诊断(cached_plan_rebuilds_*): rebase 并入的 ranger/cache-key 增量使重载后 range_is_safe 拒绝 → UnsafeRange{plan_id}; 候选引入点=34d7549bb06(LIKE escape 入 plan scope)或后续 ranger 改动。归属 DDL/planner 会话(活跃区), 已记录待其修复; 深挖二分属其领域。
+- 下轮恢复点: (1) 兄弟会话修复 4 测试; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队; (5) session lib +36 失败同批溯源。
