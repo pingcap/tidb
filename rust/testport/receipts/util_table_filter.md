@@ -62,6 +62,12 @@ equivalent. All Rust call sites were searched: no production Rust consumer
 currently invokes `ParseColumnFilterRules`; the exported API is nevertheless
 part of the Go package contract and is exercised by the focused regression.
 
+The concrete `ColumnFilterRules::match_column` method also carried one
+Rust-only `#[must_use]` diagnostic. The existing
+`filter_return_values_may_be_ignored_like_go` contract regression now discards
+that result under `#[deny(unused_must_use)]`: the detached pre-fix owner failed
+with exactly one diagnostic, while the corrected table-filter owner passes.
+
 ## Validation
 
 Profile: Ready for this package batch; the repository-wide package audit is
@@ -84,6 +90,12 @@ still continuing.
 - `cargo test -p tidb-util --locked` — passed.
 - `cargo +nightly-2026-08-22 fmt --all -- --check`, `make lint`, and
   `git diff --check` — passed.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --test table_filter_contract filter_return_values_may_be_ignored_like_go -- --exact --nocapture` — passed; the detached pre-fix owner failed with exactly one `unused_must_use` diagnostic.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util table_filter --lib -- --test-threads=1` — 16 owner tests passed.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --test table_filter_contract -- --test-threads=1` — 4 contract tests passed.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --all-targets` — passed.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util filter:: -- --test-threads=1` — 23 table/filter dependent tests passed.
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/2de586d1417ea8a2/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util regexpr_router:: -- --test-threads=1` — 9 regexp-router dependent tests passed.
 
 Go production and test files changed, including a new top-level test, so
 `make bazel_prepare` was required and is blocked locally because the `bazel`

@@ -8807,6 +8807,13 @@ risks without claiming repository-wide parity.
   diagnostics on the detached pre-fix owner and passes with the two-test
   printer owner plus its integration contract test; Ready evidence is recorded
   in `receipts/util_printer.md`.
+- 2026-09-06 (`pkg/util/table-filter`): the complete table-filter owner now
+  matches Go's discardable-return contract by removing the explicit Rust-only
+  `#[must_use]` diagnostic from `ColumnFilterRules::match_column`. The existing
+  deny-on-discard contract regression fails with one diagnostic on the detached
+  pre-fix owner and passes with the 16-test owner suite, four contract tests,
+  and dependent filter/router tests; Ready evidence is recorded in
+  `receipts/util_table_filter.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

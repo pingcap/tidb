@@ -104,4 +104,6 @@ fn filter_return_values_may_be_ignored_like_go() {
         schema: "mysql".to_owned(),
         name: "orders".to_owned(),
     });
+    let rules = parse_column_filter_rules(&["*"]).unwrap();
+    rules.match_column("orders");
 }

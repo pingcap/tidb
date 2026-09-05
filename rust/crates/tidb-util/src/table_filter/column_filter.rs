@@ -33,7 +33,6 @@ pub struct ColumnFilterRules {
 
 impl ColumnFilterRules {
     /// Checks if a column can be processed after applying the parsed rules.
-    #[must_use]
     pub fn match_column(&self, column: &str) -> bool {
         self.match_column_impl(column)
     }
