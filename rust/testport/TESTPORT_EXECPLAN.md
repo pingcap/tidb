@@ -5094,8 +5094,9 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
   remains explicitly unclaimed because it needs the ordinary session value
   store and both executor failpoint injection points. The compression audit
   was selected for completion in the next batch. Receipts are
-  `receipts/statistics_util.md`, `receipts/util_breakpoint_audit.md`, and
-  `receipts/util_compress_audit.md`.
+  `receipts/statistics_util.md`, `receipts/util_breakpoint_audit.md` (since
+  superseded by the claimed-owner receipt `receipts/util_breakpoint.md`),
+  and `receipts/util_compress_audit.md`.
 
 - 2026-09-01: completed the currently unclaimed pinned Go `pkg/util/compress`
   package as one two-artifact unit. Added the process-wide pooled gzip reader
