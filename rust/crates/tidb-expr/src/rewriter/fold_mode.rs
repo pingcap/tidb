@@ -103,6 +103,10 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.no_unsigned_subtraction()
     }
 
+    fn comparison_context(&self) -> Option<&dyn crate::context::Columns> {
+        self.base.comparison_context()
+    }
+
     fn div_precision_increment(&self) -> u32 {
         self.base.div_precision_increment()
     }

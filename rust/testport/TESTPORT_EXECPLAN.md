@@ -9107,3 +9107,9 @@ risks without claiming repository-wide parity.
   no-session fold can no longer erase that warning. Focused expression and
   session IN-list regressions plus Ready evidence are recorded in
   `receipts/expression_in_warning_preservation.md`.
+- 2026-09-06 (`pkg/planner/core` integer/string comparison warning context):
+  Rust's plan scope now passes the live statement context into integer/string
+  constant refinement, retaining Go's two build-time 1292 warnings while
+  preserving the refined `gt(column, 10)` plan shape. Context-free resolver
+  fixtures remain warning-free. Focused planner and session regressions plus
+  Ready evidence are recorded in `receipts/planner_compare_warning_context.md`.

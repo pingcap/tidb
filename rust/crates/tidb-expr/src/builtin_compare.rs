@@ -556,6 +556,18 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
 /// [`refine_comparisons`] pass remains responsible for the session-sensitive
 /// rules and warning policy.
 pub(crate) fn refine_integer_comparison_for_rewrite(name: &str, arguments: &mut [Expression]) {
+    refine_integer_comparison_for_rewrite_with_context(name, arguments, &crate::context::NoColumns);
+}
+
+/// The same context-free integer comparison rewrite, but with the live
+/// statement context Go's `compareFunctionClass.getFunction` owns. This keeps
+/// the refined integer constant while retaining the two 1292 diagnostics
+/// raised by `RefineComparedConstant` during construction.
+pub(crate) fn refine_integer_comparison_for_rewrite_with_context(
+    name: &str,
+    arguments: &mut [Expression],
+    ctx: &dyn Columns,
+) {
     let Some(mirrored) = symmetric_op(name) else {
         return;
     };
@@ -565,12 +577,7 @@ pub(crate) fn refine_integer_comparison_for_rewrite(name: &str, arguments: &mut 
     let eval_type = |expression: &Expression| expression.static_type().map(FieldType::eval_type);
     let left_is_int = eval_type(left) == Some(EvalType::Int);
     let right_is_int = eval_type(right) == Some(EvalType::Int);
-    // `NoColumns` supplies the warning sink required by the shared converter;
-    // the context-free rewrite has no statement to which those warnings could
-    // be attached.  Real statement construction reruns the full rule with its
-    // own `Columns` implementation.
-    let ctx = crate::context::NoColumns;
-    refine_int_operand_constant(left, right, left_is_int, right_is_int, name, mirrored, &ctx);
+    refine_int_operand_constant(left, right, left_is_int, right_is_int, name, mirrored, ctx);
 }
 
 /// Runs Go `compareFunctionClass.getFunction`'s comparison-only refinement

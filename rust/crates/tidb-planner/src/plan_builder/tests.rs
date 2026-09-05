@@ -22,7 +22,10 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{Expr, SelectStmt, Stmt};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode, SessionTimeZone};
+use tidb_datatype::{
+    Datum, FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata,
+    SessionTimeZone,
+};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::{Columns, EvalError, ZonedNoColumns};
@@ -1514,6 +1517,35 @@ fn plan_scope_resolver_keeps_char_using_for_runtime_warnings() {
         panic!("CHAR USING must remain executable at statement time")
     };
     assert_eq!(function.func_name.lowercase(), "char_func");
+}
+
+#[test]
+fn plan_scope_resolver_refines_integer_string_with_live_warning_context() {
+    let mut column = tidb_expr::column::Column::new(1, FieldType::new(FieldTypeCode::LongLong));
+    column.index = 0;
+    let schema = Schema::new(vec![column]);
+    let names = [FieldName::new(FieldNameMetadata {
+        original_table: IdentifierMetadata::new("t"),
+        original_column: IdentifierMetadata::new("a"),
+        database: IdentifierMetadata::new("test"),
+        table: IdentifierMetadata::new("t"),
+        column: IdentifierMetadata::new("a"),
+    })];
+    let markers = BTreeMap::new();
+    let warnings = WarningColumns::default();
+    let resolver = PlanScopeResolver::new(&schema, &names, &markers, SessionTimeZone::utc())
+        .with_warning_context(&warnings);
+    let select = parse_select("SELECT a > '10ab'");
+    let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
+        panic!("expected comparison expression")
+    };
+    let rewritten =
+        tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).expect("comparison rewrite");
+    let Expression::ScalarFunction(function) = rewritten else {
+        panic!("comparison should remain a scalar function")
+    };
+    assert!(matches!(function.args[1], Expression::Constant(_)));
+    assert_eq!(warnings.0.lock().unwrap().len(), 2);
 }
 
 impl Harness {

@@ -163,6 +163,15 @@ pub trait ColumnResolver {
         false
     }
 
+    /// The live statement context Go's comparison builder uses while
+    /// refining an integer column against a non-integer constant. A planner
+    /// resolver can expose it so conversion diagnostics are raised once at
+    /// build time; context-free resolvers retain the historical no-warning
+    /// structural rewrite.
+    fn comparison_context(&self) -> Option<&dyn crate::context::Columns> {
+        None
+    }
+
     /// The statement's `div_precision_increment` used to build `/` metadata.
     fn div_precision_increment(&self) -> u32 {
         4
@@ -439,7 +448,13 @@ fn binary_expression(
                 }
             }
             if crate::builtin_compare::infer_compare_type(name).is_some() {
-                crate::builtin_compare::refine_integer_comparison_for_rewrite(name, &mut args);
+                if let Some(ctx) = resolver.comparison_context() {
+                    crate::builtin_compare::refine_integer_comparison_for_rewrite_with_context(
+                        name, &mut args, ctx,
+                    );
+                } else {
+                    crate::builtin_compare::refine_integer_comparison_for_rewrite(name, &mut args);
+                }
                 crate::builtin_compare::prepare_json_comparison_args(&mut args);
                 crate::builtin_compare::wrap_comparison_arguments(
                     &mut args,

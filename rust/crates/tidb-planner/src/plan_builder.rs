@@ -720,6 +720,9 @@ pub struct PlanScopeResolver<'a> {
     /// Whether integer subtraction must keep a signed result domain for this
     /// statement (`NO_UNSIGNED_SUBTRACTION`).
     no_unsigned_subtraction: bool,
+    /// The live statement context used by Go's comparison constant
+    /// refinement to retain build-time conversion warnings.
+    warning_context: Option<&'a dyn tidb_expr::Columns>,
 }
 
 impl<'a> PlanScopeResolver<'a> {
@@ -744,6 +747,7 @@ impl<'a> PlanScopeResolver<'a> {
             connection_collation: connection_collation.to_owned(),
             like_default_escape: b'\\',
             no_unsigned_subtraction: false,
+            warning_context: None,
         }
     }
 
@@ -771,6 +775,7 @@ impl<'a> PlanScopeResolver<'a> {
             connection_collation: connection_collation.to_owned(),
             like_default_escape: b'\\',
             no_unsigned_subtraction: false,
+            warning_context: None,
         }
     }
 
@@ -796,6 +801,13 @@ impl<'a> PlanScopeResolver<'a> {
     #[must_use]
     pub const fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
         self.no_unsigned_subtraction = enabled;
+        self
+    }
+
+    /// Attach the live statement context used by Go's comparison builder.
+    #[must_use]
+    pub fn with_warning_context<C: tidb_expr::Columns>(mut self, ctx: &'a C) -> Self {
+        self.warning_context = Some(ctx);
         self
     }
 }
@@ -845,6 +857,10 @@ impl ColumnResolver for PlanScopeResolver<'_> {
 
     fn no_unsigned_subtraction(&self) -> bool {
         self.no_unsigned_subtraction
+    }
+
+    fn comparison_context(&self) -> Option<&dyn tidb_expr::Columns> {
+        self.warning_context
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -1259,7 +1275,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         )
         .with_connection_charset_info(self.ctx.connection_charset_info())
         .with_like_default_escape(self.ctx.like_default_escape())
-        .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction());
+        .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
+        .with_warning_context(self.ctx);
         Ok(rewrite_expr_resolved(expr, &resolver)?)
     }
 
