@@ -387,6 +387,10 @@ fn datum_json_scalar(value: &Datum) -> Result<Json, EvalError> {
     parse_json(&binary.to_string())
 }
 
+/// Known deviation: serde_json's default 128-level nesting limit rejects
+/// documents Go's unbounded recursive parser accepts. Disabling the limit
+/// would turn hostile deep input into a process-fatal stack overflow, so the
+/// limit stays as a defensive boundary.
 pub(super) fn parse_json(s: &str) -> Result<Json, EvalError> {
     if s.trim().is_empty() {
         return Err(EvalError::Json(JsonError::EmptyText));
