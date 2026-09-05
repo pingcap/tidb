@@ -104,6 +104,29 @@ fn test_context_detach_preserves_handles_and_copies_owned_state() {
 }
 
 #[test]
+fn test_query_cop_store_limiter_projects_into_read_and_kv_requests() {
+    let limiter = tidb_txnkv::new_query_cop_store_limiter(3).expect("positive limit");
+    let mut context = DistSqlContext::new();
+    context.request.query_cop_store_limiter = Some(Arc::clone(&limiter));
+
+    let metadata = ReadRequestMetadata::from_context(&context);
+    let metadata_limiter = metadata
+        .query_cop_store_limiter
+        .as_ref()
+        .expect("read metadata carries query limiter");
+    assert_eq!(metadata_limiter.capacity(), 3);
+    assert!(Arc::ptr_eq(metadata_limiter, &limiter));
+
+    let request = KvRequestMetadata::from_context(&context);
+    let request_limiter = request
+        .query_cop_store_limiter
+        .as_ref()
+        .expect("KV request carries query limiter");
+    assert_eq!(request_limiter.capacity(), 3);
+    assert!(Arc::ptr_eq(request_limiter, &limiter));
+}
+
+#[test]
 fn test_context_detach_preserves_source_routing_values() {
     assert!(!ReplicaReadType::Leader.is_follower_read());
     assert!(ReplicaReadType::PreferLeader.is_follower_read());

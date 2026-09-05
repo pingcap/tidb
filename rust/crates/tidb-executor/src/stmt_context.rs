@@ -456,6 +456,10 @@ pub struct StmtContext {
     /// Go's session `EnableMView` (the `tidb_mview_enable` sysvar): gates the
     /// materialized-view DDL admission checks.
     enable_mview: bool,
+    /// Go's query-scoped `kv.QueryCopStoreLimiter`, created once per
+    /// statement when `tidb_query_cop_store_limit` is positive and shared by
+    /// all coprocessor scans in that statement.
+    query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
     /// Go `txn.IsPessimistic()` half of `optimizeDupKeyCheckForNormalInsert`
     /// (`pkg/executor/insert.go:331-337`), resolved for the current or
     /// implicit statement transaction. On a user connection this transaction
@@ -856,6 +860,7 @@ impl StmtContext {
             foreign_key_checks: true,
             enable_check_constraint: false,
             enable_mview: false,
+            query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
             constraint_check_in_place: false,
             allow_remove_auto_inc: false,
@@ -2156,6 +2161,25 @@ impl StmtContext {
     #[must_use]
     pub fn enable_mview(&self) -> bool {
         self.enable_mview
+    }
+
+    /// Attaches Go's query-scoped per-store coprocessor limiter to this
+    /// statement. All remote scans cloned from the context share this Arc.
+    #[must_use]
+    pub fn with_query_cop_store_limiter(
+        mut self,
+        limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    ) -> Self {
+        self.query_cop_store_limiter = limiter;
+        self
+    }
+
+    /// Returns the query-scoped per-store coprocessor limiter, if enabled.
+    #[must_use]
+    pub fn query_cop_store_limiter(
+        &self,
+    ) -> Option<Arc<tidb_txnkv::QueryCopStoreLimiter>> {
+        self.query_cop_store_limiter.clone()
     }
 
     /// Sets Go's process-wide CHECK-constraint DDL switch for this statement.

@@ -550,6 +550,7 @@ where
             time_zone: request.statement.time_zone.clone(),
             resource_group_name: request.statement.resource_group_name.clone(),
             replica_read: request.statement.replica_read,
+            query_cop_store_limiter: request.statement.query_cop_store_limiter.clone(),
             warnings: request.statement.warnings.clone(),
             cop_plan_ids,
             root_plan_id: request.statement.plan_id,
@@ -604,6 +605,9 @@ struct RemoteScanPlan {
     resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` for this request.
     replica_read: tidb_distsql::ReplicaReadType,
+    /// Query-scoped per-store limiter shared by all region tasks for this
+    /// statement.
+    query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
     /// The statement's warning sink. It is an `Arc` handler, so warnings
     /// appended while the query worker decodes land in the buffer
     /// `SHOW WARNINGS` reads.
@@ -638,6 +642,7 @@ where
     let mut context = DistSqlContext::new();
     context.request.resource_group_name = plan.resource_group_name;
     context.request.replica_read = plan.replica_read;
+    context.request.query_cop_store_limiter = plan.query_cop_store_limiter;
     if let Some(min_size) = plan.paging_min_size {
         // Go's buildIndexSelectResultForRange raises both paging bounds to
         // the worker's first handle batch. Keep the normal session defaults

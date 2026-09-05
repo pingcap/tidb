@@ -62,6 +62,9 @@ pub struct ReadRequestMetadata {
     pub max_keys_read: u64,
     /// Shared statement-wide accumulator, when enabled.
     pub max_keys_read_counter: Option<Arc<AtomicU64>>,
+    /// Query-scoped per-store coprocessor limiter.
+    pub query_cop_store_limiter:
+        Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
 }
 
 impl ReadRequestMetadata {
@@ -161,6 +164,7 @@ impl ReadRequestBuilder {
         self.request.max_execution_time_ms = context.max_execution_time_ms;
         self.request.max_keys_read = context.max_keys_read;
         self.request.max_keys_read_counter = max_keys_read_counter.clone();
+        self.request.query_cop_store_limiter = context.query_cop_store_limiter.clone();
     }
 }
 

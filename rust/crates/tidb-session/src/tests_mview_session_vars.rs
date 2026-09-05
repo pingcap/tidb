@@ -59,6 +59,37 @@ fn mview_enable_roundtrip() {
     assert!(!session.statement_context(false).enable_mview());
 }
 
+/// Go `SessionVars.QueryCopStoreLimit` creates one query-scoped limiter in
+/// `Session.newDistSQLContext`; the same limiter is carried by every KV
+/// request for that statement. Verify the typed hook and the request metadata
+/// seam rather than only the SQL text.
+#[test]
+fn query_cop_store_limit_hook_reaches_request_metadata() {
+    let mut vars = SessionVars::new();
+    assert_eq!(vars.query_cop_store_limit(), 15);
+    vars.set_system("tidb_query_cop_store_limit", "3".to_owned())
+        .expect("set the per-store query limit");
+    assert_eq!(vars.query_cop_store_limit(), 3);
+
+    let mut session = crate::Session::new();
+    session
+        .run("set session tidb_query_cop_store_limit = 3")
+        .expect("set the live session limit");
+    let statement = session.statement_context(false);
+    let limiter = statement
+        .query_cop_store_limiter()
+        .expect("positive Go limit creates a limiter");
+    assert_eq!(limiter.capacity(), 3);
+
+    session
+        .run("set session tidb_query_cop_store_limit = 0")
+        .expect("zero disables the limiter");
+    assert!(session
+        .statement_context(false)
+        .query_cop_store_limiter()
+        .is_none());
+}
+
 /// Go's `tidb_mview_maintain_mem_quota` validation: a positive value below
 /// 128 clamps to 128 with the truncated-value warning; other values pass.
 #[test]

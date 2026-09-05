@@ -1816,6 +1816,10 @@ pub struct SessionVars {
     /// `tidb_analyze_store_batch_size` SetSession hook. Zero disables
     /// Analyze store batching.
     analyze_store_batch_size: i64,
+    /// Go's typed `SessionVars.QueryCopStoreLimit`, maintained by the
+    /// `tidb_query_cop_store_limit` SetSession hook. Zero disables the
+    /// per-store query limiter.
+    query_cop_store_limit: i64,
     /// Bumped by every mutation of `systems`, so a caller can cache what it
     /// PARSES out of the raw text -- chiefly the optimizer's cost environment
     /// -- and re-derive only when a `SET`
@@ -1921,6 +1925,7 @@ impl Default for SessionVars {
             bulk_dml_enabled: false,
             replica_read: tidb_executor::ReplicaReadType::Leader,
             analyze_store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
+            query_cop_store_limit: tidb_vardef::defaults::DEF_TIDB_QUERY_COP_STORE_LIMIT,
             generation: 0,
             optimizer_fix_control: OptimizerFixControl::default(),
             session_resolved: ResolvedGlobals::default(),
@@ -2008,6 +2013,7 @@ impl SessionVars {
         let bulk_dml_enabled = Self::bulk_dml_enabled_from_systems(&systems);
         let replica_read = Self::replica_read_from_systems(&systems);
         let analyze_store_batch_size = Self::analyze_store_batch_size_from_systems(&systems);
+        let query_cop_store_limit = Self::query_cop_store_limit_from_systems(&systems);
         // Commit all authorities only after the inherited fix-control
         // row has been accepted. A stale/foreign cluster row can therefore
         // refuse the connection without partially reseeding this session.
@@ -2037,6 +2043,7 @@ impl SessionVars {
         self.bulk_dml_enabled = bulk_dml_enabled;
         self.replica_read = replica_read;
         self.analyze_store_batch_size = analyze_store_batch_size;
+        self.query_cop_store_limit = query_cop_store_limit;
         self.session_resolved = Self::build_session_image(&self.systems);
         // The wholesale replacement above is a mutation like any other; the
         // parsed-product caches keyed on `generation` must not survive it.
@@ -2234,6 +2241,13 @@ impl SessionVars {
             .is_some_and(|value| value.eq_ignore_ascii_case("ON"))
     }
 
+    fn query_cop_store_limit_from_systems(systems: &HashMap<String, String>) -> i64 {
+        systems
+            .get(tidb_vardef::tidb_vars::TIDB_QUERY_COP_STORE_LIMIT)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_QUERY_COP_STORE_LIMIT)
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -2388,6 +2402,13 @@ impl SessionVars {
     #[must_use]
     pub const fn mview_enabled(&self) -> bool {
         self.enable_mview
+    }
+
+    /// Go `SessionVars.QueryCopStoreLimit`, where zero disables query-level
+    /// per-store coprocessor request limiting.
+    #[must_use]
+    pub const fn query_cop_store_limit(&self) -> i64 {
+        self.query_cop_store_limit
     }
 
     /// Updates ONE registry-indexed slot of the session image after the
@@ -2929,6 +2950,12 @@ impl SessionVars {
         }
         if key == tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE {
             self.enable_mview = validated.value == "ON";
+        }
+        if key == tidb_vardef::tidb_vars::TIDB_QUERY_COP_STORE_LIMIT {
+            self.query_cop_store_limit = validated
+                .value
+                .parse::<i64>()
+                .expect("query cop store limit validation stores an integer");
         }
         if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN {
             self.ti_flash_max_bytes_before_ext_join = validated

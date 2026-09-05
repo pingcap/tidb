@@ -450,6 +450,9 @@ pub struct PushdownStatementContext {
     pub resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
     pub replica_read: tidb_distsql::ReplicaReadType,
+    /// Go's query-scoped per-store coprocessor limiter, shared by every
+    /// remote scan in this statement.
+    pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
 }
 
 impl Default for PushdownStatementContext {
@@ -461,6 +464,7 @@ impl Default for PushdownStatementContext {
             time_zone: SessionTimeZone::default(),
             resource_group_name: "default".to_owned(),
             replica_read: tidb_distsql::ReplicaReadType::Leader,
+            query_cop_store_limiter: None,
         }
     }
 }
@@ -476,6 +480,7 @@ impl PushdownStatementContext {
             time_zone: ctx.session_zone(),
             resource_group_name: ctx.resource_group_name().to_owned(),
             replica_read: ctx.replica_read(),
+            query_cop_store_limiter: ctx.query_cop_store_limiter(),
         }
     }
 

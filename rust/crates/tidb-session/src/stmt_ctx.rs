@@ -1015,6 +1015,9 @@ impl Session {
                 .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
                 .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
                 .with_enable_mview(enable_mview)
+                .with_query_cop_store_limiter(tidb_txnkv::new_query_cop_store_limiter(
+                    self.vars.query_cop_store_limit() as isize,
+                ))
                 .with_enable_check_constraint(self.enable_check_constraint())
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_resource_group_name(self.active_resource_group.clone())
@@ -1110,6 +1113,9 @@ impl Session {
         .with_enable_no_decorrelate_in_select(enable_no_decorrelate_in_select)
         .with_enable_skew_distinct_agg(enable_skew_distinct_agg)
         .with_enable_mview(enable_mview)
+        .with_query_cop_store_limiter(tidb_txnkv::new_query_cop_store_limiter(
+            self.vars.query_cop_store_limit() as isize,
+        ))
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(sql_mode.has_no_auto_value_on_zero_mode())
         .with_foreign_key_checks(self.foreign_key_checks())

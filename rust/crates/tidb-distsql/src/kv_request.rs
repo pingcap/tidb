@@ -112,6 +112,7 @@ impl KvRequestMetadata {
         self.max_execution_time_ms = session.max_execution_time_ms;
         self.max_keys_read = session.max_keys_read;
         self.max_keys_read_counter = session.max_keys_read_counter;
+        self.query_cop_store_limiter = session.query_cop_store_limiter;
     }
 }
 

@@ -138,6 +138,10 @@ pub struct RequestContext {
     pub max_execution_time_ms: u64,
     /// Statement-wide maximum keys-read budget.
     pub max_keys_read: u64,
+    /// Query-scoped per-store coprocessor limiter, when enabled by the
+    /// session's `tidb_query_cop_store_limit` value.
+    pub query_cop_store_limiter:
+        Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
 }
 
 impl Default for RequestContext {
@@ -167,6 +171,7 @@ impl Default for RequestContext {
             tikv_client_read_timeout_ms: 0,
             max_execution_time_ms: 0,
             max_keys_read: 0,
+            query_cop_store_limiter: None,
         }
     }
 }

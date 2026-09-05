@@ -16,6 +16,7 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fmt;
 use std::future::Future;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
@@ -388,6 +389,16 @@ pub struct CoprRequestLimiter {
     available: Notify,
 }
 
+impl fmt::Debug for CoprRequestLimiter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CoprRequestLimiter")
+            .field("capacity", &self.capacity)
+            .field("in_use", &self.in_use.load(AtomicOrdering::Acquire))
+            .finish()
+    }
+}
+
 impl CoprRequestLimiter {
     fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -483,6 +494,23 @@ pub fn new_copr_request_limiter(capacity: isize) -> Option<Arc<CoprRequestLimite
 pub struct QueryCopStoreLimiter {
     limit: usize,
     stores: Mutex<HashMap<u64, Arc<CoprRequestLimiter>>>,
+}
+
+impl fmt::Debug for QueryCopStoreLimiter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("QueryCopStoreLimiter")
+            .field("limit", &self.limit)
+            .field(
+                "stores",
+                &self
+                    .stores
+                    .lock()
+                    .map(|stores| stores.len())
+                    .unwrap_or(0),
+            )
+            .finish()
+    }
 }
 
 impl QueryCopStoreLimiter {

@@ -335,3 +335,34 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
+
+## 2026-09-05 Rust query cop-store limiter propagation
+
+Go's `tidb_query_cop_store_limit` `SetSession` hook updates the typed
+`SessionVars.QueryCopStoreLimit`; `Session.newDistSQLContext` then creates one
+query-scoped `kv.QueryCopStoreLimiter` and attaches it to each request. Rust
+now stores the typed integer, creates the same statement-scoped per-store
+limiter, and carries its shared `Arc` through the pushdown statement context,
+`DistSqlContext`, read metadata, and canonical KV request metadata. Zero keeps
+the limiter disabled. The focused regressions pin the default, typed hook,
+zero-disable behavior, capacity, and pointer identity across both metadata
+projections.
+
+```text
+cargo test -p tidb-session --lib query_cop_store_limit_hook_reaches_request_metadata -- --nocapture
+# passed
+
+cargo test -p tidb-distsql --lib test_query_cop_store_limiter_projects_into_read_and_kv_requests -- --nocapture
+# passed
+
+git diff --check
+# passed
+
+cargo fmt --all -- --check
+# pre-existing formatting drift in unrelated Rust files (no batch changes)
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+```

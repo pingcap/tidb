@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable`, `pkg/distsql`, `pkg/kv` query cop
+  limiter propagation): matched Go's typed `QueryCopStoreLimit` hook by
+  creating one query-scoped per-store limiter for each statement, carrying it
+  through the pushdown statement seam and DistSQL/KV request metadata, and
+  preserving the shared Arc across request projections. Focused regressions
+  cover the typed session value, zero-disable behavior, and metadata identity.
 - 2026-09-05 (`pkg/executor` UPDATE info-message publication): matched Go's
   `UpdateExec.Close` summary text by carrying single- and multi-table UPDATE
   matched/changed/warning counts through Rust's statement context, session,
