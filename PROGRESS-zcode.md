@@ -446,3 +446,5 @@
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - gcutil 面核实: 六函数逐一对齐(validate_snapshot 拒旧快照+ErrSnapshotTooOld 渲染/get_gc_safe_point 读 mysql.tidb); crate 无测试=记录为首个可补项。收据已追加。
 - 下轮恢复点: (1) gcutil snapshot 校验回归测试(可自足); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- gcutil 快照校验回归批: 2 测试落地(mock Context 驱动 restricted-SQL 与全局读取)——过期快照拒绝+渲染时间断言/新快照通过/读失败透传/CheckGCEnable ON-OFF 表值驱动。gcutil 2/0, fmt/clippy/diff-check/make lint PASS。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

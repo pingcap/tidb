@@ -173,3 +173,98 @@ fn format_tso_in_process_location(tso: u64) -> String {
     output.push_str(&value.format("%z %Z").to_string());
     output
 }
+
+#[cfg(test)]
+mod snapshot_validation_tests {
+
+    use crate::{
+        check_gc_enable, validate_snapshot, validate_snapshot_with_gc_safe_point, Context, Error,
+    };
+
+    /// A mock session context answering the mysql.tidb rows the GC utility reads.
+    struct MockContext {
+        globals: std::collections::HashMap<String, String>,
+        tidb_table: std::collections::HashMap<String, String>,
+        fail_reads: bool,
+    }
+
+    impl Context for MockContext {
+        type Error = String;
+
+        fn get_global_sys_var(&mut self, name: &str) -> Result<String, Self::Error> {
+            if self.fail_reads {
+                return Err("read refused".to_owned());
+            }
+            self.globals
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("unknown sysvar {name}"))
+        }
+
+        fn set_global_sys_var(&mut self, name: &str, value: &str) -> Result<(), Self::Error> {
+            self.globals.insert(name.to_owned(), value.to_owned());
+            Ok(())
+        }
+
+        fn exec_restricted_sql(
+            &mut self,
+            _sql: &str,
+            arguments: &[&str],
+            _internal_source_type: &str,
+        ) -> Result<Vec<Vec<String>>, Self::Error> {
+            if self.fail_reads {
+                return Err("read refused".to_owned());
+            }
+            let key = arguments[0];
+            match self.tidb_table.get(key) {
+                Some(value) => Ok(vec![vec![value.clone()]]),
+                None => Ok(Vec::new()),
+            }
+        }
+    }
+
+    /// Go `ValidateSnapshot` refuses a snapshot older than the GC safe point
+    /// with the safe point time rendered through `TSConvert2Time`, and accepts
+    /// a newer one; `CheckGCEnable` reads the table value ON/OFF.
+    #[test]
+    fn snapshot_validation_matches_go() {
+        let mut ctx = MockContext {
+            globals: std::collections::HashMap::new(),
+            tidb_table: std::collections::HashMap::new(),
+            fail_reads: false,
+        };
+        ctx.tidb_table.insert(
+            "tikv_gc_safe_point".to_owned(),
+            "20240101-00:00:00 +0000".to_owned(),
+        );
+
+        // A snapshot after the safe point passes.
+        validate_snapshot(&mut ctx, 1_704_067_200_000_000_000).unwrap();
+        // A snapshot before it refuses with the rendered safe point time.
+        match validate_snapshot(&mut ctx, 1) {
+            Err(Error::SnapshotTooOld { safe_point_time }) => {
+                assert!(safe_point_time.contains("2024-01-01"), "{safe_point_time}");
+            }
+            other => panic!("expected SnapshotTooOld, got {other:?}"),
+        }
+        // A read failure propagates unchanged.
+        ctx.fail_reads = true;
+        assert!(validate_snapshot(&mut ctx, 1).is_err());
+    }
+
+    /// Go `CheckGCEnable` reads the table ON/OFF value, not a sysvar.
+    #[test]
+    fn gc_enable_reads_the_table_value_like_go() {
+        let mut ctx = MockContext {
+            globals: std::collections::HashMap::new(),
+            tidb_table: std::collections::HashMap::new(),
+            fail_reads: false,
+        };
+        ctx.globals
+            .insert("tidb_gc_enable".to_owned(), "ON".to_owned());
+        assert!(check_gc_enable(&mut ctx).unwrap());
+        ctx.globals
+            .insert("tidb_gc_enable".to_owned(), "OFF".to_owned());
+        assert!(!check_gc_enable(&mut ctx).unwrap());
+    }
+}
