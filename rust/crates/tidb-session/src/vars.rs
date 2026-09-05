@@ -2560,6 +2560,22 @@ impl SessionVars {
             .validate_in_scope(&value, SCOPE_SESSION)
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
+        // Go's `tidb_enforce_mpp` Validation refuses ON while the session's
+        // `allowMPPExecution` gate is OFF. The value is type-normalized before
+        // this closure runs, so numeric/boolean spellings take the same path
+        // as an explicit ON. Keep the refusal in the session writer rather
+        // than the registry (it depends on another session variable).
+        if key == "tidb_enforce_mpp"
+            && validated.value == "ON"
+            && self
+                .get_system("tidb_allow_mpp")
+                .map_or(true, |allow| allow != "ON")
+        {
+            return Err(VarError::WrongValueForVar(
+                "tidb_enforce_mpp".to_owned(),
+                "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.".to_owned(),
+            ));
+        }
         let parsed_fix_control = if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
             Some(
                 OptimizerFixControl::parse(&validated.value)
@@ -4323,6 +4339,30 @@ mod tests {
             vars.set_system("collation_connection", "not-a-collation".to_owned()),
             Err(VarError::SqlError(error)) if error.code == 1273
         ));
+    }
+
+    /// Go's `tidb_enforce_mpp` Validation only permits ON after the
+    /// session's `tidb_allow_mpp` gate is enabled.
+    #[test]
+    fn enforce_mpp_requires_allow_mpp_like_go() {
+        let mut vars = SessionVars::new();
+        vars.set_system("tidb_allow_mpp", "OFF".to_owned())
+            .unwrap();
+        assert_eq!(vars.get_system("tidb_enforce_mpp").unwrap(), "OFF");
+        assert_eq!(
+            vars.set_system("tidb_enforce_mpp", "ON".to_owned()),
+            Err(VarError::WrongValueForVar(
+                "tidb_enforce_mpp".to_owned(),
+                "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first."
+                    .to_owned(),
+            ))
+        );
+
+        vars.set_system("tidb_allow_mpp", "ON".to_owned())
+            .unwrap();
+        vars.set_system("tidb_enforce_mpp", "1".to_owned())
+            .unwrap();
+        assert_eq!(vars.get_system("tidb_enforce_mpp").unwrap(), "ON");
     }
 
     #[test]

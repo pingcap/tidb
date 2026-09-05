@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` enforce-MPP dependency): ported Go's
+  session-dependent `tidb_enforce_mpp` validation refusal when
+  `tidb_allow_mpp` is OFF, while retaining the normalized ON path after the
+  prerequisite is enabled. A focused SessionVars regression covers both
+  refusal and success; the remaining varsutil validation rows stay bounded.
 - 2026-09-05 (`pkg/sessionctx/variable` memory-limit error/arithmetic parity):
   `tidb_server_memory_limit` now returns Go's `ErrTruncatedWrongValue` (1292)
   with the original variable/value text for malformed input, instead of
