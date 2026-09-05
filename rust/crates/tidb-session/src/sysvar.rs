@@ -597,6 +597,19 @@ impl SysVarDef {
     /// Go `SysVar.ValidateFromType` including its `scope` argument, which only
     /// the empty-value escape hatch reads.
     pub fn validate_in_scope(&self, value: &str, scope: u8) -> Result<Validated, ValidationError> {
+        self.validate_in_scope_with_lookup(value, scope, None)
+    }
+
+    /// `validate_in_scope` plus an optional reader for sibling sysvars'
+    /// current values, for hooks Go resolves against `vars.systems` (e.g.
+    /// `checkIsolationLevel` reading `tidb_skip_isolation_level_check`).
+    /// `None` answers as if every sibling were unset.
+    pub fn validate_in_scope_with_lookup(
+        &self,
+        value: &str,
+        scope: u8,
+        lookup: Option<&dyn Fn(&str) -> Option<String>>,
+    ) -> Result<Validated, ValidationError> {
         // Go's tidb_gogc_tuner_threshold Validation (`sysvar.go:1270`)
         // consumes the RAW value before any type normalization: a
         // non-numeric input silently falls back to the default 0.6
@@ -612,7 +625,7 @@ impl SysVarDef {
             });
         }
         let validated = self.normalize_by_type(value, scope)?;
-        self.run_validation(validated, value)
+        self.run_validation_with_lookup(validated, value, lookup)
     }
 
     /// Go `ValidateFromType` ALONE, without the per-variable `Validation`
@@ -661,6 +674,15 @@ impl SysVarDef {
         &self,
         validated: Validated,
         original: &str,
+    ) -> Result<Validated, ValidationError> {
+        self.run_validation_with_lookup(validated, original, None)
+    }
+
+    fn run_validation_with_lookup(
+        &self,
+        validated: Validated,
+        original: &str,
+        lookup: Option<&dyn Fn(&str) -> Option<String>>,
     ) -> Result<Validated, ValidationError> {
         // Go's `timestamp` validation (`sysvar.go`, the `vardef.Timestamp`
         // entry): `tidbOptFloat64(originalValue)` above `math.MaxInt32` is
@@ -1542,6 +1564,29 @@ impl SysVarDef {
                 "Cannot enable baseline evolution feature, it is not generally available now"
                     .to_owned(),
             ));
+        }
+        // Go's `checkIsolationLevel` (`varsutil.go:116`): SERIALIZABLE and
+        // READ-UNCOMMITTED are refused with `ErrUnsupportedIsolationLevel`
+        // (8048) unless the session's own
+        // `tidb_skip_isolation_level_check` is ON, in which case the set
+        // proceeds with that warning (no sink on this boundary).
+        if self.name == "tx_isolation_one_shot"
+            && matches!(
+                validated.value.as_str(),
+                "SERIALIZABLE" | "READ-UNCOMMITTED"
+            )
+        {
+            let skip_on = lookup
+                .and_then(|read| read("tidb_skip_isolation_level_check"))
+                .map(|v| matches!(v.to_ascii_lowercase().as_str(), "on" | "1" | "true"))
+                .unwrap_or(false);
+            if !skip_on {
+                return Err(ValidationError::SqlError(SqlError::new(
+                    8048,
+                    &[FormatArg::from(validated.value.as_str())],
+                )));
+            }
+            return Ok(validated);
         }
         // Go's `validateReadConsistencyLevel` (`session.go:702`): only
         // `strict` and `weak` in any case pass, stored as typed; everything
@@ -3084,6 +3129,34 @@ fn index_join_v2_and_schema_cache_size_match_go() {
     assert_eq!(scs.validate("134217728").unwrap().value, "134217728");
     assert!(matches!(
         scs.validate("not-a-size"),
+        Err(ValidationError::SqlError(_))
+    ));
+}
+
+/// Go's `checkIsolationLevel` (`varsutil.go:116`): SERIALIZABLE and
+/// READ-UNCOMMITTED are refused with `ErrUnsupportedIsolationLevel` (8048)
+/// unless the session's `tidb_skip_isolation_level_check` is ON, in which
+/// case the set proceeds.
+#[test]
+fn tx_isolation_one_shot_matches_go() {
+    let sv = get_sys_var("tx_isolation_one_shot").unwrap();
+    let lookup_on =
+        |name: &str| (name == "tidb_skip_isolation_level_check").then(|| "ON".to_owned());
+    let lookup_off =
+        |name: &str| (name == "tidb_skip_isolation_level_check").then(|| "OFF".to_owned());
+    assert_eq!(
+        sv.validate_in_scope_with_lookup("READ-COMMITTED", 1, Some(&lookup_on))
+            .unwrap()
+            .value,
+        "READ-COMMITTED"
+    );
+    match sv.validate_in_scope_with_lookup("SERIALIZABLE", 1, Some(&lookup_off)) {
+        Err(ValidationError::SqlError(error)) => assert_eq!(error.code, 8048),
+        other => panic!("expected the 8048 refusal, got {other:?}"),
+    }
+    // Without a lookup the sibling counts as unset: refusal.
+    assert!(matches!(
+        sv.validate_in_scope_with_lookup("SERIALIZABLE", 1, None),
         Err(ValidationError::SqlError(_))
     ));
 }

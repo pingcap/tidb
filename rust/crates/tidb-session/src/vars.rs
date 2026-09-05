@@ -812,8 +812,9 @@ impl GlobalSysvars {
         if !def.has_global_scope() && !def.has_instance_scope() {
             return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
         }
+        let lookup = |sibling: &str| self.get(sibling).ok();
         let validated = def
-            .validate_in_scope(&value, scope)
+            .validate_in_scope_with_lookup(&value, scope, Some(&lookup))
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
         // Go's `tidb_auto_analyze_concurrency` Validation observes the two
