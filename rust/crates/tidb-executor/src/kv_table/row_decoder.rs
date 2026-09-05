@@ -45,19 +45,16 @@ pub struct DecodedRow {
 
 impl DecodedRow {
     /// Values in table-column order, including decoded defaults and generated values.
-    #[must_use]
     pub fn values(&self) -> &[Datum] {
         &self.values
     }
 
     /// The decoded column-id map.
-    #[must_use]
     pub fn by_id(&self) -> &BTreeMap<i64, Datum> {
         &self.by_id
     }
 
     /// Takes both representations.
-    #[must_use]
     pub fn into_parts(self) -> (Vec<Datum>, BTreeMap<i64, Datum>) {
         (self.values, self.by_id)
     }

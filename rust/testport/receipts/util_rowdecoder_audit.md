@@ -51,6 +51,30 @@ progress.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
+## Rust follow-up: Go-discardable decoded-row accessors
+
+The dependency-closed owner carried three explicit Rust `#[must_use]`
+diagnostics on `DecodedRow::values`, `by_id`, and `into_parts`. These accessors
+are Rust carriers for Go's ordinary decoded-row values/maps, whose results may
+be discarded by callers; the diagnostics were Rust-only and are now removed
+without changing row decoding or generated-column behavior.
+
+The focused regression
+`row_decoder_source::return_values_may_be_ignored_like_go` decodes a complete
+source-shaped row and discards all three accessors under
+`#[deny(unused_must_use)]`. On the pre-fix owner it failed to compile with
+three unused-return errors; the fixed test passes.
+
+Ready validation for this follow-up:
+
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --test all row_decoder_source::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --test all row_decoder_source -- --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-executor --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-executor -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` is not required.
+
 ## Risk
 
 - Correctness: low; only the old-collation common-handle V2 shape loses the

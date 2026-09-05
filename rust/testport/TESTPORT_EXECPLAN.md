@@ -8737,6 +8737,11 @@ risks without claiming repository-wide parity.
   Rust-only `#[must_use]` diagnostics from `is_new_format`, `is_row_key`, and
   `field_type_from_column`. The source-derived deny-on-discard regression and
   Ready evidence are recorded in `receipts/util_rowcodec_audit.md`.
+- 2026-09-05 (`pkg/util/rowDecoder`): the dependency-closed row decoder owner
+  now matches Go's discardable-return contract by removing three explicit
+  Rust-only `#[must_use]` diagnostics from `DecodedRow::values`, `by_id`, and
+  `into_parts`. The source-derived deny-on-discard regression and Ready
+  evidence are recorded in `receipts/util_rowdecoder_audit.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

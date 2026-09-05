@@ -110,6 +110,36 @@ fn source_columns(zone: &SessionTimeZone, unsigned_handle: bool) -> Vec<KvColumn
 }
 
 #[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    let zone = SessionTimeZone::utc();
+    let bytes = encode(
+        &[1, 2, 3, 4],
+        &[
+            Datum::Int(100),
+            Datum::new_bytes(b"abc".to_vec()),
+            Datum::Decimal(Decimal::from_int(1)),
+            Datum::Int(8),
+        ],
+        true,
+        &zone,
+    );
+    let decoded = RowDecoder::new(
+        source_columns(&zone, false),
+        Some(6),
+        Vec::new(),
+        GeneratedColumnSelection::All,
+        query_context(&zone),
+    )
+    .unwrap()
+    .decode_and_eval(&TableHandle::Int(11), &bytes)
+    .unwrap();
+    decoded.values();
+    decoded.by_id();
+    decoded.into_parts();
+}
+
+#[test]
 fn row_decoder_matches_defaults_generated_values_and_integer_handles() {
     let zone = SessionTimeZone::utc();
     let stored_ids = [1, 2, 3, 4];
