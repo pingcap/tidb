@@ -9070,3 +9070,10 @@ risks without claiming repository-wide parity.
   `ErrInvalidOnUpdate` boundary for CREATE, ADD COLUMN, and MODIFY COLUMN.
   Focused DDL validator and session regressions plus Ready evidence are
   recorded in `receipts/session_on_update_type_validation.md`.
+- 2026-09-06 (`pkg/expression` session-information context): Rust now keeps
+  `DATABASE`, `USER`/`CURRENT_USER`, connection, role, version, and related
+  session-property builtins runtime-bound during no-session planner folds,
+  matching Go's optional-evaluation-property error path. Wrappers such as
+  `UPPER(USER())` therefore read the authenticated session instead of a
+  frozen NULL. Focused expression and computed-default regressions plus Ready
+  evidence are recorded in `receipts/expression_session_information_context.md`.

@@ -372,6 +372,22 @@ pub fn is_unfoldable(name: &str) -> bool {
             | "getparam"
             | "benchmark"
             | "dayname"
+            // Information functions read session properties in Go. The
+            // planner fold has only `NoColumns`, where their Rust evaluators
+            // otherwise return NULL instead of Go's missing-property error;
+            // retaining the function lets the live session supply the value.
+            | "database"
+            | "schema"
+            | "current_user"
+            | "current_role"
+            | "current_resource_group"
+            | "user"
+            | "session_user"
+            | "system_user"
+            | "connection_id"
+            | "row_count"
+            | "version"
+            | "tidb_version"
             // Go's LAST_INSERT_ID signatures require SessionVarsPropReader;
             // a no-session fold must stay deferred rather than replacing the
             // zero-argument form with NULL or dropping its one-argument write.
@@ -527,6 +543,39 @@ mod deferred_function_tests {
         ));
         fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
         assert!(matches!(expr, Expression::ScalarFunction(_)));
+    }
+
+    /// Go's information builtins carry `CurrentDB`, `CurrentUserPropReader`,
+    /// or `SessionVarsPropReader` even though they are absent from
+    /// `unFoldableFunctions`. A planner scope has no such properties, so the
+    /// Rust fold must retain each call until a live session evaluates it.
+    #[test]
+    fn session_information_functions_require_runtime_context() {
+        for name in [
+            "database",
+            "schema",
+            "current_user",
+            "current_role",
+            "current_resource_group",
+            "user",
+            "session_user",
+            "system_user",
+            "connection_id",
+            "row_count",
+            "version",
+            "tidb_version",
+        ] {
+            let mut expr = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new(name),
+                FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                vec![],
+            ));
+            fold_constant_in_mode(&mut expr, &NoColumns, ConstantFoldMode::Normal);
+            assert!(
+                matches!(expr, Expression::ScalarFunction(_)),
+                "{name} was frozen during the no-session fold"
+            );
+        }
     }
 
     fn benchmark_scope_keeps_its_subtree_unfolded() {

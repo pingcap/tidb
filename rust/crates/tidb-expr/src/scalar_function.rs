@@ -190,6 +190,23 @@ pub fn is_unfoldable_function(name: &str) -> bool {
                 | "getparam"
                 | "benchmark"
                 | "dayname"
+                // These information functions read session properties in
+                // Go (`CurrentDB`, `CurrentUserPropReader`, or
+                // `SessionVarsPropReader`). Rust's planner fold has only
+                // `NoColumns`, so keep them runtime-bound instead of
+                // replacing a missing property with a frozen NULL.
+                | "database"
+                | "schema"
+                | "current_user"
+                | "current_role"
+                | "current_resource_group"
+                | "user"
+                | "session_user"
+                | "system_user"
+                | "connection_id"
+                | "row_count"
+                | "version"
+                | "tidb_version"
                 // Reads/writes the statement's previous publication through
                 // Go's SessionVarsPropReader. Keep both LAST_INSERT_ID forms
                 // runtime-bound so a planner fold cannot freeze NULL (or
