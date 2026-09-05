@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` memory-arbitrator query reserved):
+  matched Go's `ParseUint`-then-`int64` boundary for
+  `tidb_mem_arbitrator_query_reserved`, refusing values above `i64::MAX` that
+  would wrap negative in Go while retaining the existing 0/greater-than-1
+  cases. The focused registry regression pins both overflow boundaries.
 - 2026-09-05 (`pkg/sessionctx/variable` compile-platform defaults): replaced
   captured `darwin`/`arm64` registry literals with target-derived Rust
   constants for `version_compile_os` and `version_compile_machine`, matching

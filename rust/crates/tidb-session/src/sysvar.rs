@@ -1429,7 +1429,9 @@ impl SysVarDef {
                 return Ok(validated);
             }
             if let Ok(v) = validated.value.parse::<u64>() {
-                if v > 1 {
+                // Go parses uint64 and then compares the int64 conversion;
+                // values above MaxInt64 wrap negative and are refused.
+                if v > 1 && v <= i64::MAX as u64 {
                     return Ok(validated);
                 }
             }
@@ -2899,6 +2901,12 @@ mod tests {
             reserved.validate("1"),
             Err(ValidationError::Refused(_))
         ));
+        for invalid in ["9223372036854775808", "18446744073709551615"] {
+            assert!(
+                matches!(reserved.validate(invalid), Err(ValidationError::Refused(_))),
+                "{invalid}"
+            );
+        }
 
         let soft_limit = get_sys_var("tidb_mem_arbitrator_soft_limit").unwrap();
         assert_eq!(soft_limit.validate("0").unwrap().value, "0");
