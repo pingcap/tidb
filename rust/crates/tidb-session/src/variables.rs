@@ -462,6 +462,13 @@ impl Session {
         {
             self.warn_partition_prune_assignment(&value, is_global);
         }
+        if !is_global
+            && assignment
+                .name
+                .eq_ignore_ascii_case(tidb_vardef::tidb_vars::MPP_EXCHANGE_COMPRESSION_MODE)
+        {
+            self.warn_mpp_exchange_compression(&value);
+        }
         self.warn_sysvar_assignment(&assignment.name, &value);
         if is_node_wide {
             // Go's `require_secure_transport` Validation closure runs after
@@ -797,6 +804,41 @@ impl Session {
                     "Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level".to_owned(),
                 );
             }
+        }
+    }
+
+    /// Go's `mpp_exchange_compression_mode` SetSession hook warns when a
+    /// concrete compression mode is selected while the effective MPP version
+    /// is V0. `UNSPECIFIED` deliberately has no warning, and GLOBAL writes do
+    /// not invoke SetSession (the caller filters those out before calling).
+    fn warn_mpp_exchange_compression(&mut self, value: &str) {
+        let Some(definition) =
+            sysvar::get_sys_var(tidb_vardef::tidb_vars::MPP_EXCHANGE_COMPRESSION_MODE)
+        else {
+            return;
+        };
+        let Ok(normalized) = definition.validate_in_scope(value, sysvar::SCOPE_SESSION) else {
+            return;
+        };
+        let Some(mode) = tidb_vardef::modes::to_exchange_compression_mode(&normalized.value)
+        else {
+            return;
+        };
+        if mode == tidb_vardef::modes::ExchangeCompressionMode::UNSPECIFIED {
+            return;
+        }
+        let mpp_version = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::MPP_VERSION)
+            .ok()
+            .and_then(|value| tidb_vardef::modes::to_mpp_version(&value))
+            .unwrap_or(tidb_vardef::modes::NEWEST_MPP_VERSION);
+        if mpp_version == 0 {
+            self.append_warning(
+                crate::warnings::WarningLevel::Warning,
+                1105,
+                "mpp exchange compression won't work under current mpp version 0".to_owned(),
+            );
         }
     }
 

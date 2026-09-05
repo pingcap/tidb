@@ -244,3 +244,25 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
+
+## 2026-09-05 Rust MPP warning restoration
+
+Go's `mpp_exchange_compression_mode` `SetSession` hook emits an unknown-error
+warning when a concrete compression mode is selected while
+`ChooseMppVersion()` resolves to V0. Rust now mirrors that session-only side
+effect with warning 1105, while `UNSPECIFIED` and GLOBAL assignments stay
+quiet. The focused regression pins the exact text, canonical readback, and
+scope gates.
+
+```text
+cargo test -p tidb-session --lib mpp_exchange_compression_warns_only_for_v0_session_like_go -- --nocapture
+# passed
+
+git diff --check
+# passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+```

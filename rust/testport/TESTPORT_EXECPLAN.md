@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` MPP exchange warning): matched Go's
+  `mpp_exchange_compression_mode` SESSION hook by warning with 1105 when a
+  concrete mode is selected under effective MPP version 0. `UNSPECIFIED` and
+  GLOBAL assignments remain quiet because Go's warning lives in SetSession.
+  The focused regression checks exact warning text, readback, and scope gates.
 - 2026-09-05 (`pkg/sessionctx/variable` retired partition-statistics
   concurrency): matched Go's fixed SESSION/GLOBAL getters and validation for
   `tidb_merge_partition_stats_concurrency`: accepted values normalize to `1`,

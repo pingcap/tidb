@@ -675,6 +675,51 @@ fn partition_prune_mode_updates_and_warns_like_go() {
     );
 }
 
+/// Go's `mpp_exchange_compression_mode` `SetSession` hook warns when a
+/// concrete mode is selected with `mpp_version = 0`, while `UNSPECIFIED` and
+/// GLOBAL assignments remain quiet because the hook is session-only.
+#[test]
+fn mpp_exchange_compression_warns_only_for_v0_session_like_go() {
+    let mut session = Session::new();
+
+    session.run("SET SESSION mpp_version = 0").unwrap();
+    session
+        .run("SET SESSION mpp_exchange_compression_mode = 'FAST'")
+        .unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1105");
+    assert_eq!(
+        warnings[0][2],
+        "mpp exchange compression won't work under current mpp version 0"
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@session.mpp_exchange_compression_mode"
+        ),
+        "FAST"
+    );
+
+    session
+        .run("SET SESSION mpp_exchange_compression_mode = 'UNSPECIFIED'")
+        .unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+
+    session
+        .run("SET GLOBAL mpp_exchange_compression_mode = 'FAST'")
+        .unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.mpp_exchange_compression_mode"
+        ),
+        "FAST"
+    );
+}
+
 /// Go's continuous plan-replayer capture validation requires the GLOBAL
 /// historical-stats switch before either SESSION or GLOBAL capture is enabled.
 #[test]
