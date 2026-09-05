@@ -8857,6 +8857,14 @@ risks without claiming repository-wide parity.
   both owner tests and the benchmark-inclusive all-target check; Ready
   evidence is recorded in `receipts/util_zeropool.md` and the dedicated
   ExecPlan.
+- 2026-09-06 (`pkg/util/memory` action surface): the complete 14-artifact
+  package inventory was rechecked and the Go-shaped `ActionWithPriority::new`
+  constructor no longer emits a Rust-only `#[must_use]` diagnostic. The
+  deny-on-discard regression failed with one diagnostic on the detached
+  pre-fix owner and passes with the action tests plus affected chunk,
+  executor, and server all-target checks; the Rust-only
+  `consume_and_check_exceed` adapter remains intentionally annotated. Ready
+  evidence is recorded in `receipts/util_memory_audit.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

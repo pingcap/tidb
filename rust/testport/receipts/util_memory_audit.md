@@ -86,3 +86,29 @@ Digest IDs now intentionally distinguish component boundaries exactly as Go
 master does. The full process-memory, cgroup/platform, global-arbitrator,
 tracker transition, failpoint, and benchmark surfaces remain outside this
 checkpoint; Windows and other unsupported targets were not exercised.
+
+## Rust-only diagnostic alignment (`2026-09-06`)
+
+The complete 14-artifact Go inventory above was re-read before this focused
+owner follow-up, including all eight production files, five test/benchmark
+files, the failpoint harness, and `BUILD.bazel`. No fixture, generated input,
+or separate platform file exists in the package. The Rust memory owner and
+its action/tracker tests were also rechecked.
+
+`ActionWithPriority::new` directly mirrors Go's exported
+`NewActionWithPriority`, but its `#[must_use]` annotation imposed a Rust-only
+discard diagnostic. It was removed. The separate
+`consume_and_check_exceed` helper remains annotated because it is a Rust-only
+adapter used by disk-spill callers and has no Go method equivalent.
+`memory::action::tests::constructor_return_may_be_ignored_like_go` now
+discards the Go-shaped constructor under `#[deny(unused_must_use)]`.
+
+On detached pre-fix `b1f5dc76d25380c664e0408f21cca5f5cb13fcba`, the focused
+probe failed with exactly one `unused_must_use` diagnostic. The corrected
+fully-qualified probe passed. Ready validation passed the four action tests,
+the benchmark-inclusive `tidb-util` owner check, affected `tidb-chunk`,
+`tidb-executor`, and `tidb-server` all-target checks, pinned Rust formatting,
+`git diff --check`, and `make lint`.
+
+No Go source was edited and no external TiKV integration was needed for this
+constructor diagnostic-only alignment.

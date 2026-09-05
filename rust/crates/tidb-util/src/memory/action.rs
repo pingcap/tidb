@@ -73,7 +73,6 @@ pub struct ActionWithPriority {
 
 impl ActionWithPriority {
     /// Go `NewActionWithPriority`.
-    #[must_use]
     pub fn new(action: ArcAction, priority: i64) -> Self {
         Self { action, priority }
     }
@@ -333,5 +332,12 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert!(catch_unwind(AssertUnwindSafe(|| action.action(&tracker))).is_err());
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn constructor_return_may_be_ignored_like_go() {
+        let action = Arc::new(PanicOnExceed::new(Arc::new(SqlKiller::default())));
+        ActionWithPriority::new(action, DEF_PANIC_PRIORITY);
     }
 }
