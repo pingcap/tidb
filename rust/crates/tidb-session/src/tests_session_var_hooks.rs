@@ -764,6 +764,43 @@ fn mpp_exchange_compression_warns_only_for_v0_session_like_go() {
     );
 }
 
+/// Go's `tidb_foreign_key_check_in_shared_lock` Validation allows ON on the
+/// classic kernel and gates it behind the experimental config on NextGen.
+#[test]
+fn foreign_key_check_in_shared_lock_obeys_kernel_gate_like_go() {
+    let mut session = Session::new();
+
+    if tidb_config::kerneltype::is_next_gen()
+        && !tidb_config::config_tree::config::get_global_config()
+            .experimental
+            .allow_enable_foreign_key_check_in_shared_lock
+    {
+        let error = session
+            .run("SET SESSION tidb_foreign_key_check_in_shared_lock = ON")
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1231);
+        assert_eq!(
+            one(
+                &mut session,
+                "SELECT @@session.tidb_foreign_key_check_in_shared_lock"
+            ),
+            "0"
+        );
+    } else {
+        session
+            .run("SET SESSION tidb_foreign_key_check_in_shared_lock = ON")
+            .unwrap();
+        assert_eq!(
+            one(
+                &mut session,
+                "SELECT @@session.tidb_foreign_key_check_in_shared_lock"
+            ),
+            "1"
+        );
+    }
+}
+
 /// Go's continuous plan-replayer capture validation requires the GLOBAL
 /// historical-stats switch before either SESSION or GLOBAL capture is enabled.
 #[test]

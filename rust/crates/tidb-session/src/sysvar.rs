@@ -784,6 +784,18 @@ impl SysVarDef {
         {
             return Err(ValidationError::WrongValue);
         }
+        // Go's `tidb_foreign_key_check_in_shared_lock` Validation allows ON
+        // on Classic, while NextGen requires the experimental configuration
+        // gate `allow-enable-foreign-key-check-in-shared-lock`.
+        if self.name == tidb_vardef::tidb_vars::TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK
+            && tidb_config::kerneltype::is_next_gen()
+            && validated.value == "ON"
+            && !tidb_config::config_tree::config::get_global_config()
+                .experimental
+                .allow_enable_foreign_key_check_in_shared_lock
+        {
+            return Err(ValidationError::WrongValue);
+        }
         // Go's `tidb_enable_noop_functions` Validation refuses OFF while a
         // same-scope read-only/no-op variable remains ON. The lookup is
         // supplied by the session or GLOBAL writer; direct registry callers

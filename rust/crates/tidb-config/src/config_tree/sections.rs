@@ -165,6 +165,10 @@ pub struct Experimental {
     /// Whether expression indexes may be created.
     #[serde(rename = "allow-expression-index")]
     pub allows_expression_index: bool,
+    /// Whether SQL users may enable foreign-key checks in shared-lock reads.
+    /// Go `Experimental.AllowEnableForeignKeyCheckInSharedLock`.
+    #[serde(rename = "allow-enable-foreign-key-check-in-shared-lock")]
+    pub allow_enable_foreign_key_check_in_shared_lock: bool,
     /// Whether the charset feature is enabled (json-hidden in Go).
     #[serde(rename = "enable-new-charset", skip_serializing)]
     pub enable_new_charset: bool,

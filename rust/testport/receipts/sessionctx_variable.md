@@ -287,3 +287,25 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
 TMPDIR=/tmp/tidb-codex make lint
 # passed
 ```
+
+## 2026-09-05 Rust foreign-key shared-lock gate restoration
+
+Go's `tidb_foreign_key_check_in_shared_lock` Validation accepts ON on the
+Classic kernel, but on NextGen refuses ON unless
+`experimental.allow-enable-foreign-key-check-in-shared-lock` is enabled. Rust
+now carries the missing config field and enforces the same gate before either
+SESSION or GLOBAL publication. The focused regression checks the active
+kernel's acceptance/refusal boundary and readback.
+
+```text
+cargo test -p tidb-session --lib foreign_key_check_in_shared_lock_obeys_kernel_gate_like_go -- --nocapture
+# passed
+
+git diff --check
+# passed
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# passed
+```

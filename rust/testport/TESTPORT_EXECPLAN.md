@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` foreign-key shared-lock gate):
+  matched Go's kernel/config Validation for
+  `tidb_foreign_key_check_in_shared_lock`: Classic accepts ON, while NextGen
+  requires `experimental.allow-enable-foreign-key-check-in-shared-lock`.
+  Added the missing Rust config field and a focused kernel-gated regression.
 - 2026-09-05 (`pkg/sessionctx/variable` parallel hash-aggregate spill
   warning): restored Go's SESSION-only 1681 deprecation warning when
   `tidb_enable_parallel_hashagg_spill` is turned OFF. ON and GLOBAL writes
