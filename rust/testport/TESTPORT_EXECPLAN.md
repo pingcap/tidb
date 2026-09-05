@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` sequence cache bounds): promoted the previously
+  ignored `GetSequenceBaseEndRound` contract. The existing non-mutating Rust
+  `SequenceAllocator::base_end_round` accessor is now exercised through the
+  SQL-backed catalog/session carrier for positive, cycling, and
+  negative-growth batches; the b110 receipt records the complete row matrix,
+  and the sequence-function source has no remaining ignored rows.
 - 2026-09-05 (`pkg/ddl` errored sequence projection): aligned sequence-name
   resolution with Go's expression-build phase. The ordinary AST visitor now
   validates every parser-shaped sequence function before fresh, cached, or

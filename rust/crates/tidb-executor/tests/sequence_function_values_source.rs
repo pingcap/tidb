@@ -62,6 +62,16 @@ fn query_error(catalog: &Catalog, ctx: &StmtContext, sql: &str) -> (u16, String)
     (mysql.code, mysql.message)
 }
 
+/// Reads the table-local cache triple Go exposes through
+/// `GetSequenceBaseEndRound` without reserving another batch.
+fn sequence_cache(catalog: &Catalog) -> (i64, i64, i64) {
+    catalog
+        .sequence_allocators()
+        .get("test.seq")
+        .expect("test.seq sequence exists")
+        .base_end_round()
+}
+
 /// Parses and runs one sequence DDL statement against `catalog`.
 fn run_seq(catalog: &mut Catalog, sql: &str) {
     let stmt = tidb_parser::parse(sql).expect("sequence statement parses");
@@ -440,13 +450,56 @@ fn setval_across_cycle_rounds_honors_the_new_batch() {
 /// `increment 2 start 0 maxvalue 10 minvalue -10 cache 3 cycle` after a
 /// `setval(seq, 20)`, and `(-1, -10, 0)` / `(-10, 4, 1)` for the
 /// negative-growth ladders.
-// go-parity-gap: the allocator's cached `(base, end, round)` triple is
-// private in this tier (`src/sequence.rs` `SequenceState`) and the only
-// accessor (`alloc_seq_cache`) reserves a NEW batch rather than reading the
-// current one, so the triple is not observable.
 #[test]
-#[ignore]
 fn sequence_cache_base_end_round_bounds_match_go_batches() {
+    let mut catalog = Catalog::default();
+    run_seq(
+        &mut catalog,
+        "create sequence seq increment 10 start 5 maxvalue 100 cache 10 cycle",
+    );
+    let ctx = session(&catalog, "test");
+    assert_eq!(one_column(&catalog, &ctx, "select nextval(seq)"), vec![Some(5)]);
+    assert_eq!(sequence_cache(&catalog), (5, 95, 0));
+    assert_eq!(one_column(&catalog, &ctx, "select setval(seq, 95)"), vec![Some(95)]);
+    assert_eq!(one_column(&catalog, &ctx, "select nextval(seq)"), vec![Some(1)]);
+    assert_eq!(sequence_cache(&catalog), (1, 91, 1));
+
+    let mut catalog = Catalog::default();
+    run_seq(
+        &mut catalog,
+        "create sequence seq increment 2 start 0 maxvalue 10 minvalue -10 cache 3 cycle",
+    );
+    let ctx = session(&catalog, "test");
+    assert_eq!(one_column(&catalog, &ctx, "select setval(seq, -20)"), vec![None]);
+    assert_eq!(one_column(&catalog, &ctx, "select setval(seq, 20)"), vec![Some(20)]);
+    assert_eq!(one_column(&catalog, &ctx, "select nextval(seq)"), vec![Some(-10)]);
+    assert_eq!(sequence_cache(&catalog), (-10, -6, 1));
+
+    let mut catalog = Catalog::default();
+    run_seq(
+        &mut catalog,
+        "create sequence seq increment -3 start 5 maxvalue 10 minvalue -10 cache 3 cycle",
+    );
+    let ctx = session(&catalog, "test");
+    assert_eq!(one_column(&catalog, &ctx, "select nextval(seq)"), vec![Some(5)]);
+    assert_eq!(sequence_cache(&catalog), (5, -1, 0));
+    assert_eq!(one_column(&catalog, &ctx, "select setval(seq, -2)"), vec![Some(-2)]);
+    assert_eq!(one_column(&catalog, &ctx, "select nextval(seq)"), vec![Some(-4)]);
+    assert_eq!(sequence_cache(&catalog), (-4, -10, 0));
+    assert_eq!(one_column(&catalog, &ctx, "select setval(seq, -10)"), vec![Some(-10)]);
+    assert_eq!(one_column(&catalog, &ctx, "select nextval(seq)"), vec![Some(10)]);
+    assert_eq!(sequence_cache(&catalog), (10, 4, 1));
+
+    let mut catalog = Catalog::default();
+    run_seq(
+        &mut catalog,
+        "create sequence seq increment -2 start 0 maxvalue 10 minvalue -10 cache 3 cycle",
+    );
+    let ctx = session(&catalog, "test");
+    assert_eq!(one_column(&catalog, &ctx, "select setval(seq, 20)"), vec![None]);
+    assert_eq!(one_column(&catalog, &ctx, "select setval(seq, -20)"), vec![Some(-20)]);
+    assert_eq!(one_column(&catalog, &ctx, "select nextval(seq)"), vec![Some(10)]);
+    assert_eq!(sequence_cache(&catalog), (10, 6, 1));
 }
 
 /// Go rows `pkg/ddl/sequence_test.go:279-290` minus the end/round internals:
