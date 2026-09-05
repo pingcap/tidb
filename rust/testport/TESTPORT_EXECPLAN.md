@@ -8969,3 +8969,10 @@ risks without claiming repository-wide parity.
   not-yet-ported error. Focused expression and end-to-end session truthiness
   regressions plus Ready evidence are recorded in
   `receipts/expression_istrue_with_null.md`.
+- 2026-09-06 (`pkg/planner/core` NO_UNSIGNED_SUBTRACTION propagation): Rust's
+  plan-aware resolver now carries the statement SQL mode into arithmetic type
+  inference. Unsigned-minus-signed expressions therefore use Go's signed
+  result domain and value when `NO_UNSIGNED_SUBTRACTION` is enabled, including
+  through INSERT/storage. Focused planner and SQL-mode scanner regressions plus
+  Ready evidence are recorded in
+  `receipts/planner_no_unsigned_subtraction.md`.

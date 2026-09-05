@@ -717,6 +717,9 @@ pub struct PlanScopeResolver<'a> {
     /// planner's third `like(expr, pattern, escape)` argument agrees with the
     /// evaluator and ranger under `NO_BACKSLASH_ESCAPES`.
     like_default_escape: u8,
+    /// Whether integer subtraction must keep a signed result domain for this
+    /// statement (`NO_UNSIGNED_SUBTRACTION`).
+    no_unsigned_subtraction: bool,
 }
 
 impl<'a> PlanScopeResolver<'a> {
@@ -740,6 +743,7 @@ impl<'a> PlanScopeResolver<'a> {
             connection_charset: connection_charset.to_owned(),
             connection_collation: connection_collation.to_owned(),
             like_default_escape: b'\\',
+            no_unsigned_subtraction: false,
         }
     }
 
@@ -766,6 +770,7 @@ impl<'a> PlanScopeResolver<'a> {
             connection_charset: connection_charset.to_owned(),
             connection_collation: connection_collation.to_owned(),
             like_default_escape: b'\\',
+            no_unsigned_subtraction: false,
         }
     }
 
@@ -782,6 +787,15 @@ impl<'a> PlanScopeResolver<'a> {
     #[must_use]
     pub const fn with_like_default_escape(mut self, escape: u8) -> Self {
         self.like_default_escape = escape;
+        self
+    }
+
+    /// Attach the statement's `NO_UNSIGNED_SUBTRACTION` mode to this
+    /// resolver so arithmetic result metadata is selected during rewriting,
+    /// before execution evaluates any row.
+    #[must_use]
+    pub const fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
+        self.no_unsigned_subtraction = enabled;
         self
     }
 }
@@ -827,6 +841,10 @@ impl ColumnResolver for PlanScopeResolver<'_> {
 
     fn connection_charset_info(&self) -> (&str, &str) {
         (&self.connection_charset, &self.connection_collation)
+    }
+
+    fn no_unsigned_subtraction(&self) -> bool {
+        self.no_unsigned_subtraction
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -1240,7 +1258,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             self.time_zone.clone(),
         )
         .with_connection_charset_info(self.ctx.connection_charset_info())
-        .with_like_default_escape(self.ctx.like_default_escape());
+        .with_like_default_escape(self.ctx.like_default_escape())
+        .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction());
         Ok(rewrite_expr_resolved(expr, &resolver)?)
     }
 

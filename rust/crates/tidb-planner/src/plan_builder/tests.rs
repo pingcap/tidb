@@ -1476,6 +1476,29 @@ fn plan_scope_resolver_uses_the_statement_connection_collation() {
 }
 
 #[test]
+fn plan_scope_resolver_uses_no_unsigned_subtraction_mode() {
+    let select = parse_select("SELECT CAST(0 AS UNSIGNED) - 1");
+    let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
+        panic!("expected subtraction expression")
+    };
+    let schema = Schema::default();
+    let names = [];
+    let markers = BTreeMap::new();
+    let resolver = PlanScopeResolver::new(&schema, &names, &markers, SessionTimeZone::utc())
+        .with_no_unsigned_subtraction(true);
+    let rewritten =
+        tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).expect("subtraction rewrite");
+    let Expression::ScalarFunction(function) = rewritten else {
+        panic!("subtraction should remain a scalar function")
+    };
+    assert!(!function
+        .ret_type
+        .as_ref()
+        .expect("subtraction return type")
+        .is_unsigned());
+}
+
+#[test]
 fn plan_scope_resolver_keeps_char_using_for_runtime_warnings() {
     let select = parse_select("SELECT CHAR(65, -1, 67.5 USING utf8)");
     let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
