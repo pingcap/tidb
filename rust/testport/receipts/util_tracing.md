@@ -72,3 +72,35 @@ blocked before reaching this package by pre-existing `tidb-mysql`
   matching the synchronization implied by shared Go span handles. The four
   source workloads compile; no comparative benchmark was run in this WIP
   checkpoint.
+
+## Rust follow-up: Go-shaped return discard tolerance
+
+The complete six-artifact `pkg/util/tracing` inventory remains unchanged and
+was re-read before this edit: both production files, package test harness,
+source tests, benchmarks, and BUILD metadata are covered above, with no
+fixtures, generated files, or platform variants. Every `#[must_use]` in the
+Rust tracing owner was attached to a Go-shaped category, span, context, region,
+or CE-deduplication API (including the private no-op helper); none represents a
+Rust-only contract.
+
+Those 32 Rust-only diagnostics are removed. The new in-module regression
+exercises every affected public method/function and the private helper,
+discarding each return under `#[deny(unused_must_use)]`. It leaves all tracing
+state transitions, formatting, and benchmark code unchanged.
+
+Pre-fix proof: the detached pre-fix owner failed to compile the regression with
+exactly 32 `unused return value` diagnostics. After removing the annotations,
+the focused regression and all eight tracing tests pass.
+
+Ready validation:
+
+- `OPENSSL_DIR=... OPENSSL_STATIC=1 CARGO_TARGET_DIR=... cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-util --lib 'tracing::tests::source_api_returns_may_be_ignored_like_go' -- --exact --nocapture` — passed.
+- `cargo ... test -p tidb-util --lib 'tracing::tests' -- --nocapture --test-threads=1` — passed; 8 tests.
+- `cargo ... check -p tidb-util --bench tracing` — passed; all four benchmark carriers compile.
+- Pinned Rust formatting, repository `make lint`, and `git diff --check` —
+  passed.
+
+Correctness risk is limited to compile-time diagnostics; all Go-shaped tracing
+behavior is unchanged. Compatibility is improved because Rust no longer
+rejects valid Go-style ignored return values. No runtime allocation or timing
+path changed.

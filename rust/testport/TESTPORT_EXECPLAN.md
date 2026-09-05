@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/tracing` Go-shaped return tolerance): the complete
+  six-artifact inventory remains unchanged and was rechecked before the edit.
+  All 32 Rust-only `#[must_use]` diagnostics in the source-shaped tracing
+  owner were removed, while state transitions and benchmarks remain intact. A
+  deny-on-discard regression failed with exactly 32 diagnostics on the
+  detached pre-fix owner and passes with eight tracing tests, benchmark
+  compile, formatting, lint, and diff checks. Evidence is recorded in
+  `receipts/util_tracing.md`.
 - 2026-09-06 (`pkg/util/dbterror` Go-shaped constructors): the complete
   five-artifact root inventory remains unchanged and was rechecked before the
   edit. Rust's `ErrClass::new_std` and `new_std_err`, direct counterparts of

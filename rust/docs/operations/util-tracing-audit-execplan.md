@@ -8,6 +8,13 @@ maintaining one dependency-closed Rust owner.
 
 ## Progress
 
+- [x] (2026-09-06) Removed all 32 Rust-only `#[must_use]` diagnostics from
+  Go-shaped tracing APIs, retaining no Rust-only return contract. The complete
+  discard regression failed with exactly 32 diagnostics on the detached
+  pre-fix owner and passes with eight tracing tests and the benchmark compile
+  gate. Formatting, repository lint, and diff hygiene pass; the package commit
+  is ready for the required remote push and SHA verification.
+
 - [x] Re-read all six current Go-master artifacts at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: 715 lines comprising
   `BUILD.bazel`, two production files, the package test harness, six source

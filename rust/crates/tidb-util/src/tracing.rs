@@ -67,7 +67,6 @@ impl TraceCategory {
 
     /// Go `getCategoryName`. A mask that is not exactly one known category
     /// renders as Go's `unknown(N)` fallback.
-    #[must_use]
     pub fn name(self) -> String {
         let known = match self {
             Self::TXN_LIFECYCLE => "txn_lifecycle",
@@ -91,7 +90,6 @@ impl TraceCategory {
 
     /// Go `ParseTraceCategory`: the category with this name, or the invalid
     /// zero category.
-    #[must_use]
     pub fn parse(name: &str) -> Self {
         let mut bit = 1_u64;
         while bit < Self::SENTINEL {
@@ -150,14 +148,12 @@ pub fn set_categories(categories: TraceCategory) {
 }
 
 /// Go `GetEnabledCategories`.
-#[must_use]
 pub fn enabled_categories() -> TraceCategory {
     TraceCategory(ENABLED_CATEGORIES.load(Ordering::SeqCst))
 }
 
 /// Go `IsEnabled`. Trace events only work for the next-generation kernel, so
 /// a classic build outside tests is always disabled.
-#[must_use]
 pub fn is_enabled(category: TraceCategory) -> bool {
     if tidb_config::kerneltype::is_classic() && !IN_TEST {
         return false;
@@ -188,7 +184,6 @@ pub enum Phase {
 
 impl Phase {
     /// The single-letter wire spelling Go stores in the `Phase` string.
-    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             Self::Begin => "B",
@@ -277,7 +272,6 @@ pub struct OptimizeTracer;
 
 /// Go `DedupCETrace`: keeps the first occurrence of each distinct record,
 /// preserving input order.
-#[must_use]
 pub fn dedup_ce_trace(records: &[Arc<CeTraceRecord>]) -> Vec<Arc<CeTraceRecord>> {
     let mut seen = std::collections::HashSet::with_capacity(records.len());
     let mut deduped = Vec::with_capacity(records.len());
@@ -336,7 +330,6 @@ impl std::fmt::Debug for Tracer {
 
 impl Tracer {
     /// Go `basictracer.New(recorder)`.
-    #[must_use]
     pub fn new(recorder: CallbackRecorder) -> Self {
         Self {
             recorder: Some(recorder),
@@ -345,7 +338,6 @@ impl Tracer {
     }
 
     /// Go `opentracing.NoopTracer{}`.
-    #[must_use]
     pub fn noop() -> Self {
         Self {
             recorder: None,
@@ -354,7 +346,6 @@ impl Tracer {
     }
 
     /// Whether this tracer discards every span (Go's no-op tracer check).
-    #[must_use]
     pub fn is_noop(&self) -> bool {
         self.recorder.is_none()
     }
@@ -364,13 +355,11 @@ impl Tracer {
     }
 
     /// Go `Tracer.StartSpan(operation)`: a root span.
-    #[must_use]
     pub fn start_span(self: &Arc<Self>, operation: &str) -> Span {
         self.start_child(operation, None)
     }
 
     /// Go `Tracer.StartSpan(operation, opentracing.ChildOf(parent))`.
-    #[must_use]
     pub fn start_span_child_of(self: &Arc<Self>, operation: &str, parent: SpanContext) -> Span {
         self.start_child(operation, Some(parent))
     }
@@ -379,7 +368,6 @@ impl Tracer {
     ///
     /// TiDB never inspects the reference kind, only the resulting parentage,
     /// so this shares `ChildOf`'s model.
-    #[must_use]
     pub fn start_span_following(self: &Arc<Self>, operation: &str, parent: SpanContext) -> Span {
         self.start_child(operation, Some(parent))
     }
@@ -414,7 +402,6 @@ pub fn set_global_tracer(tracer: Arc<Tracer>) {
 }
 
 /// Go `opentracing.GlobalTracer`.
-#[must_use]
 pub fn global_tracer() -> Arc<Tracer> {
     Arc::clone(
         &global_tracer_slot()
@@ -441,19 +428,16 @@ struct SpanState {
 
 impl Span {
     /// Go `Span.Context`.
-    #[must_use]
     pub const fn context(&self) -> SpanContext {
         self.context
     }
 
     /// Go `Span.Tracer`.
-    #[must_use]
     pub fn tracer(&self) -> &Arc<Tracer> {
         &self.tracer
     }
 
     /// Whether this span discards its recording (Go's no-op tracer check).
-    #[must_use]
     pub fn is_noop(&self) -> bool {
         self.tracer.is_noop()
     }
@@ -468,7 +452,6 @@ impl Span {
     }
 
     /// Go `Span.BaggageItem`.
-    #[must_use]
     pub fn baggage_item(&self, key: &str) -> Option<String> {
         self.state
             .lock()
@@ -503,7 +486,6 @@ impl Span {
 }
 
 /// Go's private `noopSpan`.
-#[must_use]
 fn noop_span() -> Span {
     Arc::new(Tracer::noop()).start_span("DefaultSpan")
 }
@@ -548,13 +530,11 @@ impl std::fmt::Debug for TraceContext {
 
 impl TraceContext {
     /// An empty context, like Go's `context.Background()`.
-    #[must_use]
     pub fn background() -> Self {
         Self::default()
     }
 
     /// Go `opentracing.ContextWithSpan`.
-    #[must_use]
     pub fn with_span(&self, span: Span) -> Self {
         let mut next = self.clone();
         next.span = Some(span);
@@ -562,13 +542,11 @@ impl TraceContext {
     }
 
     /// Go `opentracing.SpanFromContext`: the stored span, if any.
-    #[must_use]
     pub fn span(&self) -> Option<&Span> {
         self.span.as_ref()
     }
 
     /// Go `WithFlightRecorder`.
-    #[must_use]
     pub fn with_flight_recorder(&self, sink: Arc<dyn Sink>) -> Self {
         let mut next = self.clone();
         next.sink = Some(sink);
@@ -576,14 +554,12 @@ impl TraceContext {
     }
 
     /// Go `GetSink`.
-    #[must_use]
     pub fn sink(&self) -> Option<&Arc<dyn Sink>> {
         self.sink.as_ref()
     }
 
     /// Go `ContextWithTraceInfo`. A `None` info returns the context unchanged,
     /// exactly as Go returns the original context for a nil info.
-    #[must_use]
     pub fn with_trace_info(&self, info: Option<Arc<TraceInfo>>) -> Self {
         match info {
             None => self.clone(),
@@ -596,13 +572,11 @@ impl TraceContext {
     }
 
     /// Go `TraceInfoFromContext`.
-    #[must_use]
     pub fn trace_info(&self) -> Option<&TraceInfo> {
         self.trace_info.as_deref()
     }
 
     /// Go `ExtractTraceID`.
-    #[must_use]
     pub fn extract_trace_id(&self) -> &[u8] {
         &self.trace_id
     }
@@ -615,13 +589,11 @@ impl TraceContext {
 }
 
 /// Go `ExtractTraceID`.
-#[must_use]
 pub fn extract_trace_id(context: &TraceContext) -> &[u8] {
     context.extract_trace_id()
 }
 
 /// Go `SpanFromContext`: the context's span, or a no-op span.
-#[must_use]
 pub fn span_from_context(context: &TraceContext) -> Span {
     context.span().cloned().unwrap_or_else(noop_span)
 }
@@ -629,7 +601,6 @@ pub fn span_from_context(context: &TraceContext) -> Span {
 /// Go `ChildSpanFromContxt` (Go's spelling): a child of the context's span
 /// plus the context carrying it. A missing or no-op parent yields a no-op
 /// span and the original context.
-#[must_use]
 pub fn child_span_from_context(context: &TraceContext, operation: &str) -> (Span, TraceContext) {
     if let Some(parent) = context.span() {
         if !parent.is_noop() {
@@ -643,7 +614,6 @@ pub fn child_span_from_context(context: &TraceContext, operation: &str) -> (Span
 
 /// Go `StartRegionWithNewRootSpan`: starts a root span on the global tracer
 /// and stores it in the returned context.
-#[must_use]
 pub fn start_region_with_new_root_span(
     context: &TraceContext,
     region_type: &str,
@@ -658,7 +628,6 @@ pub fn start_region_with_new_root_span(
 
 /// Go `StartRegion`: opens a traced region, emitting a `General` begin event
 /// to the context's sink when that category is enabled.
-#[must_use]
 pub fn start_region(context: &TraceContext, region_type: &str) -> Region {
     let span = context.span().map(|parent| {
         parent
@@ -688,7 +657,6 @@ pub fn start_region(context: &TraceContext, region_type: &str) -> Region {
 }
 
 /// Go `StartRegionEx`: [`start_region`] plus the context carrying its span.
-#[must_use]
 pub fn start_region_ex(context: &TraceContext, region_type: &str) -> (Region, TraceContext) {
     let region = start_region(context, region_type);
     let context = match region.span.clone() {
@@ -732,6 +700,16 @@ impl Region {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct NoopSink;
+
+    impl Sink for NoopSink {
+        fn record(&self, _context: &TraceContext, _event: &Event) {}
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
 
     // The global tracer and the enabled-category mask are process-wide. Go
     // runs a package's tests sequentially; Rust runs them in parallel, so the
@@ -870,5 +848,52 @@ mod tests {
         let info = context.trace_info().unwrap();
         assert_eq!(info.connection_id, 12345);
         assert_eq!(info.session_alias, "alias1");
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_api_returns_may_be_ignored_like_go() {
+        let category = TraceCategory::GENERAL;
+        category.name();
+        TraceCategory::parse("general");
+        enabled_categories();
+        is_enabled(category);
+        Phase::Begin.as_str();
+
+        let records: Vec<Arc<CeTraceRecord>> = Vec::new();
+        dedup_ce_trace(&records);
+
+        let callback: CallbackRecorder = Arc::new(|_span: RawSpan| {});
+        Tracer::new(Arc::clone(&callback));
+        let tracer = Arc::new(Tracer::new(callback));
+        Tracer::noop();
+        tracer.is_noop();
+        tracer.start_span("root");
+        tracer.start_span_child_of("child", SpanContext::default());
+        tracer.start_span_following("follower", SpanContext::default());
+        global_tracer();
+
+        let span = tracer.start_span("span");
+        span.context();
+        span.tracer();
+        span.is_noop();
+        span.baggage_item("key");
+
+        noop_span();
+        TraceContext::background();
+        let context = TraceContext::background();
+        context.with_span(tracer.start_span("context-span"));
+        context.span();
+        context.with_flight_recorder(Arc::new(NoopSink));
+        context.sink();
+        context.with_trace_info(Some(Arc::new(TraceInfo::default())));
+        context.trace_info();
+        context.extract_trace_id();
+        extract_trace_id(&context);
+        span_from_context(&context);
+        child_span_from_context(&context, "child");
+        start_region_with_new_root_span(&context, "region");
+        start_region(&context, "region");
+        start_region_ex(&context, "region");
     }
 }
