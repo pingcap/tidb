@@ -8828,6 +8828,13 @@ risks without claiming repository-wide parity.
   ten diagnostics on the detached pre-fix owner and passes with the 18-test
   owner suite and benchmark-target check; Ready evidence is recorded in
   `receipts/util_encrypt.md`.
+- 2026-09-06 (`pkg/planner/funcdep`): the complete six-artifact owner now
+  matches Go's discardable-return contract by removing six explicit Rust-only
+  `#[must_use]` diagnostics from `FdSet` getters and null-rejection predicates.
+  The deny-on-discard regressions fail with all six diagnostics on the detached
+  pre-fix owner and pass with the 20-test owner and 16-test planner consumer
+  suites; current Go package build drift is recorded in
+  `receipts/planner_funcdep.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

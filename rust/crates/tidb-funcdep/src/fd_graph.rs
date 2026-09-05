@@ -562,7 +562,6 @@ impl FdSet {
     }
 
     /// Go `FDSet.NotNullCols`.
-    #[must_use]
     pub fn not_null_cols(&self) -> &ColSet {
         &self.not_null_cols
     }
@@ -619,13 +618,11 @@ impl FdSet {
     }
 
     /// Go `FDSet.IsHashCodeRegistered`.
-    #[must_use]
     pub fn registered_unique_id(&self, hash_code: &[u8]) -> Option<i64> {
         self.hash_code_to_unique_id.get(hash_code).copied()
     }
 
     /// Go `FDSet.GroupByCols`.
-    #[must_use]
     pub fn group_by_cols(&self) -> &ColSet {
         &self.group_by_cols
     }
@@ -636,7 +633,6 @@ impl FdSet {
     }
 
     /// Go `FDSet.HasAggBuilt`.
-    #[must_use]
     pub const fn has_agg_built(&self) -> bool {
         self.has_agg_built
     }
@@ -1380,5 +1376,15 @@ mod tests {
         // find common equivalence classes between fd1, fd2 and fd3.
         let res = find_common_equiv_classes(&[&fd1, &fd2, &fd3]);
         assert_eq!(res.len(), 0);
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn return_values_may_be_ignored_like_go() {
+        let fd = FdSet::new();
+        fd.not_null_cols();
+        fd.registered_unique_id(&[]);
+        fd.group_by_cols();
+        fd.has_agg_built();
     }
 }

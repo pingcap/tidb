@@ -45,7 +45,7 @@ unique keys and null rejection, outer-join conditional rules, correlated
 Apply, expression-id gating, and latest-index failure. No ignored or
 documentation-only test substitutes are counted.
 
-## Validation evidence
+## Validation evidence (Ready profile)
 
 Failpoint decision: no `failpoint.`, `testfailpoint.`, or Bazel failpoint
 dependency occurs in `pkg/planner/funcdep`, so no enable/disable cycle is
@@ -66,12 +66,33 @@ make lint
 git diff --check
 ```
 
-All commands above passed. The Rust results were 18/18 graph tests, 16/16
-logical extraction tests, and 3/3 parsed-source tests; the pinned Go package
-test also passed. `make lint`, formatting, the three-crate type check, and
-whitespace validation were clean. No Go files,
-imports, top-level Go tests, modules, or Bazel metadata changed, so
-`make bazel_prepare` was not required.
+The original package checkpoint above passed with 18/18 graph tests, 16/16
+logical extraction tests, 3/3 parsed-source tests, the pinned Go package test,
+`make lint`, formatting, the three-crate type check, and whitespace validation.
+
+This follow-up removes six explicit Rust-only `#[must_use]` diagnostics from
+the four `FdSet` getters and the two null-rejection predicates. A detached
+pre-fix owner with the new deny-on-discard regressions failed with exactly six
+`unused_must_use` diagnostics. After the fix:
+
+- `OPENSSL_DIR="/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys/332dd69a952932bb/out/openssl-build/install" OPENSSL_STATIC=1 cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-funcdep --lib 'fd_graph::tests::return_values_may_be_ignored_like_go' -- --exact --nocapture` — passed;
+- the same command with `null_reject::tests::return_values_may_be_ignored_like_go` — passed;
+- the same locked toolchain with `-p tidb-funcdep --lib -- --test-threads=1` — 20 owner tests passed;
+- the same locked toolchain with `-p tidb-planner 'logical::functional_dependencies::tests::' -- --nocapture --test-threads=1` — 16 planner consumer tests passed;
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-funcdep -- --check` and `git diff --check` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH
+  GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10
+  TMPDIR=/tmp/tidb-codex make lint` — passed (Ready repository lint).
+
+The current checkout's Go probe
+`PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10
+TMPDIR=/tmp/tidb-codex go test ./pkg/planner/funcdep -count=1` is blocked before
+package execution by the existing `pkg/session` references to missing
+`metrics.GlobalMemArbitratorSubTasks.CancelWaitAversePlan` and
+`CancelStandardModePlan` fields. No Go file changed. The final repository
+Ready lint is recorded after this follow-up; `make bazel_prepare` is not
+required because no Go/Bazel/module file changed; Ready lint passed above.
 
 ## Residual risk
 
