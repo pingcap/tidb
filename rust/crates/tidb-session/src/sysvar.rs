@@ -984,6 +984,22 @@ impl SysVarDef {
                 )));
             }
         }
+        // Go's `tidb_analyze_column_options` Validation accepts only ALL and
+        // PREDICATE (case-insensitive); its GLOBAL setter uppercases the
+        // accepted text before publication. Keep the stored value canonical
+        // and refuse unknown options with the source's bare 1105 error.
+        if self.name == tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS {
+            let choice = validated.value.to_ascii_uppercase();
+            if matches!(choice.as_str(), "ALL" | "PREDICATE") {
+                return Ok(Validated {
+                    value: choice,
+                    truncated: validated.truncated,
+                });
+            }
+            return Err(ValidationError::Refused(format!(
+                "invalid value for tidb_analyze_column_options, it should be either 'ALL' or 'PREDICATE'"
+            )));
+        }
         // Direct registry users (including Go's validation unit tests) may
         // toggle the process-wide scheduler products without a GLOBAL table.
         // Preserve the source closure's prerequisite check here; SQL writes

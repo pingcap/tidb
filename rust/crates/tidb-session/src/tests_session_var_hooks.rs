@@ -336,6 +336,52 @@ fn deprecated_always_on_switches_match_go() {
     );
 }
 
+/// Go's `tidb_analyze_column_options` GLOBAL closure uppercases the two
+/// accepted modes and refuses every other spelling.
+#[test]
+fn analyze_column_options_validation_matches_go() {
+    let mut session = Session::new();
+
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'predicate'")
+        .unwrap();
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_analyze_column_options"
+        ),
+        "PREDICATE"
+    );
+
+    let error = session
+        .run("SET GLOBAL tidb_analyze_column_options = 'INDEX'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "invalid value for tidb_analyze_column_options, it should be either 'ALL' or 'PREDICATE'"
+    );
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_analyze_column_options"
+        ),
+        "PREDICATE"
+    );
+
+    session
+        .run("SET GLOBAL tidb_analyze_column_options = 'all'")
+        .unwrap();
+    assert_eq!(
+        one(
+            &mut session,
+            "SELECT @@global.tidb_analyze_column_options"
+        ),
+        "ALL"
+    );
+}
+
 /// `sql_auto_is_null` carries the same `Validation` as the five read-only
 /// no-op variables: turning it ON needs `tidb_enable_noop_functions`, and the
 /// refusal branch returns `Off` rather than the requested value.

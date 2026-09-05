@@ -41,6 +41,11 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` analyze-column options): matched
+  Go's GLOBAL validation and setter by accepting ALL/PREDICATE
+  case-insensitively, publishing uppercase values, and refusing unknown
+  choices with the source 1105 message. A focused SQL regression covers both
+  canonical modes and preservation after refusal.
 - 2026-09-05 (`pkg/sessionctx/variable` always-on compatibility toggles):
   matched Go's deprecated exchange-partition, new-cost-interface, and TiFlash
   read-for-write closures by forcing `ON` and reproducing their OFF warning
