@@ -480,3 +480,5 @@
 - 下轮恢复点: (1) 新面选型或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - 增量收敛核查: 同步至 4272cdfa565(pkg/ddl: enforce sequence create privilege); 全关键面稳定(super_read_only 1/0, tx_isolation_one_shot 1/0, gcutil 2/0, datatype 412/0); planner 4 UnsafeRange 仍为兄弟会话在途区。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- 22-crate 最终聚合核验: session 1321+/281 预存环境; vardef 45/0; executor 1069+/139 预存环境; codec 46/0; datatype 412/0; planner 920+/4 UnsafeRange 预存; distsql 29/0; chunk 242+/35 预存环境; expr 1195+/1 已知网络 flaky; funcdep 18/0; domain 143/0; gcutil 2/0; hint 0/0; kvcache 0/0; hash 0/0; errmsg 0/0; config 81/0; placement 24/0; br 31/0; allocator-stats 0/0; hack 4/0; util 539/0。全部失败均为预存环境/兄弟在途, 零新增。
+- 下轮恢复点: (1) 跟随兄弟会话增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
