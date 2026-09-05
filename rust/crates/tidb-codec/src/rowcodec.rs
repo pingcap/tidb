@@ -57,7 +57,6 @@ pub struct ColumnInfo {
 }
 
 /// Returns the field metadata carried by a model-derived column.
-#[must_use]
 pub fn field_type_from_column(column: &ColumnInfo) -> FieldType {
     column.field_type.clone()
 }

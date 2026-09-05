@@ -8732,6 +8732,11 @@ risks without claiming repository-wide parity.
   `#[must_use]` diagnostics from table-key, row-index, and table-index APIs.
   The source-derived deny-on-discard regression and Ready evidence are
   recorded in `receipts/tablecodec_master_audit.md`.
+- 2026-09-05 (`pkg/util/rowcodec`): the dependency-closed rowcodec owner now
+  matches Go's discardable-return contract by removing three explicit
+  Rust-only `#[must_use]` diagnostics from `is_new_format`, `is_row_key`, and
+  `field_type_from_column`. The source-derived deny-on-discard regression and
+  Ready evidence are recorded in `receipts/util_rowcodec_audit.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

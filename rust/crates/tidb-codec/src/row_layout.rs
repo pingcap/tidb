@@ -299,7 +299,6 @@ impl<'a> RowLayout<'a> {
 }
 
 /// Returns whether a row begins with the new-format version byte.
-#[must_use]
 pub fn is_new_format(row_data: &[u8]) -> bool {
     row_data[0] == ROW_CODEC_VERSION
 }
@@ -309,7 +308,6 @@ pub fn is_new_format(row_data: &[u8]) -> bool {
 /// The length check intentionally mirrors `pkg/util/rowcodec/common.go`:
 /// this is not a general table-key parser and does not validate the table ID
 /// or handle bytes.
-#[must_use]
 pub fn is_row_key(key: &[u8]) -> bool {
     key.len() >= 19 && key.first() == Some(&b't') && key.get(10) == Some(&b'r')
 }

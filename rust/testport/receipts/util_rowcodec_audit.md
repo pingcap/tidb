@@ -55,6 +55,29 @@ progress.
 
 No Go or Bazel file changed, so `make bazel_prepare` is not required.
 
+## Rust follow-up: Go-discardable rowcodec returns
+
+The dependency-closed owner carried three explicit Rust `#[must_use]`
+diagnostics on the direct Go-shaped `is_new_format`, `is_row_key`, and
+`field_type_from_column` helpers. Go permits callers to discard these return
+values, so the diagnostics were Rust-only and are now removed without changing
+row framing or field metadata behavior.
+
+The focused regression
+`rowcodec_package_source::return_values_may_be_ignored_like_go` discards all
+three results under `#[deny(unused_must_use)]`. On the pre-fix owner it failed
+to compile with three unused-return errors; the fixed test passes.
+
+Ready validation for this follow-up:
+
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-codec --test all rowcodec_package_source::return_values_may_be_ignored_like_go -- --exact --nocapture` — passed.
+- `cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-codec --test all -- --test-threads=1` — passed.
+- `cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-codec --all-targets` — passed.
+- `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml -p tidb-codec -- --check`, repository `make lint`, and `git diff --check` — passed.
+
+No Go, generated, fixture, platform, Bazel, or module artifact changed, so
+`make bazel_prepare` is not required.
+
 ## Risk
 
 - Correctness: low; no rowcodec production path changed and all source-derived

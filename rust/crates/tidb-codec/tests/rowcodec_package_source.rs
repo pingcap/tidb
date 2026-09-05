@@ -19,7 +19,8 @@ use std::collections::BTreeMap;
 use tidb_codec::{
     calculate_raw_checksum, decode_one, decode_row_to_datums, decode_row_to_map,
     decode_row_to_old_bytes, encode_int, encode_raw_row, encode_raw_uint, encode_row,
-    encode_row_with_checksum, encode_value, is_new_format, is_row_key, remove_keyspace_prefix,
+    encode_row_with_checksum, encode_value, field_type_from_column, is_new_format, is_row_key,
+    remove_keyspace_prefix,
     ColumnInfo, DatumColumn, DecodeRowOptions, Handle, RawRowColumn, RowChecksumPolicy, RowData,
     RowLayout, RowPackageError,
 };
@@ -30,6 +31,14 @@ use tidb_datatype::{
 
 fn field(code: FieldTypeCode) -> FieldType {
     FieldType::new(code)
+}
+
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    is_new_format(&[tidb_codec::ROW_CODEC_VERSION]);
+    is_row_key(&[]);
+    field_type_from_column(&column(1, FieldTypeCode::LongLong));
 }
 
 fn append_datum_for_checksum(
