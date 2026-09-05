@@ -826,18 +826,16 @@ impl SysVarDef {
             });
         }
         // Go's `tidb_server_memory_limit_sess_min_size` validation first
-        // accepts an unsigned byte count, then falls back to the same
-        // integer binary-unit parser used by `parseByteSize`. Values in
-        // (0, 128) are clamped with a truncation warning and the stored form
-        // is always the decimal byte count, never the original suffix.
+        // accepts an unsigned byte count, then falls back to its exact
+        // integer binary-unit `parseByteSize` helper. Values in (0, 128) are
+        // clamped with a truncation warning and the stored form is always the
+        // decimal byte count, never the original suffix.
         if self.name == "tidb_server_memory_limit_sess_min_size" {
             let bytes = match validated.value.parse::<u64>() {
                 Ok(bytes) => bytes,
-                Err(_) => tidb_config::configtypes::ram_in_bytes(&validated.value)
-                    .ok()
-                    .filter(|bytes| *bytes >= 0)
-                    .map(|bytes| bytes as u64)
-                    .ok_or(ValidationError::WrongValue)?,
+                Err(_) => crate::varsutil::parse_byte_size(&validated.value)
+                    .map(|(bytes, _)| bytes)
+                    .ok_or(ValidationError::WrongType)?,
             };
             if bytes > 0 && bytes < 128 {
                 return Ok(Validated {
@@ -852,9 +850,10 @@ impl SysVarDef {
         }
         // Go's `tidb_server_memory_limit_gc_trigger` accepts either a
         // decimal fraction or an integer percentage below 100, stores a
-        // canonical fraction, and admits only the [0.51, 1] range. The
-        // process-wide gctuner publication and threshold coupling live
-        // outside this registry layer and remain an explicit boundary.
+        // canonical fraction, and admits only the [0.51, 1] range. It also
+        // refuses values below the current GOGC tuner threshold + 0.05. The
+        // sibling lookup supplies the pending GLOBAL value during a table
+        // write; direct registry validation uses Go's 0.6 default.
         if self.name == "tidb_server_memory_limit_gc_trigger" {
             let text = validated.value.trim();
             let fraction = if let Some(percent) = text.strip_suffix('%') {
@@ -871,6 +870,16 @@ impl SysVarDef {
             };
             if !fraction.is_finite() || fraction < 0.51 || fraction > 1.0 {
                 return Err(ValidationError::WrongValue);
+            }
+            let threshold = lookup
+                .and_then(|read| read("tidb_gogc_tuner_threshold"))
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.6);
+            if threshold != 0.0 && fraction < threshold + 0.05 {
+                return Err(ValidationError::Refused(
+                    "tidb_server_memory_limit_gc_trigger should be greater than tidb_gogc_tuner_threshold + 0.05"
+                        .to_owned(),
+                ));
             }
             return Ok(Validated {
                 value: fraction.to_string(),
@@ -1263,19 +1272,6 @@ impl SysVarDef {
                 });
             }
             return Ok(validated);
-        }
-        if self.name == tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE {
-            let Some((mut bytes, _)) = crate::varsutil::parse_byte_size(&validated.value) else {
-                return Err(ValidationError::WrongType);
-            };
-            let truncated = bytes > 0 && bytes < 128;
-            if truncated {
-                bytes = 128;
-            }
-            return Ok(Validated {
-                value: bytes.to_string(),
-                truncated,
-            });
         }
         // Go's `max_allowed_packet` validation (`sysvar.go:2193`): the
         // accepted value is truncated DOWN to a multiple of 1024, and the
@@ -2425,7 +2421,14 @@ mod tests {
             sv.validate("18446744073709551615").unwrap().value,
             "18446744073709551615"
         );
-        assert_eq!(sv.validate("700MBaa"), Err(ValidationError::WrongValue));
+        assert_eq!(sv.validate("700MBaa"), Err(ValidationError::WrongType));
+        for invalid in ["32b", "32kb", "32.5KiB", "1e2KiB"] {
+            assert_eq!(
+                sv.validate(invalid),
+                Err(ValidationError::WrongType),
+                "{invalid}"
+            );
+        }
     }
 
     /// Transcreated from Go `TestTiDBServerMemoryLimit`: the memory-limit
@@ -2467,7 +2470,20 @@ mod tests {
         assert_eq!(sv.validate("0.8").unwrap().value, "0.8");
         assert_eq!(sv.validate("90%").unwrap().value, "0.9");
         assert_eq!(sv.validate("99%").unwrap().value, "0.99");
-        assert_eq!(sv.validate("0.51").unwrap().value, "0.51");
+        assert!(matches!(
+            sv.validate("0.51"),
+            Err(ValidationError::Refused(message))
+                if message.contains("gogc_tuner_threshold + 0.05")
+        ));
+        let threshold_low = |name: &str| {
+            (name == "tidb_gogc_tuner_threshold").then(|| "0.4".to_owned())
+        };
+        assert_eq!(
+            sv.validate_in_scope_with_lookup("51%", SCOPE_GLOBAL, Some(&threshold_low))
+                .unwrap()
+                .value,
+            "0.51"
+        );
         assert_eq!(sv.validate("100%"), Err(ValidationError::WrongValue));
         assert_eq!(sv.validate("101%"), Err(ValidationError::WrongValue));
         assert_eq!(sv.validate("0.5"), Err(ValidationError::WrongValue));
@@ -2935,7 +2951,6 @@ mod tests {
 
     /// The registry's concrete bool entry follows the same Go conversion
     /// rules as the synthetic `TestBoolValidation` cases above.
-    #[test]
     /// Go's allow-fallback engine whitelist (`sysvar.go:2657`) and the
     /// analyze skip column types whitelist (`varsutil.go:501`).
     #[test]

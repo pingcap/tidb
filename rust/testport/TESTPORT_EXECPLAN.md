@@ -41,6 +41,17 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/sessionctx/variable` session memory minimum parser):
+  removed the broader Rust `RAMInBytes` acceptance from
+  `tidb_server_memory_limit_sess_min_size` and matched Go's exact integer
+  `parseByteSize` suffix set and decimal storage. Focused regressions now
+  refuse lowercase, byte-suffix, fractional, and exponent spellings that Go
+  rejects.
+- 2026-09-05 (`pkg/sessionctx/variable` server-memory GC trigger coupling):
+  matched Go's refusal when `tidb_server_memory_limit_gc_trigger` falls below
+  `tidb_gogc_tuner_threshold + 0.05`, using the pending GLOBAL sibling value
+  during writes and the Go default threshold for direct registry validation.
+  Focused tests cover the default refusal and the 0.4-threshold/51% boundary.
 - 2026-09-05 (`pkg/sessionctx/variable` memory-arbitrator query reserved):
   matched Go's `ParseUint`-then-`int64` boundary for
   `tidb_mem_arbitrator_query_reserved`, refusing values above `i64::MAX` that
