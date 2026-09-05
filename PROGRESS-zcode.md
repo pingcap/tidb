@@ -478,3 +478,5 @@
 - 下轮恢复点: (1) 跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - 增量同步验证: 兄弟会话最新批次(ddl: add column if-not-exists / sequence cache bounds)合入后, 关键套件全绿(super_read_only 1/0, tx_isolation_one_shot 1/0, datatype 412/0, executor 1069 通过/139 预存)。所有已落地面在新增量下稳定。
 - 下轮恢复点: (1) 新面选型或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- 增量收敛核查: 同步至 4272cdfa565(pkg/ddl: enforce sequence create privilege); 全关键面稳定(super_read_only 1/0, tx_isolation_one_shot 1/0, gcutil 2/0, datatype 412/0); planner 4 UnsafeRange 仍为兄弟会话在途区。
+- 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
