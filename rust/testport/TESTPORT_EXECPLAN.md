@@ -8990,3 +8990,10 @@ risks without claiming repository-wide parity.
   through INSERT/storage. Focused planner and SQL-mode scanner regressions plus
   Ready evidence are recorded in
   `receipts/planner_no_unsigned_subtraction.md`.
+- 2026-09-06 (`pkg/session` effective SET_VAR warning ownership): Rust now
+  includes the direct `SysVar` declaration for `group_concat_max_len` when
+  deciding whether a SET_VAR hint is verified. Duplicate hints therefore emit
+  only Go's 3126 conflict warning (and `@@warning_count = 1`), without the
+  spurious 3637 warning for each occurrence. Focused registry and session hook
+  regressions plus Ready evidence are recorded in
+  `receipts/session_set_var_hint_warning.md`.

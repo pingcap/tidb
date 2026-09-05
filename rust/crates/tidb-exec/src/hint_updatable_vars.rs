@@ -152,8 +152,18 @@ pub const HINT_UPDATABLE_VARIABLES: [&str; 128] = [
     "tidb_max_keys_read",
 ];
 
-/// Returns whether `name` is in the source exact-name registry.
+/// Variables whose `IsHintUpdatableVerified` flag is declared directly on a
+/// Go `SysVar`, rather than in `setvar_affect.go`'s source registry.
+///
+/// `group_concat_max_len` is the currently supported direct declaration
+/// (`pkg/sessionctx/variable/sysvar.go:2142-2147`). Keep this separate from
+/// [`HINT_UPDATABLE_VARIABLES`] so the source-backed registry remains an
+/// exact port while the runtime predicate matches Go's effective flag.
+pub const SYSVAR_DECLARED_HINT_UPDATABLE_VARIABLES: [&str; 1] = ["group_concat_max_len"];
+
+/// Returns whether Go's effective `SysVar` flag allows `name` in SET_VAR.
 #[must_use]
 pub fn is_hint_updatable_verified(name: &str) -> bool {
     HINT_UPDATABLE_VARIABLES.contains(&name)
+        || SYSVAR_DECLARED_HINT_UPDATABLE_VARIABLES.contains(&name)
 }

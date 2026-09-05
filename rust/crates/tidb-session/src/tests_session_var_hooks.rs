@@ -923,3 +923,27 @@ fn warning_count_reports_the_previous_statements_warnings() {
     // other channel and is unchanged.
     assert_eq!(one(&mut session, "SELECT @@error_count"), "0");
 }
+
+/// Go's `group_concat_max_len` declares `IsHintUpdatableVerified` directly on
+/// its SysVar. A duplicated SET_VAR therefore emits only the 3126 conflict,
+/// not an extra 3637 "might not be affected" warning for each occurrence.
+#[test]
+fn duplicate_group_concat_set_var_warns_only_about_the_conflict() {
+    let mut session = Session::new();
+    session
+        .run(
+            "SELECT /*+ SET_VAR(group_concat_max_len = 1024) \
+             SET_VAR(group_concat_max_len = 2048) */ 1",
+        )
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "3126".to_owned(),
+            "Hint SET_VAR(group_concat_max_len=2048) is ignored as conflicting/duplicated."
+                .to_owned(),
+        ]]
+    );
+}
