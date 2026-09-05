@@ -110,7 +110,6 @@ pub struct MutableString {
 }
 
 /// Creates a zero-copy mutable string view.
-#[must_use]
 pub fn string(bytes: &MutableBytes) -> MutableString {
     MutableString {
         storage: Rc::clone(&bytes.storage),
@@ -156,7 +155,6 @@ impl fmt::Display for MutableString {
 /// Go returns a mutable slice here through `unsafe`. TiDB's consumers only
 /// read that slice; Rust makes the actual contract explicit and prevents
 /// mutation of immutable string storage.
-#[must_use]
 pub const fn slice(value: &str) -> &[u8] {
     value.as_bytes()
 }
@@ -169,7 +167,6 @@ pub const fn slice(value: &str) -> &[u8] {
 /// returned lifetime. The memory must not be mutated while the returned slice
 /// is borrowed. For a zero length, `pointer` must still be aligned and
 /// non-null as required by [`std::slice::from_raw_parts`].
-#[must_use]
 pub unsafe fn get_bytes_from_ptr<'a>(pointer: *const u8, length: usize) -> &'a [u8] {
     // SAFETY: the caller owns the complete raw-pointer validity contract.
     unsafe { std::slice::from_raw_parts(pointer, length) }

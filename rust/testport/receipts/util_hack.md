@@ -93,3 +93,54 @@ so the pinned Go package test was not runnable with the installed toolchain.
   sidecar. Exact source allocation reconstruction remains on `RealBytes`,
   which Go also documents as expensive, and on `clear` to retain its size.
   Benchmark compilation retains the source comparison surface.
+
+## Follow-up: discardable Go API return contracts (2026-09-06)
+
+The complete nine-artifact Go inventory above was rechecked against
+`origin/master` before editing: `BUILD.bazel`, `hack.go`, both Go-version
+`map_abi` implementations, three source tests/support files, and the two
+Go-version type test inputs. There are no package docs, fixtures, generated
+outputs, or additional platform/build artifacts. The Rust owner inventory was
+also rechecked (`Cargo.toml`, `src/lib.rs`, `src/map.rs`, and `benches/hack.rs`).
+
+Go permits callers to discard the results of `String`, `Slice`,
+`GetBytesFromPtr`, `ToSwissMap`, `SwissMapWrap.Cap`, `SwissMapWrap.Size`,
+`NewMemAwareMap`, `MemAwareMap.Count`, `Empty`, `Exist`, `Get`, `Len`, and
+`RealBytes`. Rust had added `#[must_use]` to all thirteen corresponding
+source-shaped APIs. Those annotations were removed; the Rust-only
+`MutableBytes::new`, map geometry (`used`/`map_type`), and field-style
+`bytes` helper remain annotated where no discardable Go function exists.
+
+The new `tests/source_return_contract.rs` regression invokes every affected
+API under `#[deny(unused_must_use)]`, including the `hashbrown` map and
+`SeedableRandomState` needed by the source-shaped map owner. Before the
+production edit, the focused test failed with exactly 13 unused-return-value
+diagnostics. After the edit, it passes. No Go, generated, Bazel, or Cargo
+metadata changed.
+
+## Follow-up validation: discardable Go API return contracts
+
+Profile: Ready for this Rust-only package batch.
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-hack --test source_return_contract --offline --locked -- --nocapture --test-threads=1
+PASS; 1 passed, 0 failed.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-hack --all-targets
+PASS.
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+The package's existing all-target test and benchmark coverage remains the
+source-shaped behavior gate; this focused test adds only the missing return
+contract. The full pinned Go test remains unavailable under the installed Go
+1.27 toolchain because the source intentionally carries Go 1.25/1.26 ABI
+variants.

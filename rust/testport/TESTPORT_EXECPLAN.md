@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/hack` discardable Go API return contracts): the
+  complete nine-artifact inventory and Rust owner were rechecked before
+  editing. Thirteen direct Go-shaped Rust `#[must_use]` annotations were
+  removed across byte/string views and Swiss-map accounting APIs; Rust-only
+  constructors and geometry helpers remain annotated. A focused source
+  regression failed with exactly 13 diagnostics before the edit and passes
+  afterward, with owner all-target checks, formatting, repository lint, and
+  diff checks passing. Evidence is recorded in `receipts/util_hack.md`.
 - 2026-09-06 (`pkg/distsql/context` discardable detach result): the complete
   17-artifact distsql/context-inclusive inventory and Rust owner were
   rechecked before editing. `DistSqlContext::detach` no longer emits the one

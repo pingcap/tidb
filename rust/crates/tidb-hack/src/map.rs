@@ -330,7 +330,6 @@ where
 }
 
 /// Wraps a native map for source allocation and geometry inspection.
-#[must_use]
 pub const fn to_swiss_map<K, V, S>(map: &HashMap<K, V, S>) -> SwissMapWrap<'_, K, V, S>
 where
     K: MapValueLayout,
@@ -363,13 +362,11 @@ where
     }
 
     /// Returns the source map capacity represented by the current allocation.
-    #[must_use]
     pub fn cap(&self) -> u64 {
         u64::try_from(self.source_model().cap()).expect("source map capacity must fit u64")
     }
 
     /// Returns the source map header plus its current table allocation.
-    #[must_use]
     pub fn size(&self) -> u64 {
         self.source_model()
             .size(u64::try_from(map_type::<K, V>().group_size).expect("group size must fit u64"))
@@ -411,7 +408,6 @@ where
     V: MapValueLayout,
 {
     /// Creates an empty map with the requested initial capacity.
-    #[must_use]
     pub fn new(capacity: usize) -> Self {
         let map = HashMap::with_capacity_and_hasher(capacity, SeedableRandomState::default());
         Self::from_map(map, capacity)
@@ -449,25 +445,21 @@ where
     }
 
     /// Returns the number of elements.
-    #[must_use]
     pub fn count(&self) -> usize {
         self.map.len()
     }
 
     /// Returns whether the map is empty.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 
     /// Returns whether `key` exists.
-    #[must_use]
     pub fn contains_key(&self, key: &K) -> bool {
         self.map.contains_key(key)
     }
 
     /// Gets a value.
-    #[must_use]
     pub fn get(&self, key: &K) -> Option<&V> {
         self.map.get(key)
     }
@@ -482,7 +474,6 @@ where
     }
 
     /// Returns the number of elements.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.map.len()
     }
@@ -494,7 +485,6 @@ where
     }
 
     /// Returns the current map header plus table allocation.
-    #[must_use]
     pub fn real_bytes(&self) -> u64 {
         let mut source_map = SourceMapModel::with_capacity(self.source_capacity);
         for key in self.map.keys() {
