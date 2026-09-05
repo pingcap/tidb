@@ -474,3 +474,5 @@
 - 下轮恢复点: (1) 新面或跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - 增量收敛核查: 同步至 f2d23b20e1f(ddl: validate sequence identifiers + types: preserve numeric set truncation events); 关键套件全绿(datatype 412/0, super_read_only 1/0, tx_isolation_one_shot 1/0, gcutil 2/0)。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- executor 138 失败细分: 驱动簇需运行存储(环境); column_default 的 DST 测试(2011-03-13 02:30 = 美东弹簧前进)仅在观察美 DST 的时区通过——本机时区决定性, 属测试环境依赖而非代码分歧。
+- 下轮恢复点: (1) 跟随增量; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
