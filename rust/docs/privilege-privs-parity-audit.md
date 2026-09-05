@@ -74,3 +74,15 @@ captured-verified per the in-file notes. `set_default_role_stmt` carries
 the authorization gate (self needs nothing; others need UPDATE on
 mysql.default_roles or global CREATE USER) and the CURRENT_USER
 resolution order. The privilege audit is closed with no open items.
+
+## Password validation policies (2026-09-05) — VERIFIED
+
+The `validate_password.*` policy cluster is ported faithfully in
+`tidb-util/password_validation.rs`: the MEDIUM policy reproduces Go's
+rune classification chain (upper/lower/digit/else-special), reads the
+same three global counts in the same order, refuses with the same
+message wording (Require Password Lowercase/Uppercase/Digit/
+Non-alphanumeric Count), and the LOW/STRONG policies plus the
+`ValidatePassword` dispatch (NONE bypass, policy dispatch on the
+current global) line up with `pkg/util/password-validation/
+password_validation.go`.
