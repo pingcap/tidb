@@ -178,6 +178,34 @@ Validation for this bounded Rust-only batch:
 No Go, Bazel, module, or Cargo manifest file changed, so `make
 bazel_prepare` was not required.
 
+## Rust-only diagnostic alignment for `reporter` (`2026-09-06`)
+
+The complete `pkg/util/topsql/reporter` inventory above was rechecked before
+editing. Forty-four Rust `#[must_use]` annotations on source-shaped
+datamodel, RU datamodel, and RU window-aggregator APIs were removed, covering
+the Go proto conversions, Top-N helpers, record/map constructors and queries,
+RU collecting constructors/compaction, interval alignment, and report
+construction. The two `FloatCounter` annotations remain because that counter
+is a local Rust test/metrics boundary rather than a Go reporter return API.
+
+The focused `#[deny(unused_must_use)]` regression
+`topsql_reporter::contract_tests::source_api_returns_may_be_ignored_like_go`
+discards every affected return. On a detached pre-fix worktree at
+`293c267f891`, it failed with exactly 44 diagnostics; after the fix it passes.
+The complete reporter data-model owner suite passes all 67 tests.
+
+Validation for this bounded Rust-only batch:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib topsql_reporter::contract_tests::source_api_returns_may_be_ignored_like_go --offline --locked -- --exact` — passed after the fix; the detached pre-fix owner failed with the expected 44 diagnostics.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-util --lib topsql_reporter:: --offline --locked -- --test-threads=1` — passed; all 67 reporter owner tests.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-util --all-targets --offline --locked` — passed.
+- `cd rust && cargo +nightly-2026-08-22 fmt --all -- --check` — passed.
+- `make lint` — passed under the Ready profile.
+- `git diff --check` — passed.
+
+No Go, Bazel, module, or Cargo manifest file changed, so `make
+bazel_prepare` was not required.
+
 ## Validation (Ready profile)
 
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/topsql/reporter/metrics -run '^TestIgnoreReportDataByBackpressureCounter$' -count=1` — passed after the implementation; before it the test failed to compile because the counter was undefined.

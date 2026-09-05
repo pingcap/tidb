@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/topsql/reporter` Go-shaped datamodel APIs): the
+  complete TopSQL inventory was rechecked before the edit. Forty-four direct
+  Go-shaped Rust `#[must_use]` diagnostics were removed while the two local
+  `FloatCounter` test-boundary annotations remained. A focused deny-on-discard
+  regression failed with exactly 44 diagnostics on the detached pre-fix owner
+  and passes with all 67 reporter owner tests, the util all-target check,
+  formatting, lint, and diff checks. Evidence is recorded in
+  `receipts/util_topsql_audit.md`.
 - 2026-09-06 (`pkg/util/topsql/stmtstats` Go-shaped constructors and
   queries): the complete TopSQL inventory was rechecked before the edit.
   Fourteen direct Go-shaped Rust `#[must_use]` diagnostics were removed while

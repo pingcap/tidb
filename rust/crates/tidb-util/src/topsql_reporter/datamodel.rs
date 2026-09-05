@@ -107,7 +107,6 @@ pub struct TopSqlRecordProto {
 
 impl TopSqlRecordProto {
     /// Go's generated `GetKeyspaceName`.
-    #[must_use]
     pub fn get_keyspace_name(&self) -> &[u8] {
         &self.keyspace_name
     }
@@ -157,7 +156,6 @@ pub struct TsItem {
 
 impl TsItem {
     /// Go `tsItem.toProto`.
-    #[must_use]
     pub fn to_proto(&self) -> TopSqlRecordItem {
         TopSqlRecordItem {
             timestamp_sec: self.timestamp,
@@ -181,7 +179,6 @@ impl TsItem {
 pub type TsItems = Vec<TsItem>;
 
 /// Go `tsItems.sorted`.
-#[must_use]
 pub fn ts_items_sorted(items: &[TsItem]) -> bool {
     items
         .windows(2)
@@ -190,7 +187,6 @@ pub fn ts_items_sorted(items: &[TsItem]) -> bool {
 
 /// Go `tsItems.toProto`. Go returns nil for an empty list, which is the empty
 /// slice on the wire either way.
-#[must_use]
 pub fn ts_items_to_proto(items: &[TsItem]) -> Vec<TopSqlRecordItem> {
     items.iter().map(TsItem::to_proto).collect()
 }
@@ -214,7 +210,6 @@ pub struct Record {
 
 impl Record {
     /// Go `newRecord`.
-    #[must_use]
     pub fn new(sql_digest: Vec<u8>, plan_digest: Vec<u8>) -> Self {
         let precision = topsql_state::GLOBAL_STATE
             .precision_seconds
@@ -344,7 +339,6 @@ impl Record {
     }
 
     /// Go `record.toProto`.
-    #[must_use]
     pub fn to_proto(&self, keyspace_name: &[u8]) -> TopSqlRecordProto {
         TopSqlRecordProto {
             keyspace_name: keyspace_name.to_vec(),
@@ -371,7 +365,6 @@ pub fn sort_records(rs: &mut Records) {
 /// use it happens to come out sorted. A full descending sort satisfies the
 /// same partition contract and additionally pins the order the tests observe,
 /// so the ordering is not left to an implementation detail.
-#[must_use]
 pub fn records_top_n(mut rs: Records, n: usize) -> (Records, Records) {
     if rs.len() <= n {
         return (rs, Vec::new());
@@ -382,7 +375,6 @@ pub fn records_top_n(mut rs: Records, n: usize) -> (Records, Records) {
 }
 
 /// Go `records.toProto`.
-#[must_use]
 pub fn records_to_proto(rs: &Records, keyspace_name: &[u8]) -> Vec<TopSqlRecordProto> {
     rs.iter().map(|r| r.to_proto(keyspace_name)).collect()
 }
@@ -398,7 +390,6 @@ pub fn sort_cpu_records(rs: &mut CpuRecords) {
 
 /// Go `cpuRecords.topN`, with the same quickselect narrowing as
 /// [`records_top_n`].
-#[must_use]
 pub fn cpu_records_top_n(mut rs: CpuRecords, n: usize) -> (CpuRecords, CpuRecords) {
     if rs.len() <= n {
         return (rs, Vec::new());
@@ -413,7 +404,6 @@ pub fn cpu_records_top_n(mut rs: CpuRecords, n: usize) -> (CpuRecords, CpuRecord
 /// boundary: Go threads a reusable `*bytes.Buffer` through every call to
 /// avoid an allocation; the buffer is not part of the semantics and is
 /// dropped here.
-#[must_use]
 pub fn encode_key(sql_digest: &[u8], plan_digest: &[u8]) -> Vec<u8> {
     let mut key = Vec::with_capacity(sql_digest.len() + plan_digest.len());
     key.extend_from_slice(sql_digest);
@@ -432,7 +422,6 @@ pub struct Collecting {
 
 impl Collecting {
     /// Go `newCollecting`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -454,7 +443,6 @@ impl Collecting {
     }
 
     /// Go `collecting.hasEvicted`.
-    #[must_use]
     pub fn has_evicted(&self, timestamp: u64, sql_digest: &[u8], plan_digest: &[u8]) -> bool {
         self.evicted
             .get(&timestamp)
@@ -590,25 +578,21 @@ pub struct NormalizedSqlMap {
 
 impl NormalizedSqlMap {
     /// Go `newNormalizedSQLMap`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Go's `m.length.Load()`.
-    #[must_use]
     pub fn len(&self) -> i64 {
         self.length.load(Ordering::SeqCst)
     }
 
     /// Whether no SQL meta is registered.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Go's `m.data.Load().Load(digest)`.
-    #[must_use]
     pub fn get(&self, sql_digest: &[u8]) -> Option<SqlMeta> {
         self.data.lock().unwrap().get(sql_digest).cloned()
     }
@@ -641,7 +625,6 @@ impl NormalizedSqlMap {
     }
 
     /// Go `normalizedSQLMap.take`.
-    #[must_use]
     pub fn take(&self) -> NormalizedSqlMap {
         let mut data = self.data.lock().unwrap();
         let taken = std::mem::take(&mut *data);
@@ -653,7 +636,6 @@ impl NormalizedSqlMap {
     }
 
     /// Go `normalizedSQLMap.toProto`.
-    #[must_use]
     pub fn to_proto(&self, keyspace_name: &[u8]) -> Vec<SqlMetaProto> {
         self.data
             .lock()
@@ -678,25 +660,21 @@ pub struct NormalizedPlanMap {
 
 impl NormalizedPlanMap {
     /// Go `newNormalizedPlanMap`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Go's `m.length.Load()`.
-    #[must_use]
     pub fn len(&self) -> i64 {
         self.length.load(Ordering::SeqCst)
     }
 
     /// Whether no plan meta is registered.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Go's `m.data.Load().Load(digest)`.
-    #[must_use]
     pub fn get(&self, plan_digest: &[u8]) -> Option<PlanMeta> {
         self.data.lock().unwrap().get(plan_digest).cloned()
     }
@@ -729,7 +707,6 @@ impl NormalizedPlanMap {
     }
 
     /// Go `normalizedPlanMap.take`.
-    #[must_use]
     pub fn take(&self) -> NormalizedPlanMap {
         let mut data = self.data.lock().unwrap();
         let taken = std::mem::take(&mut *data);
@@ -742,7 +719,6 @@ impl NormalizedPlanMap {
 
     /// Go `normalizedPlanMap.toProto`: large plans are compressed, the rest
     /// decoded; a plan whose decode fails is logged and skipped.
-    #[must_use]
     pub fn to_proto(
         &self,
         keyspace_name: &[u8],

@@ -130,7 +130,6 @@ pub struct RuPointBucket {
 }
 
 /// Go `alignToInterval`.
-#[must_use]
 pub fn align_to_interval(ts: u64, interval: u64) -> u64 {
     if interval == 0 {
         return ts;
@@ -164,7 +163,6 @@ pub struct RuWindowAggregator {
 
 impl RuWindowAggregator {
     /// Go `newRUWindowAggregator`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -246,7 +244,6 @@ impl RuWindowAggregator {
     ///
     /// Go's `nil` slice — window not ready, already reported, or no data — is
     /// `None` here; a reported window with data is `Some`.
-    #[must_use]
     pub fn take_report_records(
         &self,
         now_ts: u64,
@@ -326,7 +323,6 @@ impl RuWindowAggregator {
 
 /// Go `buildReportRecords`: merges the taken buckets and produces the final
 /// proto records. Requires no lock.
-#[must_use]
 pub fn build_report_records(
     buckets: &HashMap<u64, RuPointBucket>,
     window_start: u64,
