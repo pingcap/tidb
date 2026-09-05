@@ -448,3 +448,5 @@
 - 下轮恢复点: (1) gcutil snapshot 校验回归测试(可自足); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - gcutil 快照校验回归批: 2 测试落地(mock Context 驱动 restricted-SQL 与全局读取)——过期快照拒绝+渲染时间断言/新快照通过/读失败透传/CheckGCEnable ON-OFF 表值驱动。gcutil 2/0, fmt/clippy/diff-check/make lint PASS。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- errmsg 面核实: extend 与 Go Extend 逐行一致(nil 安全/首个匹配/后缀拼接去尾点), 5 集成测试全绿, 收据已追加。
+- 下轮恢复点: (1) placement/infoschema 深层或新面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

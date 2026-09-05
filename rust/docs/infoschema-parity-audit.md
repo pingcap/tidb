@@ -174,3 +174,11 @@ and `GetGCSafePoint` over `mysql.tidb`. The trait abstracts the
 restricted-SQL executor so the reads are testable without a cluster;
 the crate carries no tests yet — a snapshot-validation regression
 would be the natural first addition.
+
+## Adjacent face: errmsg (2026-09-05) — VERIFIED
+
+`tidb-errmsg::extend` mirrors Go `pkg/util/errmsg/errmsg.go`'s `Extend`
+line for line: nil-safe, first matching configured regexp wins, empty
+suffixes skipped, and the suffix joined as `"{message}, {suffix}."`
+after trimming trailing dots on both sides (`extendErrorMessage`).
+Five integration tests cover the configured-extension path.
