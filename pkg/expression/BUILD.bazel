@@ -212,6 +212,7 @@ go_test(
         "helper_test.go",
         "inference_helper_test.go",
         "main_test.go",
+        "right_unsigned_length_test.go",
         "scalar_function_test.go",
         "schema_test.go",
         "simple_rewriter_test.go",
