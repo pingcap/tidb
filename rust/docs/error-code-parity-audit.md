@@ -450,3 +450,16 @@ through the existing txn error-kind mapping instead of `unknown()`.
 Still gated on one captured conflict to pin the Rust tikv-client's
 error text signatures -- the mapping keys on text/kind, and guessing
 signatures without a capture would be speculative.
+
+### F4 follow-up closed (2026-09-05): no Go-justified upgrades exist
+
+Spot-checks of the generic-1105 DDL refusals against Go settle the
+follow-up: the AUTO_RANDOM_BASE overflow case Go itself handles by a
+silent uint64-to-int64 wrap (`pkg/ddl/create_table.go:875` stores
+without an overflow check) — the Rust refusal is a stricter
+fork-boundary behavior with no Go errno to adopt; AUTO_INCREMENT
+non-integer values are refused at Go's parser level (syntax path), not
+by a DDL errno; and the prefix-key and blob-key refusals already carry
+Go's own errnos (1089, 1170). The remaining generic sites are
+fork-boundary refusals Go never raises, so 1105 is their honest code.
+The follow-up is closed rather than deferred.
