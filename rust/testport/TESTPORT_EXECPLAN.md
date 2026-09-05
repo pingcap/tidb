@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-05 (`pkg/ddl` serial column flags): closed the remaining
+  `NO_DEFAULT_VALUE` metadata mismatch from the package's b115 inventory.
+  The Rust CREATE, ALTER ADD, and ALTER MODIFY paths now share the Go
+  `setNoDefaultValueFlag` rule, with AUTO_INCREMENT/TIMESTAMP exclusions;
+  the promoted bare-primary-key regression records fail-before (`3` vs
+  `4099`) and pass-after evidence. The b115 receipt records the fetched
+  `origin/master` authority, full owner boundary, focused tests, and five
+  still-unmodeled serial carriers.
 - 2026-09-05 (`pkg/ddl` MODIFY NULL-to-NOT-NULL error): aligned Rust's
   ALTER COLUMN data-check refusal with Go's `ErrInvalidUseOfNull` (1138).
   `KvTable::modify_column_in` now carries a dedicated NULL rejection and the

@@ -1593,6 +1593,7 @@ pub fn prepare_column_default(
 /// `origin` is settled once for rows that predate an ADD COLUMN. This is the
 /// same `DefaultValue`/`OriginDefaultValue` split used by Go's DDL path.
 struct PreparedAlterDefault {
+    has_default: bool,
     default: Option<crate::column_default::ColumnDefault>,
     origin: Option<Datum>,
 }
@@ -1611,11 +1612,13 @@ fn prepare_alter_column_default(
                 prepare_column_default(value, field_type, column, column_info_version, ctx, zone)?;
             if !prepared.has_default && field_type.has_flag(NOT_NULL_FLAG) {
                 return Ok(PreparedAlterDefault {
+                    has_default: false,
                     default: None,
                     origin: None,
                 });
             }
             Ok(PreparedAlterDefault {
+                has_default: prepared.has_default,
                 default: Some(crate::column_default::ColumnDefault::Value(
                     prepared.stored.clone(),
                 )),
@@ -1629,6 +1632,7 @@ fn prepare_alter_column_default(
             if body.added_origin_safety == crate::column_default::AddedOriginSafety::SequenceDefault
             {
                 return Ok(PreparedAlterDefault {
+                    has_default: true,
                     default: Some(computed),
                     origin: None,
                 });
@@ -1638,6 +1642,7 @@ fn prepare_alter_column_default(
             let origin =
                 prepare_computed_origin(value, field_type, column, column_info_version, ctx, zone)?;
             Ok(PreparedAlterDefault {
+                has_default: true,
                 default: Some(computed),
                 origin: Some(origin),
             })
@@ -2808,6 +2813,7 @@ fn modify_column_action(
             if preserve_origin_default =>
         {
             PreparedAlterDefault {
+                has_default: true,
                 default: Some(default),
                 origin: previous_origin_default,
             }
@@ -2826,10 +2832,13 @@ fn modify_column_action(
             prepared
         }
         None => PreparedAlterDefault {
+            has_default: false,
             default: None,
             origin: previous_origin_default,
         },
     };
+    let has_default_value = prepared_default.has_default;
+    super::set_no_default_value_flag(&mut field_type, has_default_value);
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was found above and nothing here removes it");
     };
@@ -3018,9 +3027,12 @@ fn add_column_action(
         })
         .transpose()?
         .unwrap_or(PreparedAlterDefault {
+            has_default: false,
             default: None,
             origin: None,
         });
+    let has_default_value = prepared_default.has_default;
+    super::set_no_default_value_flag(&mut field_type, has_default_value);
     // A generated expression resolves against the columns that will PRECEDE
     // the new one, which is Go's `verifyColumnGeneration` prior-order rule
     // and, for the default append position, every column the table has.

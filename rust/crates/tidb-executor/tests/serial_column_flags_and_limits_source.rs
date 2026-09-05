@@ -27,7 +27,9 @@
 //! switch, LOCK TABLES, `GetRangeEndKey`, the enum length gate), the Go test
 //! is an `#[ignore]` gap test — never approximated.
 
-use tidb_executor::{run_create_table_on, run_select_meta_on, Catalog, StmtContext};
+use tidb_executor::{
+    run_alter_table_in, run_create_table_on, run_select_meta_on, Catalog, StmtContext,
+};
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
@@ -60,12 +62,49 @@ fn primary_key_with_explicit_default_carries_not_null_and_pri_key_flags() {
 /// mysql.NoDefaultValueFlag` — the last bit set by `setNoDefaultValueFlag`
 /// (`pkg/ddl/add_column.go:1093-1105`: no default, NOT NULL after the PK
 /// branch, neither AUTO_INCREMENT nor TIMESTAMP).
-// go-parity-gap: this tier never sets NO_DEFAULT_VALUE on such a column
-// (measured: the flag word is exactly NOT_NULL|PRI_KEY), so Go's full-flag
-// equality cannot be pinned.
 #[test]
-#[ignore]
 fn primary_key_without_default_sets_the_no_default_value_flag() {
+    let mut catalog = Catalog::default();
+    run_create_table_on(
+        "create table t(id smallint, id1 int, primary key (id))",
+        &mut catalog,
+    )
+    .expect("create table");
+    let (columns, _) =
+        run_select_meta_on("select * from t", &catalog, &ctx()).expect("select meta");
+    assert_eq!(
+        columns[0].1.flags(),
+        (tidb_datatype::FieldTypeFlags::NOT_NULL
+            | tidb_datatype::FieldTypeFlags::PRI_KEY
+            | tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE) as u32,
+        "Go: mysql.NotNullFlag|mysql.PriKeyFlag|mysql.NoDefaultValueFlag on a bare PK",
+    );
+
+    run_alter_table_in(
+        "alter table t add column c int not null",
+        &mut catalog,
+        "test",
+        &ctx(),
+    )
+    .expect("add column");
+    let (columns, _) =
+        run_select_meta_on("select * from t", &catalog, &ctx()).expect("select meta");
+    assert!(columns[2]
+        .1
+        .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE));
+
+    run_alter_table_in(
+        "alter table t modify column c bigint not null",
+        &mut catalog,
+        "test",
+        &ctx(),
+    )
+    .expect("modify column");
+    let (columns, _) =
+        run_select_meta_on("select * from t", &catalog, &ctx()).expect("select meta");
+    assert!(columns[2]
+        .1
+        .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE));
 }
 
 /// Go `serial_test.go:92-102::TestChangeMaxIndexLength`: with

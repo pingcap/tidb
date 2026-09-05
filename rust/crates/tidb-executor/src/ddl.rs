@@ -366,6 +366,24 @@ use tidb_ast::{ColumnDef, DdlStmt, Stmt};
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
 use tidb_model::column::ColumnInfo;
 
+/// Go `setNoDefaultValueFlag` (`pkg/ddl/add_column.go:1093`) marks a final
+/// NOT NULL column that has no explicit default, except for AUTO_INCREMENT and
+/// TIMESTAMP columns whose value source is implicit. CREATE, ADD, and MODIFY
+/// all run this rule after their option/primary-key flags settle.
+pub(crate) fn set_no_default_value_flag(
+    field_type: &mut tidb_datatype::FieldType,
+    has_default_value: bool,
+) {
+    if has_default_value
+        || !field_type.has_flag(NOT_NULL_FLAG)
+        || field_type.has_flag(AUTO_INCREMENT_FLAG)
+        || field_type.has_flag(FieldTypeFlags::TIMESTAMP)
+    {
+        return;
+    }
+    field_type.add_flags(FieldTypeFlags::NO_DEFAULT_VALUE);
+}
+
 /// The row-handle layout a table is built with, decided ONCE per
 /// `CREATE TABLE` and then read by everything downstream.
 ///
@@ -1398,6 +1416,10 @@ pub fn run_create_table_in(
     // It validates the persisted spelling but does not replace it with the
     // typed runtime value. `setNoDefaultValueFlag` is likewise based on the
     // now-final option flags, not the flags present when DEFAULT was visited.
+    let has_default_values: Vec<bool> = staged_defaults
+        .iter()
+        .map(|staged| staged.as_ref().is_some_and(|staged| staged.has_default))
+        .collect();
     let mut defaults = Vec::with_capacity(staged_defaults.len());
     for (offset, staged) in staged_defaults.into_iter().enumerate() {
         let Some(staged) = staged else {
@@ -1427,6 +1449,9 @@ pub fn run_create_table_in(
     // the source checks above have observed the intermediate flag state.
     for offset in &pk_offsets {
         columns[*offset].add_flag(u64::from(NOT_NULL_FLAG));
+    }
+    for (offset, column) in columns.iter_mut().enumerate() {
+        set_no_default_value_flag(&mut column.field_type, has_default_values[offset]);
     }
 
     let table_id = catalog.allocate_table_id();
