@@ -444,3 +444,5 @@
 - 下轮恢复点: (1) arbitrator 深读或新面; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
 - memory arbitrator 面核实: 端到端 full_flow 测试(Go TestMemArbitrator 移植)驱动整条仲裁管线, 4 测试全绿; memory 面(meminfo/tracker/pool/action/arbitrator)全部闭环, 收据已追加。
 - 下轮恢复点: (1) 新面选型; (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。
+- gcutil 面核实: 六函数逐一对齐(validate_snapshot 拒旧快照+ErrSnapshotTooOld 渲染/get_gc_safe_point 读 mysql.tidb); crate 无测试=记录为首个可补项。收据已追加。
+- 下轮恢复点: (1) gcutil snapshot 校验回归测试(可自足); (2) F2/F3-seam live 阻塞; (3) F4 已闭; (4) DST 排队。

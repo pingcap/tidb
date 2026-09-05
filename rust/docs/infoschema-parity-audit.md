@@ -162,3 +162,15 @@ Rust `TestMemArbitrator`), which drives the whole arbitration pipeline
 risk-digest profile — against Go's own test scenario. 4 passing tests
 plus the module-level suites close the memory face (meminfo, tracker,
 pool, action, arbitrator).
+
+## Adjacent face: gcutil (2026-09-05) — VERIFIED
+
+`tidb-gcutil` mirrors Go `pkg/util/gcutil/gcutil.go` function for
+function: `CheckGCEnable`/`DisableGC`/`EnableGC` over the
+`tidb_enable` table value, `ValidateSnapshot` reading the GC safe point
+then refusing older snapshots with `ErrSnapshotTooOld` (the safe-point
+time rendered in the process location), `ValidateSnapshotWithGCSafePoint`
+and `GetGCSafePoint` over `mysql.tidb`. The trait abstracts the
+restricted-SQL executor so the reads are testable without a cluster;
+the crate carries no tests yet — a snapshot-validation regression
+would be the natural first addition.
