@@ -168,6 +168,37 @@ fn parse_sem_config(config_str: &str) -> (tempfile::TempDir, Result<Config, Stri
     (dir, parsed)
 }
 
+#[test]
+#[deny(unused_must_use)]
+fn return_values_may_be_ignored_like_go() {
+    get_sys_var("unknown");
+    tidb_release_version();
+
+    let sem = build_sem_from_config(&Config::default());
+    sem.is_invisible_schema("mysql");
+    sem.is_invisible_table("mysql", "user");
+    sem.is_restricted_privilege("SELECT");
+    sem.is_invisible_sys_var("autocommit");
+    sem.is_invisible_status_var("Threads_connected");
+    sem.is_read_only_variable("autocommit");
+
+    let stmt = StmtView::new(StmtKind::Other);
+    sem.is_restricted_sql(&stmt);
+    is_invisible_schema("mysql");
+    is_invisible_table("mysql", "user");
+    is_restricted_privilege("SELECT");
+    is_invisible_sys_var("autocommit");
+    is_read_only_variable("autocommit");
+    is_invisible_status_var("Threads_connected");
+    is_restricted_sql(&stmt);
+    is_enabled();
+    time_to_live_sql_rule(&stmt);
+    alter_table_attributes_rule(&stmt);
+    import_with_external_id_rule(&stmt);
+    select_into_file_rule(&stmt);
+    import_from_local_rule(&stmt);
+}
+
 // Go `TestParseConfigWithDifferentFormat`.
 #[test]
 fn parse_config_with_different_format() {

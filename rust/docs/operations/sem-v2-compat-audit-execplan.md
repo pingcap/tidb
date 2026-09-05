@@ -19,6 +19,8 @@ strip configured optimizer hints with a warning.
 - [x] Wire startup selection, sysvar defaults, compatibility predicates, restricted SQL, GRANT/REVOKE, and restricted hints.
 - [x] Restore the five direct compatibility tests and the restricted-SQL integration behavior.
 - [x] Complete WIP validation and package receipts.
+- [x] Remove 22 Rust-only `#[must_use]` diagnostics from Go-shaped SEM v2
+  returns, add the deny-on-discard regression, and complete Ready validation.
 - [x] Complete self-review.
 - [x] Commit and push.
 
@@ -39,12 +41,19 @@ strip configured optimizer hints with a warning.
 - The session integration test runs its global SEM policy body in a child test
   process, because the Rust unit-test harness otherwise exposes the enabled
   process policy to unrelated concurrently running session tests.
+- The current branch's isolated session consumer reaches the unrelated
+  aggregation-elimination nil-child-schema panic before its SEM assertions;
+  the SEM v2 owner suite, server startup consumer, and affected all-target
+  compilation remain clean.
+- `StmtView::{new,sem_command}`, `sql_rule_by_name`, and `is_local_url` retain
+  `#[must_use]` because they are Rust-native boundary/helper APIs, not direct Go
+  return contracts.
 
 ## Validation
 
-Use the WIP profile because this is one package unit in the continuing
-repository-wide parity audit. Run the six v2 tests, five compat tests, the
-session integration regression, the server startup/config test, full owning
-crate tests, formatting, targeted clippy, and checks for every changed crate.
-No Go or Bazel source changes are present, so `make bazel_prepare` is not
-required.
+Use the Ready profile for the Rust-only return-contract fix. Run the seven v2
+owner tests, the isolated session integration regression, the server
+startup/config test, affected all-target checks, formatting, repository lint,
+and whitespace validation. Record the current unrelated session planner panic
+without attributing it to SEM v2. No Go or Bazel source changes are present, so
+`make bazel_prepare` is not required.

@@ -149,7 +149,6 @@ pub(super) fn sql_rule_by_name(name: &str) -> Option<SQLRule> {
 }
 
 /// Go `TimeToLiveSQLRule`: true when the statement touches TTL options.
-#[must_use]
 pub fn time_to_live_sql_rule(stmt: &StmtView) -> bool {
     match &stmt.kind {
         StmtKind::CreateTable { options } => check_ttl_options(options),
@@ -164,7 +163,6 @@ pub fn time_to_live_sql_rule(stmt: &StmtView) -> bool {
 
 /// Go `AlterTableAttributesRule`: true when the statement alters table or
 /// partition attributes.
-#[must_use]
 pub fn alter_table_attributes_rule(stmt: &StmtView) -> bool {
     match &stmt.kind {
         StmtKind::AlterTable { specs } => specs.iter().any(|spec| {
@@ -180,20 +178,17 @@ pub fn alter_table_attributes_rule(stmt: &StmtView) -> bool {
 /// Go `ImportWithExternalIDRule`, kept for compatibility with existing SEM
 /// configs. Import external ID checks are handled outside the restricted SQL
 /// rule list.
-#[must_use]
 pub fn import_with_external_id_rule(_stmt: &StmtView) -> bool {
     false
 }
 
 /// Go `SelectIntoFileRule`: true for `SELECT ... INTO OUTFILE`.
-#[must_use]
 pub fn select_into_file_rule(stmt: &StmtView) -> bool {
     matches!(stmt.kind, StmtKind::Select { select_into: true })
 }
 
 /// Go `ImportFromLocalRule`: true for `IMPORT INTO` or `LOAD DATA ... INFILE`
 /// reading a local file.
-#[must_use]
 pub fn import_from_local_rule(stmt: &StmtView) -> bool {
     match &stmt.kind {
         StmtKind::ImportInto { from_select, path } => {

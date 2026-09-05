@@ -147,7 +147,6 @@ pub fn set_sys_var_registry(registry: Option<Arc<dyn SysVarRegistry>>) {
 
 /// Go `variable.GetSysVar`. Without a registry every variable is unknown,
 /// which is Go's `nil` `SysVar` branch.
-#[must_use]
 pub fn get_sys_var(name: &str) -> Option<SysVar> {
     let registry = SYS_VAR_REGISTRY
         .read()
@@ -179,7 +178,6 @@ pub fn set_tidb_release_version(version: Option<String>) {
 }
 
 /// Go `mysql.TiDBReleaseVersion`.
-#[must_use]
 pub fn tidb_release_version() -> String {
     TIDB_RELEASE_VERSION_OVERRIDE
         .read()
@@ -256,13 +254,11 @@ impl std::fmt::Debug for SemImpl {
 
 impl SemImpl {
     /// Go `semImpl.isInvisibleSchema`.
-    #[must_use]
     pub fn is_invisible_schema(&self, db_name: &str) -> bool {
         self.restricted_databases.contains(&db_name.to_lowercase())
     }
 
     /// Go `semImpl.isInvisibleTable`.
-    #[must_use]
     pub fn is_invisible_table(&self, db_lower_name: &str, tbl_lower_name: &str) -> bool {
         // to be compatible with SEM v1, we need to check the invisible schema.
         if self.is_invisible_schema(db_lower_name) {
@@ -275,7 +271,6 @@ impl SemImpl {
     }
 
     /// Go `semImpl.isRestrictedPrivilege`.
-    #[must_use]
     pub fn is_restricted_privilege(&self, privilege: &str) -> bool {
         // All privileges starting with "RESTRICTED_" are considered restricted.
         if privilege.starts_with(RESTRICTED_PRIV_PREFIX) {
@@ -288,7 +283,6 @@ impl SemImpl {
     }
 
     /// Go `semImpl.isInvisibleSysVar`.
-    #[must_use]
     pub fn is_invisible_sys_var(&self, var_name: &str) -> bool {
         self.restricted_variables
             .get(var_name)
@@ -297,13 +291,11 @@ impl SemImpl {
 
     /// Go `semImpl.isInvisibleStatusVar`. SEM v2 does not support restricted
     /// status variables; this is kept for compatibility with SEM v1.
-    #[must_use]
     pub fn is_invisible_status_var(&self, var_name: &str) -> bool {
         self.restricted_status_variables.contains(var_name)
     }
 
     /// Go `semImpl.isReadOnlyVariable`.
-    #[must_use]
     pub fn is_read_only_variable(&self, var_name: &str) -> bool {
         self.restricted_variables
             .get(var_name)
@@ -311,7 +303,6 @@ impl SemImpl {
     }
 
     /// Go `semImpl.isRestrictedSQL`.
-    #[must_use]
     pub fn is_restricted_sql(&self, stmt: &StmtView) -> bool {
         match self.restricted_sql.as_ref() {
             None => false,
@@ -389,7 +380,6 @@ fn build_sem_sql_validate_function(sql_restriction: &SQLRestriction) -> SqlValid
 }
 
 /// Go `buildSEMFromConfig`.
-#[must_use]
 fn build_sem_from_config(cfg: &Config) -> SemImpl {
     let mut restricted_tables: HashMap<String, HashMap<String, RestrictedTableAttr>> =
         HashMap::new();
@@ -434,19 +424,16 @@ fn build_sem_from_config(cfg: &Config) -> SemImpl {
 }
 
 /// Go `IsInvisibleSchema`.
-#[must_use]
 pub fn is_invisible_schema(db_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_invisible_schema(db_name))
 }
 
 /// Go `IsInvisibleTable`.
-#[must_use]
 pub fn is_invisible_table(db_lower_name: &str, tbl_lower_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_invisible_table(db_lower_name, tbl_lower_name))
 }
 
 /// Go `IsRestrictedPrivilege`.
-#[must_use]
 pub fn is_restricted_privilege(privilege: &str) -> bool {
     crate::intest::assert_with_message(
         privilege.to_uppercase() == privilege,
@@ -456,25 +443,21 @@ pub fn is_restricted_privilege(privilege: &str) -> bool {
 }
 
 /// Go `IsInvisibleSysVar`.
-#[must_use]
 pub fn is_invisible_sys_var(var_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_invisible_sys_var(var_name))
 }
 
 /// Go `IsReadOnlyVariable`.
-#[must_use]
 pub fn is_read_only_variable(var_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_read_only_variable(var_name))
 }
 
 /// Go `IsInvisibleStatusVar`.
-#[must_use]
 pub fn is_invisible_status_var(var_name: &str) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_invisible_status_var(var_name))
 }
 
 /// Go `IsRestrictedSQL`.
-#[must_use]
 pub fn is_restricted_sql(stmt: &StmtView) -> bool {
     load_global_sem().is_some_and(|sem| sem.is_restricted_sql(stmt))
 }
@@ -516,7 +499,6 @@ pub fn enable_by(sem_config: &Config) -> Result<(), String> {
 }
 
 /// Go `IsEnabled`.
-#[must_use]
 pub fn is_enabled() -> bool {
     load_global_sem().is_some()
 }

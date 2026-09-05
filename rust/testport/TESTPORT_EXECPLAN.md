@@ -8814,6 +8814,13 @@ risks without claiming repository-wide parity.
   pre-fix owner and passes with the 16-test owner suite, four contract tests,
   and dependent filter/router tests; Ready evidence is recorded in
   `receipts/util_table_filter.md`.
+- 2026-09-06 (`pkg/util/sem/v2`): the complete SEM v2 owner now matches Go's
+  discardable-return contract by removing 22 explicit Rust-only `#[must_use]`
+  diagnostics from source-shaped getters, policy predicates, configuration
+  construction, and SQL rules. The deny-on-discard regression fails with all
+  22 diagnostics on the detached pre-fix owner and passes with the seven-test
+  owner suite; the server consumer and affected targets pass, while the session
+  consumer's unrelated planner panic is recorded in `receipts/util_sem_v2.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
