@@ -218,6 +218,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use chrono::{Offset, TimeZone};
 use tidb_error::mysql::{FormatArg, SqlError};
 
 mod catalog;
@@ -466,6 +467,66 @@ pub struct Validated {
     pub truncated: bool,
 }
 
+/// Go `checkTimeSystemVar`, using the supplied session location for a short
+/// `HH:MM` value and preserving an explicitly supplied numeric offset. The
+/// registry-level validator uses UTC; GLOBAL SQL writes call this helper again
+/// with the issuing session's location before the value reaches the hook.
+pub(crate) fn normalize_time_value(
+    value: &str,
+    zone: &tidb_executor::SessionTimeZone,
+) -> Result<String, ValidationError> {
+    let mut fields = value.split_whitespace();
+    let clock = fields.next().ok_or(ValidationError::WrongType)?;
+    let explicit_offset = fields.next();
+    if fields.next().is_some() {
+        return Err(ValidationError::WrongType);
+    }
+    let (hour, minute) = clock.split_once(':').ok_or(ValidationError::WrongType)?;
+    let hour = hour.parse::<u8>().map_err(|_| ValidationError::WrongType)?;
+    let minute = minute
+        .parse::<u8>()
+        .map_err(|_| ValidationError::WrongType)?;
+    if hour >= 24 || minute >= 60 {
+        return Err(ValidationError::WrongType);
+    }
+    let offset_minutes = if let Some(offset) = explicit_offset {
+        let bytes = offset.as_bytes();
+        if bytes.len() != 5 || !matches!(bytes[0], b'+' | b'-') {
+            return Err(ValidationError::WrongType);
+        }
+        let hours = std::str::from_utf8(&bytes[1..3])
+            .ok()
+            .and_then(|text| text.parse::<u16>().ok())
+            .ok_or(ValidationError::WrongType)?;
+        let minutes = std::str::from_utf8(&bytes[3..5])
+            .ok()
+            .and_then(|text| text.parse::<u8>().ok())
+            .ok_or(ValidationError::WrongType)?;
+        if hours >= 24 || minutes >= 60 {
+            return Err(ValidationError::WrongType);
+        }
+        let total = i32::from(hours) * 60 + i32::from(minutes);
+        if bytes[0] == b'-' {
+            -total
+        } else {
+            total
+        }
+    } else {
+        let now = chrono::Utc::now().naive_utc();
+        zone.offset_from_utc_datetime(&now)
+            .fix()
+            .local_minus_utc()
+            / 60
+    };
+    let sign = if offset_minutes < 0 { '-' } else { '+' };
+    let absolute = offset_minutes.unsigned_abs();
+    Ok(format!(
+        "{hour:02}:{minute:02} {sign}{:02}{:02}",
+        absolute / 60,
+        absolute % 60
+    ))
+}
+
 /// Go `normalizeIsolationReadEnginesValue` (shared by
 /// `tidb_isolation_read_engines` and
 /// `tidb_mview_maintain_isolation_read_engines`): comma-split engines trim,
@@ -547,10 +608,12 @@ impl SysVarDef {
             VarType::Bool => self.check_bool(value),
             VarType::Float => self.check_float(value),
             VarType::Enum => self.check_enum(value),
-            // Go's TypeTime and TypeDuration checks parse a clock time and a
-            // Go duration; they are not ported, so those variables take their
-            // value unchanged rather than being wrongly rejected.
-            VarType::Time | VarType::Duration | VarType::Str => Ok(Validated {
+            VarType::Time => Ok(Validated {
+                value: normalize_time_value(value, &tidb_executor::SessionTimeZone::utc())?,
+                truncated: false,
+            }),
+            VarType::Duration => self.check_duration(value),
+            VarType::Str => Ok(Validated {
                 value: value.to_owned(),
                 truncated: false,
             }),
@@ -1457,6 +1520,29 @@ impl SysVarDef {
             truncated: false,
         })
     }
+
+    /// Go `checkDurationSystemVar`: parse `time.Duration`, clamp to the
+    /// configured nanosecond range, and render through `Duration.String()`.
+    fn check_duration(&self, value: &str) -> Result<Validated, ValidationError> {
+        let parsed = tidb_config::configtypes::parse_go_duration(value)
+            .map_err(|_| ValidationError::WrongType)?;
+        if parsed < self.min_value {
+            return Ok(Validated {
+                value: tidb_model::go_duration::format_go_duration(self.min_value),
+                truncated: true,
+            });
+        }
+        if parsed >= 0 && (parsed as u64) > self.max_value {
+            return Ok(Validated {
+                value: tidb_model::go_duration::format_go_duration(self.max_value as i64),
+                truncated: true,
+            });
+        }
+        Ok(Validated {
+            value: tidb_model::go_duration::format_go_duration(parsed),
+            truncated: false,
+        })
+    }
 }
 
 /// The wire flags Go `GetNativeValType` returns alongside the datum. Go
@@ -2076,9 +2162,6 @@ mod tests {
         );
     }
 
-    /// Go `checkBoolSystemVar`: ON/OFF in any case, 0 and 1, and nothing else
-    /// unless the variable converts negatives.
-    #[test]
     /// Go's `validateReadConsistencyLevel` (`session.go:702`): only
     /// `strict`/`weak` in any case; stored as typed; anything else is
     /// `ErrWrongTypeForVar` (1232).
@@ -2089,6 +2172,94 @@ mod tests {
         assert_eq!(sv.validate("WEAK").unwrap().value, "WEAK");
         assert_eq!(sv.validate("bogus"), Err(ValidationError::WrongType));
         assert_eq!(sv.validate(""), Err(ValidationError::WrongType));
+    }
+
+    /// Go `variable/tests/variable_test.go`'s primitive validation cases:
+    /// numeric types clamp with a truncation marker, bools accept only the
+    /// documented spellings, and enums accept names or ordinal positions.
+    #[test]
+    fn primitive_type_validation_matches_go() {
+        let int = SysVarDef {
+            name: "mynewsysvar",
+            var_type: VarType::Int,
+            min_value: 10,
+            max_value: 300,
+            allow_auto_value: true,
+            ..SysVarDef::PLACEHOLDER
+        };
+        assert_eq!(int.validate("301").unwrap().value, "300");
+        assert!(int.validate("301").unwrap().truncated);
+        assert_eq!(int.validate("5").unwrap().value, "10");
+        assert_eq!(int.validate("-1").unwrap().value, "-1");
+        assert_eq!(int.validate("oN"), Err(ValidationError::WrongType));
+
+        let unsigned = SysVarDef {
+            var_type: VarType::Unsigned,
+            min_value: 10,
+            max_value: 300,
+            allow_auto_value: true,
+            ..int
+        };
+        assert_eq!(unsigned.validate("301").unwrap().value, "300");
+        assert_eq!(unsigned.validate("-301").unwrap().value, "10");
+        assert_eq!(unsigned.validate("-ERR"), Err(ValidationError::WrongType));
+        assert_eq!(unsigned.validate("-1").unwrap().value, "-1");
+
+        let float = SysVarDef {
+            var_type: VarType::Float,
+            min_value: 2,
+            max_value: 7,
+            ..SysVarDef::PLACEHOLDER
+        };
+        assert_eq!(float.validate("1.1").unwrap().value, "2");
+        assert_eq!(float.validate("22").unwrap().value, "7");
+        assert_eq!(float.validate("stringval"), Err(ValidationError::WrongType));
+
+        let boolean = SysVarDef {
+            var_type: VarType::Bool,
+            auto_convert_negative_bool: true,
+            ..SysVarDef::PLACEHOLDER
+        };
+        assert_eq!(boolean.validate("0").unwrap().value, "OFF");
+        assert_eq!(boolean.validate("1").unwrap().value, "ON");
+        assert_eq!(boolean.validate("-1").unwrap().value, "ON");
+        assert_eq!(boolean.validate("0.000"), Err(ValidationError::WrongValue));
+
+        let enumeration = SysVarDef {
+            var_type: VarType::Enum,
+            possible_values: &["OFF", "ON", "AUTO"],
+            ..SysVarDef::PLACEHOLDER
+        };
+        assert_eq!(enumeration.validate("oFf").unwrap().value, "OFF");
+        assert_eq!(enumeration.validate("2").unwrap().value, "AUTO");
+        assert_eq!(enumeration.validate("randomstring"), Err(ValidationError::WrongValue));
+    }
+
+    /// Go `TestTimeValidation` and `TestDurationValidation`: time values are
+    /// expanded to the full offset form, while durations clamp and render with
+    /// Go's `time.Duration.String()` spelling.
+    #[test]
+    fn time_and_duration_validation_match_go() {
+        let time = SysVarDef {
+            var_type: VarType::Time,
+            ..SysVarDef::PLACEHOLDER
+        };
+        assert_eq!(
+            time.validate("23:59 +0000").unwrap().value,
+            "23:59 +0000"
+        );
+        assert_eq!(time.validate("3:00 +0000").unwrap().value, "03:00 +0000");
+        assert_eq!(time.validate("0.000"), Err(ValidationError::WrongType));
+
+        let duration = SysVarDef {
+            var_type: VarType::Duration,
+            min_value: 1_000_000_000,
+            max_value: 3_600_000_000_000,
+            ..SysVarDef::PLACEHOLDER
+        };
+        assert_eq!(duration.validate("1hr"), Err(ValidationError::WrongType));
+        assert_eq!(duration.validate("1ms").unwrap().value, "1s");
+        assert_eq!(duration.validate("2h10m").unwrap().value, "1h0m0s");
     }
 
     /// Go's mpp_exchange_compression_mode Validation (`sysvar.go:3308`):
@@ -2209,6 +2380,9 @@ mod tests {
         assert_eq!(sv.validate("-5").unwrap().value, "-5");
     }
 
+    /// The registry's concrete bool entry follows the same Go conversion
+    /// rules as the synthetic `TestBoolValidation` cases above.
+    #[test]
     fn bool_validation() {
         let sv = get_sys_var("autocommit").unwrap();
         assert_eq!(sv.var_type, VarType::Bool);

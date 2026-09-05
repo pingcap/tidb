@@ -114,6 +114,11 @@ For each bounded behavior cluster:
   added SQL-level GLOBAL coverage for process-value publication and Go's
   boundary clamping (`1..100000` buckets and `0..100000` TopN). Broader
   analyze scheduler consumers remain outside this session owner.
+- 2026-09-05 (`pkg/sessionctx/variable` generic type validation): replaced the
+  TypeTime/TypeDuration pass-through with Go-compatible clock normalization,
+  session-zone-aware GLOBAL writes, duration parsing, canonical rendering, and
+  Min/Max clamping. Added focused numeric, enum, time, duration, and integration
+  regressions; the synthetic Go session-only TypeTime shape remains explicit.
 - 2026-09-05 (`pkg/sessionctx/variable` resource-control hooks): published
   Go's process-wide enable and strict-mode switches on named GLOBAL writes,
   startup/cluster/reset paths, and changed resource-group hint admission to

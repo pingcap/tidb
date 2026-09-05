@@ -311,7 +311,7 @@ fn format_go_duration(d: i64) -> String {
 }
 
 /// Go `time.ParseDuration`.
-fn parse_go_duration(s: &str) -> Result<i64, String> {
+pub fn parse_go_duration(s: &str) -> Result<i64, String> {
     let orig = s;
     let mut s = s;
     let mut neg = false;

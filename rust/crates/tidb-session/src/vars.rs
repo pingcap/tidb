@@ -713,6 +713,13 @@ impl GlobalSysvars {
         zone: &tidb_executor::SessionTimeZone,
     ) -> Result<bool, VarError> {
         let value = normalize_ttl_schedule_window(name, &value, zone)?;
+        let value = match get_sys_var(name) {
+            Some(def) if def.var_type == crate::sysvar::VarType::Time => {
+                crate::sysvar::normalize_time_value(&value, zone)
+                    .map_err(|error| validation_var_error(name, &value, error))?
+            }
+            _ => value,
+        };
         self.write(name, value, SCOPE_GLOBAL)
     }
 
@@ -3811,6 +3818,34 @@ mod tests {
                 .unwrap(),
             "16:11 +0000"
         );
+    }
+
+    /// All Go `TypeTime` globals, not only TTL's schedule-window pair, use the
+    /// issuing session's location before their GLOBAL hook stores the value.
+    #[test]
+    fn generic_time_and_duration_globals_use_go_normalization() {
+        let mut vars = SessionVars::new();
+        vars.set_system("time_zone", "Asia/Shanghai".to_owned())
+            .unwrap();
+        vars.set_global("tidb_auto_analyze_start_time", "3:00".to_owned())
+            .unwrap();
+        assert_eq!(
+            vars.get_global("tidb_auto_analyze_start_time").unwrap(),
+            "03:00 +0800"
+        );
+        let error = vars
+            .set_global("tidb_auto_analyze_start_time", "25:00".to_owned())
+            .unwrap_err();
+        assert_eq!(
+            error,
+            VarError::WrongTypeForVar("tidb_auto_analyze_start_time".to_owned())
+        );
+
+        let truncated = vars
+            .set_global("tidb_gc_run_interval", "1ms".to_owned())
+            .unwrap();
+        assert!(truncated);
+        assert_eq!(vars.get_global("tidb_gc_run_interval").unwrap(), "10m0s");
     }
 
     #[test]
