@@ -8,6 +8,15 @@ histogram allocation, load status, memory accounting, and append helpers.
 
 ## Progress
 
+- [x] Recheck both Go artifacts at current master
+  `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; all 109 lines remain
+  byte-identical to the historical pin.
+- [x] Re-read the complete two-file Rust owner and inventory every LFU,
+  map-cache, parent-cache, and benchmark call site.
+- [x] Add a focused discard regression, observe exactly one pre-fix
+  diagnostic, remove the Rust-only `#[must_use]` annotation from the direct Go
+  constructor counterpart, and verify the regression passes.
+- [x] Run the full owner test and all-target compile gates.
 - [x] Read both Go-master artifacts at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: 109 lines, no package tests,
   fixtures, generated inputs/outputs, benchmarks, or platform variants.
@@ -22,13 +31,15 @@ histogram allocation, load status, memory accounting, and append helpers.
 
 ## Validation gate
 
-This is a Ready documentation-only support-package refresh. No Go or Bazel
+This follow-up uses the Ready profile. No Go, Bazel, Cargo metadata, or module
 source changed, so `make bazel_prepare` is not required.
 
+- [x] Focused fail-before/pass-after return-contract regression.
+- [x] Full owner test and all-target check pass.
 - [x] Current and detached Go package probes pass (`[no test files]`).
 - [x] Offline locked Rust owner check/tests and clippy pass.
 - [x] Rust formatting, pinned repository lint, and `git diff --check` pass.
-- [x] Commit, push, pull, and remote SHA verification complete.
+- [x] Commit once for this Go package, rebase/push, and verify the remote SHA.
 
 ## Next boundary
 

@@ -1,7 +1,7 @@
 # `pkg/statistics/handle/cache/internal/testutil` → `tidb-stats-handle-cache-internal-testutil`
 
-Pinned source: `c6054025ed4c32ab3672a2a24ea46892714d21ec` (Go `master` at the
-audit boundary).
+Historical pinned source: `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
+Current Go source rechecked at `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
 
 ## Atomic inventory
 
@@ -50,3 +50,49 @@ is strict compilation/linting plus the affected statistics owner gate.
 
 No Go or Bazel source changed; `make bazel_prepare` is not required for this
 documentation-only receipt refresh.
+
+## Follow-up: discardable table-constructor return (2026-09-06)
+
+The complete two-artifact, 109-line Go package was re-read at current
+`origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` and remains
+byte-identical to the historical pin. It contains the 95-line production file
+and 14-line Bazel target only: no package doc, Go test, testdata, fixture,
+generated input/output, example, benchmark, fuzz target, or platform/build-tag
+variant exists. All three Go functions and the complete two-file Rust owner
+(`Cargo.toml` and `src/lib.rs`) were reviewed, along with every Rust consumer
+in the LFU, map cache, parent cache, and cache benchmark.
+
+Go permits callers to discard `NewMockStatisticsTable`; Rust's direct
+`new_mock_statistics_table` counterpart instead emitted an
+`unused_must_use` diagnostic. The annotation was removed without changing the
+table, histogram, sketch, TopN, load-state, ID, or memory-accounting behavior.
+The focused unit regression invokes the constructor under
+`#[deny(unused_must_use)]`; it failed before the implementation edit with
+exactly one diagnostic and passes afterward.
+
+Ready validation for this follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-stats-handle-cache-internal-testutil --lib source_return_value_may_be_ignored_like_go --offline --locked -- --nocapture
+PASS; 1 passed, 0 failed.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-stats-handle-cache-internal-testutil --offline --locked -- --test-threads=1
+PASS; 1 unit test passed, 0 failed; doc tests had 0 tests.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-stats-handle-cache-internal-testutil --all-targets --offline --locked
+PASS; pre-existing dependency warnings remain outside this crate.
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+Only Rust source/tests and parity documentation changed. No Go, Bazel, Cargo
+metadata, or module dependency changed, so `make bazel_prepare` is not
+required. No Go test exists to rerun, and the return-contract-only edit leaves
+the already-covered production table behavior unchanged.

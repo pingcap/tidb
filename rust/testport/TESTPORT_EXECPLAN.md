@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/statistics/handle/cache/internal/testutil` constructor
+  return contract): the complete two-artifact, 109-line Go package and
+  two-file Rust owner were rechecked at current Go master, together with every
+  Rust consumer. `new_mock_statistics_table` no longer emits the one Rust-only
+  `#[must_use]` diagnostic. Its focused regression failed once before the edit
+  and passes afterward; the owner test, all-target check, formatting, lint,
+  and diff gates pass. Evidence is recorded in
+  `receipts/statistics_handle_cache_internal_testutil.md`.
 - 2026-09-06 (`pkg/owner` API return contracts): the complete eight-artifact,
   1,883-line Go package, five-file Rust owner, shared aggregate build input,
   generated-output shape, and workspace metadata were rechecked at current Go
