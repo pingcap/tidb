@@ -67,8 +67,15 @@ the neighbour-refinement union-find over duplicated output positions.
 ## Conclusion
 
 The `postOptimize` second half is closed for the served tier. The remaining
-`postOptimize` steps (`mergeContinuousSelections`,
-`eliminateUnionScanAndLock`, `avoidColumnEvaluatorForProjBelowUnion`,
-`enableParallelApply`, `handleFineGrainedShuffle`, `propagateProbeParents`,
-`countStarRewrite`, `disableReuseChunkIfNeeded`, `generateRuntimeFilter`)
-are store/concurrency-tier surfaces outside the narrow tier's model.
+`postOptimize` steps were audited one by one:
+`mergeContinuousSelections` (TiFlash selection merging),
+`countStarRewrite` (requires `StoreType == kv.TiFlash`; returns
+immediately on this TiKV-only tier), `enableParallelApply`,
+`handleFineGrainedShuffle`, `propagateProbeParents`,
+`disableReuseChunkIfNeeded`, `generateRuntimeFilter`,
+`avoidColumnEvaluatorForProjBelowUnion` — all store/concurrency-tier
+surfaces outside the narrow tier's model (MPP flags, runtime filters,
+parallel-apply registries, chunk-reuse hints). `eliminateUnionScanAndLock`
+is a pure performance elision whose condition guarantees results identical
+to executing the nodes; this tier executes `PhysicalUnionScan`/`Lock`
+faithfully, so observable behavior matches either way.
