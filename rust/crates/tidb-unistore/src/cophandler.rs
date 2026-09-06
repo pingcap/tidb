@@ -1430,6 +1430,23 @@ pub enum SimpleSig {
     EqReal,
     /// See [`SimpleSig::LtReal`].
     NeReal,
+    /// `IntDivideInt` and its three unsigned-flag pairings: truncating
+    /// integer division, NULL on a zero divisor. Go picks between the four
+    /// by the two arguments' UNSIGNED flags; the truncated quotient VALUE
+    /// is the same under all four for the values the flags admit.
+    IntDivideInt,
+    /// See [`SimpleSig::IntDivideInt`].
+    IntDivideIntUnsignedUnsigned,
+    /// See [`SimpleSig::IntDivideInt`].
+    IntDivideIntUnsignedSigned,
+    /// See [`SimpleSig::IntDivideInt`].
+    IntDivideIntSignedSigned,
+    /// See [`SimpleSig::IntDivideInt`].
+    IntDivideIntSignedUnsigned,
+    /// `IntDivideDecimal`: decimal division truncated to the integer part,
+    /// NULL on a zero divisor (Go `EvalIntDivideDecimal`'s `DecimalDiv` ->
+    /// `ToInt`).
+    IntDivideDecimal,
     /// `PlusReal`/`MinusReal`/`MultiplyReal`: binary64 arithmetic, NULL in
     /// -> NULL out (Go `EvalPlusReal` family).
     PlusReal,
@@ -1584,6 +1601,18 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::ModIntUnsignedSigned => SimpleSig::ModIntUnsignedSigned,
             tipb::ScalarFuncSig::ModIntSignedUnsigned => SimpleSig::ModIntSignedUnsigned,
             tipb::ScalarFuncSig::ModIntSignedSigned => SimpleSig::ModIntSignedSigned,
+            tipb::ScalarFuncSig::IntDivideInt => SimpleSig::IntDivideInt,
+            tipb::ScalarFuncSig::IntDivideIntUnsignedUnsigned => {
+                SimpleSig::IntDivideIntUnsignedUnsigned
+            }
+            tipb::ScalarFuncSig::IntDivideIntUnsignedSigned => {
+                SimpleSig::IntDivideIntUnsignedSigned
+            }
+            tipb::ScalarFuncSig::IntDivideIntSignedSigned => SimpleSig::IntDivideIntSignedSigned,
+            tipb::ScalarFuncSig::IntDivideIntSignedUnsigned => {
+                SimpleSig::IntDivideIntSignedUnsigned
+            }
+            tipb::ScalarFuncSig::IntDivideDecimal => SimpleSig::IntDivideDecimal,
             tipb::ScalarFuncSig::LtReal => SimpleSig::LtReal,
             tipb::ScalarFuncSig::LeReal => SimpleSig::LeReal,
             tipb::ScalarFuncSig::GtReal => SimpleSig::GtReal,
@@ -1854,6 +1883,31 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                     (Some(left), Some(right)) if right != 0 => Some(left % right),
                     _ => None,
                 },
+                // `types.IntDivide`: truncated division, NULL on a zero
+                // divisor, sign of the dividend. The four unsigned-flag
+                // pairings divide the same values, so one i128 arm serves;
+                // Go's `MinInt / -1` panic is unreachable at this width.
+                SimpleSig::IntDivideInt
+                | SimpleSig::IntDivideIntUnsignedUnsigned
+                | SimpleSig::IntDivideIntUnsignedSigned
+                | SimpleSig::IntDivideIntSignedSigned
+                | SimpleSig::IntDivideIntSignedUnsigned => match (child(0), child(1)) {
+                    (Some(left), Some(right)) if right != 0 => Some(left / right),
+                    _ => None,
+                },
+                SimpleSig::IntDivideDecimal => {
+                    // Go `EvalIntDivideDecimal`: `DecimalDiv` then `ToInt` --
+                    // the quotient truncated to the integer part, NULL on a
+                    // zero divisor. A quotient wider than BIGINT errors in
+                    // Go where this seam answers NULL (`div_rem` folds both)
+                    // -- a narrowing, not a value change inside BIGINT.
+                    let (left, right) = (
+                        eval_decimal(children.first()?, row)?,
+                        eval_decimal(children.get(1)?, row)?,
+                    );
+                    let (quotient, _) = left.div_rem(&right)?;
+                    Some(i128::from(quotient))
+                }
                 SimpleSig::LtReal
                 | SimpleSig::LeReal
                 | SimpleSig::GtReal
@@ -3206,5 +3260,53 @@ mod tests {
             SimpleExpr::Real(value) => assert_eq!(value, 1.5),
             other => panic!("unexpected leaf: {other:?}"),
         }
+    }
+
+    #[test]
+    fn integer_division_follows_mysql() {
+        use tidb_datatype::{Datum, Decimal};
+        let row = [
+            Datum::Int(-7),
+            Datum::Decimal(Decimal::parse_mysql("-9.5").0),
+        ];
+        let left = SimpleExpr::Column(0);
+        // `-7 DIV 2` truncates toward zero, sign of the dividend.
+        assert_eq!(
+            eval_expr(
+                &SimpleExpr::Func(
+                    SimpleSig::IntDivideIntSignedSigned,
+                    vec![left.clone(), SimpleExpr::Int(2)],
+                ),
+                &row
+            ),
+            Some(-3)
+        );
+        // A zero divisor answers NULL.
+        assert_eq!(
+            eval_expr(
+                &SimpleExpr::Func(
+                    SimpleSig::IntDivideIntUnsignedUnsigned,
+                    vec![left, SimpleExpr::Int(0)],
+                ),
+                &row
+            ),
+            None
+        );
+        // Decimal DIV truncates the quotient: `-9.5 DIV 2` = -4. The wire
+        // operands are DECIMAL by the time the sig runs (Go casts at build).
+        let decimal_left = SimpleExpr::Column(1);
+        assert_eq!(
+            eval_expr(
+                &SimpleExpr::Func(
+                    SimpleSig::IntDivideDecimal,
+                    vec![
+                        decimal_left,
+                        SimpleExpr::Decimal(Decimal::parse_mysql("2").0),
+                    ],
+                ),
+                &row
+            ),
+            Some(-4)
+        );
     }
 }

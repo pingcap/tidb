@@ -296,3 +296,26 @@ MultiplyReal 208, DivideReal 211), and the evaluator lands them:
 Regressions: `real_comparisons_and_arithmetic_follow_mysql` (GTReal truth,
 composed `x / 2 + 1`, zero-divisor NULL) and
 `a_float64_literal_decodes_go_convert_float` (wire bits -> leaf).
+
+## Coprocessor integer DIV family (2026-09-07, same session)
+
+The trimmed tipb enum gains the integer DIV signatures at their upstream
+contract ids (`IntDivideInt` 213, `IntDivideDecimal` 214,
+`IntDivideIntUnsigned{Unsigned,Signed,SignedUnsigned}` 234/235/237,
+`IntDivideIntSignedSigned` 236), and the evaluator lands them:
+
+- `IntDivideInt` + the three unsigned-flag pairings: truncated division
+  with the dividend's sign, NULL on a zero divisor. Go picks between the
+  four by the arguments' UNSIGNED flags; the quotient VALUE is identical
+  under all four for the values those flags admit, so one i128 arm
+  serves. Go's `MinInt / -1` panic is unreachable at this width
+  (documented hardening).
+- `IntDivideDecimal`: `DecimalDiv` then `ToInt` -- the quotient truncated
+  to the integer part, NULL on a zero divisor. A quotient wider than
+  BIGINT errors in Go where this seam answers NULL (`div_rem` folds both)
+  -- a narrowing, not a value change inside BIGINT. The wire operands are
+  DECIMAL by the time the sig runs (Go casts at build), which the
+  regression exercises.
+
+Regression: `integer_division_follows_mysql` (-7 DIV 2 = -3; zero divisor
+NULL; -9.5 DIV 2 = -4).

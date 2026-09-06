@@ -329,6 +329,15 @@ enum ScalarFuncSig {
 
   // The arithmetic `MOD` family. Go picks between the four integer
   // signatures by the two arguments' UNSIGNED flags, not by their width.
+  // The integer DIV family (`builtinArithmeticSig`'s IntDivide signatures):
+  // truncating division, NULL on a zero divisor. Go picks between the four
+  // unsigned-flag pairings by the two arguments' UNSIGNED flags.
+  IntDivideInt = 213;
+  IntDivideDecimal = 214;
+  IntDivideIntUnsignedUnsigned = 234;
+  IntDivideIntUnsignedSigned = 235;
+  IntDivideIntSignedSigned = 236;
+  IntDivideIntSignedUnsigned = 237;
   ModReal = 215;
   ModDecimal = 216;
   ModIntUnsignedUnsigned = 223;
