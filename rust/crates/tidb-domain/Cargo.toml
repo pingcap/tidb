@@ -34,5 +34,6 @@ chrono.workspace = true
 base64.workspace = true
 
 [dev-dependencies]
+tidb-parser = { path = "../tidb-parser" }
 # The upstream ru_stats test pins Asia/Shanghai and Australia/Lord_Howe.
 chrono-tz.workspace = true
