@@ -342,7 +342,6 @@ impl AnalysisJob {
     }
 
     /// Go `GetTableID`.
-    #[must_use]
     pub const fn table_id(&self) -> i64 {
         match self {
             Self::NonPartitioned(job) => job.table_id,
@@ -352,7 +351,6 @@ impl AnalysisJob {
     }
 
     /// Go `GetWeight`.
-    #[must_use]
     pub const fn weight(&self) -> f64 {
         match self {
             Self::NonPartitioned(job) => job.weight,
@@ -371,7 +369,6 @@ impl AnalysisJob {
     }
 
     /// Go `GetIndicators`.
-    #[must_use]
     pub const fn indicators(&self) -> Indicators {
         match self {
             Self::NonPartitioned(job) => job.indicators,
@@ -390,7 +387,6 @@ impl AnalysisJob {
     }
 
     /// Go `HasNewlyAddedIndex`.
-    #[must_use]
     pub fn has_newly_added_index(&self) -> bool {
         match self {
             Self::NonPartitioned(job) => !job.index_ids.is_empty(),
@@ -400,13 +396,11 @@ impl AnalysisJob {
     }
 
     /// Go `IsDynamicPartitionedTableAnalysisJob`.
-    #[must_use]
     pub const fn is_dynamic_partitioned(&self) -> bool {
         matches!(self, Self::DynamicPartitioned(_))
     }
 
     /// Go `AsJSON`.
-    #[must_use]
     pub fn as_json(&self) -> AnalysisJobJson {
         let indicators = self.indicators();
         let common =
@@ -466,7 +460,6 @@ impl AnalysisJob {
     }
 
     /// Go `Analyze` for all three concrete job types.
-    #[must_use]
     pub fn analyze<C: AnalysisJobContext + ?Sized>(&self, context: &C) -> bool {
         match self {
             Self::NonPartitioned(job) => job.analyze(context),
@@ -547,7 +540,6 @@ pub struct PriorityCalculator;
 
 impl PriorityCalculator {
     /// Go `CalculateWeight`.
-    #[must_use]
     pub fn calculate_weight(self, job: &AnalysisJob) -> f64 {
         let indicators = job.indicators();
         let change_ratio = 100.0 * indicators.change_percentage;
@@ -560,7 +552,6 @@ impl PriorityCalculator {
     }
 
     /// Go `GetSpecialEvent`.
-    #[must_use]
     pub fn special_event(self, job: &AnalysisJob) -> f64 {
         if job.has_newly_added_index() {
             EVENT_NEW_INDEX
@@ -629,7 +620,6 @@ impl std::error::Error for QueueError {}
 
 impl JobHeap {
     /// Go `newHeap`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -692,13 +682,11 @@ impl JobHeap {
     }
 
     /// Go `isEmpty`.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.queue.is_empty()
     }
 
     /// Go `len`.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.queue.len()
     }
@@ -948,7 +936,6 @@ pub struct RunningAnalysisJob {
 
 impl RunningAnalysisJob {
     /// Go `GetTableID`.
-    #[must_use]
     pub fn table_id(&self) -> i64 {
         self.job.table_id()
     }
@@ -966,7 +953,6 @@ impl RunningAnalysisJob {
     }
 
     /// Go `Analyze`, including the registered success/failure hook.
-    #[must_use]
     pub fn analyze(self) -> bool {
         let Some(queue) = self.queue.upgrade() else {
             return false;
@@ -979,12 +965,6 @@ impl RunningAnalysisJob {
         }
         success
     }
-
-    /// Prepared job details used by the refresher log and running-job gate.
-    #[must_use]
-    pub fn job(&self) -> &AnalysisJob {
-        &self.job
-    }
 }
 
 struct QueueWorker {
@@ -994,7 +974,6 @@ struct QueueWorker {
 
 impl AnalysisPriorityQueue {
     /// Go `NewAnalysisPriorityQueue` without starting `Initialize`.
-    #[must_use]
     pub fn new(source: Arc<dyn PriorityQueueSource>) -> Arc<Self> {
         Arc::new(Self {
             source,
@@ -1254,7 +1233,6 @@ impl AnalysisPriorityQueue {
     }
 
     /// Go `IsInitialized`.
-    #[must_use]
     pub fn is_initialized(&self) -> bool {
         self.lock_state().initialized
     }
@@ -1329,7 +1307,6 @@ impl AnalysisPriorityQueue {
     }
 
     /// Go `GetRunningJobs`; deliberately not initialization-gated.
-    #[must_use]
     pub fn running_jobs(&self) -> HashSet<i64> {
         self.lock_state().running_jobs.clone()
     }
@@ -1376,12 +1353,6 @@ impl AnalysisPriorityQueue {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
             }
         }
-    }
-
-    /// Last version consumed by Go's DML-change gate.
-    #[must_use]
-    pub fn last_dml_update_fetch_timestamp(&self) -> u64 {
-        self.lock_state().last_dml_update_fetch_timestamp
     }
 
     fn run(&self, receiver: Receiver<()>) {
@@ -1663,7 +1634,6 @@ pub struct AnalysisJobFactory {
 impl AnalysisJobFactory {
     /// Go `NewAnalysisJobFactory`; the minimum count is explicit because the
     /// Rust statistics package does not expose Go's mutable test global.
-    #[must_use]
     pub const fn new(
         auto_analyze_ratio: f64,
         current_ts: u64,
@@ -1773,7 +1743,6 @@ impl AnalysisJobFactory {
     }
 
     /// Go `CalculateChangePercentage`.
-    #[must_use]
     pub fn change_percentage(self, stats: &Table) -> f64 {
         if !stats.is_analyzed() {
             return 1.0;
@@ -1796,7 +1765,6 @@ impl AnalysisJobFactory {
     }
 
     /// Go `GetTableLastAnalyzeDuration`.
-    #[must_use]
     pub fn last_analysis_duration(self, stats: &Table) -> i64 {
         if !stats.is_analyzed() {
             return UNANALYZED_LAST_ANALYSIS_DURATION;
@@ -1814,13 +1782,11 @@ impl AnalysisJobFactory {
     }
 
     /// Go `CalculateTableSize`.
-    #[must_use]
     pub fn table_size(self, stats: &Table) -> f64 {
         table_size(stats)
     }
 
     /// Go `CalculateIndicatorsForPartitions`.
-    #[must_use]
     pub fn partition_indicators(
         self,
         global_stats: &Table,
@@ -1882,7 +1848,6 @@ pub struct AutoAnalysisTimeWindow {
 
 impl AutoAnalysisTimeWindow {
     /// Go `NewAutoAnalysisTimeWindow`.
-    #[must_use]
     pub const fn new(start: DateTime<FixedOffset>, end: DateTime<FixedOffset>) -> Self {
         Self {
             start: Some(start),
@@ -1891,7 +1856,6 @@ impl AutoAnalysisTimeWindow {
     }
 
     /// Go `IsWithinTimeWindow`, comparing inclusive UTC hour/minute values.
-    #[must_use]
     pub fn is_within_time_window(&self, current: DateTime<Utc>) -> bool {
         let (Some(start), Some(end)) = (self.start, self.end) else {
             return false;
@@ -1910,7 +1874,6 @@ impl AutoAnalysisTimeWindow {
 
 impl PartitionIdAndName {
     /// Go `NewPartitionIDAndName`.
-    #[must_use]
     pub fn new(name: impl Into<String>, id: i64) -> Self {
         Self {
             name: name.into(),
@@ -1995,7 +1958,6 @@ fn partition_indexes_needing_analyze(
 }
 
 /// Converts Go's successful-analysis AVG query result to `time.Duration`.
-#[must_use]
 pub fn average_analysis_duration(seconds: Option<f64>) -> i64 {
     let Some(seconds) = seconds else {
         return NO_RECORD;
@@ -2007,7 +1969,6 @@ pub fn average_analysis_duration(seconds: Option<f64>) -> i64 {
 }
 
 /// Converts Go's latest-failure TIMESTAMPDIFF result to `time.Duration`.
-#[must_use]
 pub fn last_failed_analysis_duration(seconds: Option<i64>) -> i64 {
     match seconds {
         None => NO_RECORD,
@@ -2018,7 +1979,6 @@ pub fn last_failed_analysis_duration(seconds: Option<i64>) -> i64 {
 }
 
 /// The decision half of Go `isValidToAnalyze` after its two SQL reads.
-#[must_use]
 pub fn valid_to_analyze(last_failed: i64, average: i64) -> (bool, String) {
     if last_failed == JUST_FAILED {
         return (false, "last analysis just failed".to_owned());
@@ -2088,7 +2048,6 @@ impl NonPartitionedTableAnalysisJob {
     }
 
     /// Go `GenSQLForAnalyzeTable`.
-    #[must_use]
     pub fn analyze_table_sql(&self) -> (&'static str, Vec<String>) {
         (
             "analyze table %n.%n",
@@ -2097,7 +2056,6 @@ impl NonPartitionedTableAnalysisJob {
     }
 
     /// Go `GenSQLForAnalyzeIndex`.
-    #[must_use]
     pub fn analyze_index_sql(&self, index: &str) -> (&'static str, Vec<String>) {
         (
             "analyze table %n.%n index %n",
@@ -2174,7 +2132,6 @@ impl StaticPartitionedTableAnalysisJob {
     }
 
     /// Go `GenSQLForAnalyzeStaticPartition`.
-    #[must_use]
     pub fn analyze_partition_sql(&self) -> (&'static str, Vec<String>) {
         (
             "analyze table %n.%n partition %n",
@@ -2187,7 +2144,6 @@ impl StaticPartitionedTableAnalysisJob {
     }
 
     /// Go `GenSQLForAnalyzeStaticPartitionIndex`.
-    #[must_use]
     pub fn analyze_partition_index_sql(&self, index: &str) -> (&'static str, Vec<String>) {
         (
             "analyze table %n.%n partition %n index %n",
@@ -2348,7 +2304,6 @@ fn validate_analysis_interval<C: AnalysisJobContext + ?Sized>(
 }
 
 /// Go `getPartitionSQL`.
-#[must_use]
 pub fn partition_sql(prefix: &str, suffix: &str, partition_count: usize) -> String {
     let mut sql = prefix.to_owned();
     for index in 0..partition_count {
@@ -2589,6 +2544,67 @@ mod tests {
         fn auto_analyze_partition_batch_size(&self) -> usize {
             2
         }
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn go_priority_queue_returns_can_be_ignored() {
+        let context = Arc::new(MockJobContext::default());
+        let analysis_job = job(1, 1.0);
+        analysis_job.table_id();
+        analysis_job.weight();
+        analysis_job.indicators();
+        analysis_job.has_newly_added_index();
+        analysis_job.is_dynamic_partitioned();
+        analysis_job.as_json();
+        analysis_job.analyze(context.as_ref());
+
+        let calculator = PriorityCalculator;
+        calculator.calculate_weight(&analysis_job);
+        calculator.special_event(&analysis_job);
+
+        JobHeap::new();
+        let heap = JobHeap::new();
+        heap.is_empty();
+        heap.len();
+
+        AnalysisPriorityQueue::new(context.clone());
+        let queue = AnalysisPriorityQueue::new(context.clone());
+        queue.is_initialized();
+        queue.running_jobs();
+        let running = RunningAnalysisJob {
+            job: job(2, 1.0),
+            queue: Arc::downgrade(&queue),
+        };
+        running.table_id();
+        running.analyze();
+
+        AnalysisJobFactory::new(0.5, 10 << 18, 2, 0);
+        let factory = AnalysisJobFactory::new(0.5, 10 << 18, 2, 0);
+        let table_stats = stats(3, 5, 100, 60);
+        factory.change_percentage(&table_stats);
+        factory.last_analysis_duration(&table_stats);
+        factory.table_size(&table_stats);
+        factory.partition_indicators(&table_stats, &HashMap::new());
+
+        let start = DateTime::parse_from_rfc3339("1970-01-01T22:00:00+00:00").unwrap();
+        let end = DateTime::parse_from_rfc3339("1970-01-01T06:00:00+00:00").unwrap();
+        AutoAnalysisTimeWindow::new(start, end);
+        let window = AutoAnalysisTimeWindow::new(start, end);
+        window.is_within_time_window(Utc::now());
+        PartitionIdAndName::new("p0", 3);
+
+        average_analysis_duration(Some(1.0));
+        last_failed_analysis_duration(Some(1));
+        valid_to_analyze(NO_RECORD, NO_RECORD);
+
+        let ordinary = NonPartitionedTableAnalysisJob::default();
+        ordinary.analyze_table_sql();
+        ordinary.analyze_index_sql("idx");
+        let static_partition = StaticPartitionedTableAnalysisJob::default();
+        static_partition.analyze_partition_sql();
+        static_partition.analyze_partition_index_sql("idx");
+        partition_sql("analyze table %n.%n partition", "", 1);
     }
 
     #[test]

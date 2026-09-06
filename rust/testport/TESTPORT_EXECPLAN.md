@@ -9555,3 +9555,11 @@ risks without claiming repository-wide parity.
   the annotation removal and passes afterward; all six owner tests, all-target
   compilation, standalone rustfmt, and Ready evidence are recorded in
   `receipts/statistics_handle_autoanalyze_refresher_audit.md`.
+- 2026-09-06 (`pkg/statistics/handle/autoanalyze/priorityqueue`
+  return-contract parity): the complete queue owner no longer marks 33
+  Go-shaped constructors, queries, calculations, analysis calls, or SQL
+  builders as `#[must_use]`, and two repository-unused Rust-only inspection
+  methods were removed. The focused discard probe failed with exactly 33
+  diagnostics before the edit and passes afterward; all 19 owner tests,
+  all-target compilation, standalone rustfmt, and Ready evidence are recorded
+  in `receipts/statistics_handle_autoanalyze_priorityqueue_audit.md`.

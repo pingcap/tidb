@@ -99,3 +99,60 @@ open package and is not claimed by this receipt.
 - `git diff --check`
 
 No Go or Bazel source changed, so `make bazel_prepare` was not required.
+
+## 2026-09-06 Rust return-contract follow-up
+
+The complete package boundary was rechecked before this follow-up. The 22
+Go artifacts and 8,132 lines above remain byte-identical between the receipt
+pin and current `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
+Per the Rust-only scope, no Go source or test was executed. The Rust owner has
+exactly two authored artifacts: the 23-line `Cargo.toml` and the single
+3,393-line pre-change `src/lib.rs`; there is no `build.rs`, generated source,
+fixture, example, benchmark target, platform variant, or separate integration
+test. Every production item and all 18 pre-existing tests in that source were
+read before editing.
+
+Thirty-three public constructors, value/status queries, calculations,
+analysis calls, interval helpers, and SQL builders directly model ordinary Go
+functions but carried Rust-only `#[must_use]` diagnostics. The focused
+`go_priority_queue_returns_can_be_ignored` regression invokes and discards all
+33 results under `#[deny(unused_must_use)]`; with the annotations present it
+failed with exactly 33 diagnostics, and after their removal it passes. The
+four remaining annotations are on APIs returning Rust `Option`; `Option`
+itself has the standard library's non-discardable contract, so deleting the
+redundant function annotations would not change or prove caller behavior.
+
+The full Rust inventory also found two public methods with no Go API and no
+repository caller: `RunningAnalysisJob::job` and
+`AnalysisPriorityQueue::last_dml_update_fetch_timestamp`. Both Rust-only
+inspection surfaces were removed. Internal queue state and the DML watermark
+algorithm are unchanged, and all-target compilation verifies that no workspace
+consumer depended on either method.
+
+Ready validation for the follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-autoanalyze-priorityqueue --lib go_priority_queue_returns_can_be_ignored -- --test-threads=1
+PASS; 1 focused regression passed. Before the production edit, the same command failed with exactly 33 `unused_must_use` diagnostics.
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-autoanalyze-priorityqueue --lib --test-threads=1
+PASS; all 19 owner tests passed.
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-autoanalyze-priorityqueue --all-targets
+PASS; pre-existing dependency warnings remain outside this crate.
+
+rustfmt +nightly-2026-08-22 --check --edition 2021 rust/crates/tidb-stats-handle-autoanalyze-priorityqueue/src/lib.rs
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+No Go, Bazel, Cargo manifest, lockfile, dependency, generated, or platform
+source changed, so `make bazel_prepare` is not required. Correctness risk is
+limited to compiler diagnostics and deletion of two proven-unused Rust-only
+APIs; scheduling, heap ordering, SQL, JSON, DDL, retry, and execution behavior
+are unchanged. There is no performance impact.
