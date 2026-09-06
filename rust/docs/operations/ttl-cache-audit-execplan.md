@@ -83,3 +83,19 @@ The complete task SQL/row behavior is source-shaped in published commit
 `cca2f7711b4ac393d8ef0d979dda8accd9c3d243`; the package remains partial only
 for the two real info-schema traversal boundaries and for live server/region
 integration tests outside the dependency-closed owner.
+
+## Corrective follow-up after restore (2026-09-06)
+
+- [x] Reconfirm that restore commit `8d42bcc7035` had reintroduced the 26
+  cache `#[must_use]` annotations and removed the prior discard regression.
+- [x] Reapply the package-scoped Rust-only correction: remove the 26 direct
+  Go-shaped annotations and retain the five native/error boundaries.
+- [x] Re-run the focused fail-before/pass-after probe (26 diagnostics before,
+  one focused test after), all 39 `tidb-ttl` tests, all-target compilation,
+  standalone rustfmt, `make lint`, and `git diff --check`.
+- [x] Update the package receipt and global ExecPlan with the restore history.
+- [ ] Continue the rolling audit with the next complete package boundary.
+
+The corrective batch changes no TTL runtime behavior and no Go/Bazel/Cargo
+metadata. It exists so the current branch again matches the package receipt's
+discard-contract claim after the later restore commit.

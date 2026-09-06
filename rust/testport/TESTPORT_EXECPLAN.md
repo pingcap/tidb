@@ -9587,3 +9587,11 @@ risks without claiming repository-wide parity.
   owner tests, all-target compilation, standalone rustfmt, and Ready evidence
   are recorded in `receipts/statistics_handle_usage_audit.md` and its living
   package ExecPlan. Eight native Rust ownership/integration annotations remain.
+- 2026-09-06 (`pkg/ttl/cache` corrective return-contract parity after
+  `8d42bcc7035`): the restore commit had reintroduced the 26 direct
+  Go-shaped `#[must_use]` annotations and removed the prior focused regression.
+  The complete Rust cache owner now again matches the receipt: 26 annotations
+  removed, five native/error boundaries retained, and the restored-tree probe
+  failed with exactly 26 diagnostics before the correction. All 39 owner tests,
+  all-target compilation, standalone rustfmt, and Ready evidence are recorded
+  in `receipts/ttl_cache.md` and `docs/operations/ttl-cache-audit-execplan.md`.

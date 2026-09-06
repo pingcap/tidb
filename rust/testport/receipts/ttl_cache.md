@@ -106,3 +106,41 @@ Bazel metadata could be regenerated.
   and repository-wide integration suites.
 
 The rolling repository audit continues with the remaining package checklist.
+
+## Corrective follow-up after restore commit `8d42bcc7035` (2026-09-06)
+
+The earlier discard-contract fix was present in ancestor commit
+`cb51678c98b`, but restore commit `8d42bcc7035` reintroduced its 26 removed
+annotations and deleted its regression/receipt updates from the current tree.
+The current 13-artifact Go package inventory remains unchanged at
+`origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; per the requested
+Rust-only scope, no Go source or test was executed. The complete Rust cache
+owner was rechecked before editing, including all five cache modules, the
+aggregate `cache_test.rs`, crate root, manifest/workspace registration, and
+the existing task/session/SQL owner tests.
+
+The 26 direct Go-shaped constructor, accessor, SQL-builder, key-range,
+table-name, decoder, status, and test-helper returns again had Rust-only
+`#[must_use]` enforcement. The focused
+`go_cache_returns_may_be_ignored_like_go` regression failed on the restored
+tree with exactly 26 diagnostics (`/tmp/tidb-ttl-cache-restored-prefix.log`)
+and passes after the annotations were removed. The five native/error
+boundaries remain annotated: `BaseCache::update_time`,
+`PhysicalTable::table_info_ptr_eq`, `TimeUnitType::from_i64`,
+`MockExpireTimeKey::get`, and the `Result`-returning
+`insert_into_ttl_task`.
+
+Ready validation for this corrective Rust-only batch:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-ttl --test cache_test go_cache_returns_may_be_ignored_like_go -- --exact --test-threads=1` (1 passed);
+- `cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-ttl --tests --test-threads=1` (39 passed);
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-ttl --all-targets --quiet`;
+- `rustfmt +nightly-2026-08-22 --check --edition 2021 rust/crates/tidb-ttl/src/cache/base.rs rust/crates/tidb-ttl/src/cache/infoschema.rs rust/crates/tidb-ttl/src/cache/table.rs rust/crates/tidb-ttl/src/cache/task.rs rust/crates/tidb-ttl/src/cache/ttlstatus.rs rust/crates/tidb-ttl/tests/cache_test.rs`;
+- `make lint`;
+- `git diff --check`.
+
+Only Rust return-value lint metadata and its focused regression are restored;
+TTL cache SQL, encoding/decoding, expiry, identity, refresh, and error
+behavior are unchanged. No Go/Bazel/Cargo/module/import graph changed, so
+`make bazel_prepare` was not required. The prior historical Go-side test
+harness change remains outside this corrective Rust-only batch.
