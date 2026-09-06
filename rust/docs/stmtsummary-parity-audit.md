@@ -14,15 +14,33 @@ Full-package audit of `pkg/util/stmtsummary` (+ `v2/`) against
   the stale rollup) failed with the previous interval's rollup exposed;
   after the fix it passes as a ported test.
 
+## Ported in a follow-up batch
+
+`v2/reader.go` (951 lines) is now ported whole in
+`src/v2/reader.rs`: `MemReader`, `HistoryReader` with the
+scan/parse worker pipeline (unbuffered file dispatch, concurrent/2 scan
+workers that then join parsing, monitor over the inner error channel),
+`stmtChecker` with time-range filtering, `stmtFile`/`stmtFiles` with the
+pinned-active-inode rotation deduplication, the persisted-record JSON
+parser mirroring `record`'s field names and `encoding/json` leniency, and
+the ported `v2/reader_test.go` regressions (61 crate tests total).
+
+Port notes (each commented at its site):
+- Go closes channels explicitly (`close(linesCh)`); Rust closes by
+  dropping senders, so a scan worker must drop its lines sender before it
+  becomes a parse worker -- the exact deadlock the ported Go tests
+  exercise.
+- `os.SameFile` deduplication resolves metadata at walk time (Go's lazy
+  `os.DirEntry.Info`), with an injectable failure for the ported test.
+- `parseEndTs` keeps Go's quirk of matching the config prefix against the
+  file's BASE name, so only a relative config filename yields a usable
+  rotated-file end timestamp.
+- The KV worker in `tidb-pd-client` is unrelated here; all etcd notes in
+  the earlier schemaver receipt.
+
 ## Open items (feature-sized ports, not yet claimed)
 
-1. `v2/reader.go` (951 lines) is not ported: `MemReader`,
-   `HistoryReader`, `stmtFile`/`stmtScanWorker`/`stmtParseWorker` persisted
-   log scanning, `StmtTimeRange`. Under persistent mode
-   (`tidb_stmt_summary_enable_persistent=ON`) there is no
-   statements_summary/history read path. Documented in
-   `src/lib.rs` and `src/v2/mod.rs` headers.
-2. `v2/logger.go` rotation is unported: `FileStmtLogWriter` is append-only;
+1. `v2/logger.go` rotation is unported: `FileStmtLogWriter` is append-only;
    `Config.file_max_size/days/backups` are carried but unused, and the
    lumberjack/zap sink plus `StmtSummaryEvictedLogCounter` wiring are
    trait-narrowed behind `EvictedLogMetricsSink` (Noop default). Persistent
@@ -57,6 +75,6 @@ Full-package audit of `pkg/util/stmtsummary` (+ `v2/`) against
 
 ## Validation
 
-- `cargo test -p tidb-stmtsummary --all-targets`: 52 tests pass (51 prior +
-  the ported stale-evicted regression).
-- `cargo fmt -p tidb-stmtsummary`, `git diff --check`.
+- `cargo test -p tidb-stmtsummary --all-targets`: 61 lib tests pass (52
+  prior + the 9 ported v2 reader regressions).
+- `cargo fmt -p tidb-stmtsummary`, `git diff --check`, `make lint`.

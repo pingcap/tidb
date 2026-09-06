@@ -975,7 +975,7 @@ impl StmtRecord {
 
 /// Go `time.Duration(int64)` for non-negative nanosecond counts; negative
 /// counts (which `time.Duration` allows and `Duration` does not) clamp to zero.
-fn nanos_to_duration(nanos: i64) -> Duration {
+pub(crate) fn nanos_to_duration(nanos: i64) -> Duration {
     Duration::from_nanos(u64::try_from(nanos).unwrap_or(0))
 }
 
