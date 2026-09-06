@@ -1717,6 +1717,27 @@ pub enum SimpleSig {
     /// `JsonMemberOfSig` over (value, json): equality against the doc, or
     /// against each ARRAY element (Go `builtinJSONMemberOfSig.evalInt`).
     JsonMemberOfSig,
+    /// The temporal extraction family over a TIME/DATETIME leaf: `Date`
+    /// truncates a DATETIME to its date part; `Hour`/`Minute`/`Second`/
+    /// `MicroSecond` extract the clock fields (unsigned, hours may exceed
+    /// 24 on durations); `Month` extracts the calendar month; `DateDiff`
+    /// answers the day difference between two dates. `CastTimeAsDuration`
+    /// adapts a DATETIME column to the DURATION channel they read.
+    Date,
+    /// See [`SimpleSig::Date`].
+    Hour,
+    /// See [`SimpleSig::Date`].
+    Minute,
+    /// See [`SimpleSig::Date`].
+    Second,
+    /// See [`SimpleSig::Date`].
+    MicroSecond,
+    /// See [`SimpleSig::Date`].
+    Month,
+    /// See [`SimpleSig::Date`].
+    DateDiff,
+    /// See [`SimpleSig::Date`].
+    CastTimeAsDuration,
     /// `CastIntAsInt`/`CastRealAsInt`/`CastDecimalAsInt` (`AS SIGNED`):
     /// the REAL and DECIMAL sources ROUND to the nearest integer and a
     /// result outside BIGINT is Go's cast overflow error
@@ -1915,6 +1936,14 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::LogicalOr => SimpleSig::LogicalOr,
             tipb::ScalarFuncSig::UnaryNotInt => SimpleSig::UnaryNot,
             tipb::ScalarFuncSig::IntIsNull => SimpleSig::IntIsNull,
+            tipb::ScalarFuncSig::Date => SimpleSig::Date,
+            tipb::ScalarFuncSig::Hour => SimpleSig::Hour,
+            tipb::ScalarFuncSig::Minute => SimpleSig::Minute,
+            tipb::ScalarFuncSig::Second => SimpleSig::Second,
+            tipb::ScalarFuncSig::MicroSecond => SimpleSig::MicroSecond,
+            tipb::ScalarFuncSig::Month => SimpleSig::Month,
+            tipb::ScalarFuncSig::DateDiff => SimpleSig::DateDiff,
+            tipb::ScalarFuncSig::CastTimeAsDuration => SimpleSig::CastTimeAsDuration,
             tipb::ScalarFuncSig::DecimalIsNull => SimpleSig::DecimalIsNull,
             tipb::ScalarFuncSig::DurationIsNull => SimpleSig::DurationIsNull,
             tipb::ScalarFuncSig::RealIsNull => SimpleSig::RealIsNull,
@@ -2183,6 +2212,26 @@ fn eval_real(
                 _ if right != 0.0 => Some(left / right),
                 _ => None,
             }
+        }
+        _ => None,
+    }
+}
+
+/// The MySQL duration of one operand: a DURATION leaf, or a DATETIME
+/// leaf's time-of-day (Go `CastTimeAsDuration`).
+fn eval_duration(
+    expr: Option<&SimpleExpr>,
+    row: &[tidb_datatype::Datum],
+) -> Option<tidb_datatype::MySqlDuration> {
+    use tidb_datatype::Datum;
+    match expr? {
+        SimpleExpr::Column(offset) => match row.get(*offset) {
+            Some(Datum::Duration(value)) => Some(*value),
+            Some(Datum::Time(value)) => value.to_duration().ok(),
+            _ => None,
+        },
+        SimpleExpr::Func(SimpleSig::CastTimeAsDuration, children) => {
+            eval_time(children.first(), row).and_then(|time| time.to_duration().ok())
         }
         _ => None,
     }
@@ -2846,6 +2895,109 @@ pub fn eval_expr(
                         Some(Err(message)) => return Err(message),
                         None => Some(1),
                     }
+                }
+                // Go's temporal extraction family: `builtinDateSig` truncates
+                // a DATETIME to its date part, the clock signatures read the
+                // DURATION channel (`CastTimeAsDuration` adapts a DATETIME
+                // column), `Month` reads the calendar month, and `DateDiff`
+                // answers the day difference between two dates.
+                SimpleSig::CastTimeAsDuration => {
+                    let Some(duration) = eval_duration(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    Some(i128::from(duration.nanoseconds() != 0))
+                }
+                SimpleSig::Date => {
+                    let Some(time) = eval_time(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    let core = time.core_time();
+                    let Some(date) = tidb_datatype::Time::new(
+                        tidb_datatype::CoreTime::from_date(
+                            core.year() as u16,
+                            core.month(),
+                            core.day(),
+                            0,
+                            0,
+                            0,
+                            0,
+                        ),
+                        tidb_datatype::TimeType::Date,
+                        0,
+                    )
+                    .ok() else {
+                        return Ok(None);
+                    };
+                    // A bare date as a condition answers ToBool of its
+                    // numeric form; comparisons read it as a decimal.
+                    Some(i128::from(!date.to_number().is_zero()))
+                }
+                SimpleSig::Hour => {
+                    let Some(duration) = eval_duration(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    Some(i128::from(duration.hour()))
+                }
+                SimpleSig::Minute => {
+                    let Some(duration) = eval_duration(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    Some(i128::from(duration.minute()))
+                }
+                SimpleSig::Second => {
+                    let Some(duration) = eval_duration(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    Some(i128::from(duration.second()))
+                }
+                SimpleSig::MicroSecond => {
+                    let Some(duration) = eval_duration(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    Some(i128::from(duration.microsecond()))
+                }
+                SimpleSig::Month => {
+                    let Some(time) = eval_time(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    Some(i128::from(time.core_time().month()))
+                }
+                SimpleSig::DateDiff => {
+                    let (Some(left), Some(right)) = (
+                        eval_time(children.first(), row),
+                        eval_time(children.get(1), row),
+                    ) else {
+                        return Ok(None);
+                    };
+                    // DATEDIFF truncates both sides to their date parts and
+                    // answers days from the second to the first.
+                    let to_date = |time: tidb_datatype::Time| {
+                        let core = time.core_time();
+                        tidb_datatype::Time::new(
+                            tidb_datatype::CoreTime::from_date(
+                                core.year() as u16,
+                                core.month(),
+                                core.day(),
+                                0,
+                                0,
+                                0,
+                                0,
+                            ),
+                            tidb_datatype::TimeType::Date,
+                            0,
+                        )
+                        .ok()
+                    };
+                    let Some(first) = to_date(left) else {
+                        return Ok(None);
+                    };
+                    let Some(second) = to_date(right) else {
+                        return Ok(None);
+                    };
+                    Some(i128::from(second.core_time().timestamp_diff(
+                        first.core_time(),
+                        tidb_datatype::TimestampInterval::Day,
+                    )))
                 }
                 SimpleSig::JsonMemberOfSig => {
                     // Go `builtinJSONMemberOfSig.evalInt`: the target (any
@@ -4527,5 +4679,35 @@ mod tests {
         // The bare condition answers its numeric-prefix truth: "éll" has
         // none -> FALSE.
         assert_eq!(eval_expr(&sub, &row, 4).expect("evals"), Some(0));
+    }
+
+    #[test]
+    fn temporal_extraction_follows_go() {
+        use tidb_datatype::{Datum, Time, TimeType};
+        // 2024-03-05 14:30:45.123456 as a DATETIME column.
+        let time = Time::from_date_checked(2024, 3, 5, 14, 30, 45, 123456, TimeType::DateTime, 6)
+            .expect("constructs");
+        let row = [Datum::Time(time)];
+
+        let month = SimpleExpr::Func(SimpleSig::Month, vec![SimpleExpr::Column(0)]);
+        assert_eq!(eval_expr(&month, &row, 4).expect("evals"), Some(3));
+        let hour = SimpleExpr::Func(SimpleSig::Hour, vec![SimpleExpr::Column(0)]);
+        assert_eq!(eval_expr(&hour, &row, 4).expect("evals"), Some(14));
+        let minute = SimpleExpr::Func(SimpleSig::Minute, vec![SimpleExpr::Column(0)]);
+        assert_eq!(eval_expr(&minute, &row, 4).expect("evals"), Some(30));
+        let second = SimpleExpr::Func(SimpleSig::Second, vec![SimpleExpr::Column(0)]);
+        assert_eq!(eval_expr(&second, &row, 4).expect("evals"), Some(45));
+        let micro = SimpleExpr::Func(SimpleSig::MicroSecond, vec![SimpleExpr::Column(0)]);
+        assert_eq!(eval_expr(&micro, &row, 4).expect("evals"), Some(123456));
+        // DateDiff truncates both sides to their date parts: two days apart
+        // answers 2 regardless of the clock fields.
+        let earlier = Time::from_date_checked(2024, 3, 3, 23, 0, 0, 0, TimeType::DateTime, 0)
+            .expect("constructs");
+        let diff = SimpleExpr::Func(
+            SimpleSig::DateDiff,
+            vec![SimpleExpr::Column(0), SimpleExpr::Column(1)],
+        );
+        let row_two = [Datum::Time(time), Datum::Time(earlier)];
+        assert_eq!(eval_expr(&diff, &row_two, 4).expect("evals"), Some(2));
     }
 }

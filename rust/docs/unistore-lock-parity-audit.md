@@ -469,3 +469,27 @@ a bare string function as a condition answers its numeric-prefix truth
 Regression: `string_functions_follow_go_semantics` (5-char/6-byte split on
 "héllo", the É rune fold, the negative-position substring, and the bare
 condition's FALSE).
+
+## Coprocessor temporal extraction family (2026-09-07, same session)
+
+Seven temporal signatures land: `Date` 6012, `Hour` 6013, `Minute` 6014,
+`Second` 6015, `MicroSecond` 6016, `Month` 6017, `DateDiff` 6003, plus the
+`CastTimeAsDuration` 45 adaptation the clock signatures read through.
+
+- `Date` truncates a DATETIME to its date part via
+  `CoreTime::from_date(y, m, d, 0, 0, 0, 0)` at `TimeType::Date`.
+- `Hour`/`Minute`/`Second`/`MicroSecond` read the DURATION channel
+  (`eval_duration`: a DURATION leaf, or a DATETIME leaf's time-of-day via
+  `Time::to_duration`, or the `CastTimeAsDuration` composition); the
+  extracted fields are unsigned with hours beyond 24 on durations, MySQL's
+  observable rule.
+- `Month` reads the calendar month; `DateDiff` truncates both sides to
+  their date parts and answers days from the second to the first (the
+  helper's `timestamp_diff` computes other-minus-self, so the arm orders
+  the operands accordingly).
+- A bare extraction answers its own non-zero truth as a condition.
+
+Regression: `temporal_extraction_follows_go` (month/hour/minute/second/
+microsecond over one DATETIME, and DATEDIFF across a two-day span with
+differing clock fields). `WeekWithoutMode` stays refused: Go's week
+calculation needs the mode-dependent calendar algorithm, its own course.
