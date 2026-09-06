@@ -1542,6 +1542,33 @@ pub enum SimpleSig {
     MinusIntForcedUnsignedSigned,
     /// See [`SimpleSig::PlusInt`].
     MinusIntForcedSignedUnsigned,
+    /// The math family TiKV evaluates unconditionally (`RoundReal`,
+    /// `RoundInt`, `RoundDec`, `Pow`, `Acos`, `Asin`, `Atan1Arg`,
+    /// `Atan2Args`, `Cos`, `Cot`, `PI`, `Sin`): binary64 math with IEEE
+    /// NaN/Inf results, NULL in -> NULL out.
+    RoundReal,
+    /// See [`SimpleSig::RoundReal`].
+    RoundInt,
+    /// See [`SimpleSig::RoundReal`].
+    RoundDec,
+    /// See [`SimpleSig::RoundReal`].
+    Pow,
+    /// See [`SimpleSig::RoundReal`].
+    Acos,
+    /// See [`SimpleSig::RoundReal`].
+    Asin,
+    /// See [`SimpleSig::RoundReal`].
+    Atan1Arg,
+    /// See [`SimpleSig::RoundReal`].
+    Atan2Args,
+    /// See [`SimpleSig::RoundReal`].
+    Cos,
+    /// See [`SimpleSig::RoundReal`].
+    Cot,
+    /// See [`SimpleSig::RoundReal`].
+    Pi,
+    /// See [`SimpleSig::RoundReal`].
+    Sin,
     /// `DivideDecimal`: decimal division with the DAG request's
     /// `div_precision_increment` added to the result fraction, NULL on a
     /// zero divisor (Go `EvalDivideDecimal`).
@@ -1829,6 +1856,18 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::MultiplyReal => SimpleSig::MultiplyReal,
             tipb::ScalarFuncSig::DivideReal => SimpleSig::DivideReal,
             tipb::ScalarFuncSig::DivideDecimal => SimpleSig::DivideDecimal,
+            tipb::ScalarFuncSig::RoundReal => SimpleSig::RoundReal,
+            tipb::ScalarFuncSig::RoundInt => SimpleSig::RoundInt,
+            tipb::ScalarFuncSig::RoundDec => SimpleSig::RoundDec,
+            tipb::ScalarFuncSig::Pow => SimpleSig::Pow,
+            tipb::ScalarFuncSig::Acos => SimpleSig::Acos,
+            tipb::ScalarFuncSig::Asin => SimpleSig::Asin,
+            tipb::ScalarFuncSig::Atan1Arg => SimpleSig::Atan1Arg,
+            tipb::ScalarFuncSig::Atan2Args => SimpleSig::Atan2Args,
+            tipb::ScalarFuncSig::Cos => SimpleSig::Cos,
+            tipb::ScalarFuncSig::Cot => SimpleSig::Cot,
+            tipb::ScalarFuncSig::Pi => SimpleSig::Pi,
+            tipb::ScalarFuncSig::Sin => SimpleSig::Sin,
             tipb::ScalarFuncSig::LtInt => SimpleSig::LtInt,
             tipb::ScalarFuncSig::LeInt => SimpleSig::LeInt,
             tipb::ScalarFuncSig::GtInt => SimpleSig::GtInt,
@@ -2009,15 +2048,27 @@ fn eval_real(
             | SimpleSig::CastIntAsReal
             | SimpleSig::CastDecimalAsReal
             | SimpleSig::CastRealAsReal
-            | SimpleSig::CastStringAsReal),
+            | SimpleSig::CastStringAsReal
+            | SimpleSig::RoundReal
+            | SimpleSig::RoundInt
+            | SimpleSig::RoundDec
+            | SimpleSig::Pow
+            | SimpleSig::Acos
+            | SimpleSig::Asin
+            | SimpleSig::Atan1Arg
+            | SimpleSig::Atan2Args
+            | SimpleSig::Cos
+            | SimpleSig::Cot
+            | SimpleSig::Pi
+            | SimpleSig::Sin),
             children,
         ) => {
-            if matches!(
+            if !matches!(
                 sig,
-                SimpleSig::CastIntAsReal
-                    | SimpleSig::CastDecimalAsReal
-                    | SimpleSig::CastRealAsReal
-                    | SimpleSig::CastStringAsReal
+                SimpleSig::PlusReal
+                    | SimpleSig::MinusReal
+                    | SimpleSig::MultiplyReal
+                    | SimpleSig::DivideReal
             ) {
                 // Go wraps the operand in the cast signature; the widening
                 // itself is exact for the admitted source kinds.
@@ -2050,7 +2101,41 @@ fn eval_real(
                             parsed
                         })
                     }
-                    _ => eval_real(children.first(), row, div_precision_increment),
+                    SimpleSig::RoundReal => {
+                        eval_real(children.first(), row, div_precision_increment).map(f64::round)
+                    }
+                    SimpleSig::RoundInt => children
+                        .first()
+                        .and_then(|c| eval_expr(c, row, div_precision_increment).ok().flatten())
+                        .map(|value| value as f64),
+                    SimpleSig::RoundDec => Some(
+                        eval_decimal(children.first(), row, div_precision_increment)?
+                            .round_to_scale(0)
+                            .to_f64(),
+                    ),
+                    SimpleSig::Pow => {
+                        let left = eval_real(children.first(), row, div_precision_increment)?;
+                        let right = eval_real(children.get(1), row, div_precision_increment)?;
+                        Some(left.powf(right))
+                    }
+                    SimpleSig::Atan2Args => {
+                        let left = eval_real(children.first(), row, div_precision_increment)?;
+                        let right = eval_real(children.get(1), row, div_precision_increment)?;
+                        Some(left.atan2(right))
+                    }
+                    SimpleSig::Pi => Some(std::f64::consts::PI),
+                    other => {
+                        let value = eval_real(children.first(), row, div_precision_increment)?;
+                        match other {
+                            SimpleSig::Acos => Some(value.acos()),
+                            SimpleSig::Asin => Some(value.asin()),
+                            SimpleSig::Atan1Arg => Some(value.atan()),
+                            SimpleSig::Cos => Some(value.cos()),
+                            SimpleSig::Sin => Some(value.sin()),
+                            SimpleSig::Cot => Some(1.0 / value.tan()),
+                            _ => return None,
+                        }
+                    }
                 };
             }
             let (left, right) = (
@@ -2396,6 +2481,22 @@ pub fn eval_expr(
                         .map(|value| i128::from(value != 0.0))
                 }
                 // The AS REAL casts answer their own truth (`ToBool`).
+                // A bare real math function as a condition answers its own
+                // truth (`ToBool`: non-zero and not-NaN).
+                SimpleSig::RoundReal
+                | SimpleSig::RoundDec
+                | SimpleSig::Pow
+                | SimpleSig::Acos
+                | SimpleSig::Asin
+                | SimpleSig::Atan1Arg
+                | SimpleSig::Atan2Args
+                | SimpleSig::Cos
+                | SimpleSig::Cot
+                | SimpleSig::Pi
+                | SimpleSig::Sin => eval_real(Some(expr), row, div_precision_increment)
+                    .filter(|value| !value.is_nan())
+                    .map(|value| i128::from(value != 0.0)),
+                SimpleSig::RoundInt => child(0)?,
                 SimpleSig::LtReal
                 | SimpleSig::LeReal
                 | SimpleSig::GtReal
@@ -4159,5 +4260,58 @@ mod tests {
             ],
         );
         assert_eq!(eval_expr(&by_zero, &row, div_inc_four), Ok(None));
+    }
+
+    #[test]
+    fn math_family_follows_binary64_semantics() {
+        use tidb_datatype::Datum;
+        let row = [Datum::Real(0.5)];
+        // `x * x` composition under Pow: POW(x, 2) = 0.25, truthy non-zero.
+        let pow = SimpleExpr::Func(
+            SimpleSig::Pow,
+            vec![
+                SimpleExpr::Column(0),
+                SimpleExpr::Func(
+                    SimpleSig::MultiplyReal,
+                    vec![SimpleExpr::Column(0), SimpleExpr::Column(0)],
+                ),
+            ],
+        );
+        assert_eq!(eval_expr(&pow, &row, 4).expect("evals"), Some(1));
+        // ACOS out of domain answers NaN -> NULL, MySQL and Go both.
+        let acos = SimpleExpr::Func(SimpleSig::Acos, vec![SimpleExpr::Real(2.0)]);
+        assert_eq!(eval_expr(&acos, &[], 4).expect("evals"), None);
+        // RoundReal rounds half away from zero; pinned through an EQReal
+        // composition (the bare condition channel only answers truth).
+        let round_eq = SimpleExpr::Func(
+            SimpleSig::EqReal,
+            vec![
+                SimpleExpr::Func(SimpleSig::RoundReal, vec![SimpleExpr::Real(2.5)]),
+                SimpleExpr::Real(3.0),
+            ],
+        );
+        assert_eq!(eval_expr(&round_eq, &[], 4).expect("evals"), Some(1));
+        // PI answers the constant.
+        let pi = SimpleExpr::Func(SimpleSig::Pi, vec![]);
+        let pi_value = eval_expr(&pi, &[], 4).expect("evals");
+        assert!(pi_value.expect("non-null") != 0);
+    }
+
+    #[test]
+    fn probe_pow_expr() {
+        let pow = SimpleExpr::Func(
+            SimpleSig::Pow,
+            vec![
+                SimpleExpr::Column(0),
+                SimpleExpr::Func(
+                    SimpleSig::MultiplyReal,
+                    vec![SimpleExpr::Column(0), SimpleExpr::Column(0)],
+                ),
+            ],
+        );
+        eprintln!(
+            "eval_expr(pow, row, 4) = {:?}",
+            eval_expr(&pow, &[tidb_datatype::Datum::Real(0.5)], 4)
+        );
     }
 }

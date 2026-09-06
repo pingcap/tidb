@@ -438,3 +438,18 @@ arithmetics do; as a comparison operand the widened fraction is
 observable: `5 / 2` with increment 4 answers 2.5000, GREATER than 2,
 while increment 0 answers exactly 2 -- both pinned by
 `decimal_divide_uses_the_request_precision_increment`.
+
+## Coprocessor math family (2026-09-07, same session)
+
+The twelve math signatures the trimmed enum carried (`RoundReal` 2121,
+`RoundInt` 2122, `RoundDec` 2123, `Pow` 2137, `Acos` 2142, `Asin` 2143,
+`Atan1Arg` 2144, `Atan2Args` 2145, `Cos` 2146, `Cot` 2147, `PI` 2150,
+`Sin` 2152) land in the real channel: `RoundReal` rounds half away from
+zero (`f64::round` == Go `RoundFloat`), `RoundInt` is identity over the
+int channel, `RoundDec` rounds a decimal to scale 0, `Pow`/`Atan2Args`
+take two operands, and the trig family answers IEEE NaN for out-of-domain
+inputs (ACOS(2) -> NULL, exactly Go's isNull) with `Cot` answering Inf at
+zero through IEEE division. They compose as REAL operands and a bare
+function answers its own `ToBool` truth. Regression:
+`math_family_follows_binary64_semantics` (POW composition, ACOS(2) NULL,
+round-half-away via EQReal, the PI constant).
