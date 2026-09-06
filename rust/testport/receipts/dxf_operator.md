@@ -41,3 +41,48 @@ cargo fmt --all -- --check
 cargo test --locked -p tidb-dxf-operator
 git diff --check
 ```
+
+## Follow-up closure — discardable constructor returns (2026-09-06)
+
+The complete six-artifact, 581-line Go package was re-read at current
+`origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; all production,
+test, and BUILD files remain byte-identical to the pinned source. The Rust
+owner (`pipeline.rs`, `wrapper.rs`, and the existing source test) and every
+constructor caller were read before editing.
+
+Go permits discarding `NewAsyncPipeline`, `NewSimpleDataSource`, the private
+`newSimpleSink`, and the private `newSimpleOperator` results. Rust had marked
+the four direct counterparts `#[must_use]`, creating four Rust-only
+`unused_must_use` diagnostics under a deny-on-discard caller. Those annotations
+were removed without changing channels, worker-pool lifecycle, cancellation,
+pipeline ordering, or error propagation.
+
+The focused regression `pipeline_test::go_constructor_return_values_can_be_ignored`
+invokes all four constructors under `#[deny(unused_must_use)]`. Before the
+implementation edit it failed with exactly four diagnostics; after the edit it
+passes. No Go, Bazel, Cargo dependency, or module file changed.
+
+Ready validation for this Rust-only follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-dxf-operator --offline --locked go_constructor_return_values_can_be_ignored -- --nocapture
+PASS; 1 passed, 0 failed.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-dxf-operator --offline --locked -- --test-threads=1
+PASS; 2 unit tests passed, 0 failed; doc tests had 0 tests.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-dxf-operator --all-targets --offline --locked
+PASS.
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+The package remains otherwise covered by its existing pipeline behavior test;
+the rolling audit continues.

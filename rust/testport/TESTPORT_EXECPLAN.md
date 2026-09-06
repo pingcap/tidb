@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/dxf/operator` constructor return contracts): the complete
+  six-artifact, 581-line Go package and complete Rust owner were rechecked at
+  current Go master. The direct `AsyncPipeline::new`,
+  `SimpleDataSource::new`, `SimpleSink::new`, and `SimpleOperator::new`
+  counterparts no longer emit four Rust-only `#[must_use]` diagnostics. A
+  focused deny-on-discard regression failed with exactly four diagnostics
+  before the edit and passes afterward; the full owner suite, all-target
+  check, formatting, lint, and diff gates pass. Evidence is recorded in
+  `receipts/dxf_operator.md`.
 - 2026-09-06 (`pkg/ddl/mock` generated return contracts): the complete
   three-artifact, 196-line generated Go package and complete Rust owner were
   rechecked at current Go master. The direct `MockSchemaLoader::{new,expect}`

@@ -32,7 +32,6 @@ impl fmt::Display for AsyncPipeline {
 
 impl AsyncPipeline {
     /// Go `NewAsyncPipeline`.
-    #[must_use]
     pub fn new(operators: Vec<Arc<dyn Operator>>) -> Self {
         Self {
             operators,

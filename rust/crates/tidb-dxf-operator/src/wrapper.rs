@@ -32,7 +32,6 @@ pub struct SimpleDataSource<T: TaskMayPanic<OperatorError>> {
 
 impl<T: TaskMayPanic<OperatorError>> SimpleDataSource<T> {
     /// Go `NewSimpleDataSource`.
-    #[must_use]
     pub fn new(context: Arc<Context>, inputs: Vec<T>) -> Self {
         Self {
             context,
@@ -113,7 +112,6 @@ pub(crate) struct SimpleSink<R: Send + 'static> {
 
 impl<R: Send + 'static> SimpleSink<R> {
     /// Go `newSimpleSink`.
-    #[must_use]
     pub(crate) fn new(context: Arc<Context>, drainer: impl Fn(R) + Send + Sync + 'static) -> Self {
         Self {
             context,
@@ -186,7 +184,6 @@ pub(crate) struct SimpleOperator<T: TaskMayPanic<OperatorError>, R: Send + 'stat
 
 impl<T: TaskMayPanic<OperatorError>, R: Send + 'static> SimpleOperator<T, R> {
     /// Go `newSimpleOperator`.
-    #[must_use]
     pub(crate) fn new(
         context: Arc<Context>,
         transform: impl Fn(T) -> R + Send + Sync + 'static,

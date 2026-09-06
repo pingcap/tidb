@@ -20,6 +20,20 @@ use regex::Regex;
 use crate::wrapper::{SimpleOperator, SimpleSink};
 use crate::{compose, strCnt, stringTask, AsyncPipeline, Context, Operator, OperatorError};
 
+#[deny(unused_must_use)]
+#[test]
+fn go_constructor_return_values_can_be_ignored() {
+    let context = Arc::new(Context::new());
+    AsyncPipeline::new(Vec::new());
+    crate::SimpleDataSource::new(Arc::clone(&context), Vec::<stringTask>::new());
+    SimpleSink::new(Arc::clone(&context), |_value: stringTask| {});
+    SimpleOperator::new(
+        Arc::clone(&context),
+        |_value: stringTask| stringTask(String::new()),
+        1,
+    );
+}
+
 #[test]
 fn pipeline_async_multi_operators_without_error() {
     let words = "Bob hiT a ball, the hIt BALL flew far after it was hit.";
