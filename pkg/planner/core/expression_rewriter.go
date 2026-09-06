@@ -2352,9 +2352,17 @@ func (er *expressionRewriter) resolveLocalFullTextAnalyzer(numCols, stackLen int
 			// and carries the same analyzer snapshot, so it can answer a
 			// MATCH. A declared one still wins if the table has both, since
 			// that is the index the user named for this purpose.
+			//
+			// Several such indexes must agree on the analyzer. Taking the
+			// first would make what MATCH means depend on the order indexes
+			// happen to sit in the table, so two indexes tokenizing the same
+			// column differently are refused rather than silently resolved.
 			if fallback == nil {
 				config := origin.AnalyzerConfig
 				fallback = &config
+			} else if !fallback.Equal(origin.AnalyzerConfig) {
+				return fulltext.AnalyzerConfig{}, expression.ErrNotSupportedYet.GenWithStackByArgs(
+					"MATCH ... AGAINST over a column with several FTS_TOKENIZE indexes that disagree on the analyzer")
 			}
 			continue
 		}

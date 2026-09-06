@@ -401,3 +401,49 @@ func TestFTSMatchAgainstWithoutIndexMergeScans(t *testing.T) {
 	tk.MustQuery(memberOf).Check([][]any{{"1"}})
 	tk.MustExec("set @@tidb_enable_index_merge=on")
 }
+
+// TestFTSMatchAgainstAmbiguousAnalyzerRejected covers a column carrying two
+// hand-written tokenize indexes that disagree on the analyzer. Resolving to
+// whichever comes first would make what MATCH means depend on the order indexes
+// sit in the table, so the query is refused instead.
+func TestFTSMatchAgainstAmbiguousAnalyzerRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_local_match_against=ON")
+	tk.MustExec(`create table articles (
+		id int primary key,
+		body varchar(255),
+		key idx_a ((cast(fts_tokenize(body, 'STANDARD', 3, 84, 1) as char(84) array))),
+		key idx_b ((cast(fts_tokenize(body, 'STANDARD', 5, 84, 1) as char(84) array)))
+	)`)
+	tk.MustExec("insert into articles values (1, 'rareone alone here')")
+
+	require.ErrorContains(t,
+		tk.ExecToErr("select id from articles where match(body) against('+rareone' in boolean mode)"),
+		"disagree on the analyzer")
+
+	// Indexes that agree are not ambiguous, whatever their number or shape.
+	tk.MustExec(`create table agreeing (
+		id int primary key,
+		tenant_id int,
+		body varchar(255),
+		key idx_a ((cast(fts_tokenize(body, 'STANDARD', 3, 84, 1) as char(84) array))),
+		key idx_b (tenant_id, (cast(fts_tokenize(body, 'STANDARD', 3, 84, 1) as char(84) array)))
+	)`)
+	tk.MustExec("insert into agreeing values (1, 7, 'rareone alone here')")
+	tk.MustQuery("select id from agreeing where match(body) against('+rareone' in boolean mode)").
+		Check([][]any{{"1"}})
+
+	// A declared FULLTEXT index settles it, so a disagreeing hand-written one
+	// alongside is not ambiguity - the declared index is the one named for it.
+	tk.MustExec(`create table declared (
+		id int primary key,
+		body varchar(255),
+		fulltext index idx_ft(body),
+		key idx_hand ((cast(fts_tokenize(body, 'STANDARD', 5, 84, 1) as char(84) array)))
+	)`)
+	tk.MustExec("insert into declared values (1, 'rareone alone here')")
+	tk.MustQuery("select id from declared where match(body) against('+rareone' in boolean mode)").
+		Check([][]any{{"1"}})
+}
