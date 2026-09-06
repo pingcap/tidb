@@ -41,6 +41,18 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`pkg/meta` remaining direct return contracts): the Rust-only
+  follow-up inventoried all 19 `tidb-meta` owner artifacts, its shared test
+  build input, workspace/lock registration, downstream edge, callers, tests,
+  feature gate, and generated/platform-variant surface before editing.
+  Twenty-seven direct source-shaped returns no longer impose Rust-only
+  discard diagnostics; the regression failed with exactly 27 diagnostics
+  before the correction and now passes. The 40 retained annotations are Rust
+  adapters/infrastructure, raw-KV helpers, error inspection, or the separately
+  owned `pkg/structure` surface. All 62 active owner tests, all-target
+  compilation, scoped formatting, Ready lint, and diff hygiene pass; this is
+  published as one package commit. Evidence is in
+  `receipts/meta_starter_bootstrap.md`.
 - 2026-09-07 (`pkg/planner/core` optimizer + postOptimize parity, batches
   pushed as `0f847776273` and `d619cc7e9aa`): the last two
   registered-but-unimplemented optimizer surfaces were ported whole and

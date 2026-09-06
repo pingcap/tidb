@@ -72,3 +72,58 @@ the pre-fix runs were recorded before production edits.
   not run locally.
 - Session bootstrap and InfoSchemaV2 tests listed in the historical `b039`
   receipt remain separate dependency boundaries and are not claimed here.
+
+## Rust-only follow-up: remaining direct return contracts (`2026-09-07`)
+
+The user narrowed this pass to Rust alignment, so the complete direct Go
+inventory above remains the package authority and no Go source was edited or
+re-read. Before editing, the Rust owner was inventoried in full: its manifest,
+eight production modules, and ten test/support modules comprise 19 tracked
+artifacts and 7,925 lines at base commit
+`0f17de068503f050f9ff1002389dc9a19c5d3aff`. The shared
+`rust/scripts/aggregate-tests.rs` build input, workspace registration,
+`Cargo.lock` package entry, downstream dependency edge, all callers, all 66
+declared tests, the single `nextgen`-gated test, and the absence of checked-in
+generated or platform-specific variants were also checked before the edit.
+
+Twenty-seven remaining direct source-shaped returns no longer impose
+Rust-only `#[must_use]` diagnostics: `Element.EncodeElement` and
+`Element.String`; the public metadata field key constructors and predicates;
+the private source key helpers for sequence cycle, schema diff, policies,
+resource groups, and DDL jobs; `splitRangeInt64Max`,
+`IsTableInfoMustLoad`, `Unescape`, `DefaultGroupMeta4Test`,
+`whichMagicType`, and `attachMagicByte`. This changes only whether callers may
+discard a value. Encoding, parsing, storage, and error behavior are unchanged.
+
+The 40 retained annotations belong to Rust convenience adapters, error-code
+inspection, raw-KV construction helpers, `MemoryTransaction` test/fault
+builders, or the separately receipted `pkg/structure` owner. They are not
+presented as direct `pkg/meta` source API parity.
+
+`return_contract_source::remaining_meta_source_returns_may_be_ignored_like_go`
+invokes all 27 corrected returns under `#[deny(unused_must_use)]`. With only
+the regression added to base `0f17de068503f050f9ff1002389dc9a19c5d3aff`,
+the focused command failed with exactly 27 diagnostics; it passes after the
+correction.
+
+The dedicated regression raises the final owner inventory to 20 tracked
+artifacts and 7,954 lines. Ready validation for the single package commit:
+
+- Focused post-fix regression — 1 passed, 64 filtered out.
+- `cargo +nightly-2026-08-22 nextest run --offline --locked -p tidb-meta --no-fail-fast`
+  — 62 passed, 3 skipped.
+- `cargo +nightly-2026-08-22 check --offline --locked -p tidb-meta --all-targets`
+  — passed.
+- `rustfmt +nightly-2026-08-22 --edition 2021 --check` on the changed ordinary
+  modules and dedicated regression — passed. The include-only
+  `transaction_rules.rs` edit deletes attributes without changing formatted
+  code; the workspace-wide formatter remains blocked by unrelated existing
+  `tidb-executor` formatting drift.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint`
+  — passed.
+- `git diff --check` — passed.
+
+No Go source, Cargo manifest, build metadata, fixture, generated input, or
+platform variant changed, so `make bazel_prepare` is not required. The
+feature-gated next-gen test and real TiKV integration were not rerun because
+this correction changes only compiler diagnostics on ignored plain values.

@@ -182,7 +182,6 @@ pub fn has_prefix(prefix: &str, field: &[u8]) -> bool {
 }
 
 /// Go `DBkey`.
-#[must_use]
 pub fn db_key(db_id: i64) -> Vec<u8> {
     prefixed_id(DB_PREFIX, db_id)
 }
@@ -193,13 +192,11 @@ pub fn parse_db_key(field: &[u8]) -> Result<i64> {
 }
 
 /// Go `IsDBkey`.
-#[must_use]
 pub fn is_db_key(field: &[u8]) -> bool {
     has_prefix(DB_PREFIX, field)
 }
 
 /// Go `TableKey`.
-#[must_use]
 pub fn table_key(table_id: i64) -> Vec<u8> {
     prefixed_id(TABLE_PREFIX, table_id)
 }
@@ -210,13 +207,11 @@ pub fn parse_table_key(field: &[u8]) -> Result<i64> {
 }
 
 /// Go `IsTableKey`.
-#[must_use]
 pub fn is_table_key(field: &[u8]) -> bool {
     has_prefix(TABLE_PREFIX, field)
 }
 
 /// Go `AutoTableIDKey`.
-#[must_use]
 pub fn auto_table_id_key(table_id: i64) -> Vec<u8> {
     prefixed_id(AUTO_TABLE_ID_PREFIX, table_id)
 }
@@ -233,13 +228,11 @@ pub fn parse_auto_table_id_key(field: &[u8]) -> Result<i64> {
 }
 
 /// Go `IsAutoTableIDKey`.
-#[must_use]
 pub fn is_auto_table_id_key(field: &[u8]) -> bool {
     has_prefix(AUTO_TABLE_ID_PREFIX, field)
 }
 
 /// Go `AutoIncrementIDKey`.
-#[must_use]
 pub fn auto_increment_id_key(table_id: i64) -> Vec<u8> {
     prefixed_id(AUTO_INCREMENT_ID_PREFIX, table_id)
 }
@@ -256,13 +249,11 @@ pub fn parse_auto_increment_id_key(field: &[u8]) -> Result<i64> {
 }
 
 /// Go `IsAutoIncrementIDKey`.
-#[must_use]
 pub fn is_auto_increment_id_key(field: &[u8]) -> bool {
     has_prefix(AUTO_INCREMENT_ID_PREFIX, field)
 }
 
 /// Go `AutoRandomTableIDKey`.
-#[must_use]
 pub fn auto_random_table_id_key(table_id: i64) -> Vec<u8> {
     prefixed_id(AUTO_RANDOM_ID_PREFIX, table_id)
 }
@@ -279,13 +270,11 @@ pub fn parse_auto_random_table_id_key(field: &[u8]) -> Result<i64> {
 }
 
 /// Go `IsAutoRandomTableIDKey`.
-#[must_use]
 pub fn is_auto_random_table_id_key(field: &[u8]) -> bool {
     has_prefix(AUTO_RANDOM_ID_PREFIX, field)
 }
 
 /// Go `SequenceKey`.
-#[must_use]
 pub fn sequence_key(sequence_id: i64) -> Vec<u8> {
     prefixed_id(SEQUENCE_PREFIX, sequence_id)
 }
@@ -302,49 +291,41 @@ pub fn parse_sequence_key(field: &[u8]) -> Result<i64> {
 }
 
 /// Go `IsSequenceKey`.
-#[must_use]
 pub fn is_sequence_key(field: &[u8]) -> bool {
     has_prefix(SEQUENCE_PREFIX, field)
 }
 
 /// Go `Mutator.sequenceCycleKey`.
-#[must_use]
 pub fn sequence_cycle_key(sequence_id: i64) -> Vec<u8> {
     prefixed_id(SEQUENCE_CYCLE_PREFIX, sequence_id)
 }
 
 /// Go `Mutator.schemaDiffKey`.
-#[must_use]
 pub fn schema_diff_key(schema_version: i64) -> Vec<u8> {
     prefixed_id(SCHEMA_DIFF_PREFIX, schema_version)
 }
 
 /// Go `Mutator.policyKey`.
-#[must_use]
 pub fn policy_key(policy_id: i64) -> Vec<u8> {
     prefixed_id(POLICY_PREFIX, policy_id)
 }
 
 /// Go `Mutator.maskingPolicyKey`.
-#[must_use]
 pub fn masking_policy_key(policy_id: i64) -> Vec<u8> {
     prefixed_id(MASKING_POLICY_PREFIX, policy_id)
 }
 
 /// Go `Mutator.resourceGroupKey`.
-#[must_use]
 pub fn resource_group_key(group_id: i64) -> Vec<u8> {
     prefixed_id(RESOURCE_GROUP_PREFIX, group_id)
 }
 
 /// Go `Mutator.jobIDKey`: signed ID reinterpreted as big-endian uint64.
-#[must_use]
 pub fn ddl_job_id_key(job_id: i64) -> [u8; 8] {
     (job_id as u64).to_be_bytes()
 }
 
 /// Go test-only `DDLJobHistoryKey`.
-#[must_use]
 pub fn ddl_job_history_kv_key(job_id: i64) -> Vec<u8> {
     encode_hash_data_key(DDL_JOB_HISTORY, &ddl_job_id_key(job_id))
 }

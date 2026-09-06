@@ -1,5 +1,4 @@
 /// Go `splitRangeInt64Max`.
-#[must_use]
 pub fn split_range_int64_max(count: i64) -> Vec<(String, String)> {
     assert!(count >= 0, "negative split range count");
     let mut ranges = Vec::with_capacity(count as usize);
@@ -162,13 +161,11 @@ pub fn table_info_must_load_with_filters(
 }
 
 /// Go `IsTableInfoMustLoad`.
-#[must_use]
 pub fn table_info_must_load(json: &[u8]) -> bool {
     table_info_must_load_with_filters(json, true, TABLE_INFO_MUST_LOAD_FILTERS)
 }
 
 /// Go `Unescape`; replacements are deliberately ordered.
-#[must_use]
 pub fn unescape_name(value: &str) -> String {
     value.replace(r#"\""#, r#"""#).replace(r#"\\"#, r#"\"#)
 }
@@ -249,7 +246,6 @@ pub fn job_matches(
 }
 
 /// Go `DefaultGroupMeta4Test`.
-#[must_use]
 pub fn default_resource_group_for_test() -> Arc<ResourceGroupInfo> {
     Arc::clone(DEFAULT_RESOURCE_GROUP.get_or_init(|| {
         Arc::new(ResourceGroupInfo {
