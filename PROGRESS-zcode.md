@@ -801,3 +801,5 @@
 - 下轮恢复点: (1) dump 剩余: tiflash-replica/stats-mem/主装配 DumpPlanReplayerInfo; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
 - dump 切片批: tiflash-replica 文件体 (TiFlashReplicaSource seam + db\ttable\tcount 行) 与 schema-meta 文件体 (db.table; 排序拼接) 落地, 2 测试钉住行格式与排序。155 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。
 - 下轮恢复点: (1) dump 剩余: stats-mem/stats 文件体与主装配 DumpPlanReplayerInfo; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
+- dump 切片批: stats 两文件体落地 (StatsDumpSource seam) —— dumpStatsMemStatus (statsMem/<db>.<table>.txt, [INDEX]/[COLUMN] 段) 与 dumpStats (stats/<db>.<table>.json + 聚合 fallback 消息 "Historical stats for ... are unavailable, fallback to latest stats"), 视图全跳过。3 测试钉住 mem 分段文件、JSON 文件与 fallback 消息 (t2 为视图只产 t1 的 fallback)。157 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。
+- 下轮恢复点: (1) dump 剩余: 主装配 DumpPlanReplayerInfo + zip 装配 + presign/extract 接线; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
