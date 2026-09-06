@@ -56,3 +56,47 @@ No Go or Bazel source changed, so `make bazel_prepare` is not required.
   in registration order.
 - Performance: this is test-only support; one mutex and queue operation are
   performed per mocked call.
+
+## Follow-up: discardable generated API returns (2026-09-06)
+
+The complete three-artifact, 152-line Go package inventory was rechecked at
+current `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
+It remains byte-identical to the receipt pin: the public Bazel target, context
+key source, and full generated MockGen output are the entire package. There
+are still no docs, tests, fixtures, benchmarks, generator inputs, or
+platform/build-tag variants. The Rust owner remains exactly `Cargo.toml` and
+`src/lib.rs`.
+
+Go callers may discard both `NewMockRestrictedSQLExecutor` and `EXPECT`
+results. Rust imposed two extra `#[must_use]` diagnostics on their direct
+counterparts, `MockRestrictedSqlExecutor::new` and `expect`. The annotations
+were removed without changing construction, expectation recording, or drop
+verification. The focused in-owner regression calls both APIs under
+`#[deny(unused_must_use)]`; before the production edit it failed with exactly
+two diagnostics, and after the edit it passes.
+
+Ready validation for this follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-sqlexec-mock --lib tests::generated_constructor_and_expect_result_may_be_ignored_like_go --offline --locked -- --exact --nocapture --test-threads=1
+PASS; 1 passed, 0 failed.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-sqlexec-mock --offline --locked -- --test-threads=1
+PASS; 4 unit tests passed, 0 failed; doc tests had 0 tests.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-sqlexec-mock --all-targets --offline --locked
+PASS.
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+Only Rust source and parity documentation changed. No Go, generated Go,
+Bazel, Cargo metadata, or module dependency changed, so `make bazel_prepare`
+is not required.

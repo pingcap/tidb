@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/sqlexec/mock` generated API return contracts): the
+  complete three-artifact, 152-line package and two-file Rust owner were
+  rechecked at current Go master. The generated constructor and `EXPECT`
+  counterpart no longer emit two Rust-only `#[must_use]` diagnostics. A
+  focused regression failed with exactly two diagnostics before the edit and
+  passes afterward; the four-test owner suite, all-target check, formatting,
+  lint, and diff checks pass. Evidence is recorded in
+  `receipts/util_sqlexec_mock.md`.
 - 2026-09-06 (`pkg/util/hack` discardable Go API return contracts): the
   complete nine-artifact inventory and Rust owner were rechecked before
   editing. Thirteen direct Go-shaped Rust `#[must_use]` annotations were

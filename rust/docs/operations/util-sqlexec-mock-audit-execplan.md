@@ -8,6 +8,13 @@ the real `tidb-sqlexec` interface as the only executor surface.
 
 ## Progress
 
+- [x] Recheck the complete 152-line inventory at current Go master
+  `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; no source or artifact delta
+  exists from the earlier pin.
+- [x] Remove the two Rust-only `#[must_use]` diagnostics from the generated
+  mock constructor and `EXPECT` counterpart. The focused discard regression
+  failed with exactly two diagnostics before the edit and passes afterward.
+
 - [x] Re-read all three current Go-master artifacts at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: 152 lines of BUILD metadata,
   the key type, and the complete MockGen output.
@@ -30,6 +37,8 @@ Go, Bazel, or module file changed, so `make bazel_prepare` is not required.
 - [x] Active and exact detached Go package probes pass; both report no source
   tests, and package scans confirm no failpoint or hidden variant surface.
 - [x] Three focused Rust owner tests and doc tests pass.
+- [x] The updated owner now passes four unit tests, its all-target check,
+  workspace formatting, repository lint, and diff hygiene.
 - [x] Rust formatting and scoped diff checks pass.
 - [x] Commit, push, pull, and remote SHA verification complete.
 

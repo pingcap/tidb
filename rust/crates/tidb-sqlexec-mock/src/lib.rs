@@ -72,13 +72,11 @@ impl Default for MockRestrictedSqlExecutor {
 impl MockRestrictedSqlExecutor {
     /// Go `NewMockRestrictedSQLExecutor` without a language-specific GoMock
     /// controller.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Go `EXPECT`.
-    #[must_use]
     pub const fn expect(&self) -> MockRestrictedSqlExecutorRecorder<'_> {
         MockRestrictedSqlExecutorRecorder { mock: self }
     }
@@ -256,6 +254,14 @@ mod tests {
         let result = mock.exec_restricted_sql(&BackgroundContext, &[], "select 1", &[]);
         assert!(result.is_ok());
         mock.verify();
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn generated_constructor_and_expect_result_may_be_ignored_like_go() {
+        MockRestrictedSqlExecutor::new();
+        let mock = MockRestrictedSqlExecutor::new();
+        mock.expect();
     }
 
     #[test]
