@@ -152,7 +152,9 @@ pub trait SessionContext: Send + Sync + 'static {
     /// (`expression.MaterializedScheduleTypeFlagsWithSQLMode` /
     /// `MaterializedScheduleErrLevelsWithSQLMode`), and the schedule time
     /// zone on both the session variables and the statement context,
-    /// returning the captured originals.
+    /// returning the captured originals. Forward-port scaffolding: the
+    /// `pkg/ddl/session` baseline at a85e0fd5df has no such surface; the
+    /// caller lives in a later Go tree this port tracks ahead of.
     fn install_schedule_eval_session(
         &self,
         sql_mode: SqlMode,
@@ -454,6 +456,9 @@ impl<C: SessionContext, P: ResourcePool<C>> Pool<C, P> {
         {
             return Err(Error::new("session pool is closed"));
         }
+        // Go type-asserts here ("need sessionctx.Context, but got %T");
+        // `ResourcePool::get` returns a typed `Arc<C>`, so that failure path
+        // is structurally impossible.
         let context = self.resource_pool.get()?;
         context.set_autocommit(true);
         context.set_restricted_sql(true);
