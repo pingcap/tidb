@@ -781,3 +781,5 @@
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
 - 巡检+收敛: disttask.rs = pkg/util/disttask/idservice.go 完整移植确认 (GenerateExecID/MatchServerInfo/FindServerInfo/GenerateSubtaskExecID/4Test 全在, schemaver 审计已证 GenerateExecID 一致)。收敛 sweep: domain 143, unistore 114, pd-client 73, timer 65, tablecodec 61, protocol 121 —— 全绿。
 - 下轮恢复点: (1) 大面候选: plan_replayer_dump.go 移植 (开放项, ~1000 行) / unistore mvcc+cophandler (超声明面) / domain 全量; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 增量收敛核查: 全部 7 面全绿 (domain 143, pd-client 73, unistore 114, br 31, tablecodec 61, protocol 121, hint 2 —— 合计 545/0)。无新增分歧。
+- 下轮恢复点: (1) plan_replayer_dump.go 移植 (大面, 需新会话完整上下文: zip 布局/sql-meta TOML/presign/extractTableNames/统计回退); (2) 只读收敛核查; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
