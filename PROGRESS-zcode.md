@@ -754,3 +754,8 @@
 - 回补批: unistore InProcessClient 实现 SynchronousBatchRequestDispatcher (tidb-txnkv::client 的 BatchCommands 式分发契约) —— 兄弟 distsql 接口重构要求的最后一块 glue, lib 测试目标从完全不可编译恢复为 114 测试全绿; distsql 256/29 测试同步验证。open 项关闭。
   验收: cargo test -p tidb-unistore --lib 114/0; tidb-distsql 256+29 全绿; fmt; diff-check; make lint 过。含代码改动, 已推送 (LANDED_1)。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 新面批次: tidb-domain 三面 (topn_slow_query/historical_stats/plan_replayer @ a85e0fd5df) 审计。修复 1 项 liveness 分歧: plan_replayer worker 循环以 catch_unwind 包裹 handle_task (Go defer util.Recover 语义), panicking dump 不再杀死 worker 线程。头注两处声明与代码矛盾修正 (metrics 实为保留/状态方法 8 个/take_receiver 代 GetWorker)。
+  匹配面: topn 堆序与淘汰、historical_stats 四条错误文案逐字与哨兵语义、plan_replayer GC 保留规则/四条 SQL 逐字/handleTask 三门/SendTask 通道语义/DirName 与文件名三分支。
+  开放: plan_replayer_dump.go 未移植 (zip 布局/TOML 键/presign, PLAN REPLAYER DUMP 执行器依赖), 计数器覆盖面因此收窄; sort.Sort 不稳定序差异文档化。
+  验收: cargo test -p tidb-domain 143 全绿; fmt; diff-check; make lint 过。收据 rust/docs/plan-replayer-domain-parity-audit.md。含代码改动, 已推送 (LANDED_1)。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
