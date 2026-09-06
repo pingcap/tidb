@@ -18,9 +18,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_owner::{
-    acquire_distributed_lock, get_owner_op_value, watch_owner_for_test, Context, Listener,
-    ListenersWrapper, Manager, MockGlobalState, MockManager, OpType, OwnerManager, OwnerStore,
-    OwnerWatch,
+    acquire_distributed_lock, get_owner_key_info, get_owner_op_value, watch_owner_for_test,
+    Context, Listener, ListenersWrapper, Manager, MockGlobalState, MockManager, OpType,
+    OwnerManager, OwnerStore, OwnerWatch,
     WAIT_TIME_ON_FORCE_OWNER_MILLIS,
 };
 use tidb_pd_client::EtcdKeyValue;
@@ -126,6 +126,13 @@ impl OwnerStore for FakeStore {
     }
 
     fn get_prefix_metadata(&self, prefix: &[u8]) -> Result<Vec<EtcdKeyValue>, String> {
+        Ok(self.get_prefix_metadata_with_revision(prefix)?.0)
+    }
+
+    fn get_prefix_metadata_with_revision(
+        &self,
+        prefix: &[u8],
+    ) -> Result<(Vec<EtcdKeyValue>, i64), String> {
         let state = self.state.lock().unwrap();
         let mut entries = state
             .entries
@@ -134,7 +141,7 @@ impl OwnerStore for FakeStore {
             .cloned()
             .collect::<Vec<_>>();
         entries.sort_by_key(|entry| entry.create_revision);
-        Ok(entries)
+        Ok((entries, state.revision))
     }
 
     fn delete(&self, key: &[u8]) -> Result<(), String> {
@@ -437,4 +444,25 @@ fn test_fail_new_session() {
         owner.campaign_owner(&[1]).unwrap_err(),
         "new session failed"
     );
+}
+
+#[test]
+fn test_get_owner_key_info_returns_header_revision() {
+    let store = Arc::new(FakeStore::default());
+    // The owner key is created at revision 1; an unrelated write then moves
+    // the store's global (response header) revision to 2. Go's GetOwnerKeyInfo
+    // returns `resp.Header.Revision` -- not the key's ModRevision -- so the
+    // watch started from `revision + 1` cannot miss events past the read.
+    let lease = store.lease_grant(1).unwrap();
+    store
+        .create_with_lease(b"/owner/1", b"one", lease)
+        .unwrap();
+    let unrelated_lease = store.lease_grant(1).unwrap();
+    store
+        .create_with_lease(b"/unrelated", b"x", unrelated_lease)
+        .unwrap();
+    let (key, revision) =
+        get_owner_key_info(&Context::background(), store.as_ref(), "/owner", "one").unwrap();
+    assert_eq!(key, "/owner/1");
+    assert_eq!(revision, 2, "Go GetOwnerKeyInfo returns resp.Header.Revision");
 }

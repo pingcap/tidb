@@ -161,6 +161,14 @@ pub trait OwnerStore: Send + Sync + 'static {
     fn create_with_lease(&self, key: &[u8], value: &[u8], lease: i64) -> Result<bool, String>;
     /// Reads a creation-revision ordered prefix.
     fn get_prefix_metadata(&self, prefix: &[u8]) -> Result<Vec<EtcdKeyValue>, String>;
+    /// Reads a creation-revision ordered prefix together with the response's
+    /// MVCC header revision -- Go's `WithFirstCreate` range-then-watch handoff
+    /// (`pkg/owner/manager.go` `getOwnerInfo` returns `resp.Header.Revision`
+    /// as the watch base).
+    fn get_prefix_metadata_with_revision(
+        &self,
+        prefix: &[u8],
+    ) -> Result<(Vec<EtcdKeyValue>, i64), String>;
     /// Deletes one key.
     fn delete(&self, key: &[u8]) -> Result<(), String>;
     /// Compare-and-swaps a leased key.
@@ -229,6 +237,14 @@ impl OwnerStore for EtcdClient {
 
     fn get_prefix_metadata(&self, prefix: &[u8]) -> Result<Vec<EtcdKeyValue>, String> {
         EtcdClient::get_prefix_metadata(self, prefix).map_err(|error| error.to_string())
+    }
+
+    fn get_prefix_metadata_with_revision(
+        &self,
+        prefix: &[u8],
+    ) -> Result<(Vec<EtcdKeyValue>, i64), String> {
+        EtcdClient::get_prefix_metadata_with_revision(self, prefix)
+            .map_err(|error| error.to_string())
     }
 
     fn delete(&self, key: &[u8]) -> Result<(), String> {
@@ -448,13 +464,13 @@ impl Manager for OwnerManager {
     }
 
     fn get_owner_id(&self, context: &Context) -> Result<String, String> {
-        let owner = get_owner_info(context, self.inner.store.as_ref(), &self.inner.key)?;
+        let (owner, _) = get_owner_info(context, self.inner.store.as_ref(), &self.inner.key)?;
         String::from_utf8(split_owner_values(&owner.value).0.to_vec())
             .map_err(|error| error.to_string())
     }
 
     fn set_owner_op_value(&self, context: &Context, op: OpType) -> Result<(), String> {
-        let owner = get_owner_info(context, self.inner.store.as_ref(), &self.inner.key)?;
+        let (owner, _) = get_owner_info(context, self.inner.store.as_ref(), &self.inner.key)?;
         let (owner_id, current_op) = split_owner_values(&owner.value);
         if current_op == op {
             return Ok(());
@@ -631,12 +647,12 @@ fn campaign_loop(manager: &OwnerManager, ttl: i64, stop: &AtomicBool) {
         {
             continue;
         }
-        let owner = match get_owner_info(
+        let (owner, curr_revision) = match get_owner_info(
             &manager.inner.context,
             manager.inner.store.as_ref(),
             &manager.inner.key,
         ) {
-            Ok(owner) => owner,
+            Ok(info) => info,
             Err(_) => continue,
         };
         let (owner_id, _) = split_owner_values(&owner.value);
@@ -644,11 +660,7 @@ fn campaign_loop(manager: &OwnerManager, ttl: i64, stop: &AtomicBool) {
             continue;
         }
         OwnerManager::become_owner(&manager.inner);
-        let mut watcher = match manager
-            .inner
-            .store
-            .watch(&owner.key, owner.mod_revision + 1)
-        {
+        let mut watcher = match manager.inner.store.watch(&owner.key, curr_revision + 1) {
             Ok(watcher) => watcher,
             Err(_) => {
                 OwnerManager::retire(&manager.inner);
@@ -696,18 +708,21 @@ fn get_owner_info(
     context: &Context,
     store: &dyn OwnerStore,
     owner_path: &str,
-) -> Result<EtcdKeyValue, String> {
+) -> Result<(EtcdKeyValue, i64), String> {
     let mut last_error = String::new();
     for attempt in 0..3 {
         if context.is_done() {
             return Err("context canceled".to_owned());
         }
-        match store.get_prefix_metadata(owner_path.as_bytes()) {
-            Ok(entries) => {
-                return entries
+        // Go's `getOwnerInfo` returns `resp.Header.Revision` beside the key
+        // metadata; the campaign watch starts from that revision + 1.
+        match store.get_prefix_metadata_with_revision(owner_path.as_bytes()) {
+            Ok((entries, revision)) => {
+                let entry = entries
                     .into_iter()
                     .next()
-                    .ok_or_else(|| "election: no leader".to_owned());
+                    .ok_or_else(|| "election: no leader".to_owned())?;
+                return Ok((entry, revision));
             }
             Err(error) => last_error = error,
         }
@@ -727,23 +742,27 @@ pub fn get_owner_op_value(
     let Some(store) = store else {
         return Ok(mock::mock_owner_op_value());
     };
-    let owner = get_owner_info(context, store, owner_path)?;
+    let (owner, _) = get_owner_info(context, store, owner_path)?;
     Ok(split_owner_values(&owner.value).1)
 }
 
 /// Gets the current owner key and validates that its owner ID equals `id`.
+///
+/// Returns the key beside the response's header revision, exactly as Go's
+/// `GetOwnerKeyInfo` (`pkg/owner/manager.go:518`) -- the watch must start
+/// from that revision + 1 so no event past the read is missed.
 pub fn get_owner_key_info(
     context: &Context,
     store: &dyn OwnerStore,
     owner_path: &str,
     id: &str,
 ) -> Result<(String, i64), String> {
-    let owner = get_owner_info(context, store, owner_path)?;
+    let (owner, curr_revision) = get_owner_info(context, store, owner_path)?;
     if split_owner_values(&owner.value).0 != id.as_bytes() {
         return Err("ownerInfoNotMatch".to_owned());
     }
     let key = String::from_utf8(owner.key).map_err(|error| error.to_string())?;
-    Ok((key, owner.mod_revision))
+    Ok((key, curr_revision))
 }
 
 /// Deletes the campaign key whose owner ID matches `id`.
@@ -790,6 +809,11 @@ pub fn watch_owner_for_test(
 }
 
 fn split_owner_values(value: &[u8]) -> (&[u8], OpType) {
+    // Go indexes `vals[1][0]` whenever the value splits into exactly two
+    // parts, so a value like "one_" (empty op part) panics there; etcd never
+    // stores such a value in production. This port deliberately returns
+    // OpNone for that and for any shape with more than two parts, matching
+    // Go's `len(vals) != 2` arm.
     let mut parts = value.split(|byte| *byte == b'_');
     let owner_id = parts.next().unwrap_or_default();
     let Some(op_bytes) = parts.next() else {
