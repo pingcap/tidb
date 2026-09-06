@@ -41,13 +41,11 @@ pub const CLUSTER_TABLE_INSTANCE_COLUMN_NAME: &str = "INSTANCE";
 const TEMPORARY_DB_NAME_PREFIX: &str = "__TiDB_BR_Temporary_";
 
 /// Go `IsMemOrSysDB`: whether `db_lower_name` is a memory or system database.
-#[must_use]
 pub fn is_mem_or_sys_db(db_lower_name: &str) -> bool {
     is_mem_db(db_lower_name) || is_system_related_db(db_lower_name)
 }
 
 /// Go `IsMemDB`: whether `db_lower_name` is a memory database.
-#[must_use]
 pub fn is_mem_db(db_lower_name: &str) -> bool {
     matches!(
         db_lower_name,
@@ -57,19 +55,16 @@ pub fn is_mem_db(db_lower_name: &str) -> bool {
 
 /// Go `IsSystemRelatedDB`: whether `db_lower_name` is a system-related
 /// database (the system db, `sys`, or the workload schema).
-#[must_use]
 pub fn is_system_related_db(db_lower_name: &str) -> bool {
     is_system_db(db_lower_name) || db_lower_name == SysDB || db_lower_name == WorkloadSchema
 }
 
 /// Go `IsSystemDB`: whether `db_lower_name` is the system database (`mysql`).
-#[must_use]
 pub fn is_system_db(db_lower_name: &str) -> bool {
     db_lower_name == SystemDB
 }
 
 /// Go `IsBRRelatedDB`: whether `db_origin_name` is a BR temporary database.
-#[must_use]
 pub fn is_br_related_db(db_origin_name: &str) -> bool {
     db_origin_name.starts_with(TEMPORARY_DB_NAME_PREFIX)
 }
@@ -102,5 +97,15 @@ mod tests {
     fn is_system_db_cases() {
         assert!(is_system_db("mysql"));
         assert!(!is_system_db("sys"));
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn database_predicate_returns_may_be_ignored_like_go() {
+        is_mem_or_sys_db("ordinary");
+        is_mem_db("ordinary");
+        is_system_related_db("ordinary");
+        is_system_db("ordinary");
+        is_br_related_db("ordinary");
     }
 }

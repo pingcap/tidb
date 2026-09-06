@@ -41,6 +41,17 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`pkg/meta/metadef` database predicate returns): all eight Rust
+  owner artifacts, workspace/lock and downstream dependency edges, callers,
+  tests, source includes, build surface, and generated/platform variants were
+  inventoried under the Rust-only scope. The crate's final five
+  `#[must_use]` annotations no longer add diagnostics to the direct Go-shaped
+  database predicates; the focused regression failed with exactly five
+  diagnostics before the correction and passes afterward. Eighteen owner
+  tests pass; the sole full-suite source-catalog failure reproduces unchanged
+  on the clean base. Downstream all-target compilation, scoped formatting,
+  Ready lint, and diff hygiene pass. Evidence is in
+  `receipts/meta_metadef_operate_view.md`.
 - 2026-09-07 (`pkg/meta` remaining direct return contracts): the Rust-only
   follow-up inventoried all 19 `tidb-meta` owner artifacts, its shared test
   build input, workspace/lock registration, downstream edge, callers, tests,

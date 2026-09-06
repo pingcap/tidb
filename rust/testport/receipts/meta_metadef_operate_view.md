@@ -100,3 +100,46 @@ constant/predicate diagnostic-only change.
   path to add these columns; this receipt does not claim that migration.
 - The privilege cache and user-attribute consumer are separate package
   boundaries and are validated in `privilege_privileges_user_attributes.md`.
+
+## Rust-only database predicate alignment (`2026-09-07`)
+
+This follow-up obeys the narrowed Rust-only scope and reuses the complete Go
+package inventory above without editing or re-reading Go source. Before the
+edit, all eight `tidb-metadef` artifacts and 2,578 lines were read: the
+manifest, five production modules, and two integration-test modules. The
+workspace and lockfile entries, seven downstream manifest edges, every caller,
+all 18 existing tests, the three inline-test configurations, both compile-time
+source includes, and the absence of a custom build script, checked-in generated
+output, fixture directory, or platform variant were also inventoried.
+
+All five remaining annotations in this crate were on direct Go-shaped database
+predicates: `IsMemOrSysDB`, `IsMemDB`, `IsSystemRelatedDB`, `IsSystemDB`, and
+`IsBRRelatedDB`. Removing their Rust-only `#[must_use]` diagnostics does not
+change classification logic or any downstream call. The inline
+`db::tests::database_predicate_returns_may_be_ignored_like_go` regression calls
+all five under `#[deny(unused_must_use)]`; with only that regression applied to
+base `9e2ee9098dfb554eb2e9b9639b4e2337b4253362`, the focused build failed with
+exactly five diagnostics, and it passes after the correction. The final owner
+has eight artifacts and 2,583 lines, with no remaining `#[must_use]`
+annotation.
+
+Ready validation:
+
+- Focused post-fix regression — 1 passed, 7 filtered out.
+- Full `cargo nextest run --offline --locked -p tidb-metadef --no-fail-fast`
+  — 18 passed and one pre-existing source-catalog test failed. The same
+  `every_public_string_constant_matches_the_go_package` failure reproduces in
+  a clean detached worktree at the base commit, so the package failure set did
+  not grow.
+- All unaffected owner tests were rerun explicitly: 8 library tests, 8 model
+  parity tests, and the other 2 metadata-contract tests passed.
+- `cargo +nightly-2026-08-22 check --offline --locked -p tidb-metadef -p tidb-executor -p tidb-session --all-targets`
+  with the bundled OpenSSL environment — passed.
+- `rustfmt +nightly-2026-08-22 --edition 2021 --check rust/crates/tidb-metadef/src/db.rs`,
+  `make lint`, and `git diff --check` — passed.
+
+The test-diff triage workflow classified the catalog mismatch as baseline
+source drift; no expected output was rewritten. No Go, manifest, generated,
+fixture, build, or platform file changed, so `make bazel_prepare` was not
+required. Live TiDB integration was not rerun because this change only removes
+compiler diagnostics on discarded booleans.
