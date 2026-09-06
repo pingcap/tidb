@@ -366,6 +366,12 @@ fn test_type_unwrap() {
     }
 }
 
+#[test]
+#[deny(unused_must_use)]
+fn go_type_api_returns_may_be_ignored_like_go() {
+    Typ::new(&type_int());
+}
+
 struct Case {
     a: FieldType,
     b: FieldType,

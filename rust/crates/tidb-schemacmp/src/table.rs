@@ -451,7 +451,6 @@ pub struct Table {
 }
 
 /// Go `Encode`: encodes a table.
-#[must_use]
 pub fn encode(ti: &TableInfo) -> Table {
     Table {
         value: Box::new(encode_table_info_to_lattice(ti)),
@@ -460,7 +459,6 @@ pub fn encode(ti: &TableInfo) -> Table {
 
 /// Go `DecodeColumnFieldTypes`: decodes column field types from the lattice.
 /// The map is keyed by the lower-case column name, exactly like Go's.
-#[must_use]
 pub fn decode_column_field_types(t: &Table) -> BTreeMap<String, FieldType> {
     let Value::List(table) = t.value.unwrap() else {
         unreachable!("a table lattice unwraps to a list");

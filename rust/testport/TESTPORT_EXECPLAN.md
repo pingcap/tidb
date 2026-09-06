@@ -9422,3 +9422,10 @@ risks without claiming repository-wide parity.
   visible-schema and derived-table boundaries. The focused coalesced-join
   matrix and complete Go inventory are recorded in
   `receipts/planner_coalesced_qualified_names.md`.
+- 2026-09-06 (`pkg/util/schemacmp` return-contract parity): Rust's native
+  schema-comparison owner no longer marks fourteen Go-shaped constructors,
+  value helpers, table encode/decode APIs, or `Typ::new` as `#[must_use]`.
+  Focused `deny(unused_must_use)` probes fail with exactly fourteen
+  diagnostics before the annotation removal and pass afterward; the complete
+  13-test aggregate, all-target check, and Ready evidence are recorded in
+  `receipts/util_schemacmp.md`.
