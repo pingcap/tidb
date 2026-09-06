@@ -9443,3 +9443,10 @@ risks without claiming repository-wide parity.
   the annotation removal and passes afterward; all three owner tests,
   all-target compilation, standalone rustfmt, and Ready evidence are recorded
   in `receipts/dxf_operator.md`.
+- 2026-09-06 (`pkg/ddl/copr` return-contract parity): Rust's coprocessor
+  context owner no longer marks ten Go-shaped context, index-lookup, and
+  schema/name query methods as `#[must_use]`. A focused
+  `deny(unused_must_use)` probe failed with exactly ten diagnostics before the
+  annotation removal and passes afterward; all four owner tests, all-target
+  compilation, standalone rustfmt, and Ready evidence are recorded in
+  `receipts/ddl_copr.md`.

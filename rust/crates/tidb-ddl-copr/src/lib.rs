@@ -128,7 +128,6 @@ pub enum CopContext<'a> {
 
 impl CopContext<'_> {
     /// Go `GetBase`.
-    #[must_use]
     pub fn base(&self) -> &CopContextBase<'_> {
         match self {
             Self::Single(context) => &context.base,
@@ -138,7 +137,6 @@ impl CopContext<'_> {
 
     /// Go `IndexColumnOutputOffsets`; `None` is Go nil for an unknown
     /// multi-index id.
-    #[must_use]
     pub fn index_column_output_offsets(&self, index_id: i64) -> Option<&[usize]> {
         match self {
             Self::Single(context) => Some(&context.index_column_output_offsets),
@@ -147,7 +145,6 @@ impl CopContext<'_> {
     }
 
     /// Go `IndexInfo`; `None` is Go nil for an unknown multi-index id.
-    #[must_use]
     pub fn index_info(&self, index_id: i64) -> Option<GoShared<IndexInfo>> {
         match self {
             Self::Single(context) => Some(context.index_info.clone()),
@@ -166,19 +163,16 @@ impl CopContext<'_> {
 
 impl CopContextSingleIndex<'_> {
     /// Go `GetBase`.
-    #[must_use]
     pub const fn base(&self) -> &CopContextBase<'_> {
         &self.base
     }
 
     /// Go ignores the id for a single-index context.
-    #[must_use]
     pub fn index_column_output_offsets(&self, _index_id: i64) -> &[usize] {
         &self.index_column_output_offsets
     }
 
     /// Go ignores the id for a single-index context.
-    #[must_use]
     pub fn index_info(&self, _index_id: i64) -> GoShared<IndexInfo> {
         self.index_info.clone()
     }
@@ -191,13 +185,11 @@ impl CopContextSingleIndex<'_> {
 
 impl CopContextMultiIndex<'_> {
     /// Go `GetBase`.
-    #[must_use]
     pub const fn base(&self) -> &CopContextBase<'_> {
         &self.base
     }
 
     /// Go `IndexColumnOutputOffsets`.
-    #[must_use]
     pub fn index_column_output_offsets(&self, index_id: i64) -> Option<&[usize]> {
         self.all_index_infos
             .iter()
@@ -206,7 +198,6 @@ impl CopContextMultiIndex<'_> {
     }
 
     /// Go `IndexInfo`.
-    #[must_use]
     pub fn index_info(&self, index_id: i64) -> Option<GoShared<IndexInfo>> {
         self.all_index_infos
             .iter()
@@ -454,7 +445,6 @@ fn build_condition(
 
 impl CopContextBase<'_> {
     /// Go `GetSchemaAndNames`.
-    #[must_use]
     pub fn schema_and_names(&self) -> (Schema, Vec<FieldName>) {
         let table = self.table_info.read();
         let table_name =
@@ -710,6 +700,42 @@ mod tests {
             resolver: &NoResolver,
             column_ids: ids,
         }
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_context_query_returns_can_be_ignored() {
+        let table = GoShared::new(TableInfo {
+            name: CiString::new("t"),
+            columns: vec![column("c0", 0, 0)].into(),
+            ..TableInfo::default()
+        });
+        let index = GoShared::new(IndexInfo {
+            id: 1,
+            name: CiString::new("i"),
+            columns: vec![index_column("c0", 0)].into(),
+            state: SchemaState::PUBLIC,
+            ..IndexInfo::default()
+        });
+        let ids = SimplePlanColumnIdAllocator::new(0);
+        let single =
+            new_cop_context_single_index(context(&ids), 0, table.clone(), index.clone(), "", false)
+                .expect("single context builds");
+        single.base();
+        single.index_column_output_offsets(0);
+        single.index_info(0);
+        single.base.schema_and_names();
+
+        let enum_context = CopContext::Single(single);
+        enum_context.base();
+        enum_context.index_column_output_offsets(0);
+        enum_context.index_info(0);
+
+        let multi = new_cop_context_multi_index(context(&ids), 0, table, vec![index], "", false)
+            .expect("multi context builds");
+        multi.base();
+        multi.index_column_output_offsets(0);
+        multi.index_info(0);
     }
 
     // Go `TestNewCopContextSingleIndex`.
