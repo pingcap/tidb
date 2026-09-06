@@ -156,6 +156,10 @@ func ftsTokenizeConfigFromArgs(ctx EvalContext, args []Expression) (fulltext.Ana
 		return fulltext.AnalyzerConfig{}, err
 	}
 	config := ftsTokenizeConfigFromLiterals(parserType, minTokenSize, maxTokenSize, enableStopword)
+	if err := fulltext.ValidateAnalyzerConfig(config); err != nil {
+		return fulltext.AnalyzerConfig{}, ErrNotSupportedYet.GenWithStackByArgs(
+			"FTS_TOKENIZE() with " + err.Error())
+	}
 	if _, err := fulltext.GetAnalyzer(config); err != nil {
 		return fulltext.AnalyzerConfig{}, err
 	}

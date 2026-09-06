@@ -230,3 +230,58 @@ func TestDefaultAnalyzerConfigMatchesSessionDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sessionDefaults, DefaultAnalyzerConfig())
 }
+
+// TestValidateAnalyzerConfigRejectsEmptyTokenStreams pins the configurations
+// that would analyze every document to nothing. The filters are total, so such
+// an index builds without complaint and holds no entries - a failure that looks
+// like missing data rather than a bad definition.
+func TestValidateAnalyzerConfigRejectsEmptyTokenStreams(t *testing.T) {
+	analyzeWith := func(config AnalyzerConfig, text string) int {
+		analyzer, err := GetAnalyzer(config)
+		require.NoError(t, err)
+		tokens, err := analyzer.Analyze(text)
+		require.NoError(t, err)
+		return len(tokens)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		config AnalyzerConfig
+		reason string
+	}{
+		{
+			name:   "bounds cross",
+			config: AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 84, InnodbFtMaxTokenSize: 3},
+			reason: "above maximum",
+		},
+		{
+			name:   "zero maximum",
+			config: AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 0, InnodbFtMaxTokenSize: 0},
+			reason: "must be at least 1",
+		},
+		{
+			name:   "ngram size below one",
+			config: AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 0},
+			reason: "at least 1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.ErrorContains(t, ValidateAnalyzerConfig(tc.config), tc.reason)
+			// The reason it is worth refusing: the analyzer accepts it and
+			// silently produces nothing.
+			require.Zero(t, analyzeWith(tc.config, "distributed sql database"))
+		})
+	}
+
+	// A negative minimum passes, because it admits every token just as zero
+	// does rather than emptying the stream.
+	negative := AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: -1, InnodbFtMaxTokenSize: 84}
+	require.NoError(t, ValidateAnalyzerConfig(negative))
+	require.NotZero(t, analyzeWith(negative, "distributed sql database"))
+
+	// The shipped defaults, and a deliberately narrow but usable window, pass.
+	require.NoError(t, ValidateAnalyzerConfig(DefaultAnalyzerConfig()))
+	narrow := AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 3, InnodbFtMaxTokenSize: 3}
+	require.NoError(t, ValidateAnalyzerConfig(narrow))
+	require.NotZero(t, analyzeWith(narrow, "sql and databases"))
+}

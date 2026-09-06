@@ -113,6 +113,36 @@ func GetAnalyzer(config AnalyzerConfig) (Analyzer, error) {
 	}
 }
 
+// ValidateAnalyzerConfig reports a token-size configuration that would analyze
+// every document to nothing.
+//
+// GetAnalyzer checks only the parser type, because the filters themselves are
+// total: lengthFilter returns nothing when its bounds cross, and ngramFilter
+// nothing for a gram size below one. An index built from such a configuration
+// would be created without complaint and hold no entries, and every query
+// compiled with it would match nothing - the failure looks like missing data
+// rather than a bad definition, so it is worth refusing up front.
+func ValidateAnalyzerConfig(config AnalyzerConfig) error {
+	if config.ParserType == model.FullTextParserTypeNgramV1 {
+		if config.NgramTokenSize < 1 {
+			return fmt.Errorf("ngram token size %d, which must be at least 1", config.NgramTokenSize)
+		}
+		return nil
+	}
+	// A negative minimum is not rejected: lengthFilter admits every token
+	// against it, so it behaves exactly as zero does rather than emptying the
+	// stream. Only the configurations that actually analyze to nothing are
+	// refused here.
+	if config.InnodbFtMaxTokenSize < 1 {
+		return fmt.Errorf("maximum token size %d, which must be at least 1", config.InnodbFtMaxTokenSize)
+	}
+	if config.InnodbFtMinTokenSize > config.InnodbFtMaxTokenSize {
+		return fmt.Errorf("minimum token size %d above maximum %d, which admits no token",
+			config.InnodbFtMinTokenSize, config.InnodbFtMaxTokenSize)
+	}
+	return nil
+}
+
 // IndexElemLen is the character width an index element must have to hold any
 // token this analyzer can emit.
 //
