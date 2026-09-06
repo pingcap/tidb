@@ -25,8 +25,8 @@ remaining Go-shaped return contracts in the complete `tidb-model` owner.
 - [x] Run the focused regression and complete owner suite.
 - [x] Run the all-target check, formatting, Ready lint, and diff hygiene;
   update the global rolling plan.
-- [ ] Commit once for `pkg/meta/model`, rebase/push to
-  `hparser-integration`, and verify the remote SHA.
+- [x] Commit once for `pkg/meta/model`, rebase/push to
+  `hparser-integration`, and verify the remote SHA `35c4a66b8ec`.
 
 ## Scope and decision
 
@@ -59,6 +59,6 @@ deny-on-discard probe a precise regression.
 
 ## Outcomes & Retrospective
 
-Pending publication. After the package-scoped commit is pushed, record its
-remote SHA here and mark the final two progress items complete. The rolling
-audit continues with the next complete package boundary.
+Published as one package-scoped commit; the remote `hparser-integration` SHA
+is `35c4a66b8ec`. The rolling audit continues with the next complete package
+boundary.
