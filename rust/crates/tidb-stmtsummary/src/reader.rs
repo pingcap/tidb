@@ -171,7 +171,7 @@ impl StmtSummaryReader<'_> {
             }
         }
         if self.checker.is_none() {
-            if let Some(other_datum) = self.get_stmt_evicted_other_row() {
+            if let Some(other_datum) = self.get_stmt_evicted_other_row(begin_time) {
                 rows.push(other_datum);
             }
         }
@@ -291,11 +291,17 @@ impl StmtSummaryReader<'_> {
     ///
     /// Go reads `ssMap.other`, which is always the `evicted.go` rollup; a map
     /// built by [`StmtSummaryByDigestMap::with_sinks`] with a different sink
-    /// has no rollup to read and yields no row.
-    fn get_stmt_evicted_other_row(&self) -> Option<Vec<Datum>> {
+    /// has no rollup to read and yields no row. Evicted summaries are lazy
+    /// expired just like regular summaries, so a rollup whose interval
+    /// predates `begin_time_for_cur_interval` is not exposed (Go
+    /// reader.go:214-220).
+    fn get_stmt_evicted_other_row(&self, begin_time_for_cur_interval: i64) -> Option<Vec<Datum>> {
         let ssbde = self.ss_map.evicted()?;
         let ssbde = ssbde.lock().unwrap();
         let se_element = ssbde.history().back()?;
+        if se_element.begin_time < begin_time_for_cur_interval {
+            return None;
+        }
 
         self.get_stmt_by_digest_element_row(
             &se_element.other_summary,
@@ -1885,6 +1891,50 @@ pub(crate) mod tests {
 
         let stmt_exec_info2 = generate_any_exec_info();
         (stmt_exec_info1, stmt_exec_info2)
+    }
+
+    /// Go `TestCurrentRowsExcludePreviousIntervalEvictedOther`: evicted
+    /// summaries are lazily expired like regular ones, so the current view
+    /// must not expose a rollup left over from a previous interval.
+    #[test]
+    fn test_current_rows_exclude_previous_interval_evicted_other() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        ss_map.set_max_stmt_count(10).unwrap();
+
+        let interval = ss_map.refresh_interval();
+        // Use future interval boundaries so AddStatement does not rotate them
+        // based on the wall clock while the test advances the intervals
+        // explicitly.
+        let previous_begin = Utc::now().timestamp() + interval;
+        ss_map.set_begin_time_for_cur_interval(previous_begin);
+
+        let mut previous_stmt = generate_any_exec_info();
+        for i in 0..11 {
+            previous_stmt.digest = format!("previous_digest_{i}");
+            ss_map.add_statement(&previous_stmt);
+        }
+        assert_eq!(10, ss_map.summary_map_size());
+        assert_eq!(1, ss_map.evicted().unwrap().lock().unwrap().history_len());
+
+        let current_begin = previous_begin + interval;
+        ss_map.set_begin_time_for_cur_interval(current_begin);
+        let mut current_stmt = generate_any_exec_info();
+        current_stmt.digest = "current_digest".to_owned();
+        ss_map.add_statement(&current_stmt);
+        assert_eq!(10, ss_map.summary_map_size());
+
+        let reader = new_stmt_summary_reader_for_test(&ss_map);
+        let rows = reader.get_stmt_summary_current_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0][4],
+            Datum::new_string(current_stmt.digest.as_bytes())
+        );
+        let tz = SessionTimeZone::utc();
+        assert_eq!(
+            rows[0][0],
+            timestamp_datum(unix_seconds_in(current_begin, &tz))
+        );
     }
 
     /// Go `TestToDatumIAColumns`.
