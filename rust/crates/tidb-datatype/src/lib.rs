@@ -98,8 +98,8 @@ pub use binary_json::{
     JSON_TYPE_CODE_TIMESTAMP, JSON_TYPE_CODE_UINT64,
 };
 pub use binary_json_ops::{
-    contains_binary_json, merge_binary_json, merge_patch_binary_json, overlaps_binary_json,
-    peek_binary_json_len, JSONModifyType, JSONSearchMode,
+    contains_binary_json, like_matches, merge_binary_json, merge_patch_binary_json,
+    overlaps_binary_json, peek_binary_json_len, JSONModifyType, JSONSearchMode,
 };
 pub use binary_literal::{
     parse_bit_str, parse_hex_str, BinaryLiteral, BinaryLiteralIntOutcome, BinaryLiteralParseError,

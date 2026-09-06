@@ -555,7 +555,10 @@ fn walk_value(
     Ok(())
 }
 
-fn like_matches(text: &str, pattern: &str, escape: char) -> bool {
+/// MySQL `LIKE` over chars: `%` any run, `_` any one, `escape` quotes the
+/// next pattern char. Case handling is the caller's (fold for `_ci`
+/// collations); this matcher is the wildcard state machine itself.
+pub fn like_matches(text: &str, pattern: &str, escape: char) -> bool {
     let text = text.chars().collect::<Vec<_>>();
     let pattern = pattern.chars().collect::<Vec<_>>();
     let mut memo = std::collections::HashMap::new();

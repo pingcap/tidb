@@ -1563,6 +1563,22 @@ pub enum SimpleSig {
     UnaryNot,
     /// `IntIsNull`.
     IntIsNull,
+    /// `DecimalIsNull`/`DurationIsNull`/`RealIsNull`/`StringIsNull`/
+    /// `TimeIsNull` -- the evaluation-family-specific IS NULL signatures
+    /// Go's `isNullFunctionClass` selects; each checks its own leaf.
+    DecimalIsNull,
+    /// See [`SimpleSig::DecimalIsNull`].
+    DurationIsNull,
+    /// See [`SimpleSig::DecimalIsNull`].
+    RealIsNull,
+    /// See [`SimpleSig::DecimalIsNull`].
+    StringIsNull,
+    /// See [`SimpleSig::DecimalIsNull`].
+    TimeIsNull,
+    /// `LikeSig` over (target, pattern, escape). The `i32` is the
+    /// comparison's collation id, as in the string comparisons: `_ci`
+    /// collations fold case before the wildcard match, `_bin` is exact.
+    Like(i32),
     /// `InInt` — n-ary membership, `tested IN (e1, e2, ...)`.
     ///
     /// Go's cop evaluates this through the shared `expression` package
@@ -1697,6 +1713,12 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::LogicalOr => SimpleSig::LogicalOr,
             tipb::ScalarFuncSig::UnaryNotInt => SimpleSig::UnaryNot,
             tipb::ScalarFuncSig::IntIsNull => SimpleSig::IntIsNull,
+            tipb::ScalarFuncSig::DecimalIsNull => SimpleSig::DecimalIsNull,
+            tipb::ScalarFuncSig::DurationIsNull => SimpleSig::DurationIsNull,
+            tipb::ScalarFuncSig::RealIsNull => SimpleSig::RealIsNull,
+            tipb::ScalarFuncSig::StringIsNull => SimpleSig::StringIsNull,
+            tipb::ScalarFuncSig::TimeIsNull => SimpleSig::TimeIsNull,
+            tipb::ScalarFuncSig::LikeSig => SimpleSig::Like(collation_of(expr)),
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             // Go reads the comparison's collation off the `ScalarFunc`'s own
             // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
@@ -2216,6 +2238,52 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Result<Opti
                 }
                 SimpleSig::UnaryNot => child(0)?.map(|v| i128::from(v == 0)),
                 SimpleSig::IntIsNull => Some(i128::from(child(0)?.is_none())),
+                SimpleSig::DecimalIsNull
+                | SimpleSig::DurationIsNull
+                | SimpleSig::RealIsNull
+                | SimpleSig::StringIsNull
+                | SimpleSig::TimeIsNull => {
+                    // Each family's IS NULL inspects its own leaf's DATUM,
+                    // not the int truth channel: a present non-NULL datum
+                    // answers FALSE even when that kind is not comparable.
+                    match children.first().map(|c| eval_datum(c, row)) {
+                        Some(Ok(datum)) => {
+                            Some(i128::from(matches!(datum, tidb_datatype::Datum::Null)))
+                        }
+                        Some(Err(message)) => return Err(message),
+                        None => Some(1),
+                    }
+                }
+                SimpleSig::Like(collation) => {
+                    // Go `builtinLikeSig`: (target, pattern, escape). Case
+                    // handling follows the comparison's collation -- `_ci`
+                    // folds both sides before the wildcard match, `_bin` is
+                    // exact (Go folds through the collator's weights; the
+                    // fold here is ASCII-lowercase, exact for the common
+                    // ASCII pattern families).
+                    let target = eval_bytes(children.first(), row);
+                    let pattern = eval_bytes(children.get(1), row);
+                    let escape = eval_bytes(children.get(2), row);
+                    let (Some(target), Some(pattern), Some(escape)) = (target, pattern, escape)
+                    else {
+                        return Ok(None);
+                    };
+                    let collator = tidb_datatype::get_collator_by_id(*collation);
+                    let fold = |bytes: &[u8]| -> String {
+                        let text = std::str::from_utf8(bytes).unwrap_or_default();
+                        if collator.compare(b"a", b"A").is_eq() {
+                            text.to_lowercase()
+                        } else {
+                            text.to_owned()
+                        }
+                    };
+                    let escape_char = fold(&escape).chars().next().unwrap_or('\\');
+                    Some(i128::from(tidb_datatype::like_matches(
+                        &fold(&target),
+                        &fold(&pattern),
+                        escape_char,
+                    )))
+                }
                 SimpleSig::InInt => {
                     // `builtinInIntSig.evalInt`: TRUE on any match; otherwise
                     // NULL if the tested value or any element was NULL.
@@ -3519,5 +3587,53 @@ mod tests {
         );
         let row_ok = [Datum::UInt(5), Datum::Int(3)];
         assert_eq!(eval_expr(&underflow, &row_ok), Ok(Some(2)));
+    }
+
+    #[test]
+    fn like_follows_collation_case_sensitivity() {
+        use tidb_datatype::Datum;
+        let row = [Datum::new_string("ABC".to_owned())];
+        let like = |collation: i32| {
+            SimpleExpr::Func(
+                SimpleSig::Like(collation),
+                vec![
+                    SimpleExpr::Column(0),
+                    SimpleExpr::Bytes(b"a%".to_vec()),
+                    SimpleExpr::Bytes(b"\\".to_vec()),
+                ],
+            )
+        };
+        // utf8mb4_general_ci (45) folds case; utf8mb4_bin (46) does not.
+        assert_eq!(eval_expr(&like(45), &row).expect("evals"), Some(1));
+        assert_eq!(eval_expr(&like(46), &row).expect("evals"), Some(0));
+        // The escape quotes the next pattern char: `100\\%` matches a
+        // literal trailing percent.
+        let row_percent = [Datum::new_string("100%".to_owned())];
+        let escaped = SimpleExpr::Func(
+            SimpleSig::Like(46),
+            vec![
+                SimpleExpr::Column(0),
+                SimpleExpr::Bytes(b"100\\%".to_vec()),
+                SimpleExpr::Bytes(b"\\".to_vec()),
+            ],
+        );
+        assert_eq!(eval_expr(&escaped, &row_percent).expect("evals"), Some(1));
+        let row_plain = [Datum::new_string("100x".to_owned())];
+        assert_eq!(eval_expr(&escaped, &row_plain).expect("evals"), Some(0));
+    }
+
+    #[test]
+    fn is_null_family_checks_its_own_leaf() {
+        use tidb_datatype::Datum;
+        let present = [Datum::Real(1.0)];
+        let absent = [Datum::Null];
+        let is_null = SimpleExpr::Func(SimpleSig::RealIsNull, vec![SimpleExpr::Column(0)]);
+        assert_eq!(eval_expr(&is_null, &present).expect("evals"), Some(0));
+        assert_eq!(eval_expr(&is_null, &absent).expect("evals"), Some(1));
+        // A string IS NULL over a string leaf; other kinds wait on their
+        // casts and answer through the same None channel today.
+        let string_null = SimpleExpr::Func(SimpleSig::StringIsNull, vec![SimpleExpr::Column(0)]);
+        let row = [Datum::Null];
+        assert_eq!(eval_expr(&string_null, &row).expect("evals"), Some(1));
     }
 }

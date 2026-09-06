@@ -341,3 +341,26 @@ filtering the row.
   regardless of the in-range difference a naive evaluation would answer.
 - Regressions: `integer_arithmetic_overflow_answers_gos_1690_text` and
   `unsigned_minus_rejects_negative_operand_like_go`.
+
+## Coprocessor IS NULL + LIKE families (2026-09-07, same session)
+
+- `DecimalIsNull`/`DurationIsNull`/`RealIsNull`/`StringIsNull`/
+  `TimeIsNull` (upstream 3111-3115, already in the trimmed enum) land
+  beside `IntIsNull`: each inspects its own leaf's DATUM for `Null` --
+  deliberately not the int truth channel, where a present non-NULL
+  non-integer datum would masquerade as NULL. A leaf whose cast is
+  refused propagates that error.
+- `LikeSig` 4310 lands as `SimpleSig::Like(collation)` over
+  (target, pattern, escape): the wildcard state machine is
+  `tidb_datatype::like_matches` (now public -- it already served the JSON
+  path), `%`/`_`/escape semantics per MySQL. Case handling follows the
+  comparison's collation: `_ci` folds both sides before the match, `_bin`
+  is exact. Narrowing, documented at the arm: Go folds through the
+  collator's per-collation weight tables; this fold is
+  character-lowercase, exact for the ASCII families that dominate pushed
+  patterns.
+
+Regressions: `like_follows_collation_case_sensitivity` (general_ci vs bin
+on the same bytes, plus the escape quoting a literal `%`) and
+`is_null_family_checks_its_own_leaf` (present REAL answers FALSE, absent
+answers TRUE).
