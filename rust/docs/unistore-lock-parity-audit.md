@@ -179,3 +179,23 @@ Still open for a full-budget session: the mpp course (`mpp.go` 780 +
 `mpp_exec.go` 1579 -- on Go's ordinary path now), `closure_exec.go`'s
 remaining expression/TopN executors (1,218), `analyze.go` (704), and the
 row-decoder warnings channel.
+
+## TopN executor port (2026-09-07, same session)
+
+The pushed-down bounded sort lands in the flat lowering:
+`buildTopNProcessor`'s parse (order-by keys with per-key direction from the
+ByItem field-type collation, heap size = the TopN limit), key evaluation at
+row-survival time through the leaf `eval_datum` (computed keys refuse by
+name, as group-by keys already do), and the Finish replay-in-key-order
+contract -- the buffering lowering sorts once instead of heap-evicting, the
+same N rows in the same order. `compare_sort_keys` ports
+`types.Datum.Compare` for the producible kinds: NULL before every non-NULL
+datum, value comparison across signedness, `Real`/`Float32` total order,
+`Time`/`Duration` through their own comparators, strings under the key's
+collation; exotic kinds are refused at evaluation so the comparator is
+total. A separate Limit above the TopN caps the replay further, as Go's
+limitProcessor does; Aggregation+TopN refuses by name like Aggregation+Limit
+already did. Regressions: DESC keeps the two largest largest-first, ASC
+keeps the two smallest smallest-first (pre-fix the shape refused as a later
+course). Go's unstable `sort.Sort` tie order is a documented narrowing --
+the stable Rust sort is deterministic where Go leaves ties unordered.

@@ -17,9 +17,10 @@
 //! flat-list-to-tree executor conversion.
 //!
 //! SEED of `cophandler` (~5k lines): request parsing plus the ordinary table
-//! and index scan DAG composition land here. Analyze, TopN, and the
-//! remaining closure-executor expressions refuse by name until they land;
-//! checksum answers Go's fixed placeholder stub.
+//! and index scan DAG composition land here, with the pushed-down bounded
+//! sort (TopN: leaf order-by keys, per-key direction, heap size). Analyze
+//! and the remaining closure-executor expressions refuse by name until they
+//! land; checksum answers Go's fixed placeholder stub.
 //!
 //! # Narrowings, by name
 //!
@@ -172,6 +173,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     let mut limit = usize::MAX;
     let mut conditions: Vec<SimpleExpr> = Vec::new();
     let mut aggregation: Option<&tipb::Aggregation> = None;
+    let mut topn: Option<TopNSpec> = None;
     for above in &context.dag_req.executors[1..] {
         if above.tp() == tipb::ExecType::TypeLimit {
             let Some(body) = above.limit.as_ref() else {
@@ -188,6 +190,14 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
                     Err(message) => return other_error(&message),
                 }
             }
+        } else if above.tp() == tipb::ExecType::TypeTopN {
+            let Some(body) = above.top_n.as_ref() else {
+                return other_error("executor missing topN body");
+            };
+            topn = Some(match TopNSpec::build(body) {
+                Ok(spec) => spec,
+                Err(message) => return other_error(&message),
+            });
         } else if above.tp() == tipb::ExecType::TypeAggregation
             || above.tp() == tipb::ExecType::TypeStreamAgg
         {
@@ -196,10 +206,10 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
             };
             aggregation = Some(body);
         } else {
-            return other_error("closure_exec.go's top-n processor is a later course");
+            return other_error("this closure-executor shape is a later course of this port");
         }
     }
-    if aggregation.is_some() && limit != usize::MAX {
+    if aggregation.is_some() && (limit != usize::MAX || topn.is_some()) {
         // Go's closure executor composes them; this port's one lowering
         // never builds the pair, so the combination refuses by name rather
         // than guessing which of Go's two cap positions was meant.
@@ -210,7 +220,15 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
         let Some(idx_scan) = scan.idx_scan.as_ref() else {
             return other_error("executor missing idx_scan body");
         };
-        return exec_index_scan(store, context, idx_scan, &conditions, limit, aggregation);
+        return exec_index_scan(
+            store,
+            context,
+            idx_scan,
+            &conditions,
+            limit,
+            aggregation,
+            topn.as_ref(),
+        );
     }
     if scan.tp() != tipb::ExecType::TypeTableScan {
         return other_error("index scans (closure_exec.go) are a later course of this port");
@@ -218,7 +236,15 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     let Some(tbl_scan) = scan.tbl_scan.as_ref() else {
         return other_error("executor missing tbl_scan body");
     };
-    exec_table_scan(store, context, tbl_scan, &conditions, limit, aggregation)
+    exec_table_scan(
+        store,
+        context,
+        tbl_scan,
+        &conditions,
+        limit,
+        aggregation,
+        topn.as_ref(),
+    )
 }
 
 /// Go `indexScanProcessor` and `indexScanProcessCore`: decode every index
@@ -234,6 +260,7 @@ fn exec_index_scan(
     conditions: &[SimpleExpr],
     limit: usize,
     aggregation: Option<&tipb::Aggregation>,
+    topn: Option<&TopNSpec>,
 ) -> coprocessor::Response {
     use tidb_datatype::Datum;
     const EXTRA_HANDLE_ID: i64 = -1;
@@ -295,6 +322,10 @@ fn exec_index_scan(
     };
     let mut rows = Vec::new();
     let mut emitted = 0_usize;
+    // Go keeps the kept rows in a bounded heap; this lowering buffers every
+    // surviving row and sorts once -- the same N rows in the same key order,
+    // without the intermediate evictions.
+    let mut topn_rows: Vec<(Vec<Datum>, Vec<Datum>)> = Vec::new();
     if aggregation.is_none() && limit == 0 {
         return encode_default_rows(rows, &timezone);
     }
@@ -369,6 +400,32 @@ fn exec_index_scan(
                 }
                 continue;
             }
+            // Go `topNProcessor`: the surviving row's sort keys are evaluated
+            // NOW and the row rides the heap; the replay emits the kept rows
+            // in key order. Buffering the whole set and sorting is that same
+            // answer without the heap.
+            if let Some(spec) = topn {
+                let keys = match spec.evaluate(&row) {
+                    Ok(keys) => keys,
+                    Err(message) => return other_error(&message),
+                };
+                let projected = if context.dag_req.output_offsets.is_empty() {
+                    row
+                } else {
+                    let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
+                    for offset in &context.dag_req.output_offsets {
+                        let Some(value) = row.get(*offset as usize) else {
+                            return other_error(&format!(
+                                "output offset {offset} is outside the scanned columns"
+                            ));
+                        };
+                        projected.push(value.clone());
+                    }
+                    projected
+                };
+                topn_rows.push((projected, keys));
+                continue;
+            }
             let projected = if context.dag_req.output_offsets.is_empty() {
                 row
             } else {
@@ -387,6 +444,20 @@ fn exec_index_scan(
             emitted += 1;
             if emitted == limit {
                 break 'ranges;
+            }
+        }
+    }
+    if let Some(spec) = topn {
+        // Go `topNProcessor.Finish` (`closure_exec.go:1064`): the kept rows
+        // replay in key order; a separate Limit above caps the replay
+        // further.
+        spec.sort_rows(&mut topn_rows);
+        topn_rows.truncate(spec.limit);
+        for (projected, _) in topn_rows {
+            rows.push(projected);
+            emitted += 1;
+            if emitted == limit {
+                break;
             }
         }
     }
@@ -486,6 +557,7 @@ fn exec_table_scan(
     conditions: &[SimpleExpr],
     limit: usize,
     aggregation: Option<&tipb::Aggregation>,
+    topn: Option<&TopNSpec>,
 ) -> coprocessor::Response {
     let timezone = match context.time_zone.resolve() {
         Ok(timezone) => timezone,
@@ -507,6 +579,10 @@ fn exec_table_scan(
     let mut current = Vec::new();
     let mut current_rows = 0_usize;
     let mut emitted = 0_usize;
+    // Go keeps the kept rows in a bounded heap; this lowering buffers every
+    // surviving row and sorts once -- the same N rows in the same key order,
+    // without the intermediate evictions.
+    let mut topn_rows: Vec<(Vec<Datum>, Vec<Datum>)> = Vec::new();
     // Go's `desc` scan: the ranges (ascending on the wire) are walked
     // last-to-first, each one reversed, so rows leave in descending record
     // order and a Limit above stops after the LARGEST keys.
@@ -636,6 +712,18 @@ fn exec_table_scan(
                 }
                 projected
             };
+            // Go `topNProcessor`: the surviving row's sort keys are evaluated
+            // NOW and the row rides the heap; the replay emits the kept rows
+            // in key order. Buffering the whole set and sorting is that same
+            // answer without the heap.
+            if let Some(spec) = topn {
+                let keys = match spec.evaluate(&row_datums) {
+                    Ok(keys) => keys,
+                    Err(message) => return other_error(&message),
+                };
+                topn_rows.push((projected, keys));
+                continue;
+            }
             let encoded = match tidb_codec::encode_value_in_timezone(&timezone, &projected) {
                 Ok(encoded) => encoded,
                 Err(err) => return other_error(&format!("encode row failed: {err:?}")),
@@ -653,6 +741,33 @@ fn exec_table_scan(
             // Go `e.rowCount == e.limit` (`closure_exec.go:597`).
             if emitted == limit {
                 break 'ranges;
+            }
+        }
+    }
+    if let Some(spec) = topn {
+        // Go `topNProcessor.Finish` (`closure_exec.go:1064`): the kept rows
+        // replay in key order; a separate Limit above caps the replay
+        // further. Sorted ties are deterministic here where Go's unstable
+        // sort leaves them unordered.
+        spec.sort_rows(&mut topn_rows);
+        topn_rows.truncate(spec.limit);
+        for (projected, _) in topn_rows {
+            let encoded = match tidb_codec::encode_value_in_timezone(&timezone, &projected) {
+                Ok(encoded) => encoded,
+                Err(err) => return other_error(&format!("encode row failed: {err:?}")),
+            };
+            current.extend_from_slice(&encoded);
+            current_rows += 1;
+            emitted += 1;
+            if current_rows == CHUNK_MAX_ROWS {
+                chunks.push(tipb::Chunk {
+                    rows_data: Some(std::mem::take(&mut current)),
+                    ..tipb::Chunk::default()
+                });
+                current_rows = 0;
+            }
+            if emitted == limit {
+                break;
             }
         }
     }
@@ -1044,6 +1159,144 @@ fn extreme_ordering(
         _ => match (candidate.as_raw_bytes(), current.as_raw_bytes()) {
             (Some(left), Some(right)) => collation.key(left).cmp(&collation.key(right)),
             _ => return Err("MIN/MAX over this datum pair is a later course".to_owned()),
+        },
+    };
+    Ok(ordering)
+}
+
+/// Go `topNCtx` (`closure_exec.go:545`): the pushed-down bounded sort --
+/// order-by keys with their directions and the heap size.
+struct TopNSpec {
+    keys: Vec<(SimpleExpr, bool, tidb_datatype::Collation)>,
+    limit: usize,
+}
+
+impl TopNSpec {
+    /// Go `buildTopNProcessor` (`closure_exec.go:384`).
+    fn build(top_n: &tipb::TopN) -> Result<Self, String> {
+        let mut keys = Vec::with_capacity(top_n.order_by.len());
+        for item in &top_n.order_by {
+            let Some(pb_expr) = item.expr.as_ref() else {
+                return Err("order-by item missing expr".to_owned());
+            };
+            let expr = convert_expr(pb_expr)?;
+            // Go orders each key under `by.Expr.FieldType.Collate`
+            // (`topn.go:60`).
+            let restored = tidb_datatype::restore_collation_id_if_needed(collation_of(pb_expr));
+            let collation =
+                tidb_datatype::Collation::from_name(&tidb_datatype::proto_to_collation(restored))
+                    .unwrap_or(tidb_datatype::Collation::Binary);
+            keys.push((expr, item.desc(), collation));
+        }
+        Ok(Self {
+            keys,
+            limit: top_n.limit() as usize,
+        })
+    }
+
+    /// Go `topNProcessor.Process`'s key evaluation (`closure_exec.go:1033`):
+    /// every key datum of one surviving row. Computed keys and kinds beyond
+    /// [`compare_sort_keys`] are a later course, matching the aggregation
+    /// lowering's leaf contract; surfacing the refusal here keeps the sort
+    /// comparator total.
+    fn evaluate(&self, row: &[tidb_datatype::Datum]) -> Result<Vec<tidb_datatype::Datum>, String> {
+        use tidb_datatype::Datum;
+        self.keys
+            .iter()
+            .map(|(expr, _, _)| {
+                let datum = match expr {
+                    SimpleExpr::Func(..) => {
+                        return Err("a computed sort key is a later course".to_owned())
+                    }
+                    other => eval_datum(other, row)?,
+                };
+                match datum {
+                    Datum::Null
+                    | Datum::Int(_)
+                    | Datum::UInt(_)
+                    | Datum::Decimal(_)
+                    | Datum::Real(_)
+                    | Datum::Float32(_)
+                    | Datum::String(_)
+                    | Datum::Bytes(_)
+                    | Datum::Time(_)
+                    | Datum::Duration(_) => Ok(datum),
+                    _ => Err("ordering over this datum kind is a later course".to_owned()),
+                }
+            })
+            .collect()
+    }
+
+    /// Go `topNSorter.Less` / `topNHeap.Less` (`topn.go:51-77`): per-key
+    /// datum comparison, negated for DESC. The heap's Enum special case and
+    /// Go's unstable `sort.Sort` are unreachable/narrowing here: computed
+    /// keys never arrive (leaf keys only), and a stable Rust sort is
+    /// deterministic where Go leaves ties unordered.
+    fn sort_rows(&self, rows: &mut [(Vec<tidb_datatype::Datum>, Vec<tidb_datatype::Datum>)]) {
+        rows.sort_by(|(_, left_keys), (_, right_keys)| {
+            for ((_, desc, collation), (left, right)) in self
+                .keys
+                .iter()
+                .zip(left_keys.iter().zip(right_keys.iter()))
+            {
+                let mut ordering = match compare_sort_keys(left, right, collation) {
+                    Ok(ordering) => ordering,
+                    // Unreachable: evaluate() gates the kinds this
+                    // comparator handles.
+                    Err(_) => std::cmp::Ordering::Equal,
+                };
+                if *desc {
+                    ordering = ordering.reverse();
+                }
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+    }
+}
+
+/// Go `types.Datum.Compare` (`pkg/types/datum.go`) over the datum kinds a
+/// lowered scan can produce as a sort key: NULL orders before every
+/// non-NULL datum, numerics compare by value across signedness, `Time` and
+/// `Duration` through their own comparators, and the string kinds under the
+/// key's collation.
+fn compare_sort_keys(
+    left: &tidb_datatype::Datum,
+    right: &tidb_datatype::Datum,
+    collation: &tidb_datatype::Collation,
+) -> Result<std::cmp::Ordering, String> {
+    use std::cmp::Ordering;
+    use tidb_datatype::Datum;
+    let ordering = match (left, right) {
+        (Datum::Null, Datum::Null) => Ordering::Equal,
+        (Datum::Null, _) => Ordering::Less,
+        (_, Datum::Null) => Ordering::Greater,
+        (Datum::Int(l), Datum::Int(r)) => l.cmp(r),
+        (Datum::UInt(l), Datum::UInt(r)) => l.cmp(r),
+        (Datum::Int(l), Datum::UInt(r)) => {
+            if *l < 0 {
+                Ordering::Less
+            } else {
+                (*l as u64).cmp(r)
+            }
+        }
+        (Datum::UInt(l), Datum::Int(r)) => {
+            if *r < 0 {
+                Ordering::Greater
+            } else {
+                l.cmp(&(*r as u64))
+            }
+        }
+        (Datum::Decimal(l), Datum::Decimal(r)) => l.cmp(r),
+        (Datum::Real(l), Datum::Real(r)) => l.total_cmp(r),
+        (Datum::Float32(l), Datum::Float32(r)) => l.total_cmp(r),
+        (Datum::Time(l), Datum::Time(r)) => l.compare(*r),
+        (Datum::Duration(l), Datum::Duration(r)) => l.compare(*r),
+        _ => match (left.as_raw_bytes(), right.as_raw_bytes()) {
+            (Some(l), Some(r)) => collation.key(l).cmp(&collation.key(r)),
+            _ => return Err("ordering over this datum pair is a later course".to_owned()),
         },
     };
     Ok(ordering)
@@ -2536,6 +2789,141 @@ mod tests {
         assert_eq!(
             decoded,
             vec![Datum::Int(2), Datum::Int(5), Datum::Int(1), Datum::Int(3)]
+        );
+    }
+
+    /// Go's `TestTopNProcessor` shape (`closure_exec_test.go`): a pushed-down
+    /// bounded sort over a table scan. The seed rows ride one transaction; the
+    /// top-N node keeps the `limit` smallest keys in key order.
+    ///
+    /// `b` values 30/10/20 across handles 1/2/3.
+    fn seed_three_rows(store: &mut MvccStore, table_id: i64) {
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+        for (handle, b_value) in [(1_i64, 30_i64), (2, 10), (3, 20)] {
+            let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
+            let value =
+                tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(b_value)]).expect("row");
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value,
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key], 10, 11).expect("commits");
+        }
+    }
+
+    fn top_n_request(
+        table_id: i64,
+        column_offset: i64,
+        desc: bool,
+        limit: u64,
+    ) -> coprocessor::Request {
+        let scan = tipb::Executor {
+            tp: Some(tipb::ExecType::TypeTableScan as i32),
+            tbl_scan: Some(tipb::TableScan {
+                table_id: Some(table_id),
+                columns: vec![
+                    tipb::ColumnInfo {
+                        column_id: Some(1),
+                        tp: Some(8), // TypeLonglong
+                        pk_handle: Some(true),
+                        ..tipb::ColumnInfo::default()
+                    },
+                    tipb::ColumnInfo {
+                        column_id: Some(2),
+                        tp: Some(8),
+                        ..tipb::ColumnInfo::default()
+                    },
+                ],
+                ..tipb::TableScan::default()
+            }),
+            ..tipb::Executor::default()
+        };
+        let mut key_offset = Vec::new();
+        tidb_codec::encode_int(&mut key_offset, column_offset);
+        let top_n = tipb::Executor {
+            tp: Some(tipb::ExecType::TypeTopN as i32),
+            top_n: Some(tipb::TopN {
+                order_by: vec![tipb::ByItem {
+                    expr: Some(tipb::Expr {
+                        tp: Some(tipb::ExprType::ColumnRef as i32),
+                        val: Some(key_offset),
+                        ..tipb::Expr::default()
+                    }),
+                    desc: Some(desc),
+                }],
+                limit: Some(limit),
+            }),
+            ..tipb::Executor::default()
+        };
+        let dag = tipb::DagRequest {
+            executors: vec![scan, top_n],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        coprocessor::Request {
+            tp: REQ_TYPE_DAG,
+            data,
+            ranges: vec![coprocessor::KeyRange {
+                start: range_start,
+                end: range_end,
+            }],
+            start_ts: 20,
+            ..coprocessor::Request::default()
+        }
+    }
+
+    #[test]
+    fn top_n_desc_keeps_the_largest_in_key_order() {
+        use tidb_datatype::Datum;
+        let mut store = MvccStore::new();
+        seed_three_rows(&mut store, 71);
+        let resp = handle_cop_request(&mut store, &top_n_request(71, 1, true, 2));
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("decodes");
+        let mut decoded = Vec::new();
+        for chunk in &select.chunks {
+            decoded.extend(
+                tidb_codec::decode(chunk.rows_data.as_deref().expect("rows"), 2).expect("row"),
+            );
+        }
+        // DESC on b keeps the two largest, largest first.
+        assert_eq!(
+            decoded,
+            vec![Datum::Int(1), Datum::Int(30), Datum::Int(3), Datum::Int(20),]
+        );
+    }
+
+    #[test]
+    fn top_n_asc_keeps_the_smallest_in_key_order() {
+        use tidb_datatype::Datum;
+        let mut store = MvccStore::new();
+        seed_three_rows(&mut store, 72);
+        let resp = handle_cop_request(&mut store, &top_n_request(72, 1, false, 2));
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("decodes");
+        let mut decoded = Vec::new();
+        for chunk in &select.chunks {
+            decoded.extend(
+                tidb_codec::decode(chunk.rows_data.as_deref().expect("rows"), 2).expect("row"),
+            );
+        }
+        // ASC on b keeps the two smallest, smallest first.
+        assert_eq!(
+            decoded,
+            vec![Datum::Int(2), Datum::Int(10), Datum::Int(3), Datum::Int(20)]
         );
     }
 }
