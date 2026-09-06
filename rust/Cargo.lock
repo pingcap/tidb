@@ -3797,6 +3797,7 @@ dependencies = [
 name = "tidb-planner"
 version = "0.0.0"
 dependencies = [
+ "prometheus 0.14.0",
  "tidb-ast",
  "tidb-chunk",
  "tidb-codec",

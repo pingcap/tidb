@@ -1658,7 +1658,15 @@ impl Session {
         // funnel; privilege, binding, transaction, and context setup below
         // remain shared whether the physical plan hits or misses.
         let non_prepared = (!prepared)
-            .then(|| self.parameterize_non_prepared_select(&stmt))
+            .then(|| {
+                let parameterized = self.parameterize_non_prepared_select(&stmt);
+                if parameterized.is_none() {
+                    // Go `NonPreparedPlanCacheableWithCtx`'s unsupported
+                    // counter: the statement was checked and declined.
+                    tidb_planner::metrics::non_prep_plan_cache_unsupported_counter().inc();
+                }
+                parameterized
+            })
             .flatten();
         // `apply_schema_stmt` dispatches administrative statements early.
         // EXPLAIN is the one such wrapper whose inner query/DML can own

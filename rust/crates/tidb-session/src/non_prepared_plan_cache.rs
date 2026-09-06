@@ -29,6 +29,9 @@ use tidb_ast::{
 use tidb_datatype::{Collation, Datum, Decimal, StringDatum};
 use tidb_executor::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
 use tidb_mysql::to_lowercase as go_simple_lowercase;
+use tidb_planner::metrics::{
+    non_prep_plan_cache_unsupported_counter, plan_cache_hit_counter, plan_cache_miss_counter,
+};
 use tidb_util::filter::is_system_schema;
 use tidb_util::kvcache::SimpleLruCache;
 
@@ -1051,9 +1054,13 @@ impl crate::Session {
                 &environment,
                 effective_statement,
             ) {
+                // Go `GetPlanFromPlanCache`'s hit arm.
+                tidb_planner::metrics::plan_cache_hit_counter(true).inc();
                 return Some(execution);
             }
         }
+        // Go's miss arm re-plans; its miss counter records the replan.
+        tidb_planner::metrics::plan_cache_miss_counter(true).inc();
         let ctx = self.statement_context(false);
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
@@ -1109,9 +1116,13 @@ impl crate::Session {
                 &environment,
                 effective_statement,
             ) {
+                // Go `GetPlanFromPlanCache`'s hit arm.
+                tidb_planner::metrics::plan_cache_hit_counter(true).inc();
                 return Some(execution);
             }
         }
+        // Go's miss arm re-plans; its miss counter records the replan.
+        tidb_planner::metrics::plan_cache_miss_counter(true).inc();
         let ctx = self.statement_context(false);
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(

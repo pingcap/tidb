@@ -13,6 +13,7 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+prometheus = { version = "0.14", default-features = false }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
