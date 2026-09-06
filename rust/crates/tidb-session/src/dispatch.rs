@@ -1657,16 +1657,12 @@ impl Session {
         // cache as PREPARE. Keep the candidate beside this ordinary statement
         // funnel; privilege, binding, transaction, and context setup below
         // remain shared whether the physical plan hits or misses.
+        // Unsupported-statement counting lives inside
+        // `parameterize_non_prepared_select` (Go's
+        // `GetNonPrepPlanCacheUnsupportedCounter`), which distinguishes
+        // counted checker-walk refusals from clause-level fast-check ones.
         let non_prepared = (!prepared)
-            .then(|| {
-                let parameterized = self.parameterize_non_prepared_select(&stmt);
-                if parameterized.is_none() {
-                    // Go `NonPreparedPlanCacheableWithCtx`'s unsupported
-                    // counter: the statement was checked and declined.
-                    tidb_planner::metrics::non_prep_plan_cache_unsupported_counter().inc();
-                }
-                parameterized
-            })
+            .then(|| self.parameterize_non_prepared_select(&stmt))
             .flatten();
         // `apply_schema_stmt` dispatches administrative statements early.
         // EXPLAIN is the one such wrapper whose inner query/DML can own
