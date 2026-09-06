@@ -378,6 +378,8 @@ impl Session {
                 &environment,
                 statement,
             ) {
+                // Go `GetPlanFromPlanCache`'s hit arm (prepared label).
+                tidb_planner::metrics::plan_cache_hit_counter(false).inc();
                 return Some(cached);
             }
         }
@@ -397,6 +399,9 @@ impl Session {
             _ => self.statement_context(true),
         };
         let catalog = self.lock_catalog().ok()?;
+        // Go's miss arm: the replan is recorded on the miss counter
+        // (plan_cache.go:366).
+        tidb_planner::metrics::plan_cache_miss_counter(false).inc();
         plan.bind_for_statement(
             values,
             &catalog,
@@ -447,12 +452,14 @@ impl Session {
                 &environment,
                 statement,
             ) {
+                // Go `GetPlanFromPlanCache`'s hit arm
+                // (plan_cache.go:351, prepared label).
+                tidb_planner::metrics::plan_cache_hit_counter(false).inc();
                 return Some(execution);
             }
         }
-        // Planning a cache miss needs sequence and decode-key snapshots from
-        // the catalog. Build them before holding the catalog guard; taking
-        // the guard first would recursively lock the same mutex.
+        // Go's miss arm (plan_cache.go:366).
+        tidb_planner::metrics::plan_cache_miss_counter(false).inc();
         let ctx = self.statement_context(false);
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
