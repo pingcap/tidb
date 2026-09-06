@@ -41,6 +41,12 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/ddl/placement` `GroupID` return contract): the complete
+  package inventory and owner were rechecked. The final direct Go-shaped
+  helper no longer imposes one Rust-only `#[must_use]` diagnostic; its focused
+  deny-on-discard regression failed once before the edit and passes afterward.
+  Evidence is recorded in `receipts/ddl_placement.md` and the dedicated
+  placement ExecPlan; Ready validation and publication remain.
 - 2026-09-06 (`pkg/ddl/notifier` return contracts): the complete eight-file,
   1,999-line Go package was re-read at current `origin/master`, together with
   all three Rust source modules and the crate manifest (1,615 lines, 10 inline

@@ -34,6 +34,13 @@ current Go master behavior.
   rolling ExecPlan.
 - [x] Commit once for `pkg/ddl/placement`, rebase/push to
   `hparser-integration`, and verify the remote SHA `a11714f1504`.
+- [x] (2026-09-06) Re-read the complete package owner and removed the lone
+  Rust-only `#[must_use]` annotation from Go-shaped `GroupID`; a deny-on-
+  discard regression failed pre-fix with one diagnostic and passes afterward.
+- [x] (2026-09-06) Focused regression, all 30 owner tests, all-target check,
+  formatting, Ready lint, and diff hygiene all pass.
+- [ ] Publish the `GroupID` return-contract follow-up as one package-scoped
+  commit, then continue the rolling package audit.
 
 ## Scope and decision
 
