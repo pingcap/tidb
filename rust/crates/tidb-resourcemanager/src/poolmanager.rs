@@ -310,6 +310,9 @@ impl TaskManager {
     fn iter(&self, select: impl Fn(&Meta, SystemTime) -> (bool, bool)) -> (u64, Option<Arc<Meta>>) {
         let mut task_id = 0;
         let mut result = None;
+        // Go seeds this with the zero time (year 1); UNIX_EPOCH is the
+        // nearest Rust equivalent and is unreachable: `fn` only runs once a
+        // real `Meta` has set `compare_ts`.
         let mut compare_ts = SystemTime::UNIX_EPOCH;
         'shards: for task in &self.tasks {
             let stats = task

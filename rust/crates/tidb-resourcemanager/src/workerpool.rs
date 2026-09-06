@@ -471,6 +471,11 @@ where
         let Some(mut worker) = (self.create_worker)() else {
             return;
         };
+        // Go re-reads `p.taskChan`/`p.resChan` on every select, so a
+        // SetTaskReceiver/SetResultSender after Start would re-route live
+        // workers; here the channels are cloned once at spawn. Re-wiring a
+        // running pool is invalid usage upstream (the callers set both
+        // before Start), and this makes that contract explicit.
         let task_channel = self.current_task_channel();
         let result_channel = self
             .result_channel

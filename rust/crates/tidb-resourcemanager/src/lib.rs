@@ -13,6 +13,10 @@
 // limitations under the License.
 
 //! Local instance resource manager from `pkg/resourcemanager`.
+//!
+//! Ported whole against the baseline, including the CPU scheduling surface
+//! Go gets from `pkg/util/cpu` (usage EMA observer, GOMAXPROCS install),
+//! which lives in `tidb_util::cpu` here.
 
 pub mod pool;
 pub mod poolmanager;
