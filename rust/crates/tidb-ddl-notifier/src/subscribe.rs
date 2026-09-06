@@ -192,7 +192,6 @@ pub struct DdlNotifier {
 
 impl DdlNotifier {
     /// Go `NewDDLNotifier`.
-    #[must_use]
     pub fn new(pool: Arc<dyn SessionPool>, store: Arc<dyn Store>, poll_interval: Duration) -> Self {
         Self {
             pool,
@@ -528,6 +527,14 @@ mod tests {
             name: CiString::new(format!("t{id}")),
             ..TableInfo::default()
         })
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn go_notifier_constructor_may_be_ignored_like_go() {
+        let pool: Arc<dyn SessionPool> = Arc::new(MockPool);
+        let store: Arc<dyn Store> = Arc::new(MockStore::default());
+        DdlNotifier::new(pool, store, Duration::from_millis(1));
     }
 
     #[test]
