@@ -274,3 +274,25 @@ with Go's `pkg/expression` semantics:
 Regressions: `integer_mod_follows_mysql` (-7 % 2 = -1; zero divisor NULL)
 and `decimal_arithmetic_composes_into_conditions` (c + (-1) > 0 as a
 selection condition).
+
+## Coprocessor REAL family (2026-09-07, same session)
+
+The trimmed tipb enum gains the six REAL comparisons and the four REAL
+arithmetic signatures at their upstream contract ids (`expression.proto` @
+the pinned tipb: LTReal 101 .. NEReal 151; PlusReal 200, MinusReal 204,
+MultiplyReal 208, DivideReal 211), and the evaluator lands them:
+
+- `LTReal`/`LEReal`/`GTReal`/`GEReal`/`EQReal`/`NEReal`: binary64
+  comparison with total ordering (`f64::total_cmp`), NULL in -> NULL out.
+- `PlusReal`/`MinusReal`/`MultiplyReal`: binary64 arithmetic, NULL in ->
+  NULL out; `DivideReal`: NULL on a zero divisor (`EvalDivideReal`).
+  Both compose recursively as operands (`x / 2 + 1`) and a bare
+  arithmetic answers its own truth (`ToBool`: non-zero and not-NaN).
+- `SimpleExpr` gains a `Real(f64)` leaf: `ExprType_Float64` constants
+  decode through Go `convertFloat`'s `codec.DecodeFloat` -- eight
+  big-endian IEEE-754 bits -- and `eval_datum` maps the leaf so aggregate
+  argument leaves stay exhaustive.
+
+Regressions: `real_comparisons_and_arithmetic_follow_mysql` (GTReal truth,
+composed `x / 2 + 1`, zero-divisor NULL) and
+`a_float64_literal_decodes_go_convert_float` (wire bits -> leaf).

@@ -152,6 +152,14 @@ enum ScalarFuncSig {
   GEString = 133;
   EQString = 143;
   NEString = 153;
+  // The same six operators over a REAL argument pair (`GetAccurateCmpType`
+  // answers ETReal when either side is double).
+  LTReal = 101;
+  LEReal = 111;
+  GTReal = 121;
+  GEReal = 131;
+  EQReal = 141;
+  NEReal = 151;
   // The op group: logical composition, negation, and the evaluation-family
   // specific `IS NULL` signatures selected by Go's `isNullFunctionClass`.
   LogicalAnd = 3101;
@@ -313,6 +321,11 @@ enum ScalarFuncSig {
   PlusDecimal = 201;
   MinusDecimal = 205;
   MultiplyDecimal = 209;
+  // The REAL arithmetic family (`builtinArithmeticSig`'s real signatures).
+  PlusReal = 200;
+  MinusReal = 204;
+  MultiplyReal = 208;
+  DivideReal = 211;
 
   // The arithmetic `MOD` family. Go picks between the four integer
   // signatures by the two arguments' UNSIGNED flags, not by their width.

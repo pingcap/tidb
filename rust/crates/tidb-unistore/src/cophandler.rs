@@ -1121,6 +1121,7 @@ fn eval_datum(
         SimpleExpr::Int(value) => Ok(Datum::Int(*value)),
         SimpleExpr::Bytes(bytes) => Ok(Datum::Bytes(bytes.clone())),
         SimpleExpr::Decimal(value) => Ok(Datum::Decimal(value.clone())),
+        SimpleExpr::Real(value) => Ok(Datum::Real(*value)),
         SimpleExpr::Time(value) => Ok(Datum::Time(*value)),
         SimpleExpr::Null => Ok(Datum::Null),
         SimpleExpr::Func(..) => Err("a computed aggregate argument is a later course".to_owned()),
@@ -1380,6 +1381,9 @@ pub enum SimpleExpr {
     /// `ExprType_MysqlDecimal`, val decimal-codec decoded
     /// (`distsql_builtin.go`'s `decodeValueList` -> `codec.DecodeDecimal`).
     Decimal(tidb_datatype::Decimal),
+    /// `ExprType_Float64`, val decoded as Go `codec.DecodeFloat` -- eight
+    /// big-endian IEEE-754 bits (`distsql_builtin.go`'s `convertFloat`).
+    Real(f64),
     /// `ExprType_MysqlTime`, val codec-uint decoded into Go's PACKED form
     /// (`distsql_builtin.go`'s `MysqlTime` arm -> `types.NewTime` from
     /// `FromPackedUint`). The type and fsp come from the leaf's own field
@@ -1414,6 +1418,27 @@ pub enum SimpleSig {
     ModIntSignedUnsigned,
     /// See [`SimpleSig::ModIntUnsignedUnsigned`].
     ModIntSignedSigned,
+    /// `LTReal`/`LEReal`/`GTReal`/`GEReal`/`EQReal`/`NEReal`, by ordering.
+    LtReal,
+    /// See [`SimpleSig::LtReal`].
+    LeReal,
+    /// See [`SimpleSig::LtReal`].
+    GtReal,
+    /// See [`SimpleSig::LtReal`].
+    GeReal,
+    /// See [`SimpleSig::LtReal`].
+    EqReal,
+    /// See [`SimpleSig::LtReal`].
+    NeReal,
+    /// `PlusReal`/`MinusReal`/`MultiplyReal`: binary64 arithmetic, NULL in
+    /// -> NULL out (Go `EvalPlusReal` family).
+    PlusReal,
+    /// See [`SimpleSig::PlusReal`].
+    MinusReal,
+    /// See [`SimpleSig::PlusReal`].
+    MultiplyReal,
+    /// Go `EvalDivideReal`: NULL on a zero divisor.
+    DivideReal,
     /// `LtInt`/`LeInt`/`GtInt`/`GeInt`/`EqInt`/`NeInt`, by ordering.
     LtInt,
     /// See [`SimpleSig::LtInt`].
@@ -1501,6 +1526,16 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             .map_err(|err| format!("invalid int literal: {err:?}"))?;
         return Ok(SimpleExpr::Int(value));
     }
+    if tp == tipb::ExprType::Float64 {
+        // Go `convertFloat`: `codec.DecodeFloat` -- eight big-endian bits.
+        let bytes = expr.val();
+        if bytes.len() != 8 {
+            return Err(format!("invalid float literal: {bytes:?}"));
+        }
+        return Ok(SimpleExpr::Real(f64::from_bits(u64::from_be_bytes(
+            bytes.try_into().expect("eight bytes"),
+        ))));
+    }
     if tp == tipb::ExprType::String {
         return Ok(SimpleExpr::Bytes(expr.val().to_vec()));
     }
@@ -1549,6 +1584,16 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::ModIntUnsignedSigned => SimpleSig::ModIntUnsignedSigned,
             tipb::ScalarFuncSig::ModIntSignedUnsigned => SimpleSig::ModIntSignedUnsigned,
             tipb::ScalarFuncSig::ModIntSignedSigned => SimpleSig::ModIntSignedSigned,
+            tipb::ScalarFuncSig::LtReal => SimpleSig::LtReal,
+            tipb::ScalarFuncSig::LeReal => SimpleSig::LeReal,
+            tipb::ScalarFuncSig::GtReal => SimpleSig::GtReal,
+            tipb::ScalarFuncSig::GeReal => SimpleSig::GeReal,
+            tipb::ScalarFuncSig::EqReal => SimpleSig::EqReal,
+            tipb::ScalarFuncSig::NeReal => SimpleSig::NeReal,
+            tipb::ScalarFuncSig::PlusReal => SimpleSig::PlusReal,
+            tipb::ScalarFuncSig::MinusReal => SimpleSig::MinusReal,
+            tipb::ScalarFuncSig::MultiplyReal => SimpleSig::MultiplyReal,
+            tipb::ScalarFuncSig::DivideReal => SimpleSig::DivideReal,
             tipb::ScalarFuncSig::LtInt => SimpleSig::LtInt,
             tipb::ScalarFuncSig::LeInt => SimpleSig::LeInt,
             tipb::ScalarFuncSig::GtInt => SimpleSig::GtInt,
@@ -1641,6 +1686,40 @@ fn eval_decimal(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<tidb_
                 SimpleSig::MinusDecimal => Some(left.sub_mysql(&right).0),
                 SimpleSig::MultiplyDecimal => Some(left.mul_mysql(&right).0),
                 _ => left.rem_mysql(&right),
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The binary64 value of one operand of a real comparison or arithmetic;
+/// see [`eval_decimal`] for why only exact operands reach here.
+fn eval_real(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<f64> {
+    use tidb_datatype::Datum;
+    match expr {
+        SimpleExpr::Real(value) => Some(*value),
+        SimpleExpr::Column(offset) => match row.get(*offset) {
+            Some(Datum::Real(value)) => Some(*value),
+            _ => None,
+        },
+        // Go's arithmetic evaluators recurse; the real family composes.
+        SimpleExpr::Func(
+            sig @ (SimpleSig::PlusReal
+            | SimpleSig::MinusReal
+            | SimpleSig::MultiplyReal
+            | SimpleSig::DivideReal),
+            children,
+        ) => {
+            let (left, right) = (
+                eval_real(children.first()?, row)?,
+                eval_real(children.get(1)?, row)?,
+            );
+            match sig {
+                SimpleSig::PlusReal => Some(left + right),
+                SimpleSig::MinusReal => Some(left - right),
+                SimpleSig::MultiplyReal => Some(left * right),
+                _ if right != 0.0 => Some(left / right),
+                _ => None,
             }
         }
         _ => None,
@@ -1751,9 +1830,12 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
             Some(Datum::Null) | None => None,
             Some(_) => None, // non-int columns wait on their course
         },
-        // A bare string or decimal is not a truth value; only a comparison
-        // reads them.
-        SimpleExpr::Bytes(_) | SimpleExpr::Decimal(_) | SimpleExpr::Time(_) => None,
+        // A bare string, decimal or real is not a truth value; only a
+        // comparison reads them.
+        SimpleExpr::Bytes(_)
+        | SimpleExpr::Decimal(_)
+        | SimpleExpr::Real(_)
+        | SimpleExpr::Time(_) => None,
         SimpleExpr::Func(sig, children) => {
             let child = |i: usize| children.get(i).and_then(|c| eval_expr(c, row));
             match sig {
@@ -1772,6 +1854,38 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                     (Some(left), Some(right)) if right != 0 => Some(left % right),
                     _ => None,
                 },
+                SimpleSig::LtReal
+                | SimpleSig::LeReal
+                | SimpleSig::GtReal
+                | SimpleSig::GeReal
+                | SimpleSig::EqReal
+                | SimpleSig::NeReal => {
+                    let (left, right) = (
+                        eval_real(children.first()?, row)?,
+                        eval_real(children.get(1)?, row)?,
+                    );
+                    let ordering = left.total_cmp(&right);
+                    let truth = match sig {
+                        SimpleSig::LtReal => ordering.is_lt(),
+                        SimpleSig::LeReal => ordering.is_le(),
+                        SimpleSig::GtReal => ordering.is_gt(),
+                        SimpleSig::GeReal => ordering.is_ge(),
+                        SimpleSig::EqReal => ordering.is_eq(),
+                        _ => !ordering.is_eq(),
+                    };
+                    Some(i128::from(truth))
+                }
+                SimpleSig::PlusReal
+                | SimpleSig::MinusReal
+                | SimpleSig::MultiplyReal
+                | SimpleSig::DivideReal => {
+                    // A bare real arithmetic as a condition answers its own
+                    // truth (`ToBool`): non-zero and not-NaN is true, NULL
+                    // is filtered. MySQL's `ToBool` treats NaN as 0.
+                    eval_real(expr, row)
+                        .filter(|value| !value.is_nan())
+                        .map(|value| i128::from(value != 0.0))
+                }
                 SimpleSig::LtInt
                 | SimpleSig::LeInt
                 | SimpleSig::GtInt
@@ -3044,5 +3158,53 @@ mod tests {
         assert_eq!(eval_expr(&condition, &row), Some(1));
         let row_small = [Datum::Decimal(Decimal::parse_mysql("1").0)];
         assert_eq!(eval_expr(&condition, &row_small), Some(0));
+    }
+
+    #[test]
+    fn real_comparisons_and_arithmetic_follow_mysql() {
+        use tidb_datatype::Datum;
+        let row = [Datum::Real(2.5)];
+        let column = SimpleExpr::Column(0);
+        let literal = SimpleExpr::Real(1.5);
+        // `x > 1.5` arrives as GTReal after `GetAccurateCmpType` answers
+        // ETReal; the comparison is binary64.
+        assert_eq!(
+            eval_expr(
+                &SimpleExpr::Func(SimpleSig::GtReal, vec![column.clone(), literal]),
+                &row
+            ),
+            Some(1)
+        );
+        // Arithmetic composes: `x / 2 + 1` is 2.25, truthy as a condition.
+        let arithmetic = SimpleExpr::Func(
+            SimpleSig::PlusReal,
+            vec![
+                SimpleExpr::Func(SimpleSig::DivideReal, vec![column, SimpleExpr::Real(2.0)]),
+                SimpleExpr::Real(1.0),
+            ],
+        );
+        assert_eq!(eval_expr(&arithmetic, &row), Some(1));
+        // A zero divisor answers NULL (`EvalDivideReal`).
+        let by_zero = SimpleExpr::Func(
+            SimpleSig::DivideReal,
+            vec![SimpleExpr::Real(1.0), SimpleExpr::Real(0.0)],
+        );
+        assert_eq!(eval_expr(&by_zero, &row), None);
+    }
+
+    #[test]
+    fn a_float64_literal_decodes_go_convert_float() {
+        // Go `convertFloat`: `codec.DecodeFloat` -- eight big-endian bits.
+        let mut val = Vec::new();
+        val.extend_from_slice(&1.5_f64.to_bits().to_be_bytes());
+        let expr = tipb::Expr {
+            tp: Some(tipb::ExprType::Float64 as i32),
+            val: Some(val),
+            ..tipb::Expr::default()
+        };
+        match convert_expr(&expr).expect("decodes") {
+            SimpleExpr::Real(value) => assert_eq!(value, 1.5),
+            other => panic!("unexpected leaf: {other:?}"),
+        }
     }
 }
