@@ -9443,3 +9443,7 @@ risks without claiming repository-wide parity.
   never consults it — MySQL 8 semantics); duplicate column 1060 and double
   primary key 1068. Five pinned regressions in
   `tests/check_column_options_source.rs`.
+- 2026-09-06 (default-value rule pins): probed `hasDefaultValue`'s BLOB/TEXT/
+  JSON literal-default refusal (1102) and the VECTOR literal-default plain
+  error (`add_column.go:1215-1237`) — all already enforced faithfully. Four
+  pinned regressions in `tests/default_value_rules_source.rs`.
