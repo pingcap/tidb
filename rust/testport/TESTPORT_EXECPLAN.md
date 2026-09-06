@@ -41,13 +41,67 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
-- 2026-09-06 (`pkg/util/hint` return contracts): the complete four-artifact
-  Go package and complete five-module Rust owner were rechecked. Eighteen
-  direct Go-shaped hint matching/restoration/query-block helpers no longer
-  impose Rust-only `#[must_use]` diagnostics; focused deny-on-discard probes
-  failed pre-fix with exactly 18 diagnostics and pass afterward. Evidence is
-  recorded in `receipts/util_hint.md`; Ready gates and one package-scoped
-  publication commit remain.
+- 2026-09-07 (`pkg/planner/core` optimizer + postOptimize parity, batches
+  pushed as `0f847776273` and `d619cc7e9aa`): the last two
+  registered-but-unimplemented optimizer surfaces were ported whole and
+  pinned. (1) `rule_aggregation_push_down.go` — the `AggregationPushDownSolver`
+  body (join-side pushdown gated by `tidb_opt_agg_push_down`, unconditional
+  projection crossing, ungated partition-union arm, `CheckCanConvertAggToProj`
+  first port, shared-`AggFuncDesc` aliasing modeled with indices) with the
+  session variable threaded end-to-end; receipt
+  `receipts/planner_aggregation_push_down.md`. (2)
+  `rule_inject_extra_projection.go` + `refine4NeighbourProj` — the second half
+  of Go's `postOptimize`, now wired in `physical_plan_for_logical` right after
+  `eliminate_physical_projection`; receipt
+  `receipts/planner_inject_extra_projection.md`. (3) `GetSelectivityByFilter`
+  coverage extended to `REGEXP`/`NOT REGEXP` and the NOT-wrapper shape via a
+  public binary-collation regexp matcher in `tidb-expr`; 5 further regressions.
+  22 focused regressions total; clean detached-worktree suite comparisons
+  against the parent commits show no new failures in `tidb-planner`,
+  `tidb-executor`, or `tidb-session` (net flips positive); clippy clean. The
+  remaining optimizer `None` bodies (Decorrelate/Correlate/FullTextIndex) and
+  the runaway manager stay documented as out-of-served-scope pending their
+  boundary groups.
+- 2026-09-06 (`pkg/dxf/framework/proto` return contracts): the complete
+  11-artifact Go package and Rust DXF value owner were rechecked. Five direct
+  Go-shaped step/task-type conversions no longer impose Rust-only
+  `#[must_use]` diagnostics; focused deny-on-discard regressions failed with
+  exactly five diagnostics before the edit and pass afterward. Evidence is in
+  `receipts/dxf_framework_proto.md` and its dedicated ExecPlan; Ready gates and
+  one package-scoped publication commit remain.
+- 2026-09-06 (`pkg/ddl/placement` `GroupID` return contract): the complete
+  package inventory and owner were rechecked. The final direct Go-shaped
+  helper no longer imposes one Rust-only `#[must_use]` diagnostic; its focused
+  deny-on-discard regression failed once before the edit and passes afterward.
+  Evidence is recorded in `receipts/ddl_placement.md` and the dedicated
+  placement ExecPlan; Ready validation and publication remain.
+- 2026-09-06 (`pkg/ddl/notifier` return contracts): the complete eight-file,
+  1,999-line Go package was re-read at current `origin/master`, together with
+  all three Rust source modules and the crate manifest (1,615 lines, 10 inline
+  tests). Thirty-one direct Go-shaped event constructors/getters/type queries
+  and `DdlNotifier::new` no longer impose Rust-only `#[must_use]` diagnostics;
+  the publication `Result` contract is retained. A focused deny-on-discard
+  regression failed pre-fix with exactly 31 diagnostics and passes afterward.
+  Evidence is recorded in `receipts/ddl_notifier.md` and the notifier
+  ExecPlans; Ready validation and one package-scoped publication commit remain.
+- 2026-09-06 (`pkg/meta/model/index` return contracts): the complete
+  23-artifact, 10,721-line model package and full index owner were re-read at
+  current Go master, including all tests and BUILD metadata and the absence of
+  fixtures/generated/platform variants. Twenty-five direct Go-shaped index
+  `#[must_use]` annotations were removed; six Rust ownership/equality
+  adapters remain. The focused regression failed pre-fix with exactly 25
+  diagnostics and passes after the edit. Evidence is recorded in
+  `receipts/meta_model_materialized_view.md` and
+  `docs/operations/meta-model-index-audit-execplan.md`.
+- 2026-09-06 (`pkg/ttl/cache` return contracts): the complete 13-artifact,
+  3,572-line cache package and full Rust owner were re-read at current Go
+  master, including every test/build artifact and the absence of fixtures,
+  generated/platform variants, benchmarks, and fuzz targets. Twenty-six
+  direct Go-shaped Rust `#[must_use]` annotations were removed; five
+  Rust-only/error-contract annotations remain. The focused regression failed
+  pre-fix with exactly 26 diagnostics and passes after the edit. Evidence is
+  recorded in `receipts/ttl_cache.md` and
+  `docs/operations/ttl-cache-audit-execplan.md`.
 - 2026-09-06 (`pkg/statistics` builder return contracts): the complete
   direct root inventory was re-read at current Go master: 33 artifacts and
   13,905 direct lines plus two JSON fixtures (71 lines), with nested packages
@@ -9413,40 +9467,47 @@ risks without claiming repository-wide parity.
   deliberate deferrals. clippy `--no-deps` zero own warnings on all four
   crates; parser+chunk+util+expr+datatype 3439/3439. Details in
   `receipts/nightly_clippy_refresh_sweep.md`.
-- 2026-09-06 (planner coalesced qualified-name parity): Go's
-  `pkg/planner/core` retains redundant `USING`/`NATURAL JOIN` columns in
-  `FullSchema`/`FullNames` for qualified references, wildcard expansion on a
-  direct join, and pruning through transparent wrappers. Rust now carries an
-  optional full scope through scalar/ON/projection/sort/GROUP BY rewriting and
-  uses full-capable child schemas during join pruning, while preserving
-  visible-schema and derived-table boundaries. The focused coalesced-join
-  matrix and complete Go inventory are recorded in
-  `receipts/planner_coalesced_qualified_names.md`.
-- 2026-09-06 (`pkg/util/schemacmp` return-contract parity): Rust's native
-  schema-comparison owner no longer marks fourteen Go-shaped constructors,
-  value helpers, table encode/decode APIs, or `Typ::new` as `#[must_use]`.
-  Focused `deny(unused_must_use)` probes fail with exactly fourteen
-  diagnostics before the annotation removal and pass afterward; the complete
-  13-test aggregate, all-target check, and Ready evidence are recorded in
-  `receipts/util_schemacmp.md`.
-- 2026-09-06 (`pkg/util/workloadrepo` return-contract parity): Rust's
-  workload-repository owner no longer marks five Go-shaped table, partition,
-  worker-constructor, or worker-status APIs as `#[must_use]`. A focused
-  `deny(unused_must_use)` probe failed with exactly five diagnostics before
-  the annotation removal and passes afterward; the complete 15-test aggregate,
-  all-target check, standalone rustfmt, and Ready evidence are recorded in
-  `receipts/util_workloadrepo.md`.
-- 2026-09-06 (`pkg/dxf/operator` return-contract parity): Rust's pipeline
-  owner no longer marks the Go-shaped `IsStarted`, `String`, and
-  `GetReaderAndWriter` queries as `#[must_use]`. A focused
-  `deny(unused_must_use)` probe failed with exactly three diagnostics before
-  the annotation removal and passes afterward; all three owner tests,
-  all-target compilation, standalone rustfmt, and Ready evidence are recorded
-  in `receipts/dxf_operator.md`.
-- 2026-09-06 (`pkg/ddl/copr` return-contract parity): Rust's coprocessor
-  context owner no longer marks ten Go-shaped context, index-lookup, and
-  schema/name query methods as `#[must_use]`. A focused
-  `deny(unused_must_use)` probe failed with exactly ten diagnostics before the
-  annotation removal and passes afterward; all four owner tests, all-target
-  compilation, standalone rustfmt, and Ready evidence are recorded in
-  `receipts/ddl_copr.md`.
+- 2026-09-06 (planner checkColumn port, batch #39): a behavioral probe proved
+  the port ACCEPTS `bit(65)`, `bit(0)`, `char(300)`, `varchar(40000)`,
+  `decimal(70,5)` and `set('a,b')` CREATE TABLEs that Go's planner
+  `checkColumn` (`preprocess.go:1578-1680`) rejects at DDL time. The missing
+  arms are now ported into `check_column_attributes` — BIT size/display (3013,
+  1439), CHAR/VARCHAR field length (1074, with the resolved-charset max
+  65535/maxlen), DECIMAL precision/scale (1426/1425), FLOAT/DOUBLE width/scale/
+  wrong-field-spec (1439/1425/1063) — and the SET comma-member/member-count
+  checks (1367/1097), with seven new coded DriverError variants carrying the
+  verbatim Go templates. Fail-before: the probe's ACCEPTED prints; fail-after:
+  nine asserted regressions including an in-range boundary create sweep. The
+  executor failure-set delta versus clean HEAD is the documented sibling
+  in-flight breakage plus spill-dir environmental flake, item-by-item. Details
+  in `receipts/check_column_width_limits.md`.
+- 2026-09-06 (checkColumn ALTER-path pin): Go runs `checkColumn` over ALTER
+  TABLE's `spec.NewColumns` as well (`preprocess.go:1444`); probe confirmed the
+  batch-#39 gate already covers the ALTER path via the shared
+  `check_column_attributes` — `MODIFY COLUMN c BIT(65)` answers 1439 and
+  `ADD COLUMN d CHAR(300)` answers 1074 with the exact Go texts. Two asserted
+  regressions pin the ALTER-path coverage in
+  `tests/check_column_alter_path_source.rs`.
+- 2026-09-06 (checkAutoIncrement + column-option pins): probed the option-rule
+  family around checkColumn. Verified faithful: two auto_increment columns →
+  1075; auto_increment on DECIMAL/DATETIME → 1063 "Incorrect column specifier";
+  a lone auto_increment WITHOUT a key accepted (Go collects the isKey flag but
+  never consults it — MySQL 8 semantics); duplicate column 1060 and double
+  primary key 1068. Five pinned regressions in
+  `tests/check_column_options_source.rs`.
+- 2026-09-06 (default-value rule pins): probed `hasDefaultValue`'s BLOB/TEXT/
+  JSON literal-default refusal (1102) and the VECTOR literal-default plain
+  error (`add_column.go:1215-1237`) — all already enforced faithfully. Four
+  pinned regressions in `tests/default_value_rules_source.rs`.
+- 2026-09-06 (generated-column and charset pins): virtual-generated PK → 3106,
+  stored-generated PK accepted, index on generated accepted, unknown column
+  charset → [parser:1115], unknown table charset parse-refused. Five pins in
+  `tests/generated_charset_rules_source.rs`.
+- 2026-09-06 (`pkg/statistics`/`pkg/executor` ANALYZE sample-rate fallback):
+  Rust's in-process analyzer now models Go's zero-count `stats_meta` row for
+  an existing fresh table, selecting a full sample instead of the unknown
+  stats-handle `0.001` rate. Small-table TopN estimates are consequently exact
+  after `ANALYZE`, while the shared helper retains Go's distinct `None`/`None`
+  fallback. Focused session/executor regressions, the complete statistics
+  inventory, and Ready evidence are recorded in
+  `receipts/statistics_analyze_small_table_sample_rate.md`.
