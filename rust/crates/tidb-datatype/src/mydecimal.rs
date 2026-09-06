@@ -1551,7 +1551,7 @@ impl MyDecimal {
     /// decimal string. This is the hot `chunk.Row::datum_with_buffer` path:
     /// Go already has the base-1e9 words, so rebuilding a string only to parse
     /// it back loses the representation's main advantage.
-    pub(crate) fn to_decimal_parts(&self) -> (bool, SmallVec<[u8; 24]>, u32, u32) {
+    pub(crate) fn to_decimal_parts(self) -> (bool, SmallVec<[u8; 24]>, u32, u32) {
         let (word_start_idx, digits_int) = self.remove_leading_zeros();
         let integer_len = digits_int.max(1) as usize;
         let fraction_len = i32::from(self.digits_frac).max(0) as usize;
@@ -1652,8 +1652,8 @@ impl MyDecimal {
             return None;
         }
         let mut magnitude = 0_i128;
-        for chunk in bytes[4..4 + used_words * 4].chunks_exact(4) {
-            let word = i32::from_ne_bytes(chunk.try_into().expect("four-byte decimal word"));
+        for chunk in bytes[4..4 + used_words * 4].as_chunks::<4>().0 {
+            let word = i32::from_ne_bytes(*chunk);
             if !(0..WORD_BASE as i32).contains(&word) {
                 return None;
             }
@@ -1682,8 +1682,13 @@ impl MyDecimal {
         bytes[1] = self.digits_frac as u8;
         bytes[2] = self.result_frac as u8;
         bytes[3] = u8::from(self.negative);
-        for (chunk, w) in bytes[4..].chunks_exact_mut(4).zip(&self.word_buf) {
-            chunk.copy_from_slice(&w.to_ne_bytes());
+        for (chunk, w) in bytes[4..]
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(&self.word_buf)
+        {
+            *chunk = w.to_ne_bytes();
         }
         bytes
     }
@@ -1715,8 +1720,8 @@ impl MyDecimal {
             negative: bytes[3] == 1,
             word_buf: [0; MAX_WORD_BUF_LEN],
         };
-        for (w, chunk) in d.word_buf.iter_mut().zip(bytes[4..].chunks_exact(4)) {
-            *w = i32::from_ne_bytes(chunk.try_into().expect("4-byte word"));
+        for (w, chunk) in d.word_buf.iter_mut().zip(bytes[4..].as_chunks::<4>().0) {
+            *w = i32::from_ne_bytes(*chunk);
         }
         if d.word_buf[..used_words as usize]
             .iter()

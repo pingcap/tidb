@@ -9327,3 +9327,13 @@ risks without claiming repository-wide parity.
   focused rollback module (including a shared-catalog regression), complete
   Go owner inventory, and Ready evidence are recorded in
   `receipts/session_statement_rollback_catalog_stage.md`.
+- 2026-09-06 (datatype clippy gate sweep): a nightly lint refresh introduced
+  `clippy::chunks_exact_to_as_chunks`, surfacing six warnings in `tidb-datatype`
+  (`json_envelope.rs` base64 decode, four `mydecimal.rs` word-buffer
+  serialization sites, `vector.rs` element decode) plus
+  `wrong_self_convention` on `MyDecimal::to_decimal_parts`. All six converted
+  to `as_chunks`/`as_chunks_mut` array views (or `self` receiver, `MyDecimal`
+  is `Copy`) — behavior-neutral by construction, removing only runtime
+  `try_into`s the compiler now proves total. Gate: fmt clean, clippy 0
+  warnings, datatype 476/476, consumers expr+chunk 1545/1545. Details in
+  `receipts/datatype_clippy_as_chunks.md`.
