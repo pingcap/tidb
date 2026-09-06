@@ -429,6 +429,9 @@ impl RuleId {
                 Some(&super::rule_order_aware_join_reorder::OrderAwareJoinReorder)
             }
             Self::JoinReOrderSolver => Some(&super::rule_join_reorder::JoinReOrderSolver),
+            Self::AggregationPushDownSolver => {
+                Some(&super::rule_aggregation_push_down::AggregationPushDownSolver)
+            }
             Self::OuterJoinToSemiJoin => {
                 Some(&super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin)
             }
@@ -443,7 +446,6 @@ impl RuleId {
             Self::OuterJoinEliminator => Some(&super::rule_join_elimination::OuterJoinEliminator),
             Self::DecorrelateSolver
             | Self::FullTextIndexResolverWhere
-            | Self::AggregationPushDownSolver
             | Self::FullTextIndexResolverTopN
             | Self::FullTextIndexResolverProjection
             | Self::CorrelateSolver
@@ -624,6 +626,10 @@ pub struct RuleContext<'a> {
     pub enable_no_decorrelate_in_select: bool,
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
     pub join_reorder_threshold: i32,
+    /// Go `SessionVars.AllowAggPushDown` (`@@tidb_opt_agg_push_down`, default
+    /// off): gates the aggregation-push-down rule's join and union arms; the
+    /// projection-crossing arm runs regardless, as in Go.
+    pub allow_agg_push_down: bool,
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`.
     pub advanced_join_reorder: bool,
     /// Go `SessionVars.CartesianJoinOrderThreshold`.

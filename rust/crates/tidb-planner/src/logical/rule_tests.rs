@@ -79,6 +79,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         enable_semi_join_rewrite: false,
         enable_no_decorrelate_in_select: false,
         join_reorder_threshold: 0,
+        allow_agg_push_down: false,
         advanced_join_reorder: true,
         cartesian_join_order_threshold: 0.0,
         join_reorder_through_proj: false,
