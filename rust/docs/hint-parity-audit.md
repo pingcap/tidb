@@ -34,14 +34,16 @@ processor.rs, query_block.rs, plan.rs).
 - The inapplicable-hint warning restores hint names with backquotes where
   Go uses flag-0 raw names; differs only when identifiers need quoting.
 
-## Open modeling item
+## Fixed in the follow-up text batch
 
-- `READ_FROM_STORAGE`: Go's parser emits one hint per engine group
-  (`read_from_storage(tiflash[t1]), read_from_storage(tikv[t2])`), while
-  this workspace's parser keeps one hint with two groups and the restore
-  space-joins them. PlanHints contents are equivalent; the restore text and
-  RemoveDuplicatedHints keys differ. Aligning needs a tidb-parser/tidb-ast
-  change and is recorded as an open item.
+- `READ_FROM_STORAGE` restore text is now comma-joined per engine group
+  (`read_from_storage(tiflash[t1]), read_from_storage(tikv[t2])`), byte-
+  identical to Go's per-group hints joined by `RestoreOptimizerHints`.
+  The one-AST-hint-with-two-groups modeling stays internal: the dedup
+  corner where two occurrences share exactly one engine group still keys
+  on the combined text (Go would key per item), recorded as the residual
+  narrowing. The tidb-ast Go-oracle table (run with the Go toolchain on
+  PATH) validates the restored text.
 
 ## Verified matching (highlights)
 
@@ -62,3 +64,5 @@ lowercased restore.
   `cargo test -p tidb-session --lib` unchanged from the pre-batch baseline
   (the known shared-branch failure set), `cargo fmt`, `git diff --check`,
   `make lint`.
+- `cargo test -p tidb-parser` (733) and `cargo test -p tidb-ast` (100 +
+  the Go-oracle table with GOROOT set) after the separator fix.

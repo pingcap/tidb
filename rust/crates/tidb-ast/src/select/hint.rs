@@ -317,9 +317,12 @@ impl Hint {
         // below entirely — see its own doc for why one written
         // occurrence restores as MULTIPLE separate `NAME(...)` blocks.
         if let HintKind::ReadFromStorage { qb_name, groups } = &self.kind {
+            // Go's parser emits one TableOptimizerHint per engine group and
+            // `RestoreOptimizerHints` joins them with ", ", so the restored
+            // text must be comma-joined to stay byte-identical.
             for (i, (store, tables)) in groups.iter().enumerate() {
                 if i > 0 {
-                    out.push(' ');
+                    out.push_str(", ");
                 }
                 out.push_str(&self.name);
                 out.push('(');
