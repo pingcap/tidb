@@ -161,6 +161,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Mutex, RwLock};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use tidb_ast::{SelectStmt, Stmt, TableRef, Visitable as _, Visitor};
@@ -2740,5 +2741,131 @@ mod variables_dump_tests {
             Some("ON")
         );
         let _ = &vars.noop;
+    }
+}
+
+/// Go `PlanReplayerPresignExpire`: a plan replayer presigned download URL
+/// stays valid for one hour.
+pub const PLAN_REPLAYER_PRESIGN_EXPIRE: Duration = Duration::from_secs(60 * 60);
+
+/// Go `getPresignedURL`'s storage probe: presign one dump file under the
+/// replayer directory for the expire window.
+pub trait PresignSource {
+    /// Go `extstore.GetGlobalExtStorage(ctx)` reporting no configured
+    /// storage: captures and dumps then keep an empty URL.
+    fn has_global_storage(&self) -> bool;
+    /// Go `storage.PresignFile(ctx, path, expire)`.
+    ///
+    /// # Errors
+    /// Whatever the external storage reports.
+    fn presign_file(&self, path: &str, expire: Duration) -> Result<String, String>;
+}
+
+/// Go `setTaskPresignedURL`: captures keep no URL; a failed presign only
+/// logs (dropped here) and leaves the URL empty.
+pub fn set_task_presigned_url(presign: &dyn PresignSource, task: &mut PlanReplayerDumpTask) {
+    if task.is_capture {
+        return;
+    }
+    if !presign.has_global_storage() {
+        return;
+    }
+    let path = format!(
+        "{}/{}",
+        crate::replayer::PLAN_REPLAYER_DIR_NAME,
+        task.file_name.clone().unwrap_or_default()
+    );
+    if let Ok(url) = presign.presign_file(&path, PLAN_REPLAYER_PRESIGN_EXPIRE) {
+        task.presigned_url = Some(url);
+    }
+}
+
+/// Go `generateRecords`: presign first (captures skip it), then one status
+/// record per executed statement with the file name as the token.
+pub fn generate_status_records(
+    presign: &dyn PresignSource,
+    task: &mut PlanReplayerDumpTask,
+    exec_stmts: &[String],
+) -> Vec<PlanReplayerStatusRecord> {
+    set_task_presigned_url(presign, task);
+    let mut records = Vec::new();
+    for exec_stmt in exec_stmts {
+        records.push(PlanReplayerStatusRecord {
+            sql_digest: task.sql_digest.clone(),
+            plan_digest: task.plan_digest.clone(),
+            origin_sql: exec_stmt.clone(),
+            token: task.file_name.clone().unwrap_or_default(),
+            failed_reason: String::new(),
+        });
+    }
+    records
+}
+
+#[cfg(test)]
+mod presign_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct FakePresign {
+        storage: bool,
+        urls: RefCell<Vec<String>>,
+        paths: RefCell<Vec<String>>,
+    }
+
+    impl PresignSource for FakePresign {
+        fn has_global_storage(&self) -> bool {
+            self.storage
+        }
+        fn presign_file(&self, path: &str, expire: Duration) -> Result<String, String> {
+            assert_eq!(expire, PLAN_REPLAYER_PRESIGN_EXPIRE);
+            self.paths.borrow_mut().push(path.to_owned());
+            let url = format!("https://presigned/{path}");
+            self.urls.borrow_mut().push(url.clone());
+            Ok(url)
+        }
+    }
+
+    /// Go `setTaskPresignedURL` + `generateRecords`: captures skip the
+    /// presign; non-captures presign under the replayer dir and get one
+    /// status record per statement with the file name as the token.
+    #[test]
+    fn presign_and_records_follow_go_order() {
+        let presign = FakePresign {
+            storage: true,
+            urls: RefCell::new(Vec::new()),
+            paths: RefCell::new(Vec::new()),
+        };
+        let mut capture = PlanReplayerDumpTask {
+            is_capture: true,
+            file_name: Some("capture_normal_replayer_x.zip".to_owned()),
+            sql_digest: "sdig".to_owned(),
+            ..PlanReplayerDumpTask::default()
+        };
+        assert!(
+            generate_status_records(&presign, &mut capture, &["select 1".to_owned()],).is_empty()
+                == false
+        );
+        // Capture: no presign attempted for it.
+        assert!(capture.presigned_url.is_none());
+
+        let mut dump = PlanReplayerDumpTask {
+            is_capture: false,
+            file_name: Some("replayer_y.zip".to_owned()),
+            sql_digest: "sdig".to_owned(),
+            ..PlanReplayerDumpTask::default()
+        };
+        let records = generate_status_records(
+            &presign,
+            &mut dump,
+            &["select 1".to_owned(), "select 2".to_owned()],
+        );
+        // The dump was presigned under the replayer dir.
+        assert!(dump.presigned_url.is_some());
+        assert_eq!(2, records.len());
+        for record in &records {
+            assert_eq!("sdig", record.sql_digest);
+            assert_eq!("replayer_y.zip", record.token);
+            assert_eq!("sdig", record.sql_digest);
+        }
     }
 }

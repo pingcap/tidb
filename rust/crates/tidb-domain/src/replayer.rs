@@ -22,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use base64::engine::general_purpose::URL_SAFE;
 use base64::Engine as _;
 
-const PLAN_REPLAYER_DIR_NAME: &str = "replayer";
+pub(crate) const PLAN_REPLAYER_DIR_NAME: &str = "replayer";
 
 /// Go `PlanReplayerTaskKey`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
