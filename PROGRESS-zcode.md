@@ -761,3 +761,5 @@
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
 - 小面巡检: optimize_trace.rs 对 Go optimize_trace.go 完整且边界注记齐备 (GetOptimizerTraceDirName, PID 回退); domainutil.rs 实为 pkg/util/domainutil/repair_vars.go 的移植 (非 pkg/domain/domainutil) —— 待后续按正确 Go 源定位核验。收敛: domain 143, unistore 114/0, hint 2/0 全绿。
 - 下轮恢复点: (1) domainutil 按正确 Go 源 (pkg/util/domainutil) 复验; (2) unistore 测试目标随兄弟 distsql 修复回补; (3) pd-client 外部 pin 待决; (4) 只读收敛核查或新面; (5) dbsid 分叉待协调。
+- domainutil 复验完成: 该模块实为 pkg/util/domainutil/repair_vars.go (198 行, 该包唯一文件) 的完整移植 —— 进程级 REPAIR_INFO (LazyLock 镜像 Go 包变量+init 种子)、InRepairMode/SetRepairMode/GetRepairTableList/GetMustLoadRepairTableListByDB (小写匹配 + 大小写敏感 table2ID 遍历注释保留)/SetRepairTableList (锁前小写)/CheckAndFetchRepairedTable (浅拷贝 DBInfo + 隔离表追加)/GetRepairedTableInfoByTableName (首个匹配库返回 (nil,db) 的 quirk 保留)/RemoveFromRepairInfo (清空库出 map + 清空 map 关 repair mode)/RepairKeyType Display 全部一致。唯一 narrowing: GetRepairTableList Rust 克隆返回 (Go 返回内部切片)。tidb-domain 143 全绿。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) unistore 回补已闭; (3) pd-client 外部 pin 待决; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
