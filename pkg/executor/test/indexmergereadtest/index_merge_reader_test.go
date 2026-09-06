@@ -904,3 +904,25 @@ func TestIssues46005(t *testing.T) {
 
 	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 1025")
 }
+
+func TestIssues70910(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
+	for rowID := 0; rowID < 3000; rowID += 500 {
+		vals := make([]string, 0, 500)
+		for i := rowID; i < rowID+500; i++ {
+			vals = append(vals, fmt.Sprintf("(1, 1, %d)", i))
+		}
+		tk.MustExec("insert into t(a,b,c) values " + strings.Join(vals, ","))
+	}
+
+	query := "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2000"
+	tk.MustHavePlan(query, "IndexMerge")
+	tk.MustNotHavePlan(query, "TopN")
+	// Issue #70910: the pushed-down limit must not be truncated to 1024 rows by
+	// the index merge union worker heap. The full 2000 rows must be returned.
+	require.Equal(t, 2000, len(tk.MustQuery(query).Rows()))
+}
