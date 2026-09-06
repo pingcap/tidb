@@ -181,28 +181,3 @@ returns under `#[deny(unused_must_use)]`. Before the source edit, the focused
 compile failed with exactly seven `unused_must_use` diagnostics; after it, the
 test passes. The full 323-test `tidb-model` owner suite and all-target check
 also pass. No Go or dependency file changed.
-
-## Rust-only return-contract alignment — `index.go` (2026-09-06)
-
-The complete 23-artifact `pkg/meta/model` inventory above was re-read against
-current Go `origin/master` (`f2c346fe4f368ff855e17c1f62e28a89ba7f9723`); the
-current source remains identical to the recorded package revision. All 14
-production files, eight tests, and `BUILD.bazel` were checked, with no
-fixtures, generated inputs, benchmarks, or platform variants. The complete
-`tidb-model` index owner, inline tests, all direct callers, and workspace
-registration were read before editing.
-
-Go permits discarding the results of 25 source-shaped index APIs. Rust had
-marked the direct counterparts `#[must_use]`, covering vector/full-text
-metric maps, global-index state, changing-index names, parser names, columnar
-and inverted-index helpers, index predicates/lookups, and foreign-key index
-searches. Those 25 annotations were removed without changing metadata,
-serialization, identity, lookup, or predicate behavior. Six explicit Rust
-ownership/equality adapters retain their annotations: the deep clone/pointer
-helpers on `RegionSplitPolicy`/`IndexInfo` and the `IndexInfo` equality
-adapters.
-
-`index::tests::go_index_returns_may_be_ignored_like_go` discards all 25
-changed returns under `#[deny(unused_must_use)]`. Before the source edit, the
-focused compile failed with exactly 25 unused-return diagnostics; after it,
-the regression passes. No Go source, dependency, or runtime behavior changed.

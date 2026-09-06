@@ -41,39 +41,6 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
-- 2026-09-06 (`pkg/ddl/placement` `GroupID` return contract): the complete
-  package inventory and owner were rechecked. The final direct Go-shaped
-  helper no longer imposes one Rust-only `#[must_use]` diagnostic; its focused
-  deny-on-discard regression failed once before the edit and passes afterward.
-  Evidence is recorded in `receipts/ddl_placement.md` and the dedicated
-  placement ExecPlan; Ready validation and publication remain.
-- 2026-09-06 (`pkg/ddl/notifier` return contracts): the complete eight-file,
-  1,999-line Go package was re-read at current `origin/master`, together with
-  all three Rust source modules and the crate manifest (1,615 lines, 10 inline
-  tests). Thirty-one direct Go-shaped event constructors/getters/type queries
-  and `DdlNotifier::new` no longer impose Rust-only `#[must_use]` diagnostics;
-  the publication `Result` contract is retained. A focused deny-on-discard
-  regression failed pre-fix with exactly 31 diagnostics and passes afterward.
-  Evidence is recorded in `receipts/ddl_notifier.md` and the notifier
-  ExecPlans; Ready validation and one package-scoped publication commit remain.
-- 2026-09-06 (`pkg/meta/model/index` return contracts): the complete
-  23-artifact, 10,721-line model package and full index owner were re-read at
-  current Go master, including all tests and BUILD metadata and the absence of
-  fixtures/generated/platform variants. Twenty-five direct Go-shaped index
-  `#[must_use]` annotations were removed; six Rust ownership/equality
-  adapters remain. The focused regression failed pre-fix with exactly 25
-  diagnostics and passes after the edit. Evidence is recorded in
-  `receipts/meta_model_materialized_view.md` and
-  `docs/operations/meta-model-index-audit-execplan.md`.
-- 2026-09-06 (`pkg/ttl/cache` return contracts): the complete 13-artifact,
-  3,572-line cache package and full Rust owner were re-read at current Go
-  master, including every test/build artifact and the absence of fixtures,
-  generated/platform variants, benchmarks, and fuzz targets. Twenty-six
-  direct Go-shaped Rust `#[must_use]` annotations were removed; five
-  Rust-only/error-contract annotations remain. The focused regression failed
-  pre-fix with exactly 26 diagnostics and passes after the edit. Evidence is
-  recorded in `receipts/ttl_cache.md` and
-  `docs/operations/ttl-cache-audit-execplan.md`.
 - 2026-09-06 (`pkg/statistics` builder return contracts): the complete
   direct root inventory was re-read at current Go master: 33 artifacts and
   13,905 direct lines plus two JSON fixtures (71 lines), with nested packages
@@ -9439,47 +9406,3 @@ risks without claiming repository-wide parity.
   deliberate deferrals. clippy `--no-deps` zero own warnings on all four
   crates; parser+chunk+util+expr+datatype 3439/3439. Details in
   `receipts/nightly_clippy_refresh_sweep.md`.
-- 2026-09-06 (planner checkColumn port, batch #39): a behavioral probe proved
-  the port ACCEPTS `bit(65)`, `bit(0)`, `char(300)`, `varchar(40000)`,
-  `decimal(70,5)` and `set('a,b')` CREATE TABLEs that Go's planner
-  `checkColumn` (`preprocess.go:1578-1680`) rejects at DDL time. The missing
-  arms are now ported into `check_column_attributes` — BIT size/display (3013,
-  1439), CHAR/VARCHAR field length (1074, with the resolved-charset max
-  65535/maxlen), DECIMAL precision/scale (1426/1425), FLOAT/DOUBLE width/scale/
-  wrong-field-spec (1439/1425/1063) — and the SET comma-member/member-count
-  checks (1367/1097), with seven new coded DriverError variants carrying the
-  verbatim Go templates. Fail-before: the probe's ACCEPTED prints; fail-after:
-  nine asserted regressions including an in-range boundary create sweep. The
-  executor failure-set delta versus clean HEAD is the documented sibling
-  in-flight breakage plus spill-dir environmental flake, item-by-item. Details
-  in `receipts/check_column_width_limits.md`.
-- 2026-09-06 (checkColumn ALTER-path pin): Go runs `checkColumn` over ALTER
-  TABLE's `spec.NewColumns` as well (`preprocess.go:1444`); probe confirmed the
-  batch-#39 gate already covers the ALTER path via the shared
-  `check_column_attributes` — `MODIFY COLUMN c BIT(65)` answers 1439 and
-  `ADD COLUMN d CHAR(300)` answers 1074 with the exact Go texts. Two asserted
-  regressions pin the ALTER-path coverage in
-  `tests/check_column_alter_path_source.rs`.
-- 2026-09-06 (checkAutoIncrement + column-option pins): probed the option-rule
-  family around checkColumn. Verified faithful: two auto_increment columns →
-  1075; auto_increment on DECIMAL/DATETIME → 1063 "Incorrect column specifier";
-  a lone auto_increment WITHOUT a key accepted (Go collects the isKey flag but
-  never consults it — MySQL 8 semantics); duplicate column 1060 and double
-  primary key 1068. Five pinned regressions in
-  `tests/check_column_options_source.rs`.
-- 2026-09-06 (default-value rule pins): probed `hasDefaultValue`'s BLOB/TEXT/
-  JSON literal-default refusal (1102) and the VECTOR literal-default plain
-  error (`add_column.go:1215-1237`) — all already enforced faithfully. Four
-  pinned regressions in `tests/default_value_rules_source.rs`.
-- 2026-09-06 (generated-column and charset pins): virtual-generated PK → 3106,
-  stored-generated PK accepted, index on generated accepted, unknown column
-  charset → [parser:1115], unknown table charset parse-refused. Five pins in
-  `tests/generated_charset_rules_source.rs`.
-- 2026-09-06 (`pkg/statistics`/`pkg/executor` ANALYZE sample-rate fallback):
-  Rust's in-process analyzer now models Go's zero-count `stats_meta` row for
-  an existing fresh table, selecting a full sample instead of the unknown
-  stats-handle `0.001` rate. Small-table TopN estimates are consequently exact
-  after `ANALYZE`, while the shared helper retains Go's distinct `None`/`None`
-  fallback. Focused session/executor regressions, the complete statistics
-  inventory, and Ready evidence are recorded in
-  `receipts/statistics_analyze_small_table_sample_rate.md`.

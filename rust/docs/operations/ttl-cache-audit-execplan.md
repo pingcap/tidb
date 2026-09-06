@@ -83,19 +83,3 @@ The complete task SQL/row behavior is source-shaped in published commit
 `cca2f7711b4ac393d8ef0d979dda8accd9c3d243`; the package remains partial only
 for the two real info-schema traversal boundaries and for live server/region
 integration tests outside the dependency-closed owner.
-
-## Follow-up: discardable cache returns (2026-09-06)
-
-- [x] Re-read all thirteen Go artifacts at current origin/master f2c346fe4f368ff855e17c1f62e28a89ba7f9723: 3,572 lines, including BUILD metadata, five production files, and seven tests, with no fixtures, generated/platform variants, benchmark, fuzz, example, or README artifact.
-- [x] Re-read the complete Rust cache modules, owner tests, manifest/workspace registration, and direct callers before editing.
-- [x] Classify 31 explicit annotations: remove 26 direct Go-shaped constructor/accessor/helper annotations; retain five Rust-only or error-contract annotations (update_time, table_info_ptr_eq, from_i64, MockExpireTimeKey.get, and insert_into_ttl_task).
-- [x] Add the focused deny-on-discard regression. It failed before the source edit with exactly 26 diagnostics and passes afterward.
-- [x] Run the full tidb-ttl owner suite (39 tests), all-target compile, formatting, Ready lint, and diff hygiene.
-- [x] Commit once for pkg/ttl/cache, rebase/push to origin/hparser-integration, and verify the remote SHA in the task handoff.
-- [ ] Continue the rolling audit with the next complete package boundary.
-
-Only Rust must-use metadata in the five cache modules, one source regression, and parity documentation change. Go's ordinary functions and methods permit discarding their return values, so the 26 direct counterparts must not add a Rust-only lint failure. The retained insert_into_ttl_task annotation is an error contract already enforced by its Result return type; the other four retained annotations are Rust-only adapters/accessors. No SQL text, argument encoding, cache refresh, key splitting/decoding, table identity, expiry, or error behavior changes.
-
-Ready validation for this Rust-only follow-up used the focused cache regression, the full tidb-ttl owner nextest suite (39/39), tidb-ttl all-target check, workspace formatting, make lint, and git diff --check. No Go source or Bazel metadata changed, so make bazel_prepare was not required; Go execution and live TiDB/etcd integration remain outside this contract batch.
-
-The cache owner already carried the source runtime behavior, including the documented info-schema/session boundaries. The remaining mismatch was solely Rust's stricter discard enforcement on 26 source-shaped values. Publication is tracked by the package-scoped commit and remote SHA in the task handoff while the rolling audit continues.

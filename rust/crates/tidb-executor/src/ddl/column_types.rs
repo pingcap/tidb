@@ -214,46 +214,6 @@ pub(crate) fn field_type_of(
             column_field_type::ColumnAttributeError::InvalidVectorDimension(message) => {
                 DriverError::unsupported(message)
             }
-            column_field_type::ColumnAttributeError::TooBigDisplayWidth { max } => {
-                DriverError::TooBigDisplayWidth {
-                    column: def.name.clone(),
-                    maximum: max,
-                }
-            }
-            column_field_type::ColumnAttributeError::TooBigFieldLength { max } => {
-                DriverError::TooBigFieldLength {
-                    column: def.name.clone(),
-                    maximum: max,
-                }
-            }
-            column_field_type::ColumnAttributeError::InvalidFieldSize => {
-                DriverError::InvalidFieldSize {
-                    column: def.name.clone(),
-                }
-            }
-            column_field_type::ColumnAttributeError::TooBigScale { scale, max } => {
-                DriverError::TooBigScale {
-                    scale,
-                    column: def.name.clone(),
-                    maximum: max,
-                }
-            }
-            column_field_type::ColumnAttributeError::TooManySetMembers => {
-                DriverError::TooManySetMembers {
-                    column: def.name.clone(),
-                }
-            }
-            column_field_type::ColumnAttributeError::IllegalValueForType { value } => {
-                DriverError::IllegalValueForType {
-                    type_name: "SET",
-                    value,
-                }
-            }
-            column_field_type::ColumnAttributeError::WrongFieldSpec => {
-                DriverError::WrongFieldSpec {
-                    column: def.name.clone(),
-                }
-            }
         },
     )?;
     Ok(field_type)

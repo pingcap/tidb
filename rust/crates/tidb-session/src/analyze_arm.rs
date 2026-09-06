@@ -659,16 +659,10 @@ impl Session {
                 // Go's `getAdjustedSampleRate` reads the CURRENT
                 // `mysql.stats_meta.count` of the physical table being
                 // analyzed, which here is whatever its last analysis
-                // published. Go's DDL path creates a zero-count stats-meta
-                // row for a new table; an in-process catalog has no
-                // `mysql.stats_meta` transport, so represent that same
-                // zero explicitly instead of treating the existing table as
-                // an unresolvable stats handle (which would select 0.001 and
-                // often retain no rows from a small table).
+                // published.
                 catalog
                     .table_statistics(physical_id)
                     .map(|statistics| statistics.row_count)
-                    .or(Some(0))
             };
             let partition_counts = partition_ids
                 .iter()

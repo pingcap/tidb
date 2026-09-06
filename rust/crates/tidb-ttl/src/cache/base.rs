@@ -31,6 +31,7 @@ pub struct BaseCache {
 
 impl BaseCache {
     /// Go `newBaseCache`.
+    #[must_use]
     pub fn new(interval: Duration) -> Self {
         Self {
             interval,
@@ -39,6 +40,7 @@ impl BaseCache {
     }
 
     /// Go `(*baseCache).ShouldUpdate`: whether this cache needs update.
+    #[must_use]
     pub fn should_update(&self) -> bool {
         match self.update_time {
             None => true,
@@ -52,6 +54,7 @@ impl BaseCache {
     }
 
     /// Go `(*baseCache).GetInterval`.
+    #[must_use]
     pub fn get_interval(&self) -> Duration {
         self.interval
     }

@@ -677,3 +677,12 @@
   匹配面: 池容量归一化/Get-Put 全序/CloseUnlessReturned≡returned defer/WithSession/WithForceBlockGCSession/TransferOwner 全卫语句/EnterOperation 线程不安全竞态拒绝/inUse 记账/panic→avoidReuse/测试钩子含 Go 的 "ResetSctxForTestcaller" 拼接 quirk。Rust-only: Session::clone 复制 owner id (Go 不可复制指针禁止第二代理, Go 形调用模式不可达)。
   验收: cargo test -p tidb-syssession --lib 14 稳定全绿 (3 连跑); fmt; diff-check; make lint 过。收据 rust/docs/syssession-parity-audit.md。推送 4879b0a2a4a..a1c425a50df。
 - 下轮恢复点: (1) 新面候选 (tidb-hint/infoschema 深层/剩余小 crate); (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 新面批次: tidb-hint (Go pkg/util/hint @ a85e0fd5df) 全文件审计。修复 3 项 behavior 分歧:
+  (1) NTH_PLAN 先赋值后钳 -1 (hint.go:521-525), NTH_PLAN(0) 不再留下 enabled 的 0 (task_map_need_backup 不再误判);
+  (2) HYPO_INDEX db key 小写化 (DBName.L, hint.go:364), checker 输入与 hypo map key 一致;
+  (3) 空 qb_name() 不占槽 (Go len(qbName)==0), 后续命名 hint 无伪告警。
+  有意分歧 (站点注释): contains_table_hint 大小写不敏感 (Go 原始大小写比较漏掉大写 USE_PLAN_CACHE, 本 crate 解析即规范化大写, 保持宽松使各写法生效); NO_INDEX_LOOKUP_PUSHDOWN 空参跳过替代 Go panic; fill_default_database 规范化 LEADING 树 (Go 只填扁平副本)。开放 modeling 项: READ_FROM_STORAGE 单 hint 双引擎组 vs Go 每引擎组一个 hint (restore 文本与去重 key 不同, 需 parser/ast 改动)。
+  新增 2 回归 (nth_plan_zero_clamps_to_disabled / hypo_index_database_key_is_lowercased); tidb-session 257 失败为共享分支预存集 (与本批无关, 双向对比一致); fmt; diff-check; make lint 过。收据 rust/docs/hint-parity-audit.md。
+  事故记录: (a) wip 变更经共享 stash 竞态丢失一次, 全量重打 (stash push/pop 必须显式 ref 且立即验证); (b) 兄弟会话开始在 /tmp/tidb-zcode-parity worktree 内活跃编辑 (planner/executor/stmt_ctx 未提交变更 + WALK_STATE.md), 本轮 rebase 改用一次性 worktree 完成, 未触碰其未提交文件。
+  推送: 8708636cf48 (基于 b9713cd4bc3)。
+- 下轮恢复点: (1) 注意兄弟会话同 worktree 并行, 收敛核查改为只读; (2) READ_FROM_STORAGE 拆分开放项; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。

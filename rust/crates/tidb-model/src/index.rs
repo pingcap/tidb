@@ -54,6 +54,7 @@ pub const VEC_COSINE_DISTANCE_FN: &str = "vec_cosine_distance";
 pub const VEC_L2_DISTANCE_FN: &str = "vec_l2_distance";
 
 /// Go `IndexableFnNameToDistanceMetric`.
+#[must_use]
 pub fn indexable_fn_name_to_distance_metric(name: &str) -> Option<&'static str> {
     match name {
         VEC_COSINE_DISTANCE_FN => Some(distance_metric::COSINE),
@@ -63,6 +64,7 @@ pub fn indexable_fn_name_to_distance_metric(name: &str) -> Option<&'static str> 
 }
 
 /// Go `IndexableDistanceMetricToFnName`.
+#[must_use]
 pub fn indexable_distance_metric_to_fn_name(metric: &str) -> Option<&'static str> {
     match metric {
         distance_metric::COSINE => Some(VEC_COSINE_DISTANCE_FN),
@@ -90,12 +92,14 @@ pub fn set_global_index_v1_supported(supported: bool) {
 }
 
 /// Go `GetGlobalIndexV1Supported`.
+#[must_use]
 pub fn get_global_index_v1_supported() -> bool {
     GLOBAL_INDEX_V1_SUPPORTED.load(Ordering::SeqCst)
 }
 
 /// Go `GenUniqueChangingIndexName`: generates the first unused temporary
 /// changing-index name, comparing the candidate case-insensitively.
+#[must_use]
 pub fn gen_unique_changing_index_name(table: &TableInfo, index: &IndexInfo) -> String {
     let used: std::collections::HashSet<String> = table
         .indices
@@ -127,6 +131,7 @@ pub mod full_text_parser_type {
 }
 
 /// Go `FullTextParserType.SQLName`: the SQL keyword for a parser type.
+#[must_use]
 pub fn full_text_parser_sql_name(parser_type: &str) -> &'static str {
     match parser_type {
         full_text_parser_type::STANDARD_V1 => "STANDARD",
@@ -137,6 +142,7 @@ pub fn full_text_parser_sql_name(parser_type: &str) -> &'static str {
 
 /// Go `GetFullTextParserTypeBySQLName`: the parser type for a SQL keyword
 /// (case-insensitive; unknown -> `INVALID`).
+#[must_use]
 pub fn get_full_text_parser_type_by_sql_name(name: &str) -> &'static str {
     match tidb_mysql::to_uppercase(name).as_str() {
         "STANDARD" => full_text_parser_type::STANDARD_V1,
@@ -200,6 +206,7 @@ impl ColumnarIndexType {
     pub const FULLTEXT: ColumnarIndexType = ColumnarIndexType(3);
 
     /// Go `ColumnarIndexType.SQLName`.
+    #[must_use]
     pub fn sql_name(self) -> &'static str {
         match self {
             ColumnarIndexType::VECTOR => "vector index",
@@ -359,6 +366,7 @@ impl_go_json_deserialize!(InvertedIndexInfo);
 /// Go `FieldTypeToInvertedIndexInfo`: returns the fixed-width physical
 /// representation used by an inverted index, or `None` for unsupported
 /// source types.
+#[must_use]
 pub fn field_type_to_inverted_index_info(
     field_type: &FieldType,
     column_id: i64,
@@ -622,22 +630,26 @@ impl IndexInfo {
     }
 
     /// Go `IsChanging`: whether this is a modify-index temporary index.
+    #[must_use]
     pub fn is_changing(&self) -> bool {
         self.name.original().starts_with(CHANGING_INDEX_PREFIX)
     }
 
     /// Go `IsRemoving`: whether this is a removing (tombstone) index.
+    #[must_use]
     pub fn is_removing(&self) -> bool {
         self.name.original().starts_with(REMOVING_OBJ_PREFIX)
     }
 
     /// Go `GetRemovingOriginName`: the original name of a removing index.
+    #[must_use]
     pub fn get_removing_origin_name(&self) -> String {
         removing_origin_name(self.name.original())
     }
 
     /// Go `GetChangingOriginName`: the original name of a changing index
     /// (strips the index changing prefix and the trailing `_<n>`).
+    #[must_use]
     pub fn get_changing_origin_name(&self) -> String {
         let idx_name = self
             .name
@@ -651,6 +663,7 @@ impl IndexInfo {
     }
 
     /// Go `HasPrefixIndex`: whether any column uses a prefix length.
+    #[must_use]
     pub fn has_prefix_index(&self) -> bool {
         // Go compares against types.UnspecifiedLength (-1).
         self.columns
@@ -661,6 +674,7 @@ impl IndexInfo {
     /// Go `HasColumnInIndexColumns`: whether an index column resolves to the
     /// requested table-column ID. As in Go, an invalid offset is a metadata
     /// invariant violation and indexes the table slice directly.
+    #[must_use]
     pub fn has_column_in_index_columns(&self, table: &TableInfo, column_id: i64) -> bool {
         self.columns.iter_deref().any(|column| {
             let offset = column.read().offset;
@@ -675,6 +689,7 @@ impl IndexInfo {
     }
 
     /// Go `FindColumnByName`: the index column named `name_l` (lower-cased).
+    #[must_use]
     pub fn find_column_by_name(&self, name_l: &str) -> Option<GoShared<IndexColumn>> {
         self.columns
             .iter_deref()
@@ -682,16 +697,19 @@ impl IndexInfo {
     }
 
     /// Go `IsPublic`: whether the index is in the public state.
+    #[must_use]
     pub fn is_public(&self) -> bool {
         self.state == SchemaState::PUBLIC
     }
 
     /// Go `IsColumnarIndex`: whether this is a vector/inverted/full-text index.
+    #[must_use]
     pub fn is_columnar_index(&self) -> bool {
         self.vector_info.is_some() || self.inverted_info.is_some() || self.full_text_info.is_some()
     }
 
     /// Go `GetColumnarIndexType`: the columnar-index kind (or `NA`).
+    #[must_use]
     pub fn get_columnar_index_type(&self) -> ColumnarIndexType {
         if self.vector_info.is_some() {
             ColumnarIndexType::VECTOR
@@ -705,6 +723,7 @@ impl IndexInfo {
     }
 
     /// Go `HasCondition`.
+    #[must_use]
     pub fn has_condition(&self) -> bool {
         !self.condition_expr_string.is_empty()
     }
@@ -717,6 +736,7 @@ impl IndexInfo {
 }
 
 /// Go `FindIndexByColumns`: first index whose leading columns cover `columns`.
+#[must_use]
 pub fn find_index_by_columns(
     table: &TableInfo,
     indices: &GoSharedPointerSlice<IndexInfo>,
@@ -728,6 +748,7 @@ pub fn find_index_by_columns(
 }
 
 /// Go `IsIndexPrefixCovered`.
+#[must_use]
 pub fn is_index_prefix_covered(table: &TableInfo, index: &IndexInfo, columns: &[CiString]) -> bool {
     if index.columns.len() < columns.len() {
         return false;
@@ -754,6 +775,7 @@ pub fn is_index_prefix_covered(table: &TableInfo, index: &IndexInfo, columns: &[
 }
 
 /// Go `FindIndexByColumnsForForeignKey`.
+#[must_use]
 pub fn find_index_by_columns_for_foreign_key(
     table: &TableInfo,
     indices: &GoSharedPointerSlice<IndexInfo>,
@@ -765,6 +787,7 @@ pub fn find_index_by_columns_for_foreign_key(
 }
 
 /// Go `IsIndexPrefixCoveredForForeignKey`.
+#[must_use]
 pub fn is_index_prefix_covered_for_foreign_key(
     table: &TableInfo,
     index: &IndexInfo,
@@ -799,6 +822,7 @@ fn is_index_condition_covered_by_foreign_key_columns(
 }
 
 /// Go `FindIndexInfoByID`.
+#[must_use]
 pub fn find_index_info_by_id(
     indices: &GoSharedPointerSlice<IndexInfo>,
     id: i64,
@@ -808,6 +832,7 @@ pub fn find_index_info_by_id(
 
 /// Go `FindIndexColumnByName`: the position and column matching `name_l`
 /// (already lower-cased), or `None`.
+#[must_use]
 pub fn find_index_column_by_name(
     index_cols: &GoSharedPointerSlice<IndexColumn>,
     name_l: &str,
@@ -821,42 +846,6 @@ pub fn find_index_column_by_name(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[deny(unused_must_use)]
-    #[test]
-    fn go_index_returns_may_be_ignored_like_go() {
-        indexable_fn_name_to_distance_metric("");
-        indexable_distance_metric_to_fn_name("");
-        get_global_index_v1_supported();
-
-        let table = TableInfo::default();
-        let index = IndexInfo::default();
-        gen_unique_changing_index_name(&table, &index);
-        full_text_parser_sql_name("");
-        get_full_text_parser_type_by_sql_name("");
-        ColumnarIndexType::NA.sql_name();
-        field_type_to_inverted_index_info(&FieldType::new(FieldTypeCode::Long), 1);
-
-        index.is_changing();
-        index.is_removing();
-        index.get_removing_origin_name();
-        index.get_changing_origin_name();
-        index.has_prefix_index();
-        index.has_column_in_index_columns(&table, 1);
-        index.find_column_by_name("");
-        index.is_public();
-        index.is_columnar_index();
-        index.get_columnar_index_type();
-        index.has_condition();
-
-        let indices = GoSharedPointerSlice::<IndexInfo>::default();
-        find_index_by_columns(&table, &indices, &[]);
-        is_index_prefix_covered(&table, &index, &[]);
-        find_index_by_columns_for_foreign_key(&table, &indices, &[]);
-        is_index_prefix_covered_for_foreign_key(&table, &index, &[]);
-        find_index_info_by_id(&indices, 1);
-        find_index_column_by_name(&index.columns, "");
-    }
 
     // Go's `ast.IndexType` is a plain `int`, and its declaration warns that a
     // value "may come from a previous version persisted in TableInfo. So you

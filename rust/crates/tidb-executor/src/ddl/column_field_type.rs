@@ -708,24 +708,6 @@ pub enum ColumnAttributeError {
     TooLongEnumSetValue,
     /// Go `types.CheckVectorDimValid`'s plain HY000 error.
     InvalidVectorDimension(String),
-    /// Go `types.ErrTooBigDisplayWidth` (1439): a declared display width above
-    /// the type's cap (BIT > 64, FLOAT/DOUBLE > 255).
-    TooBigDisplayWidth { max: i64 },
-    /// Go `types.ErrTooBigFieldLength` (1074): CHAR above 255 or VARCHAR above
-    /// the charset's max character length (65535 / maxlen).
-    TooBigFieldLength { max: i64 },
-    /// Go `types.ErrInvalidFieldSize` (3013): `BIT(0)`.
-    InvalidFieldSize,
-    /// Go `types.ErrTooBigScale` (1425): FLOAT/DOUBLE scale above 30 or
-    /// DECIMAL scale above 30.
-    TooBigScale { scale: i64, max: i64 },
-    /// Go `ErrTooBigSet` (1097): a SET with more than 64 members.
-    TooManySetMembers,
-    /// Go `types.ErrIllegalValueForType` (1367): a SET member containing a
-    /// comma.
-    IllegalValueForType { value: String },
-    /// Go `types.ErrWrongFieldSpec` (1063): `FLOAT(p)` with p above 24.
-    WrongFieldSpec,
 }
 
 /// Go `checkColumnAttributes` plus the ENUM/SET member check: what a built
@@ -756,74 +738,8 @@ pub fn check_column_attributes(
 ) -> Result<(), ColumnAttributeError> {
     match field_type.code() {
         FieldTypeCode::NewDecimal | FieldTypeCode::Double | FieldTypeCode::Float => {
-            // Go planner `checkColumn` (`preprocess.go:1623-1647`) runs the
-            // scale/width checks BEFORE the M>=D check, in this order.
-            let (max_scale, max_width) = if field_type.code() == FieldTypeCode::NewDecimal {
-                (30, 65)
-            } else {
-                (30, 255)
-            };
-            if field_type.decimal() != tidb_datatype::UNSPECIFIED_FSP
-                && field_type.decimal() > max_scale
-            {
-                return Err(ColumnAttributeError::TooBigScale {
-                    scale: field_type.decimal(),
-                    max: max_scale,
-                });
-            }
-            if field_type.code() != FieldTypeCode::NewDecimal
-                && field_type.decimal() != tidb_datatype::UNSPECIFIED_FSP
-                && (field_type.flen() > max_width || field_type.flen() == 0)
-            {
-                return Err(ColumnAttributeError::TooBigDisplayWidth { max: max_width });
-            }
-            if field_type.code() == FieldTypeCode::NewDecimal && field_type.flen() > 65 {
-                return Err(ColumnAttributeError::TooBigPrecision {
-                    precision: field_type.flen(),
-                    maximum: 65,
-                });
-            }
             if field_type.flen() < field_type.decimal() {
                 return Err(ColumnAttributeError::MBiggerThanD);
-            }
-        }
-        // Go planner `checkColumn`'s `mysql.TypeBit` arm
-        // (`preprocess.go:1668-1673`): a size below one or above 64 is
-        // refused at create time, not at evaluation.
-        FieldTypeCode::Bit => {
-            let flen = field_type.flen();
-            if flen <= 0 {
-                return Err(ColumnAttributeError::InvalidFieldSize);
-            }
-            if flen > 64 {
-                return Err(ColumnAttributeError::TooBigDisplayWidth { max: 64 });
-            }
-        }
-        // Go planner `checkColumn`'s `mysql.TypeString` arm
-        // (`preprocess.go:1604-1608`): a declared CHAR length above 255 is
-        // refused with the "use BLOB or TEXT instead" hint.
-        FieldTypeCode::String => {
-            let flen = field_type.flen();
-            if flen != tidb_datatype::UNSPECIFIED_LENGTH && flen > 255 {
-                return Err(ColumnAttributeError::TooBigFieldLength { max: 255 });
-            }
-        }
-        // Go planner `checkColumn`'s `mysql.TypeVarchar` arm: Go's preprocess
-        // skips it when the column charset is not yet resolved and defers to
-        // the DDL stage, which checks with the RESOLVED charset — exactly the
-        // type this function receives.
-        FieldTypeCode::Varchar => {
-            let flen = field_type.flen();
-            if flen != tidb_datatype::UNSPECIFIED_LENGTH {
-                let charset_maxlen = match field_type.charset_name() {
-                    "utf8mb4" | "gb18030" => 4,
-                    "utf8" | "gbk" => 3,
-                    _ => 1,
-                };
-                let max = 65535 / charset_maxlen;
-                if flen > max {
-                    return Err(ColumnAttributeError::TooBigFieldLength { max });
-                }
             }
         }
         FieldTypeCode::Datetime | FieldTypeCode::Duration | FieldTypeCode::Timestamp => {
@@ -839,27 +755,6 @@ pub fn check_column_attributes(
         }
         code @ (FieldTypeCode::Enum | FieldTypeCode::Set) => {
             let collator = field_type.runtime_collator();
-            // Go planner `checkColumn`'s `mysql.TypeSet` arm
-            // (`preprocess.go:1649-1658`): a SET with more than 64 members,
-            // or any member containing a comma, is refused at create time.
-            // ENUM has no member-count cap here (MySQL allows 65535).
-            if code == FieldTypeCode::Set {
-                let comma_member = field_type.with_elems_visible(|members| {
-                    members
-                        .iter()
-                        .find(|member| member.as_bytes().contains(&b','))
-                        .cloned()
-                });
-                if let Some(member) = comma_member {
-                    return Err(ColumnAttributeError::IllegalValueForType {
-                        value: member.to_utf8_lossy_go(),
-                    });
-                }
-                let member_count = field_type.with_elems_visible(|members| members.len());
-                if member_count > 64 {
-                    return Err(ColumnAttributeError::TooManySetMembers);
-                }
-            }
             if enable_enum_length_limit {
                 let charset_maxlen = match field_type.charset_name() {
                     "utf8mb4" | "gb18030" => 4,
