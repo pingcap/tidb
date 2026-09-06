@@ -9511,3 +9511,47 @@ risks without claiming repository-wide parity.
   fallback. Focused session/executor regressions, the complete statistics
   inventory, and Ready evidence are recorded in
   `receipts/statistics_analyze_small_table_sample_rate.md`.
+- 2026-09-06 (planner coalesced qualified-name parity): Go's
+  `pkg/planner/core` retains redundant `USING`/`NATURAL JOIN` columns in
+  `FullSchema`/`FullNames` for qualified references, wildcard expansion on a
+  direct join, and pruning through transparent wrappers. Rust now carries an
+  optional full scope through scalar/ON/projection/sort/GROUP BY rewriting and
+  uses full-capable child schemas during join pruning, while preserving
+  visible-schema and derived-table boundaries. The focused coalesced-join
+  matrix and complete Go inventory are recorded in
+  `receipts/planner_coalesced_qualified_names.md`.
+- 2026-09-06 (`pkg/util/schemacmp` return-contract parity): Rust's native
+  schema-comparison owner no longer marks fourteen Go-shaped constructors,
+  value helpers, table encode/decode APIs, or `Typ::new` as `#[must_use]`.
+  Focused `deny(unused_must_use)` probes fail with exactly fourteen
+  diagnostics before the annotation removal and pass afterward; the complete
+  13-test aggregate, all-target check, and Ready evidence are recorded in
+  `receipts/util_schemacmp.md`.
+- 2026-09-06 (`pkg/util/workloadrepo` return-contract parity): Rust's
+  workload-repository owner no longer marks five Go-shaped table, partition,
+  worker-constructor, or worker-status APIs as `#[must_use]`. A focused
+  `deny(unused_must_use)` probe failed with exactly five diagnostics before
+  the annotation removal and passes afterward; the complete 15-test aggregate,
+  all-target check, standalone rustfmt, and Ready evidence are recorded in
+  `receipts/util_workloadrepo.md`.
+- 2026-09-06 (`pkg/dxf/operator` return-contract parity): Rust's pipeline
+  owner no longer marks the Go-shaped `IsStarted`, `String`, and
+  `GetReaderAndWriter` queries as `#[must_use]`. A focused
+  `deny(unused_must_use)` probe failed with exactly three diagnostics before
+  the annotation removal and passes afterward; all three owner tests,
+  all-target compilation, standalone rustfmt, and Ready evidence are recorded
+  in `receipts/dxf_operator.md`.
+- 2026-09-06 (`pkg/ddl/copr` return-contract parity): Rust's coprocessor
+  context owner no longer marks ten Go-shaped context, index-lookup, and
+  schema/name query methods as `#[must_use]`. A focused
+  `deny(unused_must_use)` probe failed with exactly ten diagnostics before the
+  annotation removal and passes afterward; all four owner tests, all-target
+  compilation, standalone rustfmt, and Ready evidence are recorded in
+  `receipts/ddl_copr.md`.
+- 2026-09-06 (`pkg/statistics/handle/autoanalyze/refresher` return-contract
+  parity): Rust's refresher owner no longer marks seven Go-shaped worker and
+  refresher constructors/status queries as `#[must_use]`. A focused
+  `deny(unused_must_use)` probe failed with exactly seven diagnostics before
+  the annotation removal and passes afterward; all six owner tests, all-target
+  compilation, standalone rustfmt, and Ready evidence are recorded in
+  `receipts/statistics_handle_autoanalyze_refresher_audit.md`.

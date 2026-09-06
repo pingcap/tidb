@@ -71,7 +71,6 @@ pub struct Worker {
 
 impl Worker {
     /// Go `NewWorker`.
-    #[must_use]
     pub fn new(max_concurrency: usize) -> Self {
         Self {
             state: Arc::new((
@@ -114,13 +113,11 @@ impl Worker {
     }
 
     /// Go `GetRunningJobs`, returning a defensive copy.
-    #[must_use]
     pub fn running_jobs(&self) -> HashSet<i64> {
         self.lock_state().running_jobs.clone()
     }
 
     /// Go `GetMaxConcurrency`.
-    #[must_use]
     pub fn max_concurrency(&self) -> usize {
         self.lock_state().max_concurrency
     }
@@ -158,7 +155,6 @@ pub struct Refresher {
 impl Refresher {
     /// Go `NewRefresher`; DDL registration belongs to the server's notifier
     /// adapter, which owns the same queue instance.
-    #[must_use]
     pub fn new(jobs: Arc<AnalysisPriorityQueue>, max_concurrency: usize) -> Self {
         Self {
             jobs,
@@ -240,7 +236,6 @@ impl Refresher {
     }
 
     /// Go `GetRunningJobs`.
-    #[must_use]
     pub fn running_jobs(&self) -> HashSet<i64> {
         self.worker.running_jobs()
     }
@@ -258,13 +253,11 @@ impl Refresher {
     }
 
     /// Go `IsQueueInitializedForTest`.
-    #[must_use]
     pub fn is_queue_initialized(&self) -> bool {
         self.jobs.is_initialized()
     }
 
     /// Go `Len`.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.jobs.len().expect("initialized priority queue")
     }
@@ -366,6 +359,28 @@ mod tests {
             end_time: "23:59 +0000".to_owned(),
             max_concurrency: 3,
         }
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_refresher_query_returns_can_be_ignored() {
+        Worker::new(1);
+        let worker = Worker::new(1);
+        worker.running_jobs();
+        worker.max_concurrency();
+
+        let source = Arc::new(EmptySource {
+            inventory_reads: AtomicUsize::new(0),
+            version: AtomicU64::new(1),
+        });
+        let queue = AnalysisPriorityQueue::new(source);
+        queue.initialize().expect("empty queue initializes");
+        Refresher::new(Arc::clone(&queue), 1);
+        let refresher = Refresher::new(queue, 1);
+        refresher.running_jobs();
+        refresher.is_queue_initialized();
+        refresher.len();
+        refresher.close();
     }
 
     struct TestJob {

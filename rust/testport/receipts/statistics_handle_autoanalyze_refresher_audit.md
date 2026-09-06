@@ -95,3 +95,46 @@ complete at the pinned commit.
 - `git diff --check`
 
 No Go or Bazel source changed, so `make bazel_prepare` is not required.
+
+## Follow-up closure — discardable refresher returns (2026-09-06)
+
+The complete six-artifact, 1,305-line Go package was re-read at current
+`origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; all production,
+test, harness, and BUILD files remain byte-identical to the pinned source. The
+single-file Rust owner and its complete test module were reviewed before
+editing.
+
+Go permits callers to discard `NewWorker`, `worker.GetRunningJobs`,
+`worker.GetMaxConcurrency`, `NewRefresher`, `Refresher.GetRunningJobs`,
+`Refresher.IsQueueInitializedForTest`, and `Refresher.Len` results. Rust had
+marked all seven direct counterparts `#[must_use]`, imposing Rust-only return
+diagnostics. The annotations were removed without changing queue state,
+concurrency admission, running-job snapshots, or worker/refresher lifecycle.
+`tests::go_refresher_query_returns_can_be_ignored` exercises all seven APIs
+under `#[deny(unused_must_use)]`; with the annotations present it failed with
+exactly seven diagnostics, and after the edit it passes.
+
+Ready validation for this Rust-only follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-autoanalyze-refresher --lib go_refresher_query_returns_can_be_ignored -- --test-threads=1
+PASS; 1 passed, 0 failed.
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-autoanalyze-refresher --lib --test-threads=1
+PASS; 6/6 owner tests passed.
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-autoanalyze-refresher --all-targets
+PASS.
+
+rustfmt +nightly-2026-08-22 --check --edition 2021 rust/crates/tidb-stats-handle-autoanalyze-refresher/src/lib.rs
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+Only Rust source/tests and parity documentation changed. No Go, Bazel, Cargo
+dependency, or module file changed, so `make bazel_prepare` was not required.
