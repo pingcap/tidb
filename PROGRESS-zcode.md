@@ -779,3 +779,5 @@
 - 下轮恢复点: (1) ddl-logutil 小面巡检; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
 - 小面巡检: tidb-ddl-logutil (Go pkg/ddl/logutil/logutil.go, 62 行) —— 零分歧。四 logger 对齐: DDLLogger("ddl")/DDLUpgradingLogger("ddl-upgrading")/DDLIngestLogger("ddl-ingest") 共享 bg_logger + category 字段, SampleLogger = SampleLoggerFactory(time.Minute, 3, "ddl") 的进程共享采样实例 (LazyLock)。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 巡检+收敛: disttask.rs = pkg/util/disttask/idservice.go 完整移植确认 (GenerateExecID/MatchServerInfo/FindServerInfo/GenerateSubtaskExecID/4Test 全在, schemaver 审计已证 GenerateExecID 一致)。收敛 sweep: domain 143, unistore 114, pd-client 73, timer 65, tablecodec 61, protocol 121 —— 全绿。
+- 下轮恢复点: (1) 大面候选: plan_replayer_dump.go 移植 (开放项, ~1000 行) / unistore mvcc+cophandler (超声明面) / domain 全量; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
