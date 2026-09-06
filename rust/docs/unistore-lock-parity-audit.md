@@ -225,3 +225,27 @@ commit ts cannot be known. `get_with_commit_ts`/
 wire `commit_ts` fields. Three regressions: commit ts answered only when
 requested, the shortcut disabled under the flag (locked, Go's error), and
 batch-get pairs carrying the ts.
+
+## mvcc.go full-coverage closure (2026-09-07, same session)
+
+The remaining unaudited range (`mvcc.go:1421-1817`) closes the file:
+
+- Lock-check primitives verified exact: `checkLock` (resolved -> absent;
+  visible+write-lock+not-primary-get gates; `maxSystemTS` is literally
+  `math.MaxUint64` on both sides; committed-set -> LockPair; else
+  `BuildLockErr`), `checkLockForRcCheckTS` (any unresolved write lock is an
+  `RcCheckTs` conflict carrying the key, `ConflictCommitTS` unset/0), and
+  `inTSSet` = `slices.Contains` == Rust slice `contains`.
+  `value_from_lock` (Op_Put only) equal.
+- Unreachable-from-client arms dispositioned (grep-verified no dispatching
+  caller in the Rust client surface): `Cleanup`, `ScanLock`,
+  `appendScannedLock`, `scanPessimisticLocks`, `PhysicalScanLock`,
+  `ReadBufferFromLock` (BufferBatchGet), `UpdateSafePoint` (GC),
+  `DeleteFileInRange`, `StartDeadlockDetection` (the client-side waiter
+  machinery this port intentionally lacks). `MvccGetByKey`/`MvccGetRange`/
+  `MvccGetByStartTs` debug face exists in the store with transcreated tests;
+  no client dispatch, matching the tier.
+
+With the optimistic suite, the pessimistic suite, the read paths, and the
+lock primitives dispositioned, `mvcc.go` (2,182 lines) has no unaudited
+function remaining.
