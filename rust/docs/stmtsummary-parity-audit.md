@@ -38,13 +38,22 @@ Port notes (each commented at its site):
 - The KV worker in `tidb-pd-client` is unrelated here; all etcd notes in
   the earlier schemaver receipt.
 
-## Open items (feature-sized ports, not yet claimed)
+## Ported in the follow-up rotation batch
 
-1. `v2/logger.go` rotation is unported: `FileStmtLogWriter` is append-only;
-   `Config.file_max_size/days/backups` are carried but unused, and the
-   lumberjack/zap sink plus `StmtSummaryEvictedLogCounter` wiring are
-   trait-narrowed behind `EvictedLogMetricsSink` (Noop default). Persistent
-   mode should stay gated off until this lands.
+`v2/logger.go`'s file sink is now mirrored by
+`RotatingFileLogWriter` (`v2/stmtsummary.rs`), wired into
+`new_stmt_summary` where Go's `newStmtLogStorage` builds its logger:
+size-based rotation past `Config.file_max_size` (MB), backups named
+`<base>-<local timestamp><ext>` in the exact format the v2 reader's
+`parseEndTs` parses (verified by a cross-module test), and pruning by
+`file_max_backups` count and `file_max_days` age (zero disables each
+dimension), matching lumberjack's `removeOldBackups`. Regression tests
+cover size rotation with content recovery, reader interop, count pruning,
+and age pruning. The zap-core plumbing (no-op encoder, `WrapCore`) remains
+an ecosystem boundary absorbed by the `StmtLogWriter` trait; the evicted
+log metrics sink stays behind `EvictedLogMetricsSink`.
+
+Persistent mode remains gated off at the server seam, as before.
 
 ## Accepted narrowings / cosmetics (documented)
 
@@ -75,6 +84,6 @@ Port notes (each commented at its site):
 
 ## Validation
 
-- `cargo test -p tidb-stmtsummary --all-targets`: 61 lib tests pass (52
-  prior + the 9 ported v2 reader regressions).
+- `cargo test -p tidb-stmtsummary --all-targets`: 64 lib tests pass
+  (61 prior + the 4 rotation regressions, re-stabilized).
 - `cargo fmt -p tidb-stmtsummary`, `git diff --check`, `make lint`.

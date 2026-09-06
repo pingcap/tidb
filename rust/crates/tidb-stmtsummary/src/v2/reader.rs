@@ -49,7 +49,7 @@ use crate::v2::record::{nanos_to_duration, StmtRecord};
 use crate::v2::stmtsummary::{time_now, LockedStmtRecord, StmtSummary, StmtWindow};
 
 /// Go `logFileTimeFormat`: depends on lumberjack's `backupTimeFormat`.
-const LOG_FILE_TIME_FORMAT: &str = "%Y-%m-%dT%H-%M-%S%.3f";
+pub(crate) const LOG_FILE_TIME_FORMAT: &str = "%Y-%m-%dT%H-%M-%S%.3f";
 /// Go `maxLineSize`: 1 GiB.
 const MAX_LINE_SIZE: usize = 1_073_741_824;
 /// Go `batchScanSize`.
@@ -656,7 +656,8 @@ fn parse_end_ts(path: &Path) -> Result<i64, String> {
         return Ok(0);
     };
     // 2022-12-27T16-21-20.245
-    let naive = NaiveDateTime::parse_from_str(time_str, LOG_FILE_TIME_FORMAT)
+    // chrono's `%.3f` formats three digits but only `%.f` parses them back.
+    let naive = NaiveDateTime::parse_from_str(time_str, "%Y-%m-%dT%H-%M-%S%.f")
         .map_err(|error| error.to_string())?;
     let local = chrono::Local;
     match local.from_local_datetime(&naive) {
@@ -1636,8 +1637,27 @@ impl SeekReadStart for std::fs::File {
     }
 }
 
+/// Test support for sibling modules: the reader's file-opening entry point,
+/// so the rotating writer's backup names can be checked against it.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests_support {
+    use std::path::Path;
+
+    pub(crate) use super::StmtFile;
+
+    pub(crate) fn open_stmt_file_for_test(path: &Path) -> (Result<StmtFile, String>, Option<i64>) {
+        match super::open_stmt_file(path) {
+            Ok(file) => {
+                let end = file.end;
+                (Ok(file), Some(end))
+            }
+            Err(error) => (Err(error), None),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
     use super::*;
     use crate::reader::{DIGEST_STR, EXEC_COUNT_STR, IA_EXEC_COUNT_STR};
     use chrono::NaiveDate;
@@ -1648,7 +1668,7 @@ mod tests {
     /// `stmt_summary_filename` is process-global; every test that reads or
     /// rewrites it holds this lock so parallel tests cannot steal each
     /// other's configuration.
-    static CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) static CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// Restores the shipped default (relative) `tidb-statements.log`.
     fn use_default_config_filename() {
