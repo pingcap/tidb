@@ -25,20 +25,20 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use tidb_expr::expr_util::normal_form::extract_filters_from_dnfs;
 use tidb_expr::expr_util::RealFunctionBuilder;
+use tidb_expr::expr_util::normal_form::extract_filters_from_dnfs;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::ZonedNoResolver;
 use tidb_expr::simple_expr::compose_dnf_condition;
 use tidb_planner::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
 use tidb_planner::expression_rewriter::ColumnIdAllocator;
 use tidb_planner::find_best_task::coster::Ver2Coster;
-use tidb_planner::find_best_task::dispatch::{find_best_task, DispatchContext};
+use tidb_planner::find_best_task::dispatch::{DispatchContext, find_best_task};
 use tidb_planner::logical::cte::CteClass;
-use tidb_planner::logical::fold::{fold_owned, Descend, OwnedRewrite};
-use tidb_planner::logical::rule::{flags, logical_optimize, DisabledLogicalRules, RuleContext};
+use tidb_planner::logical::fold::{Descend, OwnedRewrite, fold_owned};
+use tidb_planner::logical::rule::{DisabledLogicalRules, RuleContext, flags, logical_optimize};
 use tidb_planner::logical::{
-    prepare_possible_properties, BaseLogicalPlan, LogicalPlan, LogicalSelection,
+    BaseLogicalPlan, LogicalPlan, LogicalSelection, prepare_possible_properties,
 };
 use tidb_planner::physical::PhysicalPlan;
 use tidb_planner::physical_property::PhysicalProperty;
@@ -46,9 +46,9 @@ use tidb_planner::plan_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_planner::stats_info::{HistColl, StatsInfo};
 
+use super::FromTable;
 use super::catalog::{Catalog, TableEntry};
 use super::from::FromScope;
-use super::FromTable;
 
 enum ListColumnsLocated {
     Full,
@@ -959,11 +959,8 @@ pub(crate) fn physical_plan_for_logical(
     // The projection re-injection restores the purposeful projections
     // (scalar aggregate arguments, scalar order-by items, expression
     // nominal sorts) that the elimination pass removed.
-    let mut physical = tidb_planner::physical::inject_extra_projection(
-        physical,
-        plan_ids,
-        column_ids,
-    );
+    let mut physical =
+        tidb_planner::physical::inject_extra_projection(physical, plan_ids, column_ids);
     physical
         .base_mut()
         .base
@@ -1556,11 +1553,19 @@ pub(crate) struct CachedSelectPlan {
 impl CachedSelectPlan {
     pub(crate) fn bind(&mut self, values: &[tidb_datatype::Datum]) -> Option<u64> {
         super::bind_prepared_statement_in_place(&mut self.statement, values).ok()?;
-        self.physical
-            .rebuild_plan_for_cache_in_place(
-                &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values),
-            )
-            .ok()?;
+        // Go's rebuild re-evaluates deferred constants with the session; this
+        // tier evaluates them against no session state, so deterministic
+        // functions of installed markers rebind while session-bound functions
+        // (the statement clock) fail closed and force a replan.
+        let evaluator = |expression: &tidb_expr::expression::Expression| {
+            tidb_expr::eval_expression_once(expression, &tidb_expr::NoColumns)
+                .map_err(|error| format!("{error:?}"))
+        };
+        let rebuilt = self.physical.rebuild_plan_for_cache_in_place(
+            &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values)
+                .with_deferred_evaluator(&evaluator),
+        );
+        rebuilt.ok()?;
         self.generation = self.generation.wrapping_add(1);
         Some(self.generation)
     }

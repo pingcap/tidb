@@ -24,12 +24,12 @@ use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 mod correlated;
 mod defaults;
 
-use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
+use correlated::{DmlExpression, UpdateExpression, dml_table_scope};
 
 pub(crate) use defaults::{
-    column_default, column_metadata, materialize_column_default, prepare_named_defaults,
-    rewrite_with_prepared_defaults, ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse,
-    PreparedNamedDefault, PreparedOnUpdateNow, ResolvedDefaultColumn,
+    ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse, PreparedNamedDefault,
+    PreparedOnUpdateNow, ResolvedDefaultColumn, column_default, column_metadata,
+    materialize_column_default, prepare_named_defaults, rewrite_with_prepared_defaults,
 };
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
@@ -2005,9 +2005,17 @@ struct CachedDmlPlan {
 impl CachedDmlPlan {
     fn bind(&mut self, values: &[Datum]) -> Option<u64> {
         super::bind_prepared_statement_in_place(&mut self.statement, values).ok()?;
+        // See planner_bridge: deferred constants evaluate without session
+        // state, so deterministic functions of installed markers rebind while
+        // session-bound functions fail closed and force a replan.
+        let evaluator = |expression: &tidb_expr::expression::Expression| {
+            tidb_expr::eval_expression_once(expression, &tidb_expr::NoColumns)
+                .map_err(|error| format!("{error:?}"))
+        };
         self.physical
             .rebuild_plan_for_cache_in_place(
-                &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values),
+                &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values)
+                    .with_deferred_evaluator(&evaluator),
             )
             .ok()?;
         self.generation = self.generation.wrapping_add(1);

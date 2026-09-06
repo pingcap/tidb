@@ -656,13 +656,13 @@ impl PointBuilder {
             return Vec::new();
         };
         // Go's `buildFromBinOp` evaluates the non-column operand against an
-        // empty row, so casts and unary arithmetic around literals (for
-        // example `CAST(-1 AS DECIMAL)`) still reach the unsigned-domain
-        // fixups below.  The old Rust arm accepted only a bare Constant and
-        // silently widened these predicates to a full index scan.
-        if constant.const_level() != tidb_expr::expression::ConstLevel::STRICT {
-            return Vec::new();
-        }
+        // empty row unconditionally: a scalar function around an installed
+        // parameter marker (for example `col = ABS(?)` in a cached plan)
+        // evaluates to the execute-time datum here, while a column-containing
+        // operand fails eval and widens to no points. Do not pre-gate on the
+        // operand's const level — Go has no such check, and gating on STRICT
+        // refused `ConstOnlyInExecution` operands before eval and broke
+        // cached-plan rebuilds for the function shapes.
         let Some(mut value) = constant
             .eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
             .ok()

@@ -67,8 +67,8 @@ batch under `rust/docs/go-physical-plan-parity-execplan.md`.
 ## Validation
 
     cargo +nightly-2026-08-22 test --offline --locked -p tidb-session --lib non_prepared_plan_cache
-    # 21 passed; 3 failed at the tip (2026-09-06). Two of the five original
-    # failures are fixed in this batch:
+    # 24 passed; 0 failed (2026-09-06). Three fixes this round closed the last
+    # five tip failures:
     # - go_refuses_tables_in_every_system_schema_owned_by_filter panicked
     #   because rule_collect_plan_stats.rs passed DataSource.db_name (the
     #   session's spelling, e.g. "DM_HEARTBEAT") into
@@ -78,23 +78,26 @@ batch under `rust/docs/go-physical-plan-parity-execplan.md`.
     # - a_schema_change_invalidates_the_entries_built_before_it panicked at
     #   rowcodec.rs:651 indexing handle_column_ids[0] on an empty id list (a
     #   rowid table projects no handle column); the Int guard now mirrors Go
-    #   tryDecodeHandle (IsPKHandle / ExtraHandleID, no indexing) and the
-    #   test passes.
-    # The remaining three (go_admits_custom_restore_func_call_shapes,
-    # a_set_var_hint_breaks_the_cache,
-    # go_refuses_a_user_variable_and_only_the_listed_uncacheable_functions)
-    # share one located root cause: a marker inside a scalar-function
-    # argument (`a = ABS(?)`). Probed at the executor seam: raw-statement
-    # build_prepared_select_plan succeeds and parameterization produces the
-    # correct key (test|SELECT `a` FROM `t` WHERE `a`=ABS(?)), but
-    # PreparedSelectPlan.bind returns None on the fresh path — the failure
-    # sits inside CachedSelectPlan::bind's
-    # rebuild_plan_for_cache_in_place for the ABS-bearing selection (the
-    # in-place marker install reaches function arguments through the AST
-    # visitor). Next probe: whether PointBuilder::build evaluates a
-    # ScalarFunction-of-installed-marker to a range point at all (vs leaving
-    # the condition to remained_conds, which then trips range_is_safe's
-    # full-range comparison) — the fix is teaching that value extraction to
-    # fold the installed constant the way Go's rebuild ranger does.
+    #   tryDecodeHandle (IsPKHandle / ExtraHandleID, no indexing).
+    # - The last three (go_admits_custom_restore_func_call_shapes,
+    #   a_set_var_hint_breaks_the_cache,
+    #   go_refuses_a_user_variable_and_only_the_listed_uncacheable_functions)
+    #   all failed inside CachedSelectPlan::bind's rebuild for a marker
+    #   inside a scalar-function argument (`a = ABS(?)`). Two causes, both
+    #   fixed: buildFromBinOp's Rust-only ConstLevel::STRICT pre-gate refused
+    #   ConstOnlyInExecution operands before the unconditional eval Go
+    #   performs (points.rs; Go pkg/util/ranger/points.go:326 evals with no
+    #   const-level check), and CachedPlanRebuildContext never carried a
+    #   deferred evaluator, so any deferred constant failed the rebuild
+    #   closed. The bind call sites now evaluate deferred expressions via
+    #   eval_expression_once over NoColumns: deterministic functions of
+    #   installed markers rebind like Go's rebuild ranger, while
+    #   session-bound functions (the statement clock) fail closed and force
+    #   a replan — exactly the previous fail-closed behavior.
+    # Companion fix: rowcodec decode_handle_column empty-id-list crash (the
+    # schema-change test above). The executor lib failure set is a subset of
+    # the pristine tip's sibling-in-flight cluster, with the point-get and
+    # prepared-rebind families this batch repaired removed (verified by
+    # stash-diff against the tip: 15 tip-only failures fixed, 0 new).
 
 No Go file changed; the Bazel gate is not required.
