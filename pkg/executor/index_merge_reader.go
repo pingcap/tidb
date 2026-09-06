@@ -1075,15 +1075,19 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 	}
 
 	requiredCnt := uint64(0)
+	initSize := uint64(0)
 	if w.indexMerge.pushedLimit != nil {
-		// Pre-allocate up to 1024 to avoid oom
-		requiredCnt = min(1024, w.indexMerge.pushedLimit.Count+w.indexMerge.pushedLimit.Offset)
+		// requiredCnt is the logical retention bound of the heap. Since it brings
+		// the heap size down to the real limit+offset, it must not be capped here.
+		requiredCnt = w.indexMerge.pushedLimit.Count + w.indexMerge.pushedLimit.Offset
+		// Pre-allocate at most 1024 slots to avoid OOM on a huge limit value.
+		initSize = min(1024, requiredCnt)
 	}
 	return &handleHeap{
 		requiredCnt: requiredCnt,
 		tracker:     memTracker,
 		taskMap:     taskMap,
-		idx:         make([]rowIdx, 0, requiredCnt),
+		idx:         make([]rowIdx, 0, initSize),
 		compareFunc: compareFuncs,
 		byItems:     w.indexMerge.byItems,
 	}
@@ -1149,7 +1153,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderBy(ctx context.Context,
 			if _, ok := distinctHandles.Get(h); !ok {
 				distinctHandles.Set(h, true)
 				heap.Push(taskHeap, rowIdx{task.partialPlanID, len(taskMap[task.partialPlanID]) - 1, i})
-				if int(taskHeap.requiredCnt) != 0 && taskHeap.Len() > int(taskHeap.requiredCnt) {
+				if taskHeap.requiredCnt != 0 && uint64(taskHeap.Len()) > taskHeap.requiredCnt {
 					top := heap.Pop(taskHeap).(rowIdx)
 					if top.partialID == task.partialPlanID && top.taskID == len(taskMap[task.partialPlanID])-1 && top.rowID == i {
 						uselessMap[task.partialPlanID] = struct{}{}
