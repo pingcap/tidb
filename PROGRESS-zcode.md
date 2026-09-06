@@ -657,3 +657,11 @@
   v2 包状态: 5 个 Go 生产文件中 4 个全移植 + logger.go 缩减为 StmtLogWriter trait 边界 (zap core/ecnodeer 为生态机器)。
 - 下轮恢复点: (1) 新面 tidb-ttl/dxf; (2) 兄弟增量收敛核查; (3) F2/F3-seam live 阻塞; (4) DST 排队; (5) dbsid 分叉待协调。
 - 增量收敛核查: 同步至 55bf4a80d41 (兄弟 serverstate 构造器契约 + init-stats returns), 相关面全绿: ddl-serverstate 7/0, stats-handle-initstats 1/0, schemaver 9/0, timer 16/0。无新增分歧。
+- 新面批次: tidb-ttl (Go pkg/ttl 的 cache/sqlbuilder/session 三子包 @ a85e0fd5df) 全文件审计。移植质量极高, 无 behavior 修复需求:
+  (1) 字符串键列非 UTF-8 数据: Go 写原始字节进 SQL, 本 crate SQL 面全 &str, lossy 转换会构造错误 DELETE —— 定为文档化边界, build 报错 (站点注释);
+  (2) write_value_expr 非数值臂经 writeDatum 路由不可达 (bit/blob/binary-string 先走 hex), 站点注释;
+  (3) unsigned_edge fallback 替代 Go GetInt64 panic 路径, 注释。cache/mod.rs 陈旧边界声明更正 (Update 方法已按 trait 移植)。
+  匹配面: table.go 全分裂族/解码器/EvalExpireTime, task/ttlstatus 全 SQL 逐字节, sqlbuilder 状态机/ScanQueryGenerator, session 事务序 —— 详见收据。
+  验收: cargo test -p tidb-ttl 32 全绿; fmt; diff-check; make lint 过。收据 rust/docs/ttl-parity-audit.md。
+  ttl 剩余未认领子包: ttlworker/client/metrics (worker 运行时需 executor seam, 与 F3-seam 同源阻塞)。
+- 下轮恢复点: (1) 新面候选或跟随兄弟增量; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
