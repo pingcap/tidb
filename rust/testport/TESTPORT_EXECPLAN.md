@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/statistics/handle/cache/internal/mapcache` API return
+  contracts): the complete two-artifact, 151-line Go package, two-file Rust
+  owner, native tests, and direct parent-cache consumers were rechecked at
+  current Go master. `MapCache::new` and `keys` no longer emit two Rust-only
+  `#[must_use]` diagnostics. The focused regression failed with exactly two
+  diagnostics before the edit and passes afterward; all three owner tests,
+  all-target check, formatting, lint, and diff gates pass. Evidence is
+  recorded in `receipts/statistics_handle_cache_internal_mapcache.md`.
 - 2026-09-06 (`pkg/statistics/handle/cache/internal/testutil` constructor
   return contract): the complete two-artifact, 109-line Go package and
   two-file Rust owner were rechecked at current Go master, together with every

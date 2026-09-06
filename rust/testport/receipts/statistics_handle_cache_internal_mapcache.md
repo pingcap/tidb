@@ -1,7 +1,7 @@
 # `pkg/statistics/handle/cache/internal/mapcache` → `tidb-stats-handle-cache-internal-mapcache`
 
-Pinned source: `c6054025ed4c32ab3672a2a24ea46892714d21ec` (Go `master` at the
-audit boundary).
+Historical pinned source: `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
+Current Go source rechecked at `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
 
 ## Atomic inventory
 
@@ -51,3 +51,49 @@ checks both current and detached Go package probes.
 
 No Go or Bazel source changed; `make bazel_prepare` is not required for this
 documentation-only receipt refresh.
+
+## Follow-up: discardable map-cache returns (2026-09-06)
+
+The complete two-artifact, 151-line Go package was re-read at current
+`origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723` and remains
+byte-identical to the historical pin. Its 139-line production source and
+12-line Bazel target define the whole package; there is no `doc.go`, Go test,
+fixture, testdata, generated input/output, example, benchmark, fuzz target, or
+platform/build-tag variant. The complete two-file Rust owner (`Cargo.toml` and
+`src/lib.rs`), its two native tests, and every direct parent-cache consumer
+were reviewed before editing.
+
+Go permits callers to discard both `NewMapCache` and `MapCache.Keys`. Rust's
+direct `MapCache::new` and `keys` counterparts instead emitted
+`unused_must_use` diagnostics. Both annotations were removed without changing
+map ownership, memory accounting, synchronization, copy behavior, or the
+source no-op lifecycle methods. The focused regression invokes both APIs under
+`#[deny(unused_must_use)]`; it failed before the implementation edit with
+exactly two diagnostics and passes afterward.
+
+Ready validation for this follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-stats-handle-cache-internal-mapcache --lib source_return_values_may_be_ignored_like_go --offline --locked -- --nocapture
+PASS; 1 passed, 0 failed.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-stats-handle-cache-internal-mapcache --offline --locked -- --test-threads=1
+PASS; 3 unit tests passed, 0 failed; doc tests had 0 tests.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-stats-handle-cache-internal-mapcache --all-targets --offline --locked
+PASS; pre-existing dependency warnings remain outside this crate.
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+Only Rust source/tests and parity documentation changed. No Go, Bazel, Cargo
+metadata, or module dependency changed, so `make bazel_prepare` is not
+required. The Go package has no tests, and this compile-time caller-contract
+fix leaves the already-covered cache behavior unchanged.
