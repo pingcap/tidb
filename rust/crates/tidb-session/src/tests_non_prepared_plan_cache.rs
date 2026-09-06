@@ -731,6 +731,22 @@ fn a_duplicated_in_list_hits_and_still_returns_its_own_rows() {
     assert_eq!(hit(&mut session), "1");
 }
 
+/// Go observes `plan_cache_lookup_duration` for every non-prepared cache
+/// lookup that reaches the bind (hit or fresh), on the session-plan-cache
+/// histogram.
+#[test]
+fn the_plan_cache_lookup_duration_histogram_observes_every_bind() {
+    let mut session = cache_session();
+    let before = tidb_planner::metrics::plan_cache_lookup_duration(false).get_sample_count();
+    let _ = rows(&mut session, "select a from t where a = 1");
+    let _ = rows(&mut session, "select a from t where a = 2");
+    let after = tidb_planner::metrics::plan_cache_lookup_duration(false).get_sample_count();
+    assert!(
+        after - before >= 2,
+        "each of the two binds observes the lookup duration"
+    );
+}
+
 #[test]
 fn fix_44823_controls_non_prepared_literal_and_in_list_limits() {
     let mut session = cache_session();
