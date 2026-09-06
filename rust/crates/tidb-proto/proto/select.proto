@@ -345,6 +345,7 @@ enum ScalarFuncSig {
   MinusReal = 204;
   MultiplyReal = 208;
   DivideReal = 211;
+  DivideDecimal = 212;
 
   // The arithmetic `MOD` family. Go picks between the four integer
   // signatures by the two arguments' UNSIGNED flags, not by their width.

@@ -425,3 +425,16 @@ joining the real family's composition arms.
 Regression: `string_casts_follow_go_prefix_conversion` (123abc -> 123,
 -42xyz -> -42, garbage -> 0, BIGINT saturation, and the composed
 `CastStringAsReal` under `GTReal`).
+
+## Coprocessor DivideDecimal + div_precision_increment (2026-09-07)
+
+`DivideDecimal` 212 lands. `DagContext` now carries the DAG request's
+`div_precision_increment` (session default 4 when omitted, Go `buildDAG`),
+threaded through `eval_expr`/`eval_decimal`/`eval_real` so decimal division
+widens its result fraction by the request's increment (`DivideDecimal`:
+`DecimalDiv` with `frac = a.frac + b.frac + increment`), NULL on a zero
+divisor. A bare division answers its own truth as the other decimal
+arithmetics do; as a comparison operand the widened fraction is
+observable: `5 / 2` with increment 4 answers 2.5000, GREATER than 2,
+while increment 0 answers exactly 2 -- both pinned by
+`decimal_divide_uses_the_request_precision_increment`.
