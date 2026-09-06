@@ -2970,3 +2970,236 @@ mod tiflash_replica_tests {
         assert_eq!("db1.t1;db1.t2;", text);
     }
 }
+
+/// The stats-provider probes the two stats file bodies use.
+pub trait StatsDumpSource {
+    /// The table's in-memory stats sections (`dumpStatsMemStatus`):
+    /// `[INDEX]` lines then `[COLUMN]` lines, `None` when the table has no
+    /// in-memory stats.
+    ///
+    /// # Errors
+    /// The `TableByName` failure Go aborts the whole file with.
+    fn stats_mem_sections(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Option<(Vec<String>, Vec<String>)>, PlanReplayerError>;
+
+    /// Go `getStatsForTable`: the table's stats JSON plus the fallback
+    /// table names whose historical stats were unavailable.
+    ///
+    /// # Errors
+    /// Whatever the stats provider reports.
+    fn stats_json_for_table(
+        &self,
+        db: &str,
+        table: &str,
+        history_stats_ts: u64,
+    ) -> Result<(String, Vec<String>), PlanReplayerError>;
+}
+
+/// Go `dumpStatsMemStatus`: one `statsMem/<db>.<table>.txt` per non-view
+/// table, `[INDEX]` lines then `[COLUMN]` lines.
+pub fn dump_stats_mem_status(
+    source: &dyn StatsDumpSource,
+    pairs: &BTreeSet<TableNamePair>,
+    zw: &mut dyn DumpArchiveWriter,
+) -> Result<(), PlanReplayerError> {
+    for pair in pairs {
+        if pair.is_view {
+            continue;
+        }
+        let Some((index_lines, column_lines)) =
+            source.stats_mem_sections(&pair.db_name, &pair.table_name)?
+        else {
+            continue;
+        };
+        let mut body = String::from("[INDEX]\n");
+        for line in &index_lines {
+            body.push_str(line);
+            body.push('\n');
+        }
+        body.push_str("[COLUMN]\n");
+        for line in &column_lines {
+            body.push_str(line);
+            body.push('\n');
+        }
+        zw.create_file(
+            &format!("statsMem/{}.{}.txt", pair.db_name, pair.table_name),
+            body.as_bytes(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Go `dumpStats`: one `stats/<db>.<table>.json` per non-view table and the
+/// aggregated fallback message when historical stats were unavailable for
+/// any of them (`"Historical stats for t1, t2 are unavailable, fallback to
+/// latest stats"`).
+pub fn dump_stats(
+    source: &dyn StatsDumpSource,
+    pairs: &BTreeSet<TableNamePair>,
+    history_stats_ts: u64,
+    zw: &mut dyn DumpArchiveWriter,
+) -> Result<String, PlanReplayerError> {
+    let mut all_fallback: Vec<String> = Vec::new();
+    for pair in pairs {
+        if pair.is_view {
+            continue;
+        }
+        let (json, fallbacks) =
+            source.stats_json_for_table(&pair.db_name, &pair.table_name, history_stats_ts)?;
+        zw.create_file(
+            &format!("stats/{}.{}.json", pair.db_name, pair.table_name),
+            json.as_bytes(),
+        )?;
+        all_fallback.extend(fallbacks);
+    }
+    let msg = if all_fallback.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Historical stats for {} are unavailable, fallback to latest stats",
+            all_fallback.join(", ")
+        )
+    };
+    Ok(msg)
+}
+
+#[cfg(test)]
+mod stats_dump_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    struct FakeStats {
+        json: HashMap<(String, String), String>,
+        fallbacks: HashMap<(String, String), Vec<String>>,
+        mem: HashMap<(String, String), (Vec<String>, Vec<String>)>,
+    }
+
+    impl StatsDumpSource for FakeStats {
+        fn stats_mem_sections(
+            &self,
+            db: &str,
+            table: &str,
+        ) -> Result<Option<(Vec<String>, Vec<String>)>, PlanReplayerError> {
+            Ok(self.mem.get(&(db.to_owned(), table.to_owned())).cloned())
+        }
+        fn stats_json_for_table(
+            &self,
+            db: &str,
+            table: &str,
+            _history_stats_ts: u64,
+        ) -> Result<(String, Vec<String>), PlanReplayerError> {
+            match self.json.get(&(db.to_owned(), table.to_owned())) {
+                Some(json) => {
+                    let fallbacks = self
+                        .fallbacks
+                        .get(&(db.to_owned(), table.to_owned()))
+                        .cloned()
+                        .unwrap_or_default();
+                    Ok((json.clone(), fallbacks))
+                }
+                None => Err(PlanReplayerError::Other(format!(
+                    "no stats for {db}.{table}"
+                ))),
+            }
+        }
+    }
+
+    struct Collecting {
+        files: std::collections::BTreeMap<String, Vec<u8>>,
+    }
+
+    impl DumpArchiveWriter for Collecting {
+        fn create_file(&mut self, name: &str, contents: &[u8]) -> Result<(), PlanReplayerError> {
+            self.files.insert(name.to_owned(), contents.to_vec());
+            Ok(())
+        }
+    }
+
+    /// Go `dumpStats`: one JSON file per non-view table plus the aggregated
+    /// fallback message.
+    #[test]
+    fn dump_stats_writes_json_files_and_joins_fallbacks() {
+        let mut json = HashMap::new();
+        json.insert(("db1".to_owned(), "t1".to_owned()), "{\"t1\":1}".to_owned());
+        json.insert(("db2".to_owned(), "t2".to_owned()), "{\"t2\":2}".to_owned());
+        let mut fallbacks = HashMap::new();
+        fallbacks.insert(("db1".to_owned(), "t1".to_owned()), vec!["t1".to_owned()]);
+        fallbacks.insert(("db2".to_owned(), "t2".to_owned()), vec!["t2".to_owned()]);
+        let source = FakeStats {
+            json,
+            fallbacks,
+            mem: HashMap::new(),
+        };
+        let mut pairs = BTreeSet::new();
+        pairs.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false,
+        });
+        pairs.insert(TableNamePair {
+            db_name: "db2".to_owned(),
+            table_name: "t2".to_owned(),
+            is_view: true,
+        });
+        let mut writer = Collecting {
+            files: std::collections::BTreeMap::new(),
+        };
+        let msg = dump_stats(&source, &pairs, 0, &mut writer).unwrap();
+        assert_eq!(
+            "Historical stats for t1 are unavailable, fallback to latest stats",
+            msg
+        );
+        // db2.t2 is a view in this fixture: views produce no JSON file.
+        assert!(writer.files.contains_key("stats/db1.t1.json"));
+        assert!(!writer.files.contains_key("stats/db2.t2.json"));
+    }
+
+    /// Go `dumpStatsMemStatus`: one `statsMem/<db>.<table>.txt` per
+    /// non-view table with the `[INDEX]`/`[COLUMN]` sections.
+    #[test]
+    fn dump_stats_mem_status_writes_sectioned_files() {
+        let mut mem = HashMap::new();
+        mem.insert(
+            ("db1".to_owned(), "t1".to_owned()),
+            (
+                vec!["idx_a=analyzed".to_owned()],
+                vec!["col_b=allEvicted".to_owned()],
+            ),
+        );
+        let mut source = FakeStats {
+            json: HashMap::new(),
+            fallbacks: HashMap::new(),
+            mem,
+        };
+        source
+            .mem
+            .insert(("db1".to_owned(), "skip_view".to_owned()), (vec![], vec![]));
+        // A view pair must be skipped entirely.
+        let mut pairs = BTreeSet::new();
+        pairs.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false,
+        });
+        pairs.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "v9".to_owned(),
+            is_view: true,
+        });
+        let mut writer = Collecting {
+            files: std::collections::BTreeMap::new(),
+        };
+        dump_stats_mem_status(&source, &pairs, &mut writer).unwrap();
+        assert!(writer.files.contains_key("statsMem/db1.t1.txt"));
+        let body = writer.files.get("statsMem/db1.t1.txt").unwrap();
+        let text = std::str::from_utf8(body).unwrap();
+        assert!(text.starts_with("[INDEX]\n"));
+        assert!(text.contains("idx_a=analyzed"));
+        assert!(text.contains("[COLUMN]\n"));
+        assert!(text.contains("col_b=allEvicted"));
+        source.mem.remove(&("db1".to_owned(), "t1".to_owned()));
+    }
+}
