@@ -35,7 +35,6 @@ impl AtomicF64 {
     }
 
     /// Go `Load`.
-    #[must_use]
     pub fn load(&self) -> f64 {
         f64::from_bits(self.0.load(Ordering::SeqCst))
     }
@@ -61,7 +60,6 @@ static SAMPLE_LOGGER: LazyLock<SampledLogger> = LazyLock::new(|| {
 });
 
 /// Go `GetConcurrency`.
-#[must_use]
 pub fn get_concurrency() -> isize {
     let config = tidb_config::config_tree::config::get_global_config();
     let parallelism = std::thread::available_parallelism().map_or(1, usize::from);
@@ -112,7 +110,6 @@ pub struct RangeWorker {
 
 impl RangeWorker {
     /// Go `NewRangeWorker`.
-    #[must_use]
     pub fn new(
         task_name: impl Into<String>,
         process_task: impl Fn(Task) -> TaskResult + Send + Sync + 'static,
@@ -201,5 +198,17 @@ fn load_stats(inner: Arc<WorkerInner>) {
             ),
             &[],
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[deny(unused_must_use)]
+    #[test]
+    fn source_return_values_may_be_ignored_like_go() {
+        let value = super::AtomicF64::new(0.0);
+        value.load();
+        super::get_concurrency();
+        super::RangeWorker::new("init", |_| Ok(()), 0, 1, 0.0);
     }
 }

@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/statistics/handle/initstats` API return contracts): the
+  complete three-artifact, 159-line Go package and single-file Rust owner were
+  rechecked at current Go master. `AtomicF64::load`, `get_concurrency`, and
+  `RangeWorker::new` no longer emit three Rust-only `#[must_use]` diagnostics;
+  the Rust-only `AtomicF64::new` helper remains annotated. The focused
+  regression failed with exactly three diagnostics before the edit and passes
+  afterward; owner tests, all-target check, formatting, lint, and diff gates
+  pass. Evidence is recorded in `receipts/statistics_handle_initstats.md`.
 - 2026-09-06 (`pkg/statistics/handle/autoanalyze/exec` API return contracts):
   the complete three-artifact, 387-line Go package, single-file Rust owner,
   and direct priority-queue/refresher/server callers were rechecked at current
