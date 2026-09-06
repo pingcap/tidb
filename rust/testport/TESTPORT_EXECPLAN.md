@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/ddl/mock` generated return contracts): the complete
+  three-artifact, 196-line generated Go package and complete Rust owner were
+  rechecked at current Go master. The direct `MockSchemaLoader::{new,expect}`
+  and `MockManager::{new,expect}` counterparts no longer emit four Rust-only
+  `#[must_use]` diagnostics. A focused deny-on-discard regression failed with
+  exactly four diagnostics before the edit and passes afterward; all three
+  owner tests, all-target check, formatting, lint, and diff gates pass.
+  Evidence is recorded in `receipts/ddl_mock.md`.
 - 2026-09-06 (`pkg/ddl/serverstate` constructor return contracts): the
   complete four-artifact, 454-line Go package and complete Rust owner were
   rechecked at current Go master. The direct `StateInfo::new`,

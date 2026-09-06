@@ -40,13 +40,11 @@ pub struct MockSchemaLoader {
 
 impl MockSchemaLoader {
     /// Go `NewMockSchemaLoader` without the language-specific controller.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Go `EXPECT`.
-    #[must_use]
     pub const fn expect(&self) -> MockSchemaLoaderRecorder<'_> {
         MockSchemaLoaderRecorder { mock: self }
     }
@@ -107,13 +105,11 @@ pub struct MockManager {
 
 impl MockManager {
     /// Go `NewMockManager` without the language-specific controller.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Go `EXPECT`.
-    #[must_use]
     pub const fn expect(&self) -> MockManagerRecorder<'_> {
         MockManagerRecorder { mock: self }
     }
@@ -287,6 +283,17 @@ mod tests {
     use tidb_exec::ddl_job_scheduler::{must_reload_schemas, UnsyncedJobTracker};
 
     use super::*;
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_mock_constructor_and_expect_returns_can_be_ignored() {
+        MockSchemaLoader::new();
+        let schema_loader = MockSchemaLoader::new();
+        schema_loader.expect();
+        MockManager::new();
+        let manager = MockManager::new();
+        manager.expect();
+    }
 
     #[test]
     fn schema_loader_and_scheduler_contract() {
