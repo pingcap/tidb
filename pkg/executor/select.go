@@ -18,6 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"runtime/pprof"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -702,7 +703,44 @@ type SelectionExec struct {
 	inputRow    chunk.Row
 	childResult *chunk.Chunk
 
+	// rowIndependentFilters holds the filters that reference no column of the input
+	// rows, only constants and correlated columns, whose values are all fixed before
+	// this executor runs. They evaluate to the same result for every input row, so
+	// they are checked only once per Open; if any of them is false or null, Next
+	// returns an empty result without reading the child at all. The values of the
+	// correlated columns may change between two Opens (e.g. for each outer row of an
+	// Apply), so the check is redone after each Open.
+	rowIndependentFilters []expression.Expression
+	// rowIndependentChecked and rowIndependentFalse are the runtime states of
+	// rowIndependentFilters, reset on each Open.
+	rowIndependentChecked bool
+	rowIndependentFalse   bool
+
 	memTracker *memory.Tracker
+}
+
+// initFilters splits conditions into row-independent filters and normal filters,
+// initializing e.rowIndependentFilters and e.filters.
+func (e *SelectionExec) initFilters(conditions []expression.Expression) {
+	if !slices.ContainsFunc(conditions, isRowIndependentFilter) {
+		e.filters = conditions
+		return
+	}
+	for _, cond := range conditions {
+		if isRowIndependentFilter(cond) {
+			e.rowIndependentFilters = append(e.rowIndependentFilters, cond)
+		} else {
+			e.filters = append(e.filters, cond)
+		}
+	}
+}
+
+// isRowIndependentFilter reports whether cond evaluates to the same result for
+// every input row during one execution: it references no column of the input
+// rows (only correlated columns, whose values are bound before this executor
+// runs, and constants) and contains no unfoldable function such as rand().
+func isRowIndependentFilter(cond expression.Expression) bool {
+	return cond.IsCorrelated() && len(expression.ExtractColumns(cond)) == 0 && expression.IsImmutableFunc(cond)
 }
 
 // Open implements the Executor Open interface.
@@ -733,6 +771,8 @@ func (e *SelectionExec) open(context.Context) error {
 	}
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
 	e.inputRow = e.inputIter.End()
+	e.rowIndependentChecked = false
+	e.rowIndependentFalse = false
 	return nil
 }
 
@@ -749,6 +789,20 @@ func (e *SelectionExec) Close() error {
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())
+
+	if len(e.rowIndependentFilters) > 0 && !e.rowIndependentChecked {
+		selected, _, err := expression.EvalBool(e.evalCtx, e.rowIndependentFilters, chunk.Row{})
+		if err != nil {
+			return err
+		}
+		e.rowIndependentChecked = true
+		e.rowIndependentFalse = !selected
+	}
+	// The row-independent filters filter out all rows, so there is no need to read
+	// the child at all.
+	if e.rowIndependentFalse {
+		return nil
+	}
 
 	if !e.batched {
 		return e.unBatchedNext(ctx, req)

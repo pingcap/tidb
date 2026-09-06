@@ -2256,8 +2256,8 @@ func (b *executorBuilder) buildSelection(v *physicalop.PhysicalSelection) exec.E
 	e := &SelectionExec{
 		selectionExecutorContext: newSelectionExecutorContext(b.sctx),
 		BaseExecutorV2:           exec.NewBaseExecutorV2(b.sctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
-		filters:                  v.Conditions,
 	}
+	e.initFilters(v.Conditions)
 	return e
 }
 
@@ -4947,8 +4947,8 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := &SelectionExec{
 			selectionExecutorContext: newSelectionExecutorContext(builder.sctx),
 			BaseExecutorV2:           exec.NewBaseExecutorV2(builder.sctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
-			filters:                  v.Conditions,
 		}
+		exec.initFilters(v.Conditions)
 		err = exec.open(ctx)
 		return exec, err
 	case *physicalop.PhysicalHashAgg:

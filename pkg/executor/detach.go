@@ -166,6 +166,11 @@ func (e *SelectionExec) Detach() (exec.Executor, bool) {
 			return nil, false
 		}
 	}
+	for _, expr := range e.rowIndependentFilters {
+		if !expression.GetOptionalEvalPropsForExpr(expr).IsEmpty() {
+			return nil, false
+		}
+	}
 
 	//nolint:constructor
 	newExec := new(SelectionExec)

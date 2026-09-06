@@ -2666,3 +2666,33 @@ func TestIssue52984(t *testing.T) {
 		tk.MustQuery("select p, o, v, sum(v) over w as 'sum' from t window w as (partition by p order by o rows between 0 preceding and 0 following) limit 10;")
 	}
 }
+
+func TestSelectionWithRowIndependentCorrelatedFilter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values (0, 10), (1, 11), (2, 12), (null, 13)")
+	tk.MustExec("insert into t2 values (0, 100), (1, 101), (2, 102)")
+	// Keep `>` out of the coprocessor so that the correlated filter stays in a
+	// TiDB-side Selection under Apply, which checks it once per outer row instead
+	// of for every inner row.
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('>', 'tikv,tiflash', 'for test')")
+	tk.MustExec("admin reload expr_pushdown_blacklist")
+	defer func() {
+		tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '>'")
+		tk.MustExec("admin reload expr_pushdown_blacklist")
+	}()
+
+	query := "select t1.a, (select /*+ no_decorrelate() */ sum(t2.b) from t2 where t1.a > 1) from t1 order by t1.a"
+	foundRootSelection := false
+	for _, row := range tk.MustQuery("explain format='brief' " + query).Rows() {
+		id, task, info := row[0].(string), row[2].(string), row[4].(string)
+		if strings.Contains(id, "Selection") && strings.Contains(task, "root") && strings.Contains(info, "gt(test.t1.a, 1)") {
+			foundRootSelection = true
+		}
+	}
+	require.True(t, foundRootSelection)
+	tk.MustQuery(query).Check(testkit.Rows("<nil> <nil>", "0 <nil>", "1 <nil>", "2 303"))
+}
