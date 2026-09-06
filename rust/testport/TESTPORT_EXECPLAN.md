@@ -41,6 +41,16 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`pkg/planner/util/coretestsdk` return contracts): the complete
+  two-artifact/1,193-line Rust owner, all functions, four tests, workspace and
+  lock registration, five dependency edges, caller/downstream surface, build
+  configuration, and generated/platform/fixture surface were inventoried
+  before editing. Eighteen source-shaped constructors and accessors no longer
+  impose Rust-only discarded-return diagnostics; the focused regression
+  failed with exactly 18 diagnostics before the correction and passes after
+  it. The five annotations on Rust ownership seams remain. All five owner
+  tests and all-target compilation pass; Ready formatting, lint, and diff
+  hygiene are recorded in `receipts/planner_util_coretestsdk.md`.
 - 2026-09-07 (`pkg/meta/metadef` database predicate returns): all eight Rust
   owner artifacts, workspace/lock and downstream dependency edges, callers,
   tests, source includes, build surface, and generated/platform variants were

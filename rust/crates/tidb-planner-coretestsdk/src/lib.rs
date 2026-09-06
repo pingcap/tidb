@@ -102,7 +102,6 @@ fn pointer_slice<T>(values: impl IntoIterator<Item = T>) -> GoSharedPointerSlice
 }
 
 /// Go `MockSignedTable`.
-#[must_use]
 pub fn mock_signed_table() -> TableInfo {
     let columns = vec![
         column(
@@ -209,7 +208,6 @@ pub fn mock_signed_table() -> TableInfo {
 }
 
 /// Go `MockUnsignedTable`.
-#[must_use]
 pub fn mock_unsigned_table() -> TableInfo {
     TableInfo {
         id: 2,
@@ -253,7 +251,6 @@ pub fn mock_unsigned_table() -> TableInfo {
 }
 
 /// Go `MockNoPKTable`.
-#[must_use]
 pub fn mock_no_pk_table() -> TableInfo {
     TableInfo {
         id: 3,
@@ -269,7 +266,6 @@ pub fn mock_no_pk_table() -> TableInfo {
 }
 
 /// Go `MockView`.
-#[must_use]
 pub fn mock_view() -> TableInfo {
     let columns = [
         ColumnInfo {
@@ -362,7 +358,6 @@ fn definition(id: i64, name: &str) -> PartitionDefinition {
 }
 
 /// Go `MockPartitionInfoSchema`.
-#[must_use]
 pub fn mock_partition_info_schema(definitions: Vec<PartitionDefinition>) -> MockInfoSchema {
     MockInfoSchema::new(vec![partitioned_table(
         1,
@@ -373,7 +368,6 @@ pub fn mock_partition_info_schema(definitions: Vec<PartitionDefinition>) -> Mock
 }
 
 /// Go `MockRangePartitionTable`.
-#[must_use]
 pub fn mock_range_partition_table() -> TableInfo {
     let mut p1 = definition(41, "p1");
     p1.less_than = GoSharedSlice::from_vec(vec!["16".to_owned()]);
@@ -383,7 +377,6 @@ pub fn mock_range_partition_table() -> TableInfo {
 }
 
 /// Go `MockHashPartitionTable`.
-#[must_use]
 pub fn mock_hash_partition_table() -> TableInfo {
     partitioned_table(
         6,
@@ -394,7 +387,6 @@ pub fn mock_hash_partition_table() -> TableInfo {
 }
 
 /// Go `MockListPartitionTable`.
-#[must_use]
 pub fn mock_list_partition_table() -> TableInfo {
     let mut p1 = definition(61, "p1");
     p1.in_values = GoSharedSlice::from_vec(vec![GoSharedSlice::from_vec(vec!["1".to_owned()])]);
@@ -406,7 +398,6 @@ pub fn mock_list_partition_table() -> TableInfo {
 }
 
 /// Go `MockGlobalIndexHashPartitionTable`.
-#[must_use]
 pub fn mock_global_index_hash_partition_table() -> TableInfo {
     let mut table = partitioned_table(
         1,
@@ -460,7 +451,6 @@ pub fn mock_global_index_hash_partition_table() -> TableInfo {
 }
 
 /// Go `MockStateNoneColumnTable`.
-#[must_use]
 pub fn mock_state_none_column_table() -> TableInfo {
     let mut hidden_state = column(3, 2, "c", long_type(), FieldTypeFlags::UNSIGNED);
     hidden_state.state = SchemaState::NONE;
@@ -494,7 +484,6 @@ pub fn mock_state_none_column_table() -> TableInfo {
 
 /// Go `GetFieldValue`, including its deliberate `idx > 0` and `end > 0`
 /// boundaries.
-#[must_use]
 pub fn get_field_value(prefix: &str, row: &str) -> String {
     if let Some(index) = row.find(prefix).filter(|index| *index > 0) {
         let start = index + prefix.len();
@@ -745,7 +734,6 @@ impl TableSource for MockContext {
 }
 
 /// Go `MockContext`.
-#[must_use]
 pub fn mock_context() -> MockContext {
     MockContext {
         info_schema: MockInfoSchema::default(),
@@ -775,25 +763,21 @@ pub struct PlannerSuite {
 
 impl PlannerSuite {
     /// Go `GetParser`.
-    #[must_use]
     pub const fn get_parser(&self) -> &PlannerParser {
         &self.parser
     }
 
     /// Go `GetIS`.
-    #[must_use]
     pub const fn get_is(&self) -> &MockInfoSchema {
         &self.info_schema
     }
 
     /// Go `GetSCtx`.
-    #[must_use]
     pub const fn get_sctx(&self) -> &MockContext {
         &self.context
     }
 
     /// Go `GetCtx`; both context accessors alias the same Rust value.
-    #[must_use]
     pub const fn get_ctx(&self) -> &MockContext {
         &self.context
     }
@@ -804,7 +788,6 @@ impl PlannerSuite {
 }
 
 /// Go `CreatePlannerSuite`.
-#[must_use]
 pub fn create_planner_suite(context: MockContext, info_schema: MockInfoSchema) -> PlannerSuite {
     PlannerSuite {
         parser: PlannerParser,
@@ -814,7 +797,6 @@ pub fn create_planner_suite(context: MockContext, info_schema: MockInfoSchema) -
 }
 
 /// Go `CreatePlannerSuiteElems`.
-#[must_use]
 pub fn create_planner_suite_elems() -> PlannerSuite {
     let mut tables = vec![
         mock_signed_table(),
@@ -850,6 +832,32 @@ pub fn create_planner_suite_elems() -> PlannerSuite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_api_returns_may_be_ignored_like_go() {
+        mock_signed_table();
+        mock_unsigned_table();
+        mock_no_pk_table();
+        mock_view();
+        mock_partition_info_schema(Vec::new());
+        mock_range_partition_table();
+        mock_hash_partition_table();
+        mock_list_partition_table();
+        mock_global_index_hash_partition_table();
+        mock_state_none_column_table();
+        get_field_value("", "");
+        mock_context();
+
+        let suite = create_planner_suite_elems();
+        suite.get_parser();
+        suite.get_is();
+        suite.get_sctx();
+        suite.get_ctx();
+
+        create_planner_suite(mock_context(), MockInfoSchema::default());
+        create_planner_suite_elems();
+    }
 
     #[test]
     fn get_field_value_preserves_source_boundaries() {

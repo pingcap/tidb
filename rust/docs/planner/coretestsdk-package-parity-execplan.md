@@ -14,7 +14,8 @@ The Rust mapping is one `tidb-planner-coretestsdk` crate. It will expose the sam
 - [x] (2026-08-30) Verified `tidb-model` represents every source metadata field and `tidb-planner::plan_builder::catalog::TableSource` is the existing planner boundary.
 - [x] (2026-08-30) Added the crate and source-shaped fixtures, including the zero-value view column type and the source's unusual no-PK offsets/flag combinations.
 - [x] (2026-08-30) Added structural and planner-boundary tests for all fixtures, case-insensitive table/view resolution, source-shaped field extraction, parser configuration, context aliasing, and sequential suite IDs.
-- [x] (2026-08-30) Ran final Ready lint and self-reviewed the complete diff; commit and push are the remaining handoff actions.
+- [x] (2026-08-30) Ran final Ready lint, self-reviewed the complete diff, and published the original complete mapping.
+- [x] (2026-09-07) Re-inventoried the complete Rust owner and removed the 18 Rust-only discard diagnostics from source-shaped Go APIs while retaining all five Rust ownership-seam annotations. The focused regression failed with exactly 18 diagnostics before the correction and passes afterward.
 
 ## Decisions
 
@@ -28,6 +29,7 @@ Run from the repository root:
 
     cargo test --manifest-path rust/Cargo.toml -p tidb-planner-coretestsdk --no-fail-fast
     cargo check --manifest-path rust/Cargo.toml -p tidb-planner-coretestsdk
+    cargo test --manifest-path rust/Cargo.toml -p tidb-planner-coretestsdk --lib tests::source_api_returns_may_be_ignored_like_go -- --exact --test-threads=1
     cargo fmt --manifest-path rust/Cargo.toml --all -- --check
     make lint
     git diff --check
@@ -37,6 +39,8 @@ No Go source, imports, Bazel metadata, or module dependencies are changed, so `m
 ## Outcomes
 
 The crate is dependency-closed over existing Rust model, parser, and planner boundaries. No runtime crate depends on it. `cargo test`, `cargo check`, `cargo fmt --check`, `cargo clippy --all-targets`, and `git diff --check` pass; clippy reports only pre-existing warnings in dependencies and none in `tidb-planner-coretestsdk`.
+
+The 2026-09-07 Rust-only alignment keeps that behavior and dependency shape unchanged. Direct counterparts of Go constructors and accessors may now be discarded without a Rust-only compiler diagnostic; the five retained annotations cover only Rust ownership helpers (`MockInfoSchema::{new,tables}` and `MockContext::{info_schema,current_database,div_precision_increment}`). Detailed evidence is recorded in `../../testport/receipts/planner_util_coretestsdk.md`.
 
 ## Artifact Inventory and Acceptance
 
