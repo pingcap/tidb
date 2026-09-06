@@ -991,3 +991,28 @@ func TestSingleTaskIncrementalIndexHashJoin(t *testing.T) {
 	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ * from t1 where t1.a not in (select t2.b from t2 where t2.b = t1.a)")
 	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ count(*) from t1 where t1.a not in (select t2.b from t2 where t2.b = t1.a)").Check(testkit.Rows("1"))
 }
+
+// TestIssue70546 verifies that `IN (subquery)` keeps semi-join semantics when the
+// subquery column is implicitly cast to the outer column's type.
+// See https://github.com/pingcap/tidb/issues/70546
+func TestIssue70546(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t0(c0 TINYINT(1))")
+	tk.MustExec("create table t1(c0 BLOB, KEY i0(c0(79)))")
+	tk.MustExec("insert into t0 values (0),(0)")
+	tk.MustExec("insert into t1 values ('a'),('b'),('c')")
+
+	// Q1: IN is a semi-join; each qualifying t0 row must appear at most once.
+	// 'a'/'b'/'c' all coerce to numeric 0, so before the fix the join+agg rewrite
+	// deduplicated the raw (string) inner values and multiplied outer rows: 2 * 3 = 6.
+	tk.MustQuery("select t0.c0 from t0 where t0.c0 in (select t1.c0 from t1 where t1.c0 is not null) order by t0.c0").
+		Check(testkit.Rows("0", "0"))
+
+	// Q2: relocating the IN predicate to a boolean column must give the same result.
+	tk.MustQuery("select ref0 from (select t0.c0 as ref0, t0.c0 in (select t1.c0 from t1 where t1.c0 is not null) as ref1 from t0) s where ref1 order by ref0").
+		Check(testkit.Rows("0", "0"))
+}
