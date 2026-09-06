@@ -777,3 +777,5 @@
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
 - 小面巡检: tidb-resolve (Go pkg/planner/core/resolve/{resolve,result}.go, 135 行) —— TableNameW/NodeW/Context/AddTableName/GetTableName/GetTableNames/ResultField 全对齐; Context 以 TableIdentity 复现 Go *ast.TableName 指针身份键; ResultField 7 字段含 empty_org_name。零分歧。tidb-ddl-logutil (52 行) 待巡。
 - 下轮恢复点: (1) ddl-logutil 小面巡检; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
+- 小面巡检: tidb-ddl-logutil (Go pkg/ddl/logutil/logutil.go, 62 行) —— 零分歧。四 logger 对齐: DDLLogger("ddl")/DDLUpgradingLogger("ddl-upgrading")/DDLIngestLogger("ddl-ingest") 共享 bg_logger + category 字段, SampleLogger = SampleLoggerFactory(time.Minute, 3, "ddl") 的进程共享采样实例 (LazyLock)。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
