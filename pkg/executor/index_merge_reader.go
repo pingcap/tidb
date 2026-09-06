@@ -1153,7 +1153,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderBy(ctx context.Context,
 			if _, ok := distinctHandles.Get(h); !ok {
 				distinctHandles.Set(h, true)
 				heap.Push(taskHeap, rowIdx{task.partialPlanID, len(taskMap[task.partialPlanID]) - 1, i})
-				if int(taskHeap.requiredCnt) != 0 && taskHeap.Len() > int(taskHeap.requiredCnt) {
+				if taskHeap.requiredCnt != 0 && uint64(taskHeap.Len()) > taskHeap.requiredCnt {
 					top := heap.Pop(taskHeap).(rowIdx)
 					if top.partialID == task.partialPlanID && top.taskID == len(taskMap[task.partialPlanID])-1 && top.rowID == i {
 						uselessMap[task.partialPlanID] = struct{}{}
