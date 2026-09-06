@@ -83,11 +83,17 @@ batch under `rust/docs/go-physical-plan-parity-execplan.md`.
     # The remaining three (go_admits_custom_restore_func_call_shapes,
     # a_set_var_hint_breaks_the_cache,
     # go_refuses_a_user_variable_and_only_the_listed_uncacheable_functions)
-    # share one located root cause in sibling in-flight planner code: plain
-    # literals still hit, ABS(1) parameterizes to the correct key
-    # (test|SELECT `a` FROM `t` WHERE `a`=ABS(?)), the plan builds and is
-    # put, but PreparedSelectPlan.bind_for_statement fails on the marker
-    # inside the scalar-function argument, so every execution re-plans and
-    # reports a miss. Fix belongs with the physical-plan bind owners.
+    # share one located root cause: a marker inside a scalar-function
+    # argument (`a = ABS(?)`). Probed at the executor seam: raw-statement
+    # build_prepared_select_plan succeeds and parameterization produces the
+    # correct key (test|SELECT `a` FROM `t` WHERE `a`=ABS(?)), but
+    # PreparedSelectPlan.bind returns None on the fresh path — the failure
+    # sits inside CachedSelectPlan::bind's
+    # rebuild_plan_for_cache_in_place for the ABS-bearing selection (the
+    # in-place marker install reaches function arguments through the AST
+    # visitor). Next probe: which rebuild arm errors — the ranger's
+    # build_table_range over eq(col, ABS(installed-marker)) or
+    # range_is_safe — then fix that arm to fold the installed value the way
+    # Go's rebuild ranger folds constant-foldable functions.
 
 No Go file changed; the Bazel gate is not required.
