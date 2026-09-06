@@ -773,3 +773,5 @@
   3 个旧 suffix-shift 测试按 pinned 语义重写; malformed/fallback 集成测试改钉 终态 fallback + 重试至 deadline + 终态 timeout。
   验收: cargo test -p tidb-pd-client 26 lib + 44 int 全绿; fmt; diff-check; make lint 过。收据 rust/docs/pdclient-tso-parity-audit.md。已推送 (LANDED_1)。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 增量收敛核查: 同步至 f35307a0f2a (本会话 pd-client 批为服务端 tip), 相关面全绿: pd-client 26+44+3/0, domain 143/0, unistore 114/0, ddl-session 5/0, ddl-resourcegroup 1/0, naming 2/0。无新增分歧。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
