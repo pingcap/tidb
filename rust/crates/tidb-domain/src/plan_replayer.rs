@@ -2869,3 +2869,104 @@ mod presign_tests {
         }
     }
 }
+
+/// Go `dumpTiFlashReplica`'s probe: the table's TiFlash replica count, or
+/// `None` when the table is missing (logged + skipped) or has no replica
+/// configured.
+pub trait TiFlashReplicaSource {
+    fn tiflash_replica_count(&self, db: &str, table: &str) -> Option<u64>;
+}
+
+/// Go `dumpTiFlashReplica`'s file body: one `db\ttable\tcount` line per
+/// pair that has a replica configured.
+#[must_use]
+pub fn build_tiflash_replica_file(
+    source: &dyn TiFlashReplicaSource,
+    pairs: &BTreeSet<TableNamePair>,
+) -> String {
+    let mut out = String::new();
+    for pair in pairs {
+        if let Some(count) = source.tiflash_replica_count(&pair.db_name, &pair.table_name) {
+            out.push_str(&format!(
+                "{}\t{}\t{}\n",
+                pair.db_name, pair.table_name, count
+            ));
+        }
+    }
+    out
+}
+
+/// Go `dumpSchemaMeta`'s file body: `db.table;` per non-view table.
+#[must_use]
+pub fn build_schema_meta_file(tables: &BTreeSet<TableNamePair>) -> String {
+    let mut out = String::new();
+    for table in tables {
+        out.push_str(&format!("{}.{};", table.db_name, table.table_name));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tiflash_replica_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    struct FakeReplica {
+        counts: HashMap<(String, String), u64>,
+    }
+
+    impl TiFlashReplicaSource for FakeReplica {
+        fn tiflash_replica_count(&self, db: &str, table: &str) -> Option<u64> {
+            self.counts.get(&(db.to_owned(), table.to_owned())).copied()
+        }
+    }
+
+    /// Go `dumpTiFlashReplica`: only pairs with a configured replica produce
+    /// a `db\ttable\tcount` line, in sorted pair order.
+    #[test]
+    fn tiflash_replica_file_lists_configured_pairs() {
+        let mut counts = HashMap::new();
+        counts.insert(("db1".to_owned(), "t1".to_owned()), 1_u64);
+        counts.insert(("db2".to_owned(), "t2".to_owned()), 2_u64);
+        let source = FakeReplica { counts };
+        let mut pairs = BTreeSet::new();
+        pairs.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false,
+        });
+        pairs.insert(TableNamePair {
+            db_name: "db2".to_owned(),
+            table_name: "t2".to_owned(),
+            is_view: false,
+        });
+        pairs.insert(TableNamePair {
+            db_name: "db3".to_owned(),
+            table_name: "t4".to_owned(),
+            is_view: false,
+        });
+        let text = build_tiflash_replica_file(&source, &pairs);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(2, lines.len());
+        assert_eq!("db1\tt1\t1", lines[0]);
+        assert_eq!("db2\tt2\t2", lines[1]);
+    }
+
+    /// Go `dumpSchemaMeta`: `db.table;` per non-view table, in sorted order.
+    #[test]
+    fn schema_meta_file_lists_tables_with_semicolons() {
+        let mut tables = BTreeSet::new();
+        tables.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t2".to_owned(),
+            is_view: false,
+        });
+        tables.insert(TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false,
+        });
+        let text = build_schema_meta_file(&tables);
+        assert_eq!("db1.t1;db1.t2;", text);
+    }
+}
