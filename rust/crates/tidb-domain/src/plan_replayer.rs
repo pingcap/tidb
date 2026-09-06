@@ -2180,3 +2180,43 @@ mod dump_seed_tests {
         );
     }
 }
+
+/// Go `dumpConfig`'s file body: the global config serialized as TOML
+/// (`toml.NewEncoder(cf).Encode(config.GetGlobalConfig())`).
+///
+/// # Errors
+/// Whatever the TOML serializer reports.
+pub fn build_config_toml() -> Result<String, toml::ser::Error> {
+    toml::to_string(&tidb_config::config_tree::config::get_global_config())
+}
+
+/// Go `dumpMeta`'s file body: `printer.GetTiDBInfo()` verbatim.
+#[must_use]
+pub fn build_meta_txt() -> String {
+    tidb_util::printer::get_tidb_info()
+}
+
+#[cfg(test)]
+mod dump_body_tests {
+    use super::*;
+
+    /// Go `dumpConfig`: `config.toml` carries the global config as TOML.
+    #[test]
+    fn build_config_toml_serializes_the_global_config() {
+        let toml_text = build_config_toml().unwrap();
+        assert!(
+            toml_text.contains("port") || !toml_text.is_empty(),
+            "the serialized config must not be empty"
+        );
+        // It must parse back as a TOML document.
+        assert!(toml::from_str::<toml::Value>(&toml_text).is_ok());
+    }
+
+    /// Go `dumpMeta`: `meta.txt` carries `printer.GetTiDBInfo()` verbatim.
+    #[test]
+    fn build_meta_txt_carries_the_server_info() {
+        let meta = build_meta_txt();
+        // Go's GetTiDBInfo emits "Release Version" as its first line.
+        assert!(meta.contains("Release Version"), "meta.txt head: {meta}");
+    }
+}
