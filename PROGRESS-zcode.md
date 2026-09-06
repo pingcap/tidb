@@ -714,3 +714,10 @@
   补齐两处文档契约: ParseWithParams 占位符契约 (%?/%%/%n + 注入 caveat) 与 RecordSet close 后重读重启的 Go 无条件保证。文档化 narrowing: mid-drain 部分行丢弃 (今日无观察方), Rust-only seam traits。
   验收: cargo test -p tidb-sqlexec; fmt; diff-check; make lint 过。收据 rust/docs/sqlexec-parity-audit.md。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 新面批次: tidb-unistore 的 lockstore+lockwaiter 声明面 (Go @ a85e0fd5df) 审计。零 behavior 分歧; 2 项低风险对齐:
+  (1) lockwaiter 延迟唤醒 deadline 改用 Go 的原始有符号算术 (负延迟配置保留原 deadline, 原实现钳 0 立即返回);
+  (2) lockstore replace/delete 在 node_set_next 前断言 hint.prev 非空 (Go nil 索引 panic 的镜像, 原实现会静默写 block 0)。
+  匹配面: 常量/节点布局/find 家族/Put-PutWithHint 高度启发/replace-delete 拼接与长度/随机高度 p=1/4/MaxEntrySize/Get buf-refill/arena 对齐溢出释放窗/lockwaiter 全哨兵与唤醒语义/延迟计时器 already-fired guard/CleanUp 排水。
+  记录: lib 测试目标因兄弟 distsql 接口改动预存编译失败 (双向 stash 验证与本批无关); RNG 源/原子-借用纪律/每调用计时器为站点注释 narrowing。
+  验收: cargo build -p tidb-unistore 过; fmt; diff-check; make lint 过。收据 rust/docs/unistore-lock-parity-audit.md。
+- 下轮恢复点: (1) 兄弟修复 distsql 接口后回补 unistore 测试目标验证; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
