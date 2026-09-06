@@ -17,9 +17,12 @@
 //! finished, what gets written into `mysql.plan_replayer_status`, and the
 //! periodic GC of dump files on external storage.
 //!
-//! It does *not* include the dumping itself, which is
-//! `plan_replayer_dump.go` (`DumpPlanReplayerInfo`, 1,004 lines) and is not
-//! ported; it is reached here through one named boundary method.
+//! The dumping itself is `plan_replayer_dump.go` (`DumpPlanReplayerInfo`,
+//! 1,004 lines) and is not ported whole; it is reached here through one
+//! named boundary method. A seed slice of that file landed anyway: its
+//! archive file-name constants, its sql-meta TOML keys, and the
+//! `dumpSQLMeta` record builder ([`build_sql_meta_records`]) — see the
+//! seed modules at the end of this file.
 //!
 //! ## Symbols ported
 //!
@@ -255,6 +258,14 @@ pub struct PlanReplayerDumpTask {
     pub is_capture: bool,
     /// Go `PlanReplayerDumpTask.IsContinuesCapture`.
     pub is_continues_capture: bool,
+    /// Go `PlanReplayerDumpTask.StartTS`.
+    pub start_ts: u64,
+    /// Go `PlanReplayerDumpTask.SQLDigest`.
+    pub sql_digest: String,
+    /// Go `PlanReplayerDumpTask.PlanDigest`.
+    pub plan_digest: String,
+    /// Go `PlanReplayerDumpTask.HistoricalStatsTS`.
+    pub historical_stats_ts: u64,
 }
 
 /// Go `infosync.ServerInfo`'s two fields that reach the `instance` column.
@@ -2027,5 +2038,145 @@ mod tests {
     fn base_name_takes_the_last_segment() {
         assert_eq!(base_name("replayer/replayer_k_1.zip"), "replayer_k_1.zip");
         assert_eq!(base_name("replayer_k_1.zip"), "replayer_k_1.zip");
+    }
+}
+
+/* `plan_replayer_dump.go` seed slice: the archive file names, the sql-meta
+ * TOML keys, and the `dumpSQLMeta` record builder. The dump routine itself
+ * (zip assembly, session gathering, presign) is not ported yet. */
+
+/// Go `plan_replayer_dump.go`'s archive file names.
+pub mod dump_file {
+    pub const PLAN_REPLAYER_SQL_META_FILE: &str = "sql_meta.toml";
+    pub const PLAN_REPLAYER_CONFIG_FILE: &str = "config.toml";
+    pub const PLAN_REPLAYER_META_FILE: &str = "meta.txt";
+    pub const PLAN_REPLAYER_VARIABLES_FILE: &str = "variables.toml";
+    pub const PLAN_REPLAYER_TIFLASH_REPLICAS_FILE: &str = "table_tiflash_replica.txt";
+    pub const PLAN_REPLAYER_SESSION_BINDING_FILE: &str = "session_bindings.sql";
+    pub const PLAN_REPLAYER_GLOBAL_BINDING_FILE: &str = "global_bindings.sql";
+    pub const PLAN_REPLAYER_SCHEMA_META_FILE: &str = "schema_meta.txt";
+    pub const PLAN_REPLAYER_ERROR_MESSAGE_FILE: &str = "errors.txt";
+}
+
+/// Go `plan_replayer_dump.go`'s sql-meta TOML keys.
+pub mod sql_meta_key {
+    pub const START_TS: &str = "startTS";
+    pub const IS_CAPTURE: &str = "isCapture";
+    pub const IS_CONTINUES: &str = "isContinues";
+    pub const SQL_DIGEST: &str = "sqlDigest";
+    pub const PLAN_DIGEST: &str = "planDigest";
+    pub const ENABLE_HISTORICAL_STATS: &str = "enableHistoricalStats";
+    pub const HISTORICAL_STATS_TS: &str = "historicalStatsTS";
+}
+
+/// Go `dumpSQLMeta`'s record set: the `sql_meta.toml` key/value pairs for
+/// one task. `enable_historical_stats_for_capture` reads the process-global
+/// switch (`vardef.EnableHistoricalStatsForCapture.Load()`) in Go and is
+/// passed explicitly here. A Go `toml` encoder writes the map with
+/// alphabetically sorted keys, which the `BTreeMap` reproduces.
+#[must_use]
+pub fn build_sql_meta_records(
+    task: &PlanReplayerDumpTask,
+    enable_historical_stats_for_capture: bool,
+) -> std::collections::BTreeMap<String, String> {
+    let mut records = std::collections::BTreeMap::new();
+    records.insert(sql_meta_key::START_TS.to_owned(), task.start_ts.to_string());
+    records.insert(
+        sql_meta_key::IS_CAPTURE.to_owned(),
+        task.is_capture.to_string(),
+    );
+    records.insert(
+        sql_meta_key::IS_CONTINUES.to_owned(),
+        task.is_continues_capture.to_string(),
+    );
+    records.insert(sql_meta_key::SQL_DIGEST.to_owned(), task.sql_digest.clone());
+    records.insert(
+        sql_meta_key::PLAN_DIGEST.to_owned(),
+        task.plan_digest.clone(),
+    );
+    records.insert(
+        sql_meta_key::ENABLE_HISTORICAL_STATS.to_owned(),
+        enable_historical_stats_for_capture.to_string(),
+    );
+    if task.historical_stats_ts > 0 {
+        records.insert(
+            sql_meta_key::HISTORICAL_STATS_TS.to_owned(),
+            task.historical_stats_ts.to_string(),
+        );
+    }
+    records
+}
+
+#[cfg(test)]
+mod dump_seed_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// Go `dumpSQLMeta`: every task field lands in `sql_meta.toml` under its
+    /// pinned key, with the historical-stats pair present only when the task
+    /// carries a TS.
+    #[test]
+    fn sql_meta_records_cover_every_field() {
+        let task = PlanReplayerDumpTask {
+            start_ts: 4_377_391_814_500_000_000,
+            is_capture: true,
+            is_continues_capture: false,
+            sql_digest: "dig".to_owned(),
+            plan_digest: "pdig".to_owned(),
+            historical_stats_ts: 4_377_391_814_600_000_000,
+            ..PlanReplayerDumpTask::default()
+        };
+        let records = build_sql_meta_records(&task, true);
+        assert_eq!(
+            records.get(sql_meta_key::START_TS).map(String::as_str),
+            Some("4377391814500000000")
+        );
+        assert_eq!(
+            records.get(sql_meta_key::IS_CAPTURE).map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            records.get(sql_meta_key::IS_CONTINUES).map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            records.get(sql_meta_key::SQL_DIGEST).map(String::as_str),
+            Some("dig")
+        );
+        assert_eq!(
+            records.get(sql_meta_key::PLAN_DIGEST).map(String::as_str),
+            Some("pdig")
+        );
+        assert_eq!(
+            records
+                .get(sql_meta_key::ENABLE_HISTORICAL_STATS)
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            records
+                .get(sql_meta_key::HISTORICAL_STATS_TS)
+                .map(String::as_str),
+            Some("4377391814600000000")
+        );
+    }
+
+    /// Without a historical-stats TS the pair is absent; the capture flags
+    /// still render as booleans.
+    #[test]
+    fn sql_meta_records_omit_absent_ts() {
+        let task = PlanReplayerDumpTask::default();
+        let records = build_sql_meta_records(&task, false);
+        assert!(!records.contains_key(sql_meta_key::HISTORICAL_STATS_TS));
+        assert_eq!(
+            records.get(sql_meta_key::IS_CAPTURE).map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            records
+                .get(sql_meta_key::ENABLE_HISTORICAL_STATS)
+                .map(String::as_str),
+            Some("false")
+        );
     }
 }
