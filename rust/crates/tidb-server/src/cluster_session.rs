@@ -1420,8 +1420,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             storage_stats_reads.load(std::sync::atomic::Ordering::Acquire),
-            3,
-            "Go does not column-prune PARTITIONS, so its full scan refreshes the cache"
+            2,
+            "current Go's updateStatsCacheIfNeed self-prunes on the retained \
+             columns (infoschema_reader.go:646-661): a TABLE_NAME-only \
+             PARTITIONS projection retains no size column, so no refresh runs"
         );
         fail_storage_stats.store(true, std::sync::atomic::Ordering::Release);
         let StmtResult::Rows(rows) = session

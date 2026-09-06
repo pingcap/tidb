@@ -124,9 +124,13 @@ contract above.
   `table_size_stats_are_statement_local_and_clamp_negative_sizes` regression.
 - `tidb-server::cluster_session::loaded_column_ndv_reaches_grouped_cluster_plans`
   proves TABLES projection pruning and histogram-read skipping for
-  TABLE_ROWS-only scans; on the current tip this test aborts earlier at its
-  PARTITIONS call-count assertion (pre-existing sibling in-flight breakage,
-  identical before and after this batch).
+  TABLE_ROWS-only scans. A follow-up round re-pinned its PARTITIONS section:
+  current Go's `updateStatsCacheIfNeed` (`infoschema_reader.go:646-661`)
+  self-prunes on the retained columns, so a TABLE_NAME-only PARTITIONS
+  projection runs no refresh at all — the port's plan-level pruning matches,
+  and the test's old "Go does not column-prune PARTITIONS" expectation (reads
+  == 3) described the pre-merge reader and was updated to expect no third
+  read.
 - The benchmark target retains
   `BenchmarkStatsCacheLFUCopyAndUpdate`,
   `BenchmarkStatsCacheMapCacheCopyAndUpdate`, `BenchmarkLFUCachePutGet`,
