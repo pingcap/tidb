@@ -19,7 +19,7 @@ import (
 	"crypto/tls"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/util"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 )
 
 var statisticsList []Statistics
@@ -152,15 +152,11 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, err
 
 	// `vars` may be nil in unit tests.
 	if vars != nil && vars.TLSConnectionState != nil {
-		statusVars["Ssl_cipher"] = util.TLSCipher2String(vars.TLSConnectionState.CipherSuite)
+		statusVars["Ssl_cipher"] = tlsutil.CipherSuiteName(vars.TLSConnectionState.CipherSuite)
 		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
 		// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
 		statusVars["Ssl_verify_mode"] = 0x01 | 0x04
-		if tlsVersion, tlsVersionKnown := tlsVersionString[vars.TLSConnectionState.Version]; tlsVersionKnown {
-			statusVars["Ssl_version"] = tlsVersion
-		} else {
-			statusVars["Ssl_version"] = "unknown_tls_version"
-		}
+		statusVars["Ssl_version"] = tlsutil.VersionName(vars.TLSConnectionState.Version)
 	}
 
 	return statusVars, nil
@@ -169,7 +165,7 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, err
 func init() {
 	var ciphersBuffer bytes.Buffer
 	for _, v := range tlsCiphers {
-		ciphersBuffer.WriteString(util.TLSCipher2String(v))
+		ciphersBuffer.WriteString(tlsutil.CipherSuiteName(v))
 		ciphersBuffer.WriteString(":")
 	}
 	tlsSupportedCiphers = ciphersBuffer.String()
