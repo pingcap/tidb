@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/statistics/handle/usage/indexusage` API return contracts):
+  the complete three-artifact, 568-line package and four-file Rust owner were
+  rechecked at current Go master. Five direct Go-shaped APIs no longer emit
+  Rust-only `#[must_use]` diagnostics. A focused regression failed with
+  exactly five diagnostics before the edit and passes afterward; the
+  five-test owner suite, benchmark-inclusive all-target check, formatting,
+  lint, and diff checks pass. Evidence is recorded in
+  `receipts/statistics_handle_usage_indexusage.md`.
 - 2026-09-06 (`pkg/statistics/handle/usage/collector` construction return
   contracts): the complete three-artifact, 289-line package and three-file
   Rust owner were rechecked at current Go master. `NewGlobalCollector` and

@@ -9,6 +9,13 @@ tests, and the parallel benchmark surface.
 
 ## Progress
 
+- [x] Recheck the complete three-artifact inventory at current Go master
+  `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; no package delta exists.
+- [x] Remove five Rust-only `#[must_use]` diagnostics from the direct sample,
+  collector, lookup, session-spawn, and statement-constructor counterparts.
+  The focused regression failed with exactly five diagnostics before the edit
+  and passes afterward.
+
 - [x] Read all three Go-master artifacts at
   `c6054025ed4c32ab3672a2a24ea46892714d21ec`: 568 lines across BUILD metadata,
   the complete production collector, four tests, and the three-case benchmark.
@@ -30,6 +37,8 @@ changed, so `make bazel_prepare` is not required.
 
 - [x] Current and detached exact-master Go package tests pass.
 - [x] Four owner tests pass, including the 64 × 100,000 concurrent workload.
+- [x] The updated owner passes five tests, its benchmark-inclusive all-target
+  check, workspace formatting, repository lint, and diff hygiene.
 - [x] The owner benchmark target compiles and the three report-frequency
   cases are present.
 - [x] `tidb-stats`, `tidb-session`, and `tidb-server` consumers compile.

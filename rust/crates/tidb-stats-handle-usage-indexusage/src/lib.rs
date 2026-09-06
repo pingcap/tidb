@@ -80,7 +80,6 @@ fn get_index_usage_access_bucket(percentage: f64) -> usize {
 }
 
 /// Go `NewSample`.
-#[must_use]
 pub fn new_sample(
     query_total: u64,
     kv_req_total: u64,
@@ -160,7 +159,6 @@ pub struct Collector {
 
 impl Collector {
     /// Go `NewCollector`.
-    #[must_use]
     pub fn new() -> Self {
         let index_usage = Arc::new(RwLock::new(take_index_usage()));
         let target = Arc::clone(&index_usage);
@@ -178,7 +176,6 @@ impl Collector {
     }
 
     /// Go `Collector.GetIndexUsage`.
-    #[must_use]
     pub fn get_index_usage(&self, table_id: i64, index_id: i64) -> Sample {
         self.index_usage
             .read()
@@ -189,7 +186,6 @@ impl Collector {
     }
 
     /// Go `Collector.SpawnSessionCollector`.
-    #[must_use]
     pub fn spawn_session_collector(&self) -> SessionIndexUsageCollector {
         SessionIndexUsageCollector {
             index_usage: Arc::new(take_index_usage()),
@@ -269,7 +265,6 @@ pub struct StmtIndexUsageCollector {
 
 impl StmtIndexUsageCollector {
     /// Go `NewStmtIndexUsageCollector`.
-    #[must_use]
     pub fn new(session_collector: Arc<Mutex<SessionIndexUsageCollector>>) -> Self {
         Self {
             recorded_index: Mutex::new(HashSet::new()),

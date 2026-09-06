@@ -80,3 +80,48 @@ No Go or Bazel source changed, so `make bazel_prepare` is not required.
   concurrency workload and optimized benchmark compilation cover the hot path.
 - Broader repository and integration suites remain outside this package-scoped
   gate and are tracked by the continuing parity ExecPlan.
+
+## Follow-up: discardable index-usage API returns (2026-09-06)
+
+The complete three-artifact, 568-line Go package was rechecked at current
+`origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; it remains
+byte-identical to the earlier pin. The production collector, four source
+tests, three-case benchmark, and Bazel metadata remain the entire package,
+with no docs, fixtures, generated inputs/outputs, fuzz targets, or platform
+variants. The Rust owner inventory is `Cargo.toml`, `src/lib.rs`,
+`src/tests.rs`, and `benches/collector.rs`.
+
+Go callers may discard the results of `NewSample`, `NewCollector`,
+`Collector.GetIndexUsage`, `Collector.SpawnSessionCollector`, and
+`NewStmtIndexUsageCollector`. Rust had added `#[must_use]` to all five direct
+counterparts. Those annotations were removed without changing sample
+bucketing, pooled-map ownership, report/flush behavior, or statement-level
+deduplication. The focused in-owner regression invokes all five APIs under
+`#[deny(unused_must_use)]`; it failed before the production edit with exactly
+five diagnostics and passes afterward.
+
+Ready validation for this follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-stats-handle-usage-indexusage --lib tests::source_return_values_may_be_ignored_like_go --offline --locked -- --exact --nocapture --test-threads=1
+PASS; 1 passed, 0 failed.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-stats-handle-usage-indexusage --offline --locked -- --test-threads=1
+PASS; 5 unit tests passed, 0 failed; doc tests had 0 tests.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-stats-handle-usage-indexusage --all-targets --offline --locked
+PASS; includes the benchmark target.
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+Only Rust source/tests and parity documentation changed. No Go, Bazel, Cargo
+metadata, or module dependency changed, so `make bazel_prepare` is not
+required.

@@ -30,6 +30,20 @@ fn pending_usage(
         .get(&GlobalIndexId { table_id, index_id })
 }
 
+#[deny(unused_must_use)]
+#[test]
+fn source_return_values_may_be_ignored_like_go() {
+    new_sample(0, 0, 0, 0);
+    Collector::new();
+
+    let collector = Collector::new();
+    collector.get_index_usage(1, 2);
+    collector.spawn_session_collector();
+
+    let session = Arc::new(Mutex::new(collector.spawn_session_collector()));
+    StmtIndexUsageCollector::new(session);
+}
+
 #[test]
 fn get_bucket() {
     for (value, expected) in [
