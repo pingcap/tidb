@@ -507,3 +507,13 @@ calculation needs the mode-dependent calendar algorithm, its own course.
   NULL element.
 - `VectorFloat32IsNull` 5155: the vector leaf's NULL check joins the
   IS NULL family's datum inspection.
+
+## Coprocessor DATE_FORMAT (2026-09-07, same session)
+
+`DateFormatSig` 6001 lands in the bytes channel: (datetime, format)
+operands evaluate through `eval_time` and the bytes composition, then
+`Time.DateFormat`'s layout table renders the string. It composes as an
+EQString operand (`DATE_FORMAT(t, '%Y-%m-%d') = '2024-03-05'`) and a
+bare function answers its numeric-prefix truth. Regression:
+`date_format_composes_over_a_datetime_column` (the EQString equality
+answers TRUE for the matching layout).

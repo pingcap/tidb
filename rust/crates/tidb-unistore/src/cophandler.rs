@@ -1581,6 +1581,9 @@ pub enum SimpleSig {
     LowerUtf8,
     /// See [`SimpleSig::CharLengthUtf8`].
     Lower,
+    /// `DateFormatSig` over (datetime, format): Go `builtinDateFormatSig`
+    /// answering through `Time.DateFormat`.
+    DateFormatSig,
     /// See [`SimpleSig::CharLengthUtf8`].
     UpperUtf8,
     /// See [`SimpleSig::CharLengthUtf8`].
@@ -1928,6 +1931,7 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::CharLength => SimpleSig::CharLength,
             tipb::ScalarFuncSig::LowerUtf8 => SimpleSig::LowerUtf8,
             tipb::ScalarFuncSig::Lower => SimpleSig::Lower,
+            tipb::ScalarFuncSig::DateFormatSig => SimpleSig::DateFormatSig,
             tipb::ScalarFuncSig::UpperUtf8 => SimpleSig::UpperUtf8,
             tipb::ScalarFuncSig::Upper => SimpleSig::Upper,
             tipb::ScalarFuncSig::Substring2ArgsUtf8 => SimpleSig::Substring2ArgsUtf8,
@@ -2280,6 +2284,15 @@ fn eval_bytes(
             Some(Datum::Bytes(value)) => Some(value.clone()),
             _ => None,
         },
+        // DATE_FORMAT: Go `builtinDateFormatSig` answers through
+        // `Time.DateFormat` over the format layout.
+        SimpleExpr::Func(SimpleSig::DateFormatSig, children) => {
+            let time = eval_time(children.first(), row)?;
+            let layout = eval_bytes(children.get(1), row, div_precision_increment)?;
+            let layout = String::from_utf8_lossy(&layout).into_owned();
+            let formatted = time.date_format(&layout).ok()?;
+            Some(formatted.into_bytes())
+        }
         // Go's string-function family: case folding and substring over the
         // byte domain for the binary forms and the rune domain for the
         // UTF8 forms.
@@ -2733,6 +2746,17 @@ pub fn eval_expr(
                     let numeric = numeric_prefix(text.trim_start(), true).unwrap_or_default();
                     let value: f64 = numeric.parse().unwrap_or(0.0);
                     Some(i128::from(value != 0.0))
+                }
+                SimpleSig::DateFormatSig => {
+                    // A bare formatted date as a condition answers its
+                    // numeric-prefix truth ("20240305" -> truthy).
+                    match children.first().map(|c| eval_datum(c, row)) {
+                        Some(Ok(datum)) => {
+                            Some(i128::from(!matches!(datum, tidb_datatype::Datum::Null)))
+                        }
+                        Some(Err(message)) => return Err(message),
+                        None => Some(0),
+                    }
                 }
                 SimpleSig::RoundInt => child(0)?,
                 SimpleSig::LtReal
@@ -4821,5 +4845,29 @@ mod tests {
             ],
         );
         assert_eq!(eval_expr(&with_null, &[], 4), Ok(None));
+    }
+
+    #[test]
+    fn date_format_composes_over_a_datetime_column() {
+        use tidb_datatype::{Datum, Time, TimeType};
+        let time = Time::from_date_checked(2024, 3, 5, 14, 30, 45, 123456, TimeType::DateTime, 6)
+            .expect("constructs");
+        let row = [Datum::Time(time)];
+        // DATE_FORMAT(t, '%Y-%m-%d') answers "2024-03-05" -- composable as
+        // an EQString operand through the bytes channel.
+        let condition = SimpleExpr::Func(
+            SimpleSig::EqString(46), // utf8mb4_bin
+            vec![
+                SimpleExpr::Func(
+                    SimpleSig::DateFormatSig,
+                    vec![
+                        SimpleExpr::Column(0),
+                        SimpleExpr::Bytes(b"%Y-%m-%d".to_vec()),
+                    ],
+                ),
+                SimpleExpr::Bytes(b"2024-03-05".to_vec()),
+            ],
+        );
+        assert_eq!(eval_expr(&condition, &row, 4).expect("evals"), Some(1));
     }
 }
