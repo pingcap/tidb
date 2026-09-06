@@ -670,3 +670,10 @@
   落地 4 条站点注释: worker 通道 clone-vs-live-read 契约、iterator 零时种子、构造器 option 可见性顺序、lib.rs 头注 CPU 面已全移植。
   验收: cargo test -p tidb-resourcemanager 14 全绿; fmt; diff-check; make lint 过。收据 rust/docs/resourcemanager-parity-audit.md。
 - 下轮恢复点: (1) 新面候选 (tidb-syssession/tidb-hint/infoschema 深层) 或跟随兄弟增量; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 新面批次: tidb-syssession (Go pkg/session/syssession @ a85e0fd5df) 全文件审计。无生产 behavior 分歧, 3 项精修落地:
+  (1) WithForceBlockGCSession 注册循环在 tidb_util::intest::IN_TEST 下早退, 镜像 Go pool.go:304-312 的 intest.InTest break (ForceBlockGCInTest failpoint 无对应钩子, 恒 false; 生产行为不变);
+  (2) TransferOwner/EnterOperation 的 owner-check 错误补 Go objectStr 身份后缀 (caller: Owner(id), owner: Owner(id)/<nil>);
+  (3) txn_valid 源错误 stringify 注释为 crate 错误边界。
+  匹配面: 池容量归一化/Get-Put 全序/CloseUnlessReturned≡returned defer/WithSession/WithForceBlockGCSession/TransferOwner 全卫语句/EnterOperation 线程不安全竞态拒绝/inUse 记账/panic→avoidReuse/测试钩子含 Go 的 "ResetSctxForTestcaller" 拼接 quirk。Rust-only: Session::clone 复制 owner id (Go 不可复制指针禁止第二代理, Go 形调用模式不可达)。
+  验收: cargo test -p tidb-syssession --lib 14 稳定全绿 (3 连跑); fmt; diff-check; make lint 过。收据 rust/docs/syssession-parity-audit.md。推送 4879b0a2a4a..a1c425a50df。
+- 下轮恢复点: (1) 新面候选 (tidb-hint/infoschema 深层/剩余小 crate); (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
