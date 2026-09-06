@@ -67,18 +67,27 @@ batch under `rust/docs/go-physical-plan-parity-execplan.md`.
 ## Validation
 
     cargo +nightly-2026-08-22 test --offline --locked -p tidb-session --lib non_prepared_plan_cache
-    # 19 passed; 5 failed at the tip (2026-09-06). One of the five is fixed in
-    # this batch: go_refuses_tables_in_every_system_schema_owned_by_filter
-    # panicked because rule_collect_plan_stats.rs passed DataSource.db_name
-    # (the session's spelling, e.g. "DM_HEARTBEAT") into
-    # filter::is_system_schema, whose Go contract receives the lowered
-    # CIStr.L form (plan_cacheable_checker.go:516 uses node.Schema.L); the
-    # two call sites now lower it like Go. The remaining four
-    # (go_admits_custom_restore_func_call_shapes,
-    # a_set_var_hint_breaks_the_cache, a_schema_change_invalidates_the_entries
-    # (rowcodec.rs:651 index-out-of-bounds — a codec regression),
-    # go_refuses_a_user_variable...) reproduce with this receipt stashed and
-    # sit in sibling in-flight planner/codec code; they are the concrete work
-    # list for the queued DML/container batch above.
+    # 21 passed; 3 failed at the tip (2026-09-06). Two of the five original
+    # failures are fixed in this batch:
+    # - go_refuses_tables_in_every_system_schema_owned_by_filter panicked
+    #   because rule_collect_plan_stats.rs passed DataSource.db_name (the
+    #   session's spelling, e.g. "DM_HEARTBEAT") into
+    #   filter::is_system_schema, whose Go contract receives the lowered
+    #   CIStr.L form (plan_cacheable_checker.go:516 uses node.Schema.L); the
+    #   two call sites now lower it like Go.
+    # - a_schema_change_invalidates_the_entries_built_before_it panicked at
+    #   rowcodec.rs:651 indexing handle_column_ids[0] on an empty id list (a
+    #   rowid table projects no handle column); the Int guard now mirrors Go
+    #   tryDecodeHandle (IsPKHandle / ExtraHandleID, no indexing) and the
+    #   test passes.
+    # The remaining three (go_admits_custom_restore_func_call_shapes,
+    # a_set_var_hint_breaks_the_cache,
+    # go_refuses_a_user_variable_and_only_the_listed_uncacheable_functions)
+    # share one located root cause in sibling in-flight planner code: plain
+    # literals still hit, ABS(1) parameterizes to the correct key
+    # (test|SELECT `a` FROM `t` WHERE `a`=ABS(?)), the plan builds and is
+    # put, but PreparedSelectPlan.bind_for_statement fails on the marker
+    # inside the scalar-function argument, so every execution re-plans and
+    # reports a miss. Fix belongs with the physical-plan bind owners.
 
 No Go file changed; the Bazel gate is not required.

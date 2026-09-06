@@ -648,7 +648,15 @@ fn decode_handle_column(
         return Ok(None);
     };
     match handle {
-        Handle::Int(value) if column.id == handle_column_ids[0] => {
+        // Go `tryDecodeHandle`'s Int arm admits the PK-handle column and the
+        // `_tidb_rowid` extra column without consulting `handleColIDs`, so an
+        // empty id list (a rowid table projecting no handle column) falls
+        // through to the `None` arm instead of indexing out of bounds.
+        Handle::Int(value)
+            if column.is_pk_handle
+                || column.id == -1
+                || handle_column_ids.first() == Some(&column.id) =>
+        {
             Ok(Some(if column.field_type.is_unsigned() {
                 Datum::UInt(*value as u64)
             } else {
