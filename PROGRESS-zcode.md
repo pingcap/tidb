@@ -728,3 +728,5 @@
   匹配面: 包框架 0xffffff 续传与零长终止帧、序号语义 (压缩模式 MariaDB 忽略)、压缩信封全参、dump 家族含 BinaryTime 1 字节天 quirk、列定义 dump 全规则、DumpBinaryRow 位图、文本行 NULL/类型矩阵与 float E 规则、StmtFetch、NUL 裁剪、parseBinaryParams 全矩阵、STMT_EXECUTE 门、prepare 应答、ERR/OK/EOF 含 DEPRECATE_EOF。
   验收: cargo test -p tidb-protocol 110 全绿 (含新映射回归); cargo build -p tidb-server; fmt; diff-check; make lint 过。收据 rust/docs/protocol-parity-audit.md。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 增量收敛核查: 同步至 374536a2386 (兄弟 statistics/usage + cache + priorityqueue + hint processor return contracts 等), 我修复过的面全绿: hint 2/0, tablecodec 61/0, protocol 110/0, sqlexec 0+0, timer 16+49/0。无新增分歧。注意兄弟新提交 "util/hint: align processor return contracts" 改了 hint processor —— 我上一批的 contains_table_hint 大小写注释与 NTH_PLAN 修复内容需在其上仍成立 (本轮测试通过即证)。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
