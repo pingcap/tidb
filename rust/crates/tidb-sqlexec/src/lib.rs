@@ -156,7 +156,20 @@ pub fn exec_option(options: &[OptionFuncAlias]) -> ExecOption {
 
 /// Go `RestrictedSQLExecutor`.
 pub trait RestrictedSqlExecutor: Send + Sync {
-    /// Go `ParseWithParams`.
+    /// Go `ParseWithParams`: the parameterized version of parse, trying to
+    /// prevent injection under utf8mb4. It works like printf with these
+    /// specifiers:
+    ///
+    /// 1. `%?`: automatic conversion by the type of the argument, e.g.
+    ///    a string list becomes `('s1','s2',..)`.
+    /// 2. `%%`: outputs `%`.
+    /// 3. `%n`: identifiers, e.g. `("use %n", db)`.
+    ///
+    /// Attention: this does not stop
+    /// `parse("select '%?", ";SQL injection!;")` from yielding
+    /// `"select '';SQL injection!;'"`. One argument must be a standalone
+    /// entity and never "concat" with other placeholders or characters; the
+    /// function only saves you from processing potentially unsafe parameters.
     fn parse_with_params(
         &self,
         context: &dyn ExecutionContext,
@@ -251,8 +264,9 @@ pub trait RecordSet {
     /// Creates a correctly typed result chunk.
     fn new_chunk(&self, allocator: Option<&dyn Allocator>) -> AllocatedChunk;
 
-    /// Closes the iterator. Implementations whose source permits it restart
-    /// iteration when read again after close.
+    /// Closes the iterator. Go's interface guarantees unconditionally that
+    /// calling Next after Close restarts the iteration — the contract binds
+    /// implementers.
     fn close(&mut self) -> Result<()>;
 }
 
