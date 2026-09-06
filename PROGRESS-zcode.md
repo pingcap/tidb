@@ -783,3 +783,5 @@
 - 下轮恢复点: (1) 大面候选: plan_replayer_dump.go 移植 (开放项, ~1000 行) / unistore mvcc+cophandler (超声明面) / domain 全量; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
 - 增量收敛核查: 全部 7 面全绿 (domain 143, pd-client 73, unistore 114, br 31, tablecodec 61, protocol 121, hint 2 —— 合计 545/0)。无新增分歧。
 - 下轮恢复点: (1) plan_replayer_dump.go 移植 (大面, 需新会话完整上下文: zip 布局/sql-meta TOML/presign/extractTableNames/统计回退); (2) 只读收敛核查; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
+- 种子批: plan_replayer_dump.go seed 片段 (archive 文件名常量 9 个 + sql-meta TOML 键 7 个 + build_sql_meta_records 构建器, BTreeMap 复现 Go toml 排序键) + PlanReplayerDumpTask 补 StartTS/SQLDigest/PlanDigest/HistoricalStatsTS 字段 + 2 个种子测试。模块头注改为"部分已播种"。145 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。
+- 下轮恢复点: (1) plan_replayer_dump 主体移植 (zip 装配/会话采集/presign); (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
