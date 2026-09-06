@@ -12,22 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/store/mockstore/unistore/tikv/mvcc.go` — the MVCC store, OPTIMISTIC
-//! slice.
+//! Go `pkg/store/mockstore/unistore/tikv/mvcc.go` — the MVCC store.
 //!
-//! SEED of `tikv` (`mvcc.go` is 2,182 lines): what lands here is the
-//! optimistic-transaction core with Go's bodies — `prewriteOptimistic` with
-//! its three-stage conflict protocol, `Commit` with the lock-not-found
-//! recovery, `Rollback`'s two-phase status scan, and the read path's lock
-//! check. What does not, each named at its refusal or absence:
+//! (`mvcc.go` is 2,182 lines.) Landed with Go's bodies: the optimistic core
+//! (`prewriteOptimistic` with its three-stage conflict protocol, `Commit`
+//! with the lock-not-found recovery, `Rollback`'s two-phase status scan, the
+//! read path's lock check) AND the pessimistic suite — `PessimisticLock`
+//! (duplicate-command and already-rollback detection, the `Force` value arm,
+//! the `ReturnValues`/`CheckExistence` answers), `prewritePessimistic`,
+//! `PessimisticRollback`, `TxnHeartBeat`, `CheckTxnStatus`,
+//! `CheckSecondaryLocks`, and `ResolveLock` — with Go's tests transcreated
+//! beside them (`tests_mockstore_part1_go_parity` and the `#[cfg(test)]`
+//! module). What does not, each named at its refusal or absence:
 //!
-//! * the PESSIMISTIC path (`prewritePessimistic`, `PessimisticLock`,
-//!   `PessimisticRollback`, TTL/minCommitTS updates, lock waiting and
-//!   deadlock detection) — a later course; `Prewrite` REFUSES a request with
-//!   `for_update_ts > 0` by name;
 //! * async commit and 1PC (`req.UseAsyncCommit` / `TryOnePc`, which need
 //!   `pdClient.GetTS`) — refused by name;
-//! * `CheckTxnStatus` / `ResolveLock` / scans — later courses.
+//! * `Flush` (`mvcc.go:986`, the bulk-load op) — unported;
+//! * pessimistic lock WAITING: `lockWaiterManager`, `normalizeWaitTime`,
+//!   `handleCheckPessimisticErr`'s wake-up path, and
+//!   `PessimisticLockWakeUpMode::WakeUpModeForceLock`'s per-key `Results`
+//!   (with `LockedWithConflictTs`) — a conflicted pessimistic lock returns
+//!   its error immediately instead of parking on a waiter. Go's no-wait
+//!   outcome is the same error; the parked-then-retry behavior is absent.
 //!
 //! # The engine
 //!
@@ -43,10 +49,9 @@
 //! `regCtx.AcquireLatches` / `ReleaseLatches` (region latches),
 //! `lockWaiterManager.WakeUp`, `DeadlockDetectCli.CleanUp`, and
 //! `atomic.AddInt64(regCtx.Diff(), ..)` guard multi-writer interleavings and
-//! pessimistic waiters. This slice is single-writer (`&mut self`), which the
+//! pessimistic waiters. This store is single-writer (`&mut self`), which the
 //! borrow checker enforces more strongly than the latches do; the calls are
-//! therefore absent rather than stubbed. They return with the pessimistic
-//! course, whose semantics need them.
+//! therefore absent rather than stubbed.
 //!
 //! `reqCtx.buf` (Go's per-request lock-buffer reuse) is an allocation
 //! detail with no observable content.
@@ -1636,8 +1641,9 @@ impl MvccStore {
         }
         let start_ts = req.start_version;
         if req.lock_only_if_exists && !req.return_values {
+            // Go's literal contract error (`mvcc.go:251`).
             return Err(KvError::Unported(
-                "LockOnlyIfExists without ReturnValues: Go errors here by contract",
+                "LockOnlyIfExists is set for LockKeys but ReturnValues is not set",
             ));
         }
         let mut dup = false;
@@ -2441,6 +2447,27 @@ mod tests {
             ..PrewriteReq::default()
         });
         assert!(matches!(refuse, Err(KvError::Unported(_))));
+    }
+
+    #[test]
+    fn lock_only_if_exists_without_return_values_keeps_go_error_text() {
+        // Go `pessimisticLockInner` (`mvcc.go:251`): the contract error is
+        // raised before any key is examined.
+        let mut store = MvccStore::new();
+        let refuse = store.pessimistic_lock(&PessimisticLockReq {
+            lock_only_if_exists: true,
+            return_values: false,
+            ..PessimisticLockReq::default()
+        });
+        match refuse {
+            Err(KvError::Unported(message)) => {
+                assert_eq!(
+                    message,
+                    "LockOnlyIfExists is set for LockKeys but ReturnValues is not set"
+                );
+            }
+            other => panic!("expected the Go contract error, got {other:?}"),
+        }
     }
 
     #[test]

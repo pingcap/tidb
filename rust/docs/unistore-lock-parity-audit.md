@@ -57,3 +57,34 @@ dispatch; address/forwarding irrelevant, cancellation short-circuits via
 `CallerCancelled`), completing the glue the sibling distsql realignment
 needed from this crate. `cargo test -p tidb-unistore --lib`: 114 tests
 pass — this suite was entirely unrunnable before the impl.
+
+## mvcc_store pessimistic-path status (2026-09-07 audit)
+
+The module header previously declared the pessimistic path "a later course"
+with `Prewrite` refusing `for_update_ts > 0`. That contract had drifted: the
+tree implements the pessimistic suite (`pessimistic_lock`,
+`prewrite_pessimistic`, `pessimistic_rollback`, `txn_heart_beat`,
+`check_txn_status`, `check_secondary_locks`, `resolve_lock`) with transcreated
+Go tests. Audit findings against `mvcc.go` @ a85e0fd5df:
+
+- Verified equal point-by-point in `pessimistic_lock` vs
+  `pessimisticLockInner` (`mvcc.go:226-390`): sort-unless-ReturnValues,
+  the LockOnlyIfExists contract error (message now Go's literal text,
+  pinned by
+  `lock_only_if_exists_without_return_values_keeps_go_error_text`),
+  lock-type-mismatch, the duplicate-command rule
+  (`lock.ForUpdateTS >= req.ForUpdateTs`), the primary key's
+  extra-txn-status arms (`ErrAlreadyRollback` / op-lock-committed = dup),
+  the `Force` first-key value/commit-ts answer, and the
+  `ReturnValues`/`CheckExistence` response filling.
+- Header rewritten to state the real landed set; the named absent pieces are
+  `Flush` (`mvcc.go:986`), async-commit/1PC (PD-refused, unchanged), and the
+  pessimistic lock-WAITING machinery (`lockWaiterManager`,
+  `normalizeWaitTime`, `handleCheckPessimisticErr`'s wake-up path,
+  `WakeUpModeForceLock` per-key `Results` with `LockedWithConflictTs`) —
+  a conflicted lock returns its error immediately (Go's no-wait outcome)
+  without the parked-then-retry behavior.
+- Still open for a full-budget session: line-level audit of
+  `prewrite_pessimistic`/`pessimistic_rollback`/`check_txn_status`/
+  `resolve_lock` bodies against `mvcc.go:435-935`, and the `cophandler`
+  seed vs the closure_exec/analyze/mpp tail.
