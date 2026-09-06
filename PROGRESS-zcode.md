@@ -795,3 +795,5 @@
 - 下轮恢复点: (1) dump 主体剩余 (zip 装配/variables/bindings/stats/presign); (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
 - dump 切片批: DumpArchiveWriter seam (zip 条目创建抽象) + dumpSQLs (sql/sqlN.sql 逐语句) + 会话绑定文件体构建器 (9 列 tab join) 落地, 2 测试钉住文件名/顺序/tab join。151 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。
 - 下轮恢复点: (1) dump 剩余: variables/stats/presign/tiflash-replica 文件体; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
+- dump 切片批: variables.toml 记录集构建器落地 (VariablesDumpSource seam: registry 序/IsNoop+EnableNoopVariables 过滤/SEM-hidden 过滤/session-or-global 值读), 1 测试钉三重过滤。152 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。生产 source impl 归 session 侧 owner。
+- 下轮恢复点: (1) dump 剩余: presign/tiflash-replica/stats-mem/主装配 DumpPlanReplayerInfo; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
