@@ -650,3 +650,9 @@
   验收: cargo test -p tidb-stmtsummary --all-targets 61 lib 全绿; fmt; diff-check; make lint 过 (Cargo.lock 随 tempfile dev-dep 入库)。收据更新 stmtsummary-parity-audit.md。推送 401c5035cf1..0685f495eb9。
   v2 包剩余缺口: logger.go 轮转 (FileStmtLogWriter append-only), persistent 模式保持关闭。
 - 下轮恢复点: (1) v2/logger.go 轮转移植 (中批次); (2) 新面 tidb-ttl/dxf; (3) 兄弟增量收敛核查; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
+- 中批次: v2/logger.go 文件 sink 移植完成 (RotatingFileLogWriter, Go @ a85e0fd5df)。
+  new_stmt_summary 接线点替换 append-only FileStmtLogWriter, 镜像 pingcap/log 的 lumberjack sink: file_max_size (MB) 超限轮转、备份名 <base>-<本地时间戳><ext> 与 v2 reader parseEndTs 完全互操作 (跨模块测试验证)、file_max_backups 计数 + file_max_days 年龄双维清理 (0 关闭)。
+  调试要点: (1) chrono 的 %.3f 仅格式化, 解析需 %.f (NaiveDateTime::from_str 解析不了 11-05-56 这种 dash 时间, 默认值 1970 导致新备份被误剪); (2) prune 前缀取 file_stem 而非 rsplit('-') (时间戳内含 dash); (3) keep_count 用 usize::MAX 会在 index+keep 溢出; (4) 同毫秒轮转同名备份 rename 覆盖 (lumberjack 同样行为), 测试隔 2ms 写入。
+  验收: cargo test -p tidb-stmtsummary --lib 64 稳定全绿 (3 次连跑); fmt; diff-check; make lint 过。收据更新。推送 f176dfecaa2..828880055f1。
+  v2 包状态: 5 个 Go 生产文件中 4 个全移植 + logger.go 缩减为 StmtLogWriter trait 边界 (zap core/ecnodeer 为生态机器)。
+- 下轮恢复点: (1) 新面 tidb-ttl/dxf; (2) 兄弟增量收敛核查; (3) F2/F3-seam live 阻塞; (4) DST 排队; (5) dbsid 分叉待协调。
