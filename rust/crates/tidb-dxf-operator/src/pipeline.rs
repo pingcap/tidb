@@ -54,6 +54,7 @@ impl AsyncPipeline {
     }
 
     /// Go `IsStarted`.
+    #[must_use]
     pub fn is_started(&self) -> bool {
         self.started.load(Ordering::Acquire)
     }
@@ -73,6 +74,7 @@ impl AsyncPipeline {
     }
 
     /// Go `String`.
+    #[must_use]
     pub fn pipeline_string(&self) -> String {
         format!(
             "AsyncPipeline[{}]",
@@ -85,6 +87,7 @@ impl AsyncPipeline {
     }
 
     /// Go `GetReaderAndWriter`.
+    #[must_use]
     pub fn reader_and_writer(
         &self,
     ) -> (Option<&dyn TunableOperator>, Option<&dyn TunableOperator>) {

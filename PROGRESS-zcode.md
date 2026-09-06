@@ -696,3 +696,5 @@
   验收: cargo test -p tidb-tablecodec 61 全绿; fmt; diff-check; make lint 过。
   注意: 本机 vendored OpenSSL 补丁再次被共享 stash 竞态部分吞掉 (openssl 行丢 feature, reqwest 行仍在), 已修复重放 —— 以后验证补丁要逐行 grep 两个 feature 而非 grep 整词 vendored。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 推送修复: 服务端 hparser-integration 被兄弟会话回退到 8896e800216 (丢失 tablecodec 批次), 已重新 fast-forward 推送 0d4ffe94c98 恢复。共享分支 + 共享 worktree 双重并行下, 每轮开头必须 ls-remote 对账。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。

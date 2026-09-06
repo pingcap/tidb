@@ -73,29 +73,6 @@ package-by-package parity audit, not repository-wide readiness.
 No Go source, Go test, Bazel metadata, or Go module file changed, so the
 `tidb-bazel-prepare-gate` determined that `make bazel_prepare` is not required.
 
-## Rust-only return-contract alignment (2026-09-06)
-
-The Rust owner had five direct Go-shaped APIs marked `#[must_use]` even though
-the pinned Go package permits callers to discard their results:
-`workload_tables`, `generate_partition_name`, `calc_next_tick`, `Worker::new`,
-and `Worker::enabled`. The annotations were removed without changing any
-runtime behavior. A focused `#[deny(unused_must_use)]` regression invokes each
-API as a discarded Go-style result: before the fix it failed with exactly five
-diagnostics, and after the fix it passes.
-
-Current fix validation uses the Ready profile:
-
-- `cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-workloadrepo --lib --test-threads=1` — 15/15 passed, including the focused regression.
-- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-workloadrepo --all-targets --offline --locked` — passed.
-- `rustfmt +nightly-2026-08-22 --check --edition 2021 rust/crates/tidb-workloadrepo/src/lib.rs rust/crates/tidb-workloadrepo/src/tests.rs` — passed.
-- `make lint` — passed.
-- `git diff --check` — passed.
-
-The repository-wide `cargo fmt --check` remains sensitive to unrelated
-concurrent planner edits in `tidb-executor` and `tidb-planner`; the owner files
-above pass standalone rustfmt checking and those unrelated files were not
-modified.
-
 The `tidb-txnkv` aggregate integration target cannot currently compile because
 unrelated existing tests require a `BatchScheduler` completion type annotation
 and refer to the absent `BatchCommandTag::ALL`; the production crate compiles

@@ -186,6 +186,7 @@ impl RepositoryTable {
 }
 
 /// The eleven tables in pinned Go `workloadTables`.
+#[must_use]
 pub fn workload_tables() -> Vec<RepositoryTable> {
     let metadata = RepositoryTable {
         schema: String::new(),
@@ -289,6 +290,7 @@ pub fn build_insert_query(table: &RepositoryTable, source: &TableInfo) -> Result
 }
 
 /// Go `generatePartitionName`.
+#[must_use]
 pub fn generate_partition_name(day: NaiveDate) -> String {
     format!("p{}", day.format("%Y%m%d"))
 }
@@ -328,6 +330,7 @@ pub fn generate_partition_ranges(
 }
 
 /// Go `calcNextTick`.
+#[must_use]
 pub fn calc_next_tick(now: DateTime<Local>) -> Duration {
     let day = now.date_naive();
     let mut next = date_at_two(&Local, day);
@@ -413,6 +416,7 @@ pub struct Worker {
 
 impl Worker {
     /// Go `initializeWorker` plus Domain-provided authorities.
+    #[must_use]
     pub fn new(
         store: Option<Arc<dyn RepositoryStore>>,
         sessions: Option<Arc<dyn SessionPool>>,
@@ -1046,6 +1050,7 @@ impl Worker {
     }
 
     /// Whether the worker is enabled.
+    #[must_use]
     pub fn enabled(&self) -> bool {
         self.state
             .lock()

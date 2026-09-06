@@ -165,6 +165,7 @@ pub struct Typ {
 
 impl Typ {
     /// Go `Type`: creates the lattice of a column field type.
+    #[must_use]
     pub fn new(ft: &FieldType) -> Self {
         Self {
             tuple: encode_field_type_to_lattice(ft),

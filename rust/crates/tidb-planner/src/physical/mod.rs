@@ -3771,9 +3771,5 @@ pub fn eliminate_physical_projection(mut plan: PhysicalPlan) -> PhysicalPlan {
     child
 }
 
-pub mod inject_extra_projection;
-
-pub use inject_extra_projection::inject_extra_projection;
-
 #[cfg(test)]
 mod tests;

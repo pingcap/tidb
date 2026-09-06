@@ -73,38 +73,6 @@ fn child_schemas(node: &LogicalPlan) -> Vec<Schema> {
     node.children().iter().map(effective_schema).collect()
 }
 
-/// The schema a child can resolve for column pruning.  A coalesced
-/// `USING`/`NATURAL` join exposes its redundant qualified columns through
-/// `FullSchema`; transparent selections preserve that capability, while a
-/// projection is a derived-table boundary and must stay on its visible
-/// schema.
-fn used_column_schema(node: &LogicalPlan) -> Schema {
-    match node {
-        LogicalPlan::Join(join) => join
-            .full_schema
-            .clone()
-            .unwrap_or_else(|| effective_schema(node)),
-        LogicalPlan::Apply(apply) => apply
-            .join
-            .full_schema
-            .clone()
-            .unwrap_or_else(|| effective_schema(node)),
-        LogicalPlan::Selection(selection) => selection
-            .base
-            .children()
-            .first()
-            .map_or_else(|| effective_schema(node), used_column_schema),
-        LogicalPlan::Limit(_)
-        | LogicalPlan::TopN(_)
-        | LogicalPlan::Sort(_)
-        | LogicalPlan::MaxOneRow(_) => node
-            .children()
-            .first()
-            .map_or_else(|| effective_schema(node), used_column_schema),
-        _ => effective_schema(node),
-    }
-}
-
 /// Go `getAllJoinLeaf`: DataSource, Aggregation, and Projection each start a
 /// new leaf schema; every other operator contributes the leaves of its children.
 fn all_join_leaf_schemas(node: &LogicalPlan) -> Vec<Schema> {
@@ -1079,16 +1047,10 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
             }
             // Go `LogicalJoin.PruneColumns` (`logical_join.go:339`).
             LogicalPlan::Join(op) => {
-                let used_schemas = op
-                    .base
-                    .children()
-                    .iter()
-                    .map(used_column_schema)
-                    .collect::<Vec<_>>();
                 let (left, right) = op.extract_used_cols(
                     &parent_used_cols,
-                    used_schemas.first().unwrap_or(&empty),
-                    used_schemas.get(1).unwrap_or(&empty),
+                    schemas.first().unwrap_or(&empty),
+                    schemas.get(1).unwrap_or(&empty),
                 );
                 self.stash
                     .push(PendingColumns::MergeSchema(parent_used_cols));

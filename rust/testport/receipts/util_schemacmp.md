@@ -32,27 +32,11 @@ benchmark, fuzz target, or nested package.
 `rust/crates/tidb-schemacmp` is the dependency-closed native owner. Its
 `charset_collation`, `lattice`, `table`, `typ`, and `util` modules mirror the
 Go semilattice and table metadata operations. The single `tests/all.rs`
-aggregate now executes thirteen source test functions (the nine original
-charset/collation, lattice, table, and type tests plus four return-contract
-regressions) in one process, preserving the package's process-global
-type/error behavior. The Rust owner had added `#[must_use]` to fourteen
-Go-shaped return APIs (`Charset`, `Collation`, `Value` formatting/conversion,
-the singleton/field-type/maybe/map helpers, `Type`, `Encode`, and
-`DecodeColumnFieldTypes`), making ordinary Go-compatible discard sites fail
-under `deny(unused_must_use)`. Those Rust-only annotations are removed; no
-semantic production behavior or duplicate owner was found.
-
-## Rust-only return-contract alignment (2026-09-06)
-
-The focused regressions discard all fourteen affected returns under
-`#[deny(unused_must_use)]`: charset/collation constructors in
-`charset_collation_test.rs`, lattice/value helpers in `lattice_test.rs`, the
-table encode/decode helpers in `table_test.rs`, and `Typ::new` in
-`type_test.rs`. With the annotations present, the first three probes produced
-exactly thirteen diagnostics and the type probe produced one additional
-diagnostic (fourteen total). After removing the annotations, all four probes
-compile and pass, proving Go's freely-discardable return contract without
-weakening unrelated Rust error/result annotations.
+aggregate executes the nine source test functions (four charset/collation,
+one lattice, two table, and two type tests) in one process, preserving the
+package's process-global type/error behavior. No Rust-only production API or
+duplicate owner was found; no source fix is required for the current Go
+master revision.
 
 ## Validation
 
@@ -62,9 +46,6 @@ progress.
 - `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 go test ./pkg/util/schemacmp -count=1` — passed.
 - The same focused Go suite passed in the exact detached Go-master checkout at `/tmp/tidb-go-latest-c605`.
 - `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-schemacmp --test all -- --test-threads=1` — passed (9 tests).
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-schemacmp --test all go_ -- --test-threads=1` — passed (3 focused return-contract tests).
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-schemacmp --test all --test-threads=1` — passed (13 tests, including the four new probes).
-- `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-schemacmp --all-targets --offline --locked` — passed.
 - `cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check` — passed during the adjacent Ready validation.
 - `git diff --stat c6054025ed4c32ab3672a2a24ea46892714d21ec -- pkg/util/schemacmp` — empty; source is unchanged at current Go master.
 

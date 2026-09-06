@@ -42,6 +42,7 @@ pub struct CharsetLattice {
 /// Go `Charset`: a lattice for comparing/joining character sets. Currently it
 /// supports the ordering: latin1 < utf8mb4 and utf8(utf8mb3) < utf8mb4. Other
 /// charsets are only comparable when identical.
+#[must_use]
 pub fn charset(cs: &str) -> CharsetLattice {
     let mut normalized = to_lowercase(cs);
     if normalized == CHARSET_UTF8MB3 {
@@ -140,6 +141,7 @@ pub struct CollationLattice {
 /// (same suffix only).
 ///
 /// Other collations are only comparable when identical.
+#[must_use]
 pub fn collation(co: &str) -> CollationLattice {
     let (charset_name, suffix) = co.split_once('_').unwrap_or((co, ""));
     CollationLattice {

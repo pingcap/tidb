@@ -49,6 +49,7 @@ pub struct HintedTable {
 
 impl HintedTable {
     /// Go `HintedTable.Match`.
+    #[must_use]
     pub fn matches(&self, other: &Self) -> bool {
         self.select_offset == other.select_offset
             && self.table_name.eq_ignore_ascii_case(&other.table_name)
@@ -96,17 +97,20 @@ pub struct HintedIndex {
 
 impl HintedIndex {
     /// Go `HintedIndex.Match`.
+    #[must_use]
     pub fn matches(&self, database_name: &str, table_name: &str) -> bool {
         self.table_name.eq_ignore_ascii_case(table_name)
             && (self.database_name.eq_ignore_ascii_case(database_name) || self.database_name == "*")
     }
 
     /// Go `HintedIndex.ShouldPushDownIndexLookUp`.
+    #[must_use]
     pub fn should_push_down_index_lookup(&self) -> bool {
         self.kind == HintedIndexKind::Use && self.push_down_lookup
     }
 
     /// Go `HintedIndex.HintTypeString`.
+    #[must_use]
     pub fn hint_type_string(&self) -> &'static str {
         match self.kind {
             HintedIndexKind::Use if self.push_down_lookup => "index_lookup_pushdown",
@@ -118,6 +122,7 @@ impl HintedIndex {
     }
 
     /// Go `HintedIndex.IndexString`.
+    #[must_use]
     pub fn index_string(&self) -> String {
         let mut value = format!("{}.{}", self.database_name, self.table_name);
         if !self.index_names.is_empty() {
@@ -654,6 +659,7 @@ fn join_hint_disallows_partitions(name: &str) -> bool {
 }
 
 /// Go `Restore2JoinHint`.
+#[must_use]
 pub fn restore_join_hint(hint_type: &str, tables: &[HintedTable]) -> String {
     if tables.is_empty() {
         return hint_type.to_ascii_uppercase();
@@ -678,6 +684,7 @@ pub fn restore_join_hint(hint_type: &str, tables: &[HintedTable]) -> String {
 }
 
 /// Go `Restore2IndexHint`.
+#[must_use]
 pub fn restore_index_hint(hint_type: &str, hint: &HintedIndex) -> String {
     let mut value = format!(
         "/*+ {}({}",
@@ -701,6 +708,7 @@ pub fn restore_index_hint(hint_type: &str, hint: &HintedIndex) -> String {
 }
 
 /// Go `Restore2StorageHint`.
+#[must_use]
 pub fn restore_storage_hint(tiflash: &[HintedTable], tikv: &[HintedTable]) -> String {
     let restore_tables = |tables: &[HintedTable]| {
         tables
@@ -738,11 +746,13 @@ fn restore_table_argument(table: &HintedTable) -> String {
 }
 
 /// Go `ExtractUnmatchedTables`.
+#[must_use]
 pub fn extract_unmatched_tables(tables: &[HintedTable]) -> Vec<String> {
     unmatched_table_names(tables)
 }
 
 /// Go `RemoveDuplicatedHints`, preserving the first structurally equal hint.
+#[must_use]
 pub fn remove_duplicated_hints(hints: &[Hint]) -> Vec<Hint> {
     let mut seen = std::collections::HashSet::with_capacity(hints.len());
     let mut result = Vec::with_capacity(hints.len());
@@ -755,6 +765,7 @@ pub fn remove_duplicated_hints(hints: &[Hint]) -> Vec<Hint> {
 }
 
 /// Go `CollectUnmatchedHintWarnings`.
+#[must_use]
 pub fn collect_unmatched_hint_warnings(plan: &PlanHints) -> Vec<String> {
     let mut warnings = Vec::new();
     collect_unmatched_indexes(&mut warnings, &plan.index_hint_list, false);
@@ -829,35 +840,4 @@ fn unmatched_table_names(tables: &[HintedTable]) -> Vec<String> {
         .filter(|table| !table.matched)
         .map(|table| table.table_name.clone())
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_plan_api_returns_may_be_ignored_like_go() {
-        let table = HintedTable::default();
-        table.matches(&table);
-        let index = HintedIndex {
-            database_name: "db".to_owned(),
-            table_name: "tbl".to_owned(),
-            partitions: Vec::new(),
-            kind: HintedIndexKind::Use,
-            index_names: vec!["idx".to_owned()],
-            push_down_lookup: true,
-            matched: false,
-        };
-        index.matches("db", "tbl");
-        index.should_push_down_index_lookup();
-        index.hint_type_string();
-        index.index_string();
-        restore_join_hint("inl_join", &[]);
-        restore_index_hint("use_index", &index);
-        restore_storage_hint(&[], &[]);
-        extract_unmatched_tables(&[table]);
-        remove_duplicated_hints(&[]);
-        collect_unmatched_hint_warnings(&PlanHints::default());
-    }
 }

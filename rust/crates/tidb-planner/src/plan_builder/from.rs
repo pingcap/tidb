@@ -1037,17 +1037,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             )?;
         } else if let Some(on) = join_node.on.as_ref() {
             self.cur_clause = ClauseCode::On;
+            let (schema, names) = (
+                join_plan.base.base.schema().cloned().unwrap_or_default(),
+                join_plan.base.base.output_names().to_vec(),
+            );
             // boundary: Go's `b.rewrite(...)` may REPLACE the plan with an
             // apply when the ON clause holds a subquery, and rejects that with
             // "ON condition doesn't support subqueries yet" (`:923`).
             // [`PlanBuilder::rewrite_scalar`] is the subquery-free rewrite, so
             // a subquery surfaces as an unresolved-column error instead.
-            let on_plan = LogicalPlan::Join(join_plan.clone());
-            let on_expr = self.rewrite_scalar_with_plan(
-                &Self::clause_scratch(on),
-                &on_plan,
-                &BTreeMap::new(),
-            )?;
+            let on_expr =
+                self.rewrite_scalar(&Self::clause_scratch(on), &schema, &names, &BTreeMap::new())?;
             let on_condition = split_cnf_items(&on_expr);
             // `:930` "Keep these expressions as a LogicalSelection upon the
             // inner join, in order to apply possible decorrelate
@@ -1173,12 +1173,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
         if let Some(on) = join_node.on.as_ref() {
             self.cur_clause = ClauseCode::On;
-            let on_plan = LogicalPlan::Apply(apply.clone());
-            let on_expr = self.rewrite_scalar_with_plan(
-                &Self::clause_scratch(on),
-                &on_plan,
-                &BTreeMap::new(),
-            )?;
+            let schema = apply.join.base.base.schema().cloned().unwrap_or_default();
+            let names = apply.join.base.base.output_names().to_vec();
+            let on_expr =
+                self.rewrite_scalar(&Self::clause_scratch(on), &schema, &names, &BTreeMap::new())?;
             let builder = RealFunctionBuilder::new(self.ctx);
             let opts = SubstituteOptions::new(&builder);
             apply.join.attach_on_conds(

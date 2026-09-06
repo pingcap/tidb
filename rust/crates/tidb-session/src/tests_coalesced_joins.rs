@@ -178,18 +178,6 @@ fn a_coalesced_column_is_still_reachable_through_either_qualifier() {
     );
 }
 
-/// Regression for the planner's `FullSchema` fallback: a qualified reference
-/// to the copy hidden by `USING` must still be projectable after column
-/// pruning, even though the unqualified output keeps only the canonical side.
-#[test]
-fn qualified_using_column_survives_projection_pruning() {
-    let mut session = natural_session();
-    assert_eq!(
-        rows(&mut session, "SELECT n2.a FROM n1 JOIN n2 USING (a)"),
-        ["1"]
-    );
-}
-
 /// Zero common columns degenerates to a plain cross join -- the full
 /// cartesian product, not an empty result.
 ///

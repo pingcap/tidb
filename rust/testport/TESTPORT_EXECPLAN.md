@@ -41,13 +41,6 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
-- 2026-09-06 (`pkg/util/hint` return contracts): the complete four-artifact
-  Go package and complete five-module Rust owner were rechecked. Eighteen
-  direct Go-shaped hint matching/restoration/query-block helpers no longer
-  impose Rust-only `#[must_use]` diagnostics; focused deny-on-discard probes
-  failed pre-fix with exactly 18 diagnostics and pass afterward. Evidence is
-  recorded in `receipts/util_hint.md`; Ready gates and one package-scoped
-  publication commit remain.
 - 2026-09-06 (`pkg/statistics` builder return contracts): the complete
   direct root inventory was re-read at current Go master: 33 artifacts and
   13,905 direct lines plus two JSON fixtures (71 lines), with nested packages
@@ -9413,40 +9406,3 @@ risks without claiming repository-wide parity.
   deliberate deferrals. clippy `--no-deps` zero own warnings on all four
   crates; parser+chunk+util+expr+datatype 3439/3439. Details in
   `receipts/nightly_clippy_refresh_sweep.md`.
-- 2026-09-06 (planner coalesced qualified-name parity): Go's
-  `pkg/planner/core` retains redundant `USING`/`NATURAL JOIN` columns in
-  `FullSchema`/`FullNames` for qualified references, wildcard expansion on a
-  direct join, and pruning through transparent wrappers. Rust now carries an
-  optional full scope through scalar/ON/projection/sort/GROUP BY rewriting and
-  uses full-capable child schemas during join pruning, while preserving
-  visible-schema and derived-table boundaries. The focused coalesced-join
-  matrix and complete Go inventory are recorded in
-  `receipts/planner_coalesced_qualified_names.md`.
-- 2026-09-06 (`pkg/util/schemacmp` return-contract parity): Rust's native
-  schema-comparison owner no longer marks fourteen Go-shaped constructors,
-  value helpers, table encode/decode APIs, or `Typ::new` as `#[must_use]`.
-  Focused `deny(unused_must_use)` probes fail with exactly fourteen
-  diagnostics before the annotation removal and pass afterward; the complete
-  13-test aggregate, all-target check, and Ready evidence are recorded in
-  `receipts/util_schemacmp.md`.
-- 2026-09-06 (`pkg/util/workloadrepo` return-contract parity): Rust's
-  workload-repository owner no longer marks five Go-shaped table, partition,
-  worker-constructor, or worker-status APIs as `#[must_use]`. A focused
-  `deny(unused_must_use)` probe failed with exactly five diagnostics before
-  the annotation removal and passes afterward; the complete 15-test aggregate,
-  all-target check, standalone rustfmt, and Ready evidence are recorded in
-  `receipts/util_workloadrepo.md`.
-- 2026-09-06 (`pkg/dxf/operator` return-contract parity): Rust's pipeline
-  owner no longer marks the Go-shaped `IsStarted`, `String`, and
-  `GetReaderAndWriter` queries as `#[must_use]`. A focused
-  `deny(unused_must_use)` probe failed with exactly three diagnostics before
-  the annotation removal and passes afterward; all three owner tests,
-  all-target compilation, standalone rustfmt, and Ready evidence are recorded
-  in `receipts/dxf_operator.md`.
-- 2026-09-06 (`pkg/ddl/copr` return-contract parity): Rust's coprocessor
-  context owner no longer marks ten Go-shaped context, index-lookup, and
-  schema/name query methods as `#[must_use]`. A focused
-  `deny(unused_must_use)` probe failed with exactly ten diagnostics before the
-  annotation removal and passes afterward; all four owner tests, all-target
-  compilation, standalone rustfmt, and Ready evidence are recorded in
-  `receipts/ddl_copr.md`.
