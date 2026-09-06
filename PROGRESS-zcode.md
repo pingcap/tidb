@@ -665,3 +665,8 @@
   验收: cargo test -p tidb-ttl 32 全绿; fmt; diff-check; make lint 过。收据 rust/docs/ttl-parity-audit.md。
   ttl 剩余未认领子包: ttlworker/client/metrics (worker 运行时需 executor seam, 与 F3-seam 同源阻塞)。
 - 下轮恢复点: (1) 新面候选或跟随兄弟增量; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 新面批次: tidb-resourcemanager (Go pkg/resourcemanager 全包 @ a85e0fd5df) 全文件审计。结论: 零 behavior 分歧。
+  匹配面: 单例生命周期/调度链 (DistTask 跳过/Hold/Downclock guard/200ms 门限/±1 tune+超频上限)、spool Tune 顺序与阻塞准入 (5ms sleep + LIFO 等待计数)、workerpool panic fallback 文本/首错 CAS/Tune WaitGroup/Release 顺序、8-shard pool manager 与 shard 序迭代、CPU scheduler 阈值 (<0.5/0.7)、prometheus 指标名 (tidb_rm_pool_concurrency{type}, tidb_rm_ema_cpu_usage), pkg/util/cpu 依赖面由 tidb_util::cpu 全覆盖 (无静默丢弃)。
+  落地 4 条站点注释: worker 通道 clone-vs-live-read 契约、iterator 零时种子、构造器 option 可见性顺序、lib.rs 头注 CPU 面已全移植。
+  验收: cargo test -p tidb-resourcemanager 14 全绿; fmt; diff-check; make lint 过。收据 rust/docs/resourcemanager-parity-audit.md。
+- 下轮恢复点: (1) 新面候选 (tidb-syssession/tidb-hint/infoschema 深层) 或跟随兄弟增量; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
