@@ -1149,6 +1149,7 @@ impl crate::Session {
         if !self.non_prepared_plan_cache_allowed(effective_statement) {
             return None;
         }
+        let lookup_start = std::time::Instant::now();
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
         let plan = match self.non_prepared_plan_cache.get(&parameterized.key) {
             Some(plan) => plan,
@@ -1170,6 +1171,10 @@ impl crate::Session {
                 plan
             }
         };
+        let observe = |start: std::time::Instant| {
+            tidb_planner::metrics::plan_cache_lookup_duration(false)
+                .observe(start.elapsed().as_secs_f64());
+        };
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
@@ -1181,6 +1186,7 @@ impl crate::Session {
             ) {
                 // Go `GetPlanFromPlanCache`'s hit arm.
                 tidb_planner::metrics::plan_cache_hit_counter(true).inc();
+                observe(lookup_start);
                 return Some(execution);
             }
         }
@@ -1188,14 +1194,16 @@ impl crate::Session {
         tidb_planner::metrics::plan_cache_miss_counter(true).inc();
         let ctx = self.statement_context(false);
         let catalog = self.lock_catalog().ok()?;
-        plan.bind_for_statement(
+        let execution = plan.bind_for_statement(
             &parameterized.values,
             &catalog,
             self.current_database(),
             &ctx,
             &environment,
             effective_statement,
-        )
+        );
+        observe(lookup_start);
+        execution
     }
 
     /// Whether `@@last_plan_from_cache` should report a hit, which is the
