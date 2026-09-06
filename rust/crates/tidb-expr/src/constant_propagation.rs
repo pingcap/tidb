@@ -499,6 +499,10 @@ fn try_replace_column(
     }
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "the large Option<Constant> Err payload is the source shape"
+)]
 fn pick_outer_constants(
     conditions: &[Expression],
     visited: &mut [bool],

@@ -869,7 +869,7 @@ pub(crate) fn report_decimal_input_truncation(v: &Datum, ctx: &dyn crate::Column
             1292,
             &format!(
                 "Truncated incorrect DECIMAL value: '{}'",
-                tidb_datatype::warning_subject_byte_cap(&trimmed)
+                tidb_datatype::warning_subject_byte_cap(trimmed)
             ),
         );
     }

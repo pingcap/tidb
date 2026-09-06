@@ -314,7 +314,7 @@ fn arithmetic_overflow_expression(
                 Datum::UInt(value) => Some(value.to_string()),
                 Datum::Float32(value) => {
                     if go_float_format {
-                        Some(tidb_datatype::format_float_g_shortest(f64::from(*value)))
+                        Some(tidb_datatype::format_float_g_shortest(*value))
                     } else {
                         Some(value.to_string())
                     }
@@ -414,9 +414,7 @@ fn math_overflow_expression(function: &ScalarFunction) -> Option<String> {
             Expression::Constant(constant) => match &constant.value {
                 Datum::Int(value) => Some(value.to_string()),
                 Datum::UInt(value) => Some(value.to_string()),
-                Datum::Float32(value) => {
-                    Some(tidb_datatype::format_float_g_shortest(f64::from(*value)))
-                }
+                Datum::Float32(value) => Some(tidb_datatype::format_float_g_shortest(*value)),
                 Datum::Real(value) => Some(tidb_datatype::format_float_g_shortest(*value)),
                 Datum::Decimal(value) => Some(value.to_string()),
                 Datum::Null => Some("NULL".to_owned()),
@@ -657,7 +655,7 @@ impl ScalarFunction {
 
         match name {
             "plus" | "mul" | "eq" | "in" | "or" | "and" => {
-                append_canonical_name(&mut canonical, &name);
+                append_canonical_name(&mut canonical, name);
                 let mut sorted = arg_codes;
                 sorted.sort();
                 append_canonical_args(&mut canonical, &sorted);
@@ -708,12 +706,12 @@ impl ScalarFunction {
                         _ => {}
                     }
                 } else {
-                    append_canonical_name(&mut canonical, &name);
+                    append_canonical_name(&mut canonical, name);
                     append_canonical_args(&mut canonical, &arg_codes);
                 }
             }
             _ => {
-                append_canonical_name(&mut canonical, &name);
+                append_canonical_name(&mut canonical, name);
                 append_canonical_args(&mut canonical, &arg_codes);
                 if name == "values" {
                     encode_int(
@@ -1153,7 +1151,7 @@ impl ScalarFunction {
         // IS FALSE / IS UNKNOWN never answer NULL -- NULL tests FALSE for
         // TRUE/FALSE and TRUE for UNKNOWN.
         if matches!(
-            &*name,
+            name,
             "istrue"
                 | "istrue_with_null"
                 | "isnottrue"
@@ -1173,7 +1171,7 @@ impl ScalarFunction {
                     None => Datum::Null,
                 });
             }
-            let result = match &*name {
+            let result = match name {
                 "istrue" => truthy == Some(true),
                 "isnottrue" => truthy != Some(true),
                 "isfalse" => truthy == Some(false),
@@ -1298,8 +1296,8 @@ impl ScalarFunction {
         // `cond, result, ..., else` list, and only the selected branch is
         // evaluated -- so an error in an unreachable branch never surfaces.
         if name == "case_when" {
-            let mut pairs = self.args.chunks_exact(2);
-            for pair in pairs.by_ref() {
+            let (pairs, remainder) = self.args.as_chunks::<2>();
+            for pair in pairs {
                 let condition = pair[0].eval(ctx, row)?;
                 // A NULL condition is not a match, the same as false.
                 if crate::truthy_of(&condition)? == Some(true) {
@@ -1307,7 +1305,7 @@ impl ScalarFunction {
                 }
             }
             // An odd argument count means a trailing ELSE.
-            return match pairs.remainder().first() {
+            return match remainder.first() {
                 Some(else_branch) => else_branch.eval(ctx, row),
                 None => Ok(Datum::Null),
             };
@@ -1604,7 +1602,7 @@ impl ScalarFunction {
             if value.is_null() {
                 return Ok(Datum::Null);
             }
-            if let Some(result) = crate::func::eval_func_values_in(&name, &[value], ctx) {
+            if let Some(result) = crate::func::eval_func_values_in(name, &[value], ctx) {
                 let result = result?;
                 // The values dispatcher models only the source-specific
                 // inUnion decision.  Apply the merged target's DECIMAL
@@ -2105,7 +2103,7 @@ impl ScalarFunction {
                         let position = self.args[2].eval(ctx, row)?;
                         let position = crate::cast::cast_arg_as_int(
                             &position,
-                            self.args[2].static_type().as_deref(),
+                            self.args[2].static_type(),
                             ctx,
                         )?;
                         return crate::string_fn::locate_with_position(

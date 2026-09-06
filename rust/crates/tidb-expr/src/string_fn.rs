@@ -694,7 +694,7 @@ pub(crate) fn unhex(vals: &[Datum]) -> Result<Datum, EvalError> {
     }
     digits.extend_from_slice(&s);
     let mut bytes = Vec::with_capacity(digits.len() / 2);
-    for pair in digits.chunks_exact(2) {
+    for pair in digits.as_chunks::<2>().0 {
         let hi = hex_nibble(pair[0]);
         let lo = hex_nibble(pair[1]);
         match (hi, lo) {
@@ -1369,7 +1369,7 @@ pub(crate) fn from_base64_with_packet_limit(
         }
     };
     let mut bytes = Vec::new();
-    for (group_index, chunk) in cleaned.chunks_exact(4).enumerate() {
+    for (group_index, chunk) in cleaned.as_chunks::<4>().0.iter().enumerate() {
         let last = group_index + 1 == cleaned.len() / 4;
         let Some(a) = val(chunk[0]) else {
             return Ok(Datum::Null);

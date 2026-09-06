@@ -116,7 +116,7 @@ fn fold_current_value_in(
     // subtree the source keeps runtime-only.
     if let Expression::ScalarFunction(func) = expr {
         let name_lc = func.func_name.lowercase();
-        let lazy = is_lazy_short_circuit(&name_lc) || is_unfoldable_call(&name_lc, func.args.len());
+        let lazy = is_lazy_short_circuit(name_lc) || is_unfoldable_call(name_lc, func.args.len());
         if !lazy {
             for arg in &mut func.args {
                 fold_current_value_in(arg, ctx, preserve_warning_casts);

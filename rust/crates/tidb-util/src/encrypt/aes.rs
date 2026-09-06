@@ -127,8 +127,7 @@ fn encrypt_ecb_blocks(cipher: &AesCipher, source: &[u8]) -> Vec<u8> {
         "ECBEncrypter: input not full blocks"
     );
     let mut destination = source.to_vec();
-    for block in destination.chunks_exact_mut(AES_BLOCK_SIZE) {
-        let block: &mut [u8; AES_BLOCK_SIZE] = block.try_into().expect("AES chunk has block size");
+    for block in destination.as_chunks_mut::<AES_BLOCK_SIZE>().0 {
         cipher.encrypt_block(block);
     }
     destination
@@ -141,8 +140,7 @@ fn decrypt_ecb_blocks(cipher: &AesCipher, source: &[u8]) -> Vec<u8> {
         "ECBDecrypter: input not full blocks"
     );
     let mut destination = source.to_vec();
-    for block in destination.chunks_exact_mut(AES_BLOCK_SIZE) {
-        let block: &mut [u8; AES_BLOCK_SIZE] = block.try_into().expect("AES chunk has block size");
+    for block in destination.as_chunks_mut::<AES_BLOCK_SIZE>().0 {
         cipher.decrypt_block(block);
     }
     destination
@@ -206,11 +204,10 @@ pub fn aes_encrypt_with_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
         "cipher.NewCBCEncrypter: IV length must equal block size",
     );
     let mut destination = pkcs7_pad(data, AES_BLOCK_SIZE);
-    for block in destination.chunks_exact_mut(AES_BLOCK_SIZE) {
+    for block in destination.as_chunks_mut::<AES_BLOCK_SIZE>().0 {
         for (value, prior) in block.iter_mut().zip(previous) {
             *value ^= prior;
         }
-        let block: &mut [u8; AES_BLOCK_SIZE] = block.try_into().expect("AES chunk has block size");
         cipher.encrypt_block(block);
         previous = *block;
     }
@@ -228,10 +225,9 @@ pub fn aes_decrypt_with_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
         return Err(EncryptError::CorruptedData);
     }
     let mut destination = data.to_vec();
-    for block in destination.chunks_exact_mut(AES_BLOCK_SIZE) {
+    for block in destination.as_chunks_mut::<AES_BLOCK_SIZE>().0 {
         let mut ciphertext = [0_u8; AES_BLOCK_SIZE];
         ciphertext.copy_from_slice(block);
-        let block: &mut [u8; AES_BLOCK_SIZE] = block.try_into().expect("AES chunk has block size");
         cipher.decrypt_block(block);
         for (value, prior) in block.iter_mut().zip(previous) {
             *value ^= prior;

@@ -2423,6 +2423,7 @@ fn go_test_append_rows() {
     }
 }
 
+#[cfg(test)]
 fn append_format_row(chk: &mut Chunk, i: usize, _tag: &str) {
     chk.append_null(0);
     chk.append_int64(1, i as i64);
@@ -2439,6 +2440,7 @@ fn append_format_row(chk: &mut Chunk, i: usize, _tag: &str) {
     );
 }
 
+#[cfg(test)]
 fn assert_format_row(row: &crate::row::Row<'_>, i: usize) {
     let s = format!("{i}.12345");
     assert_eq!(row.get_int64(0), 0);

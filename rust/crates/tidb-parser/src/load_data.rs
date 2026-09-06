@@ -331,7 +331,9 @@ fn decode_load_bit_literal(text: &str) -> Option<String> {
     let padded = format!("{}{}", "0".repeat(padding), bits);
     let bytes: Option<Vec<u8>> = padded
         .as_bytes()
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .map(|chunk| {
             std::str::from_utf8(chunk)
                 .ok()

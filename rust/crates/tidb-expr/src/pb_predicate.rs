@@ -561,7 +561,7 @@ pub fn string_in_to_pb(
     Ok(boolean_scalar_func_with_collation(
         ScalarFuncSig::InString,
         children,
-        &collation_name,
+        collation_name,
     ))
 }
 
@@ -584,7 +584,7 @@ pub fn string_like_to_pb(
     Ok(boolean_scalar_func_with_collation(
         ScalarFuncSig::LikeSig,
         children,
-        &collation,
+        collation,
     ))
 }
 

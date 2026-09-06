@@ -317,8 +317,10 @@ impl Codec {
             let num_offset_bytes = (length + 1) * 8;
             let offset_bytes = take_prefix(&mut buffer, num_offset_bytes, ordinal, "offset table")?;
             column.offsets = offset_bytes
-                .chunks_exact(8)
-                .map(|word| i64::from_ne_bytes(word.try_into().expect("eight bytes")))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|word| i64::from_ne_bytes(*word))
                 .collect();
             let mut previous = 0_i64;
             for (offset_index, &value) in column.offsets.iter().enumerate() {

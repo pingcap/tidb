@@ -976,9 +976,7 @@ fn parse_duration_diff_value(text: &str) -> Option<TimeDiffValue> {
     let hour = fields.next()?.parse::<i64>().ok()?;
     let minute = fields.next()?.parse::<u32>().ok()?;
     let second_part = fields.next()?;
-    let (second_part, fraction) = second_part
-        .split_once('.')
-        .map_or((second_part, ""), |pair| pair);
+    let (second_part, fraction) = second_part.split_once('.').unwrap_or((second_part, ""));
     let second = second_part.parse::<u32>().ok()?;
     if minute > 59 || second > 59 || fraction.len() > 6 || !fraction.is_ascii() {
         return None;

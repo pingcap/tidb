@@ -546,7 +546,7 @@ pub(crate) fn parse_datetime(value: &str) -> Option<GoDateTime> {
 /// reach this parser after integer arguments have been cast to text, so retain
 /// Go's width table instead of treating delimiter-free digits as unsupported.
 fn parse_compact_datetime(value: &str) -> Option<GoDateTime> {
-    let (digits, fraction) = value.split_once('.').map_or((value, ""), |pair| pair);
+    let (digits, fraction) = value.split_once('.').unwrap_or((value, ""));
     if !matches!(digits.len(), 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 14) {
         return None;
     }

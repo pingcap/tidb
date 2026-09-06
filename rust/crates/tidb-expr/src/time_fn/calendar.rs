@@ -1288,11 +1288,9 @@ fn parse_signed_duration_hms(s: &str) -> Option<(bool, u32, u32, u32, u32)> {
     // mi/sec, one covers sec alone. The last group may carry the fraction.
     let mut groups: Vec<&str> = body.split(':').collect();
     let sec_field = groups.last_mut()?;
-    let (sec_digits, fraction) = sec_field
-        .split_once('.')
-        .map_or((*sec_field, ""), |pair| pair);
+    let (sec_digits, fraction) = sec_field.split_once('.').unwrap_or((*sec_field, ""));
     *sec_field = sec_digits;
-    if groups.iter().any(|group| group.is_empty()) || fraction.is_empty() && groups.len() == 0 {
+    if groups.iter().any(|group| group.is_empty()) || fraction.is_empty() && groups.is_empty() {
         return None;
     }
     if !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -1357,6 +1355,10 @@ fn duration_composite_value(unit: &str, h: u32, mi: u32, sec: u32, microsecond: 
 
 /// `ExtractDatetimeNum`'s composite formulas: `DAY_*` variants use the
 /// actual day-of-month, and `YEAR_MONTH` is `year * 100 + month`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors Go's composite-unit extraction signature"
+)]
 fn datetime_composite_value(
     unit: &str,
     y: i64,
@@ -1424,7 +1426,7 @@ pub(crate) fn parse_time_with_fraction(s: &str) -> Option<(u32, u32, u32, String
     let h: u32 = parts.next()?.parse().ok()?;
     let mi: u32 = parts.next()?.parse().ok()?;
     let sec_part = parts.next()?;
-    let (sec_part, fraction) = sec_part.split_once('.').map_or((sec_part, ""), |pair| pair);
+    let (sec_part, fraction) = sec_part.split_once('.').unwrap_or((sec_part, ""));
     let sec: u32 = sec_part.parse().ok()?;
     if h > 23 || mi > 59 || sec > 59 || !fraction.bytes().all(|b| b.is_ascii_digit()) {
         return None;

@@ -508,26 +508,12 @@ pub fn build_simple_expr(
     }
 }
 
-/// Go `BuildCastFunction(ctx, expr, tp)` restricted to what
-/// `WithCastExprTo` needs: wrap `expr` in the cast signature that produces
-/// `target`.
-///
-/// Go picks the signature from `tp.EvalType()`; this port switches on the
-/// type CODE first so that `YEAR`, `DATE`, `TIME` and `JSON` -- which share an
-/// eval type with a wider class -- keep their own cast, exactly as Go's
-/// per-type `castAs*` selection does. The result type is the caller's own
-/// `target`, so its flen/decimal/charset drive evaluation.
-
 /// Go `WrapWithCastAsInt`/`WrapWithCastAsReal` as the hybrid push uses them
 /// (`builtin_cast.go:2909-2923`): the wrapped branch becomes
 /// ETInt/ETReal-typed so the rebuilt control function infers a numeric
 /// result. The enum `ENUM_SET_AS_INT` stamp is unnecessary in this shape:
 /// the built cast node evaluates the ordinal through `cast_arg_as_int`'s
 /// hybrid short-circuit.
-/// (builtin_cast.go:2909-2923): the wrapped branch becomes ETInt/ETReal-typed
-/// so the rebuilt control function infers a numeric result. The enum
-/// `ENUM_SET_AS_INT` stamp is unnecessary in this shape: the built cast node
-/// evaluates the ordinal through `cast_arg_as_int`'s hybrid short-circuit.
 fn wrap_cast_for_hybrid_push(
     expr: Expression,
     real: bool,
@@ -583,92 +569,6 @@ fn wrap_cast_for_hybrid_push(
     }
     tp.add_flags(inherited);
     build_cast_function(expr, tp, false)
-}
-
-/// Go `GetFormatBytes` (`pkg/expression/util.go:1804`): byte count with IEC
-/// units; a divisor of 1 renders 0 decimals, otherwise 2 decimals with the
-/// scientific form at 100000+.
-fn format_bytes(bytes: f64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = 1024.0 * KIB;
-    const GIB: f64 = 1024.0 * MIB;
-    const TIB: f64 = 1024.0 * GIB;
-    const PIB: f64 = 1024.0 * TIB;
-    const EIB: f64 = 1024.0 * PIB;
-    let (divisor, unit) = if bytes.abs() >= EIB {
-        (EIB, "EiB")
-    } else if bytes.abs() >= PIB {
-        (PIB, "PiB")
-    } else if bytes.abs() >= TIB {
-        (TIB, "TiB")
-    } else if bytes.abs() >= GIB {
-        (GIB, "GiB")
-    } else if bytes.abs() >= MIB {
-        (MIB, "MiB")
-    } else if bytes.abs() >= KIB {
-        (KIB, "KiB")
-    } else {
-        (1.0, "bytes")
-    };
-    if divisor == 1.0 {
-        return format!("{:.0} {}", bytes, unit);
-    }
-    let value = bytes / divisor;
-    if value.abs() >= 100000.0 {
-        format!("{} {}", format_float_e_go(value), unit)
-    } else {
-        format!("{:.2} {}", value, unit)
-    }
-}
-
-/// Go `GetFormatNanoTime` (`pkg/expression/util.go:1843`): nanoseconds with
-/// the d/h/min/s/ms/us/ns unit ladder, same decimal rules as
-/// [`format_bytes`].
-fn format_nano_time(time: f64) -> String {
-    const MICRO: f64 = 1_000.0;
-    const MILLI: f64 = 1_000.0 * MICRO;
-    const SEC: f64 = 1_000.0 * MILLI;
-    const MINUTE: f64 = 60.0 * SEC;
-    const HOUR: f64 = 60.0 * MINUTE;
-    const DAY: f64 = 24.0 * HOUR;
-    let (divisor, unit) = if time.abs() >= DAY {
-        (DAY, "d")
-    } else if time.abs() >= HOUR {
-        (HOUR, "h")
-    } else if time.abs() >= MINUTE {
-        (MINUTE, "min")
-    } else if time.abs() >= SEC {
-        (SEC, "s")
-    } else if time.abs() >= MILLI {
-        (MILLI, "ms")
-    } else if time.abs() >= MICRO {
-        (MICRO, "us")
-    } else {
-        (1.0, "ns")
-    };
-    if divisor == 1.0 {
-        return format!("{:.0} {}", time, unit);
-    }
-    let value = time / divisor;
-    if value.abs() >= 100000.0 {
-        format!("{} {}", format_float_e_go(value), unit)
-    } else {
-        format!("{:.2} {}", value, unit)
-    }
-}
-
-/// Go `strconv.FormatFloat(v, 'e', 2, 64)`: two decimal digits and a signed
-/// two-digit-minimum exponent (`1.02e+08`), which Rust's `{:.2e}` renders
-/// as `1.02e8`.
-fn format_float_e_go(value: f64) -> String {
-    let rendered = format!("{:.2e}", value);
-    let (mantissa, exponent) = rendered.split_once('e').unwrap_or((rendered.as_str(), "0"));
-    let exponent: i32 = exponent.parse().unwrap_or(0);
-    format!(
-        "{mantissa}e{}{:02}",
-        if exponent < 0 { "-" } else { "+" },
-        exponent.abs()
-    )
 }
 
 pub(crate) fn build_cast_function(

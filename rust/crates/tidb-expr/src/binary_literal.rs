@@ -48,7 +48,9 @@ use crate::{Datum, EvalError};
 pub(crate) fn hex_literal_value(digits: &str) -> Result<Datum, EvalError> {
     let bytes: Vec<u8> = digits
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let hi = (pair[0] as char)
                 .to_digit(16)

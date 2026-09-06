@@ -99,7 +99,9 @@ fn decode_hex(text: &[u8]) -> Result<Vec<u8>, String> {
     if !text.len().is_multiple_of(2) {
         return Err("encoding/hex: odd length hex string".to_owned());
     }
-    text.chunks_exact(2)
+    text.as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| match (digit(pair[0]), digit(pair[1])) {
             (Some(high), Some(low)) => Ok(high << 4 | low),
             _ => Err("encoding/hex: invalid byte".to_owned()),

@@ -330,9 +330,7 @@ fn prepare_shallow_column(source: &mut Column, row_idx: usize) -> PreparedShallo
 /// Go `cleanColOfMutRow`: zero every offset and clear the null bit, so the
 /// cell reads back as an empty NULL until something writes it.
 fn clean_col_of_mut_row(column: &mut Column) {
-    for offset in &mut column.offsets {
-        *offset = 0;
-    }
+    column.offsets.fill(0);
     column.null_bitmap[0] = 0;
 }
 

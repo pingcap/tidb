@@ -9381,3 +9381,17 @@ risks without claiming repository-wide parity.
   `tidb-vardef` missing-doc warning belongs to the sibling sysvar stream and
   is untouched. fmt clean, clippy 0 warnings, lexer+codec 309/309, parser
   consumer 833/833. Details in `receipts/lexer_codec_clippy_as_chunks.md`.
+- 2026-09-06 (nightly clippy refresh sweep, four crates): the toolchain lint
+  refresh behind batches #36/#37 also hit parser (6 chunks_exact sites across
+  hex/SM3/bit decoding), chunk (offset table, clean_col fill), util (AES
+  useless-conversion shadows), and expr (json pair-zips, UUID hex, case_when,
+  three dead format helpers). case_when now uses `as_chunks`'s
+  `(pairs, remainder)` split preserving lazy branch evaluation; the dead
+  simple_expr format helpers (superseded by info.rs captures) are removed with
+  the orphaned BuildCastFunction doc re-attached to `build_cast_function`;
+  chunk's test-only helpers are `#[cfg(test)]`-gated; the two design-level
+  lints carry allow-with-reason per codebase convention. Sibling-owned
+  vardef/model/proto/tikv-client and util API-shape lints are recorded as
+  deliberate deferrals. clippy `--no-deps` zero own warnings on all four
+  crates; parser+chunk+util+expr+datatype 3439/3439. Details in
+  `receipts/nightly_clippy_refresh_sweep.md`.
