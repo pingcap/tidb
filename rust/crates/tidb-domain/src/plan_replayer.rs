@@ -38,11 +38,12 @@
 //! ([`PlanReplayerTaskCollectorHandle`]) with `CollectPlanReplayerTask`,
 //! `GetTasks`, `setupTasks`, `removeTask` and `collectAllPlanReplayerTask`,
 //! `planReplayerDumpTaskStatus` ([`PlanReplayerDumpTaskStatus`]) with all
-//! seven of its methods, `planReplayerTaskDumpWorker`
+//! eight of its methods, `planReplayerTaskDumpWorker`
 //! ([`PlanReplayerTaskDumpWorker`]) with `run`, `handleTask` and
 //! `HandleTask`, `planReplayerTaskDumpHandle`
-//! ([`PlanReplayerTaskDumpHandle`]) with `GetTaskStatus`, `GetWorker`,
-//! `Close` and `DrainTask`, `checkUnHandledReplayerTask`
+//! ([`PlanReplayerTaskDumpHandle`]) with `GetTaskStatus`,
+//! `take_receiver` (standing in for Go `GetWorker`), `Close` and
+//! `DrainTask`, `checkUnHandledReplayerTask`
 //! ([`check_unhandled_replayer_task`]), `CheckPlanReplayerTaskExists`
 //! ([`check_plan_replayer_task_exists`]), `PlanReplayerStatusRecord`, and
 //! `PlanReplayerDumpTask`.
@@ -95,7 +96,8 @@
 //!   rather than a global read, so the worker stays testable.
 //! - `// boundary:` Go `pkg/domain/metrics` — `PlanReplayerCaptureTaskSendCounter`,
 //!   `PlanReplayerCaptureTaskDiscardCounter` and `PlanReplayerRegisterTaskGauge`
-//!   are dropped; no result depends on them. Each is named at its site.
+//!   are reproduced against the workspace registry, not the Go prometheus
+//!   metrics package. Each is named at its site.
 //! - `// boundary:` Go `pkg/util.Recover(metrics.LabelDomain, ...)` in
 //!   `handleTask` — Go swallows a panic in the worker so the loop survives.
 //!   Rust has no equivalent to install here; a panicking dumper propagates.
@@ -913,7 +915,14 @@ impl<E: InternalSqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E
     /// boundary: Go logs "planReplayerTaskDumpWorker started./exited.".
     pub fn run(&self, task_ch: &Receiver<PlanReplayerDumpTask>) {
         while let Ok(task) = task_ch.recv() {
-            self.handle_task(&task);
+            // Go defers `util.Recover(metrics.LabelDomain,
+            // "PlanReplayerTaskDumpWorker", ...)` inside handleTask: a
+            // panicking dump is swallowed and the worker loop survives.
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.handle_task(&task)));
+            if result.is_err() {
+                eprintln!("PlanReplayerTaskDumpWorker recovered from a panicking dump");
+            }
         }
     }
 
