@@ -631,3 +631,11 @@
   接受的 narrowing (已记录收据): TZ=/CRON_TZ= 前缀拒绝 (TiDB 不写)、prometheus metrics 面以 atomics 替代、日志字段收窄、json U+2028 转义/数字宽松度、notifier uuid 格式、panic 路径健壮性。
   注意: dbsid/hparser-integration 现含兄弟会话 2 个独立 commit (e62a9972080/42e53f1e40c, tpch+session 接线, 基于旧 merge base 7306a715bd2), 与 origin 谱系分叉 3000 commit —— 未强推 dbsid 以免破坏兄弟工作, dbsid 同步暂挂, 需协调。
 - 下轮恢复点: (1) tidb-naming/tidb-schemaver 小面核查; (2) 兄弟增量收敛核查; (3) F2/F3-seam live 阻塞; (4) DST 排队; (5) dbsid 分叉待协调。
+- 新面批次 2: tidb-schemaver (Go pkg/ddl/schemaver @ a85e0fd5df) 全文件审计 + 传输面核查。修复 2 项:
+  (1) Session keepalive 弹性: 单次 lease_keep_alive_once 失败不再立即关 done (clientv3 内部重试直到租约真亡), 连续失败满一个 SESSION_TTL (90s) 才关; ctx 结束仍即时关闭。回归测试 session_survives_transient_keepalive_failures。
+  (2) EtcdWatchOps::watch 增 require_leader 旗标 (Go syncer.go:519 WithRequireLeader 仅用于 job 镜像 watch): job watch 传 true, 全局版本 watch 传 false; 生产 adapter 记录 etcd-client crate 暂无 gRPC metadata 钩子可落实。
+  超时面核实结论 (审计分歧 2): pd-client KV worker 所有命令经 across_endpoints(..., timeout, ...) 有界, 无挂死风险; 常量选择留给 server 接线时传 KEY_OP_DEFAULT_TIMEOUT (2s)。
+  验收: cargo test -p tidb-schemaver --all-targets 9/9; cargo build -p tidb-server 干净; fmt; git diff --check; make lint 本会话已过 (Go 面未动)。收据 rust/docs/schemaver-parity-audit.md。
+  推送: 0ea2f081fb4..2fbeaf07820 origin/hparser-integration。附带核验 tidb-naming (与 Go naming.go 逐字一致含 regexp 边界, 无需改动)。
+  dbsid 分叉维持暂挂 (见上条)。
+- 下轮恢复点: (1) 新面候选: tidb-ttl/pkg-disttask/dxf 大面, 或 infoschema 深层; (2) 兄弟增量收敛核查; (3) F2/F3-seam live 阻塞; (4) DST 排队; (5) dbsid 分叉待协调。
