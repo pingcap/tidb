@@ -200,6 +200,10 @@ pub enum KvError {
     LockTypeNotMatch,
     /// A refusal: the named Go symbol is a later course of this port.
     Unported(&'static str),
+    /// Go raises `errors.Errorf` with a formatted message; the rendered text
+    /// rides here (e.g. the for-update-ts constraint range check,
+    /// `mvcc.go:857`).
+    Message(String),
 }
 
 /// The `PrewriteRequest` fields the optimistic path reads.
@@ -1740,9 +1744,11 @@ impl MvccStore {
             std::collections::BTreeMap::new();
         for (index, expected) in &req.for_update_ts_constraints {
             if *index >= mutations.len() {
-                return Err(KvError::Unported(
-                    "prewrite request invalid: for_update_ts constraint index out of range",
-                ));
+                return Err(KvError::Message(format!(
+                    "prewrite request invalid: for_update_ts constraint set for index {} while {} mutations were given",
+                    index,
+                    mutations.len()
+                )));
             }
             expected_for_update.insert(*index, *expected);
         }
@@ -1859,9 +1865,8 @@ impl MvccStore {
             let mut lock = decode_lock(&buf);
             if lock.hdr.start_ts == start_ts {
                 if lock.primary != primary {
-                    return Err(KvError::Unported(
-                        "heartbeat on non-primary key: Go errors here by contract",
-                    ));
+                    // Go's literal `errors.New` text (`mvcc.go:473`).
+                    return Err(KvError::Unported("heartbeat on non-primary key"));
                 }
                 if u64::from(lock.hdr.ttl) < advise_ttl {
                     lock.hdr.ttl = u32::try_from(advise_ttl).unwrap_or(u32::MAX);
@@ -1870,9 +1875,8 @@ impl MvccStore {
                 return Ok(u64::from(lock.hdr.ttl));
             }
         }
-        Err(KvError::Unported(
-            "lock doesn't exists: Go errors here by contract",
-        ))
+        // Go's literal `errors.New` text (`mvcc.go:486`).
+        Err(KvError::Unported("lock doesn't exists"))
     }
 
     /// Go `getLatestExtraMetaForKey` (`mvcc.go`): the newest extra-status
@@ -2467,6 +2471,55 @@ mod tests {
                 );
             }
             other => panic!("expected the Go contract error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn txn_heart_beat_rejections_keep_go_error_texts() {
+        // Go `TxnHeartBeat` (`mvcc.go:465-487`): both rejections are Go's
+        // literal `errors.New` texts.
+        let mut store = MvccStore::new();
+        assert_eq!(
+            store.txn_heart_beat(b"pk", 5, 6_000).unwrap_err(),
+            KvError::Unported("lock doesn't exists")
+        );
+        let key = b"hbk".as_slice();
+        store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::PessimisticLock as i32,
+                    key: key.to_vec(),
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: b"other".to_vec(),
+                start_version: 5,
+                for_update_ts: 5,
+                ..PessimisticLockReq::default()
+            })
+            .expect("locks");
+        assert_eq!(
+            store.txn_heart_beat(key, 5, 6_000).unwrap_err(),
+            KvError::Unported("heartbeat on non-primary key")
+        );
+    }
+
+    #[test]
+    fn prewrite_constraint_range_error_keeps_go_text() {
+        // Go `prewritePessimistic` (`mvcc.go:856-858`): the formatted range
+        // check carries the offending index and the mutation count.
+        let mut store = MvccStore::new();
+        let refuse = store.prewrite(&PrewriteReq {
+            mutations: vec![put(b"ck", b"v")],
+            for_update_ts: 10,
+            for_update_ts_constraints: vec![(3, 10)],
+            ..PrewriteReq::default()
+        });
+        match refuse {
+            Err(KvError::Message(message)) => assert_eq!(
+                message,
+                "prewrite request invalid: for_update_ts constraint set for index 3 while 1 mutations were given"
+            ),
+            other => panic!("expected the Go range error, got {other:?}"),
         }
     }
 

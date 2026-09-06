@@ -88,3 +88,54 @@ Go tests. Audit findings against `mvcc.go` @ a85e0fd5df:
   `prewrite_pessimistic`/`pessimistic_rollback`/`check_txn_status`/
   `resolve_lock` bodies against `mvcc.go:435-935`, and the `cophandler`
   seed vs the closure_exec/analyze/mpp tail.
+
+## mvcc.go:418-935 body-level audit (2026-09-07, same session)
+
+Every pessimistic-suite body compared line-by-line against `mvcc.go` @
+a85e0fd5df:
+
+- `pessimistic_rollback` vs `PessimisticRollback` (435): sorted keys, the
+  four-way lock predicate (present, `Op_PessimisticLock`, our start ts,
+  `ForUpdateTS <= req.ForUpdateTs`), delete-only write. Equal; the
+  `WakeUp`/`CleanUp` calls stay named narrowings.
+- `txn_heart_beat` vs `TxnHeartBeat` (465): existence + start-ts gate,
+  non-primary rejection, never-shrink TTL raise through the lock store,
+  TTL answer. Equal.
+- `check_txn_status` vs `CheckTxnStatus` (497): primary mismatch,
+  async-commit guard, physical-millisecond TTL expiry with the
+  resolving-pessimistic vs plain rollback split, `MinCommitTSPushed` under
+  `maxSystemTS` and the `minCommitTS >= callerStartTS + 1` invariant with
+  `max(callerStartTs+1, currentTs)`, then the no-lock ladder
+  (committed / rollback / op-lock committed / `RollbackIfNotExist` with its
+  two actions / `ErrTxnNotFound`). Equal, including the tombstone writes.
+- `check_secondary_locks` vs `CheckSecondaryLocks` (590): the sorted walk,
+  the commit short-circuit, the op-lock short-circuit, the on-the-spot
+  tombstone for neither, and the pessimistic-secondary immediate
+  `Rollback(key, true)`. Equal.
+- `resolve_lock` vs `ResolveLock` (1645): the empty-key scan, start-ts
+  filter, and the per-key write arms replicate `write.go`
+  `Commit`/`Rollback` exactly (pessimistic lock deleted with nothing
+  written; non-Lock ops written at the commit ts; the primary's Op_Lock
+  landing in the extra-status key; rollback tombstone plus lock deletion).
+- `prewrite_pessimistic` vs `prewritePessimistic` (850): the constraint map
+  with its range check, `CheckNotExists` -> `ErrInvalidOp`, the
+  DO_PESSIMISTIC_CHECK valid/`pessimistic lock not found`/duplicated/TT L
+  raise arms, DO_CONSTRAINT_CHECK's `LazyUniquenessCheck` conflict, the
+  non-pessimistic-key TTL-zero lock error and duplicate short-circuit, then
+  the shared `prewriteMutations`. Equal. Go's unguarded `lock.ForUpdateTS`
+  under a constraint for a lockless key would panic; the Rust seam treats
+  that shape as passing (documented hardening, same class as
+  `splitOwnerValues`).
+- `build_pessimistic_lock` vs `buildPessimisticLock` (663): the
+  latest-extra-meta raise, the `Force` skip, the `PessimisticRetry`
+  conflict, `Assertion_NotExist` -> `ErrKeyAlreadyExists`, `doesNeedLock`,
+  and the lock fields (in the Normal-only slice `lockedWithConflictTS` is
+  always zero, so `ForUpdateTS` is the request's). Equal.
+
+Fixed in this batch: three contract-refusal messages carried decorative
+Rust text instead of Go's wire-visible strings -- `TxnHeartBeat`'s
+"heartbeat on non-primary key" and "lock doesn't exists" (both
+`errors.New` literals), and `prewritePessimistic`'s formatted range check
+("...constraint set for index %v while %v mutations were given", now a
+`KvError::Message(String)` arm rendered through the Abort field). Three
+regressions pin the texts.

@@ -128,6 +128,7 @@ pub fn convert_to_key_error(err: &KvError) -> KvrpcKeyError {
         KvError::PessimisticLockNotFound => abort("pessimistic lock not found"),
         KvError::LockTypeNotMatch => abort("lock type not match"),
         KvError::Unported(message) => abort(message),
+        KvError::Message(message) => abort(message.as_str()),
     }
 }
 
