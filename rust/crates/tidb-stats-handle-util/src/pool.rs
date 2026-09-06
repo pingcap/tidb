@@ -183,7 +183,6 @@ pub struct StatsPool<C: SessionContext + ?Sized + 'static> {
 
 impl<C: SessionContext + ?Sized + 'static> StatsPool<C> {
     /// Go `NewPool`.
-    #[must_use]
     pub fn new(spool: Arc<dyn SessionPool<C>>) -> Self {
         Self {
             gpool: StatsWorkerPool::default(),
@@ -248,6 +247,15 @@ mod tests {
         fn close(&self) {
             self.close_count.fetch_add(1, Ordering::SeqCst);
         }
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn source_return_values_may_be_ignored_like_go() {
+        let session_pool: Arc<dyn SessionPool<dyn SessionContext>> = Arc::new(FakeSessionPool {
+            close_count: AtomicUsize::new(0),
+        });
+        StatsPool::new(session_pool);
     }
 
     #[test]

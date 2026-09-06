@@ -33,7 +33,6 @@ pub struct Generator {
 
 impl Generator {
     /// Go `NewGenerator`.
-    #[must_use]
     pub fn new(
         get: impl Fn() -> u64 + Send + Sync + 'static,
         release: impl Fn(u64) + Send + Sync + 'static,
@@ -80,7 +79,6 @@ impl AutoAnalyzeProcessList {
     }
 
     /// Go `All`; order is unspecified.
-    #[must_use]
     pub fn all(&self) -> Vec<u64> {
         self.processes
             .read()
@@ -91,7 +89,6 @@ impl AutoAnalyzeProcessList {
     }
 
     /// Go `Contains`.
-    #[must_use]
     pub fn contains(&self, id: u64) -> bool {
         self.processes
             .read()
@@ -112,7 +109,6 @@ pub struct AutoAnalyzeTracker {
 
 impl AutoAnalyzeTracker {
     /// Go `NewAutoAnalyzeTracker`.
-    #[must_use]
     pub fn new(track: TrackSysProc, untrack: UntrackSysProc) -> Self {
         Self { track, untrack }
     }
@@ -137,6 +133,18 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn source_return_values_may_be_ignored_like_go() {
+        Generator::new(|| 1, |_| {});
+
+        let list = AutoAnalyzeProcessList::default();
+        list.all();
+        list.contains(1);
+
+        AutoAnalyzeTracker::new(Arc::new(|_, _| Ok(())), Arc::new(|_| {}));
+    }
 
     #[test]
     fn generator_delegates_get_and_release() {

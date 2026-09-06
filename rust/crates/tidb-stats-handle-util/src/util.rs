@@ -374,14 +374,12 @@ pub fn exec_with_opts_with_ctx<C: StatsSessionContext + ?Sized>(
 
 /// Go `DurationToTS`. `duration_nanoseconds` is the signed representation of
 /// Go `time.Duration`.
-#[must_use]
 pub const fn duration_to_ts(duration_nanoseconds: i64) -> u64 {
     let physical_milliseconds = duration_nanoseconds / 1_000_000;
     (physical_milliseconds << 18) as u64
 }
 
 /// Go `IsSpecialGlobalIndex` over the package-owned model types.
-#[must_use]
 pub fn is_special_global_index(index: &IndexInfo, table: &TableInfo) -> bool {
     if !index.global {
         return false;
@@ -416,6 +414,13 @@ mod tests {
     use tidb_syssession::{AdvancedSessionPool, SessionContext};
 
     use super::*;
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn source_return_values_may_be_ignored_like_go() {
+        duration_to_ts(0);
+        is_special_global_index(&IndexInfo::default(), &TableInfo::default());
+    }
 
     #[derive(Default)]
     struct RecordingExecutor {

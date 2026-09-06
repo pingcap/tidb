@@ -30,7 +30,6 @@ pub struct StatsLease {
 
 impl StatsLease {
     /// Go `NewLeaseGetter`.
-    #[must_use]
     pub const fn new(lease: i64) -> Self {
         Self {
             lease: AtomicI64::new(lease),
@@ -51,6 +50,12 @@ impl LeaseGetter for StatsLease {
 #[cfg(test)]
 mod tests {
     use super::{LeaseGetter, StatsLease};
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn source_return_values_may_be_ignored_like_go() {
+        StatsLease::new(0);
+    }
 
     #[test]
     fn signed_duration_round_trips_atomically() {

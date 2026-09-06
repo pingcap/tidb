@@ -63,7 +63,6 @@ pub struct TableInfoGetter {
 
 impl TableInfoGetter {
     /// Go `NewTableInfoGetter`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -238,6 +237,12 @@ mod tests {
         fn partitioned_table_infos(&self) -> Vec<GoShared<TableInfo>> {
             self.table_infos.clone()
         }
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn source_return_values_may_be_ignored_like_go() {
+        TableInfoGetter::new();
     }
 
     #[test]
