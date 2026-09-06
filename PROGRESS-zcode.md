@@ -759,3 +759,5 @@
   开放: plan_replayer_dump.go 未移植 (zip 布局/TOML 键/presign, PLAN REPLAYER DUMP 执行器依赖), 计数器覆盖面因此收窄; sort.Sort 不稳定序差异文档化。
   验收: cargo test -p tidb-domain 143 全绿; fmt; diff-check; make lint 过。收据 rust/docs/plan-replayer-domain-parity-audit.md。含代码改动, 已推送 (LANDED_1)。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 小面巡检: optimize_trace.rs 对 Go optimize_trace.go 完整且边界注记齐备 (GetOptimizerTraceDirName, PID 回退); domainutil.rs 实为 pkg/util/domainutil/repair_vars.go 的移植 (非 pkg/domain/domainutil) —— 待后续按正确 Go 源定位核验。收敛: domain 143, unistore 114/0, hint 2/0 全绿。
+- 下轮恢复点: (1) domainutil 按正确 Go 源 (pkg/util/domainutil) 复验; (2) unistore 测试目标随兄弟 distsql 修复回补; (3) pd-client 外部 pin 待决; (4) 只读收敛核查或新面; (5) dbsid 分叉待协调。
