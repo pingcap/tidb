@@ -9436,3 +9436,10 @@ risks without claiming repository-wide parity.
   the annotation removal and passes afterward; the complete 15-test aggregate,
   all-target check, standalone rustfmt, and Ready evidence are recorded in
   `receipts/util_workloadrepo.md`.
+- 2026-09-06 (`pkg/dxf/operator` return-contract parity): Rust's pipeline
+  owner no longer marks the Go-shaped `IsStarted`, `String`, and
+  `GetReaderAndWriter` queries as `#[must_use]`. A focused
+  `deny(unused_must_use)` probe failed with exactly three diagnostics before
+  the annotation removal and passes afterward; all three owner tests,
+  all-target compilation, standalone rustfmt, and Ready evidence are recorded
+  in `receipts/dxf_operator.md`.

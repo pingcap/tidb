@@ -34,6 +34,15 @@ fn go_constructor_return_values_can_be_ignored() {
     );
 }
 
+#[deny(unused_must_use)]
+#[test]
+fn go_pipeline_query_returns_can_be_ignored() {
+    let pipeline = AsyncPipeline::new(Vec::new());
+    pipeline.is_started();
+    pipeline.pipeline_string();
+    pipeline.reader_and_writer();
+}
+
 #[test]
 fn pipeline_async_multi_operators_without_error() {
     let words = "Bob hiT a ball, the hIt BALL flew far after it was hit.";
