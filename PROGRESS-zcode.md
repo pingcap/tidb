@@ -698,3 +698,5 @@
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
 - 推送修复: 服务端 hparser-integration 被兄弟会话回退到 8896e800216 (丢失 tablecodec 批次), 已重新 fast-forward 推送 0d4ffe94c98 恢复。共享分支 + 共享 worktree 双重并行下, 每轮开头必须 ls-remote 对账。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 事故与恢复: journal commit (559bd56a04c) 因共享 git index 卷入兄弟会话 31 个 staged 文件 (1717 行删除) 并已推送。已在一次性 worktree 中 revert 该提交除 PROGRESS-zcode.md 外的全部内容 (797edab51c0), 服务端净效果仅剩我的 2 行 journal; 被卷入内容仍可从 559bd56a04c 恢复, 兄弟工作树未触碰。规程变更: 共享 worktree 内一切 journal 提交改用 pathspec 限定形式 (git commit PROGRESS-zcode.md -m ...), 不再裸 git commit; 分支 ref 移动只用 update-ref。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
