@@ -249,3 +249,28 @@ The remaining unaudited range (`mvcc.go:1421-1817`) closes the file:
 With the optimistic suite, the pessimistic suite, the read paths, and the
 lock primitives dispositioned, `mvcc.go` (2,182 lines) has no unaudited
 function remaining.
+
+## Coprocessor arithmetic family (2026-09-07, same session)
+
+The trimmed tipb enum already carried the decimal arithmetic and integer
+MOD signatures; the evaluator refused them. Landed in the flat lowering
+with Go's `pkg/expression` semantics:
+
+- `PlusDecimal`/`MinusDecimal`/`MultiplyDecimal` (`EvalPlusDecimal`
+  family): exact decimal arithmetic through the Go-aligned `*_mysql`
+  decimal ops, NULL in -> NULL out; composes as a comparison operand
+  (`GetAccurateCmpType` makes decimal arithmetic a natural child of the
+  decimal comparisons) and answers its own truth as a bare condition.
+- `ModDecimal` / `ModInt{UnsignedUnsigned,UnsignedSigned,SignedUnsigned,
+  SignedSigned}`: NULL on a zero divisor (MySQL), truncated remainder with
+  the sign of the dividend otherwise. Go picks between the four integer
+  signatures by the arguments' UNSIGNED flags -- the truncated VALUE is
+  identical under all four, so the i128 evaluator serves them with one
+  arm. Go's `MinInt % -1` panic is unreachable with operands riding i128
+  (documented hardening, same class as `splitOwnerValues`).
+- `ModReal` stays in the refusal arm: the evaluator has no Real
+  comparison family for it to compose with yet.
+
+Regressions: `integer_mod_follows_mysql` (-7 % 2 = -1; zero divisor NULL)
+and `decimal_arithmetic_composes_into_conditions` (c + (-1) > 0 as a
+selection condition).

@@ -1392,6 +1392,28 @@ pub enum SimpleExpr {
 /// The supported `ScalarFuncSig` subset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SimpleSig {
+    /// `PlusDecimal`/`MinusDecimal`/`MultiplyDecimal`/`ModDecimal`: exact
+    /// decimal arithmetic (`pkg/expression`'s `EvalPlusDecimal` family),
+    /// NULL on a zero `MOD` divisor.
+    PlusDecimal,
+    /// See [`SimpleSig::PlusDecimal`].
+    MinusDecimal,
+    /// See [`SimpleSig::PlusDecimal`].
+    MultiplyDecimal,
+    /// See [`SimpleSig::PlusDecimal`].
+    ModDecimal,
+    /// `ModIntUnsignedUnsigned`/`ModIntUnsignedSigned`/
+    /// `ModIntSignedUnsigned`/`ModIntSignedSigned`: Go picks between the
+    /// four by the two arguments' UNSIGNED flags, not their width; the
+    /// truncated-remainder VALUE is the same under all four, and a zero
+    /// divisor answers NULL.
+    ModIntUnsignedUnsigned,
+    /// See [`SimpleSig::ModIntUnsignedUnsigned`].
+    ModIntUnsignedSigned,
+    /// See [`SimpleSig::ModIntUnsignedUnsigned`].
+    ModIntSignedUnsigned,
+    /// See [`SimpleSig::ModIntUnsignedUnsigned`].
+    ModIntSignedSigned,
     /// `LtInt`/`LeInt`/`GtInt`/`GeInt`/`EqInt`/`NeInt`, by ordering.
     LtInt,
     /// See [`SimpleSig::LtInt`].
@@ -1516,6 +1538,17 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
         // falling to `Unspecified` — which lands in the refusal arm, Go's
         // unsupported-signature error.
         let sig = match expr.sig() {
+            // The decimal arithmetic and integer MOD families -- the wire
+            // ids are the upstream tipb contract, carried by the trimmed
+            // proto build.
+            tipb::ScalarFuncSig::PlusDecimal => SimpleSig::PlusDecimal,
+            tipb::ScalarFuncSig::MinusDecimal => SimpleSig::MinusDecimal,
+            tipb::ScalarFuncSig::MultiplyDecimal => SimpleSig::MultiplyDecimal,
+            tipb::ScalarFuncSig::ModDecimal => SimpleSig::ModDecimal,
+            tipb::ScalarFuncSig::ModIntUnsignedUnsigned => SimpleSig::ModIntUnsignedUnsigned,
+            tipb::ScalarFuncSig::ModIntUnsignedSigned => SimpleSig::ModIntUnsignedSigned,
+            tipb::ScalarFuncSig::ModIntSignedUnsigned => SimpleSig::ModIntSignedUnsigned,
+            tipb::ScalarFuncSig::ModIntSignedSigned => SimpleSig::ModIntSignedSigned,
             tipb::ScalarFuncSig::LtInt => SimpleSig::LtInt,
             tipb::ScalarFuncSig::LeInt => SimpleSig::LeInt,
             tipb::ScalarFuncSig::GtInt => SimpleSig::GtInt,
@@ -1588,6 +1621,28 @@ fn eval_decimal(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<tidb_
             Some(Datum::Decimal(value)) => Some(value.clone()),
             _ => None,
         },
+        // Go `EvalPlusDecimal`/`EvalMinusDecimal`/`EvalMultiplyDecimal`
+        // (`pkg/expression/builtin_arithmetic_vec.go`): exact decimal
+        // arithmetic, NULL in -> NULL out. A zero MOD divisor answers NULL
+        // (MySQL), as `rem_mysql` already encodes.
+        SimpleExpr::Func(
+            sig @ (SimpleSig::PlusDecimal
+            | SimpleSig::MinusDecimal
+            | SimpleSig::MultiplyDecimal
+            | SimpleSig::ModDecimal),
+            children,
+        ) => {
+            let (left, right) = (
+                eval_decimal(children.first()?, row)?,
+                eval_decimal(children.get(1)?, row)?,
+            );
+            match sig {
+                SimpleSig::PlusDecimal => Some(left.add_mysql(&right).0),
+                SimpleSig::MinusDecimal => Some(left.sub_mysql(&right).0),
+                SimpleSig::MultiplyDecimal => Some(left.mul_mysql(&right).0),
+                _ => left.rem_mysql(&right),
+            }
+        }
         _ => None,
     }
 }
@@ -1702,6 +1757,21 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
         SimpleExpr::Func(sig, children) => {
             let child = |i: usize| children.get(i).and_then(|c| eval_expr(c, row));
             match sig {
+                // A bare decimal arithmetic as a condition answers its own
+                // truth (`ToBool`): non-zero is true, NULL is filtered.
+                SimpleSig::PlusDecimal
+                | SimpleSig::MinusDecimal
+                | SimpleSig::MultiplyDecimal
+                | SimpleSig::ModDecimal => {
+                    eval_decimal(expr, row).map(|value| i128::from(!value.is_zero()))
+                }
+                SimpleSig::ModIntUnsignedUnsigned
+                | SimpleSig::ModIntUnsignedSigned
+                | SimpleSig::ModIntSignedUnsigned
+                | SimpleSig::ModIntSignedSigned => match (child(0), child(1)) {
+                    (Some(left), Some(right)) if right != 0 => Some(left % right),
+                    _ => None,
+                },
                 SimpleSig::LtInt
                 | SimpleSig::LeInt
                 | SimpleSig::GtInt
@@ -2925,5 +2995,54 @@ mod tests {
             decoded,
             vec![Datum::Int(2), Datum::Int(10), Datum::Int(3), Datum::Int(20)]
         );
+    }
+
+    #[test]
+    fn integer_mod_follows_mysql() {
+        use tidb_datatype::Datum;
+        let row = [Datum::Int(-7)];
+        let column = SimpleExpr::Column(0);
+        let two = SimpleExpr::Int(2);
+        // `types.ModInt`: the truncated remainder, sign of the DIVIDEND.
+        assert_eq!(
+            eval_expr(
+                &SimpleExpr::Func(SimpleSig::ModIntSignedSigned, vec![column.clone(), two]),
+                &row
+            ),
+            Some(-1)
+        );
+        // A zero divisor answers NULL (`ErrDivByZero` -> isNull).
+        let zero = SimpleExpr::Int(0);
+        assert_eq!(
+            eval_expr(
+                &SimpleExpr::Func(SimpleSig::ModIntUnsignedSigned, vec![column, zero]),
+                &row
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn decimal_arithmetic_composes_into_conditions() {
+        use tidb_datatype::{Datum, Decimal};
+        // c + (-1) > 0 keeps only c > 1: the decimal arithmetic evaluates as
+        // the comparison's operand, `EvalPlusDecimal` -> `GetAccurateCmpType`.
+        let condition = SimpleExpr::Func(
+            SimpleSig::GtDecimal,
+            vec![
+                SimpleExpr::Func(
+                    SimpleSig::PlusDecimal,
+                    vec![
+                        SimpleExpr::Column(0),
+                        SimpleExpr::Decimal(Decimal::parse_mysql("-1").0),
+                    ],
+                ),
+                SimpleExpr::Decimal(Decimal::parse_mysql("0").0),
+            ],
+        );
+        let row = [Datum::Decimal(Decimal::parse_mysql("2.5").0)];
+        assert_eq!(eval_expr(&condition, &row), Some(1));
+        let row_small = [Datum::Decimal(Decimal::parse_mysql("1").0)];
+        assert_eq!(eval_expr(&condition, &row_small), Some(0));
     }
 }
