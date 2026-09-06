@@ -33,25 +33,25 @@ The port mirrors, function for function, the SELECT half of Go
 Regression coverage lives in `tidb-session/src/tests_non_prepared_plan_cache.rs`
 (admission, parameterization, hits, invalidation, refusal reasons).
 
-## Recorded divergence: DML admission (Go default-ON)
+## Former divergence: DML admission — IMPLEMENTED (2026-09-06)
 
-Go `NonPreparedPlanCacheableWithCtx` also admits UPDATE / INSERT (values and
-insert-select) / DELETE statements, gated by
-`tidb_enable_non_prepared_plan_cache_for_dml`, whose default
-(`DefTiDBEnableNonPreparedPlanCacheForDML`, `pkg/sessionctx/vardef/tidb_vars.go:1742`)
-is **true**. The port refuses every non-SELECT statement (Go's own
-`"not a SELECT/UPDATE/INSERT/DELETE statement"` reason surfaces only for the
-non-Query shapes). Observable delta on a default-config session: a repeated
-identical UPDATE answers `@@last_plan_from_cache` = 1 in Go and 0 here, and Go
-saves the re-plan. Results are identical; the gap is plan-reuse only.
-
-This is marked where Go's behavior will land:
-`tests_non_prepared_plan_cache.rs` ("DML is refused here ... When it is, this
-test FLIPS"). Porting it needs the DML physical-plan reuse funnel
-(`run_insert/update/delete_meta_stmt_with_physical` all exist), Go's DML fast
-checks (table-hints, multiple-table UPDATE/DELETE, insert-select, the
-`nRows*nCols > maxNumParam` values cap), and the DML branch of the retained
-statement key. Queued as the next plan-cache fix batch.
+Go `NonPreparedPlanCacheableWithCtx` admits UPDATE / INSERT (values and
+insert-select) / DELETE statements under
+`tidb_enable_non_prepared_plan_cache_for_dml` (default ON). The port now
+mirrors that: `parameterize_dml` runs Go's fast checks (table hints,
+multi-table UPDATE/DELETE, insert-select source kind, the
+rows-times-columns parameter cap), lowers the DML target table like a
+SELECT reference, and walks SET values, VALUES rows, ON DUPLICATE values,
+and the WHERE predicate through the shared checker and replacer — leaving
+ORDER BY and LIMIT literals verbatim per Go's replacer skip list
+(pkg/planner/core/plan_cache_param.go:57-77). The session holds
+`NonPreparedDmlCache` (key → `PreparedDmlPlan`), the funnel binds through
+`bind_cached_for_statement`/`bind_for_statement`, and execution shares the
+prepared path's `execute_cached_prepared_dml` — privilege checks, metadata
+locks, statement context, and the DML executor stay common. Regressions:
+`dml_statements_cache_and_rebind_like_go` (UPDATE/INSERT/DELETE hit
+sequences, the gate-off refusal, hinted and multi-table refusals); the
+previously-marked flip-test now asserts the hit.
 
 ## Recorded divergence: the cache container
 
