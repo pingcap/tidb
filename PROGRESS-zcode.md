@@ -700,3 +700,12 @@
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
 - 事故与恢复: journal commit (559bd56a04c) 因共享 git index 卷入兄弟会话 31 个 staged 文件 (1717 行删除) 并已推送。已在一次性 worktree 中 revert 该提交除 PROGRESS-zcode.md 外的全部内容 (797edab51c0), 服务端净效果仅剩我的 2 行 journal; 被卷入内容仍可从 559bd56a04c 恢复, 兄弟工作树未触碰。规程变更: 共享 worktree 内一切 journal 提交改用 pathspec 限定形式 (git commit PROGRESS-zcode.md -m ...), 不再裸 git commit; 分支 ref 移动只用 update-ref。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 新面批次: tidb-log + tidb-util/logutil (Go pkg/util/logutil + pingcap/log @ a85e0fd5df) 全文件审计。修复 3 项 behavior 分歧:
+  (1) tidb-log FileSink 轮转备份改 lumberjack 命名 <base>-<本地时间戳><ext> (原 <file>.<sequence>), 清理只数可解析时间戳的备份并按解析时间排序 (原 mtime + 前缀匹配会误删同前缀兄弟文件), 回归 test_rotate_backup_name_uses_timestamp_format;
+  (2) 未设 max-size 回退 Go DefaultLogMaxSize 300MB (原 lumberjack 100);
+  (3) Level::parse 接受空串=info 且大小写不敏感 (zapcore UnmarshalText)。
+  匹配面: text encoder 逐字节 golden (时间戳/级别/分隔/转义/errorVerbose/JSON 序), config 字段与 toml/json 名, global logger 生命周期, sampler, hex.rs 存在且 golden 对齐 (Go Hex() 零生产调用方, 反射面不可达已证), gRPC/ctx/opentracing 面声明性未移植且已证不可达。
+  开放项: buildOptions 的 disable-caller/error-output-path/sampling/development 未生效 (仅测试调用方), OldSlowLogTimeFormat 待慢日志解析面。
+  验收: cargo test -p tidb-log 23 全绿 (含新回归); tidb-util 564 全绿; fmt; diff-check; make lint 过。收据 rust/docs/logutil-parity-audit.md。
+  规程生效: 本批 commit 用 pathspec 限定形式, 兄弟 staged 的 5 文件未被卷入。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
