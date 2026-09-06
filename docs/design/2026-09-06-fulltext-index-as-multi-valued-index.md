@@ -43,7 +43,7 @@ executor, or a storage change.
 A single-column `FULLTEXT` index is rewritten, before hidden columns are built,
 into an expression index over the tokenized column:
 
-```sql
+```text
 FULLTEXT INDEX idx (body)
   =>  INDEX idx ((CAST(FTS_TOKENIZE(`body`, 'STANDARD', 3, 84, 1) AS CHAR(84) ARRAY)))
 ```
@@ -110,70 +110,350 @@ fewer rows with the index than without it:
 
 ### Trying it by hand
 
-`2026-09-06-fulltext-index-as-multi-valued-index.sql`, beside this document, is
-a runnable script covering every case below. Every statement in it has been
-executed, and the two in its "definitions that are refused" section are the only
-ones that error:
+Everything below is copy-pasteable in order against a build of this branch, and
+every plan and result shown was captured from an actual run. Start a server with
+`make && ./bin/tidb-server` and connect with
+`mysql -h 127.0.0.1 -P 4000 -u root`.
 
-```
-make && ./bin/tidb-server
-mysql -h 127.0.0.1 -P 4000 -u root \
-  < docs/design/2026-09-06-fulltext-index-as-multi-valued-index.sql
-```
-
-Setup:
+#### 1. Create the table
 
 ```sql
-SET @@tidb_enable_local_match_against = ON;   -- MATCH is evaluated in TiDB; off by default
+DROP DATABASE IF EXISTS ftsdemo;
+CREATE DATABASE ftsdemo;
+USE ftsdemo;
+
+-- MATCH is evaluated in TiDB, and is off by default.
+SET @@tidb_enable_local_match_against = ON;
 
 CREATE TABLE articles (
-  id   INT PRIMARY KEY,
-  body VARCHAR(500),
+  id    INT PRIMARY KEY,
+  title VARCHAR(200),
+  body  VARCHAR(500),
   FULLTEXT INDEX idx_body (body)
 );
 ```
 
-Insert enough rows that an index path beats a scan — the optimizer is
-cost-based, and on a small table it will scan no matter what is derivable. Then:
+`SHOW CREATE TABLE articles` reports the declared form:
+
+```
+  FULLTEXT INDEX `idx_body`(`body`) WITH PARSER STANDARD
+```
+
+`SHOW INDEX FROM articles` reports what it actually is:
+
+```
+articles  1  idx_body  1  NULL  ...  FULLTEXT  ...
+          cast(fts_tokenize(`body`, _utf8mb4'STANDARD', 3, 84, 1) as char(84) array)
+```
+
+The `3, 84, 1` are the minimum token size, the maximum, and stopwords-enabled,
+read from the session once and frozen into the index. See
+[§6](#6-where-the-analyzer-comes-from).
+
+#### 2. Load data
+
+The optimizer is cost-based, so a small table is scanned no matter what is
+derivable. Give it enough rows and selective enough terms:
 
 ```sql
-EXPLAIN SELECT id FROM articles WHERE MATCH(body) AGAINST('+distributed' IN BOOLEAN MODE);
+INSERT INTO articles VALUES
+  (1, 'MySQL Tutorial',        'This tutorial provides a basic distributed sql walkthrough'),
+  (2, 'How To Use MySQL Well', 'After you went through a mysql tutorial on replication'),
+  (3, 'Optimizing MySQL',      'In this tutorial we show how to optimize a distributed database'),
+  (4, 'MySQL vs PostgreSQL',   'This article compares mysql and postgresql storage engines'),
+  (5, 'MySQL Security',        'How to secure your mysql database with proper privileges');
+
+INSERT INTO articles
+SELECT n + 100, CONCAT('Filler ', n), CONCAT('common filler text number ', n)
+FROM (
+  SELECT a.n + b.n * 10 + c.n * 100 AS n
+  FROM (SELECT 0 n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+        UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+       (SELECT 0 n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+        UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) b,
+       (SELECT 0 n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+        UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) c
+) nums;
+
+ANALYZE TABLE articles;
 ```
 
-```
-└─Selection_5            match_against("+distributed", test.articles.body)
-  └─IndexMerge_10
-    ├─IndexRangeScan_8   index:idx_body(cast(fts_tokenize(`body`, _utf8mb4'STANDARD', 3, 84, 1) as char(84) array))
-                         range:["distributed","distributed"]
-    └─TableRowIDScan_9   table:articles
-```
-
-`SHOW INDEX` reveals what was built; `FTS_TOKENIZE` shows what a row contributes:
+The tokenizer is callable directly, which is the quickest way to see what a row
+contributes to the index:
 
 ```sql
 SELECT FTS_TOKENIZE(body, 'STANDARD', 3, 84, 1) FROM articles WHERE id = 1;
 -- ["tutorial", "provides", "basic", "distributed", "sql", "walkthrough"]
 ```
 
-**Multi-tenant.** There is no `FULLTEXT` syntax for a leading key column, so
-write the index out with the same analyzer literals. It also authorises the
-`MATCH` it answers, so no second index is needed:
+#### 3. Queries that use the index
+
+Look for `IndexRangeScan ... index:idx_body` under an `IndexMerge`, with the
+`MATCH` still above as a `Selection`: the index proposes, the `MATCH` disposes.
 
 ```sql
-KEY idx_tenant_body (tenant_id, (CAST(FTS_TOKENIZE(body, 'STANDARD', 3, 84, 1) AS CHAR(84) ARRAY)))
+EXPLAIN SELECT id FROM articles WHERE MATCH(body) AGAINST('+distributed' IN BOOLEAN MODE);
+SELECT id FROM articles WHERE MATCH(body) AGAINST('+distributed' IN BOOLEAN MODE);
 ```
 
 ```
-range:[3 "rareone",3 "rareone"]
+└─Selection_5            match_against("+distributed", ftsdemo.articles.body)
+  └─IndexMerge_10
+    ├─IndexRangeScan_8   index:idx_body(...)   range:["distributed","distributed"]
+    └─TableRowIDScan_9   table:articles
+```
+→ rows `1, 3`
+
+Optional terms become one range each, unioned:
+
+```sql
+EXPLAIN SELECT id FROM articles WHERE MATCH(body) AGAINST('distributed postgresql' IN BOOLEAN MODE);
+SELECT id FROM articles WHERE MATCH(body) AGAINST('distributed postgresql' IN BOOLEAN MODE);
 ```
 
-Check the **range**, not the index name: an index chosen on the token alone
-looks identical in the plan tree while reading every tenant's rows.
+```
+  └─IndexMerge_11
+    ├─IndexRangeScan_8   range:["distributed","distributed"]
+    ├─IndexRangeScan_9   range:["postgresql","postgresql"]
+    └─TableRowIDScan_10
+```
+→ rows `1, 3, 4`
 
-**Queries that deliberately scan**, and should be confirmed to return the same
-rows as with the index: a negated `MATCH`, a `MATCH` in one branch of an `OR`, a
-prefix-only search such as `+distrib*`, a multi-column `MATCH`, and an index
-whose analyzer differs from the query's.
+Required terms intersect, and a phrase contributes its tokens while adjacency is
+left to the residual `MATCH`:
+
+```sql
+SELECT id FROM articles WHERE MATCH(body) AGAINST('+distributed +database' IN BOOLEAN MODE);  -- row 3
+SELECT id FROM articles WHERE MATCH(body) AGAINST('"distributed sql"' IN BOOLEAN MODE);       -- row 1
+SELECT id FROM articles WHERE MATCH(body) AGAINST('"sql distributed"' IN BOOLEAN MODE);       -- no rows
+SELECT id FROM articles WHERE MATCH(body) AGAINST('+distributed -database' IN BOOLEAN MODE);  -- row 1
+```
+
+The last two read the same index range as their counterparts; the `MATCH`
+rejects the candidates.
+
+These hand-written forms are what the planner derives internally, and are useful
+for checking the index in isolation. Note there is no `CAST` — that is legal only
+inside an index definition:
+
+```sql
+EXPLAIN SELECT id FROM articles
+  WHERE 'distributed' MEMBER OF (FTS_TOKENIZE(body, 'STANDARD', 3, 84, 1));
+EXPLAIN SELECT id FROM articles
+  WHERE JSON_OVERLAPS(FTS_TOKENIZE(body, 'STANDARD', 3, 84, 1), '["distributed", "postgresql"]');
+```
+
+#### 4. Queries that deliberately scan
+
+Each of these should show a `TableFullScan`, and each returns the same rows it
+would with an index. The first two are correctness requirements, not missed
+optimizations — see [Soundness](#soundness).
+
+```sql
+-- Negated MATCH: 1003 rows.
+EXPLAIN SELECT COUNT(*) FROM articles WHERE NOT MATCH(body) AGAINST('+distributed' IN BOOLEAN MODE);
+SELECT COUNT(*) FROM articles WHERE NOT MATCH(body) AGAINST('+distributed' IN BOOLEAN MODE);
+
+-- MATCH in one branch of an OR.
+EXPLAIN SELECT COUNT(*) FROM articles
+  WHERE MATCH(body) AGAINST('+distributed' IN BOOLEAN MODE) OR id < 5;
+
+-- A prefix cannot be a token lookup, so nothing is derivable. Still rows 1, 3.
+EXPLAIN SELECT id FROM articles WHERE MATCH(body) AGAINST('+distrib*' IN BOOLEAN MODE);
+SELECT id FROM articles WHERE MATCH(body) AGAINST('+distrib*' IN BOOLEAN MODE);
+```
+
+An index built with a different analyzer cannot answer the query either. Here
+`idx_hand` bounds tokens at 5 characters while the FULLTEXT index uses the
+session default of 3, so the plan uses `idx_body` and never `idx_hand`:
+
+```sql
+CREATE TABLE mismatched (
+  id   INT PRIMARY KEY,
+  body VARCHAR(500),
+  FULLTEXT INDEX idx_body (body),
+  KEY idx_hand ((CAST(FTS_TOKENIZE(body, 'STANDARD', 5, 84, 1) AS CHAR(84) ARRAY)))
+);
+```
+
+And a multi-column FULLTEXT index is metadata-only, so `MATCH` over it scans:
+
+```sql
+CREATE TABLE multi (
+  id    INT PRIMARY KEY,
+  title VARCHAR(200),
+  body  VARCHAR(500),
+  FULLTEXT INDEX idx_tb (title, body)
+);
+INSERT INTO multi VALUES (1, 'Distributed SQL', 'a database');
+ANALYZE TABLE multi;
+EXPLAIN SELECT id FROM multi WHERE MATCH(title, body) AGAINST('+distributed' IN BOOLEAN MODE);
+```
+
+#### 5. Multi-tenant: bounding the search to one tenant
+
+A single-column index answers "which rows contain this token" across the whole
+table. For "which of *this tenant's* rows", put the tenant column in front.
+There is no `FULLTEXT` syntax for that, so write the index out with the same
+analyzer literals. It also authorises the `MATCH` it answers, so no second index
+is needed:
+
+```sql
+CREATE TABLE docs (
+  id        INT PRIMARY KEY,
+  tenant_id INT,
+  body      VARCHAR(255),
+  KEY idx_tenant_body (tenant_id, (CAST(FTS_TOKENIZE(body, 'STANDARD', 3, 84, 1) AS CHAR(84) ARRAY)))
+);
+INSERT INTO docs
+SELECT n, n % 10, CONCAT('common filler text number ', n) FROM (
+  SELECT a.n + b.n * 10 + c.n * 100 AS n
+  FROM (SELECT 0 n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+        UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+       (SELECT 0 n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+        UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) b,
+       (SELECT 0 n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+        UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) c
+) nums;
+-- The same rare token in two different tenants.
+INSERT INTO docs VALUES (1001, 3, 'rareone alone here'), (1002, 7, 'rareone elsewhere here');
+ANALYZE TABLE docs;
+
+EXPLAIN SELECT id FROM docs
+  WHERE tenant_id = 3 AND MATCH(body) AGAINST('+rareone' IN BOOLEAN MODE);
+```
+
+```
+    ├─IndexRangeScan_9   index:idx_tenant_body(tenant_id, cast(fts_tokenize(...) as char(84) array))
+                         range:[3 "rareone",3 "rareone"]
+```
+→ row `1001` only
+
+**Check the range, not the index name.** `[3 "rareone",3 "rareone"]` is two
+columns: one tenant, one token. An index chosen on the token alone looks
+identical in the plan tree while reading every tenant's rows.
+
+```sql
+-- One range per tenant.
+EXPLAIN SELECT id FROM docs
+  WHERE tenant_id IN (3, 7) AND MATCH(body) AGAINST('+rareone' IN BOOLEAN MODE);
+
+-- No tenant predicate: the leading column is unbounded, so this scans. That is
+-- the ordinary index-range rule, not a full-text limitation.
+EXPLAIN SELECT id FROM docs WHERE MATCH(body) AGAINST('+rareone' IN BOOLEAN MODE);
+```
+
+The other route is to partition the *table* by tenant: the index follows
+per-partition automatically, and pruning bounds the search before the index is
+consulted. TiDB has no way to partition an index on its own.
+
+#### 6. NULL documents
+
+A `FULLTEXT`-indexed column takes `NULL` like any other. The row stays in the
+index, and a `NULL` document matches nothing:
+
+```sql
+CREATE TABLE nullable (id INT PRIMARY KEY, body VARCHAR(255), FULLTEXT INDEX idx_body (body));
+INSERT INTO nullable VALUES (1, NULL), (2, 'distributed sql');
+UPDATE nullable SET body = NULL WHERE id = 2;
+UPDATE nullable SET body = 'relational storage' WHERE id = 1;
+ADMIN CHECK TABLE nullable;
+
+SELECT id FROM nullable WHERE MATCH(body) AGAINST('+relational' IN BOOLEAN MODE);   -- row 1
+SELECT id FROM nullable WHERE MATCH(body) AGAINST('+distributed' IN BOOLEAN MODE);  -- no rows
+```
+
+Building the index over existing `NULL`s works too:
+
+```sql
+CREATE TABLE nullable_backfill (id INT PRIMARY KEY, body VARCHAR(255));
+INSERT INTO nullable_backfill VALUES (1, NULL), (2, 'distributed sql');
+ALTER TABLE nullable_backfill ADD FULLTEXT INDEX idx_body (body);
+ADMIN CHECK TABLE nullable_backfill;
+```
+
+#### 7. Where the analyzer comes from
+
+An index materialised as a multi-valued index froze its settings into the
+expression it is built over, and a query against it compiles with that snapshot
+rather than with whatever the session holds later. A metadata-only index has no
+snapshot, so it follows the variables. `innodb_ft_min_token_size` is global-only:
+
+```sql
+-- Baseline: 'sql' is 3 characters and matches in both tables.
+SELECT id FROM articles WHERE MATCH(body) AGAINST('+sql' IN BOOLEAN MODE);        -- row 1
+SELECT id FROM multi WHERE MATCH(title, body) AGAINST('+sql' IN BOOLEAN MODE);    -- row 1
+
+SET GLOBAL innodb_ft_min_token_size = 8;
+
+-- Unchanged: the MV-backed index answers with the analyzer it was built with.
+SELECT id FROM articles WHERE MATCH(body) AGAINST('+sql' IN BOOLEAN MODE);        -- row 1
+
+-- Now empty: the metadata-only index follows the variable, and 'sql' is below
+-- the new minimum.
+SELECT id FROM multi WHERE MATCH(title, body) AGAINST('+sql' IN BOOLEAN MODE);    -- no rows
+
+SET GLOBAL innodb_ft_min_token_size = 3;
+```
+
+Changing `innodb_ft_*` does not reinterpret an existing index; it changes what a
+**new** one would be built with.
+
+#### 8. Definitions that are refused
+
+Two ways to write something that would look fine and answer nothing. Both fail
+at definition time rather than silently at query time — these are the only
+statements in this walkthrough that error.
+
+```sql
+-- Token-size bounds that cross admit no token at all.
+CREATE TABLE bad_bounds (
+  id   INT PRIMARY KEY,
+  body VARCHAR(255),
+  KEY idx ((CAST(FTS_TOKENIZE(body, 'STANDARD', 84, 3, 1) AS CHAR(84) ARRAY)))
+);
+```
+```
+ERROR 1235: ... 'FTS_TOKENIZE() with minimum token size 84 above maximum 3,
+                 which admits no token'
+```
+
+```sql
+-- Two hand-written token indexes over one column that disagree on the analyzer:
+-- which one MATCH compiled against would depend on the order they sit in the
+-- table.
+CREATE TABLE ambiguous (
+  id   INT PRIMARY KEY,
+  body VARCHAR(255),
+  KEY idx_a ((CAST(FTS_TOKENIZE(body, 'STANDARD', 3, 84, 1) AS CHAR(84) ARRAY))),
+  KEY idx_b ((CAST(FTS_TOKENIZE(body, 'STANDARD', 5, 84, 1) AS CHAR(84) ARRAY)))
+);
+INSERT INTO ambiguous VALUES (1, 'distributed sql');
+SELECT id FROM ambiguous WHERE MATCH(body) AGAINST('+distributed' IN BOOLEAN MODE);
+```
+```
+ERROR 1235: ... 'MATCH ... AGAINST over a column with several FTS_TOKENIZE
+                 indexes that disagree on the analyzer'
+```
+
+Declaring one of them `FULLTEXT` settles it — the declared index is the one named
+for the purpose — and the query succeeds.
+
+#### 9. Other things worth trying
+
+```sql
+ADMIN CHECK TABLE articles;                      -- the index holds real, checkable data
+ALTER TABLE articles DROP COLUMN body;           -- refused: the index depends on it
+ALTER TABLE articles DROP INDEX idx_body;        -- drops the hidden column too
+CREATE TABLE ngram_articles (                    -- the other parser
+  id   INT PRIMARY KEY,
+  body VARCHAR(500),
+  FULLTEXT INDEX idx_body (body) WITH PARSER NGRAM
+);
+```
+
+The gram size comes from `ngram_token_size` (global-only, default 2) and travels
+in `FTS_TOKENIZE`'s `min_token_size` slot.
 
 ### Functional Tests
 
