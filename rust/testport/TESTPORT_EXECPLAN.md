@@ -9571,3 +9571,11 @@ risks without claiming repository-wide parity.
   afterward; the full five-test owner aggregate, all-target compilation,
   standalone rustfmt, and Ready evidence are recorded in
   `receipts/util_hint.md`.
+- 2026-09-06 (`pkg/statistics/handle/cache` return-contract parity): the
+  complete cache owner no longer marks ten Go-shaped cache queries, accounting
+  helpers, or copy/update operations as `#[must_use]`. The focused discard
+  probe failed with exactly ten diagnostics before the edit and passes
+  afterward; default and failpoint-enabled owner aggregates, benchmark-target
+  compilation, standalone rustfmt, and Ready evidence are recorded in
+  `receipts/statistics_handle_cache_audit.md`. The two `get` annotations remain
+  because their `Option` return is inherently must-use in Rust.

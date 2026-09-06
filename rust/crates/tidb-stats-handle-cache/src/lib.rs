@@ -166,7 +166,6 @@ impl StatsCacheImpl {
     }
 
     /// Go `GetNextCheckVersionWithOffset`, with the handle-owned lease explicit.
-    #[must_use]
     pub fn next_check_version_with_offset(&self, lease: Duration) -> u64 {
         let nanos = i64::try_from(lease.as_nanos()).unwrap_or(i64::MAX);
         let offset =
@@ -265,7 +264,6 @@ impl StatsCacheImpl {
     }
 
     /// Go `MemConsumed`.
-    #[must_use]
     pub fn mem_consumed(&self) -> i64 {
         self.load().cost()
     }
@@ -294,19 +292,16 @@ impl StatsCacheImpl {
     }
 
     /// Go `MaxTableStatsVersion`.
-    #[must_use]
     pub fn max_table_stats_version(&self) -> u64 {
         self.load().version()
     }
 
     /// Go `Values`.
-    #[must_use]
     pub fn values(&self) -> Vec<Arc<Table>> {
         self.load().values()
     }
 
     /// Go `Len`.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.load().len()
     }
@@ -425,7 +420,6 @@ impl StatsCache {
     }
 
     /// Go `Len`.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
@@ -461,13 +455,11 @@ impl StatsCache {
     }
 
     /// Go `Values`.
-    #[must_use]
     pub fn values(&self) -> Vec<Arc<Table>> {
         self.inner.values()
     }
 
     /// Go `Cost`.
-    #[must_use]
     pub fn cost(&self) -> i64 {
         self.inner.cost()
     }
@@ -483,13 +475,11 @@ impl StatsCache {
     }
 
     /// Go `Version`.
-    #[must_use]
     pub fn version(&self) -> u64 {
         self.max_table_stats_version.load(Ordering::Acquire)
     }
 
     /// Go `CopyAndUpdate`, used by copy-on-write mode.
-    #[must_use]
     pub fn copy_and_update(&self, tables: &[Arc<Table>], deleted_ids: &[i64]) -> Self {
         let result = Self::from_inner(self.inner.copy());
         result
@@ -565,6 +555,24 @@ mod tests {
         table.version = version;
         table.existence_map = Some(Arc::new(RwLock::new(ColAndIdxExistenceMap::default())));
         Arc::new(table)
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn go_cache_returns_may_be_ignored_like_go() {
+        let cache = StatsCache::from_inner(Box::new(MapCache::new()));
+        cache.len();
+        cache.values();
+        cache.cost();
+        cache.version();
+        cache.copy_and_update(&[], &[]);
+
+        let cache = StatsCacheImpl::with_cache(Arc::new(cache));
+        cache.next_check_version_with_offset(Duration::ZERO);
+        cache.mem_consumed();
+        cache.max_table_stats_version();
+        cache.values();
+        cache.len();
     }
 
     #[test]

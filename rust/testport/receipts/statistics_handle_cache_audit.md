@@ -90,3 +90,41 @@ Ready validation for this batch is required before its commit is reported:
 No Go or Bazel source was changed in this batch, so `make bazel_prepare` is
 not required. This is one atomic root-package receipt, not a repository-wide
 parity claim.
+
+## 2026-09-06 return-contract alignment follow-up
+
+The complete five-artifact Go root package above remains unchanged between
+the receipt pin and current `origin/master`
+`f2c346fe4f368ff855e17c1f62e28a89ba7f9723`. Per the requested Rust-only
+scope, no Go source was edited and no Go test was executed. The complete Rust
+owner was re-read before editing: the 35-line `Cargo.toml`, the pre-change
+815-line `src/lib.rs`, and the 130-line `benches/statscache.rs`. The crate has
+no build script, generated or platform-specific sources, fixtures, examples,
+or external test target; the benchmark retains all six source workload shapes.
+
+Ten direct Go-shaped cache returns had Rust-only `#[must_use]` enforcement:
+`StatsCacheImpl::{next_check_version_with_offset, mem_consumed,
+max_table_stats_version, values, len}` and
+`StatsCache::{len, values, cost, version, copy_and_update}`. The annotations
+were removed without changing cache behavior. The focused
+`go_cache_returns_may_be_ignored_like_go` regression, under
+`#[deny(unused_must_use)]`, failed before the fix with exactly ten diagnostics
+(`/tmp/tidb-stats-cache-prefix.log`) and passes afterward. The two annotations
+on `StatsCacheImpl::get` and `StatsCache::get` remain deliberately: their
+`Option<Arc<Table>>` results are inherently must-use in Rust even without a
+function annotation, so deleting only the redundant annotations would not
+change the caller contract or establish Go parity.
+
+Ready validation for this Rust-only follow-up:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-cache --lib go_cache_returns_may_be_ignored_like_go -- --test-threads=1` (1 passed);
+- `cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-cache --lib --test-threads=1` (8 passed);
+- `cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-cache --lib --features failpoints --test-threads=1` (9 passed, including the failpoint-gated miss regression);
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-cache --all-targets --quiet`;
+- `rustfmt +nightly-2026-08-22 --check --edition 2021 rust/crates/tidb-stats-handle-cache/src/lib.rs rust/crates/tidb-stats-handle-cache/benches/statscache.rs`;
+- `make lint`;
+- `git diff --check`.
+
+No runtime, cache-algorithm, compatibility, or performance behavior changed;
+the regression is compile-time return-contract evidence. No Go/Bazel/module or
+import graph changed, so `make bazel_prepare` remains unnecessary.
