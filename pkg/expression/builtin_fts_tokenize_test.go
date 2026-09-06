@@ -116,12 +116,12 @@ func TestFTSTokenizeNullText(t *testing.T) {
 	sf := newFTSTokenizeForTest(t, ctx, "STANDARD", 3, 84, true)
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}).ToRow()
 
-	// JSON null rather than SQL NULL: an empty array is skipped by the
-	// multi-valued index, so a NULL text column would otherwise vanish from it.
-	v, isNull, err := sf.EvalJSON(ctx, row)
+	// SQL NULL, not a JSON literal null: the array cast that wraps this call in
+	// an index expression rejects the latter, which would stop a
+	// FULLTEXT-indexed column from holding NULL at all.
+	_, isNull, err := sf.EvalJSON(ctx, row)
 	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, "null", v.String())
+	require.True(t, isNull)
 }
 
 func TestFTSTokenizeNgram(t *testing.T) {

@@ -1938,3 +1938,36 @@ func TestAlterFullTextIndexVisibilityRejected(t *testing.T) {
 	tk.MustContainErrMsg("alter table t alter index idx_meta invisible", "set fulltext index invisible")
 	tk.MustContainErrMsg("create table t2(a text, fulltext index idx(a) invisible)", "FULLTEXT index does not support INVISIBLE")
 }
+
+// TestFullTextIndexAllowsNullColumn covers a NULL in a FULLTEXT-indexed column.
+// The tokenize call must yield SQL NULL rather than a JSON literal null: the
+// array cast that wraps it in the index expression accepts only JSON strings,
+// so a literal null makes every write to such a column fail with "Invalid JSON
+// value for CAST for expression index".
+func TestFullTextIndexAllowsNullColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_local_match_against = on")
+	tk.MustExec("create table t (id int primary key, body varchar(255), fulltext index idx(body))")
+
+	tk.MustExec("insert into t values (1, NULL), (2, 'distributed sql')")
+	tk.MustExec("update t set body = NULL where id = 2")
+	tk.MustExec("update t set body = 'relational storage' where id = 1")
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select id from t where body is null").Check(testkit.Rows("2"))
+
+	// A NULL document matches nothing, and the rows that do match are found.
+	tk.MustQuery("select id from t where match(body) against('+relational' in boolean mode)").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where match(body) against('+distributed' in boolean mode)").
+		Check(testkit.Rows())
+
+	// Building the index over existing NULLs works too.
+	tk.MustExec("create table backfilled (id int primary key, body varchar(255))")
+	tk.MustExec("insert into backfilled values (1, NULL), (2, 'distributed sql')")
+	tk.MustExec("alter table backfilled add fulltext index idx(body)")
+	tk.MustExec("admin check table backfilled")
+	tk.MustQuery("select id from backfilled where match(body) against('+distributed' in boolean mode)").
+		Check(testkit.Rows("2"))
+}

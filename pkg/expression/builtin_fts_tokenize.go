@@ -210,10 +210,16 @@ func (b *builtinFTSTokenizeSig) evalJSON(ctx EvalContext, row chunk.Row) (types.
 		return types.BinaryJSON{}, false, err
 	}
 	if isNull {
-		// A NULL input produces JSON null rather than an empty array. The
-		// multi-valued index skips empty arrays entirely but records a null,
-		// so this keeps a row with a NULL text column present in the index.
-		return types.CreateBinaryJSON(nil), false, nil
+		// SQL NULL, propagated. Returning a JSON literal null instead would be
+		// rejected by the CAST(... AS CHAR(n) ARRAY) that wraps this call in an
+		// index expression - convertJSON2Tp accepts only JSON strings - so a
+		// FULLTEXT-indexed column could not hold NULL at all: the insert, the
+		// update and the backfill would each fail with
+		// "Invalid JSON value for CAST for expression index".
+		//
+		// A NULL virtual column is recorded by the index as a null entry, so
+		// the row still appears in it, and MATCH never matches a NULL document.
+		return types.BinaryJSON{}, true, nil
 	}
 	analyzer := b.analyzer
 	if analyzer == nil {
@@ -439,15 +445,4 @@ func ftsTokenizeStringLiteral(node ast.ExprNode) (string, bool) {
 		return "", false
 	}
 	return str, true
-}
-
-// ftsTokenizeMaxTokenBytes bounds the CHAR(n) element width of the multi-valued
-// index built over FTS_TOKENIZE. Token length is filtered in characters while
-// the index element width is in characters too, so the configured maximum is
-// the right bound; it is clamped to the analyzer's own ceiling.
-func ftsTokenizeMaxTokenBytes(config fulltext.AnalyzerConfig) int {
-	if config.ParserType == model.FullTextParserTypeNgramV1 {
-		return max(config.NgramTokenSize, 1)
-	}
-	return max(config.InnodbFtMaxTokenSize, 1)
 }
