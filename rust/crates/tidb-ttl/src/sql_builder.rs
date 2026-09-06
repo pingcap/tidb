@@ -94,6 +94,12 @@ fn write_datum<W: RestoreWriter>(
                 return Ok(());
             }
             let escaped = escape_string(datum.go_bytes());
+            // Go writes the escaped bytes raw (`d.GetString()` is an
+            // arbitrary byte string), so a non-binary string key column with
+            // non-UTF-8 data (e.g. latin1) yields non-UTF-8 SQL there. This
+            // crate's SQL surface is `&str` end to end, and a lossy
+            // conversion would build a DELETE that targets the wrong rows,
+            // so the build fails loudly instead.
             let escaped = String::from_utf8(escaped).map_err(|_| {
                 error("the datum is not valid UTF-8 after escaping and cannot be written as text")
             })?;
@@ -149,6 +155,10 @@ fn write_value_expr<W: RestoreWriter>(
         Datum::Decimal(value) => ctx.write_plain(&value.to_string()),
         Datum::Time(value) => ctx.write_plain(&format!("'{value}'")),
         Datum::Duration(value) => ctx.write_plain(&format!("'{value}'")),
+        // BinaryLiteral/Bit/Enum/Set never reach Go's ValueExpr.Restore
+        // either: `writeDatum` routes bit/blob/binary-string columns to the
+        // hex branch above before an AST value expression is built, so this
+        // arm is unreachable through the same routing.
         Datum::BinaryLiteral(_)
         | Datum::Bit(_)
         | Datum::Enum(_, _)

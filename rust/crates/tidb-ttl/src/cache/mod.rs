@@ -23,18 +23,17 @@
 //! - [`task`] <- `task.go`
 //! - [`ttlstatus`] <- `ttlstatus.go`
 //!
-//! This remains a partial package because the two cache `Update` methods need
-//! the real `infoschema.InfoSchema`, which has no transcreation. The reason is
-//! *not* that most of Go's tests need `testkit`: `base.go`'s and `table.go`'s
-//! whole content, both row decoders, and every SQL statement builder that does
-//! not encode datums came across, and they are covered by direct assertions
-//! here. The remaining production boundary is:
+//! This remains a partial package because the two cache `Update` methods are
+//! transcreated against trait boundaries (`TtlInfoSchema`, `Session`) rather
+//! than a real `infoschema.InfoSchema` transcreation, which this workspace
+//! does not have to depend on. The reason is *not* that most of Go's tests
+//! need `testkit`: `base.go`'s and `table.go`'s whole content, both row
+//! decoders, and every SQL statement builder that does not encode datums came
+//! across, and they are covered by direct assertions here. The boundary is:
 //!
 //! - The `Update` methods of [`infoschema::InfoSchemaCache`] and
-//!   [`ttlstatus::TableStatusCache`], whose info-schema traversal is expressed
-//!   against trait boundaries rather than the real `infoschema.InfoSchema`.
-//!   This is a genuine boundary: `pkg/infoschema` has no transcreation to
-//!   depend on.
+//!   [`ttlstatus::TableStatusCache`] drive their info-schema traversal through
+//!   those traits; the traversal logic itself is ported.
 //! The task statement builder now uses `tidb-codec` for scan-range encoding,
 //! and `RowToTTLTask` decodes both ranges and `TTLTaskState` with the same
 //! persisted contracts as Go.

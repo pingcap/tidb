@@ -391,6 +391,9 @@ pub trait RegionCache {
 }
 
 /// Go `unsignedEdge`.
+///
+/// A non-null, non-int datum reaches Go's `d.GetInt64()`, which panics on
+/// that kind; this clone is the documented substitute for that panic path.
 #[must_use]
 pub fn unsigned_edge(d: &Datum) -> Datum {
     match d {
