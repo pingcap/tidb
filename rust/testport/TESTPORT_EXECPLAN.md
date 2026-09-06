@@ -9406,3 +9406,17 @@ risks without claiming repository-wide parity.
   deliberate deferrals. clippy `--no-deps` zero own warnings on all four
   crates; parser+chunk+util+expr+datatype 3439/3439. Details in
   `receipts/nightly_clippy_refresh_sweep.md`.
+- 2026-09-06 (planner checkColumn port, batch #39): a behavioral probe proved
+  the port ACCEPTS `bit(65)`, `bit(0)`, `char(300)`, `varchar(40000)`,
+  `decimal(70,5)` and `set('a,b')` CREATE TABLEs that Go's planner
+  `checkColumn` (`preprocess.go:1578-1680`) rejects at DDL time. The missing
+  arms are now ported into `check_column_attributes` — BIT size/display (3013,
+  1439), CHAR/VARCHAR field length (1074, with the resolved-charset max
+  65535/maxlen), DECIMAL precision/scale (1426/1425), FLOAT/DOUBLE width/scale/
+  wrong-field-spec (1439/1425/1063) — and the SET comma-member/member-count
+  checks (1367/1097), with seven new coded DriverError variants carrying the
+  verbatim Go templates. Fail-before: the probe's ACCEPTED prints; fail-after:
+  nine asserted regressions including an in-range boundary create sweep. The
+  executor failure-set delta versus clean HEAD is the documented sibling
+  in-flight breakage plus spill-dir environmental flake, item-by-item. Details
+  in `receipts/check_column_width_limits.md`.

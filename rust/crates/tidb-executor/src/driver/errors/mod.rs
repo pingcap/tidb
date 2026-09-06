@@ -458,6 +458,52 @@ impl DriverError {
             3505,
             format!("Too long enumeration/set value for column {column}."),
         ),
+        // Go: "Display width out of range for column '%-.192s' (max = %d)".
+        DriverError::TooBigDisplayWidth { column, maximum } => MysqlError::new(
+            1439,
+            format!(
+                "Display width out of range for column '{column}' (max = {maximum})"
+            ),
+        ),
+        // Go: "Column length too big for column '%-.192s' (max = %d); use
+        // BLOB or TEXT instead".
+        DriverError::TooBigFieldLength { column, maximum } => MysqlError::new(
+            1074,
+            format!(
+                "Column length too big for column '{column}' (max = {maximum}); use BLOB or TEXT instead"
+            ),
+        ),
+        // Go: "Invalid size for column '%s'.".
+        DriverError::InvalidFieldSize { column } => MysqlError::new(
+            3013,
+            format!("Invalid size for column '{column}'."),
+        ),
+        // Go: "Too big scale %d specified for column '%-.192s'. Maximum is %d.".
+        DriverError::TooBigScale {
+            scale,
+            column,
+            maximum,
+        } => MysqlError::new(
+            1425,
+            format!(
+                "Too big scale {scale} specified for column '{column}'. Maximum is {maximum}."
+            ),
+        ),
+        // Go: "Too many strings for column %-.192s and SET".
+        DriverError::TooManySetMembers { column } => MysqlError::new(
+            1097,
+            format!("Too many strings for column '{column}' and SET"),
+        ),
+        // Go: "Illegal %s '%-.192s' value found during parsing".
+        DriverError::IllegalValueForType { type_name, value } => MysqlError::new(
+            1367,
+            format!("Illegal {type_name} '{value}' value found during parsing"),
+        ),
+        // Go: "Incorrect column specifier for column '%-.192s'".
+        DriverError::WrongFieldSpec { column } => MysqlError::new(
+            1063,
+            format!("Incorrect column specifier for column '{column}'"),
+        ),
         // Go: "Duplicate column name '%-.192s'".
         DriverError::DuplicateColumnName(name) => {
             MysqlError::new(1060, format!("Duplicate column name '{name}'"))

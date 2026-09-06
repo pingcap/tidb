@@ -175,6 +175,56 @@ pub enum DriverError {
         /// The column whose ENUM/SET member exceeded the configured limit.
         column: String,
     },
+    /// Go `types.ErrTooBigDisplayWidth` (1439), carrying the column and the
+    /// type's maximum display width (BIT 64, FLOAT/DOUBLE 255).
+    TooBigDisplayWidth {
+        /// The column it was declared on.
+        column: String,
+        /// The type's own maximum.
+        maximum: i64,
+    },
+    /// Go `types.ErrTooBigFieldLength` (1074), carrying the column and the
+    /// maximum character length (CHAR 255, VARCHAR 65535/charset-maxlen).
+    TooBigFieldLength {
+        /// The column it was declared on.
+        column: String,
+        /// The charset/type-specific maximum.
+        maximum: i64,
+    },
+    /// Go `types.ErrInvalidFieldSize` (3013), carrying the column: `BIT(0)`.
+    InvalidFieldSize {
+        /// The column it was declared on.
+        column: String,
+    },
+    /// Go `types.ErrTooBigScale` (1425), carrying the declared scale, the
+    /// column and the type's maximum (30).
+    TooBigScale {
+        /// The scale the column declared.
+        scale: i64,
+        /// The column it was declared on.
+        column: String,
+        /// The type's own maximum.
+        maximum: i64,
+    },
+    /// Go `ErrTooBigSet` (1097), carrying the column: more than 64 members.
+    TooManySetMembers {
+        /// The column it was declared on.
+        column: String,
+    },
+    /// Go `types.ErrIllegalValueForType` (1367), carrying the member with the
+    /// embedded comma: `Illegal SET 'a,b' value found during parsing`.
+    IllegalValueForType {
+        /// The type name in Go's message spelling (`SET`).
+        type_name: &'static str,
+        /// The offending member.
+        value: String,
+    },
+    /// Go `types.ErrWrongFieldSpec` (1063), carrying the column: `FLOAT(p)`
+    /// with p above 24.
+    WrongFieldSpec {
+        /// The column it was declared on.
+        column: String,
+    },
     /// Go `ErrCantDropFieldOrKey` (1091), with the index-specific message.
     UnknownIndex(String),
     /// Go `ErrCantDropFieldOrKey` (1091).
