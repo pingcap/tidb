@@ -132,7 +132,6 @@ pub struct StateInfo {
 
 impl StateInfo {
     /// Go `NewStateInfo`.
-    #[must_use]
     pub fn new(state: impl Into<String>) -> Self {
         Self {
             state: state.into(),
@@ -399,7 +398,6 @@ pub struct EtcdSyncer {
 
 impl EtcdSyncer {
     /// Go `NewEtcdSyncer`.
-    #[must_use]
     pub fn new(client: Arc<EtcdClient>, path: impl Into<Vec<u8>>) -> Self {
         Self {
             client,
@@ -654,7 +652,6 @@ pub struct MemSyncer {
 
 impl MemSyncer {
     /// Go `NewMemSyncer` followed by `Init`'s channel construction.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             watch: Mutex::new(None),
@@ -776,6 +773,16 @@ mod tests {
             .flat_map(|family| family.get_metric())
             .map(|metric| metric.get_histogram().get_sample_count())
             .sum()
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_constructor_return_values_can_be_ignored() {
+        StateInfo::new(STATE_NORMAL_RUNNING);
+        MemSyncer::new();
+        let client =
+            Arc::new(EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(20)).unwrap());
+        EtcdSyncer::new(client, SERVER_GLOBAL_STATE);
     }
 
     #[test]

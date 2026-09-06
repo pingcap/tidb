@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/ddl/serverstate` constructor return contracts): the
+  complete four-artifact, 454-line Go package and complete Rust owner were
+  rechecked at current Go master. The direct `StateInfo::new`,
+  `EtcdSyncer::new`, and `MemSyncer::new` counterparts no longer emit three
+  Rust-only `#[must_use]` diagnostics. A focused deny-on-discard regression
+  failed with exactly three diagnostics before the edit and passes afterward;
+  the full owner suite, all-target check, formatting, lint, and diff gates
+  pass. Evidence is recorded in `receipts/ddl_serverstate.md`.
 - 2026-09-06 (`pkg/statistics/handle/initstats` API return contracts): the
   complete three-artifact, 159-line Go package and single-file Rust owner were
   rechecked at current Go master. `AtomicF64::load`, `get_concurrency`, and
