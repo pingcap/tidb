@@ -20,6 +20,14 @@ use std::thread;
 
 use tidb_stats_handle_usage_collector::GlobalCollector;
 
+#[deny(unused_must_use)]
+#[test]
+fn constructor_and_spawn_result_may_be_ignored_like_go() {
+    GlobalCollector::<i32>::new(|_| {});
+    let collector = GlobalCollector::<i32>::new(|_| {});
+    collector.spawn_session();
+}
+
 #[test]
 fn session_send_delta() {
     let merged = Arc::new(AtomicI64::new(0));

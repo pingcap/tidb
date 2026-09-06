@@ -43,7 +43,6 @@ pub struct GlobalCollector<T> {
 
 impl<T: Send + 'static> GlobalCollector<T> {
     /// Go `NewGlobalCollector`.
-    #[must_use]
     pub fn new<F>(merge: F) -> Self
     where
         F: Fn(T) + Send + Sync + 'static,
@@ -64,7 +63,6 @@ impl<T: Send + 'static> GlobalCollector<T> {
     }
 
     /// Go `GlobalCollector.SpawnSession`.
-    #[must_use]
     pub fn spawn_session(&self) -> SessionCollector<T> {
         SessionCollector {
             shared: Arc::clone(&self.shared),

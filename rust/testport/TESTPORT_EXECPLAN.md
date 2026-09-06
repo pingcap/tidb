@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/statistics/handle/usage/collector` construction return
+  contracts): the complete three-artifact, 289-line package and three-file
+  Rust owner were rechecked at current Go master. `NewGlobalCollector` and
+  `SpawnSession` counterparts no longer emit two Rust-only `#[must_use]`
+  diagnostics. A focused regression failed with exactly two diagnostics
+  before the edit and passes afterward; the five-test owner suite, all-target
+  check, formatting, lint, and diff checks pass. Evidence is recorded in
+  `receipts/statistics_handle_usage_collector.md`.
 - 2026-09-06 (`pkg/util/sqlexec/mock` generated API return contracts): the
   complete three-artifact, 152-line package and two-file Rust owner were
   rechecked at current Go master. The generated constructor and `EXPECT`
