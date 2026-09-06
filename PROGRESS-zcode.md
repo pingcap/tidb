@@ -760,3 +760,5 @@
 - 新面批次: tidb-ddl-resourcegroup (Go pkg/ddl/resourcegroup @ a85e0fd5df) 全文件审计。零 behavior 分歧: MaxGroupNameLength 32、NewGroupFromOptions 校验序、9 条错误文案逐字一致。新增表驱动 drift-guard 测试钉死错误文案; proto3 JobTypes nil/empty 序列化等价已注释。
   验收: cargo test -p tidb-ddl-resourcegroup 全绿 (含新 drift guard); fmt; diff-check; make lint 过。收据 rust/docs/ddl-resourcegroup-parity-audit.md。含代码改动 (测试), 已推送。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 增量收敛核查: 分支重组至服务端 tip 2a081370b5c (兄弟 ddl overlap receipt review), PROGRESS-zcode.md 双-append 冲突按拼接解决 (兄弟确认 ddl-session 为其今日活跃面未碰, 与我的审计无冲突)。我修复过的面全绿: br 31/0, hint 2/0, protocol 110/0, tablecodec 61/0。无新增分歧。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) unistore 测试目标随兄弟 distsql 修复回补; (3) pd-client 外部 pin 待决; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
