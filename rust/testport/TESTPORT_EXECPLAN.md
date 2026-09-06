@@ -9610,3 +9610,12 @@ risks without claiming repository-wide parity.
   frozen metadata resolution, all 158 domain tests, all-target compilation,
   Ready lint, and diff hygiene pass. Evidence is in
   `receipts/domain_plan_replayer_retention.md` and the domain parity audit.
+- 2026-09-06 (`pkg/dxf/framework/proto` corrective return-contract parity
+  after `8d42bcc7035`): all nine current Rust owner artifacts (1,883 lines)
+  were re-read under the requested Rust-only scope. Five restored
+  `#[must_use]` annotations no longer impose Rust-only diagnostics on direct
+  Go-shaped step and task-type returns. The restored-tree probe failed with
+  exactly five diagnostics before the correction and both focused regressions
+  pass afterward; all 13 owner tests, all-target compilation, standalone
+  rustfmt, Ready lint, and diff hygiene pass. Evidence is in
+  `receipts/dxf_framework_proto.md` and its dedicated ExecPlan.

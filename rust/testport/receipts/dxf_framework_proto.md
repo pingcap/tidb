@@ -54,3 +54,59 @@ suite are shared Ready gates for the batch and are recorded in the storage
 receipt/ExecPlan. The remaining risk is that a future Rust scheduler owner
 must preserve these bounds and reset semantics when it becomes dependency
 closed.
+
+## Corrective Rust return-contract alignment (2026-09-06)
+
+Commit `8d42bcc7035` restored five `#[must_use]` annotations and deleted the
+focused regressions from the earlier alignment in `8d087ece625`. For this
+correction, the current Rust owner was read in full: `Cargo.toml`, `lib.rs`,
+and the `modify`, `node`, `schstatus`, `step`, `subtask`, `task`, and
+`task_type` modules, including all inline tests. That is exactly nine tracked
+artifacts and 1,883 lines after this test addition; there is no separate test
+target, fixture, generated source/input, platform variant, example, benchmark,
+build script, or crate-local lockfile. Per the requested Rust-only scope, the
+existing pinned Go inventory above was not re-read.
+
+Go permits callers to discard the results of `Step2Str`, `IsValidStep`,
+`IsValidBusinessStep`, `Type2Int`, and `Int2Type`. Rust had again imposed five
+Rust-only `#[must_use]` diagnostics on those direct equivalents. Removing only
+those annotations leaves step rendering, validity rules, task-type integer
+mappings, and all other crate contracts unchanged.
+
+The focused tests `step::tests::go_step_returns_may_be_ignored_like_go` and
+`task_type::tests::go_task_type_returns_may_be_ignored_like_go` discard all
+five returns under `#[deny(unused_must_use)]`. With the restored annotations,
+the compile probe failed with exactly five diagnostics, captured in
+`/tmp/tidb-dxf-proto-restored-prefix.log`; after the correction, both focused
+tests pass. The complete 13-test owner suite, all-target compilation,
+standalone rustfmt, Ready `make lint`, and diff hygiene also pass.
+
+No Go source, Bazel metadata, Cargo manifest/dependency, generated input,
+fixture, or platform variant changed. The Bazel prepare gate therefore does
+not require `make bazel_prepare`.
+
+```text
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml \
+  --offline --locked -p tidb-dxf --lib go_ -- --test-threads=1
+# PASS; 2 tests
+
+cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml \
+  --offline --locked -p tidb-dxf --lib --test-threads=1
+# PASS; 13 tests
+
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml \
+  --offline --locked -p tidb-dxf --all-targets --quiet
+# PASS
+
+rustfmt +nightly-2026-08-22 --check --edition 2021 \
+  rust/crates/tidb-dxf/src/step.rs rust/crates/tidb-dxf/src/task_type.rs
+# PASS
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 \
+TMPDIR=/tmp/tidb-codex make lint
+# PASS
+
+git diff --check
+# PASS
+```

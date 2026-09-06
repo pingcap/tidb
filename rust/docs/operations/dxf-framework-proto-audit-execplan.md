@@ -13,9 +13,17 @@ behavior restored from Go master.
   metadata with the focused `TestTaskCleanupBatchSize` regression.
 - [x] (2026-09-02) Ran the package unit suite and recorded the Rust ownership
   boundary in the parity receipt.
-- [ ] Run `make bazel_prepare`, shared Ready gates, publish one batch commit,
-  verify `origin/hparser-integration`, pull its latest state, and continue the
-  rolling audit.
+- [x] (2026-09-06) Corrected the regression from `8d42bcc7035`: re-read all
+  nine current Rust owner artifacts (1,883 lines) and removed the five restored
+  Rust-only `#[must_use]` diagnostics from direct Go-shaped step and task-type
+  returns. The restored-tree probe failed with exactly five diagnostics and
+  both deny-on-discard regressions pass afterward.
+- [x] (2026-09-06) Both focused regressions, all 13 owner tests, all-target
+  compilation, standalone formatting, Ready lint, and diff hygiene pass. No
+  Go/Bazel/module/import change requires `make bazel_prepare`.
+- [x] (2026-09-06) Prepared one package-scoped corrective commit for
+  publication to `origin/hparser-integration`; remote verification is the
+  publication gate immediately after this plan-bearing commit.
 
 ## Scope and decision
 
@@ -40,5 +48,7 @@ rust/Cargo.toml --all -- --check`, `make lint`, and `git diff --check`.
 ## Outcome
 
 The complete inventory and Go-only ownership decision are in
-`rust/testport/receipts/dxf_framework_proto.md`; no Rust production behavior
-was changed in this package.
+`rust/testport/receipts/dxf_framework_proto.md`. The 2026-09-02 batch changed
+no Rust production behavior. This corrective Rust-only batch restores the
+discardable return contract previously established by `8d087ece625`, without
+changing the values returned by any function.
