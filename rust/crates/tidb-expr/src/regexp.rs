@@ -100,6 +100,19 @@ pub(crate) fn regexp_match_with_collation(
     regexp_like(text, pattern, match_type)
 }
 
+/// `[NOT] REGEXP` matching for the statistics TopN-assisted estimation path
+/// (`GetSelectivityByFilter`): stored values and patterns arrive as raw
+/// bytes, the estimator's own gate only reaches binary-collation string
+/// columns (Go's new-collation refusal), so the case-sensitive default
+/// matcher is exact, and any invalid UTF-8 operand or malformed pattern
+/// answers `None` — the by-value form of Go's error fallback, which declines
+/// the whole estimation.
+pub fn regexp_match_bin_collation(text: &[u8], pattern: &[u8]) -> Option<bool> {
+    let text = std::str::from_utf8(text).ok()?;
+    let pattern = std::str::from_utf8(pattern).ok()?;
+    regexp_match(text, pattern).ok()
+}
+
 /// `REGEXP_LIKE` applies the expression's derived collation before its
 /// user-supplied match type. A later `c`/`i` therefore wins, as Go's
 /// `getRegexpMatchType` requires.

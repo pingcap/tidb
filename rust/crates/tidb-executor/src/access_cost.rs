@@ -1502,10 +1502,31 @@ fn condition_kind(
             }
         }
         tidb_ast::Expr::Regexp { not, .. } => {
+            let selectivity = defaults
+                .eval_topn_string_match
+                .then(|| string_match_selectivity(conjunct, table, resolver, stats))
+                .flatten();
             if *not {
-                ConditionKind::NegatedStringMatch(None)
+                ConditionKind::NegatedStringMatch(selectivity)
             } else {
-                ConditionKind::StringMatch(None)
+                ConditionKind::StringMatch(selectivity)
+            }
+        }
+        // Go `GetExprInsideIsTruth` unwraps a NOT wrapper for the str-match
+        // classification (`selectivity.go:299-304`); a wrapped string match
+        // is classified — and evaluated — through the wrapper.
+        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
+            match string_match_shape(strip_parens(inner)) {
+                Some(_) => {
+                    let selectivity = defaults
+                        .eval_topn_string_match
+                        .then(|| string_match_selectivity(conjunct, table, resolver, stats))
+                        .flatten();
+                    // The wrapper is what makes Go's negate family; the
+                    // evaluation itself handles the inversion per value.
+                    ConditionKind::NegatedStringMatch(selectivity)
+                }
+                None => ConditionKind::Other,
             }
         }
         tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => {
@@ -1518,10 +1539,49 @@ fn condition_kind(
     }
 }
 
-/// Go `GetSelectivityByFilter` for a direct-column `LIKE`/`ILIKE` over a
-/// fully available StatsVer2 column. This tier eagerly loads every statistics
-/// payload, so the presence of the column histogram and TopN is its
-/// `IsFullLoad` proof.
+/// One string-match predicate shape: the tested expression, the pattern, the
+/// negation, and the matcher.
+enum StringMatchKind<'a> {
+    Like {
+        ilike: &'a bool,
+        escape: &'a Option<u8>,
+    },
+    Regexp,
+}
+
+/// Go's classification set (`ast.Like`, `ast.Ilike`, `ast.Regexp`,
+/// `ast.RegexpLike`, and `GetExprInsideIsTruth` unwrapping a NOT wrapper).
+/// This AST carries `NOT LIKE`'s negation on the node, so a NOT wrapper only
+/// appears around parenthesized or already-negated shapes.
+fn string_match_shape(expr: &tidb_ast::Expr) -> Option<(&tidb_ast::Expr, &tidb_ast::Expr, bool, StringMatchKind<'_>)> {
+    match strip_parens(expr) {
+        tidb_ast::Expr::Like {
+            expr,
+            pattern,
+            not,
+            ilike,
+            escape,
+        } => Some((
+            expr,
+            pattern,
+            *not,
+            StringMatchKind::Like { ilike, escape },
+        )),
+        tidb_ast::Expr::Regexp { expr, pattern, not } => {
+            Some((expr, pattern, *not, StringMatchKind::Regexp))
+        }
+        tidb_ast::Expr::Unary(op @ (tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword), inner) => {
+            let (expr, pattern, not, kind) = string_match_shape(inner)?;
+            Some((expr, pattern, !not, kind))
+        }
+        _ => None,
+    }
+}
+
+/// Go `GetSelectivityByFilter` for a direct-column `LIKE`/`ILIKE`/`REGEXP`
+/// over a fully available StatsVer2 column. This tier eagerly loads every
+/// statistics payload, so the presence of the column histogram and TopN is
+/// its `IsFullLoad` proof.
 fn string_match_selectivity(
     predicate: &tidb_ast::Expr,
     table: &KvTable,
@@ -1529,20 +1589,13 @@ fn string_match_selectivity(
     stats: Option<&TableStatistics>,
 ) -> Option<f64> {
     let stats = stats.filter(|stats| !stats.pseudo)?;
-    let tidb_ast::Expr::Like {
-        expr,
-        pattern,
-        not,
-        ilike,
-        escape,
-    } = strip_parens(predicate)
-    else {
+    // Go `GetExprInsideIsTruth` unwraps a NOT wrapper before the str-match
+    // classification, so the negation rides on the inner shape here too.
+    let (tested, pattern_expr, negated, kind) = string_match_shape(strip_parens(predicate))?;
+    let tidb_ast::Expr::Column(path) = strip_parens(tested) else {
         return None;
     };
-    let tidb_ast::Expr::Column(path) = strip_parens(expr) else {
-        return None;
-    };
-    let pattern = match strip_parens(pattern) {
+    let pattern = match strip_parens(pattern_expr) {
         tidb_ast::Expr::String(pattern) | tidb_ast::Expr::RawString(pattern) => pattern.as_bytes(),
         _ => return None,
     };
@@ -1562,17 +1615,26 @@ fn string_match_selectivity(
             Datum::String(value) => value.bytes(),
             _ => return None,
         };
-        let matched = if *ilike {
-            tidb_expr::ilike_match(value, pattern, escape.unwrap_or(b'\\'))
-        } else {
-            tidb_expr::like_match_with_collation(
-                value,
-                pattern,
-                *escape,
-                column.field_type.collation(),
-            )
+        let matched = match kind {
+            StringMatchKind::Like { ilike, escape } => {
+                if *ilike {
+                    tidb_expr::ilike_match(value, pattern, escape.unwrap_or(b'\\'))
+                } else {
+                    tidb_expr::like_match_with_collation(
+                        value,
+                        pattern,
+                        *escape,
+                        column.field_type.collation(),
+                    )
+                }
+            }
+            // The estimator's own gate only reaches binary-collation string
+            // columns, so the case-sensitive regexp matcher is exact.
+            StringMatchKind::Regexp => {
+                tidb_expr::regexp_match_bin_collation(value, pattern)?
+            }
         };
-        Some(if *not { !matched } else { matched })
+        Some(if negated { !matched } else { matched })
     };
 
     let topn_total = column_stats
@@ -1911,6 +1973,74 @@ mod tests {
         assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
     }
 
+    /// The shared StatsVer2 string-column fixture: TopN values
+    /// ("needle top"×20, "other top"×10) plus two cumulative buckets
+    /// (count 30/repeat 5 over "hist needle *", count 70/repeat 10 over
+    /// "other *"), no NULLs — `totalCnt = 100`.
+    fn stats_v2_name_column_fixture() -> (KvTable, TableStatistics) {
+        let mut field_type = FieldType::new(FieldTypeCode::Varchar);
+        field_type.set_charset_name("utf8mb4");
+        field_type.set_collation_name("utf8mb4_bin");
+        let table = KvTable::with_storage(
+            81,
+            vec![KvColumn {
+                name: "name".to_owned(),
+                id: 1,
+                field_type,
+                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                default_value: None,
+                origin_default: None,
+                comment: String::new(),
+                generated: None,
+            }],
+            Box::new(MemTableStorage::new()),
+        );
+        let mut topn = tidb_stats::cmsketch::TopN::new(2);
+        for (value, count) in [("needle top", 20), ("other top", 10)] {
+            topn.append(
+                &tidb_codec::encode_key(&[Datum::new_bytes(value.as_bytes().to_vec())]).unwrap(),
+                count,
+            );
+        }
+        topn.sort();
+        let stats = TableStatistics::new(
+            100,
+            0,
+            BTreeMap::from([(
+                1,
+                ColumnStats {
+                    histogram: tidb_stats::Histogram {
+                        id: 1,
+                        ndv: 6,
+                        buckets: vec![
+                            tidb_stats::Bucket {
+                                count: 30,
+                                repeat: 5,
+                                ndv: 2,
+                                lower_bound: Datum::new_bytes(b"hist needle lower".to_vec()),
+                                upper_bound: Datum::new_bytes(b"hist needle upper".to_vec()),
+                            },
+                            tidb_stats::Bucket {
+                                count: 70,
+                                repeat: 10,
+                                ndv: 2,
+                                lower_bound: Datum::new_bytes(b"other lower".to_vec()),
+                                upper_bound: Datum::new_bytes(b"other upper".to_vec()),
+                            },
+                        ],
+                        ..tidb_stats::Histogram::default()
+                    },
+                    topn: Some(topn),
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                },
+            )]),
+            BTreeMap::new(),
+        );
+        (table, stats)
+    }
+
     /// Go `GetSelectivityByFilter` evaluates one-column string predicates
     /// against every StatsVer2 TopN value and both histogram bounds. Lower
     /// bounds are equal-weight samples while upper bounds retain `Repeat`.
@@ -1991,6 +2121,99 @@ mod tests {
             Some(&stats),
         );
         assert!((actual - 0.525).abs() < 1e-12, "{actual} != 0.525");
+    }
+
+
+    #[test]
+    fn regexp_estimates_from_topn_and_histogram_anchors() {
+        let (table, stats) = stats_v2_name_column_fixture();
+        let predicate = tidb_ast::Expr::Regexp {
+            expr: Box::new(tidb_ast::Expr::Column(vec!["name".to_owned()])),
+            pattern: Box::new(tidb_ast::Expr::String("^hist".to_owned())),
+            not: false,
+        };
+
+        let actual = selectivity(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        // TopN: no value starts with "hist". Histogram: only the first
+        // bucket's bounds match — lowerSel 1/2, upperSel 5/15, upper bounds
+        // carry 15 of the 70 histogram rows.
+        assert!((actual - 0.325).abs() < 1e-12, "{actual} != 0.325");
+    }
+
+    #[test]
+    fn negated_regexp_inverts_per_value() {
+        let (table, stats) = stats_v2_name_column_fixture();
+        let predicate = tidb_ast::Expr::Regexp {
+            expr: Box::new(tidb_ast::Expr::Column(vec!["name".to_owned()])),
+            pattern: Box::new(tidb_ast::Expr::String("^hist".to_owned())),
+            not: true,
+        };
+
+        let actual = selectivity(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        // Every non-NULL value answers either way: 0.325 + 0.675 == 1.
+        assert!((actual - 0.675).abs() < 1e-12, "{actual} != 0.675");
+    }
+
+    #[test]
+    fn not_wrapper_around_like_estimates_like_go_s_negate_family() {
+        let (table, stats) = stats_v2_name_column_fixture();
+        let inner = tidb_ast::Expr::Like {
+            expr: Box::new(tidb_ast::Expr::Column(vec!["name".to_owned()])),
+            pattern: Box::new(tidb_ast::Expr::String("%needle%".to_owned())),
+            not: false,
+            ilike: false,
+            escape: None,
+        };
+        let predicate = tidb_ast::Expr::Unary(
+            tidb_ast::UnaryOp::NotKeyword,
+            Box::new(tidb_ast::Expr::Paren(Box::new(inner))),
+        );
+
+        let actual = selectivity(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        // Go classifies `NOT (like)` through GetExprInsideIsTruth and
+        // evaluates the wrapper; the estimate mirrors the plain LIKE's
+        // 0.525 complement shape — here the wrapper is evaluated directly.
+        assert!((actual - 0.475).abs() < 1e-12, "{actual} != 0.475");
+    }
+
+    #[test]
+    fn malformed_regexp_pattern_declines_the_estimation() {
+        let (table, stats) = stats_v2_name_column_fixture();
+        let predicate = tidb_ast::Expr::Regexp {
+            expr: Box::new(tidb_ast::Expr::Column(vec!["name".to_owned()])),
+            pattern: Box::new(tidb_ast::Expr::String("[".to_owned())),
+            not: false,
+        };
+        let defaults = SelectivityDefaults {
+            eval_topn_string_match: true,
+            ..SelectivityDefaults::default()
+        };
+
+        let kind = condition_kind(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+            defaults,
+        );
+        // A malformed pattern is Go's error arm: the whole estimation
+        // declines and the condition falls to the string-match default tail.
+        assert_eq!(kind, ConditionKind::StringMatch(None));
     }
 
     #[test]
