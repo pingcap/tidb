@@ -9602,3 +9602,11 @@ risks without claiming repository-wide parity.
   pass afterward; all 10 owner tests, all-target compilation, standalone
   rustfmt, and Ready evidence are recorded in `receipts/ddl_notifier.md` and
   both notifier ExecPlans. Publication remains one Go-package commit.
+- 2026-09-06 (`pkg/domain` plan-replayer dependency lock closure): concurrent
+  plan-replayer work declared `toml`, `tidb-util`, and dev-only `tidb-parser`
+  in `tidb-domain/Cargo.toml` without refreshing the workspace lock entry, so
+  every `cargo --locked` command failed during resolution. The lock now records
+  exactly those three existing dependencies with no version/checksum changes;
+  frozen metadata resolution, all 158 domain tests, all-target compilation,
+  Ready lint, and diff hygiene pass. Evidence is in
+  `receipts/domain_plan_replayer_retention.md` and the domain parity audit.

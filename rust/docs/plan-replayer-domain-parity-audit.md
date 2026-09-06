@@ -59,3 +59,13 @@ keeps the view flag, follows foreign keys recursively with a
 visited-set guard, and re-parses+walks a view's SELECT through the same
 extractor. Real-SQL tests: view recursion pulls the referenced table,
 CTE references are skipped, FKs pull in their tables.
+
+## 2026-09-06 build-artifact closure
+
+The plan-replayer additions introduced three direct manifest dependencies
+without refreshing the `tidb-domain` entry in `rust/Cargo.lock`, making every
+frozen Cargo command fail before compilation. The lock entry now includes
+`toml`, `tidb-util`, and dev-only `tidb-parser`; no package version or checksum
+changed. Frozen metadata resolution, all 158 domain owner tests, all-target
+compilation, repository lint, and diff hygiene pass. Exact evidence is in
+`../testport/receipts/domain_plan_replayer_retention.md`.

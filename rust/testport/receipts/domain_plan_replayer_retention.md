@@ -134,3 +134,34 @@ to other tests. The Rust GC primitive already accepts caller-provided
 durations, so this batch introduces no Rust compatibility or performance
 risk. The package-level lifecycle and nested domain integration remain
 explicitly unverified boundaries for subsequent audits.
+
+## 2026-09-06 plan-replayer dependency lock closure
+
+The current integration tip added `toml` and `tidb-util` as production
+dependencies and `tidb-parser` as a development dependency of
+`tidb-domain`, with direct uses in `plan_replayer.rs`, but did not add them to
+the workspace lockfile's existing `tidb-domain` package entry. Consequently
+every `cargo --locked` command failed during workspace resolution before it
+could select a package. The pre-fix failure is captured in
+`/tmp/tidb-dxf-proto-restored-prefix.log`.
+
+Regenerating the lock metadata offline adds exactly the three dependency names
+to that existing entry. It changes no resolved version, checksum, or transitive
+package and does not alter runtime behavior. This is a Rust build-artifact
+correction for the root `pkg/domain` owner; per the requested Rust-only scope,
+no Go source or test was read, edited, or executed.
+
+Ready evidence:
+
+- `cargo +nightly-2026-08-22 metadata --manifest-path rust/Cargo.toml --offline --locked --no-deps --format-version=1`;
+- `cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-domain --lib --test-threads=1` (158 passed);
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-domain --all-targets --quiet`;
+- `make lint`;
+- `git diff --check`.
+
+The focused regression is the frozen workspace-resolution gate itself: it
+fails before the lock entry is completed and passes afterward. Adding a Rust
+unit test cannot validate Cargo's pre-compilation lock consistency. No Go,
+Bazel, module, or import graph changed, so `make bazel_prepare` was not
+required. Existing warning debt in the concurrently added plan-replayer source
+is outside this lock-only correction and remains visible in the check output.

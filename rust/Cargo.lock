@@ -3458,8 +3458,11 @@ dependencies = [
  "tidb-error",
  "tidb-model",
  "tidb-mysql",
+ "tidb-parser",
  "tidb-stats-handle-metrics",
+ "tidb-util",
  "tidb-vardef",
+ "toml",
  "tracing",
 ]
 
