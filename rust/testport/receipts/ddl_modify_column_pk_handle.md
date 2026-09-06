@@ -27,3 +27,33 @@ Validation:
 The remaining online-reorganization and generated-column rows in the broad
 failpoint carrier stay explicit boundaries; no Go, generated, platform,
 Bazel, or module files changed.
+
+## Follow-up closure — session ALTER COLUMN carriers (2026-09-06)
+
+The complete session-side inventory was rechecked before editing: `pkg/session`
+contains 68 Go files, 21 Bazel build/ownership inputs, and one package
+manifest; the related DDL source window is `pkg/ddl/db_integration_test.go`
+(`TestAlterColumn`, lines 1208-1248) and `pkg/ddl/modify_column_test.go`
+(`TestModifyColumnNullToNotNull`, lines 169-214). The Rust owners are
+`tidb-session/src/tests_alter_column.rs` and
+`tidb-session/src/tests_core/ddl.rs`; no Go, generated, fixture, platform, or
+build artifact was changed.
+
+The source fixture uses `a INT KEY NONCLUSTERED` for the successful widening,
+index-preservation, and AUTO_INCREMENT transition cases. Rust had accidentally
+omitted `NONCLUSTERED`, so those tests exercised the correctly-refusing
+clustered-handle path and failed before the intended assertions. The fixtures
+now match Go. The shared `tests_core::ddl::modify_column` carrier also now
+asserts Go's exact clustered-handle 8200 refusal for `BIGINT PRIMARY KEY` →
+`INT`, adds a nonclustered success control, and expects Go's 1138
+`Invalid use of NULL value` when converting a stored NULL to `NOT NULL`.
+
+Focused evidence:
+
+- Before the fixture/expectation corrections,
+  `tests_alter_column::modify_column_preserves_the_primary_key_and_unique_index`
+  failed on the clustered-handle 8200 guard, and
+  `tests_core::ddl::modify_column` failed on the stale 1138 expectation.
+- Afterward, all 13 `tests_alter_column` tests pass and the focused
+  `tests_core::ddl::modify_column` test passes, including the exact error codes
+  and the nonclustered positive control.

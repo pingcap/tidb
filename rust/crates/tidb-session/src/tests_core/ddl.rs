@@ -554,13 +554,28 @@ fn modify_column() {
         [["xx"]]
     );
 
-    // Captured: a clustered handle cannot leave the integer domain (8200),
-    // but may change to another integer type.
+    // Captured: a clustered handle cannot change to another integer type when
+    // the row-key width changes. Go's `checkModifyTypes` reports 8200 before
+    // touching the table; a NONCLUSTERED primary key is the control that may
+    // change type through an ordinary metadata update.
     assert!(matches!(
         session.run("ALTER TABLE t MODIFY COLUMN a VARCHAR(10)"),
-        Err(DriverError::UnsupportedModifyColumn(_))
+        Err(DriverError::UnsupportedModifyColumn(
+            "this column has primary key flag"
+        ))
     ));
-    session.run("ALTER TABLE t MODIFY COLUMN a INT").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE t MODIFY COLUMN a INT"),
+        Err(DriverError::UnsupportedModifyColumn(
+            "this column has primary key flag"
+        ))
+    ));
+    session
+        .run("CREATE TABLE nonclustered_handle (a BIGINT PRIMARY KEY NONCLUSTERED)")
+        .unwrap();
+    session
+        .run("ALTER TABLE nonclustered_handle MODIFY COLUMN a INT")
+        .unwrap();
 
     // Captured: an index cannot cover a full BLOB/TEXT column (1170).
     assert!(matches!(
@@ -608,8 +623,9 @@ fn modify_column() {
         .run("ALTER TABLE t CHANGE COLUMN d d BIGINT")
         .unwrap();
 
-    // Captured: a stored NULL is rejected by a new NOT NULL, with the
-    // row's position; a convertible string becomes the new type.
+    // Captured from Go's `TestModifyColumnNullToNotNull`: a stored NULL is
+    // rejected by a new NOT NULL with 1138 `Invalid use of NULL value`; a
+    // convertible string becomes the new type.
     let mut session = Session::new();
     session
         .run("CREATE TABLE u (a BIGINT, b VARCHAR(10), c BIGINT)")
@@ -617,7 +633,7 @@ fn modify_column() {
     session.run("INSERT INTO u VALUES (1, '12', NULL)").unwrap();
     assert!(matches!(
         session.run("ALTER TABLE u MODIFY COLUMN c BIGINT NOT NULL"),
-        Err(DriverError::DataTruncatedAtRow { row: 1, .. })
+        Err(DriverError::DdlCoded { errno: 1138, .. })
     ));
     session.run("ALTER TABLE u MODIFY COLUMN b BIGINT").unwrap();
     assert_eq!(

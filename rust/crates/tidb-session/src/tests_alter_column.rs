@@ -60,7 +60,7 @@ fn renamed_indexed_column_keeps_loaded_statistics_usable() {
 fn modify_column_cannot_add_a_key_constraint() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE mc (a INT KEY, b INT, c INT)")
+        .run("CREATE TABLE mc (a INT KEY NONCLUSTERED, b INT, c INT)")
         .unwrap();
 
     // Go: `err = tk.ExecToErr(...)`, an error either way. Adding a second
@@ -95,7 +95,7 @@ fn modify_column_cannot_add_a_key_constraint() {
 fn modify_column_preserves_the_primary_key_and_unique_index() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE mc (a INT KEY, b INT, c INT UNIQUE)")
+        .run("CREATE TABLE mc (a INT KEY NONCLUSTERED, b INT, c INT UNIQUE)")
         .unwrap();
     session
         .run("ALTER TABLE mc MODIFY COLUMN a BIGINT")
@@ -132,7 +132,7 @@ fn modify_column_preserves_the_primary_key_and_unique_index() {
 fn modify_column_auto_increment_transitions() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE mc (a INT KEY AUTO_INCREMENT, b INT)")
+        .run("CREATE TABLE mc (a INT KEY NONCLUSTERED AUTO_INCREMENT, b INT)")
         .unwrap();
 
     // Keeping it is fine, and it is still AUTO_INCREMENT afterwards.
@@ -191,7 +191,7 @@ fn modify_column_auto_increment_transitions() {
 fn modify_column_refuses_auto_increment_with_a_default() {
     let mut session = Session::new();
     session
-        .run("CREATE TABLE mc (a INT KEY AUTO_INCREMENT, b INT)")
+        .run("CREATE TABLE mc (a INT KEY NONCLUSTERED AUTO_INCREMENT, b INT)")
         .unwrap();
     assert!(matches!(
         session.run("ALTER TABLE mc MODIFY COLUMN a BIGINT AUTO_INCREMENT DEFAULT 5"),

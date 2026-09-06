@@ -240,6 +240,13 @@ For each bounded behavior cluster:
   Rust production already matched 1347, so the fix removes only the
   Rust-only test expectation and records the focused session regression in
   `receipts/b110.md`.
+- 2026-09-06 (`pkg/ddl` ALTER COLUMN session carriers): rechecked the complete
+  `pkg/session` inventory and corrected four Rust fixtures that omitted Go's
+  explicit `NONCLUSTERED` primary-key clause. The shared ALTER COLUMN carrier
+  now pins Go's clustered-handle 8200 refusal, its nonclustered success
+  control, and the 1138 stored-NULL-to-`NOT NULL` error; all 14 focused tests
+  pass. Evidence and source boundaries are recorded in
+  `receipts/ddl_modify_column_pk_handle.md`.
 - 2026-09-05 (`pkg/ddl` sequence cache bounds): promoted the previously
   ignored `GetSequenceBaseEndRound` contract. The existing non-mutating Rust
   `SequenceAllocator::base_end_round` accessor is now exercised through the
