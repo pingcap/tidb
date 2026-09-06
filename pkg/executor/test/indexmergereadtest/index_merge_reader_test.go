@@ -924,5 +924,9 @@ func TestIssues70910(t *testing.T) {
 	tk.MustNotHavePlan(query, "TopN")
 	// Issue #70910: the pushed-down limit must not be truncated to 1024 rows by
 	// the index merge union worker heap. The full 2000 rows must be returned.
-	require.Equal(t, 2000, len(tk.MustQuery(query).Rows()))
+rows := tk.MustQuery(query).Rows()
+	require.Equal(t, 2000, len(rows))
+	for i, row := range rows {
+		require.Equal(t, fmt.Sprintf("%d", i), fmt.Sprintf("%v", row[2]))
+	}
 }
