@@ -193,12 +193,18 @@ impl<C: SessionContext + ?Sized + 'static> InternalSession<C> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.sequence += 1;
         let prefix = format!("TransferOwner error, opSeq: {}, ", state.sequence);
+        // Go appends `objectStr` identities (`%T(%p)`) for both sides; the
+        // owner id is this crate's identity analog.
         let Some(current) = state.owner.as_ref() else {
-            return Err(SysSessionError::new(format!("{prefix}session is closed")));
+            return Err(SysSessionError::new(format!(
+                "{prefix}session is closed, caller: Owner({}), owner: <nil>",
+                from.id
+            )));
         };
         if !current.same(from) {
             return Err(SysSessionError::new(format!(
-                "{prefix}caller is not the owner"
+                "{prefix}caller is not the owner, caller: Owner({}), owner: Owner({})",
+                from.id, current.id
             )));
         }
         if current.same(&to) {
@@ -258,14 +264,16 @@ impl<C: SessionContext + ?Sized + 'static> InternalSession<C> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.sequence += 1;
         let Some(current) = state.owner.as_ref() else {
-            return Err(SysSessionError::new(
-                "EnterOperation error: session is closed",
-            ));
+            return Err(SysSessionError::new(format!(
+                "EnterOperation error: session is closed, caller: Owner({}), owner: <nil>",
+                caller.id
+            )));
         };
         if !current.same(caller) {
-            return Err(SysSessionError::new(
-                "EnterOperation error: caller is not the owner",
-            ));
+            return Err(SysSessionError::new(format!(
+                "EnterOperation error: caller is not the owner, caller: Owner({}), owner: Owner({})",
+                caller.id, current.id
+            )));
         }
         if !thread_safe {
             state.unsafe_count += 1;
@@ -341,6 +349,9 @@ impl<C: SessionContext + ?Sized + 'static> InternalSession<C> {
         if context.has_prepared_txn_future() {
             return Err(SysSessionError::new("txn is pending for TSO"));
         }
+        // Go returns `sctx.Txn(false)`'s error raw; this crate's
+        // `SysSessionError` is message-only, so the source renders into the
+        // message at the boundary.
         if context
             .txn_valid()
             .map_err(|error| SysSessionError::new(error.to_string()))?
@@ -765,6 +776,15 @@ impl<C: SessionContext + ?Sized + 'static> AdvancedSessionPool<C> {
             let context = session.internal.context();
             if !context.contains_internal_session() {
                 while !context.store_internal_session() {
+                    // Go breaks this loop in test builds (`intest.InTest`)
+                    // unless the ForceBlockGCInTest failpoint forces the
+                    // retry: the internal session is only registered
+                    // explicitly in tests, so a missing session manager must
+                    // not spin a test forever. That failpoint has no hook
+                    // here, so the forced-retry arm is always false.
+                    if tidb_util::intest::IN_TEST {
+                        break;
+                    }
                     if cancelled() {
                         return Err(SysSessionError::new("context canceled"));
                     }
@@ -876,6 +896,13 @@ impl<C: SessionContext + ?Sized + 'static> Pool<C> for AdvancedSessionPool<C> {
             let context = session.internal.context();
             if !context.contains_internal_session() {
                 while !context.store_internal_session() {
+                    // Go breaks this loop in test builds (`intest.InTest`)
+                    // unless the ForceBlockGCInTest failpoint forces the
+                    // retry; the forced-retry arm has no hook here and is
+                    // always false.
+                    if tidb_util::intest::IN_TEST {
+                        break;
+                    }
                     if cancelled() {
                         return Err(Box::new(SysSessionError::new("context canceled"))
                             as tidb_sqlexec::SqlExecError);
