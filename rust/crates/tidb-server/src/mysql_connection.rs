@@ -2459,7 +2459,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     ),
                 )?;
             }
-            Command::FieldList(_) | Command::ResetConnection => write_error(
+            // Go answers COM_SHUTDOWN with handleQuery("SHUTDOWN") and
+            // COM_CHANGE_USER with handleChangeUser; both need the full
+            // server, which this read-only node does not implement yet.
+            Command::FieldList(_)
+            | Command::ResetConnection
+            | Command::Shutdown
+            | Command::ChangeUser(_) => write_error(
                 &mut output,
                 1,
                 ER_UNKNOWN_COM_ERROR,

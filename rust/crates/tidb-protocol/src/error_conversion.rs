@@ -55,6 +55,7 @@ pub use tidb_error::mysql::errcode::ErrUnknown as MYSQL_ERR_UNKNOWN;
 pub use tidb_error::mysql::errcode::ErrWarnDataOutOfRange as MYSQL_ERR_WARN_DATA_OUT_OF_RANGE;
 /// Inserted row has the wrong number of values.
 pub use tidb_error::mysql::errcode::ErrWrongValueCountOnRow as MYSQL_ERR_WRONG_VALUE_COUNT_ON_ROW;
+pub use tidb_error::tidb::errcode::ErrInvalidType as MYSQL_ERR_INVALID_TYPE;
 
 /// The source-shaped execution/error categories currently available to the
 /// Rust rewrite.
@@ -107,6 +108,9 @@ pub enum ErrorKind {
     ForeignKeyViolation,
     /// Expression evaluation failed without a single source errno.
     Eval,
+    /// A datum could not be rendered for its declared column type
+    /// (`err.ErrInvalidType`, 8057).
+    InvalidType,
     /// An error category not yet represented by the Rust source vocabulary.
     Unknown,
 }
@@ -165,6 +169,7 @@ fn code_for_kind(kind: ErrorKind) -> u16 {
         ErrorKind::ColumnCountMismatch => MYSQL_ERR_WRONG_VALUE_COUNT_ON_ROW,
         ErrorKind::DataTooLong => MYSQL_ERR_DATA_TOO_LONG,
         ErrorKind::OutOfRange => MYSQL_ERR_WARN_DATA_OUT_OF_RANGE,
+        ErrorKind::InvalidType => MYSQL_ERR_INVALID_TYPE,
         ErrorKind::NotSelect
         | ErrorKind::RequiresTable
         | ErrorKind::Wildcard

@@ -47,9 +47,14 @@ pub const COM_STMT_RESET: u8 = 0x1a;
 /// MySQL command byte for fetching a cursor result.
 pub const COM_STMT_FETCH: u8 = 0x1c;
 /// MySQL command byte for changing connection options.
+/// MySQL command byte for shutting the server down (`SHUTDOWN` query).
+pub const COM_SHUTDOWN: u8 = 0x08;
 pub const COM_SET_OPTION: u8 = 0x1b;
 /// MySQL command byte for resetting a connection.
 pub const COM_RESET_CONNECTION: u8 = 0x1f;
+/// MySQL command byte for changing the connection user; the payload is
+/// auth data the server owns.
+pub const COM_CHANGE_USER: u8 = 0x11;
 
 /// A decoded command and its source-owned raw payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -89,6 +94,12 @@ pub enum Command {
     SetOption(Vec<u8>),
     /// Reset all per-connection state.
     ResetConnection,
+    /// Shut the server down. Go answers it with `handleQuery("SHUTDOWN")`
+    /// (conn.go:1554); dispatch and privileges remain server obligations.
+    Shutdown,
+    /// Change the connection user. The payload is the auth blob Go's
+    /// `handleChangeUser` parses in the server (conn.go:1567).
+    ChangeUser(Vec<u8>),
     /// A command byte not yet owned by a Rust server leaf.
     Unknown {
         /// The command byte that has no Rust owner yet.
@@ -147,6 +158,8 @@ pub fn decode_command(payload: &[u8]) -> Result<Command, CommandError> {
         COM_STMT_FETCH => Command::StmtFetch(command_payload.to_vec()),
         COM_SET_OPTION => Command::SetOption(command_payload.to_vec()),
         COM_RESET_CONNECTION => Command::ResetConnection,
+        COM_SHUTDOWN => Command::Shutdown,
+        COM_CHANGE_USER => Command::ChangeUser(command_payload.to_vec()),
         code => Command::Unknown {
             code,
             payload: command_payload.to_vec(),
