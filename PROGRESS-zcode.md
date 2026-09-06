@@ -757,3 +757,6 @@
 - 回补验证: unistore lib 测试目标仍编译失败 (InProcessClient 未实现 tidb-txnkv::client::SynchronousBatchRequestDispatcher::send_batch_request_with_route) —— 该 trait 契约是 BatchCommands 式分发, InProcess 需要真正的 coprocessor 路由功能面, 属兄弟会话 distsql 接口在途重构 (tidb-distsql 今日活跃), 按碰撞规则不动。维持 open, 归兄弟修复后回补。
 - 定性: tidb-pd-client 的 tso.rs 为工作区原生 gRPC 客户端, Go 对应物是外部 client-go (非本仓库包) —— 审计前需先定外部源 pin (repo 规则 6), 列为待决, 不盲审。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) unistore 测试目标随兄弟修复回补; (3) pd-client 外部 pin 待决; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
+- 新面批次: tidb-ddl-resourcegroup (Go pkg/ddl/resourcegroup @ a85e0fd5df) 全文件审计。零 behavior 分歧: MaxGroupNameLength 32、NewGroupFromOptions 校验序、9 条错误文案逐字一致。新增表驱动 drift-guard 测试钉死错误文案; proto3 JobTypes nil/empty 序列化等价已注释。
+  验收: cargo test -p tidb-ddl-resourcegroup 全绿 (含新 drift guard); fmt; diff-check; make lint 过。收据 rust/docs/ddl-resourcegroup-parity-audit.md。含代码改动 (测试), 已推送。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
