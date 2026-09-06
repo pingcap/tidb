@@ -450,3 +450,28 @@ func TestQueryIndexTermsAreSound(t *testing.T) {
 		}
 	}
 }
+
+// TestQueryIndexTermsRequiredClauseWithoutTokens covers a required clause that
+// contributes no indexable token. The optional tokens must not be used in its
+// place: a document satisfying the required clauses matches regardless of them,
+// so narrowing by them would drop it.
+func TestQueryIndexTermsRequiredClauseWithoutTokens(t *testing.T) {
+	for _, search := range []string{
+		"+data* apple",     // required prefix, optional term
+		"+sq* distributed", // the same shape, reversed order
+		"+data* +sq*",      // every required clause unindexable
+		"+data* apple pie", // several optional terms alongside
+	} {
+		query := mustCompileForIndexTerms(t, search)
+		_, ok := query.IndexTerms()
+		require.False(t, ok, "%q must not be narrowed", search)
+	}
+
+	// A required clause that does contribute is still used, and the optional
+	// terms alongside it are correctly ignored rather than intersected.
+	query := mustCompileForIndexTerms(t, "+database apple")
+	terms, ok := query.IndexTerms()
+	require.True(t, ok)
+	require.Equal(t, []string{"database"}, terms.Required)
+	require.Empty(t, terms.Optional)
+}

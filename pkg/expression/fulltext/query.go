@@ -621,7 +621,20 @@ func (q *Query) IndexTerms() (IndexTerms, bool) {
 	for _, clause := range group.must {
 		required = append(required, definitelyPresentTokens(clause)...)
 	}
-	if len(required) > 0 {
+	if len(group.must) > 0 {
+		// A required clause decides the match on its own: a document
+		// satisfying every one of them matches whether or not any optional
+		// clause does. So the optional tokens below say nothing about which
+		// documents qualify, and unioning them would exclude the documents
+		// that match through the required clauses alone.
+		//
+		// `+data* apple` is the case: the prefix contributes no token, and
+		// requiring "apple" would lose "database systems", which the query
+		// matches. When the required clauses yield nothing indexable, there is
+		// nothing sound to narrow with.
+		if len(required) == 0 {
+			return IndexTerms{}, false
+		}
 		return IndexTerms{Required: dedupeTokens(required)}, true
 	}
 

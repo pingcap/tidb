@@ -335,3 +335,32 @@ func TestFTSNarrowIndexCannotHoldTruncatedTokens(t *testing.T) {
 	tk.MustExec("insert into articles values (2, 'abc def')")
 	tk.MustQuery("select count(*) from articles").Check([][]any{{"1"}})
 }
+
+// TestFTSMatchAgainstUnindexableRequiredTermScans covers a MATCH whose required
+// clause contributes no indexable token. The optional terms alongside it must
+// not be used to narrow: a document satisfying the required clause matches
+// whether or not it contains them, so an index range built from them would drop
+// it before the residual MATCH ever ran.
+func TestFTSMatchAgainstUnindexableRequiredTermScans(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_local_match_against=ON")
+	tk.MustExec("create table articles (id int primary key, body varchar(255), fulltext index idx_body(body))")
+	for i := range 1000 {
+		tk.MustExec(fmt.Sprintf("insert into articles values (%d, 'common filler text number %d')", i, i))
+	}
+	tk.MustExec("insert into articles values (1001, 'database systems')")
+	tk.MustExec("insert into articles values (1002, 'apple pie')")
+	tk.MustExec("analyze table articles")
+
+	query := "select id from articles where match(body) against('+data* apple' in boolean mode) order by id"
+	// 'database systems' matches the required prefix; 'apple pie' does not.
+	tk.MustQuery(query).Check([][]any{{"1001"}})
+	require.False(t, usesFTSMVIndex(tk, query))
+
+	// The same result whether or not an access path is available at all.
+	tk.MustExec("set @@tidb_enable_index_merge=off")
+	tk.MustQuery(query).Check([][]any{{"1001"}})
+	tk.MustExec("set @@tidb_enable_index_merge=on")
+}
