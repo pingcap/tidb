@@ -656,3 +656,4 @@
   验收: cargo test -p tidb-stmtsummary --lib 64 稳定全绿 (3 次连跑); fmt; diff-check; make lint 过。收据更新。推送 f176dfecaa2..828880055f1。
   v2 包状态: 5 个 Go 生产文件中 4 个全移植 + logger.go 缩减为 StmtLogWriter trait 边界 (zap core/ecnodeer 为生态机器)。
 - 下轮恢复点: (1) 新面 tidb-ttl/dxf; (2) 兄弟增量收敛核查; (3) F2/F3-seam live 阻塞; (4) DST 排队; (5) dbsid 分叉待协调。
+- 增量收敛核查: 同步至 55bf4a80d41 (兄弟 serverstate 构造器契约 + init-stats returns), 相关面全绿: ddl-serverstate 7/0, stats-handle-initstats 1/0, schemaver 9/0, timer 16/0。无新增分歧。
