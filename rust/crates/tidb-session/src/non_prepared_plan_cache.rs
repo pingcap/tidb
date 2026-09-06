@@ -1236,10 +1236,20 @@ impl crate::Session {
     }
 
     fn non_prepared_plan_cache_capacity(&self) -> usize {
+        // The pinned surface: the deprecated `tidb_non_prepared_plan_cache_size`
+        // name drives the capacity this port's tests and callers set; the
+        // unified `tidb_session_plan_cache_size` remains the fallback default
+        // (both resolve to 100 when untouched).
         self.vars
             .get_system("tidb_non_prepared_plan_cache_size")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
+            .or_else(|| {
+                self.vars
+                    .get_system("tidb_session_plan_cache_size")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
             .unwrap_or(100)
     }
 
