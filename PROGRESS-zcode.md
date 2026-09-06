@@ -730,3 +730,8 @@
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
 - 增量收敛核查: 同步至 374536a2386 (兄弟 statistics/usage + cache + priorityqueue + hint processor return contracts 等), 我修复过的面全绿: hint 2/0, tablecodec 61/0, protocol 110/0, sqlexec 0+0, timer 16+49/0。无新增分歧。注意兄弟新提交 "util/hint: align processor return contracts" 改了 hint processor —— 我上一批的 contains_table_hint 大小写注释与 NTH_PLAN 修复内容需在其上仍成立 (本轮测试通过即证)。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 新面批次: tidb-ddl-session (Go pkg/ddl/session @ a85e0fd5df) 全文件审计。零 behavior 分歧。
+  匹配面: Session 操作序 (StmtRollback 先于 RollbackTxn)、Execute prometheus 指标 (同指数桶/ok-err 后缀/panic 覆盖)、请求源默认 ddl、DrainRecordSet 8、RunInTxn NotifyBeginTxnCh failpoint (Condvar 等价无缓冲通道)、池 Get/Put/Destroy/Close 全序与 "session pool is closed" 文案。
+  文档化: 类型断言错误路径结构不可达、RecordSetCloser 记日志 vs Go 静默、schedule-eval trait 为前瞻移植脚手架 (基线 Go 无此面)。
+  验收: cargo test -p tidb-ddl-session 5 全绿; fmt; diff-check; make lint 过。收据 rust/docs/ddl-session-parity-audit.md。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
