@@ -224,8 +224,25 @@ fn quote_identifier(value: &str) -> String {
     format!("`{}`", value.replace('`', "``"))
 }
 
+/// Go `escapeStringBackslash` (`pkg/util/sqlescape/utils.go:92`), the escape
+/// `MustFormatSQL` applies to `%?` string arguments such as column comments.
 fn quote_string(value: &str) -> String {
-    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('\'');
+    for byte in value.chars() {
+        match byte {
+            '\0' => quoted.push_str("\\0"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\u{1a}' => quoted.push_str("\\Z"),
+            '\'' => quoted.push_str("\\'"),
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 /// Go `buildCreateQuery`.
@@ -533,8 +550,12 @@ impl Worker {
 
     /// Go `changeSamplingInterval`.
     pub fn set_sampling_interval(&self, value: &str) -> Result<(), String> {
+        // Go's `errWrongValueForVar.GenWithStackByArgs(name, value)` renders
+        // errno 1231 with both arguments.
         let value = value.parse::<u64>().map_err(|_| {
-            format!("Incorrect argument type to variable '{REPOSITORY_SAMPLING_INTERVAL}'")
+            format!(
+                "Variable '{REPOSITORY_SAMPLING_INTERVAL}' can't be set to the value of '{value}'"
+            )
         })?;
         self.state
             .lock()
@@ -546,7 +567,9 @@ impl Worker {
     /// Go `changeSnapshotInterval`.
     pub fn set_snapshot_interval(&self, value: &str) -> Result<(), String> {
         let value = value.parse::<u64>().map_err(|_| {
-            format!("Incorrect argument type to variable '{REPOSITORY_SNAPSHOT_INTERVAL}'")
+            format!(
+                "Variable '{REPOSITORY_SNAPSHOT_INTERVAL}' can't be set to the value of '{value}'"
+            )
         })?;
         self.state
             .lock()
@@ -558,7 +581,7 @@ impl Worker {
     /// Go `setRetentionDays`.
     pub fn set_retention_days(&self, value: &str) -> Result<(), String> {
         let value = value.parse::<i64>().map_err(|_| {
-            format!("Incorrect argument type to variable '{REPOSITORY_RETENTION_DAYS}'")
+            format!("Variable '{REPOSITORY_RETENTION_DAYS}' can't be set to the value of '{value}'")
         })?;
         self.state
             .lock()

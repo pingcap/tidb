@@ -907,3 +907,53 @@ fn test_stopping_and_restarting_worker() {
     });
     worker.stop();
 }
+
+// Go's `MustFormatSQL("%?", comment)` escapes through
+// `escapeStringBackslash` (`pkg/util/sqlescape/utils.go:40-80`): NUL, \n, \r,
+// ctrl-Z, quote, double quote and backslash all become backslash sequences.
+#[test]
+fn test_comment_string_escaping_matches_go() {
+    let sql = build_create_query_comment("it's a \"test\" \\ path");
+    assert!(
+        sql.contains(", `C` bigint(20) COMMENT 'it\\'s a \\\"test\\\" \\\\ path' "),
+        "actual: {sql}"
+    );
+    let sql = build_create_query_comment("line\nbreak\r\nnul\0ctrl\u{1a}");
+    assert!(
+        sql.contains("COMMENT 'line\\nbreak\\r\\nnul\\0ctrl\\Z' "),
+        "actual: {sql}"
+    );
+}
+
+fn build_create_query_comment(comment: &str) -> String {
+    let table = RepositoryTable::source("TIDB_INDEX_USAGE", TableType::Snapshot);
+    let source = TableInfo {
+        columns: vec![Column {
+            name: "C".to_owned(),
+            type_desc: "bigint(20)".to_owned(),
+            comment: comment.to_owned(),
+        }],
+        partitions: Vec::new(),
+    };
+    build_create_query(&table, &source).unwrap()
+}
+
+// Go renders the numeric-variable rejections with
+// `errWrongValueForVar.GenWithStackByArgs(name, value)` -- errno 1231 with
+// both arguments -- not the 1232 "Incorrect argument type" text.
+#[test]
+fn test_interval_rejection_messages_match_go() {
+    let worker = Worker::new(None, None, None, "msg");
+    assert_eq!(
+        worker.set_sampling_interval("abc").unwrap_err(),
+        "Variable 'tidb_workload_repository_active_sampling_interval' can't be set to the value of 'abc'"
+    );
+    assert_eq!(
+        worker.set_snapshot_interval("abc").unwrap_err(),
+        "Variable 'tidb_workload_repository_snapshot_interval' can't be set to the value of 'abc'"
+    );
+    assert_eq!(
+        worker.set_retention_days("abc").unwrap_err(),
+        "Variable 'tidb_workload_repository_retention_days' can't be set to the value of 'abc'"
+    );
+}
