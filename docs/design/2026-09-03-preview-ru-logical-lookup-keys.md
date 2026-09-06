@@ -1,8 +1,9 @@
-# Experimental logical lookup inputs
+# Experimental logical lookup inputs and split preview weights
 
-This extends the coefficient-free telemetry in #69977. It does not add a
-coefficient, change the active RU formula, or charge additional RU. The purpose
-is to collect data before deciding whether a per-lookup term is useful.
+This extends the coefficient-free telemetry in #69977 with raw lookup inputs
+and two independently priced stages in the experimental preview. Production
+weights remain uncalibrated; this does not change customer RU billing or adopt
+the provisional weights from an offline fit.
 
 ## Unit contract
 
@@ -29,6 +30,36 @@ An index join's inner non-covering IndexLookup can also perform a separate
 table-fetch stage. Its handle count belongs to that IndexLookup node, not to
 the join node. Do not infer that their two counts must be equal.
 
+## Split preview formula
+
+```text
+preview_RU = existing_preview_RU
+           + logical_index_probe_keys * IndexProbeWeight
+           + logical_table_fetch_keys * TableFetchWeight
+```
+
+| New unit | Owner | Exact meaning | Example |
+| --- | --- | --- | --- |
+| `logical_index_probe_keys` | IndexJoin / IndexHashJoin / retained IndexMergeJoin | Eligible inner lookup tuples generated from outer rows, before execution-batch deduplication | Outer customer IDs `101,101,205,999,NULL`: 4 for ordinary equality, even if 999 is absent |
+| `logical_table_fetch_keys` | IndexLookup / IndexMerge | Handles submitted to the table-fetch stage; IndexMerge uses handles after union/intersection | A non-covering index lookup that finds three handles: 3 |
+
+These are typed aliases of the corresponding node's `logical_lookup_keys`;
+they are not additional lookup attempts. The raw compatibility unit is **never
+priced**. Price the typed units, or replay the old shared raw unit, never both.
+
+Explicit PointGet/BatchPointGet retain only the raw compatibility unit and their
+existing formula. Ordinary HashJoin and HashAgg emit neither new unit: their
+in-memory hash work is not an index lookup. A non-covering index join can emit
+both new units under different plan nodes. For example, three outer customer
+IDs each matching ten orders produce 3 join probes and 30 table fetches.
+
+`IndexProbeWeight` and `TableFetchWeight` are independent fields in the existing
+private `readBillingDemoWeights` provider. They accept finite nonnegative
+values. As with the other preview weights, there is no new SQL setting for
+configuring them. Local formula tests inject calibrated values; the default
+provider remains uncalibrated and does not report a numeric total. The staging
+experiment fits and replays these coefficients offline from raw JSON.
+
 ## Collection
 
 Enable `tidb_enable_read_billing_demo`. For per-statement JSON also enable the
@@ -37,15 +68,17 @@ CPU validation.
 
 The unit is available in:
 
-- `tidb_read_billing_demo_base_units_total`, with `unit="logical_lookup_keys"`
+- `tidb_read_billing_demo_base_units_total`, with `unit="logical_lookup_keys"`,
+  `unit="logical_index_probe_keys"`, or `unit="logical_table_fetch_keys"`,
   and `input_source="executor_lookup_inputs"`. Sum/difference the counters using
   the same 30-second collection process as other raw units.
 - `INFORMATION_SCHEMA.STATEMENTS_SUMMARY_READ_BILLING_DEMO_BASE_UNITS`, including
   `VALUE` and `SAMPLE_COUNT`.
 - The `units` array in `GENERAL_LOG_RU_UNITS`; its additive `statuses` array
   preserves the existing statement/operator coverage statuses.
-- `EXPLAIN ANALYZE FORMAT='RU'` as a diagnostic-only count, with no weight or
-  preview-RU contribution, when the parent collector can render the query.
+- `EXPLAIN ANALYZE FORMAT='RU'`: the compatibility count stays diagnostic-only;
+  the typed counts use their respective weights when the private provider is
+  calibrated and the parent collector can render the query.
 
 ```sql
 SET tidb_enable_read_billing_demo = ON;
@@ -53,7 +86,7 @@ SELECT pad FROM lookup_keys WHERE id IN (1, 1, 2, 999);
 
 SELECT operator_kind, unit, value, sample_count
 FROM information_schema.statements_summary_read_billing_demo_base_units
-WHERE unit = 'logical_lookup_keys';
+WHERE unit IN ('logical_lookup_keys', 'logical_index_probe_keys', 'logical_table_fetch_keys');
 ```
 
 ```json
@@ -69,8 +102,12 @@ WHERE unit = 'logical_lookup_keys';
 }
 ```
 
-Existing model/weight versions and existing operator-status counts do not
-change. Lookup observations are independent of other primitive-coverage gates:
+The internal model version and default uncalibrated weight version remain
+unchanged; archive the binary Git SHA with evidence to identify this extension.
+Observed typed aliases do not add successful operator-status/event counts.
+An active stage without its counter reports `missing_logical_lookup_keys` and
+prevents a complete preview total. Stages proven unexecuted by the existing
+execution mask are exempt. Lookup observations are independent of other primitive-coverage gates:
 an incomplete physical scan detail must not erase an observed logical count.
 Conversely, the presence of this unit does not certify the whole statement.
 Retain and inspect coverage statuses, including execution errors.
@@ -82,7 +119,8 @@ Retain and inspect coverage statuses, including execution errors.
 - Pushed-down/LocalIndexLookup is not instrumented: TiDB sees only residual
   handles and completed rows, not every lookup performed inside TiKV. Use the
   normal TiDB-side IndexLookup path for these experiments (`hint-only` policy,
-  without a lookup-pushdown hint).
+  without a lookup-pushdown hint). An active LocalIndexLookup reports missing
+  lookup coverage, never a complete count inferred from residual handles.
 - Counts describe attempted execution. Fully consume results when comparing
   runs. Cancellation or LIMIT-driven prefetch can change how much work actually
   starts. Non-covering inner lookups can also deduplicate table handles per
@@ -99,5 +137,10 @@ Focused tests cover hit/miss and duplicate semantics, composite primary keys,
 IndexLookup, IndexMerge union/intersection, IndexJoin and IndexHashJoin with
 different batch/concurrency settings, the legacy IndexMergeJoin key builder,
 prepared reuse, zero/missing evidence, and normal SQL metrics/General Log/summary
-export. Collector tests ensure diagnostic units do not change existing scores or
-successful operator-event counts.
+export. Collector tests verify independent prices, typed contributions counted
+exactly once, unpriced compatibility aliases, uncalibrated defaults, and unchanged
+operator-status/event counts. Nested index joins check that both stages are
+reported separately. Ordinary HashJoin/HashAgg are negative controls.
+
+The next [staging experiment](2026-09-07-preview-ru-split-lookup-test-plan.md)
+compares the original shared term and the split term on the same evidence.

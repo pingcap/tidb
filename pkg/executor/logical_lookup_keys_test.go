@@ -55,32 +55,50 @@ func TestReadBillingDemoLogicalLookupKeys(t *testing.T) {
 	tk.MustExec("set tidb_enable_index_merge = on")
 	vardef.ProcessGeneralLog.Store(true)
 
-	labels := map[string]string{"unit": "logical_lookup_keys"}
+	lookupUnits := []string{"logical_lookup_keys", "logical_index_probe_keys", "logical_table_fetch_keys"}
 	run := func(t *testing.T, sql, plan string, want map[string]float64) {
 		t.Helper()
 		require.Contains(t, fmt.Sprint(tk.MustQuery("explain "+sql).Rows()), plan)
 		recorded.TakeAll()
-		before, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, labels)
+		before := make(map[string]float64)
+		for _, unit := range lookupUnits {
+			before[unit], _ = readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, map[string]string{"unit": unit})
+		}
 		tk.MustQuery(sql).Rows()
-		after, found := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, labels)
-		require.True(t, found)
 		entries := recorded.FilterMessage("GENERAL_LOG_RU_UNITS").TakeAll()
 		require.Len(t, entries, 1, sql)
 		require.NotEmpty(t, entries[0].ContextMap()["statuses"])
-		got := make(map[string]float64)
-		for _, value := range entries[0].ContextMap()["units"].([]any) {
-			unit := value.(map[string]any)
-			if unit["unit"] == "logical_lookup_keys" {
-				require.Equal(t, "executor_lookup_inputs", unit["input_source"])
-				got[unit["operator_kind"].(string)] += unit["value"].(float64)
+		got := make(map[string]map[string]float64)
+		expected := make(map[string]map[string]float64)
+		for _, unit := range lookupUnits {
+			got[unit] = make(map[string]float64)
+			expected[unit] = make(map[string]float64)
+		}
+		for kind, keys := range want {
+			expected["logical_lookup_keys"][kind] = keys
+			switch kind {
+			case "indexjoin", "indexhashjoin", "indexmergejoin":
+				expected["logical_index_probe_keys"][kind] = keys
+			case "indexlookup", "indexmerge":
+				expected["logical_table_fetch_keys"][kind] = keys
 			}
 		}
-		require.Equal(t, want, got, sql)
-		total := 0.0
-		for _, n := range want {
-			total += n
+		for _, value := range entries[0].ContextMap()["units"].([]any) {
+			unit := value.(map[string]any)
+			if byKind, ok := got[unit["unit"].(string)]; ok {
+				require.Equal(t, "executor_lookup_inputs", unit["input_source"])
+				byKind[unit["operator_kind"].(string)] += unit["value"].(float64)
+			}
 		}
-		require.Equal(t, total, after-before, sql)
+		require.Equal(t, expected, got, sql)
+		for _, unit := range lookupUnits {
+			after, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, map[string]string{"unit": unit})
+			total := 0.0
+			for _, n := range expected[unit] {
+				total += n
+			}
+			require.Equal(t, total, after-before[unit], sql+" "+unit)
+		}
 	}
 
 	for _, tc := range []struct {
@@ -118,11 +136,35 @@ func TestReadBillingDemoLogicalLookupKeys(t *testing.T) {
 		})
 	}
 	run(t, "select /*+ inl_join(c) */ o.id,c.v from lookup_orders o join lookup_customers c on o.customer_id=c.id where o.id>100", "IndexJoin", map[string]float64{"indexjoin": 0})
+	// A non-covering inner lookup owns a table-fetch stage in addition to the
+	// join's outer-key binding. Batch size is fixed to deduplicate shared handles.
+	tk.MustExec("set tidb_index_join_batch_size=32")
+	for _, tc := range []struct{ hint, plan, kind string }{
+		{"inl_join", "IndexJoin", "indexjoin"},
+		{"inl_hash_join", "IndexHashJoin", "indexhashjoin"},
+	} {
+		sql := fmt.Sprintf("select /*+ %s(k) */ o.id,k.pad from lookup_orders o join lookup_keys k force index(idx_k) on o.customer_id=k.k", tc.hint)
+		// These outer keys do not match idx_k. The probe was attempted, while
+		// the inner IndexLookup's observed table-fetch count is genuinely zero.
+		run(t, sql, tc.plan, map[string]float64{tc.kind: 4, "indexlookup": 0})
+		sql = fmt.Sprintf("select /*+ %s(k) */ o.id,k.pad from lookup_orders o join lookup_keys k force index(idx_k) on o.id=k.k", tc.hint)
+		run(t, sql, tc.plan, map[string]float64{tc.kind: 5, "indexlookup": 3})
+	}
+	run(t, "select /*+ hash_join(c) */ o.id,c.v from lookup_orders o join lookup_customers c on o.customer_id=c.id", "HashJoin", map[string]float64{})
+	run(t, "select /*+ hash_agg() */ k,count(*) from lookup_keys group by k", "HashAgg", map[string]float64{})
 
 	// The detailed summary retains a real zero, rather than dropping its sample.
 	_, digest := parser.NormalizeDigest("select pad from lookup_keys force index(idx_k) where k=999")
 	tk.MustQuery(`select value, sample_count from information_schema.statements_summary_read_billing_demo_base_units
 		where digest=? and unit='logical_lookup_keys'`, digest.String()).Check(testkit.Rows("0 1"))
+	tk.MustQuery(`select value, sample_count from information_schema.statements_summary_read_billing_demo_base_units
+		where digest=? and unit='logical_table_fetch_keys'`, digest.String()).Check(testkit.Rows("0 1"))
+	_, digest = parser.NormalizeDigest("select pad from lookup_keys force index(idx_k) where k<=2")
+	tk.MustQuery(`select value, sample_count from information_schema.statements_summary_read_billing_demo_base_units
+		where digest=? and unit='logical_table_fetch_keys'`, digest.String()).Check(testkit.Rows("3 1"))
+	_, digest = parser.NormalizeDigest("select /*+ inl_join(c) */ o.id,c.v from lookup_orders o join lookup_customers c on o.customer_id=c.id")
+	tk.MustQuery(`select operator_kind, value, sample_count from information_schema.statements_summary_read_billing_demo_base_units
+		where digest=? and unit='logical_index_probe_keys' order by operator_kind`, digest.String()).Check(testkit.Rows("indexhashjoin 8 2", "indexjoin 8 2"))
 
 	t.Run("DML read stage remains observable", func(t *testing.T) {
 		recorded.TakeAll()

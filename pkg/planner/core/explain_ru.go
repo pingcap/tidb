@@ -113,6 +113,7 @@ const (
 	readBillingDemoReasonIncompletePointScanDetail    = "incomplete_point_scan_detail"
 	readBillingDemoReasonInvalidPointScanDetail       = "invalid_point_scan_detail"
 	readBillingDemoReasonIncompletePointPayload       = "incomplete_point_response_payload"
+	readBillingDemoReasonMissingLogicalLookupKeys     = "missing_logical_lookup_keys"
 	readBillingDemoReasonInvalidPointPayload          = "invalid_point_response_payload"
 	readBillingDemoReasonMissingTiKVWriteCoverage     = "missing_tikv_write_coverage"
 	readBillingDemoReasonPipelinedWriteUnmodeled      = "pipelined_tikv_write_work_unmodeled"
@@ -184,6 +185,8 @@ const (
 	readBillingDemoUnitPayloadRecords                 = "payload_records"
 	readBillingDemoUnitCompletedResponses             = "completed_responses"
 	readBillingDemoUnitLogicalLookupKeys              = "logical_lookup_keys"
+	readBillingDemoUnitLogicalIndexProbeKeys          = "logical_index_probe_keys"
+	readBillingDemoUnitLogicalTableFetchKeys          = "logical_table_fetch_keys"
 	readBillingDemoInputSourceExecutorLookupInputs    = "executor_lookup_inputs"
 	readBillingDemoInputSourceRuntimeChunkBytes       = "runtime_chunk_bytes"
 	readBillingDemoInputSourceScanDetail              = "scan_detail"
@@ -240,7 +243,7 @@ type readBillingDemoResult struct {
 	status    string
 	reason    string
 	operators []readBillingDemoOperatorResult
-	// Experimental raw observations do not affect billing or operator statuses.
+	// Independent lookup observations do not add operator status/event samples.
 	lookupKeys []readBillingDemoOperatorResult
 }
 
@@ -447,6 +450,8 @@ type readBillingDemoWeights struct {
 	WriteKeyWeight          float64
 	WriteBytesWeight        float64
 	FrontendCompileWeight   float64
+	IndexProbeWeight        float64
+	TableFetchWeight        float64
 	MutationBytesPerCPUUnit float64
 	Calibrated              bool
 }
@@ -536,6 +541,7 @@ func appendReadBillingDemoLookupKeys(result *readBillingDemoResult, sctx base.Pl
 		return
 	}
 	dmlKind, _ := explainRUWriteDMLKind(stmt)
+	var executionMask *readBillingDemoExecutionMask
 	seen := make(map[int]struct{})
 	for _, tree := range readBillingDemoAllTrees(flat) {
 		for _, node := range tree {
@@ -544,7 +550,8 @@ func appendReadBillingDemoLookupKeys(result *readBillingDemoResult, sctx base.Pl
 			}
 			switch node.Origin.TP() {
 			case plancodec.TypePointGet, plancodec.TypeBatchPointGet, plancodec.TypeIndexLookUp,
-				plancodec.TypeIndexMerge, plancodec.TypeIndexJoin, plancodec.TypeIndexHashJoin, plancodec.TypeIndexMergeJoin:
+				plancodec.TypeLocalIndexLookUp, plancodec.TypeIndexMerge, plancodec.TypeIndexJoin,
+				plancodec.TypeIndexHashJoin, plancodec.TypeIndexMergeJoin:
 			default:
 				continue
 			}
@@ -554,13 +561,34 @@ func appendReadBillingDemoLookupKeys(result *readBillingDemoResult, sctx base.Pl
 			}
 			seen[id] = struct{}{}
 			keys, present := runtimeStats.GetBasicRuntimeStats(id, false).GetLogicalLookupKeys()
-			if !present {
-				continue
-			}
 			op, _, _ := readBillingDemoClassifyOperator(node)
 			op.id = node.Origin.ExplainID().String()
 			op.dmlKind = dmlKind
 			op.scope = readBillingDemoScopeStatementAttempted
+			lookup, isLookup := node.Origin.(*physicalop.PhysicalIndexLookUpReader)
+			pushedDown := isLookup && lookup.IndexLookUpPushDown
+			if !present || pushedDown || node.Origin.TP() == plancodec.TypeLocalIndexLookUp {
+				// Pushed-down lookups cannot be reconstructed from residual handles.
+				// A proven unexecuted stage needs no observation; any other missing
+				// priced stage must not silently become zero in a complete preview.
+				if readBillingDemoLookupPricingUnit(node.Origin.TP()) == "" {
+					continue
+				}
+				if executionMask == nil {
+					executionMask = buildReadBillingDemoExecutionMask(flat, runtimeStats)
+				}
+				if !executionMask.isSkipped(node) && !executionMask.suppressesTransportProducer(node) {
+					op.status = readBillingDemoStatusUnknownInput
+					op.reason = readBillingDemoReasonMissingLogicalLookupKeys
+					op.emitStatusRow = true
+					result.operators = append(result.operators, op)
+					if result.status == readBillingDemoStatusSuccess {
+						result.status = readBillingDemoStatusPartial
+						result.reason = op.reason
+					}
+				}
+				continue
+			}
 			op.units = []readBillingDemoUnit{{
 				unit:        readBillingDemoUnitLogicalLookupKeys,
 				source:      readBillingDemoInputSourceExecutorLookupInputs,
@@ -568,8 +596,27 @@ func appendReadBillingDemoLookupKeys(result *readBillingDemoResult, sctx base.Pl
 				value:       float64(keys),
 				widthSource: explainRUWidthSourceNotApplicable,
 			}}
+			// Keep the raw compatibility counter unpriced. Only the typed alias
+			// can contribute RU, so a lookup stage cannot be charged twice.
+			if unit := readBillingDemoLookupPricingUnit(node.Origin.TP()); unit != "" {
+				typed := op.units[0]
+				typed.unit = unit
+				op.units = append(op.units, typed)
+			}
 			result.lookupKeys = append(result.lookupKeys, op)
 		}
+	}
+}
+
+func readBillingDemoLookupPricingUnit(planType string) string {
+	switch planType {
+	case plancodec.TypeIndexJoin, plancodec.TypeIndexHashJoin, plancodec.TypeIndexMergeJoin:
+		return readBillingDemoUnitLogicalIndexProbeKeys
+	case plancodec.TypeIndexLookUp, plancodec.TypeLocalIndexLookUp, plancodec.TypeIndexMerge:
+		return readBillingDemoUnitLogicalTableFetchKeys
+	default:
+		// Explicit PointGet/BatchPointGet keep their existing formula.
+		return ""
 	}
 }
 
@@ -2306,6 +2353,7 @@ func readBillingDemoWeightsValid(weights readBillingDemoWeights) bool {
 	for _, weight := range []float64{
 		weights.CPUWeight, weights.ScanWeight, weights.NetWeight, weights.HashTableWeight, weights.JoinWeight,
 		weights.WriteKeyWeight, weights.WriteBytesWeight, weights.FrontendCompileWeight,
+		weights.IndexProbeWeight, weights.TableFetchWeight,
 	} {
 		if weight < 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
 			return false
@@ -2347,6 +2395,10 @@ func readBillingDemoUnitWeight(weights readBillingDemoWeights, unit string) (flo
 		return weights.WriteBytesWeight, true
 	case readBillingDemoUnitFrontendCompileBytes:
 		return weights.FrontendCompileWeight, true
+	case readBillingDemoUnitLogicalIndexProbeKeys:
+		return weights.IndexProbeWeight, true
+	case readBillingDemoUnitLogicalTableFetchKeys:
+		return weights.TableFetchWeight, true
 	default:
 		return 0, false
 	}
@@ -3923,6 +3975,20 @@ func explainRUError(status explainRUStatus) error {
 	return errors.NewNoStackErrorf("EXPLAIN ANALYZE FORMAT='RU' is not supported for this target: %s", status)
 }
 
+func explainRUIncompleteResultError(result readBillingDemoResult) error {
+	operator := ""
+	for _, op := range result.operators {
+		if op.status != readBillingDemoStatusOperatorOK && op.reason == result.reason {
+			operator = " operator=" + op.site + "/" + op.opClass + "/" + op.operatorKind
+			break
+		}
+	}
+	return errors.NewNoStackErrorf(
+		"EXPLAIN ANALYZE FORMAT='RU' cannot render a complete preview RU model result: status=%s reason=%s%s",
+		result.status, result.reason, operator,
+	)
+}
+
 func recordExplainRUStatus(status explainRUStatus) {
 	metrics.RecordExplainRUStatus(string(status))
 }
@@ -4115,18 +4181,8 @@ func (e *Explain) renderRUExplain() (err error) {
 	}
 	result := buildReadBillingDemoResult(e.SCtx(), e.TargetPlan, e.ExecStmt, nil, snapshotRUV2Metrics)
 	if result.status != readBillingDemoStatusSuccess {
-		operator := ""
-		if len(result.operators) > 0 {
-			op := result.operators[0]
-			operator = " operator=" + op.site + "/" + op.opClass + "/" + op.operatorKind
-		}
 		status = explainRUStatusError
-		return errors.NewNoStackErrorf(
-			"EXPLAIN ANALYZE FORMAT='RU' cannot render a complete preview RU model result: status=%s reason=%s%s",
-			result.status,
-			result.reason,
-			operator,
-		)
+		return explainRUIncompleteResultError(result)
 	}
 	rows := explainRUBuildReadBillingRows(result, snapshotStatus)
 
@@ -4149,6 +4205,26 @@ func explainRUBuildReadBillingRows(result readBillingDemoResult, snapshotStatus 
 	totalPreviewRU := 0.0
 	weightsReady := readBillingDemoWeightsValid(readBillingDemoV6Weights)
 	completeTotal := weightsReady && result.status == readBillingDemoStatusSuccess
+	appendUnitRow := func(op readBillingDemoOperatorResult, unit readBillingDemoUnit) {
+		row := explainRUReadBillingUnitRow(op, unit)
+		if _, semantic := readBillingDemoUnitWeight(readBillingDemoV6Weights, unit.unit); semantic {
+			if weight, previewRU, ok := readBillingDemoUnitPreviewRU(unit, readBillingDemoV6Weights); ok {
+				row.weight = weight
+				row.hasWeight = true
+				row.previewRU = previewRU
+				row.hasPreviewRU = true
+				nextTotal := totalPreviewRU + previewRU
+				if nextTotal < 0 || math.IsNaN(nextTotal) || math.IsInf(nextTotal, 0) {
+					completeTotal = false
+				} else {
+					totalPreviewRU = nextTotal
+				}
+			} else {
+				completeTotal = false
+			}
+		}
+		rows = append(rows, row)
+	}
 	for _, op := range result.operators {
 		if op.status != readBillingDemoStatusOperatorOK {
 			if readBillingDemoOperatorBillable(op) {
@@ -4163,34 +4239,17 @@ func explainRUBuildReadBillingRows(result readBillingDemoResult, snapshotStatus 
 			continue
 		}
 		for _, unit := range op.units {
-			row := explainRUReadBillingUnitRow(op, unit)
-			if _, semantic := readBillingDemoUnitWeight(readBillingDemoV6Weights, unit.unit); semantic {
-				if weight, previewRU, ok := readBillingDemoUnitPreviewRU(unit, readBillingDemoV6Weights); ok {
-					row.weight = weight
-					row.hasWeight = true
-					row.previewRU = previewRU
-					row.hasPreviewRU = true
-					nextTotal := totalPreviewRU + previewRU
-					if nextTotal < 0 || math.IsNaN(nextTotal) || math.IsInf(nextTotal, 0) {
-						completeTotal = false
-					} else {
-						totalPreviewRU = nextTotal
-					}
-				} else {
-					completeTotal = false
-				}
-			}
-			rows = append(rows, row)
+			appendUnitRow(op, unit)
+		}
+	}
+	for _, op := range result.lookupKeys {
+		for _, unit := range op.units {
+			appendUnitRow(op, unit)
 		}
 	}
 	if completeTotal {
 		rows[0].previewRU = totalPreviewRU
 		rows[0].hasPreviewRU = true
-	}
-	for _, op := range result.lookupKeys {
-		for _, unit := range op.units {
-			rows = append(rows, explainRUReadBillingUnitRow(op, unit))
-		}
 	}
 	return rows
 }
@@ -4273,7 +4332,8 @@ func explainRUReadBillingUnitRow(op readBillingDemoOperatorResult, unit readBill
 		row.hasOutputRows = true
 	}
 	switch unit.unit {
-	case readBillingDemoUnitFixedEvents, readBillingDemoUnitLogicalLookupKeys:
+	case readBillingDemoUnitFixedEvents, readBillingDemoUnitLogicalLookupKeys,
+		readBillingDemoUnitLogicalIndexProbeKeys, readBillingDemoUnitLogicalTableFetchKeys:
 		row.count = int64(unit.value)
 		row.hasCount = true
 	case readBillingDemoUnitInputRows:

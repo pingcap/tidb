@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -486,6 +487,167 @@ func TestReadBillingDemoLogicalLookupKeys(t *testing.T) {
 	require.Contains(t, row.note, "diagnostic_only=true")
 	_, priced := readBillingDemoUnitWeight(readBillingDemoV6Weights, readBillingDemoUnitLogicalLookupKeys)
 	require.False(t, priced)
+
+	t.Run("split classification", func(t *testing.T) {
+		for _, planType := range []string{plancodec.TypeIndexJoin, plancodec.TypeIndexHashJoin, plancodec.TypeIndexMergeJoin} {
+			require.Equal(t, readBillingDemoUnitLogicalIndexProbeKeys, readBillingDemoLookupPricingUnit(planType))
+		}
+		for _, planType := range []string{plancodec.TypeIndexLookUp, plancodec.TypeIndexMerge} {
+			require.Equal(t, readBillingDemoUnitLogicalTableFetchKeys, readBillingDemoLookupPricingUnit(planType))
+		}
+		for _, planType := range []string{plancodec.TypePointGet, plancodec.TypeBatchPointGet, plancodec.TypeHashJoin, plancodec.TypeHashAgg} {
+			require.Empty(t, readBillingDemoLookupPricingUnit(planType))
+		}
+	})
+
+	t.Run("missing priced stage is not zero", func(t *testing.T) {
+		ctx := mock.NewContext()
+		runtime := execdetails.NewRuntimeStatsColl(nil)
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtime
+		join := physicalop.PhysicalIndexJoin{}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		left := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		right := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		join.SetChildren(left, right)
+		missing := readBillingDemoResult{
+			status: readBillingDemoStatusSuccess,
+			operators: []readBillingDemoOperatorResult{{
+				site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassProjection,
+				operatorKind: "projection", status: readBillingDemoStatusOperatorOK,
+				units: []readBillingDemoUnit{{unit: readBillingDemoUnitCPUWork, value: 7}},
+			}},
+		}
+		appendReadBillingDemoLookupKeys(&missing, ctx, join, stmt)
+		require.Equal(t, readBillingDemoStatusPartial, missing.status)
+		require.Equal(t, readBillingDemoReasonMissingLogicalLookupKeys, missing.reason)
+		require.Empty(t, missing.lookupKeys)
+		require.Len(t, missing.operators, 2)
+		stats := buildReadBillingDemoStatementStats(missing)
+		require.Len(t, stats.BaseUnits, 1)
+		require.Equal(t, 7.0, stats.BaseUnits[0].Value)
+		require.Equal(t, readBillingDemoReasonMissingLogicalLookupKeys, stats.Statuses[2].Reason)
+		require.False(t, explainRUBuildReadBillingRows(missing, explainRUComponentSnapshotOK)[0].hasPreviewRU)
+		require.Contains(t, explainRUIncompleteResultError(missing).Error(), "operator=tidb/join_lookup/indexjoin")
+		failed := readBillingDemoResult{status: readBillingDemoStatusError, reason: readBillingDemoReasonStatementError}
+		appendReadBillingDemoLookupKeys(&failed, ctx, join, stmt)
+		require.Equal(t, readBillingDemoStatusError, failed.status)
+		require.Equal(t, readBillingDemoReasonStatementError, failed.reason)
+		require.NotContains(t, explainRUIncompleteResultError(failed).Error(), "operator=")
+
+		limit := physicalop.PhysicalLimit{Count: 0}.Init(ctx, &property.StatsInfo{}, 0)
+		limit.SetChildren(join)
+		skipped := readBillingDemoResult{status: readBillingDemoStatusSuccess}
+		appendReadBillingDemoLookupKeys(&skipped, ctx, limit, stmt)
+		require.Equal(t, readBillingDemoStatusSuccess, skipped.status)
+		require.Empty(t, skipped.operators)
+		require.Empty(t, skipped.lookupKeys)
+
+		runtime.GetBasicRuntimeStats(join.ID(), true).RecordLogicalLookupKeys(0)
+		zero := readBillingDemoResult{status: readBillingDemoStatusSuccess}
+		appendReadBillingDemoLookupKeys(&zero, ctx, join, stmt)
+		require.Equal(t, readBillingDemoStatusSuccess, zero.status)
+		require.Empty(t, zero.operators)
+		require.Len(t, zero.lookupKeys, 1)
+		require.Len(t, zero.lookupKeys[0].units, 2)
+		require.Equal(t, readBillingDemoUnitLogicalIndexProbeKeys, zero.lookupKeys[0].units[1].unit)
+		require.Zero(t, zero.lookupKeys[0].units[1].value)
+		rows := explainRUBuildReadBillingRows(zero, explainRUComponentSnapshotOK)
+		require.True(t, rows[0].hasPreviewRU)
+		require.Zero(t, rows[0].previewRU)
+	})
+
+	t.Run("missing or pushed-down table fetch is not zero", func(t *testing.T) {
+		for _, pushedDown := range []bool{false, true} {
+			ctx := mock.NewContext()
+			runtime := execdetails.NewRuntimeStatsColl(nil)
+			ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtime
+			indexScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			tableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+			tableScan.Table = &model.TableInfo{}
+			lookup := physicalop.PhysicalIndexLookUpReader{IndexPlan: indexScan, TablePlan: tableScan}.Init(ctx, 0, plannerutil.IndexLookUpPushDownNone)
+			lookup.IndexLookUpPushDown = pushedDown
+			if pushedDown {
+				// The root keeps the IndexLookUp type even when its remote child
+				// performs local lookups. Residual handles are not complete input.
+				require.Equal(t, plancodec.TypeIndexLookUp, lookup.TP())
+				runtime.GetBasicRuntimeStats(lookup.ID(), true).RecordLogicalLookupKeys(3)
+			}
+			result := readBillingDemoResult{status: readBillingDemoStatusSuccess}
+			appendReadBillingDemoLookupKeys(&result, ctx, lookup, stmt)
+			require.Equal(t, readBillingDemoStatusPartial, result.status)
+			require.Equal(t, readBillingDemoReasonMissingLogicalLookupKeys, result.reason)
+			require.Empty(t, result.lookupKeys)
+			require.Contains(t, explainRUIncompleteResultError(result).Error(), "operator=tidb/lookup_reader/indexlookup")
+			if !pushedDown {
+				runtime.GetBasicRuntimeStats(lookup.ID(), true).RecordLogicalLookupKeys(0)
+				zero := readBillingDemoResult{status: readBillingDemoStatusSuccess}
+				appendReadBillingDemoLookupKeys(&zero, ctx, lookup, stmt)
+				require.Equal(t, readBillingDemoStatusSuccess, zero.status)
+				require.Empty(t, zero.operators)
+				require.Equal(t, readBillingDemoUnitLogicalTableFetchKeys, zero.lookupKeys[0].units[1].unit)
+				require.Zero(t, zero.lookupKeys[0].units[1].value)
+			}
+		}
+	})
+
+	t.Run("independent split weights without double charge", func(t *testing.T) {
+		readBillingDemoV6Weights.IndexProbeWeight = 2
+		readBillingDemoV6Weights.TableFetchWeight = 7
+		split := readBillingDemoResult{status: readBillingDemoStatusSuccess}
+		for _, tc := range []struct {
+			kind, unit string
+			keys       float64
+		}{
+			{"indexhashjoin", readBillingDemoUnitLogicalIndexProbeKeys, 3},
+			{"indexlookup", readBillingDemoUnitLogicalTableFetchKeys, 5},
+		} {
+			split.lookupKeys = append(split.lookupKeys, readBillingDemoOperatorResult{
+				operatorKind: tc.kind,
+				units: []readBillingDemoUnit{
+					{unit: readBillingDemoUnitLogicalLookupKeys, value: tc.keys},
+					{unit: tc.unit, value: tc.keys},
+				},
+			})
+		}
+		rows := explainRUBuildReadBillingRows(split, explainRUComponentSnapshotOK)
+		require.Len(t, rows, 5)
+		require.True(t, rows[0].hasPreviewRU)
+		require.Equal(t, 41.0, rows[0].previewRU)
+		for _, idx := range []int{1, 3} {
+			require.False(t, rows[idx].hasWeight)
+			require.False(t, rows[idx].hasPreviewRU)
+			require.Contains(t, rows[idx].note, "diagnostic_only=true")
+		}
+		require.Equal(t, 2.0, rows[2].weight)
+		require.Equal(t, 6.0, rows[2].previewRU)
+		require.Equal(t, 7.0, rows[4].weight)
+		require.Equal(t, 35.0, rows[4].previewRU)
+		require.NotContains(t, rows[2].note, "diagnostic_only=true")
+		require.NotContains(t, rows[4].note, "diagnostic_only=true")
+		// Aliases add base-unit samples, not extra operator-status events.
+		stats := buildReadBillingDemoStatementStats(split)
+		require.Len(t, stats.Statuses, 1)
+		require.Len(t, stats.BaseUnits, 4)
+
+		for _, tc := range []struct{ probe, fetch, want float64 }{
+			{2, 0, 6}, {0, 7, 35}, {0, 0, 0},
+		} {
+			readBillingDemoV6Weights.IndexProbeWeight = tc.probe
+			readBillingDemoV6Weights.TableFetchWeight = tc.fetch
+			rows = explainRUBuildReadBillingRows(split, explainRUComponentSnapshotOK)
+			require.True(t, rows[0].hasPreviewRU)
+			require.Equal(t, tc.want, rows[0].previewRU)
+		}
+		readBillingDemoV6Weights.Calibrated = false
+		rows = explainRUBuildReadBillingRows(split, explainRUComponentSnapshotOK)
+		for _, row := range rows {
+			require.False(t, row.hasWeight)
+			require.False(t, row.hasPreviewRU)
+		}
+		readBillingDemoV6Weights.Calibrated = true
+		split.status = readBillingDemoStatusPartial
+		rows = explainRUBuildReadBillingRows(split, explainRUComponentSnapshotOK)
+		require.False(t, rows[0].hasPreviewRU)
+	})
 }
 
 func TestReadBillingDemoV6FormulaContract(t *testing.T) {
@@ -553,6 +715,7 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 		CPUWeight: 2, ScanWeight: 3, NetWeight: 5,
 		HashTableWeight: 11, JoinWeight: 13, WriteKeyWeight: 17, WriteBytesWeight: 19,
 		FrontendCompileWeight: 23, MutationBytesPerCPUUnit: 10, Calibrated: true,
+		IndexProbeWeight: 29, TableFetchWeight: 31,
 	}
 	for _, tc := range []struct {
 		unit   string
@@ -564,6 +727,8 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 		{readBillingDemoUnitHashStateRows, 12, 11}, {readBillingDemoUnitJoinOutputRows, 14, 13},
 		{readBillingDemoUnitWriteKeys, 3, 17}, {readBillingDemoUnitWriteBytes, 20, 19},
 		{readBillingDemoUnitFrontendCompileBytes, 7, 23},
+		{readBillingDemoUnitLogicalIndexProbeKeys, 5, 29}, {readBillingDemoUnitLogicalTableFetchKeys, 3, 31},
+		{readBillingDemoUnitLogicalIndexProbeKeys, 0, 29}, {readBillingDemoUnitLogicalTableFetchKeys, 0, 31},
 	} {
 		weight, ru, ok := readBillingDemoUnitPreviewRU(readBillingDemoUnit{unit: tc.unit, value: tc.value}, weights)
 		require.True(t, ok)
@@ -573,6 +738,16 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 	for _, invalid := range []float64{-1, math.NaN(), math.Inf(1)} {
 		_, _, ok := readBillingDemoUnitPreviewRU(readBillingDemoUnit{unit: readBillingDemoUnitCPUWork, value: invalid}, weights)
 		require.False(t, ok)
+		for _, unit := range []string{readBillingDemoUnitLogicalIndexProbeKeys, readBillingDemoUnitLogicalTableFetchKeys} {
+			_, _, ok = readBillingDemoUnitPreviewRU(readBillingDemoUnit{unit: unit, value: invalid}, weights)
+			require.False(t, ok)
+		}
+		invalidProbe := weights
+		invalidProbe.IndexProbeWeight = invalid
+		require.False(t, readBillingDemoWeightsValid(invalidProbe))
+		invalidFetch := weights
+		invalidFetch.TableFetchWeight = invalid
+		require.False(t, readBillingDemoWeightsValid(invalidFetch))
 	}
 	for _, invalidWeights := range []readBillingDemoWeights{
 		{},
