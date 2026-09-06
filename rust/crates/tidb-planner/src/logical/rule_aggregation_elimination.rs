@@ -152,7 +152,7 @@ fn is_binary_literal(expression: &Expression) -> bool {
     matches!(expression, Expression::Constant(constant) if matches!(constant.value, Datum::BinaryLiteral(_)))
 }
 
-fn rewrite_aggregate(
+pub(crate) fn rewrite_aggregate(
     ctx: &RuleContext<'_>,
     function: &AggFuncDesc,
 ) -> Result<Option<Expression>, PlanError> {

@@ -487,6 +487,10 @@ pub struct StmtContext {
     /// default no group qualifies for DP, so a stock session uses greedy
     /// reorder in the shared logical planner.
     join_reorder_threshold: i32,
+    /// Go `SessionVars.AllowAggPushDown`
+    /// (`@@tidb_opt_agg_push_down`, default `OFF`): gates the
+    /// aggregation-push-down rule's join and union arms.
+    allow_agg_push_down: bool,
     /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`
     /// (`@@tidb_opt_enable_advanced_join_reorder`, default `ON`): whether
     /// join reorder uses the advanced framework. Its greedy solver compares
@@ -900,6 +904,7 @@ impl StmtContext {
             cte_max_recursion_depth: 1000,
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
+            allow_agg_push_down: tidb_vardef::defaults::DEF_OPT_AGG_PUSH_DOWN,
             advanced_join_reorder: tidb_vardef::defaults::DEF_TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             cartesian_join_order_threshold:
                 tidb_vardef::defaults::DEF_OPT_CARTESIAN_JOIN_ORDER_THRESHOLD,
@@ -1916,6 +1921,19 @@ impl StmtContext {
     #[must_use]
     pub fn join_reorder_threshold(&self) -> i32 {
         self.join_reorder_threshold
+    }
+
+    /// Sets `@@tidb_opt_agg_push_down` for this statement.
+    #[must_use]
+    pub fn with_allow_agg_push_down(mut self, enabled: bool) -> Self {
+        self.allow_agg_push_down = enabled;
+        self
+    }
+
+    /// Go `SessionVars.AllowAggPushDown`.
+    #[must_use]
+    pub fn allow_agg_push_down(&self) -> bool {
+        self.allow_agg_push_down
     }
 
     /// Sets `@@tidb_opt_enable_advanced_join_reorder` for this statement.

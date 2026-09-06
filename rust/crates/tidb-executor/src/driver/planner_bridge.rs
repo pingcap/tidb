@@ -1462,6 +1462,7 @@ fn optimize_built_logical(
         enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
         enable_no_decorrelate_in_select: ctx.enable_no_decorrelate_in_select(),
         join_reorder_threshold: ctx.join_reorder_threshold(),
+        allow_agg_push_down: ctx.allow_agg_push_down(),
         advanced_join_reorder: ctx.advanced_join_reorder(),
         cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),
         join_reorder_through_proj: ctx.join_reorder_through_proj(),

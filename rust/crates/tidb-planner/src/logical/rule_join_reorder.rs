@@ -193,6 +193,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         use_plan_cache: context.use_plan_cache,
         plan_cache_marker: context.plan_cache_marker,
         allow_derive_topn: context.allow_derive_topn,
+        allow_agg_push_down: context.allow_agg_push_down,
         disabled_rules: context.disabled_rules.clone(),
         statistics_load: context.statistics_load,
         partition_pruning: context.partition_pruning,
