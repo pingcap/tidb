@@ -241,10 +241,15 @@ impl Waiter {
                     if result.wakeup_sleep_time == WAKEUP_DELAY_TIMEOUT {
                         self.commit_ts.store(result.commit_ts, Ordering::SeqCst);
                         wakeup_delayed = true;
+                        // Go computes `now + d` with the raw signed
+                        // duration: a negative configured delay never beats
+                        // the original deadline, which then stands.
                         let delay_sleep_duration =
                             Duration::from_millis(self.wake_up_delay_duration.max(0) as u64);
                         let now = Instant::now();
-                        if now + delay_sleep_duration < self.deadline_time {
+                        if self.wake_up_delay_duration >= 0
+                            && now + delay_sleep_duration < self.deadline_time
+                        {
                             // Go's `if w.timer.Stop() { w.timer.Reset(d) }`: a
                             // timer that already fired cannot be restarted, and
                             // its pending tick still ends the next iteration.
