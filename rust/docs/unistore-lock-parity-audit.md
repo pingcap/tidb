@@ -139,3 +139,43 @@ Rust text instead of Go's wire-visible strings -- `TxnHeartBeat`'s
 ("...constraint set for index %v while %v mutations were given", now a
 `KvError::Message(String)` arm rendered through the Abort field). Three
 regressions pin the texts.
+
+## cophandler front-door audit (2026-09-07, same session)
+
+`cop_handler.go` @ a85e0fd5df compared against `cophandler.rs` (2,460 lines).
+Structural note: Go's ordinary DAG path is now MPP-first —
+`handleCopDAGRequest` routes through `buildAndRunMPPExecutor` and the
+`mpp_exec` closure tree — while the Rust seed executes its own flat
+scan/selection/limit/aggregation lowering. A like-for-like front-door audit
+therefore belongs to the mpp course; this round covered the pieces that are
+architecture-independent:
+
+- Dispatch (`HandleCopRequestWithMPPCtx` 98-110 vs `handle_cop_request`):
+  the four request types and Go's exact "unsupported request type %d"
+  answer (already pinned by a test).
+- `buildDAG` guards (393-442 vs `build_dag`): empty ranges
+  ("request range is null"), the type check, proto decode, and the
+  three-way timezone split are equal; `resolvedLocks`/`keyspaceID` ride the
+  region-context narrowing.
+- FIXED: `handleCopChecksumRequest` answers a marshalled
+  `tipb.ChecksumResponse{1,1,1}` -- a fake SUCCESS on Go's side, a refusal
+  here. The trimmed tipb build drops `ChecksumResponse`, so the six
+  deterministic wire bytes are hand-encoded with the field numbers cited;
+  pinned by `checksum_answers_gos_stub_response`.
+- FIXED: `extractKVRanges`' malformed-range rejection
+  ("invalid range, start should be smaller than end: %v %v", Go `%v`
+  byte-slice rendering) was absent; a malformed request now answers Go's
+  error before any scan, pinned by
+  `a_malformed_range_answers_gos_validation_error`. The region clipping
+  halves (`maxStartKey`/`minEndKey`/reverse-on-desc) stay under the
+  whole-keyspace narrowing -- the Rust scans walk the request's ranges
+  directly, reversing for desc.
+- Verified equal at the composition layer: `validate_executor_list`
+  enforces the parentIdx/leaf invariants `ExecutorListsToTree` panics on,
+  and the scan/selection/limit/aggregation lowering answers the
+  `closure_exec` shapes the seed claims.
+
+Still open for a full-budget session: the mpp course (`mpp.go` 780 +
+`mpp_exec.go` 1579 -- on Go's ordinary path now), `closure_exec.go`'s
+remaining expression/TopN executors (1,218), `analyze.go` (704), and the
+row-decoder warnings channel.

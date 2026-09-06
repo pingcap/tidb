@@ -17,8 +17,9 @@
 //! flat-list-to-tree executor conversion.
 //!
 //! SEED of `cophandler` (~5k lines): request parsing plus the ordinary table
-//! and index scan DAG composition land here. Analyze, checksum, TopN, and the
-//! remaining closure-executor expressions refuse by name until they land.
+//! and index scan DAG composition land here. Analyze, TopN, and the
+//! remaining closure-executor expressions refuse by name until they land;
+//! checksum answers Go's fixed placeholder stub.
 //!
 //! # Narrowings, by name
 //!
@@ -100,9 +101,16 @@ pub fn handle_cop_request(
         REQ_TYPE_ANALYZE => other_error(
             "handleCopAnalyzeRequest (cophandler/analyze.go) is a later course of this port",
         ),
-        REQ_TYPE_CHECKSUM => other_error(
-            "handleCopChecksumRequest (cophandler/cop_handler.go) is a later course of this port",
-        ),
+        // Go's stub (`cop_handler.go:750`): a marshalled
+        // `tipb.ChecksumResponse{Checksum:1, TotalKvs:1, TotalBytes:1}` --
+        // unistore never computes real checksums. The trimmed tipb build
+        // drops `ChecksumResponse`, so the message is hand-encoded: three
+        // optional uint64 fields at wire numbers 1-3, each carrying `1`
+        // (`0x08 0x01`, `0x10 0x01`, `0x18 0x01`).
+        REQ_TYPE_CHECKSUM => coprocessor::Response {
+            data: vec![0x08, 0x01, 0x10, 0x01, 0x18, 0x01],
+            ..coprocessor::Response::default()
+        },
         other => other_error(&format!("unsupported request type {other}")),
     }
 }
@@ -112,6 +120,16 @@ fn other_error(message: &str) -> coprocessor::Response {
         other_error: message.to_owned(),
         ..coprocessor::Response::default()
     }
+}
+
+/// Go's `%v` rendering of a `[]byte`: space-separated decimals in brackets.
+fn go_byte_slice(bytes: &[u8]) -> String {
+    let rendered = bytes
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("[{rendered}]")
 }
 
 /// Go `handleCopDAGRequest`'s parse half: `buildDAG`'s guards and decode,
@@ -132,6 +150,20 @@ fn handle_cop_dag_request(
 /// refuses by name until its course lands.
 fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Response {
     validate_executor_list(&context.dag_req.executors);
+    // Go validates every request range while clipping it against the region
+    // (`extractKVRanges`, `cop_handler.go:675`); the whole-keyspace engine
+    // has no region bounds to clip to, but the malformed-range rejection is
+    // wire-visible and kept verbatim, Go's `%v` byte-slice rendering
+    // included.
+    for range in &context.key_ranges {
+        if range.start >= range.end {
+            return other_error(&format!(
+                "invalid range, start should be smaller than end: {} {}",
+                go_byte_slice(&range.start),
+                go_byte_slice(&range.end)
+            ));
+        }
+    }
     // Go's composition contract (`closure_exec.go:166`):
     // `tableScan|indexScan [selection] [topN | limit | agg]`. This slice
     // runs the scan and a LIMIT above it — Go's limit is nothing but a
@@ -1596,6 +1628,55 @@ mod tests {
             },
         );
         assert_eq!(resp.other_error, "unsupported request type 999");
+    }
+
+    #[test]
+    fn checksum_answers_gos_stub_response() {
+        // Go's `handleCopChecksumRequest` (`cop_handler.go:750`): unistore
+        // never computes checksums; it answers the fixed placeholder
+        // ChecksumResponse{1, 1, 1} as a SUCCESS, not an error.
+        let mut store = MvccStore::new();
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_CHECKSUM,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(
+            resp.other_error.is_empty(),
+            "the stub must not be an error: {}",
+            resp.other_error
+        );
+        // tipb.ChecksumResponse fields 1-3, each varint 1.
+        assert_eq!(resp.data, vec![0x08, 0x01, 0x10, 0x01, 0x18, 0x01]);
+    }
+
+    #[test]
+    fn a_malformed_range_answers_gos_validation_error() {
+        // Go's `extractKVRanges` (`cop_handler.go:678`): start >= end is a
+        // wire-visible rejection, with Go's `%v` byte-slice rendering.
+        let mut store = MvccStore::new();
+        let dag = tipb::DagRequest::default();
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: vec![1, 2],
+                    end: vec![1, 2],
+                    ..coprocessor::KeyRange::default()
+                }],
+                ..coprocessor::Request::default()
+            },
+        );
+        assert_eq!(
+            resp.other_error,
+            "invalid range, start should be smaller than end: [1 2] [1 2]"
+        );
     }
 
     #[test]
