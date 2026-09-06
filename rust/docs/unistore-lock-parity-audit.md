@@ -385,3 +385,26 @@ for the projection course).
 
 Regression: `json_member_of_follows_go_equality_rules` -- array hit, miss
 answering FALSE, non-array equality, NULL target answering NULL.
+
+## Coprocessor numeric CAST family (2026-09-07, same session)
+
+The six numeric cast signatures the trimmed enum already carried land with
+Go `builtinCast*` semantics:
+
+- `CastIntAsInt`: identity over the int channel.
+- `CastRealAsInt`/`CastDecimalAsInt` (`AS SIGNED`): `ConvertFloatToInt`
+  ROUNDS to nearest first (half away from zero -- `CAST(2.5)` is 3), then
+  the range check answers the cast overflow error
+  ("constant %v overflows bigint", Go `%v` float rendering reproduced by
+  `go_float_display`); `CastDecimalAsInt` truncates toward zero and maps
+  `Decimal.ToInt`'s overflow warning to the same error.
+- `CastIntAsReal`/`CastRealAsReal`/`CastDecimalAsReal`: widening through
+  `eval_real`'s composition arms, so a widened column feeds REAL
+  comparisons and arithmetic as an operand; a bare cast answers its own
+  `ToBool` truth.
+- The INT-source recursion inside `eval_real` flattens the int channel's
+  (impossible-there) error with `.ok()` -- documented at the site.
+
+Regressions: `real_cast_rounds_then_checks_range` (2.5 -> 3, -2.5 -> -3,
+9.3e18 overflow text) and `real_cast_composes_as_a_comparison_operand`
+(widened column under `GTReal`).

@@ -1113,6 +1113,29 @@ impl RegionAggregator {
     }
 }
 
+/// Go's `%v` rendering of a float64: shortest round-trip decimal, switching
+/// to `e` notation outside Go's `%g` thresholds (exponent >= 21 or < -4).
+fn go_float_display(value: f64) -> String {
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+    let magnitude = value.abs();
+    if (1e-4..1e21).contains(&magnitude) {
+        let rendered = format!("{}", value);
+        rendered
+    } else {
+        let rendered = format!("{:e}", value);
+        // Rust "1.5e21" -> Go "1.5e+21".
+        match rendered.split_once('e') {
+            Some((mantissa, exponent)) => format!(
+                "{mantissa}e{}{exponent}",
+                if exponent.starts_with('-') { "" } else { "+" }
+            ),
+            None => rendered,
+        }
+    }
+}
+
 /// The datum a leaf answers for one row: the column value, or the literal.
 fn eval_datum(
     expr: &SimpleExpr,
@@ -1582,6 +1605,22 @@ pub enum SimpleSig {
     /// `JsonMemberOfSig` over (value, json): equality against the doc, or
     /// against each ARRAY element (Go `builtinJSONMemberOfSig.evalInt`).
     JsonMemberOfSig,
+    /// `CastIntAsInt`/`CastRealAsInt`/`CastDecimalAsInt` (`AS SIGNED`):
+    /// the REAL and DECIMAL sources ROUND to the nearest integer and a
+    /// result outside BIGINT is Go's cast overflow error
+    /// (`constant %v overflows bigint`).
+    CastIntAsInt,
+    /// See [`SimpleSig::CastIntAsInt`].
+    CastRealAsInt,
+    /// See [`SimpleSig::CastIntAsInt`].
+    CastDecimalAsInt,
+    /// `CastIntAsReal`/`CastRealAsReal`/`CastDecimalAsReal`: widening to
+    /// binary64 (`AS REAL`); a bare cast answers its own truth.
+    CastIntAsReal,
+    /// See [`SimpleSig::CastIntAsReal`].
+    CastRealAsReal,
+    /// See [`SimpleSig::CastIntAsReal`].
+    CastDecimalAsReal,
     /// `LikeSig` over (target, pattern, escape). The `i32` is the
     /// comparison's collation id, as in the string comparisons: `_ci`
     /// collations fold case before the wildcard match, `_bin` is exact.
@@ -1739,6 +1778,12 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::TimeIsNull => SimpleSig::TimeIsNull,
             tipb::ScalarFuncSig::LikeSig => SimpleSig::Like(collation_of(expr)),
             tipb::ScalarFuncSig::JsonMemberOfSig => SimpleSig::JsonMemberOfSig,
+            tipb::ScalarFuncSig::CastIntAsInt => SimpleSig::CastIntAsInt,
+            tipb::ScalarFuncSig::CastRealAsInt => SimpleSig::CastRealAsInt,
+            tipb::ScalarFuncSig::CastDecimalAsInt => SimpleSig::CastDecimalAsInt,
+            tipb::ScalarFuncSig::CastIntAsReal => SimpleSig::CastIntAsReal,
+            tipb::ScalarFuncSig::CastRealAsReal => SimpleSig::CastRealAsReal,
+            tipb::ScalarFuncSig::CastDecimalAsReal => SimpleSig::CastDecimalAsReal,
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             // Go reads the comparison's collation off the `ScalarFunc`'s own
             // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
@@ -1880,9 +1925,32 @@ fn eval_real(expr: Option<&SimpleExpr>, row: &[tidb_datatype::Datum]) -> Option<
             sig @ (SimpleSig::PlusReal
             | SimpleSig::MinusReal
             | SimpleSig::MultiplyReal
-            | SimpleSig::DivideReal),
+            | SimpleSig::DivideReal
+            | SimpleSig::CastIntAsReal
+            | SimpleSig::CastDecimalAsReal
+            | SimpleSig::CastRealAsReal),
             children,
         ) => {
+            if matches!(
+                sig,
+                SimpleSig::CastIntAsReal | SimpleSig::CastDecimalAsReal | SimpleSig::CastRealAsReal
+            ) {
+                // Go wraps the operand in the cast signature; the widening
+                // itself is exact for the admitted source kinds.
+                return match sig {
+                    SimpleSig::CastIntAsReal => {
+                        // The int channel carries no error for a leaf.
+                        let value = children
+                            .first()
+                            .and_then(|c| eval_expr(c, row).ok().flatten());
+                        value.map(|value| value as f64)
+                    }
+                    SimpleSig::CastDecimalAsReal => {
+                        Some(eval_decimal(children.first(), row)?.to_f64())
+                    }
+                    _ => eval_real(children.first(), row),
+                };
+            }
             let (left, right) = (
                 eval_real(children.first(), row)?,
                 eval_real(children.get(1), row)?,
@@ -2139,6 +2207,53 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Result<Opti
                     };
                     Some(i128::from(quotient))
                 }
+                // Go `builtinCast*AsIntSig` under `AS SIGNED`:
+                // `ConvertFloatToInt`/decimal truncation -- the REAL source
+                // ROUNDS to nearest (half away), and an out-of-BIGINT
+                // result is the cast overflow error
+                // ("constant %v overflows bigint").
+                SimpleSig::CastRealAsInt => {
+                    let Some(value) = eval_real(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    let rounded = value.round();
+                    if rounded < -9_223_372_036_854_775_808.0
+                        || rounded >= 9_223_372_036_854_775_808.0
+                    {
+                        return Err(format!(
+                            "constant {} overflows bigint",
+                            go_float_display(rounded)
+                        ));
+                    }
+                    Some(i128::from(rounded as i64))
+                }
+                SimpleSig::CastDecimalAsInt => {
+                    let Some(value) = eval_decimal(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    // `Decimal.ToInt`: truncation toward zero; the warning
+                    // flag IS the overflow event.
+                    let (truncated, overflow) = value.to_i64_trunc();
+                    if overflow.is_some() {
+                        return Err(format!(
+                            "constant {} overflows bigint",
+                            go_float_display(value.to_f64())
+                        ));
+                    }
+                    Some(i128::from(truncated))
+                }
+                SimpleSig::CastIntAsInt => child(0)?,
+                SimpleSig::CastIntAsReal
+                | SimpleSig::CastDecimalAsReal
+                | SimpleSig::CastRealAsReal => {
+                    // A bare real cast as a condition answers its own truth
+                    // (`ToBool`); the value flows through `eval_real`'s own
+                    // composition arms, which early-return on the Result.
+                    eval_real(Some(expr), row)
+                        .filter(|value| !value.is_nan())
+                        .map(|value| i128::from(value != 0.0))
+                }
+                // The AS REAL casts answer their own truth (`ToBool`).
                 SimpleSig::LtReal
                 | SimpleSig::LeReal
                 | SimpleSig::GtReal
@@ -3759,5 +3874,35 @@ mod tests {
         let doc = SimpleExpr::Json(BinaryJSON::parse("[1]").expect("parses"));
         let null_target = SimpleExpr::Func(SimpleSig::JsonMemberOfSig, vec![SimpleExpr::Null, doc]);
         assert_eq!(eval_expr(&null_target, &[]), Ok(None));
+    }
+
+    #[test]
+    fn real_cast_rounds_then_checks_range() {
+        use tidb_datatype::Datum;
+        // Go `ConvertFloatToInt` ROUNDS first (half away from zero):
+        // CAST(2.5 AS SIGNED) = 3.
+        let row = [Datum::Real(2.5)];
+        let cast = SimpleExpr::Func(SimpleSig::CastRealAsInt, vec![SimpleExpr::Column(0)]);
+        assert_eq!(eval_expr(&cast, &row).expect("evals"), Some(3));
+        let row_negative = [Datum::Real(-2.5)];
+        assert_eq!(eval_expr(&cast, &row_negative).expect("evals"), Some(-3));
+        // An out-of-BIGINT source answers the cast overflow error, with
+        // Go's `%v` rendering of the rounded value.
+        let row_huge = [Datum::Real(9.3e18)];
+        assert_eq!(
+            eval_expr(&cast, &row_huge),
+            Err("constant 9300000000000000000 overflows bigint".to_owned())
+        );
+    }
+
+    #[test]
+    fn real_cast_composes_as_a_comparison_operand() {
+        use tidb_datatype::Datum;
+        // `int_col / 2 + 1` style composition: the AS REAL widening feeds
+        // the REAL comparison channel.
+        let row = [Datum::Int(5)];
+        let widened = SimpleExpr::Func(SimpleSig::CastIntAsReal, vec![SimpleExpr::Column(0)]);
+        let condition = SimpleExpr::Func(SimpleSig::GtReal, vec![widened, SimpleExpr::Real(4.5)]);
+        assert_eq!(eval_expr(&condition, &row).expect("evals"), Some(1));
     }
 }
