@@ -337,6 +337,14 @@ impl Walk<'_> {
         for assignment in &mut insert.on_duplicate {
             self.check_expr(&assignment.value)?;
         }
+        // Go's `extractTableNames` for the INSERT-SELECT source accumulates
+        // the target + source tables and refuses when the combined count
+        // exceeds two (plan_cacheable_checker.go:394).
+        if self.tables.len() > 2 {
+            return Err(Refusal::walk(
+                "queries that have more than 2 tables are not supported",
+            ));
+        }
         for row in &mut insert.rows {
             for value in row.iter_mut() {
                 self.replace_expr(value)?;
