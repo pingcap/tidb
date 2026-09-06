@@ -721,3 +721,10 @@
   记录: lib 测试目标因兄弟 distsql 接口改动预存编译失败 (双向 stash 验证与本批无关); RNG 源/原子-借用纪律/每调用计时器为站点注释 narrowing。
   验收: cargo build -p tidb-unistore 过; fmt; diff-check; make lint 过。收据 rust/docs/unistore-lock-parity-audit.md。
 - 下轮恢复点: (1) 兄弟修复 distsql 接口后回补 unistore 测试目标验证; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
+- 新面批次: tidb-protocol (Go pkg/server/internal @ a85e0fd5df) 全包审计。修复 2 项 behavior 分歧:
+  (1) COM_SHUTDOWN (0x08)/COM_CHANGE_USER (0x11) 落入 Unknown —— protocol 层补常量与解臂 (Command::Shutdown/ChangeUser), 只读 Rust SQL 节点按声明义务应答 unsupported 错误 (Go conn.go:1554/1567 由完整服务端应答);
+  (2) 不可渲染 datum 报 1105 —— 新增 ErrorKind::InvalidType 映射 Go err.ErrInvalidType (8057, column.go:175/238), 经新 ResultSetStreamError::error_kind() 暴露, 回归 invalid_type_maps_to_go_err_invalid_type 验证线上字节 79 1f。
+  文档化: advertisedstatus checker 补入头注义务清单; zstd 级别刻度差异 (线格式兼容); 头溢出拒绝/解压长度校验为 Rust 纵深防御; 类型向量复用 Rust 提前报错 (同为错误结局); utf8mb4 wrapper 仅回退用。
+  匹配面: 包框架 0xffffff 续传与零长终止帧、序号语义 (压缩模式 MariaDB 忽略)、压缩信封全参、dump 家族含 BinaryTime 1 字节天 quirk、列定义 dump 全规则、DumpBinaryRow 位图、文本行 NULL/类型矩阵与 float E 规则、StmtFetch、NUL 裁剪、parseBinaryParams 全矩阵、STMT_EXECUTE 门、prepare 应答、ERR/OK/EOF 含 DEPRECATE_EOF。
+  验收: cargo test -p tidb-protocol 110 全绿 (含新映射回归); cargo build -p tidb-server; fmt; diff-check; make lint 过。收据 rust/docs/protocol-parity-audit.md。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
