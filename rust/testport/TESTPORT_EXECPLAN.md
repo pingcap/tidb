@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/ttl/cache` return contracts): the complete 13-artifact,
+  3,572-line cache package and full Rust owner were re-read at current Go
+  master, including every test/build artifact and the absence of fixtures,
+  generated/platform variants, benchmarks, and fuzz targets. Twenty-six
+  direct Go-shaped Rust `#[must_use]` annotations were removed; five
+  Rust-only/error-contract annotations remain. The focused regression failed
+  pre-fix with exactly 26 diagnostics and passes after the edit. Evidence is
+  recorded in `receipts/ttl_cache.md` and
+  `docs/operations/ttl-cache-audit-execplan.md`.
 - 2026-09-06 (`pkg/statistics` builder return contracts): the complete
   direct root inventory was re-read at current Go master: 33 artifacts and
   13,905 direct lines plus two JSON fixtures (71 lines), with nested packages

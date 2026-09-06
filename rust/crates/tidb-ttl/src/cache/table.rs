@@ -138,13 +138,11 @@ pub struct ScanRange {
 }
 
 /// Go `newFullRange`.
-#[must_use]
 pub fn new_full_range() -> ScanRange {
     ScanRange::default()
 }
 
 /// Go `newDatumRange`.
-#[must_use]
 pub fn new_datum_range(start: Datum, end: Datum) -> ScanRange {
     let mut range = ScanRange::default();
     if !matches!(start, Datum::Null) {
@@ -157,7 +155,6 @@ pub fn new_datum_range(start: Datum, end: Datum) -> ScanRange {
 }
 
 /// Go `nullDatum`.
-#[must_use]
 pub fn null_datum() -> Datum {
     Datum::Null
 }
@@ -200,13 +197,11 @@ impl Default for PhysicalTable {
 
 impl PhysicalTable {
     /// Go's promoted `TableInfo.Name`.
-    #[must_use]
     pub fn name(&self) -> CiString {
         self.table_info.read().name.clone()
     }
 
     /// Go's promoted `TableInfo.Name.O`.
-    #[must_use]
     pub fn name_original(&self) -> String {
         self.table_info.read().name.original().to_string()
     }
@@ -231,7 +226,6 @@ impl PhysicalTable {
     }
 
     /// Go `(*PhysicalTable).FullName`.
-    #[must_use]
     pub fn full_name(&self) -> String {
         if !self.partition.lowercase().is_empty() {
             return format!(
@@ -394,7 +388,6 @@ pub trait RegionCache {
 ///
 /// A non-null, non-int datum reaches Go's `d.GetInt64()`, which panics on
 /// that kind; this clone is the documented substitute for that panic path.
-#[must_use]
 pub fn unsigned_edge(d: &Datum) -> Datum {
     match d {
         Datum::Null => Datum::new_uint(1 << 63),
@@ -675,7 +668,6 @@ impl PhysicalTable {
 /// It returns the min handle whose encoded key is or after argument `key`. If
 /// it cannot find a valid value, `None` is returned — Go returns a `nil`
 /// `kv.Handle` there, and a `kv.IntHandle` otherwise.
-#[must_use]
 pub fn get_next_int_handle(key: &[u8], record_prefix: &[u8]) -> Option<i64> {
     if key > record_prefix && !key.starts_with(record_prefix) {
         return None;
@@ -709,7 +701,6 @@ pub fn get_next_int_handle(key: &[u8], record_prefix: &[u8]) -> Option<i64> {
 ///
 /// It returns the min handle whose encoded key is or after argument `key`. If
 /// it cannot find a valid value, a null datum is returned.
-#[must_use]
 pub fn get_next_int_datum_from_common_handle(
     key: &[u8],
     record_prefix: &[u8],
@@ -772,7 +763,6 @@ pub fn get_next_int_datum_from_common_handle(
 ///
 /// It returns the min value whose encoded key is or after argument `key`. If it
 /// cannot find a valid value, a null datum is returned.
-#[must_use]
 pub fn get_next_bytes_handle_datum(key: &[u8], record_prefix: &[u8]) -> Datum {
     if key > record_prefix && !key.starts_with(record_prefix) {
         return Datum::Null;
@@ -839,7 +829,6 @@ pub fn get_next_bytes_handle_datum(key: &[u8], record_prefix: &[u8]) -> Datum {
 /// `\r`:
 /// `"abc" -> "abc"`, `"\0abc" -> ""`, `"ab\x01c" -> "ab"`, `"ab\xffc" -> "ab"`,
 /// `"ab\rc\xff" -> "ab\rc"`.
-#[must_use]
 pub fn get_ascii_prefix_datum_from_bytes(bs: &[u8]) -> Datum {
     let mut bs = bs;
     for (i, c) in bs.iter().enumerate() {
@@ -950,7 +939,6 @@ impl TimeUnitType {
     }
 
     /// Go `(TimeUnitType).String()`.
-    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Invalid => "",
@@ -1013,7 +1001,6 @@ impl<Tz: chrono::TimeZone> MockExpireTimeKey<Tz> {
 }
 
 /// Go `SetMockExpireTime`: can only be used in test.
-#[must_use]
 pub fn set_mock_expire_time<Tz: chrono::TimeZone>(
     ctx: &MockExpireTimeKey<Tz>,
     tm: DateTime<Tz>,

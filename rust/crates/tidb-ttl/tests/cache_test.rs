@@ -71,6 +71,50 @@ use tidb_ttl::cache::ttlstatus::{
 use tidb_ttl::session::{ResultRow, TtlSession};
 use tidb_txnkv::Key;
 
+#[deny(unused_must_use)]
+#[test]
+fn go_cache_returns_may_be_ignored_like_go() {
+    let interval = Duration::from_secs(1);
+
+    BaseCache::new(interval);
+    let base = BaseCache::new(interval);
+    base.should_update();
+    base.get_interval();
+
+    tidb_ttl::cache::infoschema::InfoSchemaCache::new(interval);
+    let info_schema = tidb_ttl::cache::infoschema::InfoSchemaCache::new(interval);
+    info_schema.should_update();
+    info_schema.get_interval();
+
+    tidb_ttl::cache::table::new_full_range();
+    tidb_ttl::cache::table::new_datum_range(Datum::Int(1), Datum::Int(2));
+    tidb_ttl::cache::table::null_datum();
+    let table = ttl_table(1, signed(FieldTypeCode::Long));
+    table.name();
+    table.name_original();
+    table.full_name();
+    tidb_ttl::cache::table::unsigned_edge(&Datum::Int(1));
+    tidb_ttl::cache::table::get_next_int_handle(&[], &[]);
+    tidb_ttl::cache::table::get_next_int_datum_from_common_handle(&[], &[], false);
+    tidb_ttl::cache::table::get_next_bytes_handle_datum(&[], &[]);
+    tidb_ttl::cache::table::get_ascii_prefix_datum_from_bytes(&[]);
+    TimeUnitType::Day.as_str();
+    tidb_ttl::cache::table::set_mock_expire_time(
+        &MockExpireTimeKey::<chrono::Utc>::default(),
+        chrono::Utc::now(),
+    );
+
+    tidb_ttl::cache::task::select_from_ttl_task_with_job_id("job");
+    tidb_ttl::cache::task::select_from_ttl_task_with_id("job", 1);
+    tidb_ttl::cache::task::peek_waiting_ttl_task("2026-01-01 00:00:00");
+
+    tidb_ttl::cache::ttlstatus::select_from_ttl_table_status_with_id(1);
+    tidb_ttl::cache::ttlstatus::TableStatusCache::new(interval);
+    let table_status = tidb_ttl::cache::ttlstatus::TableStatusCache::new(interval);
+    table_status.should_update();
+    table_status.get_interval();
+}
+
 // -------------------------------------------------------------------------
 // base_test.go
 // -------------------------------------------------------------------------
