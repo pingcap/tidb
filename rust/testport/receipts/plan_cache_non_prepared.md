@@ -64,6 +64,24 @@ answers are identical; the deltas are cross-statement sharing within a session
 and the memory-guard accounting, both covered by the same queued DML/container
 batch under `rust/docs/go-physical-plan-parity-execplan.md`.
 
+### Container audit detail: plan_cache_lru.go (280 lines)
+
+Function-level mapping of Go's `LRUPlanCache` to the port's owners:
+
+| Go function | Port owner | Note |
+| --- | --- | --- |
+| `NewLRUPlanCache` (capacity guard: <1 → 100) | `NonPreparedPlanCache::resize` / `PreparedSelectPlan.cached_plans` | per-handle Vec stands in for the session-wide LRU |
+| `Get` + `pickFromBucket` (paramTypes compatibility) | `prepared_parameter_types_compatible` lookup in `bind_inner`/`bind_cached_for_statement` | one key may hold several plans keyed by parameter-type signature |
+| `Put` (replace-compatible / push-new, evict-oldest at capacity) | the cached-plans `retain` + `push` + miss rebuild | capacity unbounded per handle (Go bounds per session) |
+| `Delete` / `DeleteAll` / `Size` / `SetCapacity` / `Close` | `invalidate_on_fresh_stats` schema-version filtering; no explicit capacity setter | SetCapacity <1 errors in Go |
+| `memoryControl` (quota × guard via `memory.InstanceMemUsed`) | not ported | the port has no session-plan memory quota loop |
+| `MemoryUsage` / `updateInstanceMetric` / `updateInstancePlanNum` (grafana instance gauges) | not ported | prometheus instance-metric face absent |
+| `onEvict` (test-only) | n/a | |
+
+The unported slice is exactly the session-wide sharing, memory-quota loop,
+and instance metrics; statement answers are unaffected. It stays queued with
+the DML/container follow-up under `rust/docs/go-physical-plan-parity-execplan.md`.
+
 ## Validation
 
     cargo +nightly-2026-08-22 test --offline --locked -p tidb-session --lib non_prepared_plan_cache
