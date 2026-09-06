@@ -41,6 +41,13 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/util/hint` return contracts): the complete four-artifact
+  Go package and complete five-module Rust owner were rechecked. Eighteen
+  direct Go-shaped hint matching/restoration/query-block helpers no longer
+  impose Rust-only `#[must_use]` diagnostics; focused deny-on-discard probes
+  failed pre-fix with exactly 18 diagnostics and pass afterward. Evidence is
+  recorded in `receipts/util_hint.md`; Ready gates and one package-scoped
+  publication commit remain.
 - 2026-09-06 (`pkg/statistics` builder return contracts): the complete
   direct root inventory was re-read at current Go master: 33 artifacts and
   13,905 direct lines plus two JSON fixtures (71 lines), with nested packages

@@ -65,7 +65,6 @@ pub struct QBHintHandler {
 
 impl QBHintHandler {
     /// Go `NewQBHintHandler(nil)`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -86,7 +85,6 @@ impl QBHintHandler {
     }
 
     /// Go `NewBuildState`.
-    #[must_use]
     pub fn new_build_state(&self) -> QBHintBuildState {
         QBHintBuildState {
             view_qb_name_used: (!self.view_qb_name_to_table.is_empty())
@@ -96,7 +94,6 @@ impl QBHintHandler {
     }
 
     /// Go `MaxSelectStmtOffset`.
-    #[must_use]
     pub fn max_select_stmt_offset(&self) -> i32 {
         self.select_stmt_offset
     }
@@ -235,13 +232,11 @@ impl QBHintHandler {
     }
 
     /// Go `GetHintOffset`.
-    #[must_use]
     pub fn hint_offset(&self, qb_name: Option<&str>, current_offset: i32) -> i32 {
         qb_name.map_or(current_offset, |name| self.block_offset(name))
     }
 
     /// Go `checkTableQBName`.
-    #[must_use]
     pub fn tables_have_valid_qb_names(&self, tables: &[&HintTable]) -> bool {
         tables.iter().all(|table| {
             table
@@ -252,7 +247,6 @@ impl QBHintHandler {
     }
 
     /// Go `isHint4View`.
-    #[must_use]
     pub fn is_hint_for_view(&self, hint: &Hint) -> bool {
         if let Some(name) = hint_target_qb_name(hint) {
             return self
@@ -316,7 +310,6 @@ impl QBHintHandler {
     }
 
     /// Go `HandleUnusedViewHints`.
-    #[must_use]
     pub fn unused_view_hint_warnings(&self, state: &QBHintBuildState) -> Vec<String> {
         self.view_qb_name_to_table
             .keys()
@@ -500,5 +493,34 @@ fn collect_leading_tables<'a>(
             tidb_ast::LeadingElement::Table(table) => tables.push(table),
             tidb_ast::LeadingElement::Group(group) => collect_leading_tables(group, tables),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn go_query_block_api_returns_may_be_ignored_like_go() {
+        QBHintHandler::new();
+        let handler = QBHintHandler::new();
+        handler.new_build_state();
+        handler.max_select_stmt_offset();
+        handler.hint_offset(None, 0);
+        let table = HintTable {
+            db_name: None,
+            name: "t".to_owned(),
+            qb_name: None,
+            partitions: Vec::new(),
+        };
+        handler.tables_have_valid_qb_names(&[&table]);
+        let hint = Hint {
+            name: "HINT".to_owned(),
+            kind: HintKind::Nullary { qb_name: None },
+        };
+        handler.is_hint_for_view(&hint);
+        let state = handler.new_build_state();
+        handler.unused_view_hint_warnings(&state);
     }
 }
