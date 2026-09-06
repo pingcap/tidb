@@ -68,19 +68,28 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 	for _, expr := range ds.AllConds {
 		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.SCtx().GetExprCtx(), expr))
 	}
+	sessionAndStmtPermission := (ds.SCtx().GetSessionVars().GetEnableIndexMerge() || len(ds.IndexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
+	if !sessionAndStmtPermission {
+		warningMsg = "IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off."
+		return nil
+	}
+
 	// Predicates implied by a MATCH ... AGAINST filter, which let it reach a
 	// multi-valued index over the tokenized column through the ordinary paths
 	// below. They are added only to this local set, never to ds.AllConds: they
 	// exist to unlock an access path, and the MATCH they came from already
 	// decides the result, so evaluating them again per row would re-tokenize
 	// the document for nothing.
+	//
+	// Derived after the permission check rather than before it. Compiling the
+	// search string and building the predicates is wasted work when no index
+	// merge path can be generated to consume them, and a MATCH then scans -
+	// which is how every multi-valued index behaves here, full-text or not:
+	// `member of` over a plain one also falls back to a scan under
+	// no_index_merge or with tidb_enable_index_merge off, because
+	// generateIndexMerge4MVIndex below is the only thing that builds those
+	// paths. TestFTSMatchAgainstWithoutIndexMergeScans pins the behaviour.
 	indexMergeConds = append(indexMergeConds, deriveFTSIndexFilters(ds)...)
-
-	sessionAndStmtPermission := (ds.SCtx().GetSessionVars().GetEnableIndexMerge() || len(ds.IndexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
-	if !sessionAndStmtPermission {
-		warningMsg = "IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off."
-		return nil
-	}
 
 	if ds.TableInfo.TempTableType == model.TempTableLocal {
 		warningMsg = "IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."

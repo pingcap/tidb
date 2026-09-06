@@ -364,3 +364,40 @@ func TestFTSMatchAgainstUnindexableRequiredTermScans(t *testing.T) {
 	tk.MustQuery(query).Check([][]any{{"1001"}})
 	tk.MustExec("set @@tidb_enable_index_merge=on")
 }
+
+// TestFTSMatchAgainstWithoutIndexMergeScans pins what happens when no index
+// merge path can be built. A multi-valued index is reachable only through
+// generateIndexMerge4MVIndex, so a MATCH scans under no_index_merge or with
+// tidb_enable_index_merge off - and so does `member of` over a plain
+// multi-valued index, which is where this behaviour comes from rather than
+// anything full-text specific.
+//
+// The results must not change with it, only the plan.
+func TestFTSMatchAgainstWithoutIndexMergeScans(t *testing.T) {
+	tk := prepareFTSMVIndexTable(t)
+	const query = "select id from articles where match(body) against('+rareone' in boolean mode) order by id"
+	expected := [][]any{{"1001"}, {"1002"}}
+
+	require.True(t, usesFTSMVIndex(tk, query))
+	tk.MustQuery(query).Check(expected)
+
+	tk.MustExec("set @@tidb_enable_index_merge=off")
+	require.False(t, usesFTSMVIndex(tk, query))
+	tk.MustQuery(query).Check(expected)
+	tk.MustExec("set @@tidb_enable_index_merge=on")
+
+	hinted := "select /*+ no_index_merge() */ id from articles where match(body) against('+rareone' in boolean mode) order by id"
+	require.False(t, usesFTSMVIndex(tk, hinted))
+	tk.MustQuery(hinted).Check(expected)
+
+	// The same for a plain multi-valued index, which is the general rule this
+	// follows: nothing about it is specific to full-text search.
+	tk.MustExec("create table tags (id int primary key, j json, key idx ((cast(j->'$.t' as char(32) array))))")
+	tk.MustExec(`insert into tags values (1, '{"t":["rareone"]}')`)
+	tk.MustExec("analyze table tags")
+	const memberOf = `select id from tags where 'rareone' member of (j->'$.t')`
+	tk.MustExec("set @@tidb_enable_index_merge=off")
+	require.NotContains(t, fmt.Sprintf("%v", tk.MustQuery("explain "+memberOf).Rows()), "idx")
+	tk.MustQuery(memberOf).Check([][]any{{"1"}})
+	tk.MustExec("set @@tidb_enable_index_merge=on")
+}
