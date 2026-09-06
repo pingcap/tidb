@@ -787,3 +787,5 @@
 - 下轮恢复点: (1) plan_replayer_dump 主体移植 (zip 装配/会话采集/presign); (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
 - dump 主体第二批: build_config_toml (dumpConfig, 全局配置 TOML 序列化) 与 build_meta_txt (dumpMeta, printer.GetTiDBInfo 原文) 落地; tidb-domain 增 toml/tidb-util 依赖。2 个测试: TOML 可回解析 + meta.txt Release Version 头。147 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。
 - 下轮恢复点: (1) dump 主体剩余: dumpSQLMeta 的 zip 写入/variables/bindings/tiflash-replica/schemas/stats/presign; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
+- 范围确认: extractTableNames/tableNameExtractor 移植需要 (a) tidb-ast Visitor (enter/leave over dyn Any, 已存在) (b) infoschema seam (TableExists/TableByName/View.select_stmt/ForeignKeys, model 字段齐备 ViewInfo.select_stmt:430 + FKInfo:895) (c) executor ParseWithParams 复入 —— 约 200+ 行, 需完整上下文一批成型, 本轮不开工以免中途截断。
+- 下轮恢复点: (1) tableNameExtractor + findFK + handleIsView 移植 (带 infoschema/executor seam, ~200 行); (2) dumpSchemas/dumpVariables/bindings/stats 后续切片; (3) 只读收敛核查; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
