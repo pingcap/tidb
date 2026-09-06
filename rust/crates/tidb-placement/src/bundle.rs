@@ -169,11 +169,13 @@ pub fn new_bundle_from_constraints_options(
     // Create follower rules.
     // If no constraints, we need create default follower rules.
     if follower_replicas > 0 {
-        let builder = RuleBuilder::new()
-            .set_role(PeerRoleType::VOTER)
-            .set_replicas_num(follower_replicas)
-            .set_skip_check_replicas_consistent(need_create_default && explicit_follower_count == 0)
-            .set_constraint_str(follower_constraints);
+        let mut builder = RuleBuilder::new();
+        builder.set_role(PeerRoleType::VOTER);
+        builder.set_replicas_num(follower_replicas);
+        builder.set_skip_check_replicas_consistent(
+            need_create_default && explicit_follower_count == 0,
+        );
+        builder.set_constraint_str(follower_constraints);
         let mut follower_rules = builder
             .build_rules()
             .map_err(|err| err.wrapping("invalid FollowerConstraints"))?;
@@ -188,10 +190,10 @@ pub fn new_bundle_from_constraints_options(
     }
 
     // Create learner rules.
-    let builder = RuleBuilder::new()
-        .set_role(PeerRoleType::LEARNER)
-        .set_replicas_num(explicit_learner_count)
-        .set_constraint_str(learner_constraints);
+    let mut builder = RuleBuilder::new();
+    builder.set_role(PeerRoleType::LEARNER);
+    builder.set_replicas_num(explicit_learner_count);
+    builder.set_constraint_str(learner_constraints);
     let mut learner_rules = builder
         .build_rules()
         .map_err(|err| err.wrapping("invalid LearnerConstraints"))?;

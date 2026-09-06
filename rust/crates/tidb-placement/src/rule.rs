@@ -41,35 +41,30 @@ pub struct RuleBuilder {
 
 impl RuleBuilder {
     /// Go `NewRuleBuilder`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Go `SetRole`: sets the role of the rule.
-    #[must_use]
-    pub fn set_role(mut self, role: PeerRoleType) -> Self {
+    pub fn set_role(&mut self, role: PeerRoleType) -> &mut Self {
         self.role = role;
         self
     }
 
     /// Go `SetReplicasNum`: sets the replicas number in the rule.
-    #[must_use]
-    pub const fn set_replicas_num(mut self, num: u64) -> Self {
+    pub fn set_replicas_num(&mut self, num: u64) -> &mut Self {
         self.replicas_num = num;
         self
     }
 
     /// Go `SetSkipCheckReplicasConsistent`.
-    #[must_use]
-    pub const fn set_skip_check_replicas_consistent(mut self, skip: bool) -> Self {
+    pub fn set_skip_check_replicas_consistent(&mut self, skip: bool) -> &mut Self {
         self.skip_check_replicas_consistent = skip;
         self
     }
 
     /// Go `SetConstraintStr`: sets the constraint string.
-    #[must_use]
-    pub fn set_constraint_str(mut self, constraint_str: &str) -> Self {
+    pub fn set_constraint_str(&mut self, constraint_str: &str) -> &mut Self {
         self.constraint_str = constraint_str.to_owned();
         self
     }
@@ -117,7 +112,6 @@ impl RuleBuilder {
 
 /// Go `NewRule`: constructs a rule from role, count, and constraints. It is
 /// here to make the behavior of creating new rules consistent.
-#[must_use]
 pub fn new_rule(role: PeerRoleType, replicas: u64, constraints: Vec<LabelConstraint>) -> Rule {
     Rule {
         role,
@@ -247,7 +241,7 @@ pub(crate) fn new_rules_with_dict_constraints(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{new_rule, new_rules};
+    use super::{new_rule, new_rules, RuleBuilder};
     use crate::constraint::new_constraint_direct;
     use crate::constraints::new_constraints_direct;
     use crate::errors::PlacementErrorKind;
@@ -263,6 +257,24 @@ pub(crate) mod tests {
                 "{prefix}\n\ncan not found {index} rule\n{rule:?}\n{got:?}"
             );
         }
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_builder_mutators_apply_when_returns_are_ignored() {
+        RuleBuilder::new();
+        new_rule(PeerRoleType::VOTER, 1, Vec::new());
+
+        let mut builder = RuleBuilder::new();
+        builder.set_role(PeerRoleType::LEARNER);
+        builder.set_replicas_num(2);
+        builder.set_skip_check_replicas_consistent(true);
+        builder.set_constraint_str("");
+
+        let rules = builder.build_rules().unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].role, PeerRoleType::LEARNER);
+        assert_eq!(rules[0].count, 2);
     }
 
     /// Go `TestClone` (`rule_test.go`).

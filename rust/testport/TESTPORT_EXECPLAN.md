@@ -41,6 +41,17 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/ddl/placement` Go pointer-builder semantics): the complete
+  13-artifact, 3,844-line Go package and complete `tidb-placement` owner were
+  re-read at current Go master, including every production/test/support
+  artifact and metadata carrier. Rust's four consuming `RuleBuilder` setters
+  were a real parity gap: ignored setter calls moved the builder instead of
+  mutating Go's pointer. The focused regression failed pre-fix with exactly
+  four `E0382` diagnostics and passes after switching to `&mut self -> &mut
+  Self`; discard-only constructor annotations were removed as well. The 29
+  owner tests, all-target check, formatting, Ready lint, and diff checks pass.
+  Evidence is recorded in `receipts/ddl_placement.md` and the dedicated
+  `docs/operations/ddl-placement-audit-execplan.md`.
 - 2026-09-06 (`pkg/dxf/operator` constructor return contracts): the complete
   six-artifact, 581-line Go package and complete Rust owner were rechecked at
   current Go master. The direct `AsyncPipeline::new`,
