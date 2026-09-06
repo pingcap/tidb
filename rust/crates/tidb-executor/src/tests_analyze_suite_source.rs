@@ -511,14 +511,15 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
 /// 0.500000 of `use min(1, 110000/220000) as the sample-rate=0.5`, and a
 /// small table's storage count 10000 gives the 1.000000 of
 /// `use min(1, 110000/10000)`; a table with no stats row at all reads all of
-/// it (rate 1).
+/// it (rate 1) once its caller reports the zero stats-meta count. The helper's
+/// `None`/`None` input remains Go's unknown-row-count fallback (rate 0.001).
 #[test]
 fn analyze_auto_adjusted_sample_rate_boundaries() {
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
     assert_eq!(adjusted_sample_rate(Some(220_000), None), 0.5);
     assert_eq!(adjusted_sample_rate(Some(10_000), None), 1.0);
     assert_eq!(adjusted_sample_rate(Some(3), None), 1.0);
-    assert_eq!(adjusted_sample_rate(None, None), 1.0);
+    assert_eq!(adjusted_sample_rate(None, None), 0.001);
 }
 
 /// Go `analyze_test.go:509::TestIssue20874`: utf8mb4_unicode_ci /

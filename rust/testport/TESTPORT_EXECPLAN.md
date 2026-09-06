@@ -9469,3 +9469,11 @@ risks without claiming repository-wide parity.
   stored-generated PK accepted, index on generated accepted, unknown column
   charset → [parser:1115], unknown table charset parse-refused. Five pins in
   `tests/generated_charset_rules_source.rs`.
+- 2026-09-06 (`pkg/statistics`/`pkg/executor` ANALYZE sample-rate fallback):
+  Rust's in-process analyzer now models Go's zero-count `stats_meta` row for
+  an existing fresh table, selecting a full sample instead of the unknown
+  stats-handle `0.001` rate. Small-table TopN estimates are consequently exact
+  after `ANALYZE`, while the shared helper retains Go's distinct `None`/`None`
+  fallback. Focused session/executor regressions, the complete statistics
+  inventory, and Ready evidence are recorded in
+  `receipts/statistics_analyze_small_table_sample_rate.md`.

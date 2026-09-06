@@ -160,6 +160,26 @@ fn analyze_publishes_the_row_count_and_the_distribution() {
     );
 }
 
+/// Go's auto-adjusted rate treats a present table with a zero `stats_meta`
+/// count as a full scan. The in-process catalog has no `mysql.stats_meta` row
+/// to read, so it must supply that zero rather than taking the unknown-table
+/// 0.001 fallback (which can retain no rows from a small table).
+#[test]
+fn fresh_in_process_analyze_uses_full_sample_for_a_small_table() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT)").expect("create table");
+    session
+        .run("INSERT INTO t VALUES (1),(1),(2),(2),(2)")
+        .expect("insert rows");
+    session.run("ANALYZE TABLE t").expect("analyze table");
+
+    assert_eq!(
+        top_est_rows(&mut session, "EXPLAIN SELECT * FROM t WHERE a = 2"),
+        "3.00",
+        "the zero-count stats-meta branch must retain all five rows for TopN"
+    );
+}
+
 /// Go analyzes each physical partition under static pruning and does not
 /// merge a logical-table histogram. Switching that same session back to the
 /// default dynamic pruning therefore sees pseudo global statistics and keeps
