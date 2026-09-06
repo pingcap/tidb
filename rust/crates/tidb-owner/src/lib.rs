@@ -58,7 +58,6 @@ impl OpType {
     }
 
     /// Whether the upgrading state has been synchronized.
-    #[must_use]
     pub const fn is_synced_upgrading_state(self) -> bool {
         self.0 == Self::SYNC_UPGRADING_STATE.0
     }
@@ -131,7 +130,6 @@ pub struct ListenersWrapper {
 
 impl ListenersWrapper {
     /// Creates a listener broadcaster.
-    #[must_use]
     pub fn new(listeners: Vec<Arc<dyn Listener>>) -> Self {
         Self { listeners }
     }
@@ -347,7 +345,6 @@ pub struct OwnerManager {
 
 impl OwnerManager {
     /// Creates an owner manager over the shared etcd authority.
-    #[must_use]
     pub fn new(
         context: Context,
         store: Arc<dyn OwnerStore>,

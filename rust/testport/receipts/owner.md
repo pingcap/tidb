@@ -1,6 +1,7 @@
 # `pkg/owner` — complete package transcreation
 
-Pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Historical pinned Go source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Current Go source rechecked at `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
 
 ## Complete inventory
 
@@ -10,7 +11,8 @@ That is three production files, three test/harness files, eleven top-level
 source tests, one build artifact, and one ownership artifact. It has no
 `doc.go`, fixture, generated source, benchmark, fuzz target, example, or
 platform/build-tag production variant. The checkout package is byte-identical
-to the pin.
+to the historical pin except for the current ten-line `OWNERS` routing file;
+all production, test, and BUILD artifacts remain byte-identical.
 
 `main_test.go` supplies Go's package setup and goroutine leak checker; Rust's
 test harness has no Go goroutines or package-level setup hook to reproduce.
@@ -25,8 +27,8 @@ manager, operation value, listener broadcast, current-owner reads, stale-key
 cleanup, force-owner transaction, session lifecycle, source-shaped owner-key
 encoding, watch behavior, and distributed lock. `mock.rs` contains the local
 store manager and the process-wide `(store ID, owner key)` state. The aggregate
-test has exactly the eleven source test identities and no supplemental Rust
-test.
+test has the eleven source test identities plus one focused return-contract
+regression.
 
 The ordinary production adapter is `tidb-pd-client::EtcdClient`. Its existing
 single etcd worker now exposes the MVCC metadata and transactions Go's
@@ -97,3 +99,64 @@ file changed, so `make bazel_prepare` is not required.
   not run. The production transaction calls compile through `etcd-client` and
   the Go reference suite exercised embedded etcd; Rust source-equivalent tests
   use the package's deterministic store seam.
+
+## Follow-up: discardable owner API returns (2026-09-06)
+
+The complete eight-artifact, 1,883-line Go package was re-read and inventoried
+at current `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
+It contains three production files, three test/harness files with eleven
+ordinary top-level tests plus `TestMain`, one Bazel build file, and one
+ownership-policy file. There is no `doc.go`, fixture, generated source,
+generator input, example, benchmark, fuzz target, or platform/build-tag
+variant. The historical-to-current delta is confined to `OWNERS`; no Go
+source or test behavior changed.
+
+The complete Rust owner is the five crate-local artifacts `Cargo.toml`,
+`src/lib.rs`, `src/mock.rs`, `tests/all.rs`, and
+`tests/manager_source.rs`, together with the shared
+`rust/scripts/aggregate-tests.rs` build input and its ephemeral generated
+`OUT_DIR/all_tests.rs` module list. Workspace membership and lockfile entries
+were inspected and did not require changes.
+
+Go permits callers to discard `OpType.IsSyncedUpgradingState`,
+`NewListenersWrapper`, `NewOwnerManager`, `MockGlobalState.OwnerKey`,
+`MockGlobalStateSelector.GetOwner` and `IsOwner`, and `NewMockManager`. Rust
+imposed `#[must_use]` on all seven direct counterparts. Those annotations were
+removed without changing election, watch, lease, listener, serialization, or
+mock-state behavior. The focused aggregate regression invokes all seven APIs
+under `#[deny(unused_must_use)]`; it failed before the implementation edit
+with exactly seven diagnostics and passes afterward.
+
+Seven annotations remain intentionally: `OpType::from_byte` and `as_byte` are
+Rust encoding helpers; the three `Context` constructors are the Rust adapter
+for an external Go package; `MockManager::global_state` is the Rust access
+adapter for Go's exported global; and `mock_owner_op_value` is a private Rust
+atomic-load helper. None is a direct callable API declared by Go `pkg/owner`.
+
+Ready validation for this follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-owner --test all source_return_values_may_be_ignored_like_go --offline --locked -- --nocapture
+PASS; 1 passed, 0 failed.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-owner --offline --locked -- --test-threads=1
+PASS; 12 aggregate tests passed, 0 failed; unit and doc targets had 0 tests.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-owner --all-targets --offline --locked
+PASS; the pre-existing vendored tikv-client private-bounds warning remains outside this crate.
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+Only Rust source/tests and parity documentation changed. No Go, Bazel, Cargo
+metadata, or module dependency changed, so `make bazel_prepare` is not
+required. The live-PD probe and Go suite were not rerun because this
+return-contract-only edit does not change runtime behavior; the deterministic
+source-equivalent Rust suite and all-target compile cover the affected owner.

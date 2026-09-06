@@ -32,7 +32,6 @@ pub struct MockGlobalState {
 
 impl MockGlobalState {
     /// Returns a selector for one store and owner category.
-    #[must_use]
     pub fn owner_key(self: &Arc<Self>, store_id: &str, owner_key: &str) -> MockGlobalStateSelector {
         MockGlobalStateSelector {
             state: Arc::clone(self),
@@ -56,7 +55,6 @@ impl MockGlobalStateSelector {
     }
 
     /// Returns the current owner.
-    #[must_use]
     pub fn get_owner(&self) -> String {
         lock(&self.state.current_owner)
             .get(&self.map_key())
@@ -89,7 +87,6 @@ impl MockGlobalStateSelector {
     }
 
     /// Whether `owner` is current.
-    #[must_use]
     pub fn is_owner(&self, owner: &str) -> bool {
         self.get_owner() == owner
     }
@@ -119,7 +116,6 @@ pub struct MockManager {
 impl MockManager {
     /// Creates a mock manager. A missing store ID uses Go's
     /// `"mock_store_id"` identity.
-    #[must_use]
     pub fn new(
         context: Context,
         id: impl Into<String>,

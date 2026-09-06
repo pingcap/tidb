@@ -19,7 +19,8 @@ use std::time::{Duration, Instant};
 
 use tidb_owner::{
     acquire_distributed_lock, get_owner_op_value, watch_owner_for_test, Context, Listener,
-    ListenersWrapper, Manager, OpType, OwnerManager, OwnerStore, OwnerWatch,
+    ListenersWrapper, Manager, MockGlobalState, MockManager, OpType, OwnerManager, OwnerStore,
+    OwnerWatch,
     WAIT_TIME_ON_FORCE_OWNER_MILLIS,
 };
 use tidb_pd_client::EtcdKeyValue;
@@ -212,6 +213,28 @@ fn wait_until(mut predicate: impl FnMut() -> bool) {
 
 fn manager(store: Arc<FakeStore>, id: &str, key: &str) -> OwnerManager {
     OwnerManager::new(Context::background(), store, "owner-test", id, key)
+}
+
+#[deny(unused_must_use)]
+#[test]
+fn source_return_values_may_be_ignored_like_go() {
+    OpType::NONE.is_synced_upgrading_state();
+    ListenersWrapper::new(Vec::new());
+    OwnerManager::new(
+        Context::background(),
+        Arc::new(FakeStore::default()),
+        "owner-test",
+        "owner",
+        "/owner",
+    );
+
+    let state = Arc::new(MockGlobalState::default());
+    state.owner_key("store", "ddl");
+    let selector = state.owner_key("store", "ddl");
+    selector.get_owner();
+    selector.is_owner("owner");
+
+    MockManager::new(Context::background(), "owner", None, "/owner");
 }
 
 #[test]

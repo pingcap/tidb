@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/owner` API return contracts): the complete eight-artifact,
+  1,883-line Go package, five-file Rust owner, shared aggregate build input,
+  generated-output shape, and workspace metadata were rechecked at current Go
+  master. Seven direct Go-shaped APIs no longer emit Rust-only `#[must_use]`
+  diagnostics; seven Rust adapter/helper annotations remain. A focused
+  regression failed with exactly seven diagnostics before the edit and passes
+  afterward; the twelve-test owner suite and all-target check pass. Evidence
+  is recorded in `receipts/owner.md`.
 - 2026-09-06 (`pkg/statistics/handle/util` API return contracts): the complete
   seven-artifact, 927-line root package and five-module Rust owner were
   rechecked at current Go master; the nested `util/test` package remains a
