@@ -709,3 +709,8 @@
   验收: cargo test -p tidb-log 23 全绿 (含新回归); tidb-util 564 全绿; fmt; diff-check; make lint 过。收据 rust/docs/logutil-parity-audit.md。
   规程生效: 本批 commit 用 pathspec 限定形式, 兄弟 staged 的 5 文件未被卷入。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 新面批次: tidb-sqlexec (Go pkg/util/sqlexec @ a85e0fd5df) 全文件审计。零 behavior 分歧。
+  匹配面: RestrictedSQLExecutor 3 方法, ExecOption 全 10 字段 + 9 个 option 函数 + GetExecOption 左折叠, 六个接口形状 (nil RecordSet=Option, NewChunk(nil)=new_chunk(None), Send+Sync 并发注记, TryDetach 三值返回), DrainRecordSet(AndClose) chunk 阶梯/close 恒执行且错误只记日志, ExecSQL 短路, SimpleRecordSet 全语义。
+  补齐两处文档契约: ParseWithParams 占位符契约 (%?/%%/%n + 注入 caveat) 与 RecordSet close 后重读重启的 Go 无条件保证。文档化 narrowing: mid-drain 部分行丢弃 (今日无观察方), Rust-only seam traits。
+  验收: cargo test -p tidb-sqlexec; fmt; diff-check; make lint 过。收据 rust/docs/sqlexec-parity-audit.md。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
