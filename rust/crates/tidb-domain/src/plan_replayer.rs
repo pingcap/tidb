@@ -2644,3 +2644,101 @@ mod dump_archive_tests {
         assert_eq!(9, lines[0].split('\t').count());
     }
 }
+
+/// Go `dumpVariables`' variable source: the sys-var registry with the
+/// noop/SEM filters and the per-session value read.
+pub trait VariablesDumpSource {
+    /// The registry's variable names, in registry order.
+    fn variable_names(&self) -> Vec<String>;
+    /// Go `SysVar.IsNoop`.
+    fn is_noop(&self, name: &str) -> bool;
+    /// Go `infoschema.SysVarHiddenForSem(sctx, v.Name)`.
+    fn hidden_for_sem(&self, name: &str) -> bool;
+    /// Go `sessionVars.GetSessionOrGlobalSystemVar(ctx, name)`.
+    fn session_or_global_value(&self, name: &str) -> Result<String, String>;
+    /// Go `vardef.EnableNoopVariables.Load()`.
+    fn enable_noop_variables(&self) -> bool;
+}
+
+/// Go `dumpVariables`' record set: the `variables.toml` key/value pairs.
+/// Noop variables are skipped unless noop variables are enabled, SEM-hidden
+/// variables are skipped, and the rest take the session-or-global value.
+///
+/// # Errors
+/// Whatever the value read reports; Go aborts the whole file.
+pub fn build_variables_records(
+    source: &dyn VariablesDumpSource,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut records = std::collections::BTreeMap::new();
+    for name in source.variable_names() {
+        if source.is_noop(&name) && !source.enable_noop_variables() {
+            continue;
+        }
+        if source.hidden_for_sem(&name) {
+            continue;
+        }
+        records.insert(name.clone(), source.session_or_global_value(&name)?);
+    }
+    Ok(records)
+}
+
+#[cfg(test)]
+mod variables_dump_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    struct FakeVars {
+        values: HashMap<String, String>,
+        noop: HashSet<String>,
+        hidden: HashSet<String>,
+        enable_noop: bool,
+    }
+
+    impl VariablesDumpSource for FakeVars {
+        fn variable_names(&self) -> Vec<String> {
+            self.values.keys().cloned().collect()
+        }
+        fn is_noop(&self, name: &str) -> bool {
+            self.noop.contains(name)
+        }
+        fn hidden_for_sem(&self, name: &str) -> bool {
+            self.hidden.contains(name)
+        }
+        fn session_or_global_value(&self, name: &str) -> Result<String, String> {
+            self.values
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("unknown variable {name}"))
+        }
+        fn enable_noop_variables(&self) -> bool {
+            self.enable_noop
+        }
+    }
+
+    /// Go `dumpVariables`: noop variables drop unless noop variables are
+    /// enabled, SEM-hidden variables always drop, and the rest carry the
+    /// session-or-global value.
+    #[test]
+    fn variables_records_apply_the_filters() {
+        let mut values = HashMap::new();
+        values.insert("windowing_use_high_precision".to_owned(), "ON".to_owned());
+        values.insert("tidb_enable_noop_func".to_owned(), "OFF".to_owned());
+        let mut vars = FakeVars {
+            values,
+            noop: HashSet::from(["tidb_enable_noop_func".to_owned()]),
+            hidden: HashSet::from(["hidden_one".to_owned()]),
+            enable_noop: false,
+        };
+        vars.values.insert("hidden_one".to_owned(), "x".to_owned());
+        let records = build_variables_records(&vars).unwrap();
+        assert!(!records.contains_key("tidb_enable_noop_func"));
+        assert!(!records.contains_key("hidden_one"));
+        assert_eq!(
+            records
+                .get("windowing_use_high_precision")
+                .map(String::as_str),
+            Some("ON")
+        );
+        let _ = &vars.noop;
+    }
+}
