@@ -765,3 +765,11 @@
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) unistore 回补已闭; (3) pd-client 外部 pin 待决; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
 - 全量收敛 sweep: 本会话全部 12 个修复/审计面一次性复验 —— hint 2, tablecodec 61, protocol 121 (含兄弟并跑新增), sqlexec 0, timer 65, domain 143, unistore 114, br 31, schemaver 9, stmtsummary 64, ddl-session 5, ddl-resourcegroup 1 —— 合计 571 passed / 0 failed。replayer.rs (131 行, PlanReplayerTaskKey + 文件名生成器 + DirName, 上轮 plan-replayer 审计已覆盖) 与 disttask.rs (106 行, GenerateExecID, schemaver 审计已覆盖) 均确认无遗漏。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) unistore 回补已闭; (3) pd-client 外部 pin 待决; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
+- 新面批次: tidb-pd-client tso 面 (外部 pin: github.com/tikv/pd/client@v0.0.0-20260805103528-afa43111d149, 源自 module cache) 审计 + 修复。落地 4 项:
+  (1) 批内时间戳算术改纯加法 (pinned dispatcher.go:461,483 不读 suffix_bits), 丢弃 count<<suffix_bits 位移;
+  (2) 重试语义对齐 handleProcessRequestError: 全错误可重试直至等待 deadline, 撤销 20 次上限与窄可重试集, 终态错误为 deadline miss (Go ctx.Err() 类比);
+  (3) 重试间隔 500ms 均匀 (constants.RetryInterval), 无首次免费;
+  (4) 单调性违规 (tso_fallback) 保持终态: Go dispatcher 内 panic, 本 crate 报错并存活 (文档化 narrowing)。
+  3 个旧 suffix-shift 测试按 pinned 语义重写; malformed/fallback 集成测试改钉 终态 fallback + 重试至 deadline + 终态 timeout。
+  验收: cargo test -p tidb-pd-client 26 lib + 44 int 全绿; fmt; diff-check; make lint 过。收据 rust/docs/pdclient-tso-parity-audit.md。已推送 (LANDED_1)。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
