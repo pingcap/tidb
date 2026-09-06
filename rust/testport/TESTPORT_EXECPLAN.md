@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/meta/model` reorganization return contracts): the complete
+  23-artifact, 10,721-line Go package and complete `tidb-model` owner were
+  re-read at current Go master. Seven direct `DDLReorgMeta` constructor/getter
+  and `ReorgType.NeedMergeProcess` counterparts no longer impose Rust-only
+  `#[must_use]` diagnostics. The focused regression failed pre-fix with
+  exactly seven diagnostics and passes after the edit; all 323 owner tests
+  pass. Evidence is recorded in `receipts/meta_model_materialized_view.md`
+  and `docs/operations/meta-model-reorg-audit-execplan.md`.
 - 2026-09-06 (`pkg/ddl/placement` Go pointer-builder semantics): the complete
   13-artifact, 3,844-line Go package and complete `tidb-placement` owner were
   re-read at current Go master, including every production/test/support

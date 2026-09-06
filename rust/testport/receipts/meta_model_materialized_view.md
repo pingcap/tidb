@@ -157,3 +157,27 @@ and `make lint`.
 
 No Go source was edited and no live database integration was needed for this
 method diagnostic-only alignment.
+
+## Rust-only return-contract alignment — `reorg.go` (2026-09-06)
+
+The complete 23-artifact `pkg/meta/model` inventory above was re-read against
+current Go `origin/master` (`f2c346fe4f368ff855e17c1f62e28a89ba7f9723`);
+`git diff 94a9cbedab..origin/master -- pkg/meta/model` is empty. The same
+14 production files, eight tests, and `BUILD.bazel` remain the whole package;
+there are no fixtures, generated inputs, benchmarks, or platform variants.
+The Rust `tidb-model` owner, `reorg.rs` callers, inline tests, aggregate test
+registration, and workspace metadata were read before editing.
+
+Go permits discarding `NewDDLReorgMeta`, `ShallowCopy`, all three dynamic
+numeric getters, `GetUseNewCollateOrDefault`, and `ReorgType.NeedMergeProcess`.
+Rust had marked those seven Go-shaped counterparts `#[must_use]`, imposing a
+Rust-only compile contract. The annotations were removed without changing
+reorganization metadata, atomic defaults, JSON merge behavior, pointer
+sharing, or reorg-stage semantics. The Rust-only `DDLReorgProcessDefaults`
+callback constructor and nullable receiver helper retain their diagnostics.
+
+`reorg::tests::go_reorg_returns_may_be_ignored_like_go` discards all seven
+returns under `#[deny(unused_must_use)]`. Before the source edit, the focused
+compile failed with exactly seven `unused_must_use` diagnostics; after it, the
+test passes. The full 323-test `tidb-model` owner suite and all-target check
+also pass. No Go or dependency file changed.
