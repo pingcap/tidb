@@ -122,7 +122,7 @@ struct InterestingColumnPruner {
 
 impl InterestingColumnPruner {
     fn record_asked_groups(source: &mut DataSource, groups: &[Vec<Column>]) {
-        if tidb_util::filter::is_system_schema(&source.db_name) {
+        if tidb_util::filter::is_system_schema(&tidb_mysql::to_lowercase(&source.db_name)) {
             return;
         }
         let Some(schema) = source.base.base.schema() else {
@@ -371,7 +371,7 @@ impl Collector {
     }
 
     fn collect_data_source(&mut self, source: &DataSource) {
-        if tidb_util::filter::is_system_schema(&source.db_name) {
+        if tidb_util::filter::is_system_schema(&tidb_mysql::to_lowercase(&source.db_name)) {
             return;
         }
         self.result
