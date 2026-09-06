@@ -53,8 +53,8 @@ use tidb_expr::schema::Schema;
 use tidb_expr::NoColumns;
 
 use crate::expression_rewriter::ColumnIdAllocator;
-use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
 use crate::plan_base::PlanIdAllocator;
+use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
 
 /// The allocators and stats context Go reaches through `plan.SCtx()`.
 pub struct InjectContext<'a> {
@@ -95,12 +95,8 @@ pub fn inject_extra_projection(
 fn inject(ctx: &InjectContext<'_>, plan: PhysicalPlan) -> PhysicalPlan {
     let mut plan = plan;
     let children = plan.base_mut().take_children();
-    plan.base_mut().set_children(
-        children
-            .into_iter()
-            .map(|child| inject(ctx, child))
-            .collect(),
-    );
+    plan.base_mut()
+        .set_children(children.into_iter().map(|child| inject(ctx, child)).collect());
     match plan {
         PhysicalPlan::HashAgg(agg) => inject_proj_below_agg(ctx, agg),
         PhysicalPlan::StreamAgg(agg) => inject_proj_below_stream_agg(ctx, agg),
@@ -536,10 +532,7 @@ fn refine_4_neighbour_proj_exprs(exprs: &mut [Expression], child_proj_exprs: &[E
         std::collections::BTreeMap::new();
     for (i, expr) in child_proj_exprs.iter().enumerate() {
         if let Expression::Column(col) = expr {
-            input_idx_to_output_idxes
-                .entry(col.index)
-                .or_default()
-                .push(i);
+            input_idx_to_output_idxes.entry(col.index).or_default().push(i);
         }
     }
     let mut union_set = DisjointSet::new(child_proj_exprs.len());
@@ -696,29 +689,27 @@ mod tests {
         match plan {
             PhysicalPlan::TableDual(_) => "dual".to_owned(),
             PhysicalPlan::Projection(proj) => {
-                let inner = proj.base.children().first().map(shape).unwrap_or_default();
+                let inner = proj
+                    .base
+                    .children()
+                    .first()
+                    .map(shape)
+                    .unwrap_or_default();
                 format!("Proj({inner})")
             }
             PhysicalPlan::HashAgg(agg) => format!("HashAgg({})", shape(&agg.base.children()[0])),
-            PhysicalPlan::StreamAgg(agg) => {
-                format!("StreamAgg({})", shape(&agg.base.children()[0]))
-            }
+            PhysicalPlan::StreamAgg(agg) => format!("StreamAgg({})", shape(&agg.base.children()[0])),
             PhysicalPlan::Sort(sort) => format!("Sort({})", shape(&sort.base.children()[0])),
             PhysicalPlan::TopN(topn) => format!("TopN({})", shape(&topn.base.children()[0])),
             PhysicalPlan::NominalSort(nominal) => {
                 format!("NominalSort({})", shape(&nominal.base.children()[0]))
             }
-            PhysicalPlan::UnionAll(union_all) => {
-                format!("Union({} children)", union_all.base.children().len())
-            }
+            PhysicalPlan::UnionAll(union_all) => format!("Union({} children)", union_all.base.children().len()),
             other => other.tp().to_owned(),
         }
     }
 
-    fn context<'a>(
-        plan_ids: &'a PlanIdAllocator,
-        column_ids: &'a ColumnIdAllocator,
-    ) -> InjectContext<'a> {
+    fn context<'a>(plan_ids: &'a PlanIdAllocator, column_ids: &'a ColumnIdAllocator) -> InjectContext<'a> {
         InjectContext {
             plan_ids,
             column_ids,
@@ -733,7 +724,12 @@ mod tests {
         let ctx = context(&plan_ids, &column_ids);
         let child = dual(&plan_ids, vec![column(1)]);
         // sum(a + a): the argument is a scalar function.
-        let plan = agg_node(&plan_ids, vec![sum(plus(1, 1))], Vec::new(), child);
+        let plan = agg_node(
+            &plan_ids,
+            vec![sum(plus(1, 1))],
+            Vec::new(),
+            child,
+        );
 
         let injected = inject(&ctx, plan);
         assert_eq!(shape(&injected), "HashAgg(Proj(dual))");
@@ -755,7 +751,12 @@ mod tests {
         let column_ids = ColumnIdAllocator::new();
         let ctx = context(&plan_ids, &column_ids);
         let child = dual(&plan_ids, vec![column(1)]);
-        let plan = agg_node(&plan_ids, vec![sum(col_expr(1))], vec![col_expr(1)], child);
+        let plan = agg_node(
+            &plan_ids,
+            vec![sum(col_expr(1))],
+            vec![col_expr(1)],
+            child,
+        );
 
         let injected = inject(&ctx, plan);
         assert_eq!(shape(&injected), "HashAgg(dual)");
@@ -769,7 +770,12 @@ mod tests {
         let child = dual(&plan_ids, vec![column(1), column(2)]);
         // sum(a) group by a + b: the group-by scalar goes to the projection;
         // sum's column arg does not.
-        let plan = agg_node(&plan_ids, vec![sum(col_expr(1))], vec![plus(1, 2)], child);
+        let plan = agg_node(
+            &plan_ids,
+            vec![sum(col_expr(1))],
+            vec![plus(1, 2)],
+            child,
+        );
 
         let injected = inject(&ctx, plan);
         assert_eq!(shape(&injected), "HashAgg(Proj(dual))");
@@ -821,8 +827,7 @@ mod tests {
         let ctx = context(&plan_ids, &column_ids);
         let child = dual(&plan_ids, vec![column(1)]);
         let mut base = BasePhysicalPlan::new(&plan_ids, "NominalSort", 1);
-        base.base
-            .set_schema(Some(child.schema().cloned().unwrap_or_default()));
+        base.base.set_schema(Some(child.schema().cloned().unwrap_or_default()));
         base.set_children(vec![child]);
         base.set_children_req_props(vec![Some(
             crate::physical_property::PhysicalProperty::default(),
@@ -844,8 +849,7 @@ mod tests {
         let ctx = context(&plan_ids, &column_ids);
         let child = dual(&plan_ids, vec![column(1)]);
         let mut base = BasePhysicalPlan::new(&plan_ids, "NominalSort", 1);
-        base.base
-            .set_schema(Some(child.schema().cloned().unwrap_or_default()));
+        base.base.set_schema(Some(child.schema().cloned().unwrap_or_default()));
         base.set_children(vec![child]);
         base.set_children_req_props(vec![Some(
             crate::physical_property::PhysicalProperty::default(),
@@ -867,10 +871,12 @@ mod tests {
         let ctx = context(&plan_ids, &column_ids);
         let child = dual(&plan_ids, vec![column(1)]);
         let mut base = BasePhysicalPlan::new(&plan_ids, "Union", 1);
-        base.base
-            .set_schema(Some(child.schema().cloned().unwrap_or_default()));
+        base.base.set_schema(Some(child.schema().cloned().unwrap_or_default()));
         base.set_children(vec![child.clone(), child]);
-        let plan = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll { base, mpp: false });
+        let plan = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll {
+            base,
+            mpp: false,
+        });
 
         let injected = inject(&ctx, plan);
         assert_eq!(shape(&injected), "Union(2 children)");
