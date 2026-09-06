@@ -200,7 +200,6 @@ impl PartialEq for Value {
 impl Value {
     /// Renders this value the way Go's `%v` verb does, for error arguments
     /// and for `DEFAULT` clauses in restored SQL.
-    #[must_use]
     pub fn go_format(&self) -> String {
         match self {
             Self::Nil => "<nil>".to_owned(),
@@ -220,7 +219,6 @@ impl Value {
     /// Converts a [`GoAny`] interface payload into this domain, keeping the
     /// built-in shapes comparable with values this package itself produces
     /// (for example a joined column's synthesized string default).
-    #[must_use]
     pub fn from_go_any(value: &GoAny) -> Self {
         match value.view() {
             None => Self::Nil,
@@ -343,7 +341,6 @@ struct Singleton {
 
 /// Go `Singleton`: wraps an unordered value. Distinct instances of
 /// `Singleton` are incompatible.
-#[must_use]
 pub fn singleton(value: Value) -> Box<dyn Lattice> {
     Box::new(Singleton { value })
 }
@@ -404,7 +401,6 @@ struct EqualitySingleton {
 
 /// Go `EqualitySingleton`: wraps an unordered value with equality defined by
 /// custom code instead of the `==` operator.
-#[must_use]
 pub fn equality_singleton(value: Rc<dyn Equality>) -> Box<dyn Lattice> {
     Box::new(EqualitySingleton { value })
 }
@@ -597,7 +593,6 @@ struct FieldTp {
 
 /// Go `FieldTp`: used for the column field type
 /// (`github.com/pingcap/tidb/pkg/parser/types.FieldType.Tp`).
-#[must_use]
 pub fn field_tp(value: u8) -> Box<dyn Lattice> {
     Box::new(FieldTp { value })
 }
@@ -775,14 +770,12 @@ struct Maybe(Option<Box<dyn Lattice>>);
 
 /// Go `Maybe`: includes `nil` as the universal lower bound of the original
 /// lattice.
-#[must_use]
 pub fn maybe(inner: Option<Box<dyn Lattice>>) -> Box<dyn Lattice> {
     Box::new(Maybe(inner))
 }
 
 /// Go `MaybeSingletonInterface`: a convenient function calling
 /// `Maybe(Singleton(value))`.
-#[must_use]
 pub fn maybe_singleton_interface(value: &GoAny) -> Box<dyn Lattice> {
     if value.is_nil() {
         return maybe(None);
@@ -792,7 +785,6 @@ pub fn maybe_singleton_interface(value: &GoAny) -> Box<dyn Lattice> {
 
 /// Go `MaybeSingletonString`: a convenient function calling
 /// `Maybe(Singleton(s))`.
-#[must_use]
 pub fn maybe_singleton_string(s: &str) -> Box<dyn Lattice> {
     if s.is_empty() {
         return maybe(None);
@@ -975,7 +967,6 @@ impl Clone for MapLattice {
 }
 
 /// Go `Map`: wraps a `LatticeMap` instance into a `Lattice`.
-#[must_use]
 pub fn map_lattice(inner: Box<dyn LatticeMap>) -> Box<dyn Lattice> {
     Box::new(MapLattice { inner })
 }

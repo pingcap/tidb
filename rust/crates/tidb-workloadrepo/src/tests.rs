@@ -22,6 +22,19 @@ use tidb_owner::{Context, MockManager};
 
 use super::*;
 
+// Go callers may ignore return values from these package APIs. Keep the Rust
+// owner from imposing a stricter return contract than the pinned Go package.
+#[test]
+#[deny(unused_must_use)]
+fn go_workloadrepo_apis_allow_discarding_returns() {
+    workload_tables();
+    generate_partition_name(Local::now().date_naive());
+    calc_next_tick(Local::now());
+    Worker::new(None, None, None, "discarded");
+    let worker = Worker::new(None, None, None, "discarded");
+    worker.enabled();
+}
+
 #[derive(Default)]
 struct MemoryStore {
     values: Mutex<HashMap<Vec<u8>, Vec<u8>>>,

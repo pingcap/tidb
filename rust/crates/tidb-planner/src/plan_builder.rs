@@ -699,6 +699,12 @@ pub fn constant_is_always_false(constant: &Constant) -> Option<bool> {
 pub struct PlanScopeResolver<'a> {
     schema: &'a Schema,
     names: &'a [FieldName],
+    /// The underlying join's full schema/name slice, when the visible schema
+    /// coalesces a `USING`/`NATURAL` column. Go keeps the redundant side in
+    /// `FullSchema` for qualified references even though it is absent from
+    /// the executable join schema.
+    full_schema: Option<&'a Schema>,
+    full_names: Option<&'a [FieldName]>,
     /// The columns a marker index refers to, per [`MarkerKind`]. A kind absent
     /// from this map has no producer yet in the current build.
     marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
@@ -739,6 +745,8 @@ impl<'a> PlanScopeResolver<'a> {
         Self {
             schema,
             names,
+            full_schema: None,
+            full_names: None,
             marker_columns,
             outer_schemas: &[],
             outer_names: &[],
@@ -767,6 +775,8 @@ impl<'a> PlanScopeResolver<'a> {
         Self {
             schema,
             names,
+            full_schema: None,
+            full_names: None,
             marker_columns,
             outer_schemas,
             outer_names,
@@ -801,6 +811,17 @@ impl<'a> PlanScopeResolver<'a> {
     #[must_use]
     pub const fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
         self.no_unsigned_subtraction = enabled;
+        self
+    }
+
+    /// Attach a join's `FullSchema`/`FullNames` for qualified resolution.
+    /// The ordinary visible schema remains authoritative for unqualified
+    /// names and wildcard expansion; the full pair is only a fallback for a
+    /// redundant side that `JOIN ... USING` coalesced away.
+    #[must_use]
+    pub const fn with_full_scope(mut self, schema: &'a Schema, names: &'a [FieldName]) -> Self {
+        self.full_schema = Some(schema);
+        self.full_names = Some(names);
         self
     }
 
@@ -940,8 +961,14 @@ impl ColumnResolver for PlanScopeResolver<'_> {
                 // marker falls through to ordinary name resolution.
             }
         }
-        let index = find_field_name(self.names, path)?;
-        let mut column = self.schema.columns.get(index)?.clone();
+        let (schema, index) = if let Some(index) = find_field_name(self.names, path) {
+            (self.schema, index)
+        } else {
+            let full_names = self.full_names?;
+            let index = find_field_name(full_names, path)?;
+            (self.full_schema?, index)
+        };
+        let mut column = schema.columns.get(index)?.clone();
         column.index = index as i64;
         Some(column)
     }
@@ -1295,6 +1322,36 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         names: &[FieldName],
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<Expression, PlanError> {
+        self.rewrite_scalar_with_scope(expr, schema, names, None, None, markers)
+    }
+
+    /// `rewrite_scalar` with the current plan's optional `FullSchema` pair.
+    /// A coalesced `USING`/`NATURAL` join keeps its redundant columns only in
+    /// that pair, so qualified references such as `t2.a` must be resolved
+    /// against it while `*` and unqualified names continue to use `schema`.
+    pub fn rewrite_scalar_with_plan(
+        &self,
+        expr: &Expr,
+        plan: &LogicalPlan,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<Expression, PlanError> {
+        let (schema, names) = snapshot_schema_and_names(plan);
+        let full = from::find_join_full_schema(plan);
+        let (full_schema, full_names) = full
+            .map(|(schema, names)| (Some(schema), Some(names)))
+            .unwrap_or((None, None));
+        self.rewrite_scalar_with_scope(expr, &schema, &names, full_schema, full_names, markers)
+    }
+
+    fn rewrite_scalar_with_scope(
+        &self,
+        expr: &Expr,
+        schema: &Schema,
+        names: &[FieldName],
+        full_schema: Option<&Schema>,
+        full_names: Option<&[FieldName]>,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<Expression, PlanError> {
         let resolver = PlanScopeResolver::with_outer_scopes(
             schema,
             names,
@@ -1307,6 +1364,10 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_like_default_escape(self.ctx.like_default_escape())
         .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
         .with_warning_context(self.ctx);
+        let resolver = match (full_schema, full_names) {
+            (Some(schema), Some(names)) => resolver.with_full_scope(schema, names),
+            _ => resolver,
+        };
         let mut rewritten = rewrite_expr_resolved(expr, &resolver)?;
         // The resolver's structural pass intentionally preserves warning-
         // producing casts while it has only a zone-only no-column context.
@@ -2286,8 +2347,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut scratch = Self::clause_scratch(where_clause);
         let (plan, lowered_subquery) = self.lower_scalar_subqueries(plan, &mut scratch)?;
         // Rule 3: both snapshots are taken before `plan` moves anywhere.
-        let (schema, names) = snapshot_schema_and_names(&plan);
         let mut lowered_markers;
+        let (schema, _) = snapshot_schema_and_names(&plan);
         let markers = if lowered_subquery {
             lowered_markers = markers.clone();
             lowered_markers.insert(MarkerKind::Column, schema.columns.clone());
@@ -2295,7 +2356,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         } else {
             markers
         };
-        let built = self.rewrite_scalar(&scratch, &schema, &names, markers)?;
+        let built = self.rewrite_scalar_with_plan(&scratch, &plan, markers)?;
 
         for item in split_cnf_items(&built) {
             if let Expression::Constant(constant) = &item {
@@ -2305,7 +2366,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     Some(true) => {
                         let mut dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
                         dual.base.base.set_schema(Some(schema));
-                        dual.base.base.set_output_names(names);
+                        dual.base
+                            .base
+                            .set_output_names(plan.output_names().to_vec());
                         return Ok(LogicalPlan::TableDual(dual));
                     }
                     // An always-true conjunct is dropped.
@@ -2427,6 +2490,61 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             match field {
                 SelectField::Wildcard(path) => {
                     expanded.extend(Self::unfold_wild_star(path, schema, names));
+                }
+                SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
+                    expr: expr.clone(),
+                    alias: alias.clone(),
+                    text: fields
+                        .text(index)
+                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                        .map(str::to_owned)
+                        .filter(|text| !text.is_empty()),
+                    hidden: false,
+                }),
+            }
+        }
+        expanded
+    }
+
+    /// Wildcard expansion with the direct join node's `FullSchema` rule.
+    /// Go's `unfoldWildStar` reads redundant qualified columns only when the
+    /// current FROM plan is itself a `LogicalJoin`/`LogicalApply`; an inner
+    /// join with an `ON` clause is wrapped in a `LogicalSelection`, which is a
+    /// deliberate boundary and therefore exposes only the visible schema.
+    #[must_use]
+    pub fn expand_fields_for_plan(
+        fields: &tidb_ast::SelectFieldList,
+        plan: &LogicalPlan,
+    ) -> Vec<ProjectionField> {
+        let (schema, names) = snapshot_schema_and_names(plan);
+        let full = match plan {
+            LogicalPlan::Join(join) => join
+                .full_schema
+                .as_ref()
+                .map(|schema| (schema, join.full_names.as_slice())),
+            LogicalPlan::Apply(apply) => apply
+                .join
+                .full_schema
+                .as_ref()
+                .map(|schema| (schema, apply.join.full_names.as_slice())),
+            _ => None,
+        };
+        let mut expanded = Vec::with_capacity(fields.fields().len());
+        for (index, field) in fields.fields().iter().enumerate() {
+            match field {
+                SelectField::Wildcard(path) => {
+                    let (wildcard_schema, wildcard_names) = if !path.is_empty() {
+                        full.map_or((&schema, names.as_slice()), |(schema, names)| {
+                            (schema, names)
+                        })
+                    } else {
+                        (&schema, names.as_slice())
+                    };
+                    expanded.extend(Self::unfold_wild_star(
+                        path,
+                        wildcard_schema,
+                        wildcard_names,
+                    ));
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
                     expr: expr.clone(),
@@ -2585,7 +2703,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let (schema, names) = snapshot_schema_and_names(&plan);
                 let mut current_markers = markers.clone();
                 current_markers.insert(MarkerKind::Column, schema.columns.clone());
-                self.rewrite_scalar(&scratch, &schema, &names, &current_markers)?
+                self.rewrite_scalar_with_plan(&scratch, &plan, &current_markers)?
             };
             let (_, names) = snapshot_schema_and_names(&plan);
             let resolved_index = match &built {
@@ -2673,7 +2791,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 projection_names.push(names.get(index).cloned().unwrap_or_default());
                 continue;
             }
-            let built = self.rewrite_scalar(&field.expr, &schema, &names, markers)?;
+            let built = self.rewrite_scalar_with_plan(&field.expr, &plan, markers)?;
             let resolved_index = match &built {
                 Expression::Column(column) => usize::try_from(column.index).ok(),
                 _ => None,
@@ -2763,7 +2881,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     column.index = position as i64 - 1;
                     Expression::Column(column)
                 }
-                None => self.rewrite_scalar(&scratch, &schema, &names, markers)?,
+                None => self.rewrite_scalar_with_plan(&scratch, &plan, markers)?,
             };
             by_items.push(ByItems::new(built, item.desc));
         }
@@ -3083,7 +3201,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:4348` `unfoldWildStar`, then `:4360` `resolveGbyExprs` — GROUP BY
         // is resolved against the SOURCE scope and the written select list,
         // both of which exist before any operator above the FROM.
-        let mut fields = Self::expand_fields(&select.fields, &source_schema, &source_names);
+        let mut fields = Self::expand_fields_for_plan(&select.fields, &plan);
         let gby_exprs = self.resolve_gby_exprs(&select.group_by, &fields, &source_names)?;
 
         // `:4370` "checkOnlyFullGroupBy should be executed before rewrite
@@ -3091,8 +3209,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         self.check_only_full_group_by(select, &gby_exprs, &source_names)?;
 
         let mut markers: BTreeMap<MarkerKind, Vec<Column>> = BTreeMap::new();
-        let group_by_items =
-            self.rewrite_gby_exprs(&gby_exprs, &source_schema, &source_names, &markers)?;
+        let group_by_items = self.rewrite_gby_exprs_with_plan(&gby_exprs, &plan, &markers)?;
 
         // `:4405` resolveHavingAndOrderBy: HAVING first (it may append
         // auxiliary aggregate fields the ORDER BY half then sees), then

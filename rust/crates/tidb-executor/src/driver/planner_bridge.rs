@@ -955,6 +955,15 @@ pub(crate) fn physical_plan_for_logical(
         tidb_planner::plan_base::PlanError::internal("physical planning produced no plan")
     })?;
     let mut physical = tidb_planner::physical::eliminate_physical_projection(physical);
+    // Go postOptimize: eliminatePhysicalProjection → InjectExtraProjection.
+    // The projection re-injection restores the purposeful projections
+    // (scalar aggregate arguments, scalar order-by items, expression
+    // nominal sorts) that the elimination pass removed.
+    let mut physical = tidb_planner::physical::inject_extra_projection(
+        physical,
+        plan_ids,
+        column_ids,
+    );
     physical
         .base_mut()
         .base
