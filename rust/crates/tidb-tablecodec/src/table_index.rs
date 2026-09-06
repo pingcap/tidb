@@ -1169,14 +1169,22 @@ pub fn decode_index_kv(
     if handle_status == HandleStatus::NotNeeded {
         return Ok(results);
     }
-    let handle = if let Some(encoded) = segments.int_handle.as_deref() {
-        decode_int_handle_in_index_value(encoded)?
-    } else if let Some(encoded) = segments.common_handle {
-        if index_value_version(value) == 1 {
+
+    let handle = if index_value_version(value) == 1 {
+        // Go's clustered-index V1 decode wraps BOTH the unique common-handle
+        // segment and the non-unique key suffix in kv.NewCommonHandle
+        // (tablecodec.go:1968-1975): the suffix of a single-int-column
+        // common handle must stay a common handle, never collapse to an int
+        // handle.
+        if let Some(encoded) = segments.common_handle.as_deref() {
             common_handle(encoded)?
         } else {
-            decode_handle_in_index_key(&encoded)?
+            common_handle(suffix)?
         }
+    } else if let Some(encoded) = segments.int_handle.as_deref() {
+        decode_int_handle_in_index_value(encoded)?
+    } else if let Some(encoded) = segments.common_handle {
+        decode_handle_in_index_key(&encoded)?
     } else {
         decode_handle_in_index_key(suffix)?
     };
@@ -1921,5 +1929,99 @@ mod source_tests {
                 .encoded(),
             handle.encoded()
         );
+    }
+
+    /// Go decodes a non-unique clustered-index key suffix via
+    /// `kv.NewCommonHandle(keySuffix)` (tablecodec.go:1975), so a
+    /// single-int-column common handle must stay a common handle and never
+    /// collapse to an int handle in the V1 path. Restored data on the first
+    /// indexed column forces the V1 split path (mirroring the large-padding
+    /// test's setup, but with a single-int primary key).
+    #[test]
+    fn test_v1_non_unique_single_int_column_common_handle() {
+        let mut padded = b"abc".to_vec();
+        padded.resize(padded.len() + 128, b' ');
+        let table = TableInfo {
+            columns: vec![
+                long_column(1, 0),
+                long_column(2, 1),
+                varchar_column(3, 2),
+                long_column(4, 3),
+            ],
+            indices: vec![IndexInfo {
+                id: 1,
+                columns: vec![index_column(0)],
+                unique: true,
+                global: false,
+                global_index_version: 0,
+                primary: true,
+            }],
+            pk_is_handle: false,
+            is_common_handle: true,
+            common_handle_version: 1,
+        };
+        let index = IndexInfo {
+            id: 10,
+            columns: vec![index_column(2)],
+            unique: false,
+            global: false,
+            global_index_version: 0,
+            primary: false,
+        };
+        let encoded_handle = Encoder::new(true)
+            .encode_key_in_timezone(&SessionTimeZone::utc(), &[Datum::Int(42)])
+            .unwrap();
+        let handle: Handle = CommonHandle::new(encoded_handle).unwrap().into();
+        let indexed_values = vec![Datum::new_collation_string(
+            padded.clone(),
+            Collation::Utf8Mb4Bin,
+        )];
+        let (key, distinct) = generate_index_key(
+            Encoder::new(true),
+            None,
+            &table,
+            &index,
+            42,
+            &mut indexed_values.clone(),
+            Some(&handle),
+        )
+        .unwrap();
+        assert!(!distinct);
+        let value = generate_index_value(
+            true,
+            None,
+            &table,
+            &index,
+            true,
+            distinct,
+            false,
+            &indexed_values,
+            &handle,
+            0,
+            &[],
+        )
+        .unwrap();
+        let columns = [
+            ColumnInfo {
+                id: 3,
+                is_pk_handle: false,
+                virtual_generated: false,
+                field_type: table.columns[2].field_type.clone(),
+            },
+            ColumnInfo {
+                id: 1,
+                is_pk_handle: false,
+                virtual_generated: false,
+                field_type: table.columns[0].field_type.clone(),
+            },
+        ];
+
+        let decoded =
+            decode_index_kv(true, &key, &value, 1, HandleStatus::Default, &columns).unwrap();
+        assert_eq!(decoded.len(), 2);
+        let (_, indexed) = decode_one(&decoded[0]).unwrap();
+        let (_, handle_value) = decode_one(&decoded[1]).unwrap();
+        assert_eq!(indexed.as_raw_bytes().unwrap(), padded);
+        assert_eq!(handle_value, Datum::Int(42));
     }
 }
