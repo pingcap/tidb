@@ -76,6 +76,34 @@ fn a_five_row_update_colliding_on_the_third_row_leaves_the_table_unchanged() {
     );
 }
 
+/// A session opened over a shared in-process catalog still needs the image
+/// rollback path. This is the shape used by the pipeline front end: unlike a
+/// cluster-backed table it has no outer mutation-buffer checkpoint, even
+/// though its rows are represented by a `KvTable` rather than a `MemTable`.
+#[test]
+fn a_shared_in_process_catalog_rolls_back_a_failed_insert() {
+    let mut owner = Session::new();
+    owner
+        .run("CREATE TABLE shared_ins (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    owner.run("INSERT INTO shared_ins VALUES (3,30)").unwrap();
+
+    let mut peer = Session::with_catalog(owner.shared_catalog());
+    let error = peer
+        .run("INSERT INTO shared_ins VALUES (1,10),(3,99),(4,40)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1062);
+    assert_eq!(
+        rows(&mut peer, "SELECT a,b FROM shared_ins ORDER BY a"),
+        [["3", "30"]]
+    );
+    assert_eq!(
+        rows(&mut owner, "SELECT a,b FROM shared_ins ORDER BY a"),
+        [["3", "30"]]
+    );
+}
+
 /// Inside an explicit transaction a failed statement discards only its OWN
 /// writes: the statement before it survives, a statement after it still runs,
 /// and COMMIT publishes both.

@@ -611,6 +611,31 @@ impl Catalog {
         })
     }
 
+    /// Whether every table in this catalog is backed by a session-owned
+    /// statement savepoint. Cluster sessions satisfy this for their loaded
+    /// `KvTable`s; standalone and pipeline sessions use the in-process
+    /// `MemTableStorage` and must stage a catalog image instead.
+    #[must_use]
+    pub fn all_tables_have_external_statement_rollback(&self) -> bool {
+        self.databases.values().all(|database| {
+            database.tables.values().all(|entry| match entry.as_ref() {
+                TableEntry::Kv(table) => table.has_external_statement_rollback(),
+                _ => false,
+            })
+        })
+    }
+
+    /// Whether one named table is backed by a session-owned statement
+    /// savepoint. A missing or non-KV entry deliberately returns false so the
+    /// caller keeps the image-based path while the executor reports the
+    /// canonical schema error.
+    #[must_use]
+    pub fn table_has_external_statement_rollback(&self, database: &str, name: &str) -> bool {
+        self.get_in(database, name).is_some_and(|entry| {
+            matches!(entry, TableEntry::Kv(table) if table.has_external_statement_rollback())
+        })
+    }
+
     /// Registers a matrix-backed `table` in the default database.
     ///
     /// # Panics

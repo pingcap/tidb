@@ -716,6 +716,10 @@ impl ClusterTableStorage {
 }
 
 impl TableStorage for ClusterTableStorage {
+    fn has_external_statement_rollback(&self) -> bool {
+        true
+    }
+
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.snapshot
             .lock()

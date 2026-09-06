@@ -9270,3 +9270,12 @@ risks without claiming repository-wide parity.
   evaluation support keeps the shared folder usable from the resolver. Focused
   expression and session status regressions plus Ready evidence are recorded in
   `receipts/expression_last_insert_id_state.md`.
+- 2026-09-06 (`pkg/executor`/`pkg/session` statement rollback staging): Rust
+  now distinguishes cluster `KvTable` storage, whose outer mutation buffer
+  owns statement savepoints, from standalone/pipeline `KvTable`s over
+  `MemTableStorage`, which require the session catalog image. Failed
+  multi-row UPDATE/INSERT statements therefore discard all of their own row
+  writes in both front ends while preserving the existing cluster path. The
+  focused rollback module (including a shared-catalog regression), complete
+  Go owner inventory, and Ready evidence are recorded in
+  `receipts/session_statement_rollback_catalog_stage.md`.

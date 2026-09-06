@@ -889,7 +889,7 @@ impl Session {
         // it), hence the deliberately narrow fast path.
         let cluster_catalog = self.txn.is_none();
         self.with_catalog_mut(|catalog| {
-            if cluster_catalog && !catalog.has_mem_tables() {
+            if cluster_catalog && catalog.all_tables_have_external_statement_rollback() {
                 return body(catalog);
             }
             let mut guard = CatalogStage {
@@ -905,10 +905,10 @@ impl Session {
     }
 
     /// Runs a DML statement over its target table without taking a catalog
-    /// image when the target is cluster-backed.  Cluster sessions keep row
-    /// mutations in the outer statement savepoint, while the image remains
-    /// necessary for an in-process `MemTable` target and for Session-owned
-    /// transactions.
+    /// image when the target is cluster-backed. Cluster sessions keep row
+    /// mutations in the outer statement savepoint, while standalone and
+    /// pipeline sessions (whose `KvTable`s use `MemTableStorage`) still need
+    /// the image even though their table entry is not a `MemTable`.
     pub(crate) fn with_staged_catalog_for_table<T>(
         &mut self,
         database: &str,
@@ -917,10 +917,9 @@ impl Session {
     ) -> Result<T, DriverError> {
         let cluster_catalog = self.txn.is_none();
         self.with_catalog_mut(|catalog| {
-            let needs_stage = catalog
-                .table_in(database, table_name)
-                .is_some_and(|entry| matches!(entry, tidb_executor::TableEntry::Mem(_)));
-            if cluster_catalog && !needs_stage {
+            let has_external_rollback =
+                catalog.table_has_external_statement_rollback(database, table_name);
+            if cluster_catalog && has_external_rollback {
                 return body(catalog);
             }
             let mut guard = CatalogStage {

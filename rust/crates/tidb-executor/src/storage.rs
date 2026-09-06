@@ -328,6 +328,16 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// The number of stored keys. Divergence: see the module doc.
     fn key_count(&self) -> usize;
 
+    /// Whether the surrounding session owns a statement savepoint for this
+    /// backend. Cluster sessions keep row mutations in an outer
+    /// `MutationBuffer::checkpoint`/`restore` pair, so cloning a table for
+    /// the catalog image must not be mistaken for the rollback mechanism.
+    /// In-process stores have no such outer owner and therefore rely on the
+    /// catalog image itself.
+    fn has_external_statement_rollback(&self) -> bool {
+        false
+    }
+
     /// Drops every key this backend holds. Divergence: see the module doc.
     fn clear(&mut self);
 

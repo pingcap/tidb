@@ -1525,6 +1525,13 @@ impl KvTable {
         std::mem::replace(&mut self.store, store)
     }
 
+    /// Whether this table's row backend is rolled back by the cluster
+    /// session's outer statement savepoint rather than by a catalog image.
+    #[must_use]
+    pub(crate) fn has_external_statement_rollback(&self) -> bool {
+        self.store.has_external_statement_rollback()
+    }
+
     /// Go snapshot runtime `CmdGet` and `CmdBatchGet` totals for this table's
     /// statement snapshot.
     pub(crate) fn point_rpc_counts(&mut self) -> (u64, u64) {
