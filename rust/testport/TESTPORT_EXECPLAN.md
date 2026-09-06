@@ -9429,3 +9429,10 @@ risks without claiming repository-wide parity.
   executor failure-set delta versus clean HEAD is the documented sibling
   in-flight breakage plus spill-dir environmental flake, item-by-item. Details
   in `receipts/check_column_width_limits.md`.
+- 2026-09-06 (checkColumn ALTER-path pin): Go runs `checkColumn` over ALTER
+  TABLE's `spec.NewColumns` as well (`preprocess.go:1444`); probe confirmed the
+  batch-#39 gate already covers the ALTER path via the shared
+  `check_column_attributes` — `MODIFY COLUMN c BIT(65)` answers 1439 and
+  `ADD COLUMN d CHAR(300)` answers 1074 with the exact Go texts. Two asserted
+  regressions pin the ALTER-path coverage in
+  `tests/check_column_alter_path_source.rs`.
