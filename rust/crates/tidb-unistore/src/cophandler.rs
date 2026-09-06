@@ -1127,6 +1127,7 @@ fn eval_datum(
         SimpleExpr::Int(value) => Ok(Datum::Int(*value)),
         SimpleExpr::Bytes(bytes) => Ok(Datum::Bytes(bytes.clone())),
         SimpleExpr::Decimal(value) => Ok(Datum::Decimal(value.clone())),
+        SimpleExpr::Json(value) => Ok(Datum::Json(value.clone())),
         SimpleExpr::Real(value) => Ok(Datum::Real(*value)),
         SimpleExpr::Time(value) => Ok(Datum::Time(*value)),
         SimpleExpr::Null => Ok(Datum::Null),
@@ -1387,6 +1388,9 @@ pub enum SimpleExpr {
     /// `ExprType_MysqlDecimal`, val decimal-codec decoded
     /// (`distsql_builtin.go`'s `decodeValueList` -> `codec.DecodeDecimal`).
     Decimal(tidb_datatype::Decimal),
+    /// `ExprType_MysqlJson`, val codec-datum decoded
+    /// (`distsql_builtin.go`'s `convertJSON` -> `codec.DecodeOne`).
+    Json(tidb_datatype::BinaryJSON),
     /// `ExprType_Float64`, val decoded as Go `codec.DecodeFloat` -- eight
     /// big-endian IEEE-754 bits (`distsql_builtin.go`'s `convertFloat`).
     Real(f64),
@@ -1575,6 +1579,9 @@ pub enum SimpleSig {
     StringIsNull,
     /// See [`SimpleSig::DecimalIsNull`].
     TimeIsNull,
+    /// `JsonMemberOfSig` over (value, json): equality against the doc, or
+    /// against each ARRAY element (Go `builtinJSONMemberOfSig.evalInt`).
+    JsonMemberOfSig,
     /// `LikeSig` over (target, pattern, escape). The `i32` is the
     /// comparison's collation id, as in the string comparisons: `_ci`
     /// collations fold case before the wildcard match, `_bin` is exact.
@@ -1633,6 +1640,18 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
         let (_, value, _, _) = tidb_codec::decode_decimal(expr.val())
             .map_err(|err| format!("invalid decimal literal: {err:?}"))?;
         return Ok(SimpleExpr::Decimal(value));
+    }
+    if tp == tipb::ExprType::MysqlJson {
+        // Go `convertJSON`: `codec.DecodeOne` -- a codec-wrapped JSON datum.
+        let datums = tidb_codec::decode(expr.val(), 1)
+            .map_err(|err| format!("invalid json literal: {err:?}"))?;
+        let Some(datum) = datums.into_iter().next() else {
+            return Err("invalid json literal: no datum".to_owned());
+        };
+        match datum {
+            tidb_datatype::Datum::Json(json) => return Ok(SimpleExpr::Json(json)),
+            _ => return Err("invalid json literal: not a json datum".to_owned()),
+        }
     }
     if tp == tipb::ExprType::ColumnRef {
         let (_, offset) = tidb_codec::decode_int(expr.val())
@@ -1719,6 +1738,7 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::StringIsNull => SimpleSig::StringIsNull,
             tipb::ScalarFuncSig::TimeIsNull => SimpleSig::TimeIsNull,
             tipb::ScalarFuncSig::LikeSig => SimpleSig::Like(collation_of(expr)),
+            tipb::ScalarFuncSig::JsonMemberOfSig => SimpleSig::JsonMemberOfSig,
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             // Go reads the comparison's collation off the `ScalarFunc`'s own
             // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
@@ -1804,6 +1824,42 @@ fn eval_decimal(
                 _ => left.rem_mysql(&right),
             }
         }
+        _ => None,
+    }
+}
+
+/// Go's `CreateBinaryJSON` over a scanned datum, for a MEMBER OF target:
+/// integers, reals, strings, bytes and JSON pass; other kinds wait on their
+/// cast courses.
+fn datum_to_json_value(datum: &tidb_datatype::Datum) -> Option<tidb_datatype::BinaryJSONValue> {
+    use tidb_datatype::{BinaryJSONValue, Datum};
+    Some(match datum {
+        Datum::Null => BinaryJSONValue::Null,
+        Datum::Int(value) => BinaryJSONValue::Int64(*value),
+        Datum::UInt(value) => BinaryJSONValue::Uint64(*value),
+        Datum::Real(value) => BinaryJSONValue::Float64(*value),
+        Datum::String(text) => {
+            BinaryJSONValue::String(String::from_utf8_lossy(text.bytes()).into_owned())
+        }
+        Datum::Bytes(bytes) => BinaryJSONValue::String(String::from_utf8_lossy(bytes).into_owned()),
+        Datum::Json(json) => BinaryJSONValue::Binary(json.clone()),
+        _ => return None,
+    })
+}
+
+/// The binary JSON of one operand of a JSON operation; see [`eval_decimal`]
+/// for why only exact operands reach here.
+fn eval_json(
+    expr: Option<&SimpleExpr>,
+    row: &[tidb_datatype::Datum],
+) -> Option<tidb_datatype::BinaryJSON> {
+    use tidb_datatype::Datum;
+    match expr? {
+        SimpleExpr::Json(value) => Some(value.clone()),
+        SimpleExpr::Column(offset) => match row.get(*offset) {
+            Some(Datum::Json(value)) => Some(value.clone()),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -1952,10 +2008,11 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Result<Opti
             Some(Datum::Null) | None => None,
             Some(_) => None, // non-int columns wait on their course
         },
-        // A bare string, decimal or real is not a truth value; only a
+        // A bare string, decimal, real or json is not a truth value; only a
         // comparison reads them.
         SimpleExpr::Bytes(_)
         | SimpleExpr::Decimal(_)
+        | SimpleExpr::Json(_)
         | SimpleExpr::Real(_)
         | SimpleExpr::Time(_) => None,
         SimpleExpr::Func(sig, children) => {
@@ -2253,6 +2310,51 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Result<Opti
                         Some(Err(message)) => return Err(message),
                         None => Some(1),
                     }
+                }
+                SimpleSig::JsonMemberOfSig => {
+                    // Go `builtinJSONMemberOfSig.evalInt`: the target (any
+                    // scalar, coerced through `CreateBinaryJSON`) equals the
+                    // doc, or equals ANY element of an ARRAY doc.
+                    let target = match children.first().map(|c| eval_datum(c, row)) {
+                        Some(Ok(datum)) => {
+                            // A NULL datum is SQL NULL: the answer is NULL,
+                            // not a JSON `null` document.
+                            if matches!(datum, tidb_datatype::Datum::Null) {
+                                return Ok(None);
+                            }
+                            match datum_to_json_value(&datum) {
+                                Some(value) => {
+                                    match tidb_datatype::BinaryJSON::from_typed_value(&value) {
+                                        Ok(json) => json,
+                                        Err(error) => return Err(error.to_string()),
+                                    }
+                                }
+                                None => {
+                                    return Err(
+                                        "this MEMBER OF target kind is a later course".to_owned()
+                                    )
+                                }
+                            }
+                        }
+                        Some(Err(message)) => return Err(message),
+                        None => return Ok(None),
+                    };
+                    let Some(obj) = eval_json(children.get(1), row) else {
+                        return Ok(None);
+                    };
+                    let member = if obj.type_code() == tidb_datatype::JSON_TYPE_CODE_ARRAY {
+                        match obj.element_count() {
+                            Ok(count) => (0..count).any(|index| {
+                                obj.array_get(index).ok().flatten().is_some_and(|element| {
+                                    tidb_datatype::compare_binary_json(&element, &target).is_eq()
+                                })
+                            }),
+                            Err(_) => return Err("invalid json array".to_owned()),
+                        }
+                    } else {
+                        tidb_datatype::compare_binary_json(&obj, &target).is_eq()
+                    };
+                    Some(i128::from(member))
                 }
                 SimpleSig::Like(collation) => {
                     // Go `builtinLikeSig`: (target, pattern, escape). Case
@@ -3635,5 +3737,27 @@ mod tests {
         let string_null = SimpleExpr::Func(SimpleSig::StringIsNull, vec![SimpleExpr::Column(0)]);
         let row = [Datum::Null];
         assert_eq!(eval_expr(&string_null, &row).expect("evals"), Some(1));
+    }
+
+    #[test]
+    fn json_member_of_follows_go_equality_rules() {
+        use tidb_datatype::{BinaryJSON, Datum};
+        // The target coerces through CreateBinaryJSON: an INT target equals
+        // the ARRAY element carrying that number.
+        let doc = SimpleExpr::Json(BinaryJSON::parse("[1, 2, 3]").expect("parses"));
+        let member = SimpleExpr::Func(SimpleSig::JsonMemberOfSig, vec![SimpleExpr::Int(2), doc]);
+        assert_eq!(eval_expr(&member, &[]).expect("evals"), Some(1));
+        // A miss answers FALSE, not NULL.
+        let doc = SimpleExpr::Json(BinaryJSON::parse("[1, 2, 3]").expect("parses"));
+        let miss = SimpleExpr::Func(SimpleSig::JsonMemberOfSig, vec![SimpleExpr::Int(7), doc]);
+        assert_eq!(eval_expr(&miss, &[]).expect("evals"), Some(0));
+        // A non-array doc compares by whole-document equality.
+        let doc = SimpleExpr::Json(BinaryJSON::parse("3").expect("parses"));
+        let equal = SimpleExpr::Func(SimpleSig::JsonMemberOfSig, vec![SimpleExpr::Int(3), doc]);
+        assert_eq!(eval_expr(&equal, &[]).expect("evals"), Some(1));
+        // A NULL target answers NULL.
+        let doc = SimpleExpr::Json(BinaryJSON::parse("[1]").expect("parses"));
+        let null_target = SimpleExpr::Func(SimpleSig::JsonMemberOfSig, vec![SimpleExpr::Null, doc]);
+        assert_eq!(eval_expr(&null_target, &[]), Ok(None));
     }
 }

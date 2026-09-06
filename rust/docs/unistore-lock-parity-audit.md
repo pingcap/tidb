@@ -364,3 +364,24 @@ Regressions: `like_follows_collation_case_sensitivity` (general_ci vs bin
 on the same bytes, plus the escape quoting a literal `%`) and
 `is_null_family_checks_its_own_leaf` (present REAL answers FALSE, absent
 answers TRUE).
+
+## Coprocessor JSON MEMBER OF (2026-09-07, same session)
+
+`JsonMemberOfSig` 5029 lands, the one JSON signature that is
+condition-shaped. `SimpleExpr` gains a `Json(BinaryJSON)` leaf:
+`ExprType_MysqlJson` constants decode through `codec.DecodeOne` exactly as
+Go `convertJSON` does. The target operand coerces through the
+`CreateBinaryJSON` subset over scanned datums (int/uint/real/string/bytes/
+json); a NULL datum answers NULL rather than a JSON `null` document. The
+answer follows `builtinJSONMemberOfSig.evalInt`: whole-document EQUALITY
+against a non-array doc, equality against any ARRAY element otherwise
+(structural `JSON_CONTAINS` is a different function and is not substituted).
+
+`JsonReplaceSig`/`JsonArrayAppendSig`/`JsonMergePatchSig` stay refused by
+name: they are projection VALUE functions and this lowering has no
+projection executor yet, so their arms would be unreachable decoration
+(`merge_patch_binary_json` and friends already sit in the datatype crate
+for the projection course).
+
+Regression: `json_member_of_follows_go_equality_rules` -- array hit, miss
+answering FALSE, non-array equality, NULL target answering NULL.
