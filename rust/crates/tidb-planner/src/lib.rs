@@ -154,6 +154,7 @@ pub mod physical_table_reader;
 pub mod plan;
 pub mod plan_base;
 pub mod plan_builder;
+pub mod plan_cache_lru;
 pub mod plan_context;
 pub mod plan_cost_ver2;
 pub mod predicate_partition;

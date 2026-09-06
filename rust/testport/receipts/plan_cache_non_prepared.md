@@ -53,7 +53,23 @@ locks, statement context, and the DML executor stay common. Regressions:
 sequences, the gate-off refusal, hinted and multi-table refusals); the
 previously-marked flip-test now asserts the hit.
 
-## Recorded divergence: the cache container
+## Container: `plan_cache_lru.go` — PORTED (2026-09-06)
+
+Go's `LRUPlanCache` (280 lines) is now ported as
+`tidb-planner::plan_cache_lru::LruPlanCache<V: PlanCacheValue>`: capacity
+with the below-1 → 100 default, per-key buckets of plans differing by
+parameter-type signature, replace-compatible/move-to-front semantics,
+capacity eviction with the `onEvict` hook, `SetCapacity` (below 1 refused),
+`MemoryUsage`/`Close`/`DeleteAll`. The memory-quota loop (`memoryControl`:
+evict oldest while `memory.InstanceMemUsed() > quota × (1 - guard)`) is
+portable via an injected `memory_used` probe, so tests can drive it and the
+session wiring can supply the instance probe. The instance prometheus
+gauges (`PlanCacheInstanceMemoryUsage`/`NumCounter`) remain a recorded
+metrics-face item. The session-wide container is wired into the
+prepared/non-prepared funnels by the execplan owner's unification work; the
+container itself is complete with Go-pinned behavior tests (8/8 green).
+
+
 
 Go `plan_cache_lru.go` (`LRUPlanCache`, 280 lines) is a session-wide,
 cross-statement LRU with bucket maps, a memory guard and quota, an on-evict
