@@ -167,7 +167,7 @@
 //! [`SessionTransaction`]: tidb_exec::cluster_table_storage::SessionTransaction
 
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -183,7 +183,9 @@ use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::ClusterCatalog;
 use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_load_stats::prepare_cluster_load_stats;
-use tidb_exec::cluster_stats_load::{ClusterStatsLoader, TableSizeStats};
+use tidb_exec::cluster_stats_load::{
+    ClusterStatsLoader, ColumnLength, TableRowCount, TableSizeStats,
+};
 use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
@@ -205,6 +207,7 @@ use tidb_session::{
 };
 
 use tidb_exec::cluster_table_storage::LockKeysOutcome;
+use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
 
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_analyze_seam::ClusterAnalyze;
@@ -395,6 +398,108 @@ struct ClusterColumnStatsUsageProvider {
 struct ClusterTableStorageStatsProvider {
     transactions: Arc<dyn ClusterTransactions>,
     catalog: Arc<SharedClusterCatalog>,
+    /// Go `cache.TableRowStatsCache`
+    /// (`pkg/statistics/handle/cache/stats_table_row_cache.go`): the size
+    /// cache the information-schema `TABLES`/`PARTITIONS` readers refresh in
+    /// batch and then serve from. Go keeps one process-wide instance; this
+    /// node owns one per provider.
+    row_stats_cache: StatsTableRowCache,
+}
+
+impl ClusterTableStorageStatsProvider {
+    /// The two restricted reads Go's `UpdateByID` performs inside
+    /// `getRowCountTables`/`getColLengthTables`. Kept behind
+    /// [`StatsTableRowSizeSource`] so the cache can enforce its
+    /// both-reads-or-nothing copy contract.
+    fn size_reads(
+        &self,
+        catalog: &tidb_exec::cluster_catalog::ClusterCatalog,
+        resource_group: &str,
+        ids: &[i64],
+        need_column_lengths: bool,
+    ) -> Result<SizeReads, String> {
+        let loader = ClusterStatsLoader::locate(catalog).map_err(|error| error.to_string())?;
+        let row_snapshot = self.transactions.open_snapshot(resource_group)?;
+        let rows = loader
+            .load_table_row_counts(&mut SnapshotMetaSnapshot::new(row_snapshot), ids)
+            .map_err(|error| error.to_string())?;
+        let lengths = if need_column_lengths {
+            let length_snapshot = self.transactions.open_snapshot(resource_group)?;
+            loader
+                .load_column_lengths(&mut SnapshotMetaSnapshot::new(length_snapshot), ids)
+                .map_err(|error| error.to_string())?
+        } else {
+            // Statement-local `TableSizeStats` skips the histogram read when
+            // no retained projection consumes column lengths; the cached map
+            // is then left unchanged, which those projections never observe.
+            Vec::new()
+        };
+        Ok((
+            rows.into_iter()
+                .map(|row| (row.table_id, row.count))
+                .collect(),
+            lengths
+                .into_iter()
+                .map(|row| {
+                    (
+                        (row.table_id, row.histogram_id),
+                        u64::try_from(row.total_size.max(0)).expect("nonnegative i64 fits in u64"),
+                    )
+                })
+                .collect(),
+        ))
+    }
+}
+
+/// The size source one refresh closes over: Go's `UpdateByID` runs both
+/// reads against one session context; this adapter runs them against one
+/// provider, catalog image, and per-read statement snapshots. Both reads are
+/// performed once, on the first call, exactly like Go's sequential pair.
+/// One refreshed pair of restricted reads: the row counts and the column
+/// lengths Go's `UpdateByID` copies into the cache together.
+type SizeReads = (Vec<(i64, u64)>, Vec<(TableHistId, u64)>);
+
+struct ProviderSizeReads<'a> {
+    provider: &'a ClusterTableStorageStatsProvider,
+    catalog: &'a tidb_exec::cluster_catalog::ClusterCatalog,
+    resource_group: &'a str,
+    need_column_lengths: bool,
+    reads: RefCell<Option<Result<SizeReads, String>>>,
+}
+
+impl ProviderSizeReads<'_> {
+    /// Performs both restricted reads once, on the first call, exactly like
+    /// Go's sequential `getRowCountTables`/`getColLengthTables` pair.
+    fn load(&self, ids: &[i64]) -> Result<SizeReads, String> {
+        {
+            let mut reads = self.reads.borrow_mut();
+            if reads.is_none() {
+                *reads = Some(self.provider.size_reads(
+                    self.catalog,
+                    self.resource_group,
+                    ids,
+                    self.need_column_lengths,
+                ));
+            }
+        }
+        self.reads
+            .borrow()
+            .as_ref()
+            .expect("reads are computed above")
+            .clone()
+    }
+}
+
+impl StatsTableRowSizeSource for ProviderSizeReads<'_> {
+    type Error = String;
+
+    fn read_row_counts(&self, ids: &[i64]) -> Result<Vec<(i64, u64)>, Self::Error> {
+        self.load(ids).map(|(rows, _)| rows)
+    }
+
+    fn read_column_lengths(&self, ids: &[i64]) -> Result<Vec<(TableHistId, u64)>, Self::Error> {
+        self.load(ids).map(|(_, lengths)| lengths)
+    }
 }
 
 impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
@@ -419,27 +524,42 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
             })
             .collect::<Vec<_>>();
 
-        // Go's TableSizeStats reads stats_meta for every statement, and only
-        // reads stats_histograms when a size column is retained after pruning.
-        // Keep the two reads statement-local instead of publishing a process-
-        // wide row cache or mutating the shared catalog image.
-        let row_snapshot = self.transactions.open_snapshot(resource_group)?;
-        let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
-        let rows = loader
-            .load_table_row_counts(&mut SnapshotMetaSnapshot::new(row_snapshot), &physical_ids)
-            .map_err(|error| error.to_string())?;
-        let lengths = if need_column_lengths {
-            let length_snapshot = self.transactions.open_snapshot(resource_group)?;
-            loader
-                .load_column_lengths(
-                    &mut SnapshotMetaSnapshot::new(length_snapshot),
-                    &physical_ids,
-                )
-                .map_err(|error| error.to_string())?
-        } else {
-            Vec::new()
+        // Go `updateStatsCacheIfNeed` + `TableRowStatsCache.UpdateByID`
+        // (`executor/infoschema_reader.go:671`): refresh the node's size cache
+        // for every visible table and partition ID first. A failed restricted
+        // read only warns — the reader then serves the cache's previous
+        // values, not zeros.
+        let source = ProviderSizeReads {
+            provider: self,
+            catalog: &catalog,
+            resource_group,
+            need_column_lengths,
+            reads: RefCell::new(None),
         };
-        let stats = TableSizeStats::from_rows(rows, lengths);
+        if let Err(error) = self.row_stats_cache.update_by_id(&source, &physical_ids) {
+            eprintln!(
+                "{{\"event\":\"information_schema_stats_cache_update_failed\",\"error\":{}}}",
+                serde_json::to_string(&error).unwrap_or_else(|_| "\"unprintable\"".to_owned())
+            );
+        }
+
+        // Go's readers answer from `cache.TableRowStatsCache` after the
+        // refresh attempt, so the returned values are the cache's, whatever
+        // the fresh reads did.
+        let (rows, lengths) = self.row_stats_cache.snapshot();
+        let stats = TableSizeStats::from_rows(
+            rows.into_iter()
+                .map(|(table_id, count)| TableRowCount { table_id, count })
+                .collect(),
+            lengths
+                .into_iter()
+                .map(|((table_id, histogram_id), total_size)| ColumnLength {
+                    table_id,
+                    histogram_id,
+                    total_size: total_size as i64,
+                })
+                .collect(),
+        );
 
         Ok(catalog
             .databases
@@ -2919,6 +3039,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
         session.set_table_storage_stats_provider(Arc::new(ClusterTableStorageStatsProvider {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
+            row_stats_cache: StatsTableRowCache::new(),
         }));
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),

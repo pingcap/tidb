@@ -1939,7 +1939,9 @@ impl Catalog {
     }
 
     /// Clears statement-derived information-schema storage estimates from a
-    /// scratch catalog after a failed Go `TableSizeStats` read.
+    /// scratch catalog after a seam provider refused the read. Go's reader
+    /// never fails a query over a stats refresh error; the zeroed statement is
+    /// the seam fallback for providers that surface their own errors.
     pub fn clear_table_storage_statistics(&mut self) {
         for database in self.databases.values_mut() {
             for entry in database.tables.values_mut() {

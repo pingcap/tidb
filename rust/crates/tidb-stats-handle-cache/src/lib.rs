@@ -14,6 +14,10 @@
 
 //! Go `pkg/statistics/handle/cache` full-table cache core.
 
+mod stats_table_row_cache;
+
+pub use stats_table_row_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;

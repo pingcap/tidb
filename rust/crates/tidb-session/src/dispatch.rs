@@ -631,9 +631,12 @@ impl Session {
                     needs_column_lengths,
                 ) {
                     Ok(statistics) => storage_statistics = Some(statistics),
-                    // Pinned `buildTableSizeStats` logs the restricted-read
-                    // error and returns nil, so all size getters report zero
-                    // for this statement.
+                    // The production provider already mirrors Go's
+                    // warn-and-serve-cache refresh, so it never returns Err;
+                    // a seam provider that does is served with zero size
+                    // columns for this statement rather than failing the
+                    // query, matching Go's reader never failing on a stats
+                    // refresh error.
                     Err(error) => {
                         storage_statistics_failed = true;
                         eprintln!(

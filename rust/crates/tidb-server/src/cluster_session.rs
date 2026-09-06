@@ -1436,7 +1436,8 @@ mod tests {
         assert_eq!(
             rows,
             vec![vec![Datum::Int(0)]],
-            "Go's nil TableSizeStats zeroes the statement instead of retaining prior values"
+            "a seam provider that refuses its read is served with zero size \
+             columns; Go's own provider path warns and serves its cache instead"
         );
         let StmtResult::Rows(rows) = session
             .run(

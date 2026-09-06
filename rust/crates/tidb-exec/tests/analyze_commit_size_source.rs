@@ -24,6 +24,7 @@
 //! PESSIMISTIC` ... `COMMIT`), and enforces no mutation *count* on it at all --
 //! only the byte limits. This test states the same for this node's path.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
 use tidb_ast::CiString;
@@ -68,7 +69,10 @@ use tidb_exec::cluster_stats_write::{
     AnalyzeStatsMeta, AnalyzeStatsWriteScope, StatsDeltaStatement, StatsWriteError,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
-use tidb_exec::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
+use tidb_exec::mysql_system_tables::{
+    scan_system_table, SystemRow, SystemTableError, SystemTableView,
+};
+use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
 use tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS;
 use tidb_exec::real_tikv_stats::{
     load_initial_stats_snapshot, load_initial_stats_snapshot_with_memory_limits,
@@ -648,6 +652,126 @@ fn table_size_stats_source_reads_requested_storage_rows() {
         4,
         "two unique IDs produce two keyed scans for each restricted read"
     );
+}
+
+/// Go `cache.TableRowStatsCache.UpdateByID` copies both restricted reads into
+/// the cache only when both succeed, and the information-schema reader then
+/// warns over a failed refresh and serves the PREVIOUS cached values
+/// (`executor/infoschema_reader.go:671` + `handle/cache/stats_table_row_cache.go`).
+/// This pins that contract against the real encoded `mysql.stats_*` rows: a
+/// failed refresh must leave stale values in place instead of zeroing them.
+#[test]
+fn the_table_row_size_cache_serves_previous_values_after_a_failed_refresh() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
+    for (table_id, row_count, column_id) in [(4242, 10, 11), (5151, 20, 12)] {
+        let stats = ClusterTableStats {
+            table_id,
+            version: 440_000_000_000_000_000 + table_id as u64,
+            snapshot: 440_000_000_000_000_000,
+            last_analyze_version: 440_000_000_000_000_000,
+            last_stats_hist_version: 440_000_000_000_000_000,
+            modify_count: 0,
+            row_count,
+            columns: vec![full_histogram(column_id, false)],
+            indexes: vec![full_histogram(21, true)],
+        };
+        let plan =
+            plan_stats_write(&mut store, &catalog, &stats, now()).expect("statistics rows plan");
+        apply_mutations(&mut store, &plan.mutations);
+    }
+
+    let loader = ClusterStatsLoader::locate(&catalog).expect("the stats tables locate");
+    let cache = StatsTableRowCache::new();
+    {
+        let store = RefCell::new(&mut store);
+        let source = LoaderSizeSource {
+            loader: &loader,
+            store: &store,
+        };
+        cache
+            .update_by_id(&source, &[4242, 5151])
+            .expect("the first refresh succeeds");
+    }
+    assert_eq!(cache.get_table_rows(4242), 10);
+    assert_eq!(cache.get_table_rows(5151), 20);
+    assert_eq!(cache.get_col_length((4242, 11)), 40_000);
+
+    // Fail exactly the `stats_meta` scan the row-count read performs, the way
+    // a lost restricted read fails in production.
+    let meta_scan_prefix = {
+        store.scans.clear();
+        loader
+            .load_table_row_counts(&mut store, &[4242])
+            .expect("the probe read succeeds");
+        let prefix = store
+            .scans
+            .first()
+            .expect("the row-count read scans by prefix")
+            .clone();
+        store.scans.clear();
+        prefix
+    };
+    store.fail_scan_prefix = Some(meta_scan_prefix);
+    {
+        let store = RefCell::new(&mut store);
+        let source = LoaderSizeSource {
+            loader: &loader,
+            store: &store,
+        };
+        cache
+            .update_by_id(&source, &[4242, 5151])
+            .expect_err("the failed restricted read refuses the refresh");
+    }
+    assert_eq!(
+        cache.get_table_rows(4242),
+        10,
+        "a failed refresh serves the previous cached row count, not zero"
+    );
+    assert_eq!(
+        cache.get_table_rows(5151),
+        20,
+        "every cached table keeps its previous value across the failed refresh"
+    );
+    assert_eq!(
+        cache.get_col_length((4242, 11)),
+        40_000,
+        "the column-length map is likewise untouched"
+    );
+}
+
+/// The refresh source the size cache consumes over one loaded catalog: the
+/// same two restricted reads Go's `UpdateByID` runs, here against the test's
+/// own `MetaStore`.
+struct LoaderSizeSource<'a> {
+    loader: &'a ClusterStatsLoader,
+    store: &'a RefCell<&'a mut MetaStore>,
+}
+
+impl StatsTableRowSizeSource for LoaderSizeSource<'_> {
+    type Error = SystemTableError;
+
+    fn read_row_counts(&self, ids: &[i64]) -> Result<Vec<(i64, u64)>, Self::Error> {
+        Ok(self
+            .loader
+            .load_table_row_counts(&mut **self.store.borrow_mut(), ids)?
+            .into_iter()
+            .map(|row| (row.table_id, row.count))
+            .collect())
+    }
+
+    fn read_column_lengths(&self, ids: &[i64]) -> Result<Vec<(TableHistId, u64)>, Self::Error> {
+        Ok(self
+            .loader
+            .load_column_lengths(&mut **self.store.borrow_mut(), ids)?
+            .into_iter()
+            .map(|row| {
+                let total_size = u64::try_from(row.total_size.max(0))
+                    .expect("nonnegative i64 fits in u64");
+                ((row.table_id, row.histogram_id), total_size)
+            })
+            .collect())
+    }
 }
 
 /// Go's `TableSizeStats` is statement-local and clamps a negative persisted
