@@ -47,7 +47,7 @@ two directly relevant production files are:
 | Dependency artifact | Lines | Git blob | SHA-256 |
 | --- | ---: | --- | --- |
 | `pkg/metrics/stats.go` | 198 | `3190fb120ab927985590a7b280bf7d9588218944` | `61939f2a426d04e7f1de1f0eb20e2a9fc370cd875931f73df02ebd02e6cfa38c` |
-| `pkg/metrics/metrics.go` | 623 | `3bc6342ba45813c417e1c40b86a7c620abda5d81` | `a12468b525d8dca15f3d2f39b6241453928f9da7703fe9ecb8783995b1eb3b4a` |
+| `pkg/metrics/metrics.go` | 623 | `707323005570803a4a4ed23c567266ebc358b21e` | `48b6fbc0bbb7ad7b7f004e4568ae218db15598dbdb03a12a33b620974a314b1d` | re-pinned 2026-09-06: upstream evolved the family definitions after the original pin |
 
 Rust has no completed owner for that 60-artifact package. The existing
 `tidb-stats-handle-metrics` crate privately constructs and immediately
