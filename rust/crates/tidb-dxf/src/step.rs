@@ -47,6 +47,7 @@ const UNKNOWN_STEP_PREFIX: &str = "unknown step";
 /// Go `Step2Str`: converts a step to a string.
 ///
 /// It is too bad that Go defines step as an int 🙃.
+#[must_use]
 pub fn step2str(t: &TaskType, s: Step) -> String {
     // StepInit, StepDone and StepPrepared are special steps, we don't check
     // task type for them.
@@ -68,12 +69,14 @@ pub fn step2str(t: &TaskType, s: Step) -> String {
 }
 
 /// Go `IsValidStep`: whether the step is valid for the task type.
+#[must_use]
 pub fn is_valid_step(t: &TaskType, s: Step) -> bool {
     !step2str(t, s).contains(UNKNOWN_STEP_PREFIX)
 }
 
 /// Go `IsValidBusinessStep`: whether the step is a business step valid for the
 /// task type. Framework marker steps are excluded.
+#[must_use]
 pub fn is_valid_business_step(t: &TaskType, s: Step) -> bool {
     if s == STEP_INIT || s == STEP_DONE || s == STEP_PREPARED {
         return false;
@@ -259,13 +262,5 @@ mod tests {
         assert!(!is_valid_business_step(&BACKFILL, STEP_DONE));
         assert!(!is_valid_business_step(&BACKFILL, STEP_PREPARED));
         assert!(!is_valid_business_step(&BACKFILL, Step(123)));
-    }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_step_returns_may_be_ignored_like_go() {
-        step2str(&BACKFILL, STEP_INIT);
-        is_valid_step(&BACKFILL, STEP_INIT);
-        is_valid_business_step(&BACKFILL, STEP_INIT);
     }
 }

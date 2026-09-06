@@ -142,22 +142,26 @@ impl std::fmt::Display for SchemaChangeEvent {
 
 impl SchemaChangeEvent {
     /// Go `GetType`.
+    #[must_use]
     pub const fn action_type(&self) -> ActionType {
         self.inner.action_type
     }
 
     /// Go `NewCreateTableEvent`.
+    #[must_use]
     pub fn create_table(table: TableInfo) -> Self {
         Self::with_table(ActionType::ACTION_CREATE_TABLE, table)
     }
 
     /// Go `GetCreateTableInfo`.
+    #[must_use]
     pub fn create_table_info(&self) -> &TableInfo {
         self.assert_type(ActionType::ACTION_CREATE_TABLE);
         self.table_info()
     }
 
     /// Go `NewTruncateTableEvent`.
+    #[must_use]
     pub fn truncate_table(table: TableInfo, old_table: TableInfo) -> Self {
         Self {
             inner: JsonSchemaChangeEvent {
@@ -170,12 +174,14 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetTruncateTableInfo`.
+    #[must_use]
     pub fn truncate_table_info(&self) -> (&TableInfo, &TableInfo) {
         self.assert_type(ActionType::ACTION_TRUNCATE_TABLE);
         (self.table_info(), self.old_table_info())
     }
 
     /// Go `NewDropTableEvent`.
+    #[must_use]
     pub fn drop_table(old_table: TableInfo) -> Self {
         Self {
             inner: JsonSchemaChangeEvent {
@@ -187,34 +193,40 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetDropTableInfo`.
+    #[must_use]
     pub fn drop_table_info(&self) -> &TableInfo {
         self.assert_type(ActionType::ACTION_DROP_TABLE);
         self.old_table_info()
     }
 
     /// Go `NewAddColumnEvent`.
+    #[must_use]
     pub fn add_columns(table: TableInfo, columns: Vec<ColumnInfo>) -> Self {
         Self::with_columns(ActionType::ACTION_ADD_COLUMN, table, columns, false)
     }
 
     /// Go `GetAddColumnInfo`.
+    #[must_use]
     pub fn add_column_info(&self) -> (&TableInfo, &[ColumnInfo]) {
         self.assert_type(ActionType::ACTION_ADD_COLUMN);
         (self.table_info(), &self.inner.columns)
     }
 
     /// Go `NewModifyColumnEvent`.
+    #[must_use]
     pub fn modify_columns(table: TableInfo, columns: Vec<ColumnInfo>, analyzed: bool) -> Self {
         Self::with_columns(ActionType::ACTION_MODIFY_COLUMN, table, columns, analyzed)
     }
 
     /// Go `GetModifyColumnInfo`.
+    #[must_use]
     pub fn modify_column_info(&self) -> (&TableInfo, &[ColumnInfo], bool) {
         self.assert_type(ActionType::ACTION_MODIFY_COLUMN);
         (self.table_info(), &self.inner.columns, self.inner.analyzed)
     }
 
     /// Go `NewAddPartitionEvent`.
+    #[must_use]
     pub fn add_partitions(table: TableInfo, added: PartitionInfo) -> Self {
         Self::with_partitions(
             ActionType::ACTION_ADD_TABLE_PARTITION,
@@ -225,12 +237,14 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetAddPartitionInfo`.
+    #[must_use]
     pub fn add_partition_info(&self) -> (&TableInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_ADD_TABLE_PARTITION);
         (self.table_info(), self.added_partition_info())
     }
 
     /// Go `NewTruncatePartitionEvent`.
+    #[must_use]
     pub fn truncate_partitions(
         table: TableInfo,
         added: PartitionInfo,
@@ -245,6 +259,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetTruncatePartitionInfo`.
+    #[must_use]
     pub fn truncate_partition_info(&self) -> (&TableInfo, &PartitionInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_TRUNCATE_TABLE_PARTITION);
         (
@@ -255,6 +270,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `NewDropPartitionEvent`.
+    #[must_use]
     pub fn drop_partitions(table: TableInfo, dropped: PartitionInfo) -> Self {
         Self::with_partitions(
             ActionType::ACTION_DROP_TABLE_PARTITION,
@@ -265,12 +281,14 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetDropPartitionInfo`.
+    #[must_use]
     pub fn drop_partition_info(&self) -> (&TableInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_DROP_TABLE_PARTITION);
         (self.table_info(), self.dropped_partition_info())
     }
 
     /// Go `NewExchangePartitionEvent`.
+    #[must_use]
     pub fn exchange_partition(
         table: TableInfo,
         partition: PartitionInfo,
@@ -287,6 +305,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetExchangePartitionInfo`.
+    #[must_use]
     pub fn exchange_partition_info(&self) -> (&TableInfo, &PartitionInfo, &TableInfo) {
         self.assert_type(ActionType::ACTION_EXCHANGE_TABLE_PARTITION);
         (
@@ -297,6 +316,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `NewReorganizePartitionEvent`.
+    #[must_use]
     pub fn reorganize_partitions(
         table: TableInfo,
         added: PartitionInfo,
@@ -311,6 +331,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetReorganizePartitionInfo`.
+    #[must_use]
     pub fn reorganize_partition_info(&self) -> (&TableInfo, &PartitionInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_REORGANIZE_PARTITION);
         (
@@ -321,6 +342,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `NewAddPartitioningEvent`.
+    #[must_use]
     pub fn add_partitioning(old_table_id: i64, table: TableInfo, added: PartitionInfo) -> Self {
         let mut event = Self::with_partitions(
             ActionType::ACTION_ALTER_TABLE_PARTITIONING,
@@ -333,6 +355,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetAddPartitioningInfo`.
+    #[must_use]
     pub fn add_partitioning_info(&self) -> (i64, &TableInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_ALTER_TABLE_PARTITIONING);
         (
@@ -343,6 +366,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `NewRemovePartitioningEvent`.
+    #[must_use]
     pub fn remove_partitioning(
         old_table_id: i64,
         table: TableInfo,
@@ -359,6 +383,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetRemovePartitioningInfo`.
+    #[must_use]
     pub fn remove_partitioning_info(&self) -> (i64, &TableInfo, &PartitionInfo) {
         self.assert_type(ActionType::ACTION_REMOVE_PARTITIONING);
         (
@@ -369,6 +394,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `NewAddIndexEvent`.
+    #[must_use]
     pub fn add_indexes(table: TableInfo, indexes: Vec<IndexInfo>, analyzed: bool) -> Self {
         Self {
             inner: JsonSchemaChangeEvent {
@@ -382,12 +408,14 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetAddIndexInfo`.
+    #[must_use]
     pub fn add_index_info(&self) -> (&TableInfo, &[IndexInfo], bool) {
         self.assert_type(ActionType::ACTION_ADD_INDEX);
         (self.table_info(), &self.inner.indexes, self.inner.analyzed)
     }
 
     /// Go `NewFlashbackClusterEvent`.
+    #[must_use]
     pub fn flashback_cluster() -> Self {
         Self {
             inner: JsonSchemaChangeEvent {
@@ -398,6 +426,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `NewDropSchemaEvent`, including its deliberately small payload.
+    #[must_use]
     pub fn drop_schema(database: &DBInfo, tables: &[TableInfo]) -> Self {
         let tables = tables
             .iter()
@@ -436,6 +465,7 @@ impl SchemaChangeEvent {
     }
 
     /// Go `GetDropSchemaInfo`.
+    #[must_use]
     pub fn drop_schema_info(&self) -> &MiniDbInfoForSchemaEvent {
         self.assert_type(ActionType::ACTION_DROP_SCHEMA);
         self.inner
@@ -806,61 +836,5 @@ mod tests {
         let event = round_trip(SchemaChangeEvent::drop_schema(&database, &[table(10)]));
         assert_eq!(event.drop_schema_info().id, 13);
         assert_eq!(event.drop_schema_info().tables[0].id, 10);
-    }
-
-    #[test]
-    #[deny(unused_must_use)]
-    fn go_event_api_returns_may_be_ignored_like_go() {
-        let table = || TableInfo::default();
-        let partition = || PartitionInfo::default();
-        let database = DBInfo::default();
-
-        SchemaChangeEvent::default().action_type();
-        SchemaChangeEvent::create_table(table());
-        let create = SchemaChangeEvent::create_table(table());
-        create.create_table_info();
-        SchemaChangeEvent::truncate_table(table(), table());
-        let truncate = SchemaChangeEvent::truncate_table(table(), table());
-        truncate.truncate_table_info();
-        SchemaChangeEvent::drop_table(table());
-        let drop = SchemaChangeEvent::drop_table(table());
-        drop.drop_table_info();
-        SchemaChangeEvent::add_columns(table(), Vec::new());
-        let add_column = SchemaChangeEvent::add_columns(table(), Vec::new());
-        add_column.add_column_info();
-        SchemaChangeEvent::modify_columns(table(), Vec::new(), false);
-        let modify_column = SchemaChangeEvent::modify_columns(table(), Vec::new(), false);
-        modify_column.modify_column_info();
-        SchemaChangeEvent::add_partitions(table(), partition());
-        let add_partition = SchemaChangeEvent::add_partitions(table(), partition());
-        add_partition.add_partition_info();
-        SchemaChangeEvent::truncate_partitions(table(), partition(), partition());
-        let truncate_partition =
-            SchemaChangeEvent::truncate_partitions(table(), partition(), partition());
-        truncate_partition.truncate_partition_info();
-        SchemaChangeEvent::drop_partitions(table(), partition());
-        let drop_partition = SchemaChangeEvent::drop_partitions(table(), partition());
-        drop_partition.drop_partition_info();
-        SchemaChangeEvent::exchange_partition(table(), partition(), table());
-        let exchange_partition =
-            SchemaChangeEvent::exchange_partition(table(), partition(), table());
-        exchange_partition.exchange_partition_info();
-        SchemaChangeEvent::reorganize_partitions(table(), partition(), partition());
-        let reorganize_partition =
-            SchemaChangeEvent::reorganize_partitions(table(), partition(), partition());
-        reorganize_partition.reorganize_partition_info();
-        SchemaChangeEvent::add_partitioning(1, table(), partition());
-        let add_partitioning = SchemaChangeEvent::add_partitioning(1, table(), partition());
-        add_partitioning.add_partitioning_info();
-        SchemaChangeEvent::remove_partitioning(1, table(), partition());
-        let remove_partitioning = SchemaChangeEvent::remove_partitioning(1, table(), partition());
-        remove_partitioning.remove_partitioning_info();
-        SchemaChangeEvent::add_indexes(table(), Vec::new(), false);
-        let add_index = SchemaChangeEvent::add_indexes(table(), Vec::new(), false);
-        add_index.add_index_info();
-        SchemaChangeEvent::flashback_cluster();
-        SchemaChangeEvent::drop_schema(&database, &[]);
-        let drop_schema = SchemaChangeEvent::drop_schema(&database, &[]);
-        drop_schema.drop_schema_info();
     }
 }

@@ -14,7 +14,7 @@ before this batch (`b8c2cb741fa361825db335fa42ac38320899282`).
 ## Complete Go inventory
 
 All thirteen tracked artifacts in `pkg/ttl/cache` were read in full before
-editing: 3,572 lines total, including production code, tests, and Bazel
+editing: 3,566 lines total, including production code, tests, and Bazel
 metadata. There is no package `doc.go`, fixture or `testdata` directory,
 generated source or input, platform/build-tag variant, benchmark, fuzz target,
 README, or ownership artifact.
@@ -31,7 +31,7 @@ README, or ownership artifact.
 | `table.go` | 717 | physical TTL table and expiry/range logic |
 | `table_test.go` | 292 | table and expiry tests |
 | `task.go` | 199 | TTL task SQL, range codec, and row decoder |
-| `task_test.go` | 141 | task SQL/row integration tests |
+| `task_test.go` | 135 | task SQL/row integration tests |
 | `ttlstatus.go` | 193 | table status cache and row decoder |
 | `ttlstatus_test.go` | 181 | table status tests |
 
@@ -106,37 +106,3 @@ Bazel metadata could be regenerated.
   and repository-wide integration suites.
 
 The rolling repository audit continues with the remaining package checklist.
-
-## Follow-up: discardable cache returns (2026-09-06)
-
-The complete thirteen-artifact package inventory above was re-read at current
-Go `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; the current
-source remains byte-identical to the recorded `c6054025` source and totals
-3,572 lines. Every production function, test, fixture/build input, generated
-or platform variant (none), and the complete Rust cache owner were checked
-before editing. The package has no fixture, generated output, platform
-variant, benchmark, fuzz target, README, or ownership artifact.
-
-Go permits discarding all ordinary return values. Rust had 26 redundant
-`#[must_use]` annotations on direct Go-shaped cache constructors, state
-queries, SQL builders, key-range helpers, table accessors, and the mock-expiry
-setter. Those annotations were removed from `BaseCache`, `InfoSchemaCache`,
-`TableStatusCache`, `ScanRange`/`PhysicalTable`, task/status query builders,
-the four handle decoders, `TimeUnitType::as_str`, and
-`set_mock_expire_time`. The five Rust-only or error-contract annotations were
-retained: `BaseCache::update_time`, `PhysicalTable::table_info_ptr_eq`,
-`TimeUnitType::from_i64`, `MockExpireTimeKey::get`, and the `Result`-returning
-`insert_into_ttl_task` (whose result is independently must-use).
-
-`go_cache_returns_may_be_ignored_like_go` invokes each of the 26 changed
-APIs under `#[deny(unused_must_use)]`. The pre-fix owner failed to compile
-with exactly 26 `unused return value` diagnostics; the post-fix focused test
-passes. Runtime cache refresh, SQL text/arguments, key decoding, table
-identity, expiry arithmetic, and task-state behavior are unchanged.
-
-Ready validation for this follow-up is recorded in
-`docs/operations/ttl-cache-audit-execplan.md`. The Rust owner suite, all-target
-compile, formatting, `make lint`, and diff checks are required before
-publication. No Go source or Bazel metadata changed, so `make bazel_prepare`
-is not required; Go execution and live TiDB/etcd integration remain outside
-this Rust-only contract batch.

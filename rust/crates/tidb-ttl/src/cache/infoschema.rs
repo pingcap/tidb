@@ -59,6 +59,7 @@ pub struct InfoSchemaCache {
 
 impl InfoSchemaCache {
     /// Go `NewInfoSchemaCache`.
+    #[must_use]
     pub fn new(update_interval: Duration) -> Self {
         Self {
             base: BaseCache::new(update_interval),
@@ -68,6 +69,7 @@ impl InfoSchemaCache {
     }
 
     /// Go's embedded `baseCache.ShouldUpdate`.
+    #[must_use]
     pub fn should_update(&self) -> bool {
         self.base.should_update()
     }
@@ -78,6 +80,7 @@ impl InfoSchemaCache {
     }
 
     /// Go's embedded `baseCache.GetInterval`.
+    #[must_use]
     pub fn get_interval(&self) -> Duration {
         self.base.get_interval()
     }

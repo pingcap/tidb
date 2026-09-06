@@ -686,3 +686,6 @@
   事故记录: (a) wip 变更经共享 stash 竞态丢失一次, 全量重打 (stash push/pop 必须显式 ref 且立即验证); (b) 兄弟会话开始在 /tmp/tidb-zcode-parity worktree 内活跃编辑 (planner/executor/stmt_ctx 未提交变更 + WALK_STATE.md), 本轮 rebase 改用一次性 worktree 完成, 未触碰其未提交文件。
   推送: 8708636cf48 (基于 b9713cd4bc3)。
 - 下轮恢复点: (1) 注意兄弟会话同 worktree 并行, 收敛核查改为只读; (2) READ_FROM_STORAGE 拆分开放项; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
+- 收尾批: READ_FROM_STORAGE restore 文本逗号连接 (tidb-ast hint.rs)。Go parser 每引擎组产出一个 TableOptimizerHint, RestoreOptimizerHints 以 ", " 连接; Rust 单 hint 双组内以空格连接导致 restore 文本分歧。改为组间 ", " 连接后与 Go 字节一致 (tidb-ast Go-oracle 表在 GOROOT 就绪时验证); 单 hint 双组建模保留为内部形态, 共享引擎组的去重角落 (Go 按条目去重 vs Rust 按合并文本) 记录为残余 narrowing。parser 733 / ast 100 / hint 2 全绿; fmt; diff-check; make lint 过。
+  推送: caa7f4e59fb (一次性 worktree rebase, 兄弟仍在同 worktree 活跃)。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。

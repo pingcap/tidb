@@ -75,6 +75,7 @@ pub enum SqlArg {
 }
 
 /// Go `SelectFromTTLTaskWithJobID`.
+#[must_use]
 pub fn select_from_ttl_task_with_job_id(job_id: &str) -> (String, Vec<SqlArg>) {
     (
         format!("{SELECT_FROM_TTL_TASK} WHERE job_id = %?"),
@@ -83,6 +84,7 @@ pub fn select_from_ttl_task_with_job_id(job_id: &str) -> (String, Vec<SqlArg>) {
 }
 
 /// Go `SelectFromTTLTaskWithID`.
+#[must_use]
 pub fn select_from_ttl_task_with_id(job_id: &str, scan_id: i64) -> (String, Vec<SqlArg>) {
     (
         format!("{SELECT_FROM_TTL_TASK} WHERE job_id = %? AND scan_id = %?"),
@@ -96,6 +98,7 @@ pub fn select_from_ttl_task_with_id(job_id: &str, scan_id: i64) -> (String, Vec<
 /// `hbExpire.Format(time.DateTime)`. With no reachable Go-instant type the
 /// already-rendered `"2006-01-02 15:04:05"` literal is the parameter, which is
 /// exactly the value Go binds.
+#[must_use]
 pub fn peek_waiting_ttl_task(hb_expire_date_time: &str) -> (String, Vec<SqlArg>) {
     (
         format!(

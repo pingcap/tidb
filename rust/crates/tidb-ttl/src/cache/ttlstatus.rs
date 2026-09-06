@@ -61,6 +61,7 @@ current_job_owner_hb_time,current_job_start_time,current_job_ttl_expire,current_
 current_job_status,current_job_status_update_time FROM mysql.tidb_ttl_table_status";
 
 /// Go `SelectFromTTLTableStatusWithID`.
+#[must_use]
 pub fn select_from_ttl_table_status_with_id(table_id: i64) -> (String, Vec<i64>) {
     (
         format!("{SELECT_FROM_TTL_TABLE_STATUS} WHERE table_id = %?"),
@@ -190,6 +191,7 @@ pub struct TableStatusCache {
 
 impl TableStatusCache {
     /// Go `NewTableStatusCache`.
+    #[must_use]
     pub fn new(update_interval: Duration) -> Self {
         Self {
             base: BaseCache::new(update_interval),
@@ -198,6 +200,7 @@ impl TableStatusCache {
     }
 
     /// Go's embedded `baseCache.ShouldUpdate`.
+    #[must_use]
     pub fn should_update(&self) -> bool {
         self.base.should_update()
     }
@@ -208,6 +211,7 @@ impl TableStatusCache {
     }
 
     /// Go's embedded `baseCache.GetInterval`.
+    #[must_use]
     pub fn get_interval(&self) -> Duration {
         self.base.get_interval()
     }
