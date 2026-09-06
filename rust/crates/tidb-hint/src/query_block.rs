@@ -123,7 +123,10 @@ impl QBHintHandler {
                 self.warn(format!(
                     "There are more than two query names in same query block, using the first one {first}"
                 ));
-            } else {
+            } else if !candidate.is_empty() {
+                // An empty-name qb_name() does not occupy the slot in Go
+                // (len(qbName) stays 0), so a later named hint still wins
+                // without a warning.
                 qb_name = Some(candidate.to_ascii_lowercase());
             }
         }

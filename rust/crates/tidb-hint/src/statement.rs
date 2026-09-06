@@ -290,10 +290,12 @@ where
                     ));
                     continue;
                 }
+                // Go keys on `DBName.L`, the lowercased db name.
                 let database = tables[0]
                     .db_name
                     .clone()
-                    .unwrap_or_else(|| current_database.to_owned());
+                    .unwrap_or_else(|| current_database.to_owned())
+                    .to_ascii_lowercase();
                 let table = tables[0].name.clone();
                 let index = tables[1].name.clone();
                 let mut columns = Vec::with_capacity(tables.len() - 2);
@@ -449,12 +451,14 @@ where
                 "NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN({value})"
             )));
         }
+        // Go assigns the hintdata first and clamps to -1 afterwards
+        // (hint.go:521-525), so an out-of-range value never stays visible.
+        result.force_nth_plan = value;
         if value < 1 {
+            result.force_nth_plan = -1;
             warnings.push(HintWarning::ordinary(
                 "the hintdata for NTH_PLAN() is too small, hint ignored",
             ));
-        } else {
-            result.force_nth_plan = value;
         }
     } else {
         result.force_nth_plan = -1;
@@ -490,4 +494,84 @@ fn apply_last_bool(
     }
     *present = true;
     *target = value;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::statement::parse_stmt_hints;
+    use tidb_ast::{Hint, HintKind};
+
+    fn hint_table(name: &str, db: Option<&str>) -> tidb_ast::HintTable {
+        tidb_ast::HintTable {
+            name: name.to_owned(),
+            db_name: db.map(str::to_owned),
+            qb_name: None,
+            partitions: Vec::new(),
+        }
+    }
+
+    fn number_hint(name: &str, value: i64) -> Hint {
+        Hint {
+            name: name.to_owned(),
+            kind: HintKind::Number {
+                qb_name: None,
+                value,
+            },
+        }
+    }
+
+    /// Go hint.go:521-525 assigns the hintdata first and clamps out-of-range
+    /// values to -1, so `NTH_PLAN(0)` never leaves an "enabled" zero behind.
+    #[test]
+    fn nth_plan_zero_clamps_to_disabled() {
+        fn accept_set_var(_: &str, _: &str) -> (bool, Option<HintWarning>) {
+            (true, None)
+        }
+        fn reject_column(_: &str, _: &str, _: &str) -> Result<i64, String> {
+            Err("no table".to_owned())
+        }
+        let hints = vec![number_hint("NTH_PLAN", 0)];
+        let (stmt_hints, _, _) =
+            parse_stmt_hints(&hints, &mut accept_set_var, &mut reject_column, "test", 0);
+        assert_eq!(-1, stmt_hints.force_nth_plan);
+        assert!(!stmt_hints.task_map_need_backup());
+    }
+
+    /// Go keys HYPO_INDEX on `DBName.L` (hint.go:364): the checker input and
+    /// the added-hypo db name are lowercased even when the SQL wrote them
+    /// with uppercase.
+    #[test]
+    fn hypo_index_database_key_is_lowercased() {
+        fn accept_set_var(_: &str, _: &str) -> (bool, Option<HintWarning>) {
+            (true, None)
+        }
+        let hints = vec![Hint {
+            name: "HYPO_INDEX".to_owned(),
+            kind: HintKind::Tables {
+                qb_name: None,
+                tables: vec![
+                    hint_table("t1", Some("DB1")),
+                    hint_table("idx", Some("DB1")),
+                    hint_table("c1", Some("DB1")),
+                ],
+            },
+        }];
+        let mut seen = Vec::new();
+        let mut checker = |database: &str, table: &str, column: &str| {
+            seen.push((database.to_owned(), table.to_owned(), column.to_owned()));
+            if database == "DB1" {
+                return Err("database must already be lowercased".to_owned());
+            }
+            Ok(0)
+        };
+        let (stmt_hints, _, warnings) =
+            parse_stmt_hints(&hints, &mut accept_set_var, &mut checker, "test", 0);
+        assert!(
+            seen.iter().all(|(database, _, _)| database == "db1"),
+            "the checker must see the lowercased db: {seen:?}"
+        );
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert_eq!(1, stmt_hints.hinted_hypo_indexes.len());
+    }
 }

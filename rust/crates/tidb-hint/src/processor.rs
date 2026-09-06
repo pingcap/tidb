@@ -45,6 +45,12 @@ impl HintsSet {
     }
 
     /// Go `HintsSet.ContainTableHint`.
+    ///
+    /// Go compares `HintName.String() == hint` in the SQL-written case, so a
+    /// `/*+ USE_PLAN_CACHE() */` written uppercase is MISSED there (callers
+    /// pass lowercase names). This crate normalizes hint names to canonical
+    /// uppercase at parse time and deliberately matches case-insensitively,
+    /// so the hint works in every written case.
     #[must_use]
     pub fn contains_table_hint(&self, name: &str) -> bool {
         self.table_hints
