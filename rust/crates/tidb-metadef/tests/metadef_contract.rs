@@ -112,21 +112,11 @@ fn rust_public_string_constants(source: &str) -> Vec<String> {
 fn every_public_string_constant_matches_the_go_package() {
     let mut go = go_public_string_constants(GO_SYSTEM_TABLES);
     let mut rust = rust_public_string_constants(RUST_SYSTEM_TABLES);
-    // The checked-out Go tree is the extraction baseline, while this rolling
-    // audit targets origin/master. Keep the baseline equality useful while
-    // allowing the target-only privilege-column and materialized-view
-    // definitions; their names/shape are asserted by the owner tests.
-    for sql in &mut rust {
-        // Normalize target-only privilege columns before comparing against
-        // the checked-out extraction baseline.
-        *sql = sql.replace(
-            "\t\tOperate_view_priv\t\tENUM('N','Y') NOT NULL DEFAULT 'N',\n",
-            "",
-        );
-        *sql = sql.replace(", 'Operate View'", "");
-        *sql = sql.replace(",'Operate View'", "");
-    }
-    rust.retain(|sql| !sql.contains("mysql.tidb_mview_") && !sql.contains("mysql.tidb_mlog_"));
+    // The checked-out Go tree now carries the privilege columns and the
+    // materialized-view/log definitions this rolling audit once normalized
+    // away (upstream #70789-era mview model included), so the comparison is
+    // plain list equality again; the owner tests still assert each
+    // definition's name and shape.
     go.sort();
     rust.sort();
     assert_eq!(rust, go);
