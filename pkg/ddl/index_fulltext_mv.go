@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -40,6 +41,49 @@ import (
 // is still evaluated locally, just without an access path to narrow it.
 func fullTextIndexIsMVBacked(indexPartSpecifications []*ast.IndexPartSpecification) bool {
 	return len(indexPartSpecifications) == 1 && indexPartSpecifications[0].Column != nil
+}
+
+// BuildFullTextIndexSpec rewrites a FULLTEXT index definition into the
+// expression-index specification it is materialised as, reporting whether the
+// rewrite applied. A definition that stays metadata-only - a multi-column one,
+// since a multi-valued index covers exactly one expression - is returned
+// unchanged with false.
+//
+// It exists so that everything applying a CREATE FULLTEXT INDEX produces the
+// same schema: the executor, and the schema tracker that mirrors DDL for DM.
+// A consumer building an ordinary index over the raw column instead would drift
+// from what the cluster actually holds.
+func BuildFullTextIndexSpec(
+	ctx *metabuild.Context,
+	tblInfo *model.TableInfo,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+) ([]*ast.IndexPartSpecification, *ast.IndexOption, bool, error) {
+	if !fullTextIndexIsMVBacked(indexPartSpecifications) {
+		return indexPartSpecifications, indexOption, false, nil
+	}
+	analyzer, err := ctx.GetFullTextAnalyzer()
+	if err != nil {
+		return nil, nil, false, errors.Trace(err)
+	}
+	mvSpecs, err := buildFullTextMVIndexSpec(analyzer, indexPartSpecifications, indexOption, tblInfo)
+	if err != nil {
+		return nil, nil, false, errors.Trace(err)
+	}
+	return mvSpecs, fullTextMVIndexOption(indexOption), true, nil
+}
+
+// BuildFullTextIndexInfo builds the metadata-only index a multi-column FULLTEXT
+// definition becomes. Exported for the schema tracker, which mirrors DDL
+// without executing it.
+func BuildFullTextIndexInfo(
+	tblInfo *model.TableInfo,
+	indexName pmodel.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+	state model.SchemaState,
+) (*model.IndexInfo, error) {
+	return buildFullTextIndexInfo(tblInfo, indexName, indexPartSpecifications, indexOption, state)
 }
 
 // buildFullTextMVIndexSpec rewrites a FULLTEXT index definition into an
@@ -142,6 +186,10 @@ func fullTextMVIndexAnalyzerConfig(
 	config.ParserType = parserType
 	if config.ParserType == model.FullTextParserTypeNgramV1 && config.NgramTokenSize <= 0 {
 		config.NgramTokenSize = 2
+	}
+	if err := fulltext.ValidateAnalyzerConfig(config); err != nil {
+		return fulltext.AnalyzerConfig{}, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("FULLTEXT index with %s", err))
 	}
 	if _, err := fulltext.GetAnalyzer(config); err != nil {
 		return fulltext.AnalyzerConfig{}, errors.Trace(err)
