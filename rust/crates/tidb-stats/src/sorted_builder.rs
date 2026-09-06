@@ -30,7 +30,6 @@ pub struct SortedHistogramBuilder {
 }
 
 impl SortedHistogramBuilder {
-    #[must_use]
     pub fn new(num_buckets: i64, id: i64, stats_version: isize) -> Self {
         assert!(
             num_buckets >= 0,
@@ -50,7 +49,6 @@ impl SortedHistogramBuilder {
         }
     }
 
-    #[must_use]
     pub const fn histogram(&self) -> &Histogram {
         &self.histogram
     }

@@ -252,7 +252,6 @@ pub struct SequentialRangeChecker {
 impl SequentialRangeChecker {
     /// Creates the source checker from inclusive `(start, end)` ranges and
     /// sorts an unsorted input by its start index.
-    #[must_use]
     pub fn from_ranges(ranges: &[(i64, i64)]) -> Self {
         let mut ranges = ranges.to_vec();
         Self::from_ranges_in_place(&mut ranges)
@@ -719,7 +718,6 @@ pub fn try_build_column_histogram_in_place(
 }
 
 /// Go `BuildColumn`, forwarding the collector's whole-scan summary.
-#[must_use]
 pub fn build_column(id: i64, collector: &SampleCollector, num_buckets: i64) -> Histogram {
     build_column_histogram(
         id,

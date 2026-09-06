@@ -41,6 +41,17 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/statistics` builder return contracts): the complete
+  direct root inventory was re-read at current Go master: 33 artifacts and
+  13,905 direct lines plus two JSON fixtures (71 lines), with nested packages
+  treated as separate boundaries. Rust's four direct Go-shaped builder
+  counterparts no longer impose `#[must_use]` diagnostics; Rust-only
+  `count`/in-place range helpers remain annotated. The focused regression
+  failed pre-fix with exactly four diagnostics and passes after the edit; all
+  287 `tidb-stats` tests, all-target compile, formatting, Ready lint, and diff
+  checks pass. Evidence is recorded in
+  `receipts/statistics_builder_walk.md` and
+  `docs/operations/statistics-builder-audit-execplan.md`.
 - 2026-09-06 (`pkg/meta/model` reorganization return contracts): the complete
   23-artifact, 10,721-line Go package and complete `tidb-model` owner were
   re-read at current Go master. Seven direct `DDLReorgMeta` constructor/getter
