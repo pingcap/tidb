@@ -9436,3 +9436,10 @@ risks without claiming repository-wide parity.
   `ADD COLUMN d CHAR(300)` answers 1074 with the exact Go texts. Two asserted
   regressions pin the ALTER-path coverage in
   `tests/check_column_alter_path_source.rs`.
+- 2026-09-06 (checkAutoIncrement + column-option pins): probed the option-rule
+  family around checkColumn. Verified faithful: two auto_increment columns →
+  1075; auto_increment on DECIMAL/DATETIME → 1063 "Incorrect column specifier";
+  a lone auto_increment WITHOUT a key accepted (Go collects the isKey flag but
+  never consults it — MySQL 8 semantics); duplicate column 1060 and double
+  primary key 1068. Five pinned regressions in
+  `tests/check_column_options_source.rs`.
