@@ -453,3 +453,19 @@ zero through IEEE division. They compose as REAL operands and a bare
 function answers its own `ToBool` truth. Regression:
 `math_family_follows_binary64_semantics` (POW composition, ACOS(2) NULL,
 round-half-away via EQReal, the PI constant).
+
+## Coprocessor string function family (2026-09-07, same session)
+
+Ten string signatures land in the bytes channel:
+`CharLengthUTF8`/`CharLength` (rune count vs byte count),
+`LowerUTF8`/`Lower`/`UpperUTF8`/`Upper` (rune folding for the UTF8 forms,
+ASCII folding for the binary forms), and
+`Substring2Args*`/`Substring3Args*` (1-based positions, negative from the
+end, negative length = rest, rune vs byte indexing per form). They compose
+as bytes-channel operands (string comparisons, LIKE targets/patterns), and
+a bare string function as a condition answers its numeric-prefix truth
+(Go `ToBool` over `StrToFloat`), which filters the common all-text case.
+
+Regression: `string_functions_follow_go_semantics` (5-char/6-byte split on
+"héllo", the É rune fold, the negative-position substring, and the bare
+condition's FALSE).

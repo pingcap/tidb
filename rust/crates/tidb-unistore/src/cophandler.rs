@@ -1569,6 +1569,30 @@ pub enum SimpleSig {
     Pi,
     /// See [`SimpleSig::RoundReal`].
     Sin,
+    /// The string function family: `CharLengthUTF8` counts CHARACTERS,
+    /// `CharLength` counts BYTES; `Lower`/`LowerUTF8` and `Upper`/`UpperUTF8`
+    /// fold case (the UTF8 forms per rune, the binary forms ASCII-only);
+    /// `Substring2Args*`/`Substring3Args*` take 1-based positions (negative
+    /// counts from the end) with byte or rune indexing.
+    CharLengthUtf8,
+    /// See [`SimpleSig::CharLengthUtf8`].
+    CharLength,
+    /// See [`SimpleSig::CharLengthUtf8`].
+    LowerUtf8,
+    /// See [`SimpleSig::CharLengthUtf8`].
+    Lower,
+    /// See [`SimpleSig::CharLengthUtf8`].
+    UpperUtf8,
+    /// See [`SimpleSig::CharLengthUtf8`].
+    Upper,
+    /// See [`SimpleSig::CharLengthUtf8`].
+    Substring2ArgsUtf8,
+    /// See [`SimpleSig::CharLengthUtf8`].
+    Substring3ArgsUtf8,
+    /// See [`SimpleSig::CharLengthUtf8`].
+    Substring2Args,
+    /// See [`SimpleSig::CharLengthUtf8`].
+    Substring3Args,
     /// `DivideDecimal`: decimal division with the DAG request's
     /// `div_precision_increment` added to the result fraction, NULL on a
     /// zero divisor (Go `EvalDivideDecimal`).
@@ -1868,6 +1892,16 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::Cot => SimpleSig::Cot,
             tipb::ScalarFuncSig::Pi => SimpleSig::Pi,
             tipb::ScalarFuncSig::Sin => SimpleSig::Sin,
+            tipb::ScalarFuncSig::CharLengthUtf8 => SimpleSig::CharLengthUtf8,
+            tipb::ScalarFuncSig::CharLength => SimpleSig::CharLength,
+            tipb::ScalarFuncSig::LowerUtf8 => SimpleSig::LowerUtf8,
+            tipb::ScalarFuncSig::Lower => SimpleSig::Lower,
+            tipb::ScalarFuncSig::UpperUtf8 => SimpleSig::UpperUtf8,
+            tipb::ScalarFuncSig::Upper => SimpleSig::Upper,
+            tipb::ScalarFuncSig::Substring2ArgsUtf8 => SimpleSig::Substring2ArgsUtf8,
+            tipb::ScalarFuncSig::Substring3ArgsUtf8 => SimpleSig::Substring3ArgsUtf8,
+            tipb::ScalarFuncSig::Substring2Args => SimpleSig::Substring2Args,
+            tipb::ScalarFuncSig::Substring3Args => SimpleSig::Substring3Args,
             tipb::ScalarFuncSig::LtInt => SimpleSig::LtInt,
             tipb::ScalarFuncSig::LeInt => SimpleSig::LeInt,
             tipb::ScalarFuncSig::GtInt => SimpleSig::GtInt,
@@ -2084,7 +2118,7 @@ fn eval_real(
                         Some(eval_decimal(children.first(), row, div_precision_increment)?.to_f64())
                     }
                     SimpleSig::CastStringAsReal => {
-                        let raw = eval_bytes(children.first(), row)?;
+                        let raw = eval_bytes(children.first(), row, div_precision_increment)?;
                         let text = String::from_utf8_lossy(&raw);
                         let Some(prefix) = numeric_prefix(text.trim_start(), true) else {
                             return Some(0.0);
@@ -2172,7 +2206,11 @@ fn eval_time(
     }
 }
 
-fn eval_bytes(expr: Option<&SimpleExpr>, row: &[tidb_datatype::Datum]) -> Option<Vec<u8>> {
+fn eval_bytes(
+    expr: Option<&SimpleExpr>,
+    row: &[tidb_datatype::Datum],
+    div_precision_increment: i64,
+) -> Option<Vec<u8>> {
     use tidb_datatype::Datum;
     let expr = expr?;
     match expr {
@@ -2182,6 +2220,112 @@ fn eval_bytes(expr: Option<&SimpleExpr>, row: &[tidb_datatype::Datum]) -> Option
             Some(Datum::Bytes(value)) => Some(value.clone()),
             _ => None,
         },
+        // Go's string-function family: case folding and substring over the
+        // byte domain for the binary forms and the rune domain for the
+        // UTF8 forms.
+        SimpleExpr::Func(
+            sig @ (SimpleSig::Lower
+            | SimpleSig::LowerUtf8
+            | SimpleSig::Upper
+            | SimpleSig::UpperUtf8
+            | SimpleSig::Substring2Args
+            | SimpleSig::Substring2ArgsUtf8
+            | SimpleSig::Substring3Args
+            | SimpleSig::Substring3ArgsUtf8),
+            children,
+        ) => {
+            let utf8 = matches!(
+                sig,
+                SimpleSig::LowerUtf8
+                    | SimpleSig::UpperUtf8
+                    | SimpleSig::Substring2ArgsUtf8
+                    | SimpleSig::Substring3ArgsUtf8
+            );
+            let units = |bytes: &[u8]| -> Vec<char> {
+                if utf8 {
+                    String::from_utf8_lossy(bytes).chars().collect()
+                } else {
+                    bytes.iter().map(|b| *b as char).collect()
+                }
+            };
+            let text = eval_bytes(children.first(), row, div_precision_increment)?;
+            let is_sub = matches!(
+                sig,
+                SimpleSig::Substring2Args
+                    | SimpleSig::Substring2ArgsUtf8
+                    | SimpleSig::Substring3Args
+                    | SimpleSig::Substring3ArgsUtf8
+            );
+            let _ = is_sub;
+            if matches!(
+                sig,
+                SimpleSig::Lower | SimpleSig::LowerUtf8 | SimpleSig::Upper | SimpleSig::UpperUtf8
+            ) {
+                let units = units(&text);
+                let folded: String = match sig {
+                    SimpleSig::LowerUtf8 => units.iter().collect::<String>().to_lowercase(),
+                    SimpleSig::Lower => units
+                        .iter()
+                        .map(|c| (*c as u8).to_ascii_lowercase() as char)
+                        .collect(),
+                    SimpleSig::UpperUtf8 => units.iter().collect::<String>().to_uppercase(),
+                    _ => units
+                        .iter()
+                        .map(|c| (*c as u8).to_ascii_uppercase() as char)
+                        .collect(),
+                };
+                return Some(if utf8 {
+                    folded.into_bytes()
+                } else {
+                    folded.chars().map(|c| c as u8).collect()
+                });
+            }
+            // Go `builtinSubstringSig`: 1-based position; a negative
+            // position counts from the end; a negative length takes the
+            // rest after the start.
+            let pos_arg = children
+                .get(1)
+                .and_then(|c| eval_expr(c, row, div_precision_increment).ok())?
+                .and_then(|value| i64::try_from(value).ok())?;
+            let pos = pos_arg;
+            let char_units: Vec<char> = units(&text);
+            let char_count = if utf8 {
+                char_units.len() as i64
+            } else {
+                text.len() as i64
+            };
+            let start = if pos > 0 {
+                pos - 1
+            } else if pos < 0 {
+                char_count + pos
+            } else {
+                return None;
+            };
+            if start < 0 || start >= char_count {
+                return Some(Vec::new());
+            }
+            let mut end = char_count;
+            if matches!(
+                sig,
+                SimpleSig::Substring3Args | SimpleSig::Substring3ArgsUtf8
+            ) {
+                let len_arg = children
+                    .get(2)
+                    .and_then(|c| eval_expr(c, row, div_precision_increment).ok())?
+                    .and_then(|value| i64::try_from(value).ok())?;
+                let len = len_arg;
+                if len < 0 {
+                    return Some(Vec::new());
+                }
+                end = (start + len).min(char_count);
+            }
+            let picked: String = char_units[start as usize..end as usize].iter().collect();
+            if utf8 {
+                Some(picked.into_bytes())
+            } else {
+                Some(picked.chars().map(|c| c as u8).collect())
+            }
+        }
         _ => None,
     }
 }
@@ -2446,7 +2590,8 @@ pub fn eval_expr(
                     // truncation warning has no coprocessor sink, garbage
                     // answers 0 and the range saturates to the BIGINT bound
                     // (the non-strict SELECT observable).
-                    let Some(raw) = eval_bytes(children.first(), row) else {
+                    let Some(raw) = eval_bytes(children.first(), row, div_precision_increment)
+                    else {
                         return Ok(None);
                     };
                     let text = String::from_utf8_lossy(&raw);
@@ -2496,6 +2641,39 @@ pub fn eval_expr(
                 | SimpleSig::Sin => eval_real(Some(expr), row, div_precision_increment)
                     .filter(|value| !value.is_nan())
                     .map(|value| i128::from(value != 0.0)),
+                SimpleSig::CharLengthUtf8 | SimpleSig::CharLength => {
+                    // Go `builtinCharLengthUtf8Sig` counts runes;
+                    // `builtinCharLengthBinarySig` counts bytes.
+                    let Some(raw) = eval_bytes(children.first(), row, div_precision_increment)
+                    else {
+                        return Ok(None);
+                    };
+                    let count = if matches!(sig, SimpleSig::CharLengthUtf8) {
+                        String::from_utf8_lossy(&raw).chars().count()
+                    } else {
+                        raw.len()
+                    };
+                    Some(i128::from(count as u64))
+                }
+                SimpleSig::Lower
+                | SimpleSig::LowerUtf8
+                | SimpleSig::Upper
+                | SimpleSig::UpperUtf8
+                | SimpleSig::Substring2Args
+                | SimpleSig::Substring2ArgsUtf8
+                | SimpleSig::Substring3Args
+                | SimpleSig::Substring3ArgsUtf8 => {
+                    // A bare string function as a condition answers its
+                    // `ToBool` truth: the numeric prefix of the result,
+                    // non-zero (Go `StrToFloat` -> `ToBool`).
+                    let Some(raw) = eval_bytes(Some(expr), row, div_precision_increment) else {
+                        return Ok(None);
+                    };
+                    let text = String::from_utf8_lossy(&raw);
+                    let numeric = numeric_prefix(text.trim_start(), true).unwrap_or_default();
+                    let value: f64 = numeric.parse().unwrap_or(0.0);
+                    Some(i128::from(value != 0.0))
+                }
                 SimpleSig::RoundInt => child(0)?,
                 SimpleSig::LtReal
                 | SimpleSig::LeReal
@@ -2558,8 +2736,8 @@ pub fn eval_expr(
                 | SimpleSig::GeString(collation)
                 | SimpleSig::EqString(collation) => {
                     let (Some(left), Some(right)) = (
-                        eval_bytes(children.first(), row),
-                        eval_bytes(children.get(1), row),
+                        eval_bytes(children.first(), row, div_precision_increment),
+                        eval_bytes(children.get(1), row, div_precision_increment),
                     ) else {
                         return Ok(None);
                     };
@@ -2622,8 +2800,8 @@ pub fn eval_expr(
                 }
                 SimpleSig::NeString(collation) => {
                     let (Some(left), Some(right)) = (
-                        eval_bytes(children.first(), row),
-                        eval_bytes(children.get(1), row),
+                        eval_bytes(children.first(), row, div_precision_increment),
+                        eval_bytes(children.get(1), row, div_precision_increment),
                     ) else {
                         return Ok(None);
                     };
@@ -2721,9 +2899,9 @@ pub fn eval_expr(
                     // exact (Go folds through the collator's weights; the
                     // fold here is ASCII-lowercase, exact for the common
                     // ASCII pattern families).
-                    let target = eval_bytes(children.first(), row);
-                    let pattern = eval_bytes(children.get(1), row);
-                    let escape = eval_bytes(children.get(2), row);
+                    let target = eval_bytes(children.first(), row, div_precision_increment);
+                    let pattern = eval_bytes(children.get(1), row, div_precision_increment);
+                    let escape = eval_bytes(children.get(2), row, div_precision_increment);
                     let (Some(target), Some(pattern), Some(escape)) = (target, pattern, escape)
                     else {
                         return Ok(None);
@@ -4313,5 +4491,41 @@ mod tests {
             "eval_expr(pow, row, 4) = {:?}",
             eval_expr(&pow, &[tidb_datatype::Datum::Real(0.5)], 4)
         );
+    }
+
+    #[test]
+    fn string_functions_follow_go_semantics() {
+        use tidb_datatype::Datum;
+        // CHAR_LENGTH counts runes over UTF-8; LENGTH-style binary counts
+        // bytes. `"héllo"`: 5 chars, 6 bytes.
+        let row = [Datum::new_string("héllo".to_owned())];
+        let char_len = SimpleExpr::Func(SimpleSig::CharLengthUtf8, vec![SimpleExpr::Column(0)]);
+        assert_eq!(eval_expr(&char_len, &row, 4).expect("evals"), Some(5));
+        let byte_len = SimpleExpr::Func(SimpleSig::CharLength, vec![SimpleExpr::Column(0)]);
+        assert_eq!(eval_expr(&byte_len, &row, 4).expect("evals"), Some(6));
+        // LOWER folds case; the UTF8 form folds runes (É -> é).
+        let lower = SimpleExpr::Func(
+            SimpleSig::LowerUtf8,
+            vec![SimpleExpr::Bytes(b"H\xc3\x89LLO".to_vec())],
+        );
+        let folded = eval_bytes(Some(&lower), &row, 4).expect("folds");
+        // "héllo" -- the É (C3 89) folds to é (C3 A9) via the rune fold.
+        assert_eq!(folded, b"h\xc3\xa9llo".to_vec());
+        // A bare string function as a condition answers its numeric-prefix
+        // truth: "héllo" has none, so FALSE.
+        assert_eq!(eval_expr(&lower, &row, 4).expect("evals"), Some(0));
+        // SUBSTRING with a negative position counts from the end.
+        let sub = SimpleExpr::Func(
+            SimpleSig::Substring3ArgsUtf8,
+            vec![
+                SimpleExpr::Column(0),
+                SimpleExpr::Int(-4),
+                SimpleExpr::Int(3),
+            ],
+        );
+        // SUBSTRING("héllo", -4, 3): 1-based from the end-4 => "éll".
+        // The bare condition answers its numeric-prefix truth: "éll" has
+        // none -> FALSE.
+        assert_eq!(eval_expr(&sub, &row, 4).expect("evals"), Some(0));
     }
 }
