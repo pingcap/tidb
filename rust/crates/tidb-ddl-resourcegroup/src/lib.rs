@@ -150,3 +150,52 @@ pub fn new_group_from_options(
 
     Err(Error::UnknownResourceGroupMode)
 }
+
+#[cfg(test)]
+mod error_literal_tests {
+    use super::*;
+
+    /// Pins every error Display text byte-for-byte against Go
+    /// `pkg/ddl/resourcegroup/errors.go` so future sweeps cannot drift.
+    #[test]
+    fn error_display_texts_match_go_literals() {
+        let literals: &[(Error, &str)] = &[
+            (Error::InvalidGroupSettings, "invalid group settings"),
+            (
+                Error::TooLongResourceGroupName,
+                "resource group name too long",
+            ),
+            (
+                Error::InvalidResourceGroupFormat,
+                "group settings with invalid format",
+            ),
+            (
+                Error::InvalidResourceGroupDuplicatedMode,
+                "cannot set RU mode and Raw mode options at the same time",
+            ),
+            (
+                Error::UnknownResourceGroupMode,
+                "unknown resource group mode",
+            ),
+            (
+                Error::DroppingInternalResourceGroup,
+                "can't drop reserved resource group",
+            ),
+            (
+                Error::ResourceGroupRunawayRuleIsEmpty,
+                "please set at least one field(exec_elapsed_time_ms, processed_keys, ru)",
+            ),
+            (
+                Error::UnknownResourceGroupRunawayAction,
+                "unknown resource group runaway action",
+            ),
+            (
+                Error::UnknownResourceGroupRunawaySwitchGroupName,
+                "unknown resource group runaway switch group name",
+            ),
+        ];
+        for (variant, literal) in literals {
+            assert_eq!(&variant.to_string(), literal);
+        }
+    }
+}
