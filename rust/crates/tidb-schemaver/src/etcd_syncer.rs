@@ -111,6 +111,12 @@ pub trait EtcdWatchOps: EtcdOps {
     /// [`WatchStream::stop_watching`] fires. A reconnected implementation is
     /// expected to resume from where it left off, like Go's watch channel.
     ///
+    /// `require_leader` mirrors Go's `clientv3.WithRequireLeader`: when set,
+    /// the stream must error out promptly if the connected etcd loses its
+    /// leader, so the caller rebuilds the watch instead of idling on a
+    /// follower (Go sets it only for the job-version mirror watch,
+    /// syncer.go:519).
+    ///
     /// # Errors
     /// Failure establishing the watch.
     fn watch(
@@ -118,6 +124,7 @@ pub trait EtcdWatchOps: EtcdOps {
         key: &str,
         start_revision: i64,
         with_prefix: bool,
+        require_leader: bool,
     ) -> Result<WatchStream, String>;
 }
 
@@ -351,9 +358,15 @@ pub(crate) struct Session {
 
 impl Session {
     /// Go `tidbutil.NewSession`: grant a lease of `SESSION_TTL_SECONDS`,
-    /// start keeping it alive under `ctx`. Losing one keepalive round or
-    /// ending the context closes [`Self::done`] exactly like
+    /// start keeping it alive under `ctx`. Losing the lease or ending the
+    /// context closes [`Self::done`] exactly like
     /// `concurrency.Session.Done()`.
+    ///
+    /// clientv3's `KeepAlive` retries transport failures internally and only
+    /// closes `Done` once the lease is truly gone, so one failed RPC here
+    /// must not kill the session: failures accumulate, and `done` closes only
+    /// after a full lease TTL elapsed without a single successful round (the
+    /// lease has then certainly expired server-side).
     pub(crate) fn new(
         etcd: Arc<dyn EtcdWatchOps>,
         ctx: &Context,
@@ -370,17 +383,24 @@ impl Session {
                 // Owned so its drop IS the close of `done`.
                 let _keep_sender = sender;
                 let mut slept = Duration::ZERO;
+                let mut failing_for = Duration::ZERO;
                 loop {
                     if session_ctx.err().is_err() {
                         return;
                     }
                     if slept >= keep_alive {
                         slept = Duration::ZERO;
-                        if etcd.lease_keep_alive_once(lease).is_err() {
-                            // The lease is gone: dropping the sender closes
-                            // every receiver -- exactly what Go's
-                            // session.Done() does.
-                            return;
+                        if etcd.lease_keep_alive_once(lease).is_ok() {
+                            failing_for = Duration::ZERO;
+                        } else {
+                            failing_for += keep_alive;
+                            if failing_for >= Duration::from_secs(SESSION_TTL_SECONDS as u64) {
+                                // No keepalive succeeded for a whole lease
+                                // TTL: the lease has expired server-side.
+                                // Dropping the sender closes every receiver
+                                // -- exactly what Go's session.Done() does.
+                                return;
+                            }
                         }
                     }
                     std::thread::sleep(STEP);
@@ -441,7 +461,7 @@ impl GlobalVerWatcher {
         {
             previous.stop.store(true, Ordering::Release);
         }
-        match self.etcd.watch(DDL_GLOBAL_SCHEMA_VERSION, 0, false) {
+        match self.etcd.watch(DDL_GLOBAL_SCHEMA_VERSION, 0, false, false) {
             Ok(stream) => {
                 // A forwarding thread turns the raw stream into Go's watch
                 // channel: plain events for the consumer, ended on error.
@@ -884,7 +904,7 @@ impl EtcdSyncer {
 
         let stream = match self
             .etcd
-            .watch(&self.job_node_ver_prefix, revision + 1, true)
+            .watch(&self.job_node_ver_prefix, revision + 1, true, true)
         {
             Ok(stream) => stream,
             Err(_error) => {
@@ -1379,6 +1399,7 @@ mod tests {
             key: &str,
             start_revision: i64,
             with_prefix: bool,
+            _require_leader: bool,
         ) -> Result<WatchStream, String> {
             let (sender, receiver) = mpsc::channel::<Result<WatchEvent, String>>();
             let stop = Arc::new(AtomicBool::new(false));
@@ -1454,6 +1475,46 @@ mod tests {
         let syncer = new_etcd_syncer(Arc::new(etcd.clone()), "1111");
         syncer.set_server_info_syncer(FakeEtcd::all_server_info_fn(etcd));
         syncer
+    }
+
+    /// clientv3 retries keepalive transport failures instead of killing the
+    /// session, so one failed round must not close `done`.
+    #[test]
+    fn session_survives_transient_keepalive_failures() {
+        let etcd = FakeEtcd::default();
+        let syncer = new_syncer(&etcd);
+        let ctx = Context::background();
+        syncer.init(&ctx).expect("init must grant a lease");
+
+        etcd.state
+            .keepalive_failures
+            .store(true, AtomicOrdering::Release);
+        let done = syncer.done();
+        // A whole lease TTL of continuous failure is needed before `done`
+        // may close; well inside that window it must still be open.
+        assert!(
+            matches!(
+                done.recv_timeout(Duration::from_millis(300)),
+                crate::Recv::Timeout
+            ),
+            "a transient keepalive failure must not close the session"
+        );
+
+        // Context end still tears the session down promptly.
+        let etcd2 = FakeEtcd::default();
+        let syncer2 = new_syncer(&etcd2);
+        let parent = Context::background();
+        let ctx2 = Context::with_cancel(&parent);
+        syncer2.init(&ctx2).expect("init must grant a lease");
+        let done2 = syncer2.done();
+        ctx2.cancel();
+        assert!(
+            matches!(
+                done2.recv_timeout(Duration::from_secs(5)),
+                crate::Recv::Closed
+            ),
+            "context end must close the session"
+        );
     }
 
     fn server_info(id: &str, ip: &str, start: i64, keyspace: &str, assumed: &str) -> ServerInfo {

@@ -226,7 +226,13 @@ impl EtcdWatchOps for EtcdClientOps {
         key: &str,
         start_revision: i64,
         with_prefix: bool,
+        require_leader: bool,
     ) -> Result<WatchStream, String> {
+        // Go attaches `WithRequireLeader` through gRPC header metadata. The
+        // etcd-client crate exposes no metadata hook for watch requests, so
+        // the flag is accepted here but not yet enforceable in transport;
+        // the watch still fails over via its ordinary error paths.
+        let _ = require_leader;
         let (sender, receiver) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let canceled = Arc::clone(&stop);
