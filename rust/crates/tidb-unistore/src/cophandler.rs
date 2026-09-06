@@ -1738,6 +1738,14 @@ pub enum SimpleSig {
     DateDiff,
     /// See [`SimpleSig::Date`].
     CastTimeAsDuration,
+    /// `WeekWithoutMode`: WEEK(date) with mode 0 -- weeks start Sunday and
+    /// week 1 contains January 1st (Go `builtinWeekWithoutModeSig`).
+    WeekWithoutMode,
+    /// `InString`: n-ary membership over the string channel, compared
+    /// under the comparison's collation, with InInt's NULL rules.
+    InString(i32),
+    /// `VectorFloat32IsNull`.
+    VectorFloat32IsNull,
     /// `CastIntAsInt`/`CastRealAsInt`/`CastDecimalAsInt` (`AS SIGNED`):
     /// the REAL and DECIMAL sources ROUND to the nearest integer and a
     /// result outside BIGINT is Go's cast overflow error
@@ -1913,6 +1921,9 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::Cot => SimpleSig::Cot,
             tipb::ScalarFuncSig::Pi => SimpleSig::Pi,
             tipb::ScalarFuncSig::Sin => SimpleSig::Sin,
+            tipb::ScalarFuncSig::WeekWithoutMode => SimpleSig::WeekWithoutMode,
+            tipb::ScalarFuncSig::InString => SimpleSig::InString(collation_of(expr)),
+            tipb::ScalarFuncSig::VectorFloat32IsNull => SimpleSig::VectorFloat32IsNull,
             tipb::ScalarFuncSig::CharLengthUtf8 => SimpleSig::CharLengthUtf8,
             tipb::ScalarFuncSig::CharLength => SimpleSig::CharLength,
             tipb::ScalarFuncSig::LowerUtf8 => SimpleSig::LowerUtf8,
@@ -2880,6 +2891,48 @@ pub fn eval_expr(
                 }
                 SimpleSig::UnaryNot => child(0)?.map(|v| i128::from(v == 0)),
                 SimpleSig::IntIsNull => Some(i128::from(child(0)?.is_none())),
+                SimpleSig::VectorFloat32IsNull => {
+                    // The vector leaf answers NULL only through its datum.
+                    match children.first().map(|c| eval_datum(c, row)) {
+                        Some(Ok(datum)) => {
+                            Some(i128::from(matches!(datum, tidb_datatype::Datum::Null)))
+                        }
+                        Some(Err(message)) => return Err(message),
+                        None => Some(1),
+                    }
+                }
+                SimpleSig::InString(collation) => {
+                    // Go `builtinInStringSig`: TRUE on any match under the
+                    // collation; otherwise NULL if the tested value or any
+                    // element was NULL, FALSE otherwise.
+                    let tested = eval_bytes(children.first(), row, div_precision_increment);
+                    let mut saw_null = tested.is_none();
+                    for index in 1..children.len() {
+                        let element = eval_bytes(children.get(index), row, div_precision_increment);
+                        match (&tested, &element) {
+                            (Some(left), Some(right)) => {
+                                if tidb_datatype::get_collator_by_id(*collation)
+                                    .compare(left, right)
+                                    .is_eq()
+                                {
+                                    return Ok(Some(1));
+                                }
+                            }
+                            _ => saw_null = true,
+                        }
+                    }
+                    if saw_null {
+                        None
+                    } else {
+                        Some(0)
+                    }
+                }
+                SimpleSig::WeekWithoutMode => {
+                    let Some(time) = eval_time(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    Some(i128::from(time.core_time().week(0)))
+                }
                 SimpleSig::DecimalIsNull
                 | SimpleSig::DurationIsNull
                 | SimpleSig::RealIsNull
@@ -4709,5 +4762,64 @@ mod tests {
         );
         let row_two = [Datum::Time(time), Datum::Time(earlier)];
         assert_eq!(eval_expr(&diff, &row_two, 4).expect("evals"), Some(2));
+    }
+
+    #[test]
+    fn week_without_mode_follows_go_calendar() {
+        use tidb_datatype::{Datum, Time, TimeType};
+        let week = |date: Time| {
+            let row = [Datum::Time(date)];
+            eval_expr(
+                &SimpleExpr::Func(SimpleSig::WeekWithoutMode, vec![SimpleExpr::Column(0)]),
+                &row,
+                4,
+            )
+            .expect("evals")
+        };
+        // Mode 0: weeks start Sunday and week 1 is the week containing the
+        // first Sunday of the year -- days before that are week 0.
+        // 2024-01-01 (Monday) is week 0; the first Sunday (2024-01-07)
+        // opens week 1.
+        let new_year =
+            Time::from_date_checked(2024, 1, 1, 0, 0, 0, 0, TimeType::Date, 0).expect("constructs");
+        assert_eq!(week(new_year), Some(0));
+        let first_sunday =
+            Time::from_date_checked(2024, 1, 7, 0, 0, 0, 0, TimeType::Date, 0).expect("constructs");
+        assert_eq!(week(first_sunday), Some(1));
+    }
+
+    #[test]
+    fn in_string_follows_collation_and_null_rules() {
+        use tidb_datatype::Datum;
+        // 'b' IN ('a', 'b') matches.
+        let member = SimpleExpr::Func(
+            SimpleSig::InString(46), // utf8mb4_bin
+            vec![
+                SimpleExpr::Bytes(b"b".to_vec()),
+                SimpleExpr::Bytes(b"a".to_vec()),
+                SimpleExpr::Bytes(b"b".to_vec()),
+            ],
+        );
+        assert_eq!(eval_expr(&member, &[], 4).expect("evals"), Some(1));
+        // No match answers FALSE, not NULL.
+        let miss = SimpleExpr::Func(
+            SimpleSig::InString(46),
+            vec![
+                SimpleExpr::Bytes(b"c".to_vec()),
+                SimpleExpr::Bytes(b"a".to_vec()),
+                SimpleExpr::Bytes(b"b".to_vec()),
+            ],
+        );
+        assert_eq!(eval_expr(&miss, &[], 4).expect("evals"), Some(0));
+        // A NULL element makes the answer NULL.
+        let with_null = SimpleExpr::Func(
+            SimpleSig::InString(46),
+            vec![
+                SimpleExpr::Bytes(b"c".to_vec()),
+                SimpleExpr::Null,
+                SimpleExpr::Bytes(b"b".to_vec()),
+            ],
+        );
+        assert_eq!(eval_expr(&with_null, &[], 4), Ok(None));
     }
 }

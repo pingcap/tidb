@@ -493,3 +493,17 @@ Regression: `temporal_extraction_follows_go` (month/hour/minute/second/
 microsecond over one DATETIME, and DATEDIFF across a two-day span with
 differing clock fields). `WeekWithoutMode` stays refused: Go's week
 calculation needs the mode-dependent calendar algorithm, its own course.
+
+## Coprocessor WEEK / IN STRING / vector IS NULL (2026-09-07, same session)
+
+- `WeekWithoutMode` 6026: WEEK(date) at mode 0 through the datatype's
+  calc_week port (`CoreTime::week(0)` -- weeks start Sunday, week 1
+  contains the first Sunday; days before it answer 0, per MySQL's mode
+  table). Regressions pin 2024-01-01 (Monday) -> 0 and 2024-01-07
+  (first Sunday) -> 1.
+- `InString` 4004: n-ary string membership under the comparison's
+  collation, InInt's NULL rules (match -> TRUE, any NULL -> NULL,
+  else FALSE). Regression pins the match, the FALSE miss and the
+  NULL element.
+- `VectorFloat32IsNull` 5155: the vector leaf's NULL check joins the
+  IS NULL family's datum inspection.
