@@ -9749,3 +9749,16 @@ risks without claiming repository-wide parity.
   it; the full owner aggregate passes 302 tests and all-target compilation
   passes. Evidence is in `receipts/statistics_builder_walk.md` and
   `docs/operations/statistics-builder-audit-execplan.md`.
+- 2026-09-06 (shard_row_id_bits clamp port, batch #40): Go `handleTableOptions`
+  (`create_table.go:967-971`) CLAMPS `shard_row_id_bits` to
+  `MaxShardRowIDBits` (15) on non-clustered tables and refuses any positive
+  count (8200 "Unsupported shard_row_id_bits for table with primary key as
+  row id") only when the table is CLUSTERED. The port instead rejected any
+  count >= 16 unconditionally ("should be less than 16" — not a Go master
+  string) and accepted the clustered form. Fixed: clustered + positive → the
+  coded 8200 variant `UnsupportedShardRowIdBits`; otherwise clamp via the new
+  `tidb-vardef` constant `MAX_SHARD_ROW_ID_BITS = 15`
+  (`vardef/tidb_vars.go:1437`). Fail-before: the probe's rejection; fail-after:
+  three asserted regressions (clamp-to-15 accept, in-range accept, clustered
+  8200) in `tests/shard_row_id_bits_source.rs`. DDL-family failure set is
+  byte-identical to clean HEAD (10 pre-existing sibling/environmental).

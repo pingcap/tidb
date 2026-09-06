@@ -1628,14 +1628,16 @@ pub fn run_create_table_in(
             let bits = value.parse::<u64>().map_err(|_| {
                 DriverError::unsupported("SHARD_ROW_ID_BITS needs an integer value")
             })?;
-            // Go `checkShardRowIDBits`: the shard has to leave room for the
-            // counter and the sign bit.
-            if bits >= 16 {
-                return Err(DriverError::unsupported(
-                    "shard_row_id_bits should be less than 16",
-                ));
+            // Go `handleTableOptions` (`create_table.go:967-971`): on a table
+            // whose primary key is the CLUSTERED row id, any positive bit
+            // count is refused (`ErrUnsupportedShardRowIDBits`, 8200);
+            // otherwise the value is CLAMPED to `MaxShardRowIDBits` (15),
+            // never refused -- an over-large count on a non-clustered table
+            // is not an error.
+            if bits > 0 && clustered {
+                return Err(DriverError::UnsupportedShardRowIdBits);
             }
-            table.set_shard_row_id_bits(bits);
+            table.set_shard_row_id_bits(bits.min(tidb_vardef::tidb_vars::MAX_SHARD_ROW_ID_BITS));
         }
         if let tidb_ast::TableOption::PreSplitRegions(value) = option {
             let regions = value.parse::<u64>().map_err(|_| {

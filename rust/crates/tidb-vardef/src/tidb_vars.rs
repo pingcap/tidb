@@ -1790,6 +1790,10 @@ pub const LOCAL_DAY_TIME_FORMAT: &str = "15:04";
 /// Go `FullDayTimeFormat`.
 pub const FULL_DAY_TIME_FORMAT: &str = "15:04 -0700";
 
+/// MaxShardRowIDBits is the maximum number of bits that can be used for
+/// row-id sharding (`pkg/sessionctx/vardef/tidb_vars.go:1437`).
+pub const MAX_SHARD_ROW_ID_BITS: u64 = 15;
+
 #[cfg(test)]
 mod tests {
     use super::*;
