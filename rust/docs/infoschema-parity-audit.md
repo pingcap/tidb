@@ -210,3 +210,28 @@ validate, the SQL-rule registry, `restricted_hint`, and the predicate
 set — `is_invisible_schema/table`, `is_restricted_privilege`,
 `is_invisible_sys_var`, `is_read_only_variable`, `is_restricted_sql`).
 18 sem tests pass. This is the face the noop-gated sysvar arm rides on.
+
+## Re-pin against the current Go tree tip (2026-09-06) — cache.go disposition HOLDS
+
+The 2026-09-06 stats-cache walk found one sibling receipt relying on a stale
+Go premise, so this audit's pinned claims were re-verified the same way.
+`pkg/infoschema/cache.go` (the `InfoCache`, 413 lines, blob
+`2c1660ff93608f3d907ce268ec928adc1954786f`) is byte-identical between the
+c6054025 snapshot and the current tree tip, so the opening scope decision
+stands against the same bytes it was made against: the versioned multi-image
+cache (with `infoschema_v2`/`sieve`) is subsumed by the port's single
+authoritative registry image plus `catalog_reload`/`catalog_watch` (slice (a),
+VERIFIED), and Go's `InfoCache` consumers map to store-history reads — the
+stale-read surface carries its own verified receipt
+(`testport/receipts/sessiontxn_staleread.md`). No `cache.go` behavior is
+observable in this port's information-schema statements beyond what those two
+verified faces already pin; the disposition is unchanged and now recorded
+against the current bytes.
+
+For contrast, the same re-verification pass corrected the stats-cache receipt:
+upstream #69955 (which deleted
+`pkg/statistics/handle/cache/stats_table_row_cache.go`) is NOT an ancestor of
+this tree, so that Go package still carries the process-wide
+`TableRowStatsCache` the reader consumes. That fix lives in
+`testport/receipts/statistics_handle_cache_audit.md` and the
+`tidb-stats-handle-cache` crate, not here.
