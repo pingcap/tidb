@@ -27,7 +27,7 @@ use tidb_ast::{
     Expr, GroupByItem, IsTarget, JoinNode, OrderItem, QueryStmt, SelectField, SelectStmt, Stmt,
 };
 use tidb_datatype::{Collation, Datum, Decimal, StringDatum};
-use tidb_executor::{Catalog, PreparedSelectPlan};
+use tidb_executor::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 use tidb_util::filter::is_system_schema;
 use tidb_util::kvcache::SimpleLruCache;
@@ -80,6 +80,255 @@ impl NonPreparedPlanCache {
         if let Some(plans) = self.plans.as_mut() {
             plans.put(key, plan);
         }
+    }
+}
+
+/// The per-session parameterized-DML-statement LRU over the same
+/// general physical-plan cache PREPARE uses for DML roots.
+#[derive(Default)]
+pub(crate) struct NonPreparedDmlCache {
+    plans: Option<SimpleLruCache<String, std::sync::Arc<PreparedDmlPlan>>>,
+    capacity: usize,
+}
+
+impl NonPreparedDmlCache {
+    pub(crate) fn resize(&mut self, capacity: usize) {
+        if self.capacity == capacity {
+            return;
+        }
+        match self.plans.as_mut() {
+            Some(plans) if capacity > 0 => {
+                let _ = plans.set_capacity(capacity);
+            }
+            _ => self.plans = (capacity > 0).then(|| SimpleLruCache::new(capacity)),
+        }
+        self.capacity = capacity;
+    }
+
+    pub(crate) fn get(&mut self, key: &str) -> Option<std::sync::Arc<PreparedDmlPlan>> {
+        self.plans.as_mut()?.get(key).cloned()
+    }
+
+    pub(crate) fn put(&mut self, key: String, plan: std::sync::Arc<PreparedDmlPlan>) {
+        if let Some(plans) = self.plans.as_mut() {
+            plans.put(key, plan);
+        }
+    }
+}
+
+/// Go `NonPreparedPlanCacheableWithCtx`'s UPDATE/INSERT/DELETE arms plus the
+/// checker walk and `paramReplacer` over the DML tree: SET values, `VALUES`
+/// rows, `ON DUPLICATE KEY UPDATE` values, and the WHERE predicate are
+/// parameterized; ORDER BY and LIMIT literals stay verbatim (Go's replacer
+/// skips those node kinds so different limit values plan differently).
+pub(crate) fn parameterize_dml(
+    stmt: &Stmt,
+    catalog: &Catalog,
+    current_db: &str,
+    enable_param_limit: bool,
+    string_collation: Collation,
+    max_num_param: usize,
+) -> Result<ParameterizedSelect, Refusal> {
+    let mut walk = Walk {
+        catalog,
+        current_db,
+        enable_param_limit,
+        tables: Vec::new(),
+        params: Vec::new(),
+        string_collation,
+        const_count: 0,
+        sum_in_list_len: 0,
+        filter_depth: 0,
+        max_num_param,
+    };
+    let statement = match stmt {
+        Stmt::Dml(dml) => match &**dml {
+            tidb_ast::DmlStmt::Update(update) => {
+                if !update.hints.is_empty() {
+                    return Err(Refusal("not support update statement with table hints"));
+                }
+                if matches!(update.kind, tidb_ast::UpdateKind::Multi { .. }) {
+                    return Err(Refusal("not support multiple tables update statements"));
+                }
+                let mut statement = Stmt::Dml(tidb_ast::NodeBox::new(tidb_ast::DmlStmt::Update(
+                    update.clone(),
+                )));
+                if let Stmt::Dml(dml) = &mut statement {
+                    let tidb_ast::DmlStmt::Update(update) = &mut **dml else {
+                        unreachable!("cloned the matched update")
+                    };
+                    walk.dml_table(match &update.kind {
+                        tidb_ast::UpdateKind::Single(table) => &table.name,
+                        tidb_ast::UpdateKind::Multi { .. } => unreachable!("refused above"),
+                    })?;
+                    walk.table_names_cacheable()?;
+                    walk.update(update)?;
+                }
+                statement
+            }
+            tidb_ast::DmlStmt::Insert(insert) => {
+                if !insert.hints.is_empty() {
+                    return Err(Refusal("not support insert statement with table hints"));
+                }
+                let mut statement = Stmt::Dml(tidb_ast::NodeBox::new(tidb_ast::DmlStmt::Insert(
+                    insert.clone(),
+                )));
+                if let Stmt::Dml(dml) = &mut statement {
+                    let tidb_ast::DmlStmt::Insert(insert) = &mut **dml else {
+                        unreachable!("cloned the matched insert")
+                    };
+                    walk.dml_table(&insert.table)?;
+                    walk.table_names_cacheable()?;
+                    if insert.rows.is_empty() {
+                        // `INSERT ... SELECT`: Go admits only a plain SELECT
+                        // source and fast-checks it before the walk.
+                        let Some(source) = insert.source.as_deref_mut() else {
+                            return Err(Refusal("not a SELECT statement"));
+                        };
+                        let tidb_ast::QueryStmt::Select(select) = source else {
+                            return Err(Refusal("not a select statement"));
+                        };
+                        walk.select(select)?;
+                    } else {
+                        let n_rows = insert.rows.len();
+                        let n_cols = insert.rows.first().map_or(0, Vec::len);
+                        if n_rows * n_cols > walk.max_num_param {
+                            return Err(Refusal("too many values in the insert statement"));
+                        }
+                        walk.insert(insert)?;
+                    }
+                }
+                statement
+            }
+            tidb_ast::DmlStmt::Delete(delete) => {
+                if !delete.hints.is_empty() {
+                    // Go's own message names INSERT for every statement kind.
+                    return Err(Refusal("not support insert statement with table hints"));
+                }
+                if matches!(delete.kind, tidb_ast::DeleteKind::Multi { .. }) {
+                    return Err(Refusal("not support multiple tables delete statements"));
+                }
+                let mut statement = Stmt::Dml(tidb_ast::NodeBox::new(tidb_ast::DmlStmt::Delete(
+                    delete.clone(),
+                )));
+                if let Stmt::Dml(dml) = &mut statement {
+                    let tidb_ast::DmlStmt::Delete(delete) = &mut **dml else {
+                        unreachable!("cloned the matched delete")
+                    };
+                    walk.dml_table(match &delete.kind {
+                        tidb_ast::DeleteKind::Single(table) => &table.name,
+                        tidb_ast::DeleteKind::Multi { .. } => unreachable!("refused above"),
+                    })?;
+                    walk.table_names_cacheable()?;
+                    walk.delete(delete)?;
+                }
+                statement
+            }
+            _ => return Err(Refusal("not a SELECT/UPDATE/INSERT/DELETE statement")),
+        },
+        _ => return Err(Refusal("not a SELECT/UPDATE/INSERT/DELETE statement")),
+    };
+
+    walk.table_names_cacheable()?;
+    let mut key = String::with_capacity(64);
+    key.push_str(current_db);
+    key.push('|');
+    key.push_str(&statement.restore());
+    Ok(ParameterizedSelect {
+        key,
+        statement,
+        values: walk.params,
+    })
+}
+
+impl Walk<'_> {
+    /// Go `extractTableNames` for a DML target: the dotted name path is
+    /// lowered exactly like a SELECT's table reference.
+    fn dml_table(&mut self, name: &[String]) -> Result<(), Refusal> {
+        let Some(table_name) = name.last() else {
+            return Err(Refusal("some column is not found in table schema"));
+        };
+        let schema = if name.len() >= 2 {
+            &name[name.len() - 2]
+        } else {
+            self.current_db
+        };
+        self.tables
+            .push((go_simple_lowercase(schema), go_simple_lowercase(table_name)));
+        Ok(())
+    }
+
+    /// Go's checker walk over `*ast.UpdateStmt` plus the replacer pass: SET
+    /// values and ON DUPLICATE values are parameterized, ORDER BY and LIMIT
+    /// literals stay verbatim.
+    fn update(&mut self, update: &mut tidb_ast::UpdateStmt) -> Result<(), Refusal> {
+        for assignment in &mut update.assignments {
+            self.check_expr(&assignment.value)?;
+        }
+        if let Some(where_clause) = update.where_clause.as_ref() {
+            self.check_inside_filter(|walk| walk.check_expr(where_clause))?;
+        }
+        self.order_by(&update.order_by)?;
+        if let Some(limit) = update.limit.as_ref() {
+            if !self.enable_param_limit {
+                return Err(Refusal("query has 'limit ?' is un-cacheable"));
+            }
+            if let Some(offset) = limit.offset.as_ref() {
+                self.check_expr(offset)?;
+            }
+            self.check_expr(&limit.count)?;
+        }
+        for assignment in &mut update.assignments {
+            self.replace_expr(&mut assignment.value)?;
+        }
+        if let Some(where_clause) = update.where_clause.as_mut() {
+            self.replace_expr(where_clause)?;
+        }
+        Ok(())
+    }
+
+    /// Go's checker walk over `*ast.InsertStmt` plus the replacer pass:
+    /// VALUES rows and ON DUPLICATE values are parameterized; the SELECT
+    /// source (when present) goes through the full SELECT walk.
+    fn insert(&mut self, insert: &mut tidb_ast::InsertStmt) -> Result<(), Refusal> {
+        for row in &mut insert.rows {
+            for value in row.iter_mut() {
+                self.check_expr(value)?;
+            }
+        }
+        for assignment in &mut insert.on_duplicate {
+            self.check_expr(&assignment.value)?;
+        }
+        for row in &mut insert.rows {
+            for value in row.iter_mut() {
+                self.replace_expr(value)?;
+            }
+        }
+        for assignment in &mut insert.on_duplicate {
+            self.replace_expr(&mut assignment.value)?;
+        }
+        Ok(())
+    }
+
+    /// Go's checker walk over `*ast.DeleteStmt` plus the replacer pass.
+    fn delete(&mut self, delete: &mut tidb_ast::DeleteStmt) -> Result<(), Refusal> {
+        if let Some(where_clause) = delete.where_clause.as_ref() {
+            self.check_inside_filter(|walk| walk.check_expr(where_clause))?;
+        }
+        self.order_by(&delete.order_by)?;
+        if let Some(limit) = delete.limit.as_ref() {
+            if !self.enable_param_limit {
+                return Err(Refusal("query has 'limit ?' is un-cacheable"));
+            }
+            if let Some(offset) = limit.offset.as_ref() {
+                self.check_expr(offset)?;
+            }
+            self.check_expr(&limit.count)?;
+        }
+        if let Some(where_clause) = delete.where_clause.as_mut() {
+            self.replace_expr(where_clause)?;
+        }
+        Ok(())
     }
 }
 
@@ -714,6 +963,107 @@ impl crate::Session {
             max_num_param,
         )
         .ok()
+    }
+
+    /// Go's DML switch: `EnableNonPreparedPlanCacheForDML`, true by default.
+    fn non_prepared_plan_cache_for_dml_enabled(&self) -> bool {
+        self.session_bool("tidb_enable_non_prepared_plan_cache_for_dml", true)
+    }
+
+    /// Parameterizes one non-prepared UPDATE/INSERT/DELETE statement.
+    pub(crate) fn parameterize_non_prepared_dml(
+        &mut self,
+        stmt: &Stmt,
+    ) -> Option<ParameterizedSelect> {
+        if !self.non_prepared_plan_cache_enabled()
+            || !self.non_prepared_plan_cache_for_dml_enabled()
+        {
+            return None;
+        }
+        let capacity = self.non_prepared_plan_cache_capacity();
+        self.non_prepared_dml_cache.resize(capacity);
+        let enable_param_limit = self.session_bool("tidb_enable_plan_cache_for_param_limit", true);
+        let string_collation = self
+            .vars
+            .get_system("collation_connection")
+            .ok()
+            .and_then(|name| Collation::from_name(&name))
+            .unwrap_or(Collation::Utf8Mb4Bin);
+        let configured_max = self
+            .vars
+            .optimizer_fix_control()
+            .get_int_with_default(tidb_planner::fix_control::FIX_44823, MAX_PARAM_NUM as i64);
+        let max_num_param = match configured_max {
+            0 => usize::MAX,
+            value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
+            _ => MAX_PARAM_NUM,
+        };
+        let catalog = self.catalog.lock().ok()?;
+        parameterize_dml(
+            stmt,
+            &catalog,
+            &self.current_db,
+            enable_param_limit,
+            string_collation,
+            max_num_param,
+        )
+        .ok()
+    }
+
+    /// Generates or recursively rebuilds the retained DML root for one
+    /// parameterized non-prepared statement, through the same plan object
+    /// SQL and binary PREPARE use.
+    pub(crate) fn bind_non_prepared_dml(
+        &mut self,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Option<tidb_executor::PreparedDmlExecution> {
+        if !self.non_prepared_plan_cache_allowed(effective_statement) {
+            return None;
+        }
+        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let plan = match self.non_prepared_dml_cache.get(&parameterized.key) {
+            Some(plan) => plan,
+            None => {
+                let plan = {
+                    let catalog = self.lock_catalog().ok()?;
+                    tidb_executor::build_prepared_dml_plan(
+                        &parameterized.statement,
+                        parameterized.values.len(),
+                        &catalog,
+                        self.current_database(),
+                    )
+                    .ok()??
+                };
+                let plan = std::sync::Arc::new(plan);
+                self.non_prepared_dml_cache
+                    .put(parameterized.key.clone(), std::sync::Arc::clone(&plan));
+                plan
+            }
+        };
+        {
+            let catalog = self.lock_catalog().ok()?;
+            if let Some(execution) = plan.bind_cached_for_statement(
+                &parameterized.values,
+                &catalog,
+                self.current_database(),
+                &environment,
+                effective_statement,
+            ) {
+                return Some(execution);
+            }
+        }
+        let ctx = self.statement_context(false);
+        let catalog = self.lock_catalog().ok()?;
+        plan.bind_for_statement(
+            &parameterized.values,
+            &catalog,
+            self.current_database(),
+            &ctx,
+            &environment,
+            effective_statement,
+        )
     }
 
     /// Generates or recursively rebuilds the physical plan owned by one

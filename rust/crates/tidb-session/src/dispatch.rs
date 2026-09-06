@@ -1897,91 +1897,131 @@ impl Session {
                 self.drain_eval_warnings(&ctx);
                 Ok(StmtOutput::Rows { columns, rows })
             }
-            Stmt::Dml(dml) => match &**dml {
-                DmlStmt::Insert(insert) => {
-                    let physical_plan = cached_dml_plan(dml_plan, "Insert")?;
-                    let current_db = self.current_db.clone();
-                    let enable_strict_not_null_check = !matches!(
-                        self.vars
-                            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_STRICT_NOT_NULL_CHECK)
-                            .as_deref(),
-                        Ok("OFF" | "off" | "0")
-                    );
-                    // Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm. The class
-                    // is what `StmtContext::push_down_flags` turns into the
-                    // statement-kind bit of any coprocessor request this
-                    // statement's read half issues, and `IgnoreErr` is the
-                    // `IGNORE` modifier Go reads off this same AST to downgrade
-                    // every value-level error to a warning.
-                    let ctx = self
-                        .statement_context_ignoring(true, insert.ignore)
-                        .with_statement_class(tidb_executor::StatementClass::Insert)
-                        .with_single_insert_bad_null_policy(
-                            insert.rows.len() == 1,
-                            enable_strict_not_null_check,
-                        );
-                    if insert.source.is_some() {
-                        self.write_sli.set_invalid();
+            Stmt::Dml(dml) => {
+                // Go parameterizes a non-prepared DML statement too (the
+                // `tidb_enable_non_prepared_plan_cache_for_dml` switch, true
+                // by default) and sends the retained marker-bearing statement
+                // through the same plan cache as PREPARE.
+                let non_prepared_dml = (!prepared)
+                    .then(|| self.parameterize_non_prepared_dml(&stmt))
+                    .flatten();
+                if let Some(parameterized) = non_prepared_dml.as_ref() {
+                    let mut effective_parameterized = parameterized.statement.clone();
+                    if binding_sql.is_some() {
+                        let binding_hints = crate::binding::collect_hints(&stmt);
+                        crate::binding::bind_hints(&mut effective_parameterized, &binding_hints);
                     }
-                    let result =
-                        self.with_staged_catalog_for_path(&insert.table, &current_db, |catalog| {
-                            // Go executes the statement the protocol BOUND
-                            // (`pkg/server`'s `statement`/`executableParams`
-                            // carry the values): re-parsing `sql` here would run
-                            // a tree whose markers never met their execute-time
-                            // values, which is a wrong answer for every binary-
-                            // protocol write.
-                            tidb_executor::run_insert_stmt_with_physical(
-                                insert,
-                                catalog,
-                                &current_db,
-                                &ctx,
-                                physical_plan,
-                            )
-                        });
-                    self.drain_eval_warnings(&ctx);
-                    // Go `session.LastInsertID()`, the OK packet's field:
-                    // `StmtCtx.LastInsertID` when the statement PUBLISHED an
-                    // allocated id, `StmtCtx.InsertID` -- the last explicit
-                    // value -- otherwise. Both come off the same context the
-                    // publication above reads, so the wire and
-                    // `LAST_INSERT_ID()` cannot drift apart: what differs is
-                    // only the fallback Go itself applies.
-                    //
-                    // Captured from TiDB: an allocating insert reports the id
-                    // on both; `INSERT INTO t (id,v) VALUES (50,2)` reports 50
-                    // on the wire while `LAST_INSERT_ID()` stays where it was;
-                    // an `INSERT IGNORE` whose only row is a duplicate burns
-                    // an id but reports 0 on the wire.
-                    // The publication itself is promoted at the statement
-                    // boundary by `publish_statement_status`, off the same
-                    // cell this reads -- one channel, two readers.
-                    self.statement_insert_id = ctx
-                        .published_last_insert_id()
-                        .unwrap_or_else(|| ctx.given_insert_id());
-                    let (affected, _) = result?;
-                    Ok(StmtOutput::Affected(affected))
+                    if let Some(execution) = self.bind_non_prepared_dml(
+                        &parameterized,
+                        &effective_parameterized,
+                        binding_sql.as_deref(),
+                    ) {
+                        return self.execute_cached_prepared_dml(&execution, sql);
+                    }
                 }
-                DmlStmt::Update(update) => {
-                    let physical_plan = cached_dml_plan(dml_plan, "Update")?;
-                    let current_db = self.current_db.clone();
-                    // Go `ResetUpdateStmtCtx`, which applies the same
-                    // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
-                    // does; the class is what `StmtContext::push_down_flags`
-                    // turns into the statement-kind bit of any coprocessor
-                    // request this statement's read half issues.
-                    let ctx = self
-                        .statement_context_for_update_read(update.ignore)
-                        .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
-                    let output = match &update.kind {
-                        tidb_ast::UpdateKind::Single(table_ref) => self
-                            .with_staged_catalog_for_path(
-                                &table_ref.name,
-                                &current_db,
-                                |catalog| {
-                                    // Bound AST, not SQL text: the text still
-                                    // carries the markers the binary protocol
-                                    // already replaced. See the INSERT arm.
+                match &**dml {
+                    DmlStmt::Insert(insert) => {
+                        let physical_plan = cached_dml_plan(dml_plan, "Insert")?;
+                        let current_db = self.current_db.clone();
+                        let enable_strict_not_null_check = !matches!(
+                            self.vars
+                                .get_system(
+                                    tidb_vardef::tidb_vars::TIDB_ENABLE_STRICT_NOT_NULL_CHECK
+                                )
+                                .as_deref(),
+                            Ok("OFF" | "off" | "0")
+                        );
+                        // Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm. The class
+                        // is what `StmtContext::push_down_flags` turns into the
+                        // statement-kind bit of any coprocessor request this
+                        // statement's read half issues, and `IgnoreErr` is the
+                        // `IGNORE` modifier Go reads off this same AST to downgrade
+                        // every value-level error to a warning.
+                        let ctx = self
+                            .statement_context_ignoring(true, insert.ignore)
+                            .with_statement_class(tidb_executor::StatementClass::Insert)
+                            .with_single_insert_bad_null_policy(
+                                insert.rows.len() == 1,
+                                enable_strict_not_null_check,
+                            );
+                        if insert.source.is_some() {
+                            self.write_sli.set_invalid();
+                        }
+                        let result = self.with_staged_catalog_for_path(
+                            &insert.table,
+                            &current_db,
+                            |catalog| {
+                                // Go executes the statement the protocol BOUND
+                                // (`pkg/server`'s `statement`/`executableParams`
+                                // carry the values): re-parsing `sql` here would run
+                                // a tree whose markers never met their execute-time
+                                // values, which is a wrong answer for every binary-
+                                // protocol write.
+                                tidb_executor::run_insert_stmt_with_physical(
+                                    insert,
+                                    catalog,
+                                    &current_db,
+                                    &ctx,
+                                    physical_plan,
+                                )
+                            },
+                        );
+                        self.drain_eval_warnings(&ctx);
+                        // Go `session.LastInsertID()`, the OK packet's field:
+                        // `StmtCtx.LastInsertID` when the statement PUBLISHED an
+                        // allocated id, `StmtCtx.InsertID` -- the last explicit
+                        // value -- otherwise. Both come off the same context the
+                        // publication above reads, so the wire and
+                        // `LAST_INSERT_ID()` cannot drift apart: what differs is
+                        // only the fallback Go itself applies.
+                        //
+                        // Captured from TiDB: an allocating insert reports the id
+                        // on both; `INSERT INTO t (id,v) VALUES (50,2)` reports 50
+                        // on the wire while `LAST_INSERT_ID()` stays where it was;
+                        // an `INSERT IGNORE` whose only row is a duplicate burns
+                        // an id but reports 0 on the wire.
+                        // The publication itself is promoted at the statement
+                        // boundary by `publish_statement_status`, off the same
+                        // cell this reads -- one channel, two readers.
+                        self.statement_insert_id = ctx
+                            .published_last_insert_id()
+                            .unwrap_or_else(|| ctx.given_insert_id());
+                        let (affected, _) = result?;
+                        Ok(StmtOutput::Affected(affected))
+                    }
+                    DmlStmt::Update(update) => {
+                        let physical_plan = cached_dml_plan(dml_plan, "Update")?;
+                        let current_db = self.current_db.clone();
+                        // Go `ResetUpdateStmtCtx`, which applies the same
+                        // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
+                        // does; the class is what `StmtContext::push_down_flags`
+                        // turns into the statement-kind bit of any coprocessor
+                        // request this statement's read half issues.
+                        let ctx = self
+                            .statement_context_for_update_read(update.ignore)
+                            .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
+                        let output = match &update.kind {
+                            tidb_ast::UpdateKind::Single(table_ref) => self
+                                .with_staged_catalog_for_path(
+                                    &table_ref.name,
+                                    &current_db,
+                                    |catalog| {
+                                        // Bound AST, not SQL text: the text still
+                                        // carries the markers the binary protocol
+                                        // already replaced. See the INSERT arm.
+                                        Ok(StmtOutput::Affected(
+                                            tidb_executor::run_update_stmt_with_physical(
+                                                update,
+                                                catalog,
+                                                &current_db,
+                                                &ctx,
+                                                physical_plan,
+                                            )?,
+                                        ))
+                                    },
+                                ),
+                            tidb_ast::UpdateKind::Multi { .. } => {
+                                self.with_staged_catalog(|catalog| {
                                     Ok(StmtOutput::Affected(
                                         tidb_executor::run_update_stmt_with_physical(
                                             update,
@@ -1991,43 +2031,45 @@ impl Session {
                                             physical_plan,
                                         )?,
                                     ))
-                                },
-                            ),
-                        tidb_ast::UpdateKind::Multi { .. } => self.with_staged_catalog(|catalog| {
-                            Ok(StmtOutput::Affected(
-                                tidb_executor::run_update_stmt_with_physical(
-                                    update,
-                                    catalog,
+                                })
+                            }
+                        };
+                        self.drain_eval_warnings(&ctx);
+                        self.statement_message = ctx.message();
+                        output
+                    }
+                    DmlStmt::Delete(delete) => {
+                        let physical_plan = cached_dml_plan(dml_plan, "Delete")?;
+                        let current_db = self.current_db.clone();
+                        // Go `ResetDeleteStmtCtx`, which applies the same
+                        // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
+                        // does; the class is what `StmtContext::push_down_flags`
+                        // turns into the statement-kind bit of any coprocessor
+                        // request this statement's read half issues.
+                        let ctx = self
+                            .statement_context_for_update_read(delete.ignore)
+                            .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
+                        let output = match &delete.kind {
+                            tidb_ast::DeleteKind::Single(table_ref) => self
+                                .with_staged_catalog_for_path(
+                                    &table_ref.name,
                                     &current_db,
-                                    &ctx,
-                                    physical_plan,
-                                )?,
-                            ))
-                        }),
-                    };
-                    self.drain_eval_warnings(&ctx);
-                    self.statement_message = ctx.message();
-                    output
-                }
-                DmlStmt::Delete(delete) => {
-                    let physical_plan = cached_dml_plan(dml_plan, "Delete")?;
-                    let current_db = self.current_db.clone();
-                    // Go `ResetDeleteStmtCtx`, which applies the same
-                    // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
-                    // does; the class is what `StmtContext::push_down_flags`
-                    // turns into the statement-kind bit of any coprocessor
-                    // request this statement's read half issues.
-                    let ctx = self
-                        .statement_context_for_update_read(delete.ignore)
-                        .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
-                    let output = match &delete.kind {
-                        tidb_ast::DeleteKind::Single(table_ref) => self
-                            .with_staged_catalog_for_path(
-                                &table_ref.name,
-                                &current_db,
-                                |catalog| {
-                                    // Bound AST, not SQL text -- see the
-                                    // UPDATE arm.
+                                    |catalog| {
+                                        // Bound AST, not SQL text -- see the
+                                        // UPDATE arm.
+                                        Ok(StmtOutput::Affected(
+                                            tidb_executor::run_delete_stmt_with_physical(
+                                                delete,
+                                                catalog,
+                                                &current_db,
+                                                &ctx,
+                                                physical_plan,
+                                            )?,
+                                        ))
+                                    },
+                                ),
+                            tidb_ast::DeleteKind::Multi { .. } => {
+                                self.with_staged_catalog(|catalog| {
                                     Ok(StmtOutput::Affected(
                                         tidb_executor::run_delete_stmt_with_physical(
                                             delete,
@@ -2037,28 +2079,18 @@ impl Session {
                                             physical_plan,
                                         )?,
                                     ))
-                                },
-                            ),
-                        tidb_ast::DeleteKind::Multi { .. } => self.with_staged_catalog(|catalog| {
-                            Ok(StmtOutput::Affected(
-                                tidb_executor::run_delete_stmt_with_physical(
-                                    delete,
-                                    catalog,
-                                    &current_db,
-                                    &ctx,
-                                    physical_plan,
-                                )?,
-                            ))
-                        }),
-                    };
-                    self.drain_eval_warnings(&ctx);
-                    output
+                                })
+                            }
+                        };
+                        self.drain_eval_warnings(&ctx);
+                        output
+                    }
+                    other => Err(DriverError::unsupported(format!(
+                        "this DML statement kind ({}) is not supported yet",
+                        variant_name(other)
+                    ))),
                 }
-                other => Err(DriverError::unsupported(format!(
-                    "this DML statement kind ({}) is not supported yet",
-                    variant_name(other)
-                ))),
-            },
+            }
             Stmt::Ddl(ddl) => match &**ddl {
                 DdlStmt::RenameTable(_) => {
                     let current_db = self.current_db.clone();

@@ -674,6 +674,7 @@ pub struct Session {
     /// The session's non-prepared physical-plan cache
     /// (`tidb_enable_non_prepared_plan_cache`).
     non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache,
+    non_prepared_dml_cache: non_prepared_plan_cache::NonPreparedDmlCache,
     /// Go `SessionVars.FoundInPlanCache`: whether the statement RUNNING now
     /// found its plan in the cache. Reset for every statement.
     found_in_plan_cache: bool,
@@ -846,6 +847,7 @@ impl Session {
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
+            non_prepared_dml_cache: non_prepared_plan_cache::NonPreparedDmlCache::default(),
             found_in_plan_cache: false,
             prev_found_in_plan_cache: false,
             user_vars: Arc::default(),

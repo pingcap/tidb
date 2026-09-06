@@ -517,12 +517,68 @@ fn go_refuses_a_locking_read_and_a_statement_that_is_not_a_select() {
         "select a from t where a = 1 for update",
         "select a from t where a = 2 for update",
     );
-    // "not a SELECT/UPDATE/INSERT/DELETE statement": DML is refused here
-    // because `tidb_enable_non_prepared_plan_cache_for_dml` is not wired to
-    // an admission path in this tier. When it is, this test FLIPS.
+    // The DML switch is on by default (`DefTiDBEnableNonPreparedPlanCacheForDML`),
+    // so a repeated UPDATE now reuses the retained plan.
     let _ = session.run("update t set b = 9 where a = 1");
     let _ = session.run("update t set b = 9 where a = 2");
+    assert_eq!(hit(&mut session), "1");
+}
+
+/// Go `NonPreparedPlanCacheableWithCtx`'s UPDATE/INSERT/DELETE arms: the
+/// parameterized DML statements cache and rebind like SELECTs, the DML
+/// fast-check refusals answer with Go's own reasons, and the
+/// `tidb_enable_non_prepared_plan_cache_for_dml` switch (default ON) gates
+/// the whole family.
+#[test]
+fn dml_statements_cache_and_rebind_like_go() {
+    let mut session = cache_session();
+
+    // A repeated UPDATE hits: SET values and the WHERE predicate are both
+    // parameterized into the retained key.
+    let _ = session.run("update t set b = 9 where a = 1");
     assert_eq!(hit(&mut session), "0");
+    let _ = session.run("update t set b = 9 where a = 2");
+    assert_eq!(hit(&mut session), "1");
+
+    // INSERT ... VALUES caches the same way.
+    let _ = session.run("insert into t values (10, 10)");
+    assert_eq!(hit(&mut session), "0");
+    let _ = session.run("insert into t values (11, 11)");
+    assert_eq!(hit(&mut session), "1");
+
+    // DELETE caches too.
+    let _ = session.run("delete from t where a = 11");
+    assert_eq!(hit(&mut session), "0");
+    let _ = session.run("delete from t where a = 10");
+    assert_eq!(hit(&mut session), "1");
+
+    // The DML switch OFF (Go's session variable) refuses every DML shape
+    // while SELECTs keep hitting.
+    session
+        .run("set tidb_enable_non_prepared_plan_cache_for_dml = false")
+        .unwrap();
+    let _ = session.run("update t set b = 1 where a = 1");
+    let _ = session.run("update t set b = 1 where a = 2");
+    assert_eq!(hit(&mut session), "0");
+    let _ = session.run("select a from t where a = 1");
+    let _ = session.run("select a from t where a = 2");
+    assert_eq!(hit(&mut session), "1");
+    session
+        .run("set tidb_enable_non_prepared_plan_cache_for_dml = true")
+        .unwrap();
+
+    // Go's DML fast-check refusals answer with Go's own reasons: table
+    // hints and the multi-table forms never cache.
+    refused(
+        &mut session,
+        "update /*+ USE_INDEX(t, b) */ t set b = 9 where a = 1",
+        "update /*+ USE_INDEX(t, b) */ t set b = 9 where a = 2",
+    );
+    refused(
+        &mut session,
+        "delete t1, t2 from t1 join t2 on t1.a = t2.a where t1.a = 1",
+        "delete t1, t2 from t1 join t2 on t1.a = t2.a where t1.a = 2",
+    );
 }
 
 /// A join of at most two tables is admitted; a third refuses
