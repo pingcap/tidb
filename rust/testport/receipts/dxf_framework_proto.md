@@ -54,3 +54,53 @@ suite are shared Ready gates for the batch and are recorded in the storage
 receipt/ExecPlan. The remaining risk is that a future Rust scheduler owner
 must preserve these bounds and reset semantics when it becomes dependency
 closed.
+
+## Rust-only return-contract alignment (2026-09-06)
+
+The complete 11-artifact Go inventory above remains the authority for this
+package. The Rust `tidb-dxf` owner modules (`step`, `task_type`, `task`,
+`subtask`, `node`, `modify`, and `schstatus`), inline tests, and workspace
+registration were rechecked before this follow-up. Go permits discarding the
+results of `Step2Str`, `IsValidStep`, `IsValidBusinessStep`, `Type2Int`, and
+`Int2Type`; Rust had imposed five Rust-only `#[must_use]` diagnostics on those
+direct source APIs. The annotations were removed without changing step
+rendering, validity rules, or task-type integer mappings.
+
+`step::tests::go_step_returns_may_be_ignored_like_go` and
+`task_type::tests::go_task_type_returns_may_be_ignored_like_go` discard all
+five returns under `#[deny(unused_must_use)]`. Before the source edit, the
+focused compile failed with exactly five `unused_must_use` diagnostics; after
+the edit both regressions pass. No Go source, Bazel metadata, Cargo
+dependency, generated input, fixture, or platform variant changed, so
+`make bazel_prepare` was not required.
+
+The full owner suite (13 inline tests), all-target check, Rust formatting,
+Ready `make lint`, and `git diff --check` all pass for this package-scoped
+follow-up. No Go source, Bazel metadata, Cargo dependency, generated input,
+fixture, or platform variant changed, so `make bazel_prepare` was not
+required.
+
+```text
+OPENSSL_DIR=.../openssl-build/install OPENSSL_STATIC=1 \
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml \
+  -p tidb-dxf --lib go_ --offline --locked
+# PASS; 2 tests
+
+OPENSSL_DIR=.../openssl-build/install OPENSSL_STATIC=1 \
+cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml \
+  -p tidb-dxf --offline --locked --no-fail-fast
+# PASS; 13 tests
+
+OPENSSL_DIR=.../openssl-build/install OPENSSL_STATIC=1 \
+cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml \
+  -p tidb-dxf --all-targets --offline --locked
+# PASS
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+# PASS
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
+GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
+# PASS
+git diff --check
+# PASS
+```

@@ -13,9 +13,15 @@ behavior restored from Go master.
   metadata with the focused `TestTaskCleanupBatchSize` regression.
 - [x] (2026-09-02) Ran the package unit suite and recorded the Rust ownership
   boundary in the parity receipt.
-- [ ] Run `make bazel_prepare`, shared Ready gates, publish one batch commit,
-  verify `origin/hparser-integration`, pull its latest state, and continue the
-  rolling audit.
+- [x] (2026-09-06) Re-read the complete owner and removed five Rust-only
+  `#[must_use]` annotations from Go-shaped step and task-type conversion
+  APIs. The deny-on-discard regressions failed pre-fix with exactly five
+  diagnostics and pass after the edit.
+- [x] (2026-09-06) Focused regressions, all 13 owner tests, all-target check,
+  formatting, Ready lint, and diff hygiene pass. No Go/Bazel/module changes
+  require `make bazel_prepare`.
+- [ ] Publish one package-scoped return-contract commit, verify
+  `origin/hparser-integration`, and continue the rolling audit.
 
 ## Scope and decision
 
