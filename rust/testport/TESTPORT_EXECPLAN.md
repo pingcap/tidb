@@ -9345,3 +9345,11 @@ risks without claiming repository-wide parity.
   `try_into`s the compiler now proves total. Gate: fmt clean, clippy 0
   warnings, datatype 476/476, consumers expr+chunk 1545/1545. Details in
   `receipts/datatype_clippy_as_chunks.md`.
+- 2026-09-06 (lexer/codec clippy gate sweep): same nightly lint refresh as
+  batch #36 — `chunks_exact_to_as_chunks` in `tidb-lexer`'s hex-literal
+  decoder and `tidb-codec`'s bytes-group/offset-table decoders. Converted to
+  `as_chunks` array views (const-generic in the codec group case); the
+  statically-safe offset `try_into().unwrap()` is now `*bytes`. The
+  `tidb-vardef` missing-doc warning belongs to the sibling sysvar stream and
+  is untouched. fmt clean, clippy 0 warnings, lexer+codec 309/309, parser
+  consumer 833/833. Details in `receipts/lexer_codec_clippy_as_chunks.md`.

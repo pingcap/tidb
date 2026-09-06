@@ -1164,7 +1164,9 @@ fn decode_hex_literal(raw: &[u8]) -> Vec<u8> {
     }
     padded.extend_from_slice(digits);
     padded
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let text = std::str::from_utf8(pair).expect("hex digits are ASCII");
             u8::from_str_radix(text, 16).expect("HexLit is validated while scanning")

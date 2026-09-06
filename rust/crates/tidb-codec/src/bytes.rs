@@ -127,7 +127,7 @@ fn validated_bytes_len(input: &[u8], reverse: bool) -> Result<usize, CodecError>
 fn decode_bytes_inner(input: &[u8], reverse: bool) -> Result<(&[u8], Vec<u8>), CodecError> {
     let encoded_len = validated_bytes_len(input, reverse)?;
     let mut output = Vec::with_capacity(encoded_len);
-    for group in input[..encoded_len].chunks_exact(GROUP_SIZE + 1) {
+    for group in input[..encoded_len].as_chunks::<{ GROUP_SIZE + 1 }>().0 {
         let padding = if reverse {
             group[GROUP_SIZE]
         } else {
