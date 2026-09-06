@@ -2275,22 +2275,33 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST without tidb_enable_local_match_against")
 		return
 	}
-	indexInfo, err := er.resolveLocalFullTextIndex(numCols, stackLen)
+	config, err := er.resolveLocalFullTextAnalyzer(numCols, stackLen)
 	if err != nil {
 		er.err = err
 		return
 	}
-	er.matchAgainstToLocalBuiltin(v, numCols, stackLen, indexInfo)
+	er.matchAgainstToLocalBuiltin(v, numCols, stackLen, config)
 }
 
-func (er *expressionRewriter) resolveLocalFullTextIndex(numCols, stackLen int) (*model.IndexInfo, error) {
+// resolveLocalFullTextAnalyzer finds the FULLTEXT index covering the matched
+// columns and returns the analyzer a query against it must compile with.
+//
+// Where that analyzer comes from depends on how the index is stored. An index
+// materialised as a multi-valued index carries its configuration in the
+// expression it is built over, and that snapshot wins: the indexed tokens were
+// produced by it, so compiling the query any other way would ask the index a
+// question its entries cannot answer. A metadata-only index - all a
+// multi-column FULLTEXT can be, since a multi-valued index covers one
+// expression - has no such snapshot, so its analyzer still comes from session
+// variables.
+func (er *expressionRewriter) resolveLocalFullTextAnalyzer(numCols, stackLen int) (fulltext.AnalyzerConfig, error) {
 	nameStart := stackLen - numCols - 1
 	if nameStart < 0 || er.planCtx == nil || er.planCtx.builder == nil {
-		return nil, plannererrors.ErrFtMatchingKeyNotFound
+		return fulltext.AnalyzerConfig{}, plannererrors.ErrFtMatchingKeyNotFound
 	}
 	first := er.ctxNameStk[nameStart]
 	if first == nil {
-		return nil, plannererrors.ErrFtMatchingKeyNotFound
+		return fulltext.AnalyzerConfig{}, plannererrors.ErrFtMatchingKeyNotFound
 	}
 	dbName, tblName := first.DBName, first.OrigTblName
 	if tblName.L == "" {
@@ -2301,20 +2312,20 @@ func (er *expressionRewriter) resolveLocalFullTextIndex(numCols, stackLen int) (
 	}
 	tblInfo, err := er.planCtx.builder.is.TableInfoByName(dbName, tblName)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return fulltext.AnalyzerConfig{}, errors.Trace(err)
 	}
 	columnNames := make([]string, numCols)
 	for i := range numCols {
 		name := er.ctxNameStk[nameStart+i]
 		if name == nil {
-			return nil, plannererrors.ErrFtMatchingKeyNotFound
+			return fulltext.AnalyzerConfig{}, plannererrors.ErrFtMatchingKeyNotFound
 		}
 		nameTable := name.OrigTblName
 		if nameTable.L == "" {
 			nameTable = name.TblName
 		}
 		if nameTable.L != tblName.L || name.DBName.L != "" && name.DBName.L != dbName.L {
-			return nil, plannererrors.ErrFtMatchingKeyNotFound
+			return fulltext.AnalyzerConfig{}, plannererrors.ErrFtMatchingKeyNotFound
 		}
 		colName := name.OrigColName
 		if colName.L == "" {
@@ -2322,8 +2333,40 @@ func (er *expressionRewriter) resolveLocalFullTextIndex(numCols, stackLen int) (
 		}
 		columnNames[i] = colName.L
 	}
+	sessVars := er.planCtx.builder.ctx.GetSessionVars()
+	var fallback *fulltext.AnalyzerConfig
 	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic || idx.FullTextInfo == nil || len(idx.Columns) != len(columnNames) {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if origin, ok := expression.FTSTokenizeIndexColumn(tblInfo, idx); ok {
+			if len(columnNames) != 1 || origin.ColumnName.L != columnNames[0] {
+				continue
+			}
+			if _, declared := expression.FTSTokenizeIndexOriginFromIndex(tblInfo, idx); declared {
+				return origin.AnalyzerConfig, nil
+			}
+			// An index the user wrote over FTS_TOKENIZE themselves, such as
+			// the composite (tenant_id, tokens) a multi-tenant table wants.
+			// It tokenizes the column just as a declared FULLTEXT index does,
+			// and carries the same analyzer snapshot, so it can answer a
+			// MATCH. A declared one still wins if the table has both, since
+			// that is the index the user named for this purpose.
+			//
+			// Several such indexes must agree on the analyzer. Taking the
+			// first would make what MATCH means depend on the order indexes
+			// happen to sit in the table, so two indexes tokenizing the same
+			// column differently are refused rather than silently resolved.
+			if fallback == nil {
+				config := origin.AnalyzerConfig
+				fallback = &config
+			} else if !fallback.Equal(origin.AnalyzerConfig) {
+				return fulltext.AnalyzerConfig{}, expression.ErrNotSupportedYet.GenWithStackByArgs(
+					"MATCH ... AGAINST over a column with several FTS_TOKENIZE indexes that disagree on the analyzer")
+			}
+			continue
+		}
+		if idx.FullTextInfo == nil || len(idx.Columns) != len(columnNames) {
 			continue
 		}
 		matched := true
@@ -2334,13 +2377,20 @@ func (er *expressionRewriter) resolveLocalFullTextIndex(numCols, stackLen int) (
 			}
 		}
 		if matched {
-			return idx, nil
+			config, err := fulltext.AnalyzerConfigFromSessionVars(sessVars, idx.FullTextInfo.ParserType)
+			if err != nil {
+				return fulltext.AnalyzerConfig{}, err
+			}
+			return config, nil
 		}
 	}
-	return nil, plannererrors.ErrFtMatchingKeyNotFound
+	if fallback != nil {
+		return *fallback, nil
+	}
+	return fulltext.AnalyzerConfig{}, plannererrors.ErrFtMatchingKeyNotFound
 }
 
-func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int, indexInfo *model.IndexInfo) {
+func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, numCols, stackLen int, config fulltext.AnalyzerConfig) {
 	against := er.ctxStack[stackLen-1]
 	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
 	args := make([]expression.Expression, 0, numCols+1)
@@ -2363,11 +2413,6 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		return
 	}
 
-	config, err := fulltext.AnalyzerConfigFromSessionVars(er.planCtx.builder.ctx.GetSessionVars(), indexInfo.FullTextInfo.ParserType)
-	if err != nil {
-		er.err = err
-		return
-	}
 	info := &expression.FTSLocalEvalInfo{AnalyzerConfig: config}
 	if constExpr, isConst := against.(*expression.Constant); isConst &&
 		!expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {

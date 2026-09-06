@@ -672,7 +672,12 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr
 	if idx.VectorInfo != nil {
 		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
 	}
-	if idx.FullTextInfo != nil {
+	// Both shapes of FULLTEXT index are covered: the metadata-only one carries
+	// FullTextInfo, while the one materialised as a multi-valued index leaves
+	// that nil and is marked by its type. Creating either as INVISIBLE is
+	// rejected, so allowing ALTER to make one invisible afterwards would be a
+	// way around that restriction rather than a feature.
+	if idx.FullTextInfo != nil || idx.Tp == pmodel.IndexTypeFulltext {
 		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set fulltext index invisible")
 	}
 	return false, nil

@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -180,4 +181,107 @@ func setGlobalSysVar(t *testing.T, sctx *mock.Context, name, value string) {
 	globalAccessor, ok := sctx.GetSessionVars().GlobalVarsAccessor.(*variable.MockGlobalAccessor)
 	require.True(t, ok)
 	require.NoError(t, globalAccessor.SetGlobalSysVarOnly(context.Background(), name, value, false))
+}
+
+func TestAnalyzerConfigEqualComparesWhatTheParserReads(t *testing.T) {
+	standard := AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize:   3,
+		InnodbFtMaxTokenSize:   84,
+		InnodbFtEnableStopword: true,
+	}
+	// An index records no ngram size for STANDARD text, while a session always
+	// carries the ngram_token_size default. That difference cannot change the
+	// tokens, so it must not make the two look incompatible.
+	withNgram := standard
+	withNgram.NgramTokenSize = 2
+	require.True(t, standard.Equal(withNgram))
+
+	differentBound := standard
+	differentBound.InnodbFtMinTokenSize = 5
+	require.False(t, standard.Equal(differentBound))
+
+	withoutStopwords := standard
+	withoutStopwords.InnodbFtEnableStopword = false
+	require.False(t, standard.Equal(withoutStopwords))
+
+	ngram := AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 2}
+	require.False(t, standard.Equal(ngram))
+	// The ngram analyzer neither length-filters nor removes stopwords, so
+	// those settings cannot separate two ngram configurations.
+	ngramWithBounds := ngram
+	ngramWithBounds.InnodbFtMinTokenSize = 3
+	ngramWithBounds.InnodbFtEnableStopword = true
+	require.True(t, ngram.Equal(ngramWithBounds))
+
+	differentNgram := ngram
+	differentNgram.NgramTokenSize = 3
+	require.False(t, ngram.Equal(differentNgram))
+}
+
+// TestDefaultAnalyzerConfigMatchesSessionDefaults keeps the offline defaults
+// and the system-variable defaults from drifting apart. A table built offline
+// must tokenize the way a default-configured server does, or an imported table
+// and the server that later queries it would disagree about its own index.
+func TestDefaultAnalyzerConfigMatchesSessionDefaults(t *testing.T) {
+	sctx := newFulltextTestContext(t)
+	sessionDefaults, err := AnalyzerConfigFromSessionVars(
+		sctx.GetSessionVars(), model.FullTextParserTypeStandardV1)
+	require.NoError(t, err)
+	require.Equal(t, sessionDefaults, DefaultAnalyzerConfig())
+}
+
+// TestValidateAnalyzerConfigRejectsEmptyTokenStreams pins the configurations
+// that would analyze every document to nothing. The filters are total, so such
+// an index builds without complaint and holds no entries - a failure that looks
+// like missing data rather than a bad definition.
+func TestValidateAnalyzerConfigRejectsEmptyTokenStreams(t *testing.T) {
+	analyzeWith := func(config AnalyzerConfig, text string) int {
+		analyzer, err := GetAnalyzer(config)
+		require.NoError(t, err)
+		tokens, err := analyzer.Analyze(text)
+		require.NoError(t, err)
+		return len(tokens)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		config AnalyzerConfig
+		reason string
+	}{
+		{
+			name:   "bounds cross",
+			config: AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 84, InnodbFtMaxTokenSize: 3},
+			reason: "above maximum",
+		},
+		{
+			name:   "zero maximum",
+			config: AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 0, InnodbFtMaxTokenSize: 0},
+			reason: "must be at least 1",
+		},
+		{
+			name:   "ngram size below one",
+			config: AnalyzerConfig{ParserType: model.FullTextParserTypeNgramV1, NgramTokenSize: 0},
+			reason: "at least 1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.ErrorContains(t, ValidateAnalyzerConfig(tc.config), tc.reason)
+			// The reason it is worth refusing: the analyzer accepts it and
+			// silently produces nothing.
+			require.Zero(t, analyzeWith(tc.config, "distributed sql database"))
+		})
+	}
+
+	// A negative minimum passes, because it admits every token just as zero
+	// does rather than emptying the stream.
+	negative := AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: -1, InnodbFtMaxTokenSize: 84}
+	require.NoError(t, ValidateAnalyzerConfig(negative))
+	require.NotZero(t, analyzeWith(negative, "distributed sql database"))
+
+	// The shipped defaults, and a deliberately narrow but usable window, pass.
+	require.NoError(t, ValidateAnalyzerConfig(DefaultAnalyzerConfig()))
+	narrow := AnalyzerConfig{ParserType: model.FullTextParserTypeStandardV1, InnodbFtMinTokenSize: 3, InnodbFtMaxTokenSize: 3}
+	require.NoError(t, ValidateAnalyzerConfig(narrow))
+	require.NotZero(t, analyzeWith(narrow, "sql and databases"))
 }

@@ -15,8 +15,10 @@
 package metabuild
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -77,6 +79,27 @@ func WithShardRowIDBits(bits uint64) Option {
 	})
 }
 
+// WithFullTextAnalyzer sets the analyzer configuration used when a FULLTEXT
+// index is built as a multi-valued index over tokenized text. It is read from
+// session variables at statement time and frozen into the resulting schema, so
+// meta building must not consult those variables itself.
+func WithFullTextAnalyzer(config fulltext.AnalyzerConfig) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.fullTextAnalyzer = &config
+		ctx.fullTextAnalyzerErr = nil
+	})
+}
+
+// WithFullTextAnalyzerError records why the analyzer configuration could not be
+// resolved, so that building a FULLTEXT index reports that reason instead of
+// proceeding without one.
+func WithFullTextAnalyzerError(err error) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.fullTextAnalyzer = nil
+		ctx.fullTextAnalyzerErr = err
+	})
+}
+
 // WithPreSplitRegions sets the pre-split regions.
 func WithPreSplitRegions(regions uint64) Option {
 	return funcOpt(func(ctx *Context) {
@@ -108,10 +131,13 @@ type Context struct {
 	preSplitRegions                uint64
 	suppressTooLongIndexErr        bool
 	is                             infoschemactx.MetaOnlyInfoSchema
+	fullTextAnalyzer               *fulltext.AnalyzerConfig
+	fullTextAnalyzerErr            error
 }
 
 // NewContext creates a new context for meta-building.
 func NewContext(opts ...Option) *Context {
+	defaultFullTextAnalyzer := fulltext.DefaultAnalyzerConfig()
 	ctx := &Context{
 		enableAutoIncrementInGenerated: variable.DefTiDBEnableAutoIncrementInGenerated,
 		primaryKeyRequired:             false,
@@ -119,6 +145,13 @@ func NewContext(opts ...Option) *Context {
 		shardRowIDBits:                 variable.DefShardRowIDBits,
 		preSplitRegions:                variable.DefPreSplitRegions,
 		suppressTooLongIndexErr:        false,
+		// Callers that build table metadata offline have no session to read
+		// the analyzer from, and must still be able to build a FULLTEXT index:
+		// Lightning and the importer parse user DDL, and a dump produced by
+		// SHOW CREATE TABLE contains a FULLTEXT declaration. They get the
+		// settings a default-configured server would use. A session-backed
+		// context overwrites this with the settings it actually read.
+		fullTextAnalyzer: &defaultFullTextAnalyzer,
 	}
 
 	for _, opt := range opts {
@@ -141,6 +174,31 @@ func NewNonStrictContext() *Context {
 	return NewContext(WithExprCtx(exprstatic.NewExprContext(
 		exprstatic.WithEvalCtx(evalCtx),
 	)))
+}
+
+// GetFullTextAnalyzer returns the analyzer configuration to freeze into a
+// FULLTEXT index definition, or the reason it is unavailable.
+//
+// Reading the settings from a session can fail, and that failure is reported
+// rather than papered over: falling back to defaults there would build an index
+// whose tokens disagree with the session that asked for it. A context built
+// without any session carries the defaults instead - see NewContext.
+//
+// What must never happen is returning a zero-valued configuration. Its
+// token-size bounds are 0..0, so an index built from one would be created
+// successfully, hold nothing, and match nothing.
+func (ctx *Context) GetFullTextAnalyzer() (fulltext.AnalyzerConfig, error) {
+	if ctx.fullTextAnalyzerErr != nil {
+		return fulltext.AnalyzerConfig{}, ctx.fullTextAnalyzerErr
+	}
+	if ctx.fullTextAnalyzer == nil {
+		// Only reachable through a zero-valued Context, which NewContext never
+		// produces.
+		return fulltext.AnalyzerConfig{}, errors.New(
+			"no fulltext analyzer configuration was resolved for this statement; " +
+				"a FULLTEXT index cannot be built without one")
+	}
+	return *ctx.fullTextAnalyzer, nil
 }
 
 // GetExprCtx returns the expression context of the session.

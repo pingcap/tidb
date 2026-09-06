@@ -23363,7 +23363,7 @@ yynewstate:
 			for _, option := range yyS[yypt-0].item.([]*ast.ResourceOption) {
 				switch option.Type {
 				case ast.MaxUserConnections:
-					// do nothing.
+				// do nothing.
 				default:
 					needWarning = true
 				}
