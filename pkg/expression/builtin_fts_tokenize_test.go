@@ -211,3 +211,29 @@ func TestFTSTokenizeRejectsParameterConfig(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkParseFTSTokenizeIndexExpr covers the planning path: resolving a
+// MATCH reads back the generated-column expression of every tokenized index on
+// the table, and SHOW CREATE TABLE does the same per index.
+func BenchmarkParseFTSTokenizeIndexExpr(b *testing.B) {
+	const expr = "cast(fts_tokenize(`body`, _utf8mb4'STANDARD', 3, 84, 1) as char(84) array)"
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, ok := ParseFTSTokenizeIndexExpr(expr); !ok {
+			b.Fatal("expected a match")
+		}
+	}
+}
+
+// BenchmarkParseFTSTokenizeIndexExprNonMatch covers what most indexes on a
+// table look like: the name guard rejects them before any parsing happens, so
+// an ordinary index costs nothing per MATCH.
+func BenchmarkParseFTSTokenizeIndexExprNonMatch(b *testing.B) {
+	const expr = "cast(json_extract(`j`, _utf8mb4'$.a') as char(32) array)"
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, ok := ParseFTSTokenizeIndexExpr(expr); ok {
+			b.Fatal("expected no match")
+		}
+	}
+}

@@ -16,6 +16,7 @@ package expression
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -302,7 +303,9 @@ func ParseFTSTokenizeIndexExpr(exprStr string) (FTSTokenizeIndexOrigin, bool) {
 	if exprStr == "" || !strings.Contains(strings.ToLower(exprStr), ast.FTSTokenize) {
 		return FTSTokenizeIndexOrigin{}, false
 	}
-	stmt, err := parser.New().ParseOneStmt("select "+exprStr, mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+	p := ftsIndexExprParserPool.Get().(*parser.Parser)
+	defer ftsIndexExprParserPool.Put(p)
+	stmt, err := p.ParseOneStmt("select "+exprStr, mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
 	if err != nil {
 		return FTSTokenizeIndexOrigin{}, false
 	}
@@ -356,6 +359,15 @@ func ParseFTSTokenizeIndexExpr(exprStr string) (FTSTokenizeIndexOrigin, bool) {
 		AnalyzerConfig: config,
 	}, true
 }
+
+// ftsIndexExprParserPool keeps parsers for reading index expressions back.
+//
+// Resolving a MATCH parses the generated-column expression of every tokenized
+// index on the table, and SHOW CREATE TABLE does the same per index, so this
+// sits on the planning path rather than in DDL. A fresh parser.New() carries
+// the yacc tables and a lexer with it - about 20KB and 40 allocations per call,
+// against roughly 200 for the parse itself.
+var ftsIndexExprParserPool = &sync.Pool{New: func() any { return parser.New() }}
 
 // FTSTokenizeIndexColumn reports whether idxInfo is a multi-valued index over a
 // tokenized column, and recovers what that column was built from.
