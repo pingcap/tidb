@@ -9595,3 +9595,10 @@ risks without claiming repository-wide parity.
   failed with exactly 26 diagnostics before the correction. All 39 owner tests,
   all-target compilation, standalone rustfmt, and Ready evidence are recorded
   in `receipts/ttl_cache.md` and `docs/operations/ttl-cache-audit-execplan.md`.
+- 2026-09-06 (`pkg/ddl/notifier` corrective return-contract parity after
+  `8d42bcc7035`): the complete current Rust owner again removes all 31
+  Rust-only diagnostics from direct Go-shaped event and notifier returns. The
+  restored-tree probes failed with exactly 31 diagnostics before the edit and
+  pass afterward; all 10 owner tests, all-target compilation, standalone
+  rustfmt, and Ready evidence are recorded in `receipts/ddl_notifier.md` and
+  both notifier ExecPlans. Publication remains one Go-package commit.

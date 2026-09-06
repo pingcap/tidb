@@ -23,6 +23,12 @@ After this work, a successful non-system DDL in the Rust server durably records 
 - [x] (2026-08-31 21:05Z) Implemented the `EXCHANGE PARTITION` producer family: exact admission/compatibility errors, default same-snapshot validation in both CHECK-constraint directions, physical-ID/allocator/TiFlash swaps, placement and label publication, schema diff, and atomic notifier event.
 - [x] (2026-08-31 21:05Z) Routed persisted writable CHECK constraints through the ordinary `KvTable` INSERT/UPDATE evaluator, so exchange validation reuses the same expression engine instead of a cache- or DDL-specific evaluator.
 - [x] (2026-08-31 21:05Z) Matched PD's placement/region-label HTTP contracts and retained pre-attempt rules for determinate rollback; undetermined commits keep external state because the catalog may have committed.
+- [x] (2026-09-06) Corrected the return-contract regression introduced by
+  restore commit `8d42bcc7035`: all 31 direct Go-shaped annotations and both
+  focused regressions were restored to the intended state. The current-tree
+  probe failed with exactly 31 diagnostics before the correction; all 10 owner
+  tests, all-target compilation, standalone rustfmt, Ready lint, and diff
+  hygiene pass. Exact evidence is in `../testport/receipts/ddl_notifier.md`.
 - [ ] Run completion-level Ready validation, including `make lint`, only after the dependent DDL producer gaps are closed.
 
 ## Surprises & Discoveries

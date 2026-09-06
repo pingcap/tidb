@@ -19,7 +19,13 @@ silently diverging.
 - [x] (2026-09-02) Complete failpoint-aware package suite passed in 14.269s;
   Rust formatting, diff hygiene, and `make lint` passed. No Bazel preparation
   was required because only an existing test body changed.
-- [ ] Publish one batch commit, then continue the rolling package audit.
+- [x] (2026-09-06) Re-read the complete 1,615-line Rust notifier owner and
+  correct the `8d42bcc7035` restore regression. The two focused probes failed
+  before the edit with exactly 31 diagnostics and pass afterward; all 10 owner
+  tests and Ready gates pass. The package receipt records exact commands.
+- [x] Keep the correction in one package-scoped commit; its publication hash
+  is tracked in the task handoff.
+- [ ] Continue the rolling package audit.
 
 ## Scope and decision
 
