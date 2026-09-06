@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/ddl/notifier` return contracts): the complete eight-file,
+  1,999-line Go package was re-read at current `origin/master`, together with
+  all three Rust source modules and the crate manifest (1,615 lines, 10 inline
+  tests). Thirty-one direct Go-shaped event constructors/getters/type queries
+  and `DdlNotifier::new` no longer impose Rust-only `#[must_use]` diagnostics;
+  the publication `Result` contract is retained. A focused deny-on-discard
+  regression failed pre-fix with exactly 31 diagnostics and passes afterward.
+  Evidence is recorded in `receipts/ddl_notifier.md` and the notifier
+  ExecPlans; Ready validation and one package-scoped publication commit remain.
 - 2026-09-06 (`pkg/meta/model/index` return contracts): the complete
   23-artifact, 10,721-line model package and full index owner were re-read at
   current Go master, including all tests and BUILD metadata and the absence of

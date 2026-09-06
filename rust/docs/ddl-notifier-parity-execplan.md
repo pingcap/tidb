@@ -23,6 +23,14 @@ After this work, a successful non-system DDL in the Rust server durably records 
 - [x] (2026-08-31 21:05Z) Implemented the `EXCHANGE PARTITION` producer family: exact admission/compatibility errors, default same-snapshot validation in both CHECK-constraint directions, physical-ID/allocator/TiFlash swaps, placement and label publication, schema diff, and atomic notifier event.
 - [x] (2026-08-31 21:05Z) Routed persisted writable CHECK constraints through the ordinary `KvTable` INSERT/UPDATE evaluator, so exchange validation reuses the same expression engine instead of a cache- or DDL-specific evaluator.
 - [x] (2026-08-31 21:05Z) Matched PD's placement/region-label HTTP contracts and retained pre-attempt rules for determinate rollback; undetermined commits keep external state because the catalog may have committed.
+- [x] (2026-09-06) Re-read current Go `origin/master` `pkg/ddl/notifier` (eight
+  artifacts, 1,999 lines) and the complete Rust owner (three source files plus
+  manifest, 1,615 lines, 10 tests). Removed 31 Rust-only `#[must_use]`
+  annotations from the Go-shaped event constructors/getters/type query and
+  `DdlNotifier::new`; the explicit `Result` contract on publication remains.
+  A deny-on-discard regression failed before the fix with exactly 31
+  diagnostics and passes after it. The package owner suite, all-target check,
+  formatting, Ready lint, and diff checks are the remaining publication gate.
 - [ ] Run completion-level Ready validation, including `make lint`, only after the dependent DDL producer gaps are closed.
 
 ## Surprises & Discoveries

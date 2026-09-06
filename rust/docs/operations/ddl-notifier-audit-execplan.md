@@ -19,7 +19,14 @@ silently diverging.
 - [x] (2026-09-02) Complete failpoint-aware package suite passed in 14.269s;
   Rust formatting, diff hygiene, and `make lint` passed. No Bazel preparation
   was required because only an existing test body changed.
-- [ ] Publish one batch commit, then continue the rolling package audit.
+- [x] (2026-09-06) Re-read current Go `origin/master` and the complete Rust
+  notifier owner. Removed 31 Rust-only `#[must_use]` annotations from all
+  Go-shaped event constructors/getters/type queries and `DdlNotifier::new`.
+  The deny-on-discard regression emitted exactly 31 diagnostics before the
+  fix and passes afterward; the package owner suite and Ready gates are being
+  run before the batch commit.
+- [ ] Publish the return-contract batch commit, then continue the rolling
+  package audit.
 
 ## Scope and decision
 
