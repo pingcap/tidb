@@ -319,3 +319,25 @@ contract ids (`IntDivideInt` 213, `IntDivideDecimal` 214,
 
 Regression: `integer_division_follows_mysql` (-7 DIV 2 = -3; zero divisor
 NULL; -9.5 DIV 2 = -4).
+
+## Coprocessor integer arithmetic family + error channel (2026-09-07)
+
+`eval_expr` now carries Go's expression-level error: `Result<Option<i128>,
+String>`. This is what makes the integer arithmetic family portable --
+`types.AddInt`/`SubInt`/`MulInt`/`AddUint`/`SubUint`/`MulUint` answer a
+request-level 1690 overflow terror (`BIGINT [UNSIGNED] value is out of range
+in 'ADD'|'SUBTRACT'|'MULTIPLY'`) rather than a NULL, and the selection loops
+convert that error into the response's error channel instead of silently
+filtering the row.
+
+- Landed: `PlusInt` 203, `MinusInt` 207, `MultiplyInt` 210,
+  `MultiplyIntUnsigned` 218, the `PlusIntUnsigned*` 219-222 pairings, the
+  `MinusIntUnsigned*` 227-230 pairings, and the `MinusIntForced*` 231-233
+  pairings, at their upstream contract ids.
+- Result domain per signature: BIGINT for the plain signed sigs, BIGINT
+  UNSIGNED for every flag-pairing and forced form. The mixed/forced
+  unsigned pairings additionally reject a NEGATIVE operand immediately:
+  Go converts it through uint64, which wraps into an immediate overflow
+  regardless of the in-range difference a naive evaluation would answer.
+- Regressions: `integer_arithmetic_overflow_answers_gos_1690_text` and
+  `unsigned_minus_rejects_negative_operand_like_go`.

@@ -321,6 +321,25 @@ enum ScalarFuncSig {
   PlusDecimal = 201;
   MinusDecimal = 205;
   MultiplyDecimal = 209;
+  // The INTEGER arithmetic family. Go picks between the flag pairings by
+  // the two arguments' UNSIGNED flags, and an overflow answer is the
+  // request-level 1690 error (`BIGINT [UNSIGNED] value is out of range in
+  // '<OP>'`).
+  PlusInt = 203;
+  MinusInt = 207;
+  MultiplyInt = 210;
+  MultiplyIntUnsigned = 218;
+  PlusIntUnsignedUnsigned = 219;
+  PlusIntUnsignedSigned = 220;
+  PlusIntSignedUnsigned = 221;
+  PlusIntSignedSigned = 222;
+  MinusIntUnsignedUnsigned = 227;
+  MinusIntUnsignedSigned = 228;
+  MinusIntSignedUnsigned = 229;
+  MinusIntSignedSigned = 230;
+  MinusIntForcedUnsignedUnsigned = 231;
+  MinusIntForcedUnsignedSigned = 232;
+  MinusIntForcedSignedUnsigned = 233;
   // The REAL arithmetic family (`builtinArithmeticSig`'s real signatures).
   PlusReal = 200;
   MinusReal = 204;

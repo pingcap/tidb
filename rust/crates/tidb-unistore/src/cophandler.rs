@@ -388,11 +388,14 @@ fn exec_index_scan(
             if row.len() != idx_scan.columns.len() {
                 return other_error("decoded index entry does not match its executor schema");
             }
-            if !conditions
+            match conditions
                 .iter()
-                .all(|condition| eval_expr(condition, &row).is_some_and(|value| value != 0))
+                .map(|condition| eval_expr(condition, &row))
+                .collect::<Result<Vec<_>, String>>()
             {
-                continue;
+                Ok(values) if values.iter().all(|v| v.is_some_and(|v| v != 0)) => {}
+                Ok(_) => continue,
+                Err(message) => return other_error(&message),
             }
             if let Some(aggregator) = aggregator.as_mut() {
                 if let Err(message) = aggregator.update(&row) {
@@ -679,11 +682,14 @@ fn exec_table_scan(
             }
             // Go `selectionProcessor`: a row survives only when EVERY
             // condition evaluates non-null and non-zero.
-            if !conditions
+            match conditions
                 .iter()
-                .all(|condition| eval_expr(condition, &row_datums).is_some_and(|v| v != 0))
+                .map(|condition| eval_expr(condition, &row_datums))
+                .collect::<Result<Vec<_>, String>>()
             {
-                continue;
+                Ok(values) if values.iter().all(|v| v.is_some_and(|v| v != 0)) => {}
+                Ok(_) => continue,
+                Err(message) => return other_error(&message),
             }
             // A partial aggregation consumes the surviving row instead of
             // emitting it; the grouped rows leave after the scan.
@@ -1418,6 +1424,40 @@ pub enum SimpleSig {
     ModIntSignedUnsigned,
     /// See [`SimpleSig::ModIntUnsignedUnsigned`].
     ModIntSignedSigned,
+    /// The integer arithmetic family. Go picks between the flag pairings
+    /// by the two arguments' UNSIGNED flags; a result outside the
+    /// family's domain is Go's 1690 overflow error, which the evaluator
+    /// carries as [`SimpleSig`]'s error arm.
+    PlusInt,
+    /// See [`SimpleSig::PlusInt`].
+    MinusInt,
+    /// See [`SimpleSig::PlusInt`].
+    MultiplyInt,
+    /// See [`SimpleSig::PlusInt`].
+    MultiplyIntUnsigned,
+    /// See [`SimpleSig::PlusInt`].
+    PlusIntUnsignedUnsigned,
+    /// See [`SimpleSig::PlusInt`].
+    PlusIntUnsignedSigned,
+    /// See [`SimpleSig::PlusInt`].
+    PlusIntSignedUnsigned,
+    /// See [`SimpleSig::PlusInt`].
+    PlusIntSignedSigned,
+    /// See [`SimpleSig::PlusInt`].
+    MinusIntUnsignedUnsigned,
+    /// See [`SimpleSig::PlusInt`].
+    MinusIntUnsignedSigned,
+    /// See [`SimpleSig::PlusInt`].
+    MinusIntSignedUnsigned,
+    /// See [`SimpleSig::PlusInt`].
+    MinusIntSignedSigned,
+    /// See [`SimpleSig::PlusInt`]. The FORCED pairings keep the unsigned
+    /// result domain even when a signed argument arrives.
+    MinusIntForcedUnsignedUnsigned,
+    /// See [`SimpleSig::PlusInt`].
+    MinusIntForcedUnsignedSigned,
+    /// See [`SimpleSig::PlusInt`].
+    MinusIntForcedSignedUnsigned,
     /// `LTReal`/`LEReal`/`GTReal`/`GEReal`/`EQReal`/`NEReal`, by ordering.
     LtReal,
     /// See [`SimpleSig::LtReal`].
@@ -1613,6 +1653,27 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
                 SimpleSig::IntDivideIntSignedUnsigned
             }
             tipb::ScalarFuncSig::IntDivideDecimal => SimpleSig::IntDivideDecimal,
+            tipb::ScalarFuncSig::PlusInt => SimpleSig::PlusInt,
+            tipb::ScalarFuncSig::MinusInt => SimpleSig::MinusInt,
+            tipb::ScalarFuncSig::MultiplyInt => SimpleSig::MultiplyInt,
+            tipb::ScalarFuncSig::MultiplyIntUnsigned => SimpleSig::MultiplyIntUnsigned,
+            tipb::ScalarFuncSig::PlusIntUnsignedUnsigned => SimpleSig::PlusIntUnsignedUnsigned,
+            tipb::ScalarFuncSig::PlusIntUnsignedSigned => SimpleSig::PlusIntUnsignedSigned,
+            tipb::ScalarFuncSig::PlusIntSignedUnsigned => SimpleSig::PlusIntSignedUnsigned,
+            tipb::ScalarFuncSig::PlusIntSignedSigned => SimpleSig::PlusIntSignedSigned,
+            tipb::ScalarFuncSig::MinusIntUnsignedUnsigned => SimpleSig::MinusIntUnsignedUnsigned,
+            tipb::ScalarFuncSig::MinusIntUnsignedSigned => SimpleSig::MinusIntUnsignedSigned,
+            tipb::ScalarFuncSig::MinusIntSignedUnsigned => SimpleSig::MinusIntSignedUnsigned,
+            tipb::ScalarFuncSig::MinusIntSignedSigned => SimpleSig::MinusIntSignedSigned,
+            tipb::ScalarFuncSig::MinusIntForcedUnsignedUnsigned => {
+                SimpleSig::MinusIntForcedUnsignedUnsigned
+            }
+            tipb::ScalarFuncSig::MinusIntForcedUnsignedSigned => {
+                SimpleSig::MinusIntForcedUnsignedSigned
+            }
+            tipb::ScalarFuncSig::MinusIntForcedSignedUnsigned => {
+                SimpleSig::MinusIntForcedSignedUnsigned
+            }
             tipb::ScalarFuncSig::LtReal => SimpleSig::LtReal,
             tipb::ScalarFuncSig::LeReal => SimpleSig::LeReal,
             tipb::ScalarFuncSig::GtReal => SimpleSig::GtReal,
@@ -1687,8 +1748,12 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
 /// still reach here through `dc > i`, where Go wraps the int side in
 /// `CastIntAsDecimal`; that cast is a signature of its own and is refused
 /// above rather than approximated, so only exact decimal operands get here.
-fn eval_decimal(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<tidb_datatype::Decimal> {
+fn eval_decimal(
+    expr: Option<&SimpleExpr>,
+    row: &[tidb_datatype::Datum],
+) -> Option<tidb_datatype::Decimal> {
     use tidb_datatype::Datum;
+    let expr = expr?;
     match expr {
         SimpleExpr::Decimal(value) => Some(value.clone()),
         SimpleExpr::Column(offset) => match row.get(*offset) {
@@ -1707,8 +1772,8 @@ fn eval_decimal(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<tidb_
             children,
         ) => {
             let (left, right) = (
-                eval_decimal(children.first()?, row)?,
-                eval_decimal(children.get(1)?, row)?,
+                eval_decimal(children.first(), row)?,
+                eval_decimal(children.get(1), row)?,
             );
             match sig {
                 SimpleSig::PlusDecimal => Some(left.add_mysql(&right).0),
@@ -1723,8 +1788,9 @@ fn eval_decimal(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<tidb_
 
 /// The binary64 value of one operand of a real comparison or arithmetic;
 /// see [`eval_decimal`] for why only exact operands reach here.
-fn eval_real(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<f64> {
+fn eval_real(expr: Option<&SimpleExpr>, row: &[tidb_datatype::Datum]) -> Option<f64> {
     use tidb_datatype::Datum;
+    let expr = expr?;
     match expr {
         SimpleExpr::Real(value) => Some(*value),
         SimpleExpr::Column(offset) => match row.get(*offset) {
@@ -1740,8 +1806,8 @@ fn eval_real(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<f64> {
             children,
         ) => {
             let (left, right) = (
-                eval_real(children.first()?, row)?,
-                eval_real(children.get(1)?, row)?,
+                eval_real(children.first(), row)?,
+                eval_real(children.get(1), row)?,
             );
             match sig {
                 SimpleSig::PlusReal => Some(left + right),
@@ -1757,8 +1823,12 @@ fn eval_real(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<f64> {
 
 /// The TIME value of one operand of a temporal comparison; see
 /// [`eval_decimal`] for why only exact operands reach here.
-fn eval_time(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<tidb_datatype::Time> {
+fn eval_time(
+    expr: Option<&SimpleExpr>,
+    row: &[tidb_datatype::Datum],
+) -> Option<tidb_datatype::Time> {
     use tidb_datatype::Datum;
+    let expr = expr?;
     match expr {
         SimpleExpr::Time(value) => Some(*value),
         SimpleExpr::Column(offset) => match row.get(*offset) {
@@ -1769,8 +1839,9 @@ fn eval_time(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<tidb_dat
     }
 }
 
-fn eval_bytes(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<Vec<u8>> {
+fn eval_bytes(expr: Option<&SimpleExpr>, row: &[tidb_datatype::Datum]) -> Option<Vec<u8>> {
     use tidb_datatype::Datum;
+    let expr = expr?;
     match expr {
         SimpleExpr::Bytes(value) => Some(value.clone()),
         SimpleExpr::Column(offset) => match row.get(*offset) {
@@ -1835,9 +1906,9 @@ fn collation_of(expr: &tipb::Expr) -> i32 {
     tidb_datatype::restore_collation_id_if_needed(protocol)
 }
 
-/// Evaluate to MySQL's three-valued int: `Some(0/1/n)` or NULL.
-#[must_use]
-/// Evaluates one pushed-down expression against a scanned row.
+/// Evaluates one pushed-down expression against a scanned row: MySQL's
+/// three-valued int (`Some(0/1/n)`) or NULL, beside Go's expression-level
+/// error -- the 1690 overflow terror the request-level answer carries.
 ///
 /// The value is carried as `i128` because an integer column is either signed
 /// or UNSIGNED and the two domains do not fit in one 64-bit slot: a
@@ -1846,9 +1917,9 @@ fn collation_of(expr: &tipb::Expr) -> i32 {
 /// -specific comparison signature per operand pair; one wider integer settles
 /// every pairing at once, which is what a filter that must never invent a row
 /// needs.
-pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128> {
+pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Result<Option<i128>, String> {
     use tidb_datatype::Datum;
-    match expr {
+    let value = match expr {
         SimpleExpr::Null => None,
         SimpleExpr::Int(value) => Some(i128::from(*value)),
         SimpleExpr::Column(offset) => match row.get(*offset) {
@@ -1866,20 +1937,97 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
         | SimpleExpr::Real(_)
         | SimpleExpr::Time(_) => None,
         SimpleExpr::Func(sig, children) => {
-            let child = |i: usize| children.get(i).and_then(|c| eval_expr(c, row));
-            match sig {
+            let child = |i: usize| children.get(i).map_or(Ok(None), |c| eval_expr(c, row));
+            return Ok(match sig {
+                // Go's integer arithmetic family (`types.AddInt`/`SubUint`/
+                // `MulInt`...): a result outside the signature's domain is
+                // the request-level 1690 error, whose text names the type
+                // (BIGINT vs BIGINT UNSIGNED) and the operation (ADD/
+                // SUBTRACT/MULTIPLY). The mixed and forced unsigned
+                // pairings additionally reject a negative operand outright:
+                // Go converts it through uint64, which wraps into an
+                // immediate overflow.
+                SimpleSig::PlusInt
+                | SimpleSig::PlusIntUnsignedUnsigned
+                | SimpleSig::PlusIntUnsignedSigned
+                | SimpleSig::PlusIntSignedUnsigned
+                | SimpleSig::PlusIntSignedSigned
+                | SimpleSig::MinusInt
+                | SimpleSig::MinusIntUnsignedUnsigned
+                | SimpleSig::MinusIntUnsignedSigned
+                | SimpleSig::MinusIntSignedUnsigned
+                | SimpleSig::MinusIntSignedSigned
+                | SimpleSig::MinusIntForcedUnsignedUnsigned
+                | SimpleSig::MinusIntForcedUnsignedSigned
+                | SimpleSig::MinusIntForcedSignedUnsigned
+                | SimpleSig::MultiplyInt
+                | SimpleSig::MultiplyIntUnsigned => {
+                    let (left, right) = match (child(0), child(1)) {
+                        (Ok(Some(left)), Ok(Some(right))) => (left, right),
+                        _ => return Ok(None),
+                    };
+                    let (name, unsigned) = match sig {
+                        SimpleSig::PlusInt => ("ADD", false),
+                        SimpleSig::PlusIntUnsignedUnsigned
+                        | SimpleSig::PlusIntUnsignedSigned
+                        | SimpleSig::PlusIntSignedUnsigned
+                        | SimpleSig::PlusIntSignedSigned => ("ADD", true),
+                        SimpleSig::MinusInt => ("SUBTRACT", false),
+                        SimpleSig::MinusIntUnsignedUnsigned
+                        | SimpleSig::MinusIntUnsignedSigned
+                        | SimpleSig::MinusIntSignedUnsigned
+                        | SimpleSig::MinusIntSignedSigned
+                        | SimpleSig::MinusIntForcedUnsignedUnsigned
+                        | SimpleSig::MinusIntForcedUnsignedSigned
+                        | SimpleSig::MinusIntForcedSignedUnsigned => ("SUBTRACT", true),
+                        _ => ("MULTIPLY", matches!(sig, SimpleSig::MultiplyIntUnsigned)),
+                    };
+                    let mixed_negative = match sig {
+                        SimpleSig::PlusIntUnsignedSigned
+                        | SimpleSig::MinusIntUnsignedSigned
+                        | SimpleSig::MinusIntForcedUnsignedSigned => right < 0,
+                        SimpleSig::PlusIntSignedUnsigned
+                        | SimpleSig::MinusIntForcedSignedUnsigned => left < 0,
+                        _ => false,
+                    };
+                    let raw = match name {
+                        "ADD" => left.checked_add(right),
+                        "SUBTRACT" => left.checked_sub(right),
+                        _ => left.checked_mul(right),
+                    };
+                    let (low, high) = if unsigned {
+                        (0, u64::MAX as i128)
+                    } else {
+                        (i64::MIN as i128, i64::MAX as i128)
+                    };
+                    if mixed_negative
+                        || !raw
+                            .map(|value| (low..=high).contains(&value))
+                            .unwrap_or(false)
+                    {
+                        return Err(format!(
+                            "{domain} value is out of range in '{name}'",
+                            domain = if unsigned {
+                                "BIGINT UNSIGNED"
+                            } else {
+                                "BIGINT"
+                            }
+                        ));
+                    }
+                    Some(raw.expect("checked above"))
+                }
                 // A bare decimal arithmetic as a condition answers its own
                 // truth (`ToBool`): non-zero is true, NULL is filtered.
                 SimpleSig::PlusDecimal
                 | SimpleSig::MinusDecimal
                 | SimpleSig::MultiplyDecimal
                 | SimpleSig::ModDecimal => {
-                    eval_decimal(expr, row).map(|value| i128::from(!value.is_zero()))
+                    eval_decimal(Some(expr), row).map(|value| i128::from(!value.is_zero()))
                 }
                 SimpleSig::ModIntUnsignedUnsigned
                 | SimpleSig::ModIntUnsignedSigned
                 | SimpleSig::ModIntSignedUnsigned
-                | SimpleSig::ModIntSignedSigned => match (child(0), child(1)) {
+                | SimpleSig::ModIntSignedSigned => match (child(0)?, child(1)?) {
                     (Some(left), Some(right)) if right != 0 => Some(left % right),
                     _ => None,
                 },
@@ -1891,7 +2039,7 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                 | SimpleSig::IntDivideIntUnsignedUnsigned
                 | SimpleSig::IntDivideIntUnsignedSigned
                 | SimpleSig::IntDivideIntSignedSigned
-                | SimpleSig::IntDivideIntSignedUnsigned => match (child(0), child(1)) {
+                | SimpleSig::IntDivideIntSignedUnsigned => match (child(0)?, child(1)?) {
                     (Some(left), Some(right)) if right != 0 => Some(left / right),
                     _ => None,
                 },
@@ -1901,11 +2049,15 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                     // zero divisor. A quotient wider than BIGINT errors in
                     // Go where this seam answers NULL (`div_rem` folds both)
                     // -- a narrowing, not a value change inside BIGINT.
-                    let (left, right) = (
-                        eval_decimal(children.first()?, row)?,
-                        eval_decimal(children.get(1)?, row)?,
-                    );
-                    let (quotient, _) = left.div_rem(&right)?;
+                    let (Some(left), Some(right)) = (
+                        eval_decimal(children.first(), row),
+                        eval_decimal(children.get(1), row),
+                    ) else {
+                        return Ok(None);
+                    };
+                    let Some((quotient, _)) = left.div_rem(&right) else {
+                        return Ok(None);
+                    };
                     Some(i128::from(quotient))
                 }
                 SimpleSig::LtReal
@@ -1914,10 +2066,12 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                 | SimpleSig::GeReal
                 | SimpleSig::EqReal
                 | SimpleSig::NeReal => {
-                    let (left, right) = (
-                        eval_real(children.first()?, row)?,
-                        eval_real(children.get(1)?, row)?,
-                    );
+                    let (Some(left), Some(right)) = (
+                        eval_real(children.first(), row),
+                        eval_real(children.get(1), row),
+                    ) else {
+                        return Ok(None);
+                    };
                     let ordering = left.total_cmp(&right);
                     let truth = match sig {
                         SimpleSig::LtReal => ordering.is_lt(),
@@ -1936,7 +2090,7 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                     // A bare real arithmetic as a condition answers its own
                     // truth (`ToBool`): non-zero and not-NaN is true, NULL
                     // is filtered. MySQL's `ToBool` treats NaN as 0.
-                    eval_real(expr, row)
+                    eval_real(Some(expr), row)
                         .filter(|value| !value.is_nan())
                         .map(|value| i128::from(value != 0.0))
                 }
@@ -1946,7 +2100,10 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                 | SimpleSig::GeInt
                 | SimpleSig::EqInt
                 | SimpleSig::NeInt => {
-                    let (left, right) = (child(0)?, child(1)?);
+                    let (left, right) = match (child(0), child(1)) {
+                        (Ok(Some(left)), Ok(Some(right))) => (left, right),
+                        _ => return Ok(None),
+                    };
                     let truth = match sig {
                         SimpleSig::LtInt => left < right,
                         SimpleSig::LeInt => left <= right,
@@ -1963,10 +2120,12 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                 | SimpleSig::GtString(collation)
                 | SimpleSig::GeString(collation)
                 | SimpleSig::EqString(collation) => {
-                    let (left, right) = (
-                        eval_bytes(children.first()?, row)?,
-                        eval_bytes(children.get(1)?, row)?,
-                    );
+                    let (Some(left), Some(right)) = (
+                        eval_bytes(children.first(), row),
+                        eval_bytes(children.get(1), row),
+                    ) else {
+                        return Ok(None);
+                    };
                     let ordering =
                         tidb_datatype::get_collator_by_id(*collation).compare(&left, &right);
                     let truth = match sig {
@@ -1984,10 +2143,12 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                 | SimpleSig::GeDecimal
                 | SimpleSig::EqDecimal
                 | SimpleSig::NeDecimal => {
-                    let (left, right) = (
-                        eval_decimal(children.first()?, row)?,
-                        eval_decimal(children.get(1)?, row)?,
-                    );
+                    let (Some(left), Some(right)) = (
+                        eval_decimal(children.first(), row),
+                        eval_decimal(children.get(1), row),
+                    ) else {
+                        return Ok(None);
+                    };
                     let ordering = left.cmp(&right);
                     let truth = match sig {
                         SimpleSig::LtDecimal => ordering.is_lt(),
@@ -2005,10 +2166,12 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                 | SimpleSig::GeTime
                 | SimpleSig::EqTime
                 | SimpleSig::NeTime => {
-                    let (left, right) = (
-                        eval_time(children.first()?, row)?,
-                        eval_time(children.get(1)?, row)?,
-                    );
+                    let (Some(left), Some(right)) = (
+                        eval_time(children.first(), row),
+                        eval_time(children.get(1), row),
+                    ) else {
+                        return Ok(None);
+                    };
                     let ordering = left.compare(right);
                     let truth = match sig {
                         SimpleSig::LtTime => ordering.is_lt(),
@@ -2021,10 +2184,12 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                     Some(i128::from(truth))
                 }
                 SimpleSig::NeString(collation) => {
-                    let (left, right) = (
-                        eval_bytes(children.first()?, row)?,
-                        eval_bytes(children.get(1)?, row)?,
-                    );
+                    let (Some(left), Some(right)) = (
+                        eval_bytes(children.first(), row),
+                        eval_bytes(children.get(1), row),
+                    ) else {
+                        return Ok(None);
+                    };
                     let equal = tidb_datatype::get_collator_by_id(*collation)
                         .compare(&left, &right)
                         .is_eq();
@@ -2032,7 +2197,7 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                 }
                 SimpleSig::LogicalAnd => {
                     // MySQL: FALSE dominates NULL.
-                    let (left, right) = (child(0), child(1));
+                    let (left, right) = (child(0)?, child(1)?);
                     match (left, right) {
                         (Some(0), _) | (_, Some(0)) => Some(0),
                         (Some(_), Some(_)) => Some(1),
@@ -2041,7 +2206,7 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                 }
                 SimpleSig::LogicalOr => {
                     // MySQL: TRUE dominates NULL.
-                    let (left, right) = (child(0), child(1));
+                    let (left, right) = (child(0)?, child(1)?);
                     match (left, right) {
                         (Some(l), _) if l != 0 => Some(1),
                         (_, Some(r)) if r != 0 => Some(1),
@@ -2049,16 +2214,16 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                         _ => None,
                     }
                 }
-                SimpleSig::UnaryNot => child(0).map(|v| i128::from(v == 0)),
-                SimpleSig::IntIsNull => Some(i128::from(child(0).is_none())),
+                SimpleSig::UnaryNot => child(0)?.map(|v| i128::from(v == 0)),
+                SimpleSig::IntIsNull => Some(i128::from(child(0)?.is_none())),
                 SimpleSig::InInt => {
                     // `builtinInIntSig.evalInt`: TRUE on any match; otherwise
                     // NULL if the tested value or any element was NULL.
-                    let tested = child(0);
+                    let tested = child(0)?;
                     let mut saw_null = tested.is_none();
                     for index in 1..children.len() {
-                        match (tested, child(index)) {
-                            (Some(left), Some(right)) if left == right => return Some(1),
+                        match (tested, child(index)?) {
+                            (Some(left), Some(right)) if left == right => return Ok(Some(1)),
                             (_, None) => saw_null = true,
                             _ => {}
                         }
@@ -2069,9 +2234,10 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i128
                         Some(0)
                     }
                 }
-            }
+            });
         }
-    }
+    };
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -2096,16 +2262,16 @@ mod tests {
 
         // A match answers TRUE even with a NULL elsewhere in the list.
         let with_null = in_list(vec![SimpleExpr::Null, SimpleExpr::Int(300)]);
-        assert_eq!(eval_expr(&with_null, &row_int), Some(1));
+        assert_eq!(eval_expr(&with_null, &row_int).expect("evals"), Some(1));
         // A miss with a NULL element is NULL, not FALSE.
         let miss_with_null = in_list(vec![SimpleExpr::Null, SimpleExpr::Int(7)]);
-        assert_eq!(eval_expr(&miss_with_null, &row_int), None);
+        assert_eq!(eval_expr(&miss_with_null, &row_int).expect("evals"), None);
         // A plain miss is FALSE.
         let plain_miss = in_list(vec![SimpleExpr::Int(7), SimpleExpr::Int(8)]);
-        assert_eq!(eval_expr(&plain_miss, &row_int), Some(0));
+        assert_eq!(eval_expr(&plain_miss, &row_int).expect("evals"), Some(0));
         // A NULL tested value never answers TRUE or FALSE.
         let any = in_list(vec![SimpleExpr::Int(300)]);
-        assert_eq!(eval_expr(&any, &row_null), None);
+        assert_eq!(eval_expr(&any, &row_null).expect("evals"), None);
     }
 
     #[test]
@@ -2503,7 +2669,7 @@ mod tests {
                 ..tipb::Expr::default()
             };
             let converted = convert_expr(&expr).expect("a string comparison converts");
-            eval_expr(&converted, &[Datum::new_string(value.to_owned())])
+            eval_expr(&converted, &[Datum::new_string(value.to_owned())]).expect("evals")
         };
 
         // Case-sensitive under the binary collation.
@@ -2755,20 +2921,20 @@ mod tests {
         let row: [Datum; 0] = [];
         // NULL AND FALSE = FALSE; NULL AND TRUE = NULL.
         assert_eq!(
-            eval_expr(&and(SimpleExpr::Null, SimpleExpr::Int(0)), &row),
+            eval_expr(&and(SimpleExpr::Null, SimpleExpr::Int(0)), &row).expect("evals"),
             Some(0)
         );
         assert_eq!(
-            eval_expr(&and(SimpleExpr::Null, SimpleExpr::Int(1)), &row),
+            eval_expr(&and(SimpleExpr::Null, SimpleExpr::Int(1)), &row).expect("evals"),
             None
         );
         // NULL OR TRUE = TRUE; NULL OR FALSE = NULL.
         assert_eq!(
-            eval_expr(&or(SimpleExpr::Null, SimpleExpr::Int(1)), &row),
+            eval_expr(&or(SimpleExpr::Null, SimpleExpr::Int(1)), &row).expect("evals"),
             Some(1)
         );
         assert_eq!(
-            eval_expr(&or(SimpleExpr::Null, SimpleExpr::Int(0)), &row),
+            eval_expr(&or(SimpleExpr::Null, SimpleExpr::Int(0)), &row).expect("evals"),
             None
         );
         // NOT NULL = NULL; IS NULL answers over null.
@@ -2776,14 +2942,16 @@ mod tests {
             eval_expr(
                 &SimpleExpr::Func(SimpleSig::UnaryNot, vec![SimpleExpr::Null]),
                 &row
-            ),
+            )
+            .expect("evals"),
             None
         );
         assert_eq!(
             eval_expr(
                 &SimpleExpr::Func(SimpleSig::IntIsNull, vec![SimpleExpr::Null]),
                 &row
-            ),
+            )
+            .expect("evals"),
             Some(1)
         );
     }
@@ -3176,7 +3344,8 @@ mod tests {
             eval_expr(
                 &SimpleExpr::Func(SimpleSig::ModIntSignedSigned, vec![column.clone(), two]),
                 &row
-            ),
+            )
+            .expect("evals"),
             Some(-1)
         );
         // A zero divisor answers NULL (`ErrDivByZero` -> isNull).
@@ -3185,7 +3354,8 @@ mod tests {
             eval_expr(
                 &SimpleExpr::Func(SimpleSig::ModIntUnsignedSigned, vec![column, zero]),
                 &row
-            ),
+            )
+            .expect("evals"),
             None
         );
     }
@@ -3209,9 +3379,9 @@ mod tests {
             ],
         );
         let row = [Datum::Decimal(Decimal::parse_mysql("2.5").0)];
-        assert_eq!(eval_expr(&condition, &row), Some(1));
+        assert_eq!(eval_expr(&condition, &row).expect("evals"), Some(1));
         let row_small = [Datum::Decimal(Decimal::parse_mysql("1").0)];
-        assert_eq!(eval_expr(&condition, &row_small), Some(0));
+        assert_eq!(eval_expr(&condition, &row_small).expect("evals"), Some(0));
     }
 
     #[test]
@@ -3226,7 +3396,8 @@ mod tests {
             eval_expr(
                 &SimpleExpr::Func(SimpleSig::GtReal, vec![column.clone(), literal]),
                 &row
-            ),
+            )
+            .expect("evals"),
             Some(1)
         );
         // Arithmetic composes: `x / 2 + 1` is 2.25, truthy as a condition.
@@ -3237,13 +3408,13 @@ mod tests {
                 SimpleExpr::Real(1.0),
             ],
         );
-        assert_eq!(eval_expr(&arithmetic, &row), Some(1));
+        assert_eq!(eval_expr(&arithmetic, &row).expect("evals"), Some(1));
         // A zero divisor answers NULL (`EvalDivideReal`).
         let by_zero = SimpleExpr::Func(
             SimpleSig::DivideReal,
             vec![SimpleExpr::Real(1.0), SimpleExpr::Real(0.0)],
         );
-        assert_eq!(eval_expr(&by_zero, &row), None);
+        assert_eq!(eval_expr(&by_zero, &row).expect("evals"), None);
     }
 
     #[test]
@@ -3278,7 +3449,8 @@ mod tests {
                     vec![left.clone(), SimpleExpr::Int(2)],
                 ),
                 &row
-            ),
+            )
+            .expect("evals"),
             Some(-3)
         );
         // A zero divisor answers NULL.
@@ -3289,7 +3461,8 @@ mod tests {
                     vec![left, SimpleExpr::Int(0)],
                 ),
                 &row
-            ),
+            )
+            .expect("evals"),
             None
         );
         // Decimal DIV truncates the quotient: `-9.5 DIV 2` = -4. The wire
@@ -3305,8 +3478,46 @@ mod tests {
                     ],
                 ),
                 &row
-            ),
+            )
+            .expect("evals"),
             Some(-4)
         );
+    }
+
+    #[test]
+    fn integer_arithmetic_overflow_answers_gos_1690_text() {
+        use tidb_datatype::Datum;
+        let row = [Datum::Int(i64::MAX), Datum::Int(1)];
+        let overflow = SimpleExpr::Func(
+            SimpleSig::PlusInt,
+            vec![SimpleExpr::Column(0), SimpleExpr::Column(1)],
+        );
+        // Go's `types.AddInt` raises the 1690 terror whose text names the
+        // type and the operation; the request answers it, not a value.
+        assert_eq!(
+            eval_expr(&overflow, &row),
+            Err("BIGINT value is out of range in 'ADD'".to_owned())
+        );
+        let row_small = [Datum::Int(2), Datum::Int(3)];
+        assert_eq!(eval_expr(&overflow, &row_small), Ok(Some(5)));
+    }
+
+    #[test]
+    fn unsigned_minus_rejects_negative_operand_like_go() {
+        use tidb_datatype::Datum;
+        // `MinusIntUnsignedSigned`: Go converts the signed operand through
+        // uint64, so a negative operand wraps into an immediate overflow
+        // rather than an in-range difference.
+        let row = [Datum::UInt(5), Datum::Int(-3)];
+        let underflow = SimpleExpr::Func(
+            SimpleSig::MinusIntUnsignedSigned,
+            vec![SimpleExpr::Column(0), SimpleExpr::Column(1)],
+        );
+        assert_eq!(
+            eval_expr(&underflow, &row),
+            Err("BIGINT UNSIGNED value is out of range in 'SUBTRACT'".to_owned())
+        );
+        let row_ok = [Datum::UInt(5), Datum::Int(3)];
+        assert_eq!(eval_expr(&underflow, &row_ok), Ok(Some(2)));
     }
 }
