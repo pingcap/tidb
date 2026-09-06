@@ -9456,3 +9456,7 @@ risks without claiming repository-wide parity.
   JSON literal-default refusal (1102) and the VECTOR literal-default plain
   error (`add_column.go:1215-1237`) — all already enforced faithfully. Four
   pinned regressions in `tests/default_value_rules_source.rs`.
+- 2026-09-06 (generated-column and charset pins): virtual-generated PK → 3106,
+  stored-generated PK accepted, index on generated accepted, unknown column
+  charset → [parser:1115], unknown table charset parse-refused. Five pins in
+  `tests/generated_charset_rules_source.rs`.
