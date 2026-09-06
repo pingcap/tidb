@@ -9628,3 +9628,11 @@ risks without claiming repository-wide parity.
   324 owner tests, all-target compilation, standalone rustfmt, Ready lint, and
   diff hygiene pass. Evidence is in
   `receipts/meta_model_materialized_view.md` and the dedicated index ExecPlan.
+- 2026-09-06 (`pkg/ddl/placement` corrective `GroupID` return contract after
+  `8d42bcc7035`): all 11 current Rust owner artifacts (5,066 lines) were read
+  under the requested Rust-only scope. The lone restored `#[must_use]`
+  annotation no longer imposes a Rust-only diagnostic on `group_id`; the
+  restored-tree probe failed exactly once before the correction and passes
+  afterward. All 30 owner tests, all-target compilation, standalone rustfmt,
+  Ready lint, and diff hygiene pass. Evidence is in
+  `receipts/ddl_placement.md` and the dedicated placement ExecPlan.

@@ -95,3 +95,32 @@ PASS.
 The Rust crate emits only pre-existing warnings in dependencies and unrelated
 workspace modules. Go-side execution remains intentionally unverified for
 this Rust-only follow-up.
+
+## Corrective `GroupID` return contract (2026-09-06)
+
+Commit `8d42bcc7035` restored the Rust-only `#[must_use]` annotation on
+`common::group_id` and deleted the regression and receipt evidence from
+`9f2fbd93e02`. Under the requested Rust-only scope, the Go inventory above was
+not re-read. The current Rust owner was read in full before this correction:
+exactly 11 tracked artifacts and 5,066 lines after the focused test addition,
+comprising the manifest, eight production modules, all inline tests, and the
+`meta_bundle_test` integration target. There is no generated input/output,
+platform variant, fixture, example, benchmark, build script, or crate-local
+lockfile.
+
+Go's `GroupID` string may be discarded, while the restored Rust annotation
+made that source-shaped use a compile diagnostic. Removing the one annotation
+does not change the `TiDB_DDL_<id>` encoding or any bundle construction,
+key-range, policy, YAML, PD DTO, or error behavior.
+
+`common::tests::go_group_id_return_may_be_ignored_like_go` discards the result
+under `#[deny(unused_must_use)]`. Against the restored source, the focused
+compile failed with exactly one diagnostic, captured in
+`/tmp/tidb-ddl-placement-group-id-restored-prefix.log`; after the correction,
+it passes. All 30 owner tests, all-target compilation, standalone rustfmt,
+Ready `make lint`, and diff hygiene pass. Warnings emitted by dependency and
+unrelated workspace modules remain visible and are outside this one-line
+contract correction.
+
+No Go, Bazel, Cargo manifest/dependency, module, or import graph changed, so
+the Bazel prepare gate does not require `make bazel_prepare`.

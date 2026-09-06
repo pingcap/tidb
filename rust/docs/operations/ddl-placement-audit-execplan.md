@@ -34,6 +34,16 @@ current Go master behavior.
   rolling ExecPlan.
 - [x] Commit once for `pkg/ddl/placement`, rebase/push to
   `hparser-integration`, and verify the remote SHA `a11714f1504`.
+- [x] (2026-09-06) Correct the regression from `8d42bcc7035`: under the
+  requested Rust-only scope, read all 11 current Rust owner artifacts (5,066
+  lines after the test addition), restore the focused `GroupID` discard test,
+  and remove the one restored `#[must_use]` annotation.
+- [x] (2026-09-06) Preserve exact fail-before evidence for one diagnostic;
+  pass the focused test, all 30 owner tests, all-target compilation,
+  standalone rustfmt, Ready lint, and diff hygiene afterward.
+- [x] (2026-09-06) Prepare one corrective `pkg/ddl/placement` commit for
+  normal rebase and publication to `origin/hparser-integration`.
+- [ ] Continue the rolling Rust-only audit with the next package boundary.
 
 ## Scope and decision
 
@@ -73,9 +83,13 @@ The short-lived chain remains valid through the returned mutable reference.
   carriers; no Go test or fixture changes are needed.
 - 2026-09-06: Skip Go execution and `make bazel_prepare` for this Rust-only
   follow-up; the owner tests, compile gates, and Ready lint are proportional.
+- 2026-09-06: Treat `8d42bcc7035` as a restore regression: reapply only the
+  discarded `GroupID` return contract and its focused test; do not change the
+  already aligned bundle and builder behavior.
 
 ## Outcomes & Retrospective
 
 Published as one package-scoped commit; after the latest upstream rebase the
 remote `hparser-integration` SHA is `a11714f1504`. The rolling audit continues
-with the next complete package boundary.
+with the next complete package boundary. The corrective batch restores the
+later `GroupID` contract without changing the prior package implementation.
