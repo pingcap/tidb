@@ -9406,3 +9406,12 @@ risks without claiming repository-wide parity.
   deliberate deferrals. clippy `--no-deps` zero own warnings on all four
   crates; parser+chunk+util+expr+datatype 3439/3439. Details in
   `receipts/nightly_clippy_refresh_sweep.md`.
+- 2026-09-06 (planner coalesced qualified-name parity): Go's
+  `pkg/planner/core` retains redundant `USING`/`NATURAL JOIN` columns in
+  `FullSchema`/`FullNames` for qualified references, wildcard expansion on a
+  direct join, and pruning through transparent wrappers. Rust now carries an
+  optional full scope through scalar/ON/projection/sort/GROUP BY rewriting and
+  uses full-capable child schemas during join pruning, while preserving
+  visible-schema and derived-table boundaries. The focused coalesced-join
+  matrix and complete Go inventory are recorded in
+  `receipts/planner_coalesced_qualified_names.md`.

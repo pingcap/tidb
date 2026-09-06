@@ -594,6 +594,20 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .map(|item| self.rewrite_scalar(item, schema, names, markers))
             .collect()
     }
+
+    /// Plan-aware GROUP BY rewriting, retaining qualified columns hidden by a
+    /// coalesced `USING`/`NATURAL` join in its `FullSchema` lookup.
+    pub fn rewrite_gby_exprs_with_plan(
+        &mut self,
+        items: &[Expr],
+        plan: &LogicalPlan,
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<Vec<Expression>, PlanError> {
+        items
+            .iter()
+            .map(|item| self.rewrite_scalar_with_plan(item, plan, markers))
+            .collect()
+    }
 }
 
 /// Go `resolveFromSelectFields(v, fields, ignoreAsName)`
