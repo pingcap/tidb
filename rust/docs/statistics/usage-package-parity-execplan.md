@@ -142,3 +142,13 @@ Revision note (2026-09-02): the complete root-usage inventory was refreshed
 against Go master `c6054025…`; all eight artifacts remain byte-identical to the
 previous `e2788410…` pin. The multi-crate ownership and existing Ready gates
 remain valid.
+
+Revision note (2026-09-06): the complete immediate
+`tidb-stats-handle-usage` owner was re-read under the Rust-only alignment
+scope. Sixteen direct Go-shaped returns no longer impose Rust-only
+`#[must_use]` diagnostics; eight annotations remain on native partition,
+RAII, `Option`, configuration, and cross-crate integration boundaries. The
+focused discard regression failed before the edit with exactly sixteen
+diagnostics and passes afterward; all eight owner tests, all-target
+compilation, standalone rustfmt, repository lint, and diff hygiene pass. The
+receipt records the exact inventory and commands.

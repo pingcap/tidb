@@ -102,3 +102,50 @@ Rust formatting, pinned `make lint`, and `git diff --check`. A broader
 statistics-module probe exposed one unrelated baseline failure in
 `analyze_clauses_this_node_does_not_run_are_refused_by_name`; the usage-specific
 tests remained green.
+
+## 2026-09-06 return-contract alignment follow-up
+
+The eight-artifact Go inventory above is unchanged from the receipt pin through
+current `origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
+Per the requested Rust-only scope, no Go file was read or edited and no Go test
+was executed in this follow-up. The complete immediate Rust owner was read
+before editing: the 15-line `Cargo.toml` and pre-change 877-line `src/lib.rs`,
+including all seven existing tests. It has no build script, generated or
+platform-specific source, fixture, benchmark, example, fuzz target, or
+external test target. Direct callers at the `tidb-server` and `tidb-session`
+boundaries were also classified before changing the public annotations.
+
+Sixteen direct Go-shaped constructors, getters, snapshots, dump selection, and
+eligibility returns no longer impose Rust-only `#[must_use]` diagnostics:
+`TableDeltaMap::{new, get_delta_and_reset, snapshot}`,
+`StatsUsage::{new, get_usage_and_reset}`,
+`SessionStatsList::{new, new_session_stats_item, session_table_delta,
+session_stats_usage}`, `TableDeltaDump::pending_table_ids`,
+`need_dump_stats_delta`, and
+`StatsUsageHandle::{new, new_session_stats_item,
+new_session_index_usage_collector, get_index_usage, session_stats_list}`.
+The focused `go_usage_returns_may_be_ignored_like_go` regression failed before
+the fix with exactly sixteen diagnostics
+(`/tmp/tidb-stats-usage-prefix.log`) and passes afterward.
+
+Eight annotations remain on native Rust boundaries rather than direct
+discardable Go API contracts: partition-update expansion; the two RAII dump
+guard constructors; the column-entry view; the `Option`-returning table lookup;
+two private configuration reads; and the cross-crate index collector adapter.
+These guards protect ownership or native integration behavior and are not
+claimed as Go surface parity.
+
+Ready validation for this Rust-only follow-up:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-usage --lib go_usage_returns_may_be_ignored_like_go -- --test-threads=1` (1 passed);
+- `cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-usage --lib --test-threads=1` (8 passed);
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-stats-handle-usage --all-targets --quiet`;
+- `rustfmt +nightly-2026-08-22 --check --edition 2021 rust/crates/tidb-stats-handle-usage/src/lib.rs`;
+- `make lint`;
+- `git diff --check`.
+
+Only compile-time return enforcement changed. Collection, dumping, rollback,
+timestamp, locking, and index-GC behavior are unchanged, so correctness,
+compatibility, and performance risk is limited to callers that intentionally
+discard these values. No Go/Bazel/Cargo/module/import graph changed, so
+`make bazel_prepare` was not required.

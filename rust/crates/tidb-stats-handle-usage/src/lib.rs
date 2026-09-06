@@ -113,7 +113,6 @@ pub struct TableDeltaMap {
 
 impl TableDeltaMap {
     /// Go `NewTableDeltaMap`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -127,7 +126,6 @@ impl TableDeltaMap {
     }
 
     /// Go `TableDeltaMap.GetDeltaAndReset`.
-    #[must_use]
     pub fn get_delta_and_reset(&self) -> HashMap<i64, TableDelta> {
         std::mem::take(&mut *self.delta.lock().expect("table delta lock poisoned"))
     }
@@ -153,7 +151,6 @@ impl TableDeltaMap {
     }
 
     /// Go `TransactionContext.GetCurrentSavepoint`'s table-delta clone.
-    #[must_use]
     pub fn snapshot(&self) -> HashMap<i64, TableDelta> {
         self.delta
             .lock()
@@ -175,7 +172,6 @@ pub struct StatsUsage {
 
 impl StatsUsage {
     /// Go `NewStatsUsage`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -189,7 +185,6 @@ impl StatsUsage {
     }
 
     /// Go `StatsUsage.GetUsageAndReset`.
-    #[must_use]
     pub fn get_usage_and_reset(&self) -> HashMap<TableItemID, SystemTime> {
         std::mem::take(&mut *self.usage.lock().expect("column stats usage lock poisoned"))
     }
@@ -310,7 +305,6 @@ pub struct SessionStatsList {
 
 impl SessionStatsList {
     /// Go `NewSessionStatsList`.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             table_delta: TableDeltaMap::new(),
@@ -320,7 +314,6 @@ impl SessionStatsList {
     }
 
     /// Go `SessionStatsList.NewSessionStatsItem`.
-    #[must_use]
     pub fn new_session_stats_item(&self) -> Arc<SessionStatsItem> {
         let item = Arc::new(SessionStatsItem::new());
         self.sessions
@@ -339,13 +332,11 @@ impl SessionStatsList {
     }
 
     /// Go `SessionStatsList.SessionTableDelta`.
-    #[must_use]
     pub const fn session_table_delta(&self) -> &TableDeltaMap {
         &self.table_delta
     }
 
     /// Go `SessionStatsList.SessionStatsUsage`.
-    #[must_use]
     pub const fn session_stats_usage(&self) -> &StatsUsage {
         &self.stats_usage
     }
@@ -428,7 +419,6 @@ pub struct TableDeltaDump<'a> {
 
 impl TableDeltaDump<'_> {
     /// Go `collectPendingStatsDeltaTableIDs`.
-    #[must_use]
     pub fn pending_table_ids(&self, target_table_ids: &[i64]) -> Vec<i64> {
         let mut table_ids = if target_table_ids.is_empty() {
             self.delta.keys().copied().collect::<Vec<_>>()
@@ -472,7 +462,6 @@ impl Drop for TableDeltaDump<'_> {
 }
 
 /// Go `statsUsageImpl.needDumpStatsDelta` after table/schema exclusions.
-#[must_use]
 pub fn need_dump_stats_delta(
     force_dump: bool,
     item: TableDelta,
@@ -526,7 +515,6 @@ pub struct StatsUsageHandle {
 
 impl StatsUsageHandle {
     /// Go `NewStatsUsageImpl`'s collector construction.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             index_usage: Arc::new(IndexUsageCollector::new()),
@@ -535,13 +523,11 @@ impl StatsUsageHandle {
     }
 
     /// Go `statsUsageImpl.NewSessionStatsItem`.
-    #[must_use]
     pub fn new_session_stats_item(&self) -> Arc<SessionStatsItem> {
         self.sessions.new_session_stats_item()
     }
 
     /// Go `statsUsageImpl.NewSessionIndexUsageCollector`.
-    #[must_use]
     pub fn new_session_index_usage_collector(
         &self,
     ) -> tidb_stats_handle_usage_indexusage::SessionIndexUsageCollector {
@@ -559,13 +545,11 @@ impl StatsUsageHandle {
     }
 
     /// Go `statsUsageImpl.GetIndexUsage`.
-    #[must_use]
     pub fn get_index_usage(&self, table_id: i64, index_id: i64) -> Sample {
         self.index_usage.get_index_usage(table_id, index_id)
     }
 
     /// Go `statsUsageImpl.SessionStatsList`.
-    #[must_use]
     pub const fn session_stats_list(&self) -> &SessionStatsList {
         &self.sessions
     }
@@ -596,6 +580,41 @@ mod tests {
     use super::*;
 
     use tidb_model::{IndexInfo, TableInfo};
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn go_usage_returns_may_be_ignored_like_go() {
+        TableDeltaMap::new();
+        let table_delta = TableDeltaMap::new();
+        table_delta.get_delta_and_reset();
+        table_delta.snapshot();
+
+        StatsUsage::new();
+        let stats_usage = StatsUsage::new();
+        stats_usage.get_usage_and_reset();
+
+        SessionStatsList::new();
+        let sessions = SessionStatsList::new();
+        sessions.new_session_stats_item();
+        sessions.session_table_delta();
+        sessions.session_stats_usage();
+        let pending = sessions.begin_table_delta_dump();
+        pending.pending_table_ids(&[]);
+
+        need_dump_stats_delta(
+            false,
+            TableDelta::default(),
+            SystemTime::UNIX_EPOCH,
+            Some(1),
+        );
+
+        StatsUsageHandle::new();
+        let handle = StatsUsageHandle::new();
+        handle.new_session_stats_item();
+        handle.new_session_index_usage_collector();
+        handle.get_index_usage(1, 1);
+        handle.session_stats_list();
+    }
 
     fn column(table_id: i64, column_id: i64) -> TableItemID {
         TableItemID {

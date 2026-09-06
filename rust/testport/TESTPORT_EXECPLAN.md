@@ -9579,3 +9579,11 @@ risks without claiming repository-wide parity.
   compilation, standalone rustfmt, and Ready evidence are recorded in
   `receipts/statistics_handle_cache_audit.md`. The two `get` annotations remain
   because their `Option` return is inherently must-use in Rust.
+- 2026-09-06 (`pkg/statistics/handle/usage` return-contract parity): the
+  complete immediate usage owner no longer marks sixteen direct Go-shaped
+  constructors, state getters, snapshots, table selection, eligibility, or
+  collector returns as `#[must_use]`. The focused discard probe failed with
+  exactly sixteen diagnostics before the edit and passes afterward; all eight
+  owner tests, all-target compilation, standalone rustfmt, and Ready evidence
+  are recorded in `receipts/statistics_handle_usage_audit.md` and its living
+  package ExecPlan. Eight native Rust ownership/integration annotations remain.
