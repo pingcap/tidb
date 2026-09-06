@@ -9563,3 +9563,11 @@ risks without claiming repository-wide parity.
   diagnostics before the edit and passes afterward; all 19 owner tests,
   all-target compilation, standalone rustfmt, and Ready evidence are recorded
   in `receipts/statistics_handle_autoanalyze_priorityqueue_audit.md`.
+- 2026-09-06 (`pkg/util/hint` processor/statement return-contract parity):
+  the complete hint owner no longer marks the remaining twelve Go-shaped
+  statement-state, hint-set, collection, extraction, classification,
+  completeness, or restoration returns as `#[must_use]`. The focused discard
+  probe failed with exactly twelve diagnostics before the edit and passes
+  afterward; the full five-test owner aggregate, all-target compilation,
+  standalone rustfmt, and Ready evidence are recorded in
+  `receipts/util_hint.md`.

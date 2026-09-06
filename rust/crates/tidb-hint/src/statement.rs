@@ -175,7 +175,6 @@ impl Clone for StmtHints {
 
 impl StmtHints {
     /// Go `StmtHints.TaskMapNeedBackUp`.
-    #[must_use]
     pub fn task_map_need_backup(&self) -> bool {
         self.force_nth_plan != -1
     }

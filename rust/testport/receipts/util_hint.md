@@ -142,3 +142,59 @@ GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 make lint
 git diff --check
 # PASS
 ```
+
+## Complete processor/statement return-contract follow-up (2026-09-06)
+
+The complete four-artifact Go package remains the authority at current
+`origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`. Relative to the
+historical pin, the only source delta is the mechanical migration of
+`bindableChecker` from the returning visitor interface to the in-place AST
+walk; the same subquery/table-count decisions, reasons, and public
+`CheckBindingFromHistoryComplete` contract remain. Per the Rust-only scope,
+no Go source was edited and no Go test was run.
+
+The complete Rust owner was reread before editing: the 17-line `Cargo.toml`
+and all 2,579 lines across `lib.rs`, `plan.rs`, `processor.rs`,
+`query_block.rs`, and `statement.rs`. There is no `build.rs`, generated source
+or input, fixture, external test target, example, benchmark, or platform
+variant. All production functions and the four pre-existing inline tests were
+inventoried.
+
+After the earlier plan/query-block sweep, twelve direct Go counterparts still
+carried Rust-only `#[must_use]`: `StmtHints.TaskMapNeedBackUp`; the three
+`HintsSet` queries; `CollectHint`; table-hint extraction/containment;
+index-hint restore; statement node type; binding-completeness checking; and
+the two optimizer-hint restore helpers. The focused
+`processor::tests::go_processor_returns_may_be_ignored_like_go` regression
+discards all twelve under `#[deny(unused_must_use)]`. It failed before the
+production edit with exactly twelve diagnostics and passes after removing the
+annotations. The complete `tidb-hint` owner now contains no explicit
+`#[must_use]` behavior; parsing, traversal, binding, matching, restoration,
+deduplication, and warnings are unchanged.
+
+Ready validation for this package follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-hint --lib go_processor_returns_may_be_ignored_like_go -- --test-threads=1
+PASS; 1 focused regression passed. Before the production edit, the same command failed with exactly 12 `unused_must_use` diagnostics.
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-hint --test-threads=1
+PASS; all 5 owner tests passed.
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-hint --all-targets
+PASS; two pre-existing `tidb-model` warnings remain outside this crate.
+
+rustfmt +nightly-2026-08-22 --check --edition 2021 rust/crates/tidb-hint/src/lib.rs rust/crates/tidb-hint/src/plan.rs rust/crates/tidb-hint/src/processor.rs rust/crates/tidb-hint/src/query_block.rs rust/crates/tidb-hint/src/statement.rs
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+No Go, Bazel, Cargo metadata, lockfile, dependency, generated, or platform
+source changed, so `make bazel_prepare` is not required. The change only
+relaxes compiler diagnostics, with no correctness, compatibility, or
+performance change to hint behavior.

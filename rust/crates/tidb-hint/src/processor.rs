@@ -32,7 +32,6 @@ pub struct HintsSet {
 
 impl HintsSet {
     /// Go `HintsSet.GetStmtHints`.
-    #[must_use]
     pub fn stmt_hints(&self) -> Vec<&Hint> {
         let mut result = Vec::new();
         if let Some(first) = self.table_hints.first() {
@@ -51,7 +50,6 @@ impl HintsSet {
     /// pass lowercase names). This crate normalizes hint names to canonical
     /// uppercase at parse time and deliberately matches case-insensitively,
     /// so the hint works in every written case.
-    #[must_use]
     pub fn contains_table_hint(&self, name: &str) -> bool {
         self.table_hints
             .iter()
@@ -60,7 +58,6 @@ impl HintsSet {
     }
 
     /// Go `HintsSet.Restore`.
-    #[must_use]
     pub fn restore(&self) -> String {
         let mut restored = Vec::new();
         restored.extend(
@@ -153,7 +150,6 @@ impl Visitor for HintProcessor {
 }
 
 /// Go `CollectHint`.
-#[must_use]
 pub fn collect_hint(statement: &Stmt) -> HintsSet {
     let mut statement = statement.clone();
     let mut processor = HintProcessor {
@@ -180,7 +176,6 @@ pub fn bind_hint(statement: &mut Stmt, hints: &HintsSet) {
 }
 
 /// Go `ExtractTableHintsFromStmtNode`.
-#[must_use]
 pub fn extract_table_hints_from_stmt_node(statement: &Stmt) -> (Vec<Hint>, Vec<HintWarning>) {
     let mut warnings = Vec::new();
     let hints = extract_stmt_hints(statement, Some(&mut warnings));
@@ -267,7 +262,6 @@ fn hint_scalar_value(hint: &Hint) -> String {
 }
 
 /// Go `ContainTableHintInStmtNode`.
-#[must_use]
 pub fn contain_table_hint_in_stmt_node(statement: &Stmt, hint_name: &str) -> bool {
     extract_stmt_hints(statement, None)
         .iter()
@@ -275,7 +269,6 @@ pub fn contain_table_hint_in_stmt_node(statement: &Stmt, hint_name: &str) -> boo
 }
 
 /// Go `RestoreIndexHint`.
-#[must_use]
 pub fn restore_index_hint(hint: &IndexHint) -> String {
     let mut value = match hint.kind {
         IndexHintKind::Use => "use index".to_owned(),
@@ -302,7 +295,6 @@ pub fn restore_index_hint(hint: &IndexHint) -> String {
 }
 
 /// Go `nodeType4Stmt`.
-#[must_use]
 pub fn node_type_for_stmt(statement: &Stmt) -> NodeType {
     match statement {
         Stmt::Query(_) => NodeType::Select,
@@ -485,7 +477,6 @@ fn unwrap_dml(mut statement: &DmlStmt) -> &DmlStmt {
 }
 
 /// Go `CheckBindingFromHistoryComplete`.
-#[must_use]
 pub fn check_binding_from_history_complete(statement: &Stmt, hint: &str) -> (bool, String) {
     if hint.contains("tiflash") {
         return (
@@ -552,14 +543,12 @@ impl Visitor for BindableChecker {
 }
 
 /// Go `RestoreTableOptimizerHint`.
-#[must_use]
 pub fn restore_table_optimizer_hint(hint: &Hint) -> String {
     hint.restore().to_ascii_lowercase()
 }
 
 /// Go `RestoreOptimizerHints`, including its first-occurrence-preserving
 /// duplicate removal.
-#[must_use]
 pub fn restore_optimizer_hints(hints: &[Hint]) -> String {
     let mut seen = HashSet::with_capacity(hints.len());
     hints
@@ -568,4 +557,41 @@ pub fn restore_optimizer_hints(hints: &[Hint]) -> String {
         .filter(|restored| seen.insert(restored.clone()))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::StmtHints;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn go_processor_returns_may_be_ignored_like_go() {
+        StmtHints::default().task_map_need_backup();
+
+        let hints = HintsSet::default();
+        hints.stmt_hints();
+        hints.contains_table_hint("use_plan_cache");
+        hints.restore();
+
+        let statement = tidb_parser::parse("select 1").unwrap();
+        collect_hint(&statement);
+        extract_table_hints_from_stmt_node(&statement);
+        contain_table_hint_in_stmt_node(&statement, "use_plan_cache");
+        let index_hint = IndexHint {
+            kind: IndexHintKind::Use,
+            scope: IndexHintScope::All,
+            indexes: vec!["idx".to_owned()],
+        };
+        restore_index_hint(&index_hint);
+        node_type_for_stmt(&statement);
+        check_binding_from_history_complete(&statement, "");
+
+        let hint = Hint {
+            name: "STRAIGHT_JOIN".to_owned(),
+            kind: HintKind::Nullary { qb_name: None },
+        };
+        restore_table_optimizer_hint(&hint);
+        restore_optimizer_hints(&[hint]);
+    }
 }
