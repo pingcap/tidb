@@ -789,3 +789,5 @@
 - 下轮恢复点: (1) dump 主体剩余: dumpSQLMeta 的 zip 写入/variables/bindings/tiflash-replica/schemas/stats/presign; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
 - 范围确认: extractTableNames/tableNameExtractor 移植需要 (a) tidb-ast Visitor (enter/leave over dyn Any, 已存在) (b) infoschema seam (TableExists/TableByName/View.select_stmt/ForeignKeys, model 字段齐备 ViewInfo.select_stmt:430 + FKInfo:895) (c) executor ParseWithParams 复入 —— 约 200+ 行, 需完整上下文一批成型, 本轮不开工以免中途截断。
 - 下轮恢复点: (1) tableNameExtractor + findFK + handleIsView 移植 (带 infoschema/executor seam, ~200 行); (2) dumpSchemas/dumpVariables/bindings/stats 后续切片; (3) 只读收敛核查; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
+- 增量收敛核查: 7 面全绿 (domain 147, pd-client 73, unistore 114, br 31, tablecodec 61, protocol 121, hint 2 —— 549/0)。无新增分歧。
+- 下轮恢复点: (1) tableNameExtractor+findFK+handleIsView 移植 (前置件已确认: Visitor/ViewInfo.select_stmt/FKInfo/seam 先例, ~200-300 行需完整上下文); (2) dumpVariables/bindings/stats/presign 切片; (3) 只读收敛核查; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
