@@ -793,3 +793,5 @@
 - 下轮恢复点: (1) tableNameExtractor+findFK+handleIsView 移植 (前置件已确认: Visitor/ViewInfo.select_stmt/FKInfo/seam 先例, ~200-300 行需完整上下文); (2) dumpVariables/bindings/stats/presign 切片; (3) 只读收敛核查; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
 - 移植批: tableNameExtractor + findFK + handleIsView 落地 (plan_replayer.rs, +338 行), 两个 seam (ExtractSchemaSource/ExtractViewParser), 真实 SQL 测试驱动视图递归/CTE 跳过/外键拉表。149 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。
 - 下轮恢复点: (1) dump 主体剩余 (zip 装配/variables/bindings/stats/presign); (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
+- dump 切片批: DumpArchiveWriter seam (zip 条目创建抽象) + dumpSQLs (sql/sqlN.sql 逐语句) + 会话绑定文件体构建器 (9 列 tab join) 落地, 2 测试钉住文件名/顺序/tab join。151 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。
+- 下轮恢复点: (1) dump 剩余: variables/stats/presign/tiflash-replica 文件体; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
