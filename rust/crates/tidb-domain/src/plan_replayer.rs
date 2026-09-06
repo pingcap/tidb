@@ -103,9 +103,7 @@
 //!   metrics package. Each is named at its site.
 //! - `// boundary:` Go `pkg/util.Recover(metrics.LabelDomain, ...)` in
 //!   `handleTask` — Go swallows a panic in the worker so the loop survives.
-//!   Rust has no equivalent to install here; a panicking dumper propagates.
-//!   Named at the site so the `domain.go` batch can decide where the
-//!   catch-unwind belongs.
+//!   `run` reproduces that with `catch_unwind` around `handle_task`.
 //! - `// boundary:` Go `logutil.BgLogger()` — dropped throughout.
 //!
 //! ## Go behaviors reproduced rather than tidied
@@ -160,11 +158,13 @@
 //!   [`DumpFileGcChecker`] takes the two together as one
 //!   [`GcStatusHook`], so that state is unrepresentable.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Mutex, RwLock};
 
 use chrono::{DateTime, Utc};
+use tidb_ast::{SelectStmt, Stmt, TableRef, Visitable as _, Visitor};
+use tidb_mysql::to_lowercase as go_simple_lowercase;
 use tidb_stats_handle_metrics::domain_metrics;
 
 use crate::replayer::PlanReplayerTaskKey;
@@ -2218,5 +2218,329 @@ mod dump_body_tests {
         let meta = build_meta_txt();
         // Go's GetTiDBInfo emits "Release Version" as its first line.
         assert!(meta.contains("Release Version"), "meta.txt head: {meta}");
+    }
+}
+
+/* `plan_replayer_dump.go`'s table-name extractor (`tableNameExtractor`,
+ * `findFK`, `handleIsView`): the AST walk that turns one statement into the
+ * full set of databases/tables the dump must carry — views keep their flag,
+ * CTE names are skipped, and foreign keys pull in the referenced tables. */
+
+/// One entry of the extractor's result: a lowercased `db.table` pair plus
+/// whether it is a view. Go `tableNamePair`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TableNamePair {
+    /// Lowercased schema name (`DBName.L`).
+    pub db_name: String,
+    /// Lowercased table name (`TableName.L`).
+    pub table_name: String,
+    /// Whether the table is a view.
+    pub is_view: bool,
+}
+
+/// The two probes the extractor makes against the info schema, mirroring
+/// `infoschema.InfoSchema`'s `TableExists` / `TableByName` + `Meta()` usage.
+pub trait ExtractSchemaSource {
+    /// Go `infoschema.TableExists`.
+    fn table_exists(&self, db: &str, table: &str) -> bool;
+    /// Go `infoschema.TableIsView`.
+    fn is_view(&self, db: &str, table: &str) -> bool;
+    /// Go `is.TableByName(...).Meta().View.SelectStmt` for a view.
+    fn view_select_stmt(&self, db: &str, table: &str) -> Option<String>;
+    /// Go `tblInfo.Meta().ForeignKeys`, as the lowercased
+    /// `(ref_schema, ref_table)` pairs.
+    fn foreign_keys(&self, db: &str, table: &str) -> Vec<(String, String)>;
+}
+
+/// Go `tne.executor.ParseWithParams(ctx, sql)` followed by
+/// `ast.Walk(node, tne)`: parse a view's SELECT and walk it with the same
+/// extractor.
+pub trait ExtractViewParser {
+    /// Parses a view's SELECT into a walkable statement.
+    ///
+    /// # Errors
+    /// Whatever the parse reports; the extractor records it and stops.
+    fn parse(&self, sql: &str) -> Result<Stmt, PlanReplayerError>;
+}
+
+/// Go `tableNameExtractor`.
+pub struct TableNameExtractor<'a> {
+    /// Go `tne.is` — the info-schema probes.
+    pub schema: &'a dyn ExtractSchemaSource,
+    /// Go `tne.executor` — parses a view's SELECT for the recursive walk.
+    pub parser: &'a dyn ExtractViewParser,
+    /// Go `tne.curDB`.
+    pub cur_db: String,
+    /// Go `tne.names`.
+    pub names: BTreeSet<TableNamePair>,
+    /// Go `tne.cteNames`.
+    pub cte_names: HashSet<String>,
+    /// Go `tne.err`.
+    pub err: Option<PlanReplayerError>,
+}
+
+impl TableNameExtractor<'_> {
+    /// Go `(*tableNameExtractor).getTablesAndViews`: views pass through,
+    /// CTE-named tables are skipped, and every foreign key pulls its
+    /// referenced table into the result.
+    pub fn get_tables_and_views(&mut self) -> Result<BTreeSet<TableNamePair>, PlanReplayerError> {
+        let mut result = BTreeSet::new();
+        for pair in std::mem::take(&mut self.names) {
+            if pair.is_view {
+                result.insert(pair);
+                continue;
+            }
+            // remove cte in table names
+            if !self.cte_names.contains(&pair.table_name) {
+                result.insert(pair.clone());
+            }
+            // if the table has a foreign key, we need to add the referenced
+            // table to the list
+            self.find_fk(&pair.db_name, &pair.table_name, &mut result)?;
+        }
+        Ok(result)
+    }
+
+    /// Go `findFK`: the recursive foreign-key walk. The visited set is the
+    /// result itself, so a table already collected stops that branch.
+    fn find_fk(
+        &self,
+        db: &str,
+        table: &str,
+        result: &mut BTreeSet<TableNamePair>,
+    ) -> Result<(), PlanReplayerError> {
+        for (ref_schema, ref_table) in self.schema.foreign_keys(db, table) {
+            let key = TableNamePair {
+                db_name: ref_schema.clone(),
+                table_name: ref_table.clone(),
+                is_view: false,
+            };
+            // Skip already visited tables to prevent infinite recursion in
+            // case of circular foreign key definitions.
+            if result.contains(&key) {
+                continue;
+            }
+            result.insert(key);
+            self.find_fk(&ref_schema, &ref_table, result)?;
+        }
+        Ok(())
+    }
+
+    /// Go `handleIsView`: for a view, parse its SELECT and walk it with this
+    /// same extractor; returns whether the table is a view.
+    fn handle_is_view(&mut self, t: &TableRef) -> Result<bool, PlanReplayerError> {
+        let (schema, table) = resolve_schema_table(t, &self.cur_db);
+        if !self.schema.is_view(&schema, &table) {
+            return Ok(false);
+        }
+        let Some(sql) = self.schema.view_select_stmt(&schema, &table) else {
+            return Ok(false);
+        };
+        let mut stmt = self.parser.parse(&sql)?;
+        stmt.accept(self);
+        Ok(true)
+    }
+}
+
+/// Go `t.Schema`/`t.Name` with the empty-schema default to the current db.
+fn resolve_schema_table(t: &TableRef, cur_db: &str) -> (String, String) {
+    match t.name.as_slice() {
+        [db, table] => (db.clone(), table.clone()),
+        [table] => (cur_db.to_owned(), table.clone()),
+        _ => (String::new(), String::new()),
+    }
+}
+
+/// Go `(*tableNameExtractor).Leave` (the `Enter` half returns `false` to
+/// walk children): TableName nodes resolve against the info schema and
+/// SelectStmt nodes contribute their CTE names.
+impl Visitor for TableNameExtractor<'_> {
+    fn enter(&mut self, _node: &mut dyn std::any::Any) -> bool {
+        false
+    }
+
+    fn leave(&mut self, node: &mut dyn std::any::Any) -> bool {
+        if self.err.is_some() {
+            return true;
+        }
+        if let Some(t) = node.downcast_ref::<TableRef>() {
+            let (schema, table) = resolve_schema_table(t, &self.cur_db);
+            let is_view = match self.handle_is_view(t) {
+                Ok(is_view) => is_view,
+                Err(error) => {
+                    self.err = Some(error);
+                    return true;
+                }
+            };
+            let schema = go_simple_lowercase(&schema);
+            let table = go_simple_lowercase(&table);
+            if self.schema.table_exists(&schema, &table) {
+                self.names.insert(TableNamePair {
+                    db_name: schema,
+                    table_name: table,
+                    is_view,
+                });
+            }
+            return true;
+        }
+        if let Some(select) = node.downcast_mut::<SelectStmt>() {
+            if let Some(with) = &select.with {
+                for cte in &with.ctes {
+                    self.cte_names.insert(go_simple_lowercase(&cte.name));
+                }
+            }
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+mod table_name_extractor_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    struct FakeSchema {
+        tables: Vec<(String, String)>,              // (db, table), lowercased
+        views: Vec<(String, String, String)>,       // (db, table, view select sql)
+        fks: Vec<(String, String, String, String)>, // (db, table, ref_db, ref_table)
+    }
+
+    impl ExtractSchemaSource for FakeSchema {
+        fn table_exists(&self, db: &str, table: &str) -> bool {
+            self.has_table(db, table)
+        }
+        fn is_view(&self, db: &str, table: &str) -> bool {
+            self.views.iter().any(|(d, t, _)| d == db && t == table)
+        }
+        fn view_select_stmt(&self, db: &str, table: &str) -> Option<String> {
+            self.views
+                .iter()
+                .find(|(d, t, _)| d == db && t == table)
+                .map(|(_, _, sql)| sql.clone())
+        }
+        fn foreign_keys(&self, db: &str, table: &str) -> Vec<(String, String)> {
+            self.fks
+                .iter()
+                .filter(|(d, t, _, _)| d == db && t == table)
+                .map(|(_, _, rd, rt)| (rd.clone(), rt.clone()))
+                .collect()
+        }
+    }
+
+    impl FakeSchema {
+        fn has_table(&self, db: &str, table: &str) -> bool {
+            self.tables.iter().any(|(d, t)| d == db && t == table)
+                || self.views.iter().any(|(d, t, _)| d == db && t == table)
+        }
+    }
+
+    /// Parses real SQL and walks it, exactly the production wiring.
+    struct RealParser;
+
+    impl ExtractViewParser for RealParser {
+        fn parse(&self, sql: &str) -> Result<Stmt, PlanReplayerError> {
+            use tidb_ast::Visitable as _;
+            tidb_parser::parse(sql)
+                .map_err(|error| PlanReplayerError::Other(error.compatibility_message(sql)))
+        }
+    }
+
+    /// Adapts `&mut dyn Visitor` into the AST walker's visitor argument.
+    fn stmt_visit<'a>(visitor: &'a mut (dyn Visitor)) -> StmtWalk<'a> {
+        StmtWalk(visitor)
+    }
+
+    struct StmtWalk<'a>(&'a mut (dyn Visitor));
+
+    impl Visitor for StmtWalk<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            self.0.enter(node)
+        }
+        fn leave(&mut self, node: &mut dyn std::any::Any) -> bool {
+            self.0.leave(node)
+        }
+    }
+
+    fn extractor<'a>(
+        schema: &'a FakeSchema,
+        parser: &'a RealParser,
+        cur_db: &str,
+    ) -> TableNameExtractor<'a> {
+        TableNameExtractor {
+            schema,
+            parser,
+            cur_db: cur_db.to_owned(),
+            names: BTreeSet::new(),
+            cte_names: HashSet::new(),
+            err: None,
+        }
+    }
+
+    fn walk_sql(schema: &FakeSchema, sql: &str) -> BTreeSet<TableNamePair> {
+        let parser = RealParser;
+        let mut extractor = extractor(schema, &parser, "db1");
+        let mut stmt = tidb_parser::parse(sql).unwrap();
+        stmt.accept(&mut extractor);
+        extractor.get_tables_and_views().unwrap()
+    }
+
+    #[test]
+    fn names_views_and_follows_foreign_keys() {
+        let schema = FakeSchema {
+            tables: vec![
+                ("db1".to_owned(), "t1".to_owned()),
+                ("db1".to_owned(), "t2".to_owned()),
+                ("db2".to_owned(), "t3".to_owned()),
+            ],
+            views: vec![(
+                "db1".to_owned(),
+                "v1".to_owned(),
+                "select * from db2.t3".to_owned(),
+            )],
+            fks: vec![(
+                "db1".to_owned(),
+                "t2".to_owned(),
+                "db2".to_owned(),
+                "t3".to_owned(),
+            )],
+        };
+        let result = walk_sql(&schema, "select * from db1.v1, db1.t2");
+        assert_eq!(result.len(), 3);
+        assert!(result.contains(&TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "v1".to_owned(),
+            is_view: true
+        }));
+        assert!(result.contains(&TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t2".to_owned(),
+            is_view: false
+        }));
+        // The view's body pulls in db2.t3 through the recursive walk.
+        assert!(result.contains(&TableNamePair {
+            db_name: "db2".to_owned(),
+            table_name: "t3".to_owned(),
+            is_view: false
+        }));
+    }
+
+    #[test]
+    fn cte_names_are_skipped() {
+        let schema = FakeSchema {
+            tables: vec![("db1".to_owned(), "t1".to_owned())],
+            views: vec![],
+            fks: vec![],
+        };
+        let result = walk_sql(
+            &schema,
+            "with c as (select * from db1.t1) select * from c, db1.t1",
+        );
+        // The CTE reference `c` is skipped; the real table stays.
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&TableNamePair {
+            db_name: "db1".to_owned(),
+            table_name: "t1".to_owned(),
+            is_view: false
+        }));
     }
 }

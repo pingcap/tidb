@@ -49,3 +49,13 @@ Audit of Go `pkg/domain/{topn_slow_query,historical_stats,plan_replayer}.go`
 
 - `cargo test -p tidb-domain` (143 pass), `cargo fmt`, `git diff --check`,
   `make lint`.
+
+## Follow-up: the table-name extractor is ported
+
+`tableNameExtractor` + `findFK` + `handleIsView` land as
+`TableNameExtractor` (+ `ExtractSchemaSource` / `ExtractViewParser`
+seams): the AST walk collects `db.table` pairs, skips CTE references,
+keeps the view flag, follows foreign keys recursively with a
+visited-set guard, and re-parses+walks a view's SELECT through the same
+extractor. Real-SQL tests: view recursion pulls the referenced table,
+CTE references are skipped, FKs pull in their tables.
