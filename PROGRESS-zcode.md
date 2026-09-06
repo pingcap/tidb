@@ -799,3 +799,5 @@
 - 下轮恢复点: (1) dump 剩余: presign/tiflash-replica/stats-mem/主装配 DumpPlanReplayerInfo; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
 - dump 切片批: presign 三件套落地 (PLAN_REPLAYER_PRESIGN_EXPIRE 1h + PresignSource seam + setTaskPresignedURL/generateRecords), capture 跳过 presign、失败仅记录、每语句一条 status 记录 (token=文件名)。1 测试钉 capture 跳过/presign 路径/逐语句记录。replayer.rs 的 DIR_NAME 常量改 crate 可见。153 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。
 - 下轮恢复点: (1) dump 剩余: tiflash-replica/stats-mem/主装配 DumpPlanReplayerInfo; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
+- dump 切片批: tiflash-replica 文件体 (TiFlashReplicaSource seam + db\ttable\tcount 行) 与 schema-meta 文件体 (db.table; 排序拼接) 落地, 2 测试钉住行格式与排序。155 测试全绿; fmt; diff-check; make lint 过。已推送 (LANDED_1)。
+- 下轮恢复点: (1) dump 剩余: stats-mem/stats 文件体与主装配 DumpPlanReplayerInfo; (2) 只读收敛核查或新面; (3) F2/F3-seam live 阻塞; (4) dbsid 分叉待协调。
