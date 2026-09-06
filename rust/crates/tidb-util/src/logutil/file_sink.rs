@@ -99,7 +99,9 @@ impl RotatingFile {
             path: path.to_path_buf(),
             file: Some(file),
             size,
-            max_size_mb: if max_size_mb <= 0 { 100 } else { max_size_mb },
+            // Go `DefaultLogMaxSize = 300` (MB): an unset max-size falls
+            // back to 300, not lumberjack's own 100.
+            max_size_mb: if max_size_mb <= 0 { 300 } else { max_size_mb },
             max_backups,
             max_days,
             compress,

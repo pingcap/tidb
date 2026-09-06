@@ -63,9 +63,11 @@ impl Level {
         }
     }
 
-    /// Parses zap's lowercase level spelling.
+    /// Parses zap's level spelling. zapcore's `UnmarshalText` accepts the
+    /// empty string as info and is case-insensitive.
     pub fn parse(value: &str) -> Result<Self, String> {
-        match value {
+        match value.to_ascii_lowercase().as_str() {
+            "" => Ok(Self::Info),
             "debug" => Ok(Self::Debug),
             "info" => Ok(Self::Info),
             "warn" => Ok(Self::Warn),

@@ -662,7 +662,14 @@ impl FileSink {
 
     fn rotate(&self, state: &mut FileSinkState) -> io::Result<()> {
         state.sequence += 1;
-        let rotated = PathBuf::from(format!("{}.{}", self.filename.display(), state.sequence));
+        // lumberjack names backups `<base>-<local timestamp><ext>` in the
+        // `2006-01-02T15-04-05.000` format, and retention keys on that
+        // parsed timestamp rather than file mtime.
+        let timestamp = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S%.3f");
+        let (stem, ext) = split_ext(&self.filename);
+        let rotated = self
+            .filename
+            .with_file_name(format!("{stem}-{timestamp}{ext}"));
         fs::rename(&self.filename, &rotated)?;
         if self.compress {
             let gzip_path = PathBuf::from(format!("{}.gz", rotated.display()));
@@ -677,48 +684,75 @@ impl FileSink {
     }
 
     fn cleanup_backups(&self) -> io::Result<()> {
+        // lumberjack only ever counts `<base>-<timestamp><ext>[.gz]` files
+        // as backups, ordered by the PARSED timestamp (unparsable names are
+        // the oldest), never sibling files that merely share the prefix.
         let parent = self.filename.parent().unwrap_or_else(|| Path::new("."));
         let base = self
             .filename
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
-        let mut backups: Vec<_> = fs::read_dir(parent)?
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with(&format!("{base}.")))
+        let (stem, ext) = split_ext(&self.filename);
+        let prefix = format!("{stem}-");
+        let mut backups: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
+        for entry in fs::read_dir(parent)?.filter_map(Result::ok) {
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            let Some(stamped) = name
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.strip_suffix(ext.as_str()))
+                .map(|rest| rest.strip_suffix(".gz").unwrap_or(rest))
+            else {
+                continue;
+            };
+            let stamp = chrono::NaiveDateTime::parse_from_str(stamped, "%Y-%m-%dT%H-%M-%S%.f")
+                .map_or(chrono::DateTime::<chrono::Utc>::MIN_UTC, |naive| {
+                    use chrono::TimeZone as _;
+                    chrono::Local
+                        .from_local_datetime(&naive)
+                        .single()
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Utc)
+                });
+            backups.push((name.to_owned(), stamp));
+        }
+        backups.sort_by_key(|(_, stamp)| *stamp);
+        let cutoff = (self.max_days > 0)
+            .then(|| {
+                chrono::Local::now()
+                    .with_timezone(&chrono::Utc)
+                    .checked_sub_signed(chrono::Duration::days(self.max_days))
             })
-            .collect();
-        backups.sort_by_key(|entry| {
-            std::cmp::Reverse(
-                entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .unwrap_or(SystemTime::UNIX_EPOCH),
-            )
-        });
-        let expiry = (self.max_days > 0).then(|| {
-            SystemTime::now()
-                .checked_sub(Duration::from_secs(self.max_days as u64 * 24 * 60 * 60))
-                .unwrap_or(SystemTime::UNIX_EPOCH)
-        });
-        for (index, entry) in backups.into_iter().enumerate() {
-            let too_many = self.max_backups > 0 && index >= self.max_backups as usize;
-            let too_old = expiry.is_some_and(|expiry| {
-                entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .map(|modified| modified < expiry)
-                    .unwrap_or(false)
-            });
+            .flatten();
+        let keep = if self.max_backups > 0 {
+            self.max_backups as usize
+        } else {
+            usize::MAX
+        };
+        for (index, (name, stamp)) in backups.iter().enumerate() {
+            let too_many = index + keep < backups.len();
+            let too_old = cutoff.is_some_and(|cutoff| *stamp < cutoff);
             if too_many || too_old {
-                fs::remove_file(entry.path())?;
+                fs::remove_file(parent.join(name))?;
             }
         }
+        let _ = base;
         Ok(())
+    }
+}
+
+/// Go `filepath.Ext` split: `(stem, ".ext")` for a log path.
+fn split_ext(path: &Path) -> (String, String) {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    match name.rfind('.') {
+        Some(index) => (name[..index].to_owned(), name[index..].to_owned()),
+        None => (name.to_owned(), String::new()),
     }
 }
 
