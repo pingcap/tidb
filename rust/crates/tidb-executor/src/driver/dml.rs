@@ -3215,6 +3215,24 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
     physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
+    // Go's `PlanBuilder.buildDelete` resolves the target and refuses a view or
+    // sequence before it builds the read child.  A sequence is not a row
+    // source, so letting the physical planner inspect it first would turn the
+    // intended plain 1105 refusal into a misleading 1146 unknown-table error.
+    // Keep this preflight limited to known read-only objects; ordinary table
+    // and missing-table ordering remains owned by the existing planner path.
+    if let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind {
+        let (database, name) = single_table_name(table_ref, current_db)?;
+        match catalog.get_in(&database, &name) {
+            Some(TableEntry::View(_)) => {
+                return Err(DriverError::DeleteViewUnsupported(name));
+            }
+            Some(TableEntry::Sequence(_)) => {
+                return Err(DriverError::DeleteSequenceUnsupported(name));
+            }
+            _ => {}
+        }
+    }
     let source = delete_source_query(delete);
     let mut fresh = physical_plan
         .is_none()

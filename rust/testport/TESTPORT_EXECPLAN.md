@@ -255,6 +255,12 @@ For each bounded behavior cluster:
   control, and the 1138 stored-NULL-to-`NOT NULL` error; all 14 focused tests
   pass. Evidence and source boundaries are recorded in
   `receipts/ddl_modify_column_pk_handle.md`.
+- 2026-09-06 (`pkg/ddl` sequence DELETE target): rechecked the complete
+  sequence owner inventory and moved sequence/view writability checks ahead of
+  DELETE physical-child construction, matching Go's plain 1105
+  `delete sequence ... is not supported now` contract instead of the prior
+  1146 row-source error. The focused session sequence regression now covers
+  both INSERT and DELETE refusals; evidence is recorded in `receipts/b110.md`.
 - 2026-09-05 (`pkg/ddl` sequence cache bounds): promoted the previously
   ignored `GetSequenceBaseEndRound` contract. The existing non-mutating Rust
   `SequenceAllocator::base_end_round` accessor is now exercised through the
