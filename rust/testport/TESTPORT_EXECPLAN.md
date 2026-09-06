@@ -217,6 +217,13 @@ For each bounded behavior cluster:
   schema `CREATE` grant and succeeds after the positive control grant; the
   empty executor `#[ignore]` placeholder was removed and b110 records the
   cross-crate owner inventory.
+- 2026-09-06 (`pkg/ddl` sequence wrong-object session expectation): rechecked
+  the complete `pkg/ddl`/`pkg/session` Go owner inventory and corrected the
+  stale Rust session assertion for an existing table passed to `NEXTVAL`.
+  Go distinguishes missing names (1146) from existing non-sequences (1347);
+  Rust production already matched 1347, so the fix removes only the
+  Rust-only test expectation and records the focused session regression in
+  `receipts/b110.md`.
 - 2026-09-05 (`pkg/ddl` sequence cache bounds): promoted the previously
   ignored `GetSequenceBaseEndRound` contract. The existing non-mutating Rust
   `SequenceAllocator::base_end_round` accessor is now exercised through the
