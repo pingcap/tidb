@@ -48,3 +48,12 @@ out of scope.
   `client::InProcessClient` (verified identical with and without this
   batch's changes); the lib itself compiles clean.
 - `cargo fmt`, `git diff --check`, `make lint`.
+
+## Follow-up (same session)
+
+The pre-existing lib-test compile break is resolved: `InProcessClient` now
+implements `SynchronousBatchRequestDispatcher` (in-process coprocessor
+dispatch; address/forwarding irrelevant, cancellation short-circuits via
+`CallerCancelled`), completing the glue the sibling distsql realignment
+needed from this crate. `cargo test -p tidb-unistore --lib`: 114 tests
+pass — this suite was entirely unrunnable before the impl.
