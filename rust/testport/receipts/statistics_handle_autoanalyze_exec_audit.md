@@ -1,7 +1,9 @@
 # `pkg/statistics/handle/autoanalyze/exec` package audit
 
-Reference: TiDB Go commit
+Historical reference: TiDB Go commit
 `e2788410d8d696605e8cb002585877a063ccc909`.
+Current Go source rechecked at
+`f2c346fe4f368ff855e17c1f62e28a89ba7f9723`.
 
 ## Complete Go inventory
 
@@ -82,3 +84,55 @@ failure in this package receipt.
 
 No Go or Bazel source changed, so `make bazel_prepare` was not required. This
 is a WIP package audit, not a repository-wide Ready parity claim.
+
+## Follow-up: discardable auto-analyze returns (2026-09-06)
+
+The complete three-artifact, 387-line Go package was re-read at current
+`origin/master` `f2c346fe4f368ff855e17c1f62e28a89ba7f9723`; it remains
+byte-identical to the historical reference. The package contains the 157-line
+production implementation, its 184-line three-test integration file, and a
+46-line BUILD target. There is no `doc.go`, fixture, generated input/output,
+benchmark, fuzz target, example, or platform/build-tag variant. Every Go
+function and test was inventoried, and all direct Rust call sites in the
+priority-queue, refresher, and server owners were checked.
+
+The complete Rust owner is the single 617-line `src/lib.rs` plus its manifest.
+Its five pre-existing native tests cover the Go execution, legacy-version
+rewrite, interruption/window, panic recovery, and parameter-parser behavior.
+
+Go permits callers to discard `AutoAnalyze` and `ParseAutoAnalyzeRatio`; Rust's
+direct `auto_analyze` and `parse_auto_analyze_ratio` counterparts instead
+emitted two `unused_must_use` diagnostics. The annotations were removed
+without changing analyze options, process tracking/release, metrics, warning
+logging, panic recovery, or ratio parsing. A focused executable regression
+invokes both APIs under `#[deny(unused_must_use)]`; it failed before the
+implementation edit with exactly two diagnostics and passes afterward.
+
+Ready validation for this follow-up (Rust scope, per the request to skip Go
+code execution):
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-stats-handle-autoanalyze-exec --lib source_return_values_may_be_ignored_like_go --offline --locked -- --nocapture
+PASS; 1 passed, 0 failed.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml -p tidb-stats-handle-autoanalyze-exec --offline --locked -- --test-threads=1
+PASS; 6 unit tests passed, 0 failed; doc tests had 0 tests.
+
+OPENSSL_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target/debug/build/openssl-sys-e4f1dd7465974733/out/openssl-build/install OPENSSL_STATIC=1 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb/rust/target cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml -p tidb-stats-handle-autoanalyze-exec --all-targets --offline --locked
+PASS; pre-existing dependency warnings remain outside this crate.
+
+cargo +nightly-2026-08-22 fmt --manifest-path rust/Cargo.toml --all -- --check
+PASS.
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+PASS.
+
+git diff --check
+PASS.
+```
+
+Only Rust source/tests and parity documentation changed. No Go, Bazel, Cargo
+metadata, or module dependency changed, so `make bazel_prepare` is not
+required. The Go tests and live server integration were not rerun, per the
+Rust-only scope; the complete Rust owner suite and all-target check cover the
+changed caller contract.

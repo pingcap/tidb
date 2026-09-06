@@ -41,6 +41,14 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/statistics/handle/autoanalyze/exec` API return contracts):
+  the complete three-artifact, 387-line Go package, single-file Rust owner,
+  and direct priority-queue/refresher/server callers were rechecked at current
+  Go master. `auto_analyze` and `parse_auto_analyze_ratio` no longer emit two
+  Rust-only `#[must_use]` diagnostics. The focused executable regression failed
+  with exactly two diagnostics before the edit and passes afterward; all six
+  owner tests, all-target check, formatting, lint, and diff gates pass.
+  Evidence is recorded in `receipts/statistics_handle_autoanalyze_exec_audit.md`.
 - 2026-09-06 (`pkg/statistics/handle/cache/internal/mapcache` API return
   contracts): the complete two-artifact, 151-line Go package, two-file Rust
   owner, native tests, and direct parent-cache consumers were rechecked at

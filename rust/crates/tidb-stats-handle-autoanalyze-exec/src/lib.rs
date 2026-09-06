@@ -192,7 +192,6 @@ pub fn run_analyze_stmt<C: AutoAnalyzeSessionContext + ?Sized>(
 }
 
 /// Go `AutoAnalyze`.
-#[must_use]
 pub fn auto_analyze<C: AutoAnalyzeSessionContext + ?Sized>(
     context: &C,
     generator: &dyn AutoAnalyzeProcIdGenerator,
@@ -271,7 +270,6 @@ pub fn get_auto_analyze_parameters<C: AutoAnalyzeSessionContext + ?Sized>(
 }
 
 /// Go `ParseAutoAnalyzeRatio`.
-#[must_use]
 pub fn parse_auto_analyze_ratio(ratio: &str) -> f64 {
     ratio
         .parse::<f64>()
@@ -492,6 +490,33 @@ mod tests {
             "analyze table %n partition %n",
             &[SqlArg::from("pt"), SqlArg::from("p0")],
         ));
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn source_return_values_may_be_ignored_like_go() {
+        let restricted = Arc::new(MockRestrictedSqlExecutor::new());
+        restricted
+            .expect()
+            .exec_restricted_sql(|_, _, _, _| Ok((Vec::new(), Vec::new())));
+        let context = Context::new(restricted);
+        let generator = Generator::new(|| 45, |_| {});
+        let (track, untrack) = callbacks(
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(Mutex::new(Vec::new())),
+        );
+
+        auto_analyze(
+            &context,
+            &generator,
+            track,
+            untrack,
+            2,
+            false,
+            "analyze table %n",
+            &[SqlArg::from("t")],
+        );
+        parse_auto_analyze_ratio("0.5");
     }
 
     #[test]
