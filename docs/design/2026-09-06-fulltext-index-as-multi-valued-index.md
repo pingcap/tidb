@@ -110,11 +110,16 @@ fewer rows with the index than without it:
 
 ### Trying it by hand
 
-Two files accompany this work, and both are verified by execution rather than
-written from expectation:
+`2026-09-06-fulltext-index-as-multi-valued-index.sql`, beside this document, is
+a runnable script covering every case below. Every statement in it has been
+executed, and the two in its "definitions that are refused" section are the only
+ones that error:
 
-- `fts-mvindex-examples.sql` — a runnable script covering every case below.
-- `fts-mvindex-walkthrough.md` — a narrative walkthrough with real output.
+```
+make && ./bin/tidb-server
+mysql -h 127.0.0.1 -P 4000 -u root \
+  < docs/design/2026-09-06-fulltext-index-as-multi-valued-index.sql
+```
 
 Setup:
 
