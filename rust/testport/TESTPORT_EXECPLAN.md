@@ -9429,3 +9429,10 @@ risks without claiming repository-wide parity.
   diagnostics before the annotation removal and pass afterward; the complete
   13-test aggregate, all-target check, and Ready evidence are recorded in
   `receipts/util_schemacmp.md`.
+- 2026-09-06 (`pkg/util/workloadrepo` return-contract parity): Rust's
+  workload-repository owner no longer marks five Go-shaped table, partition,
+  worker-constructor, or worker-status APIs as `#[must_use]`. A focused
+  `deny(unused_must_use)` probe failed with exactly five diagnostics before
+  the annotation removal and passes afterward; the complete 15-test aggregate,
+  all-target check, standalone rustfmt, and Ready evidence are recorded in
+  `receipts/util_workloadrepo.md`.
