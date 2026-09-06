@@ -91,9 +91,10 @@ batch under `rust/docs/go-physical-plan-parity-execplan.md`.
     # sits inside CachedSelectPlan::bind's
     # rebuild_plan_for_cache_in_place for the ABS-bearing selection (the
     # in-place marker install reaches function arguments through the AST
-    # visitor). Next probe: which rebuild arm errors — the ranger's
-    # build_table_range over eq(col, ABS(installed-marker)) or
-    # range_is_safe — then fix that arm to fold the installed value the way
-    # Go's rebuild ranger folds constant-foldable functions.
+    # visitor). Next probe: whether PointBuilder::build evaluates a
+    # ScalarFunction-of-installed-marker to a range point at all (vs leaving
+    # the condition to remained_conds, which then trips range_is_safe's
+    # full-range comparison) — the fix is teaching that value extraction to
+    # fold the installed constant the way Go's rebuild ranger does.
 
 No Go file changed; the Bazel gate is not required.
