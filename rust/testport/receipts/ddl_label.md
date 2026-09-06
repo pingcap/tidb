@@ -1,6 +1,11 @@
 # `pkg/ddl/label` package receipt
 
-Pinned source: `e2788410d8d696605e8cb002585877a063ccc909`.
+Pinned source: `e2788410d8d696605e8cb002585877a063ccc909`; re-pinned against
+the repository Go tree tip 2026-09-06. The only drift since the original pin
+is `rule_test.go`'s keyspace-codec construction picking up the protobuf
+`KeyspaceMeta.Keyspace` wrapper — test-harness mechanics with no behavior
+contract change; production `rule.go`/`attributes.go`/`errors.go` blobs are
+unchanged.
 
 ## Complete package inventory
 
@@ -12,7 +17,7 @@ Pinned source: `e2788410d8d696605e8cb002585877a063ccc909`.
 | `errors.go` | 22 | `430a767b9a43c512822b664a1f41ba1fd5d202f9` | `LabelError::InvalidAttributesFormat` and its source message |
 | `main_test.go` | 34 | `aa8bef08d69a68cc2f849c59d747445ef1734a7a` | Go goleak/test-suite harness only; Rust has no package-owned worker or harness behavior to reproduce |
 | `rule.go` | 220 | `10904faa06d1059a600863579e9a5d80af299d6b` | `Rule`, `RegionLabel`, codec boundary, rule IDs, reset, JSON string/wire shape, clone, and patch construction |
-| `rule_test.go` | 157 | `1aceddb13ed5d11f1d255e167df4d2f21fc7bf2f` | `ddl_label::tests`, plus the `tidb-exec` exchange-patch and PD HTTP delivery regressions |
+| `rule_test.go` | 157 | `1a204cbd412ad9307cd936b9dfe04aa2a90057f6` | `ddl_label::tests`, plus the `tidb-exec` exchange-patch and PD HTTP delivery regressions |
 
 There is no package doc, generated source/input, fixture, benchmark, fuzz target,
 platform file, or build-tagged source in the pinned directory. Kernel branching
