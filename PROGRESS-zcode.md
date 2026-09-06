@@ -639,3 +639,8 @@
   推送: 0ea2f081fb4..2fbeaf07820 origin/hparser-integration。附带核验 tidb-naming (与 Go naming.go 逐字一致含 regexp 边界, 无需改动)。
   dbsid 分叉维持暂挂 (见上条)。
 - 下轮恢复点: (1) 新面候选: tidb-ttl/pkg-disttask/dxf 大面, 或 infoschema 深层; (2) 兄弟增量收敛核查; (3) F2/F3-seam live 阻塞; (4) DST 排队; (5) dbsid 分叉待协调。
+- 新面批次 3: tidb-stmtsummary (Go pkg/util/stmtsummary + v2 @ a85e0fd5df) 全包审计。修复 1 项 behavior-breaking:
+  当前 STATEMENTS_SUMMARY_EVICTED 汇总行在区间轮转后仍暴露 (Go reader.go:214-220 懒过期语义) —— get_stmt_evicted_other_row 增加 begin_time 过滤。pre-fix 失败基线: 移植 Go 回归 TestCurrentRowsExcludePreviousIntervalEvictedOther 先失败 (暴露上轮汇总行) 后通过。52 测试全绿; fmt; diff-check; make lint 过。
+  收据 rust/docs/stmtsummary-parity-audit.md。推送 40e4683e9a6..946f43d3fbb origin/hparser-integration。
+  开放项 (feature 级, 未认领): (1) v2/reader.go 951 行未移植 (MemReader/HistoryReader/持久日志扫描, persistent 模式无读路径, 见 src/lib.rs 与 src/v2/mod.rs 头注); (2) v2/logger.go 轮转未移植 (FileStmtLogWriter append-only, file_max_size/days/backups 空挂, persistent 模式应保持关闭)。其余 narrowing (UTC 时区渲染/UTF-8 截断边界/proxy 饱和转换) 已记录收据。
+- 下轮恢复点: (1) stmtsummary 开放项 v2 reader/logger 移植 (大批次); (2) 新面候选 tidb-ttl/dxf; (3) 兄弟增量收敛核查; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
