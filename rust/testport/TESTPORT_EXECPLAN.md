@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-06 (`pkg/meta/model/index` return contracts): the complete
+  23-artifact, 10,721-line model package and full index owner were re-read at
+  current Go master, including all tests and BUILD metadata and the absence of
+  fixtures/generated/platform variants. Twenty-five direct Go-shaped index
+  `#[must_use]` annotations were removed; six Rust ownership/equality
+  adapters remain. The focused regression failed pre-fix with exactly 25
+  diagnostics and passes after the edit. Evidence is recorded in
+  `receipts/meta_model_materialized_view.md` and
+  `docs/operations/meta-model-index-audit-execplan.md`.
 - 2026-09-06 (`pkg/ttl/cache` return contracts): the complete 13-artifact,
   3,572-line cache package and full Rust owner were re-read at current Go
   master, including every test/build artifact and the absence of fixtures,
