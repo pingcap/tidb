@@ -1136,6 +1136,52 @@ fn go_float_display(value: f64) -> String {
     }
 }
 
+/// Go's `getValidFloatPrefix`: the longest leading prefix that scans as an
+/// optional-signed integer, decimal or exponent form. `None` when the
+/// prefix carries no digit at all (Go answers 0 with a truncation warning).
+fn numeric_prefix(text: &str, allow_float: bool) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut end = 0;
+    if end < chars.len() && (chars[end] == '+' || chars[end] == '-') {
+        end += 1;
+    }
+    let mut digits = 0;
+    while end < chars.len() && chars[end].is_ascii_digit() {
+        end += 1;
+        digits += 1;
+    }
+    let mut fraction = 0;
+    if allow_float && end < chars.len() && chars[end] == '.' {
+        let mut peek = end + 1;
+        while peek < chars.len() && chars[peek].is_ascii_digit() {
+            peek += 1;
+            fraction += 1;
+        }
+        if fraction > 0 {
+            end = peek;
+            digits += fraction;
+        }
+    }
+    if digits == 0 {
+        return None;
+    }
+    if allow_float && end < chars.len() && (chars[end] == 'e' || chars[end] == 'E') {
+        let mut exp_end = end + 1;
+        if exp_end < chars.len() && (chars[exp_end] == '+' || chars[exp_end] == '-') {
+            exp_end += 1;
+        }
+        let mut exp_digits = 0;
+        while exp_end < chars.len() && chars[exp_end].is_ascii_digit() {
+            exp_end += 1;
+            exp_digits += 1;
+        }
+        if exp_digits > 0 {
+            end = exp_end;
+        }
+    }
+    Some(chars[..end].iter().collect())
+}
+
 /// The datum a leaf answers for one row: the column value, or the literal.
 fn eval_datum(
     expr: &SimpleExpr,
@@ -1614,6 +1660,15 @@ pub enum SimpleSig {
     CastRealAsInt,
     /// See [`SimpleSig::CastIntAsInt`].
     CastDecimalAsInt,
+    /// `CastStringAsInt`/`CastStringAsReal`: Go's best-effort prefix
+    /// conversion (`StrToInt`/`StrToFloat64`) -- trim, take the longest
+    /// valid numeric prefix, garbage answers 0. The companion truncation
+    /// and range warnings have no coprocessor sink; a range overflow
+    /// saturates to the BIGINT/DOUBLE bound (the non-strict SELECT
+    /// observable), not an error.
+    CastStringAsInt,
+    /// See [`SimpleSig::CastStringAsInt`].
+    CastStringAsReal,
     /// `CastIntAsReal`/`CastRealAsReal`/`CastDecimalAsReal`: widening to
     /// binary64 (`AS REAL`); a bare cast answers its own truth.
     CastIntAsReal,
@@ -1784,6 +1839,8 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::CastIntAsReal => SimpleSig::CastIntAsReal,
             tipb::ScalarFuncSig::CastRealAsReal => SimpleSig::CastRealAsReal,
             tipb::ScalarFuncSig::CastDecimalAsReal => SimpleSig::CastDecimalAsReal,
+            tipb::ScalarFuncSig::CastStringAsInt => SimpleSig::CastStringAsInt,
+            tipb::ScalarFuncSig::CastStringAsReal => SimpleSig::CastStringAsReal,
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             // Go reads the comparison's collation off the `ScalarFunc`'s own
             // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
@@ -1928,12 +1985,16 @@ fn eval_real(expr: Option<&SimpleExpr>, row: &[tidb_datatype::Datum]) -> Option<
             | SimpleSig::DivideReal
             | SimpleSig::CastIntAsReal
             | SimpleSig::CastDecimalAsReal
-            | SimpleSig::CastRealAsReal),
+            | SimpleSig::CastRealAsReal
+            | SimpleSig::CastStringAsReal),
             children,
         ) => {
             if matches!(
                 sig,
-                SimpleSig::CastIntAsReal | SimpleSig::CastDecimalAsReal | SimpleSig::CastRealAsReal
+                SimpleSig::CastIntAsReal
+                    | SimpleSig::CastDecimalAsReal
+                    | SimpleSig::CastRealAsReal
+                    | SimpleSig::CastStringAsReal
             ) {
                 // Go wraps the operand in the cast signature; the widening
                 // itself is exact for the admitted source kinds.
@@ -1947,6 +2008,24 @@ fn eval_real(expr: Option<&SimpleExpr>, row: &[tidb_datatype::Datum]) -> Option<
                     }
                     SimpleSig::CastDecimalAsReal => {
                         Some(eval_decimal(children.first(), row)?.to_f64())
+                    }
+                    SimpleSig::CastStringAsReal => {
+                        let raw = eval_bytes(children.first(), row)?;
+                        let text = String::from_utf8_lossy(&raw);
+                        let Some(prefix) = numeric_prefix(text.trim_start(), true) else {
+                            return Some(0.0);
+                        };
+                        let parsed = prefix.parse::<f64>().unwrap_or(f64::NAN);
+                        // `strconv.ParseFloat` range saturation: ±MaxFloat64.
+                        Some(if parsed.is_infinite() {
+                            if parsed > 0.0 {
+                                f64::MAX
+                            } else {
+                                f64::MIN
+                            }
+                        } else {
+                            parsed
+                        })
                     }
                     _ => eval_real(children.first(), row),
                 };
@@ -2241,6 +2320,34 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Result<Opti
                         ));
                     }
                     Some(i128::from(truncated))
+                }
+                SimpleSig::CastStringAsInt => {
+                    // Go `StrToInt`: best-effort prefix conversion; the
+                    // truncation warning has no coprocessor sink, garbage
+                    // answers 0 and the range saturates to the BIGINT bound
+                    // (the non-strict SELECT observable).
+                    let Some(raw) = eval_bytes(children.first(), row) else {
+                        return Ok(None);
+                    };
+                    let text = String::from_utf8_lossy(&raw);
+                    let Some(prefix) = numeric_prefix(text.trim_start(), false) else {
+                        return Ok(Some(0));
+                    };
+                    let value = prefix.parse::<i64>().unwrap_or_else(|_| {
+                        if prefix.starts_with('-') {
+                            i64::MIN
+                        } else {
+                            i64::MAX
+                        }
+                    });
+                    Some(i128::from(value))
+                }
+                SimpleSig::CastStringAsReal => {
+                    // A bare AS REAL cast answers its own truth; the value
+                    // flows through `eval_real`'s composition arm.
+                    eval_real(Some(expr), row)
+                        .filter(|value| !value.is_nan())
+                        .map(|value| i128::from(value != 0.0))
                 }
                 SimpleSig::CastIntAsInt => child(0)?,
                 SimpleSig::CastIntAsReal
@@ -3904,5 +4011,57 @@ mod tests {
         let widened = SimpleExpr::Func(SimpleSig::CastIntAsReal, vec![SimpleExpr::Column(0)]);
         let condition = SimpleExpr::Func(SimpleSig::GtReal, vec![widened, SimpleExpr::Real(4.5)]);
         assert_eq!(eval_expr(&condition, &row).expect("evals"), Some(1));
+    }
+
+    #[test]
+    fn string_casts_follow_go_prefix_conversion() {
+        use tidb_datatype::Datum;
+        let cast_int = |text: &str| {
+            eval_expr(
+                &SimpleExpr::Func(
+                    SimpleSig::CastStringAsInt,
+                    vec![SimpleExpr::Bytes(text.as_bytes().to_vec())],
+                ),
+                &[],
+            )
+            .expect("evals")
+        };
+        // `StrToInt`: the longest valid integer prefix, best-effort.
+        assert_eq!(cast_int("123abc"), Some(123));
+        assert_eq!(cast_int("  -42xyz"), Some(-42));
+        assert_eq!(cast_int("abc"), Some(0));
+        // Range saturates to the BIGINT bound (non-strict observable).
+        assert_eq!(cast_int("99999999999999999999"), Some(i128::from(i64::MAX)));
+
+        let cast_real = |text: &str| {
+            eval_expr(
+                &SimpleExpr::Func(
+                    SimpleSig::CastStringAsReal,
+                    vec![SimpleExpr::Bytes(text.as_bytes().to_vec())],
+                ),
+                &[],
+            )
+            .expect("evals")
+        };
+        // `StrToFloat64`: prefix parses as binary64, composed with a REAL
+        // comparison the way a pushed condition arrives.
+        let condition = SimpleExpr::Func(
+            SimpleSig::GtReal,
+            vec![
+                SimpleExpr::Func(
+                    SimpleSig::CastStringAsReal,
+                    vec![SimpleExpr::Bytes(b"1.5e3x".to_vec())],
+                ),
+                SimpleExpr::Real(100.0),
+            ],
+        );
+        assert_eq!(eval_expr(&condition, &[]), Ok(Some(1)));
+        // Garbage answers 0 through the same channel.
+        let garbage = SimpleExpr::Func(
+            SimpleSig::CastStringAsReal,
+            vec![SimpleExpr::Bytes(b"none".to_vec())],
+        );
+        assert_eq!(eval_expr(&garbage, &[]), Ok(Some(0)));
+        let _ = cast_real("ignored-in-favour-of-the-composed-form");
     }
 }

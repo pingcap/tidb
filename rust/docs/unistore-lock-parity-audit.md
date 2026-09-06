@@ -408,3 +408,20 @@ Go `builtinCast*` semantics:
 Regressions: `real_cast_rounds_then_checks_range` (2.5 -> 3, -2.5 -> -3,
 9.3e18 overflow text) and `real_cast_composes_as_a_comparison_operand`
 (widened column under `GTReal`).
+
+## Coprocessor string CAST family (2026-09-07, same session)
+
+`CastStringAsInt` 30 / `CastStringAsReal` 31 land with Go's best-effort
+prefix conversion (`StrToInt`/`StrToFloat64`): trim, take the longest
+valid numeric prefix (`getValidIntPrefix`/float scanner -- sign, integer
+digits, optional fraction and exponent for the real form), garbage
+answers 0, and a range overflow saturates to the BIGINT/DOUBLE bound.
+The companion truncation/range warnings have no coprocessor sink; strict
+mode's error-instead-of-clamp is likewise not modeled -- both documented
+narrowings of the mock tier. `CastStringAsReal` composes as a REAL
+comparison operand and answers its own truth as a bare condition,
+joining the real family's composition arms.
+
+Regression: `string_casts_follow_go_prefix_conversion` (123abc -> 123,
+-42xyz -> -42, garbage -> 0, BIGINT saturation, and the composed
+`CastStringAsReal` under `GTReal`).
