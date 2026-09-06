@@ -181,3 +181,37 @@ returns under `#[deny(unused_must_use)]`. Before the source edit, the focused
 compile failed with exactly seven `unused_must_use` diagnostics; after it, the
 test passes. The full 323-test `tidb-model` owner suite and all-target check
 also pass. No Go or dependency file changed.
+
+## Corrective Rust return-contract alignment — `index.go` (2026-09-06)
+
+Commit `8d42bcc7035` reintroduced 25 `#[must_use]` annotations in the Rust
+index owner and deleted the regression and audit plan previously published by
+`079d1bc2abf`. Under the requested Rust-only scope, the pinned Go inventory
+above was not re-read. The current Rust surface was re-inventoried instead:
+the `tidb-model` crate has 42 tracked artifacts and 32,466 lines after this
+test addition. `index.rs` (1,621 lines), its complete inline test module,
+`Cargo.toml`, `lib.rs` registration/re-exports, the package integration tests,
+and every repository caller located for the affected free functions were
+read before the correction. There is no generated input/output, platform
+variant, example, benchmark, build script, fixture, or crate-local lockfile in
+the Rust owner.
+
+The 25 direct Go-shaped return annotations covered vector/full-text metric
+maps, global-index state, changing-index names, parser names, columnar and
+inverted-index helpers, index predicates/lookups, and foreign-key index
+searches. They are removed without changing metadata, serialization, clone
+depth, identity, lookup, or predicate behavior. The six annotations on the
+explicit Rust ownership/equality adapters remain: `clone_like_go` and
+`clone_pointer` for `RegionSplitPolicy` and `IndexInfo`, plus `equals_id` and
+`equals`.
+
+`index::tests::go_index_returns_may_be_ignored_like_go` discards all 25
+changed returns under `#[deny(unused_must_use)]`. Against the restored source,
+the focused compile failed with exactly 25 diagnostics; the evidence is in
+`/tmp/tidb-model-index-restored-prefix.log`. The corrected test passes, as do
+all 324 current `tidb-model` tests, all-target compilation, standalone rustfmt,
+Ready `make lint`, and diff hygiene. The existing `nextgen` cfg and two
+`placement.rs` unused-mut warnings are outside this index-only correction.
+
+No Go, Bazel, Cargo manifest/dependency, module, or import graph changed, so
+the Bazel prepare gate does not require `make bazel_prepare`.

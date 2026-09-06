@@ -9619,3 +9619,12 @@ risks without claiming repository-wide parity.
   pass afterward; all 13 owner tests, all-target compilation, standalone
   rustfmt, Ready lint, and diff hygiene pass. Evidence is in
   `receipts/dxf_framework_proto.md` and its dedicated ExecPlan.
+- 2026-09-06 (`pkg/meta/model/index` corrective return-contract parity after
+  `8d42bcc7035`): the current Rust owner was re-inventoried under the requested
+  Rust-only scope. Twenty-five restored `#[must_use]` annotations no longer
+  impose Rust-only diagnostics on direct Go-shaped index returns, while six
+  Rust ownership/equality annotations remain. The restored-tree probe failed
+  with exactly 25 diagnostics before the correction and passes afterward; all
+  324 owner tests, all-target compilation, standalone rustfmt, Ready lint, and
+  diff hygiene pass. Evidence is in
+  `receipts/meta_model_materialized_view.md` and the dedicated index ExecPlan.
