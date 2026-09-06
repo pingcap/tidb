@@ -689,3 +689,10 @@
 - 收尾批: READ_FROM_STORAGE restore 文本逗号连接 (tidb-ast hint.rs)。Go parser 每引擎组产出一个 TableOptimizerHint, RestoreOptimizerHints 以 ", " 连接; Rust 单 hint 双组内以空格连接导致 restore 文本分歧。改为组间 ", " 连接后与 Go 字节一致 (tidb-ast Go-oracle 表在 GOROOT 就绪时验证); 单 hint 双组建模保留为内部形态, 共享引擎组的去重角落 (Go 按条目去重 vs Rust 按合并文本) 记录为残余 narrowing。parser 733 / ast 100 / hint 2 全绿; fmt; diff-check; make lint 过。
   推送: caa7f4e59fb (一次性 worktree rebase, 兄弟仍在同 worktree 活跃)。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
+- 新面批次: tidb-tablecodec (Go pkg/tablecodec @ a85e0fd5df) 全文件审计。修复 1 项 behavior 分歧:
+  decode_index_kv 的 clustered-index V1 分支: Go 对唯一 common-handle 段与非唯一 key suffix 都用 kv.NewCommonHandle (tablecodec.go:1968-1975); Rust 把非唯一 suffix 走 decode_handle_in_index_key, 单 int 列 common handle (9 字节) 被折叠成 IntHandle 后命中 IntHandle.NumCols assert panic。V1 分支现在先于 general 分支选择 common_handle 段或原始 suffix 的真 common-handle 解码。
+  回归 test_v1_non_unique_single_int_column_common_handle: pre-fix panic "IntHandle.NumCols is unsupported" (已确认), post-fix 解码 padded 索引列与 42 handle。调参过程: 旧布局 (value<=9) 走不到 V1 分支, 需 restore data 强制 V1 split; 两列索引的 suffix 含 2 个 datum 不触发折叠 —— 单索引列 + restore data 才是精确触发形态。
+  其余匹配面 (前缀字节/errno/GenIndexKey/行值 v0-v1/临时索引/rowindexcodec) 与 12 项 cosmetic narrowing 详见收据 rust/docs/tablecodec-parity-audit.md。
+  验收: cargo test -p tidb-tablecodec 61 全绿; fmt; diff-check; make lint 过。
+  注意: 本机 vendored OpenSSL 补丁再次被共享 stash 竞态部分吞掉 (openssl 行丢 feature, reqwest 行仍在), 已修复重放 —— 以后验证补丁要逐行 grep 两个 feature 而非 grep 整词 vendored。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
