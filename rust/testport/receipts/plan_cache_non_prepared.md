@@ -101,7 +101,7 @@ the DML/container follow-up under `rust/docs/go-physical-plan-parity-execplan.md
 ## Validation
 
     cargo +nightly-2026-08-22 test --offline --locked -p tidb-session --lib non_prepared_plan_cache
-    # 24 passed; 0 failed (2026-09-06). Three fixes this round closed the last
+    # 26 passed; 0 failed (2026-09-06). The fixes this round closed the last
     # five tip failures:
     # - go_refuses_tables_in_every_system_schema_owned_by_filter panicked
     #   because rule_collect_plan_stats.rs passed DataSource.db_name (the
