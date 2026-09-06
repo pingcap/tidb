@@ -199,3 +199,29 @@ already did. Regressions: DESC keeps the two largest largest-first, ASC
 keeps the two smallest smallest-first (pre-fix the shape refused as a later
 course). Go's unstable `sort.Sort` tie order is a documented narrowing --
 the stable Rust sort is deterministic where Go leaves ties unordered.
+
+## Server command-surface audit + NeedCommitTs (2026-09-07, same session)
+
+`server.go` @ a85e0fd5df compared against `kv_handler.rs`. The twelve landed
+handlers (get/scan/batch_get/prewrite/commit/batch_rollback/
+pessimistic_lock/pessimistic_rollback/txn_heart_beat/check_txn_status/
+check_secondary_locks/resolve_lock) are faithful at the body level,
+including the PessimisticLock ForceLock result padding and the
+CheckTxnStatus lock-ttl extraction. The Go arms absent here --
+`KvCleanup`, `KvScanLock`, `KvGC`, `KvDeleteRange`, the Raw* family,
+`KvFlush`/`KvImport`/`KvBufferBatchGet`, `RawGetKeyTTL`'s empty stub -- have
+NO dispatching caller in the Rust client surface (grep-verified across
+`tidb-txnkv`'s rpc/unary/batch modules): absent, not broken.
+
+FIXED: `NeedCommitTs` was ignored. The Rust client SENDS
+`need_commit_ts: true` on its snapshot batch-gets (Go's client does the
+same), but the mock answered no commit ts. `GetPair`/`BatchGet`
+(`mvcc.go:1826-1866`) under `requestCtx.returnCommitTS` answer each pair's
+commit ts AND disable the committed-lock shortcut -- Go nils
+`committedLocks` "to make sure all KvPair has CommitTS", so a lock only the
+shortcut knew about reports as locked instead of answering a value whose
+commit ts cannot be known. `get_with_commit_ts`/
+`batch_get_with_commit_ts` port both halves; `KvGet`/`KvBatchGet` fill the
+wire `commit_ts` fields. Three regressions: commit ts answered only when
+requested, the shortcut disabled under the flag (locked, Go's error), and
+batch-get pairs carrying the ts.

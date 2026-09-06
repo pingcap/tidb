@@ -150,10 +150,14 @@ impl KvHandler {
     /// Go `Server.KvGet` (`server.go`).
     pub fn kv_get(&mut self, req: &kvrpcpb::GetRequest) -> kvrpcpb::GetResponse {
         let ctx = read_context(req.context.as_ref());
-        match self.store.get_with(&ctx, &req.key, req.version) {
-            Ok(value) => kvrpcpb::GetResponse {
+        match self
+            .store
+            .get_with_commit_ts(&ctx, &req.key, req.version, req.need_commit_ts)
+        {
+            Ok((value, commit_ts)) => kvrpcpb::GetResponse {
                 value: value.unwrap_or_default(),
                 not_found: false,
+                commit_ts,
                 ..kvrpcpb::GetResponse::default()
             },
             Err(err) => kvrpcpb::GetResponse {
@@ -188,7 +192,7 @@ impl KvHandler {
         let ctx = read_context(req.context.as_ref());
         let pairs = self
             .store
-            .batch_get_with(&ctx, &req.keys, req.version)
+            .batch_get_with_commit_ts(&ctx, &req.keys, req.version, req.need_commit_ts)
             .into_iter()
             .map(pair_to_proto)
             .collect();
@@ -457,6 +461,7 @@ fn pair_to_proto(pair: crate::mvcc_store::KvPair) -> kvrpcpb::KvPair {
         key: pair.key,
         value: pair.value,
         error: pair.error.map(|err| convert_to_key_error(&err)),
+        commit_ts: pair.commit_ts,
         ..kvrpcpb::KvPair::default()
     }
 }
