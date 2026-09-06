@@ -2544,3 +2544,103 @@ mod table_name_extractor_tests {
         }));
     }
 }
+
+/// The archive-writer seam the dump assembly writes through: Go creates one
+/// `zip.Writer` entry per file; implementations receive the file name and
+/// its full contents.
+pub trait DumpArchiveWriter {
+    /// # Errors
+    /// Whatever the underlying archive reports.
+    fn create_file(&mut self, name: &str, contents: &[u8]) -> Result<(), PlanReplayerError>;
+}
+
+/// Go `dumpSQLs`: one `sql/sqlN.sql` file per statement, in order.
+pub fn dump_sqls(sqls: &[String], zw: &mut dyn DumpArchiveWriter) -> Result<(), PlanReplayerError> {
+    for (index, sql) in sqls.iter().enumerate() {
+        zw.create_file(&format!("sql/sql{index}.sql"), sql.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Go `dumpSessionBindRecords`' file body: every binding becomes one
+/// tab-joined row of the nine columns Go selects, rows newline-terminated.
+#[must_use]
+pub fn build_session_bindings_sql(records: &[Vec<Vec<String>>]) -> String {
+    let mut out = String::new();
+    for record in records {
+        for binding in record {
+            // Go selects: OriginalSQL, BindSQL, Db, Status, CreateTime,
+            // UpdateTime, Charset, Collation, Source.
+            let row: Vec<String> = vec![
+                binding[0].clone(),
+                binding[1].clone(),
+                binding[2].clone(),
+                binding[3].clone(),
+                binding[4].clone(),
+                binding[5].clone(),
+                binding[6].clone(),
+                binding[7].clone(),
+                binding[8].clone(),
+            ];
+            out.push_str(&row.join("\t"));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod dump_archive_tests {
+    use super::*;
+
+    struct CollectingWriter {
+        files: std::collections::BTreeMap<String, Vec<u8>>,
+    }
+
+    impl DumpArchiveWriter for CollectingWriter {
+        fn create_file(&mut self, name: &str, contents: &[u8]) -> Result<(), PlanReplayerError> {
+            self.files.insert(name.to_owned(), contents.to_vec());
+            Ok(())
+        }
+    }
+
+    /// Go `dumpSQLs`: one `sql/sqlN.sql` per statement, in order.
+    #[test]
+    fn dump_sqls_writes_one_file_per_statement() {
+        let mut writer = CollectingWriter {
+            files: std::collections::BTreeMap::new(),
+        };
+        dump_sqls(&["select 1".to_owned(), "select 2".to_owned()], &mut writer).unwrap();
+        assert_eq!(
+            writer.files.get("sql/sql0.sql").map(Vec::as_slice),
+            Some(b"select 1".as_slice())
+        );
+        assert_eq!(
+            writer.files.get("sql/sql1.sql").map(Vec::as_slice),
+            Some(b"select 2".as_slice())
+        );
+    }
+
+    /// Go `dumpSessionBindRecords`: nine tab-joined columns per binding row.
+    #[test]
+    fn build_session_bindings_sql_joins_with_tabs() {
+        let row: Vec<String> = [
+            "select * from t",
+            "select * from t use index(i)",
+            "test",
+            "using",
+            "2026-09-06 00:00:00",
+            "2026-09-06 00:00:00",
+            "utf8mb4",
+            "utf8mb4_bin",
+            "manual",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let text = build_session_bindings_sql(&[vec![row]]);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(1, lines.len());
+        assert_eq!(9, lines[0].split('\t').count());
+    }
+}
