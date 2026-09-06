@@ -751,3 +751,6 @@
 - 推送恢复: 兄弟 revert (c5776e1e7bf) 波及并丢失了 ddl-resourcegroup 批次 (代码+收据), 已重新 fast-forward 推送恢复。规程补充: 共享分支被 revert/rewrite 后, 已推送批次可能丢失 —— 每轮 ls-remote 对账时同时抽查最近批次的标志性内容是否仍在服务端。
 - 分支重组: 本地谱系已重放到 c5776e1e7bf 之上 (PROGRESS-zcode.md 双-append 冲突按拼接解决)。
 - 下轮恢复点: (1) 只读收敛核查或新面; (2) unistore 测试目标随兄弟 distsql 修复回补; (3) pd-client 外部 pin 待决; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
+- 回补批: unistore InProcessClient 实现 SynchronousBatchRequestDispatcher (tidb-txnkv::client 的 BatchCommands 式分发契约) —— 兄弟 distsql 接口重构要求的最后一块 glue, lib 测试目标从完全不可编译恢复为 114 测试全绿; distsql 256/29 测试同步验证。open 项关闭。
+  验收: cargo test -p tidb-unistore --lib 114/0; tidb-distsql 256+29 全绿; fmt; diff-check; make lint 过。含代码改动, 已推送 (LANDED_1)。
+- 下轮恢复点: (1) 只读收敛核查或新面; (2) F2/F3-seam live 阻塞; (3) DST 排队; (4) dbsid 分叉待协调。
