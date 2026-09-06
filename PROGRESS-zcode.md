@@ -644,3 +644,9 @@
   收据 rust/docs/stmtsummary-parity-audit.md。推送 40e4683e9a6..946f43d3fbb origin/hparser-integration。
   开放项 (feature 级, 未认领): (1) v2/reader.go 951 行未移植 (MemReader/HistoryReader/持久日志扫描, persistent 模式无读路径, 见 src/lib.rs 与 src/v2/mod.rs 头注); (2) v2/logger.go 轮转未移植 (FileStmtLogWriter append-only, file_max_size/days/backups 空挂, persistent 模式应保持关闭)。其余 narrowing (UTC 时区渲染/UTF-8 截断边界/proxy 饱和转换) 已记录收据。
 - 下轮恢复点: (1) stmtsummary 开放项 v2 reader/logger 移植 (大批次); (2) 新面候选 tidb-ttl/dxf; (3) 兄弟增量收敛核查; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
+- 大批次: v2/reader.go (951 行) 全文件移植完成 (rust/crates/tidb-stmtsummary/src/v2/reader.rs, Go @ a85e0fd5df)。
+  内容: MemReader (窗口内存读 + evicted 汇总行)、HistoryReader + scan/parse 流水线 (无缓冲文件派发/concurrent-2 扫描转解析/monitor 错误通道)、stmtChecker (digest/priv/time-range)、stmtFile/stmtFiles 钉住活动 inode 的轮转去重、持久化记录 JSON 解析 (与 record 序列化字段名一致 + encoding/json 宽松度)、全部 9 个 Go v2/reader_test.go 回归移植。
+  移植中被测试逼出的两个关键差异: (1) Go close(channel) 显式关闭 vs Rust 丢 sender 关闭 —— scan worker 转 parse 前必须 drop lines sender, 否则死锁; (2) os.DirEntry.Info 惰性解析 —— walk 时才查 metadata, 注入失败可模拟。parseEndTs 保留 Go 的 base-name 前缀 quirk (仅相对路径 config 可解析轮转文件时间戳)。
+  验收: cargo test -p tidb-stmtsummary --all-targets 61 lib 全绿; fmt; diff-check; make lint 过 (Cargo.lock 随 tempfile dev-dep 入库)。收据更新 stmtsummary-parity-audit.md。推送 401c5035cf1..0685f495eb9。
+  v2 包剩余缺口: logger.go 轮转 (FileStmtLogWriter append-only), persistent 模式保持关闭。
+- 下轮恢复点: (1) v2/logger.go 轮转移植 (中批次); (2) 新面 tidb-ttl/dxf; (3) 兄弟增量收敛核查; (4) F2/F3-seam live 阻塞; (5) dbsid 分叉待协调。
