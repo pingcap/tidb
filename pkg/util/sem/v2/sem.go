@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -90,11 +91,33 @@ func IsInvisibleStatusVar(varName string) bool {
 
 // IsRestrictedSQL checks if a SQL statement is restricted under SEM rules.
 func IsRestrictedSQL(stmt ast.StmtNode) bool {
+	if IsNextGenRestrictedSQL(stmt) {
+		return true
+	}
+
 	sem := globalSem.Load()
 	if sem == nil {
 		return false
 	}
 	return sem.isRestrictedSQL(stmt)
+}
+
+// IsNextGenRestrictedSQL checks if a SQL statement is restricted by the built-in NextGen policy.
+func IsNextGenRestrictedSQL(stmt ast.StmtNode) bool {
+	if !kerneltype.IsNextGen() {
+		return false
+	}
+
+	switch stmt.SEMCommand() {
+	case ast.AlterResourceGroupCommand,
+		ast.CalibrateResourceCommand,
+		ast.CreateResourceGroupCommand,
+		ast.DropResourceGroupCommand,
+		ast.SetResourceGroupCommand,
+		ast.ShowCreateResourceGroupCommand:
+		return true
+	}
+	return false
 }
 
 // Enable enables SEM.

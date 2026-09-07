@@ -19,6 +19,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -149,4 +151,36 @@ func TestEnableSEM(t *testing.T) {
 	// Test overrideRestrictedVariable
 	sysVar = variable.GetSysVar(vardef.TiDBEnableEnhancedSecurity)
 	require.Equal(t, sysVar.Value, "CONFIG")
+}
+
+func TestBuiltInResourceGroupSQLRestriction(t *testing.T) {
+	Disable()
+	t.Cleanup(Disable)
+
+	p := parser.New()
+	resourceGroupStatements := []string{
+		"CREATE RESOURCE GROUP rg RU_PER_SEC=1000",
+		"ALTER RESOURCE GROUP rg RU_PER_SEC=500",
+		"DROP RESOURCE GROUP rg",
+		"SET RESOURCE GROUP rg",
+		"SHOW CREATE RESOURCE GROUP rg",
+		"CALIBRATE RESOURCE",
+	}
+	for _, sql := range resourceGroupStatements {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		require.Equal(t, kerneltype.IsNextGen(), IsRestrictedSQL(stmt), sql)
+	}
+
+	stmt, err := p.ParseOneStmt("CREATE DATABASE db", "", "")
+	require.NoError(t, err)
+	require.False(t, IsRestrictedSQL(stmt))
+
+	require.NoError(t, EnableBy(&Config{
+		TiDBVersion: "v0.0.0",
+		RestrictedSQL: SQLRestriction{
+			SQL: []string{"CREATE DATABASE"},
+		},
+	}))
+	require.True(t, IsRestrictedSQL(stmt))
 }

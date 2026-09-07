@@ -6381,10 +6381,6 @@ func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (maxWriteSpeed int64, e
 }
 
 func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
-	if !semv2.IsEnabled() {
-		return nil
-	}
-
 	stmtNode, ok := stmt.(ast.StmtNode)
 	intest.Assert(ok, "node.Node should be ast.StmtNode, but got %T", stmt)
 	if !semv2.IsRestrictedSQL(stmtNode) {
@@ -6399,5 +6395,8 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 		return nil
 	}
 
+	if semv2.IsNextGenRestrictedSQL(stmtNode) {
+		return plannererrors.ErrNotSupportedWithSem.GenWithStack("Feature '%s' is not supported in TiDB X", stmtNode.Text())
+	}
 	return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(stmtNode.Text())
 }
