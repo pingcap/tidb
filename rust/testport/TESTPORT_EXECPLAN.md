@@ -11086,3 +11086,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (COALESCE/NULLIF pin): first-non-NULL selection, all-NULL ->
   NULL, equality-to-NULL NULLIF, and their composition. Pinned in
   `crates/tidb-session/tests/coalesce_nullif_source.rs`.
+- 2026-09-06 (IF/IFNULL + length-edge pin): NULL-falsy IF, the IFNULL
+  fallback, and LEFT/RIGHT zero/negative/over-length rules. Pinned in
+  `crates/tidb-session/tests/if_ifnull_length_edges_source.rs`.
