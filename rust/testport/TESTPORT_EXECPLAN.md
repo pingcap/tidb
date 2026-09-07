@@ -11113,3 +11113,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (DATE_FORMAT/DATEDIFF pin): %W %M %e weekday/name rendering,
   DATEDIFF across a year boundary, and TIMESTAMPDIFF hour arithmetic.
   Pinned in `crates/tidb-session/tests/date_format_datediff_source.rs`.
+- 2026-09-06 (DATE_ADD clamp pin): month arithmetic clamps to the month's
+  last day across leap years; negative intervals, LAST_DAY, MONTHNAME and
+  QUARTER all calendar-correct. Pinned in
+  `crates/tidb-session/tests/date_add_clamp_source.rs`.
