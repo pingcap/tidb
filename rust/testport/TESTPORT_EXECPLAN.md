@@ -10654,3 +10654,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (NOT EXISTS anti-join pin): correlated NOT EXISTS keeps only
   the rows of `l` with no match in `r`. Pinned in
   `crates/tidb-session/tests/not_exists_anti_join_source.rs`.
+- 2026-09-06 (DML EXISTS/NOT EXISTS pins): DELETE with NOT EXISTS removes
+  only unmatched rows; UPDATE with EXISTS moves only the matched row.
+  Pinned in `crates/tidb-session/tests/dml_not_exists_corr_source.rs`.
