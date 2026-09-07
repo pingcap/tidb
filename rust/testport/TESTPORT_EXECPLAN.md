@@ -10465,3 +10465,14 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (ADD COLUMN FIRST pin): `add column ... first` positions the
   new column at the head of the row layout. Complements the AFTER pin.
   Pinned in `crates/tidb-session/tests/add_column_first_source.rs`.
+- 2026-09-06 (CREATE AUTO_ID_CACHE fix, REAL DIVERGENCE): `create table t
+  (...) auto_id_cache=1` failed with the ALTER-only text "Can't Alter
+  AUTO_ID_CACHE between 1 and non-1..." — Go raises that guard only when
+  ALTERing an EXISTING table (whose counters would move between
+  implementations); at CREATE the option simply chooses the allocator
+  shape. Fix: a new `init_auto_id_cache` applied at CREATE rebuilds the
+  allocator without the guard (single-point included), while ALTER keeps
+  `set_auto_id_cache` and its guard. Pin
+  `crates/tidb-session/tests/auto_id_cache_create_source.rs` fails on the
+  old code and passes with the fix; the ALTER guard and AUTO_RANDOM pins
+  stay green.

@@ -1656,9 +1656,7 @@ pub fn run_create_table_in(
                     "table option auto_id_cache overflows int64",
                 ));
             }
-            table
-                .set_auto_id_cache(cache)
-                .map_err(|message| DriverError::unsupported(message))?;
+            table.init_auto_id_cache(cache);
         }
     }
     let (indexes, hidden_columns, partial_conditions) = table_indexes(

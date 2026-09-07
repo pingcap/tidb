@@ -208,6 +208,21 @@ impl KvTable {
         Ok(rows)
     }
 
+    /// CREATE-time `AUTO_ID_CACHE=n`: Go's "can't alter between 1 and
+    /// non-1" guard is ALTER-only -- at CREATE the option simply chooses the
+    /// allocator shape (a fresh table has no counters to preserve), so this
+    /// rebuilds with the requested step, single-point included.
+    pub fn init_auto_id_cache(&mut self, cache: u64) {
+        let step = if cache == 0 {
+            crate::kv_table::DEFAULT_AUTO_ID_STEP
+        } else {
+            cache
+        };
+        self.auto_id = self.auto_id.with_step(step);
+        self.auto_random_id = self.auto_random_id.with_step(step);
+        self.auto_id_cache = i64::try_from(cache).unwrap_or(i64::MAX);
+    }
+
     /// Rebuilds the allocator after `ALTER TABLE ... AUTO_ID_CACHE=n` while
     /// retaining the counter's global high-water mark.
     pub fn set_auto_id_cache(&mut self, cache: u64) -> Result<(), &'static str> {
