@@ -1887,7 +1887,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	if len(rows) == 0 {
 		// FIXME: the error returned is not escaped safely
 		return exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
-			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
+			fmt.Sprintf("'%s'@'%s'", userName, hostName))
 	}
 
 	authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
@@ -1984,6 +1984,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
 	}
 
+	// FIXME: authPlugin, authData, tokenIssuer, and userAttributes are not escaped safely.
 	account := stringutil.Escape(userName, sessVars.SQLMode) + "@" +
 		stringutil.Escape(hostName, sessVars.SQLMode)
 	showStr := fmt.Sprintf("CREATE USER %s IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",

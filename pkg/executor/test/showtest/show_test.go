@@ -616,6 +616,11 @@ func TestShowCreateUser(t *testing.T) {
 	tk1.MustQuery("show create user current_user").
 		Check(testkit.Rows("CREATE USER `check_priv`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
+	// Drop the authenticated account while its existing connection remains open.
+	tk.MustExec("DROP USER 'check_priv'")
+	err = tk1.QueryToErr("show create user current_user()")
+	require.Equal(t, exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'check_priv'@'%'").Error(), err.Error())
+
 	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`.
 	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' BY 'temp_passwd'")
 
