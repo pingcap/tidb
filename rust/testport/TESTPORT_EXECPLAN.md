@@ -10401,3 +10401,7 @@ risks without claiming repository-wide parity.
   name column; `SHOW DATABASES WHERE database = ...` filters by value;
   `SHOW COLLATION WHERE charset = ...` restricts to the charset's
   collations. Pinned in `crates/tidb-session/tests/show_filters_source.rs`.
+- 2026-09-06 (SHOW TABLE STATUS pin): one row per table with engine, the
+  NEXT auto-increment value (4 after 3 rows), the table comment, and the
+  utf8mb4_bin collation. Pinned in
+  `crates/tidb-session/tests/show_table_status_source.rs`.
