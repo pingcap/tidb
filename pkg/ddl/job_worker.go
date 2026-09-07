@@ -127,6 +127,11 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
+	// Keep storage-class history changes pending until a batched multi-schema
+	// step is known to commit its TableInfo changes.
+	deferStorageClassTransitionStaging bool
+	pendingStorageClassTransitions     []pendingStorageClassTransition
+	sharedMultiSchemaVersion           int64
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -677,7 +682,20 @@ func (w *worker) transitOneJobStep(
 	}()
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
+	restoreStorageClassTransitionStep := checkpointStorageClassTransitionStep(w.sess, txn, job)
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
+	if restoreStorageClassTransitionStep != nil {
+		var stagingErr *storageClassTransitionStagingError
+		if goerrors.As(runJobErr, &stagingErr) {
+			// History SQL can release earlier TableInfo and history writes from
+			// the statement buffer, so Reset alone cannot discard this step.
+			restoreStorageClassTransitionStep()
+			schemaVer = 0
+			// Preserve the saved raw arguments, not decoded args mutated by a
+			// sub-job whose metadata changes were just rolled back.
+			updateRawArgs = false
+		}
+	}
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
@@ -1138,7 +1156,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
 	case model.ActionModifyEngineAttribute:
-		ver, err = onModifyTableEngineAttribute(jobCtx, job)
+		ver, err = w.onModifyTableEngineAttribute(jobCtx, job)
 	case model.ActionRefreshMeta:
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:

@@ -714,6 +714,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	traditional                "TRADITIONAL"
 	transaction                "TRANSACTION"
 	transactional              "TRANSACTIONAL"
+	transitions                "TRANSITIONS"
 	triggers                   "TRIGGERS"
 	truncate                   "TRUNCATE"
 	tsoType                    "TSO"
@@ -7746,6 +7747,7 @@ UnReservedKeyword:
 |	"ENGINE_ATTRIBUTE"
 |	"SECONDARY_ENGINE_ATTRIBUTE"
 |	"STORAGE_CLASS"
+|	"TRANSITIONS"
 |	"ENUM"
 |	"ERROR"
 |	"ERRORS"
@@ -12982,6 +12984,10 @@ ShowTargetFilterable:
 	"ENGINES"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowEngines}
+	}
+|	"STORAGE_CLASS" "TRANSITIONS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowStorageClassTransitions}
 	}
 |	"DATABASES"
 	{

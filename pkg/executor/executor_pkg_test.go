@@ -53,6 +53,18 @@ var (
 	InspectionRules        = inspectionRules
 )
 
+func TestStorageClassTransitionTimeZoneSetup(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	internalTimeZone := time.FixedZone("internal", -12*60*60)
+	callerTimeZone := time.FixedZone("caller", 14*60*60)
+	vars.TimeZone = internalTimeZone
+
+	restore := storageClassTransitionTimeZoneSetup(callerTimeZone)(vars)
+	require.Same(t, callerTimeZone, vars.TimeZone)
+	restore()
+	require.Same(t, internalTimeZone, vars.TimeZone)
+}
+
 func TestFillEmbedTextValues(t *testing.T) {
 	sctx := mock.NewContext()
 	tblInfo := &model.TableInfo{
