@@ -10734,3 +10734,6 @@ risks without claiming repository-wide parity.
   ENFORCED CHECK with TiDB's version-gated comment form: CONSTRAINT
   `chk_b` CHECK ((`b` > 0)) /*!80016 NOT ENFORCED */. Pinned in
   `crates/tidb-session/tests/not_enforced_show_create_source.rs`.
+- 2026-09-06 (RENAME TABLE x CHECK pin): the attached CHECK constraint
+  follows the renamed table and still enforces under its original name.
+  Pinned in `crates/tidb-session/tests/rename_table_check_source.rs`.
