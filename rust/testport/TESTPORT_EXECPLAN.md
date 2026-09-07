@@ -10059,3 +10059,16 @@ risks without claiming repository-wide parity.
   an UPDATE that moves the base column regenerates the stored value
   (3|6 -> 10|20). Pinned in
   `crates/tidb-session/tests/generated_column_write_source.rs`.
+- 2026-09-06 (INCIDENT + recovery): a bare `git stash pop` after a
+  stash-baseline run popped a SIBLING instance's stash (`wip before sync to
+  2e5e8bc347`), leaving UU conflict state in driver/catalog.rs and the
+  session cache files. Because the apply CONFLICTED, git preserved the
+  stash entry — the sibling instance lost nothing. The tree was restored
+  with `git reset --hard HEAD` (back to the pushed tip) and 34 session pins
+  re-verified green. PROCEDURE CHANGE: future baseline cycles must use a
+  NAMED stash and `git stash apply stash@{n}` with an explicit ref, never a
+  bare push/pop, and must verify `git stash list` before and after.
+- 2026-09-06 (session sweep attribution): the 228 tidb-session failures at
+  this tip (windows, vars, plan-cache switches) are byte-identical on the
+  pre-corruption clean-HEAD run — sibling in-flight select-path breakage,
+  none attributable to this loop's batches.
