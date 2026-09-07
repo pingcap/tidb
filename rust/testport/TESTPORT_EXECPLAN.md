@@ -10689,3 +10689,7 @@ risks without claiming repository-wide parity.
   (p0) where a >= 1` removes only p0's rows — the qualifier restricts the
   read and the p1 rows survive. Pinned in
   `crates/tidb-session/tests/partition_qualified_delete_source.rs`.
+- 2026-09-06 (partition-qualified UPDATE pin): a qualified update moves only
+  the named partition's rows; a new value that fits no partition fails
+  Go's 1526 leaving the table unchanged. Pinned in
+  `crates/tidb-session/tests/partition_qualified_update_source.rs`.
