@@ -10327,3 +10327,12 @@ risks without claiming repository-wide parity.
   (positions) resolve to SELECT-list expressions; a UNION inside a derived
   table composes with the outer ORDER BY/LIMIT. Pinned in
   `crates/tidb-session/tests/ordinal_union_derived_source.rs`.
+- 2026-09-06 (correlated scalar SELECT-list pin + EXISTS projection record):
+  a correlated scalar subquery in the SELECT list evaluates per row
+  (max(v) per matching k; NULL for unmatched) — pinned in
+  `crates/tidb-session/tests/correlated_scalar_select_list_source.rs`.
+  Projection-position EXISTS (`select exists (select 1 ...)`) is NOT
+  supported by the rewriter ("expression form is not yet supported") —
+  recorded: Go rewrites projection EXISTS through the same Apply machinery
+  as WHERE EXISTS; the port only wires that path for WHERE/predicate
+  positions. Queued behind the sibling planner stream.
