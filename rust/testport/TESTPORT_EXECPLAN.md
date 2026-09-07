@@ -11272,3 +11272,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (tuple IN pin): multi-column tuple IN, the ROW(a,b) spelling,
   and the negated complement. Pinned in
   `crates/tidb-session/tests/tuple_in_row_eq_source.rs`.
+- 2026-09-06 (clock shape pin): CURRENT_DATE as a DATE equal to its own
+  DATE() projection, CURTIME's minimum rendering, and NOW()'s full
+  datetime width — shape contracts, no wall-clock values. Pinned in
+  `crates/tidb-session/tests/clock_shape_source.rs`.
