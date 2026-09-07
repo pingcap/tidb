@@ -1007,6 +1007,14 @@ fn reader_output_offsets(
                 ));
             }
             extra_handle_slot = Some(source_columns.len());
+            // The rowid occupies a schema slot with no stored offset behind
+            // it: it must exist in the source schema (the slot index names a
+            // real column) while staying out of the kept offsets, which the
+            // `read_table_columns` invariant checks. Without this push the
+            // schema is never wider than `keep` and column-less selects over
+            // handle-forced sources (Go's taobench case, `SELECT 1 FROM t`)
+            // trip the width assertion.
+            source_columns.push(output.clone());
             continue;
         }
         let source = scan
