@@ -10816,3 +10816,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (delete no-id-reuse pin): the auto-increment counter never
   rewinds — a deleted max-id row's id is not reused. Pinned in
   `crates/tidb-session/tests/delete_no_id_reuse_source.rs`.
+- 2026-09-06 (TRUNCATE auto-inc reset pin): TRUNCATE TABLE resets the
+  auto-increment counter to 1 (DELETE does not). Pinned in
+  `crates/tidb-session/tests/truncate_resets_auto_inc_source.rs`.
