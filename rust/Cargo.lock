@@ -3808,6 +3808,7 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-funcdep",
+ "tidb-hack",
  "tidb-hash",
  "tidb-hint",
  "tidb-model",

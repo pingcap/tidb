@@ -136,6 +136,7 @@ use crate::stats_info::StatsInfo;
 
 use super::catalog::TableSource;
 use super::PlanBuilder;
+use tidb_hack::go_to_lower;
 
 #[derive(Clone, Copy)]
 enum ConsumerScopePhase {
@@ -446,7 +447,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ));
         }
         for cte in &with.ctes {
-            if !self.name_map_cte.insert(cte.name.to_lowercase()) {
+            if !self.name_map_cte.insert(go_to_lower(&cte.name)) {
                 return Err(err_non_uniq_table());
             }
         }
@@ -454,7 +455,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for (consumer_count, cte) in consumer_counts.iter().copied().zip(&with.ctes) {
             let index = self.outer_ctes.len();
             self.outer_ctes.push(super::OuterCte {
-                name: cte.name.to_lowercase(),
+                name: go_to_lower(&cte.name),
                 name_original: cte.name.clone(),
                 col_name_list: cte.columns.clone(),
                 definition: Some((*cte.query).clone()),
@@ -908,7 +909,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         table_name: &str,
         as_name: Option<&str>,
     ) -> Result<Option<LogicalPlan>, PlanError> {
-        let lower = table_name.to_lowercase();
+        let lower = go_to_lower(table_name);
         for index in (0..self.outer_ctes.len()).rev() {
             if self.outer_ctes[index].name != lower {
                 continue;

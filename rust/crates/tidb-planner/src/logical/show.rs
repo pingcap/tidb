@@ -57,6 +57,7 @@ use tidb_expr::schema::Schema;
 
 use crate::logical::BaseLogicalPlan;
 use crate::stats_info::StatsInfo;
+use tidb_hack::go_to_lower;
 
 /// Go `logicalop.ShowStatsMetaPredicateExtractor` (`logical_show.go:43`): the
 /// db and table filters `SHOW STATS_META ... WHERE ...` gave up to the plan.
@@ -248,7 +249,7 @@ pub fn extract_stats_meta_filters(
         extracted_idx.push(i);
         let val_set: BTreeSet<String> = vals
             .into_iter()
-            .map(|val| if to_lower { val.to_lowercase() } else { val })
+            .map(|val| if to_lower { go_to_lower(val) } else { val })
             .collect();
         intersection = Some(match intersection {
             None => val_set,

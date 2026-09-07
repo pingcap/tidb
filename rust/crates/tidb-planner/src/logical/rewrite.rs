@@ -59,6 +59,7 @@ use super::{
     BaseLogicalPlan, LogicalExpand, LogicalLimit, LogicalMaxOneRow, LogicalPlan, LogicalProjection,
     LogicalSort, LogicalTableDual, LogicalTopN, LogicalUnionAll, LogicalUnionScan,
 };
+use tidb_hack::go_to_lower;
 
 /// The schema an operator effectively exposes, materialized.
 ///
@@ -2013,7 +2014,7 @@ impl OwnedRewrite for DeriveStatsFold {
                             let position = schema_ids.iter().position(|id| *id == unique_id)?;
                             let column = op.columns.get(position)?;
                             Some(crate::cardinality::pseudo::PseudoColumn {
-                                lower_name: column.name.to_lowercase(),
+                                lower_name: go_to_lower(&column.name),
                                 unique_key_flag: false,
                             })
                         };

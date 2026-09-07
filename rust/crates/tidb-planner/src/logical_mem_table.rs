@@ -23,6 +23,7 @@
 //! boundaries.
 
 use crate::hash_equaler::{new_hash_equaler, Hasher, NIL_FLAG, NOT_NIL_FLAG};
+use tidb_hack::go_to_lower;
 
 /// Normalized output-column identity used by LogicalMemTable.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -80,7 +81,7 @@ impl LogicalMemTableIdentity {
     ) -> Self {
         Self {
             schema,
-            db_name: db_name.as_ref().to_lowercase(),
+            db_name: go_to_lower(db_name.as_ref()),
             table_info_id,
         }
     }

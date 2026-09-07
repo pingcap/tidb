@@ -61,6 +61,7 @@ use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::{
     column::Column, constant::Constant, expression::Expression, scalar_function::ScalarFunction,
 };
+use tidb_hack::go_to_lower;
 
 use crate::{
     access_path::{
@@ -1977,7 +1978,7 @@ fn resolve_column_path<'a>(
 }
 
 pub(crate) fn fold_identifier(identifier: &str) -> String {
-    identifier.to_lowercase()
+    go_to_lower(identifier)
 }
 
 fn identifier_eq(left: &str, right: &str) -> bool {
