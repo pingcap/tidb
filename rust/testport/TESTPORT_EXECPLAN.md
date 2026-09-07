@@ -10703,3 +10703,14 @@ risks without claiming repository-wide parity.
   validate the new column's default value against its own CHECK in the
   ALTER add-column flow (the column_default::evaluate machinery already
   exists). Queued as a bounded alter_table.rs fix.
+- 2026-09-06 (ADD COLUMN self-violating CHECK fix, REAL DIVERGENCE):
+  `alter table t add column b int default -5 check (b > 0)` over existing
+  rows was ACCEPTED — the inline CHECK was discarded by the single-column
+  AddColumn arm. Go's AddColumn builds the column AND its inline CHECK
+  through the same build/validate flow, refusing the ALTER with 3819 when
+  the default violates (the existing rows materialize the violating
+  default). Fix: the AddColumn arm now runs add_check_constraint_action
+  for the inline check and rolls the column add back on failure (the
+  column is NOT added). The 6-test CHECK family stays green; the pin
+  `crates/tidb-session/tests/add_column_self_check_source.rs` fails on
+  the old code and passes with the fix.
