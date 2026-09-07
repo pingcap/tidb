@@ -11298,3 +11298,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (duration functions pin): HOUR beyond 24, TIME_FORMAT's full
   duration width, TIME() extraction, MICROSECOND's fractional tail.
   Pinned in `crates/tidb-session/tests/duration_functions_source.rs`.
+- 2026-09-06 (string extremum/binary length pin): lexicographic GREATEST
+  and BINARY's byte-as-character lengths. Pinned in
+  `crates/tidb-session/tests/greatest_str_binary_len_source.rs`.
