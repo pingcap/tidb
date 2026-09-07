@@ -11280,3 +11280,6 @@ risks without claiming repository-wide parity.
   count, DATE_FORMAT NULL propagation, and IFNULL's string promotion.
   Pinned in
   `crates/tidb-session/tests/bitcount_null_promote_source.rs`.
+- 2026-09-06 (UUID pin): the 8-4-4-4-12 hyphenated shape, version-1
+  nibble, session-stable node block, and cross-call uniqueness. Pinned
+  in `crates/tidb-session/tests/uuid_shape_source.rs`.
