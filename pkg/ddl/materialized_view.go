@@ -763,12 +763,13 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 
 func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMaterializedViewStmt) error {
 	is := e.infoCache.GetLatest()
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
 	schemaName := s.ViewName.Schema
 	if schemaName.O == "" {
-		if ctx.GetSessionVars().CurrentDB == "" {
+		if sessionVars.CurrentDB == "" {
 			return errors.Trace(plannererrors.ErrNoDB)
 		}
-		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		schemaName = ast.NewCIStr(sessionVars.CurrentDB)
 		s.ViewName.Schema = schemaName
 	}
 	schema, ok := is.SchemaByName(schemaName)
@@ -783,7 +784,6 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name, "MATERIALIZED VIEW")
 	}
 
-	sessionVars := ctx.GetSessionVars()
 	for _, action := range s.Actions {
 		switch action.Tp {
 		case ast.AlterMaterializedViewActionComment:
@@ -836,12 +836,13 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 
 func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.AlterMaterializedViewLogStmt) error {
 	is := e.infoCache.GetLatest()
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
 	schemaName := s.Table.Schema
 	if schemaName.O == "" {
-		if ctx.GetSessionVars().CurrentDB == "" {
+		if sessionVars.CurrentDB == "" {
 			return errors.Trace(plannererrors.ErrNoDB)
 		}
-		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+		schemaName = ast.NewCIStr(sessionVars.CurrentDB)
 		s.Table.Schema = schemaName
 	}
 	schema, ok := is.SchemaByName(schemaName)
@@ -948,7 +949,8 @@ func (e *executor) addMaterializedViewLogColumns(ctx sessionctx.Context, schemaN
 		return e.addMaterializedViewLogColumn(ctx, schemaName, mlogName, baseCols[0], afterCol)
 	}
 
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
+	stmtCtx := sessionVars.StmtCtx
 	originalMultiSchemaInfo := stmtCtx.MultiSchemaInfo
 	stmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 	defer func() {
@@ -1007,12 +1009,13 @@ func buildMaterializedViewLogBaseInvolvingSchemaInfo(ctx context.Context, is inf
 }
 
 func (e *executor) alterMaterializedViewLogPurge(ctx sessionctx.Context, schemaID int64, schemaName, mlogName ast.CIStr, mlogID int64, purge *ast.MLogPurgeClause) error {
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
 	purgeMethod, purgeStartWith, purgeNext, err := buildMLogPurgeMeta(ctx, purge)
 	if err != nil {
 		return err
 	}
 	updatePurgeScheduleTimeZone := purge != nil && (purge.StartWith != nil || purge.Next != nil)
-	purgeScheduleTimeZone := ctx.GetSessionVars().Location()
+	purgeScheduleTimeZone := sessionVars.Location()
 	purgeScheduleTimeZoneMeta := model.TimeZoneLocation{}
 	if updatePurgeScheduleTimeZone {
 		tzName, tzOffset := ddlutil.GetTimeZone(ctx)
@@ -1027,21 +1030,21 @@ func (e *executor) alterMaterializedViewLogPurge(ctx sessionctx.Context, schemaI
 		TableName:      mlogName.L,
 		Type:           model.ActionAlterMaterializedViewLogPurge,
 		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		CDCWriteSource: sessionVars.CDCWriteSource,
+		SQLMode:        sessionVars.SQLMode,
 	}
 	args := &model.AlterMaterializedViewLogPurgeArgs{
 		PurgeMethod:                 purgeMethod,
 		PurgeStartWith:              purgeStartWith,
 		PurgeNext:                   purgeNext,
-		PurgeScheduleTimeZone:       purgeScheduleTimeZoneMeta,
+		PurgeScheduleTimeZone:       purgeScheduleTimeZoneMeta.Clone(),
 		UpdatePurgeScheduleTimeZone: updatePurgeScheduleTimeZone,
 	}
 	if err := e.doDDLJob2(ctx, job, args); err != nil {
 		return errors.Trace(err)
 	}
 
-	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, ctx.GetSessionVars().SQLMode, purgeScheduleTimeZone)
+	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, sessionVars.SQLMode, purgeScheduleTimeZone)
 	defer restoreEvalSession()
 
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
@@ -1057,12 +1060,13 @@ func (e *executor) alterMaterializedViewLogPurge(ctx sessionctx.Context, schemaI
 }
 
 func (e *executor) alterMaterializedViewRefresh(ctx sessionctx.Context, schemaID int64, schemaName, viewName ast.CIStr, mviewID int64, refresh *ast.MViewRefreshClause) error {
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
 	refreshMethod, refreshStartWith, refreshNext, err := buildMViewRefreshMeta(ctx, refresh)
 	if err != nil {
 		return err
 	}
 	updateRefreshScheduleTimeZone := refresh != nil && (refresh.StartWith != nil || refresh.Next != nil)
-	refreshScheduleTimeZone := ctx.GetSessionVars().Location()
+	refreshScheduleTimeZone := sessionVars.Location()
 	refreshScheduleTimeZoneMeta := model.TimeZoneLocation{}
 	if updateRefreshScheduleTimeZone {
 		tzName, tzOffset := ddlutil.GetTimeZone(ctx)
@@ -1077,21 +1081,21 @@ func (e *executor) alterMaterializedViewRefresh(ctx sessionctx.Context, schemaID
 		TableName:      viewName.L,
 		Type:           model.ActionAlterMaterializedViewRefresh,
 		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		CDCWriteSource: sessionVars.CDCWriteSource,
+		SQLMode:        sessionVars.SQLMode,
 	}
 	args := &model.AlterMaterializedViewRefreshArgs{
 		RefreshMethod:                 refreshMethod,
 		RefreshStartWith:              refreshStartWith,
 		RefreshNext:                   refreshNext,
-		RefreshScheduleTimeZone:       refreshScheduleTimeZoneMeta,
+		RefreshScheduleTimeZone:       refreshScheduleTimeZoneMeta.Clone(),
 		UpdateRefreshScheduleTimeZone: updateRefreshScheduleTimeZone,
 	}
 	if err := e.doDDLJob2(ctx, job, args); err != nil {
 		return errors.Trace(err)
 	}
 
-	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, ctx.GetSessionVars().SQLMode, refreshScheduleTimeZone)
+	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, sessionVars.SQLMode, refreshScheduleTimeZone)
 	defer restoreEvalSession()
 
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
@@ -1116,6 +1120,7 @@ func (e *executor) alterMaterializedViewRefresh(ctx sessionctx.Context, schemaID
 }
 
 func (e *executor) alterMaterializedViewAttributes(ctx sessionctx.Context, schemaID int64, schemaName, viewName ast.CIStr, mviewID int64, attrs string) error {
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
 	alertWarningSec, alertOverdueSec, alertRefreshFailed, err := parseMViewAttributes(attrs)
 	if err != nil {
 		return err
@@ -1129,8 +1134,8 @@ func (e *executor) alterMaterializedViewAttributes(ctx sessionctx.Context, schem
 		TableName:      viewName.L,
 		Type:           model.ActionAlterMaterializedViewAttributes,
 		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		CDCWriteSource: sessionVars.CDCWriteSource,
+		SQLMode:        sessionVars.SQLMode,
 	}
 	args := &model.AlterMaterializedViewAttributesArgs{AlertWarningSec: alertWarningSec, AlertOverdueSec: alertOverdueSec, AlertRefreshFailed: alertRefreshFailed}
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
@@ -1293,7 +1298,8 @@ func isAlterMaterializedScheduleInfoUpdateLockContentionErr(err error) bool {
 }
 
 func appendAlterMaterializedScheduleInfoUpdateWarning(ctx sessionctx.Context, spec alterMaterializedScheduleInfoUnixSecondsUpdateSpec) {
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("%s: metadata updated but failed to update %s.%s within %ds due to row lock contention; please retry later if immediate reschedule is needed", spec.operation, spec.infoTable, spec.scheduleColumn, alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec))
+	sessionVars := ctx.GetSessionVars() //nolint:forbidigo
+	sessionVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf("%s: metadata updated but failed to update %s.%s within %ds due to row lock contention; please retry later if immediate reschedule is needed", spec.operation, spec.infoTable, spec.scheduleColumn, alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec))
 }
 
 func convertAlterMaterializedViewLogPurgeInfoTableNotExistsErr(err error) error {
@@ -1790,9 +1796,12 @@ func analyzeStoredMaterializedViewQuery(
 ) (*mviewQueryAnalysis, error) {
 	charset, collation := "", ""
 	p := parser.New()
-	if sctx != nil && sctx.GetSessionVars() != nil {
-		charset, collation = sctx.GetSessionVars().GetCharsetInfo()
-		p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
+	if sctx != nil {
+		sessionVars := sctx.GetSessionVars() //nolint:forbidigo
+		if sessionVars != nil {
+			charset, collation = sessionVars.GetCharsetInfo()
+			p.SetParserConfig(sessionVars.BuildParserConfig())
+		}
 	}
 	stmt, err := p.ParseOneStmt(sql, charset, collation)
 	if err != nil {

@@ -1172,7 +1172,7 @@ func onAlterMaterializedViewRefresh(jobCtx *jobContext, job *model.Job, se *sess
 	tblInfo.MaterializedView.RefreshStartWith = args.RefreshStartWith
 	tblInfo.MaterializedView.RefreshNext = args.RefreshNext
 	if args.UpdateRefreshScheduleTimeZone {
-		tblInfo.MaterializedView.RefreshScheduleTimeZone = args.RefreshScheduleTimeZone
+		tblInfo.MaterializedView.RefreshScheduleTimeZone = args.RefreshScheduleTimeZone.Clone()
 	}
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
@@ -1241,7 +1241,7 @@ func onAlterMaterializedViewLogPurge(jobCtx *jobContext, job *model.Job, se *ses
 	tblInfo.MaterializedViewLog.PurgeStartWith = args.PurgeStartWith
 	tblInfo.MaterializedViewLog.PurgeNext = args.PurgeNext
 	if args.UpdatePurgeScheduleTimeZone {
-		tblInfo.MaterializedViewLog.PurgeScheduleTimeZone = args.PurgeScheduleTimeZone
+		tblInfo.MaterializedViewLog.PurgeScheduleTimeZone = args.PurgeScheduleTimeZone.Clone()
 	}
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
