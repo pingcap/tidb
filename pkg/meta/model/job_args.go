@@ -725,7 +725,8 @@ type AlterMaterializedViewRefreshArgs struct {
 }
 
 func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
-	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext, a.RefreshScheduleTimeZone, a.UpdateRefreshScheduleTimeZone}
+	refreshScheduleTimeZone := a.RefreshScheduleTimeZone.Clone()
+	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext, &refreshScheduleTimeZone, a.UpdateRefreshScheduleTimeZone}
 }
 
 func (a *AlterMaterializedViewRefreshArgs) decodeV1(job *Job) error {
@@ -771,7 +772,8 @@ type AlterMaterializedViewLogPurgeArgs struct {
 }
 
 func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
-	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext, a.PurgeScheduleTimeZone, a.UpdatePurgeScheduleTimeZone}
+	purgeScheduleTimeZone := a.PurgeScheduleTimeZone.Clone()
+	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext, &purgeScheduleTimeZone, a.UpdatePurgeScheduleTimeZone}
 }
 
 func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
