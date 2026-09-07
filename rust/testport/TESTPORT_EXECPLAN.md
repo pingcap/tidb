@@ -10001,3 +10001,7 @@ risks without claiming repository-wide parity.
   routes by `a % 3` (p0: 0,3,6 / p1: 1,4 / p2: 2,5); a p1-qualified read
   answers only p1 and a p1-qualified DELETE removes exactly its 2 rows.
   Pinned in `crates/tidb-session/tests/hash_partition_routing_source.rs`.
+- 2026-09-06 (LIST partition pin): `partition by list (a)` routes by value
+  list (p0: 1,2 / p1: 3,4); a value with no list fails with Go's exact 1526
+  text; a p1-qualified DELETE removes exactly p1's rows. Pinned in
+  `crates/tidb-session/tests/list_partition_routing_source.rs`.
