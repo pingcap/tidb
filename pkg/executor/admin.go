@@ -121,7 +121,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		return nil
 	}
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.Ctx().GetDistSQLCtx(), e.table.ID, e.index.ID, ranger.FullRange()).
+	kvReq, err := builder.SetIndexRanges(e.Ctx().GetDistSQLCtx(), e.table.ID, e.index.ID, ranger.FullRange(), distsql.NoIntHandleSuffix).
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
@@ -823,7 +823,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	}
 	var builder distsql.RequestBuilder
 	ranges := ranger.FullRange()
-	keyRanges, err := distsql.IndexRangesToKVRanges(e.Ctx().GetDistSQLCtx(), e.physicalID, e.index.Meta().ID, ranges)
+	keyRanges, err := distsql.IndexRangesToKVRanges(e.Ctx().GetDistSQLCtx(), e.physicalID, e.index.Meta().ID, ranges, distsql.NoIntHandleSuffix)
 	if err != nil {
 		return nil, err
 	}
