@@ -468,6 +468,11 @@ type StatementContext struct {
 	usedStatsInfo atomic.Pointer[UsedStatsInfo]
 	// IsSyncStatsFailed indicates whether any failure happened during sync stats
 	IsSyncStatsFailed bool
+	// SkipStatsLoad indicates the planner should not trigger synchronous or asynchronous
+	// statistics loading for this statement: its cached plan classification proved that
+	// statistics cannot affect the chosen plan (e.g. PointGet, BatchPointGet, or
+	// INSERT ... VALUES; see PlanCacheStmt.statsIndependent).
+	SkipStatsLoad bool
 	// UseDynamicPruneMode indicates whether use UseDynamicPruneMode in query stmt
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
