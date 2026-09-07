@@ -9997,3 +9997,7 @@ risks without claiming repository-wide parity.
   row is addressable only from its new partition (verified with
   partition-qualified reads). Pinned at session level in
   `crates/tidb-session/tests/partition_row_movement_source.rs`.
+- 2026-09-06 (HASH partition pin): `partition by hash(a) partitions 3`
+  routes by `a % 3` (p0: 0,3,6 / p1: 1,4 / p2: 2,5); a p1-qualified read
+  answers only p1 and a p1-qualified DELETE removes exactly its 2 rows.
+  Pinned in `crates/tidb-session/tests/hash_partition_routing_source.rs`.
