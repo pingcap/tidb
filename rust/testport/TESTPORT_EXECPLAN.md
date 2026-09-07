@@ -10164,3 +10164,8 @@ risks without claiming repository-wide parity.
   Go's 5 affected rows (2 per update + 1 insert); dup rows take the
   assignment value and the fresh row lands. Pinned in
   `crates/tidb-session/tests/odku_multi_row_accounting_source.rs`.
+- 2026-09-06 (UPDATE IGNORE partial-skip pin): with a CHECK constraint, an
+  `update ignore` applies the conforming rows (affected 2) and skips the
+  violating row in place with a warning. ADMIN CHECKSUM is an explicit
+  NotSupportedYet statement-kind (recorded class). Pinned in
+  `crates/tidb-session/tests/update_ignore_partial_skip_source.rs`.
