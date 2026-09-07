@@ -35,6 +35,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const materializedViewInfoDeleteBatchSize = 1000
+
 func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetCreateMaterializedViewLogArgs(job)
 	if err != nil {
@@ -389,6 +391,7 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 
 func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, createdTable *model.TableInfo) ([]schemaIDAndTableInfo, error) {
 	var baseTableIDs []int64
+	var mlogTableIDs []int64
 	var apply func(*model.TableInfo) error
 	switch {
 	case createdTable.MaterializedView != nil:
@@ -397,6 +400,9 @@ func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, 
 			return nil, errors.New("materialized view must reference at least one base table")
 		}
 		baseTableIDs = createdTable.MaterializedView.BaseTableIDs
+		if args, ok := jobCtx.jobArgs.(*model.CreateMaterializedViewArgs); ok && args != nil {
+			mlogTableIDs = args.MLogTableIDs
+		}
 		apply = func(base *model.TableInfo) error {
 			if base.MaterializedViewBase == nil {
 				base.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
@@ -424,7 +430,7 @@ func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, 
 	default:
 		return nil, nil
 	}
-	extraInfos := make([]schemaIDAndTableInfo, 0, len(baseTableIDs))
+	extraInfos := make([]schemaIDAndTableInfo, 0, len(baseTableIDs)+len(mlogTableIDs))
 	processed := make(map[int64]struct{}, len(baseTableIDs))
 	for _, baseID := range baseTableIDs {
 		if baseID == 0 {
@@ -449,6 +455,53 @@ func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, 
 			return nil, errors.Trace(err)
 		}
 		extraInfos = append(extraInfos, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: base})
+	}
+	processedMLogs := make(map[int64]struct{}, len(mlogTableIDs))
+	for _, mlogID := range mlogTableIDs {
+		if mlogID == 0 {
+			job.State = model.JobStateCancelled
+			return nil, errors.New("materialized view log id is invalid")
+		}
+		if _, ok := processedMLogs[mlogID]; ok {
+			continue
+		}
+		processedMLogs[mlogID] = struct{}{}
+		mlog, err := getTableInfo(jobCtx.metaMut, mlogID, job.SchemaID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(err)
+		}
+		if mlog.MaterializedViewLog == nil {
+			job.State = model.JobStateCancelled
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid materialized view log")
+		}
+		isBaseTable := false
+		for _, baseID := range baseTableIDs {
+			if mlog.MaterializedViewLog.BaseTableID == baseID {
+				isBaseTable = true
+				break
+			}
+		}
+		if !isBaseTable {
+			job.State = model.JobStateCancelled
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: materialized view log does not belong to a base table")
+		}
+		dependent := false
+		for _, mviewID := range mlog.MaterializedViewLog.DependentMViewIDs {
+			if mviewID == createdTable.ID {
+				dependent = true
+				break
+			}
+		}
+		if dependent {
+			continue
+		}
+		mlog.MaterializedViewLog.DependentMViewIDs = append(mlog.MaterializedViewLog.DependentMViewIDs, createdTable.ID)
+		if err := updateTable(jobCtx.metaMut, job.SchemaID, mlog, true); err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(err)
+		}
+		extraInfos = append(extraInfos, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: mlog})
 	}
 	return extraInfos, nil
 }
@@ -776,20 +829,44 @@ func execCreateMaterializedViewLogPurgeInfoUpsert(ctx context.Context, ddlSess *
 }
 
 func (w *worker) deleteMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogID int64) error {
+	return w.deleteMaterializedViewLogPurgeInfos(jobCtx, []int64{mlogID})
+}
+
+func (w *worker) deleteMaterializedViewLogPurgeInfos(jobCtx *jobContext, mlogIDs []int64) error {
+	if len(mlogIDs) == 0 {
+		return nil
+	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	_, err := w.sess.Execute(ctx, sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?", mlogID), "mlog-purge-info-delete")
-	failpoint.Inject("mockDeleteMaterializedViewLogPurgeInfoTableNotExists", func(val failpoint.Value) {
-		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
+	for start := 0; start < len(mlogIDs); start += materializedViewInfoDeleteBatchSize {
+		end := min(start+materializedViewInfoDeleteBatchSize, len(mlogIDs))
+		batch := mlogIDs[start:end]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
 		}
-	})
-	if infoschema.ErrTableNotExists.Equal(err) {
-		return nil
+		/* #nosec G202: only the placeholder count is dynamic; IDs are escaped by sqlescape. */
+		_, err := w.sess.Execute(ctx,
+			sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
+			"mlog-purge-info-delete")
+		failpoint.Inject("mockDeleteMaterializedViewLogPurgeInfoTableNotExists", func(val failpoint.Value) {
+			if val.(bool) {
+				err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mlog_purge_info")
+			}
+		})
+		failpoint.Inject("mockDeleteMaterializedViewLogPurgeInfoErr", func(val failpoint.Value) {
+			err = errors.New(val.(string))
+		})
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 func execCreateMaterializedViewRefreshInfoUpsert(ctx context.Context, ddlSess *sess.Session, mviewID int64, readTS uint64, lastSuccess, next *int64, shouldUpdate bool) error {
@@ -834,33 +911,136 @@ VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE LAST_SUCCESS_READ_TSO = VALUES(LAST_
 }
 
 func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64) error {
+	return w.deleteCreateMaterializedViewRefreshInfos(jobCtx, []int64{mviewID})
+}
+
+func (w *worker) deleteCreateMaterializedViewRefreshInfos(jobCtx *jobContext, mviewIDs []int64) error {
+	if len(mviewIDs) == 0 {
+		return nil
+	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	_, err := w.sess.Execute(ctx, sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?", mviewID), "mview-refresh-info-delete")
-	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
-		if val.(bool) {
-			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
+	for start := 0; start < len(mviewIDs); start += materializedViewInfoDeleteBatchSize {
+		end := min(start+materializedViewInfoDeleteBatchSize, len(mviewIDs))
+		batch := mviewIDs[start:end]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
 		}
-	})
-	if infoschema.ErrTableNotExists.Equal(err) {
-		return nil
+		/* #nosec G202: only the placeholder count is dynamic; IDs are escaped by sqlescape. */
+		_, err := w.sess.Execute(ctx,
+			sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
+			"mview-refresh-info-delete")
+		failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
+			if val.(bool) {
+				err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_info")
+			}
+		})
+		failpoint.Inject("mockDeleteCreateMaterializedViewRefreshInfoErr", func(val failpoint.Value) {
+			err = errors.New(val.(string))
+		})
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 func (w *worker) deleteCreateMaterializedViewRefreshAlert(jobCtx *jobContext, mviewID int64) error {
+	return w.deleteCreateMaterializedViewRefreshAlerts(jobCtx, []int64{mviewID})
+}
+
+func (w *worker) deleteCreateMaterializedViewRefreshAlerts(jobCtx *jobContext, mviewIDs []int64) error {
+	if len(mviewIDs) == 0 {
+		return nil
+	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = w.workCtx
 	}
-	_, err := w.sess.Execute(ctx, buildDeleteMViewRefreshAlertSQL(mviewID), "mview-refresh-alert-delete")
-	failpoint.Inject("mockDeleteCreateMaterializedViewRefreshAlertErr", func(val failpoint.Value) { err = errors.New(val.(string)) })
-	if infoschema.ErrTableNotExists.Equal(err) {
+	for start := 0; start < len(mviewIDs); start += materializedViewInfoDeleteBatchSize {
+		end := min(start+materializedViewInfoDeleteBatchSize, len(mviewIDs))
+		batch := mviewIDs[start:end]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		var err error
+		failpoint.Inject("mockDeleteCreateMaterializedViewRefreshAlertErr", func(val failpoint.Value) {
+			err = errors.New(val.(string))
+		})
+		if err == nil {
+			/* #nosec G202: only the placeholder count is dynamic; IDs are escaped by sqlescape. */
+			_, err = w.sess.Execute(ctx,
+				sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ("+strings.Repeat("%?,", len(batch)-1)+"%?)", args...),
+				"mview-refresh-alert-delete")
+		}
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func hasMaterializedViewDependsOnBaseTable(baseTableInfo *model.TableInfo) bool {
+	return baseTableInfo.MaterializedViewBase != nil && len(baseTableInfo.MaterializedViewBase.MViewIDs) > 0
+}
+
+func hasMaterializedViewDependsOnMaterializedViewLog(mlogTableInfo *model.TableInfo) bool {
+	return mlogTableInfo.MaterializedViewLog != nil && len(mlogTableInfo.MaterializedViewLog.DependentMViewIDs) > 0
+}
+
+func hasMaterializedViewID(ids []int64, mviewID int64) bool {
+	for _, id := range ids {
+		if id == mviewID {
+			return true
+		}
+	}
+	return false
+}
+
+func removeMaterializedViewID(ids []int64, mviewID int64) ([]int64, bool) {
+	removed := false
+	filtered := ids[:0]
+	for _, id := range ids {
+		if id == mviewID {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, id)
+	}
+	return filtered, removed
+}
+
+func errDropMaterializedViewLogDependent(schemaName, baseTableName string) error {
+	return errors.Errorf("cannot drop materialized view log on %s.%s: dependent materialized views exist", schemaName, baseTableName)
+}
+
+func checkDropMaterializedViewLogHasNoDependentMVs(jobCtx *jobContext, job *model.Job, droppingTable *model.TableInfo) error {
+	if droppingTable.MaterializedViewLog == nil {
 		return nil
 	}
-	return errors.Trace(err)
+	if !hasMaterializedViewDependsOnMaterializedViewLog(droppingTable) {
+		return nil
+	}
+	baseTableID := droppingTable.MaterializedViewLog.BaseTableID
+	baseTblInfo, err := getTableInfo(jobCtx.metaMut, baseTableID, job.SchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	job.State = model.JobStateCancelled
+	return errDropMaterializedViewLogDependent(job.SchemaName, baseTblInfo.Name.O)
 }
 
 func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, droppingTable *model.TableInfo) ([]schemaIDAndTableInfo, error) {
@@ -869,7 +1049,11 @@ func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, dr
 	switch {
 	case droppingTable.MaterializedView != nil:
 		if len(droppingTable.MaterializedView.BaseTableIDs) == 0 {
-			return nil, errors.New("materialized view must reference at least one base table")
+			logutil.DDLLogger().Warn(
+				"materialized view has no base tables in metadata, skip dependency cleanup when dropping",
+				zap.Int64("mviewID", droppingTable.ID),
+			)
+			return nil, nil
 		}
 		baseTableIDs = droppingTable.MaterializedView.BaseTableIDs
 		apply = func(base *model.TableInfo) {
@@ -911,11 +1095,56 @@ func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, dr
 		}
 		processed[baseID] = struct{}{}
 		base, err := jobCtx.metaMut.GetTable(job.SchemaID, baseID)
-		if err != nil || base == nil {
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if base == nil {
 			continue
+		}
+		var mlogID int64
+		if droppingTable.MaterializedView != nil && base.MaterializedViewBase != nil {
+			mlogID = base.MaterializedViewBase.MLogID
 		}
 		apply(base)
 		extraInfos = append(extraInfos, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: base})
+		if mlogID == 0 {
+			continue
+		}
+		mlog, err := jobCtx.metaMut.GetTable(job.SchemaID, mlogID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if mlog == nil || mlog.MaterializedViewLog == nil {
+			// The executor rejects this corrupted metadata before submitting the job.
+			// Do not leave an already-started DROP job retrying in delete-only state.
+			logutil.DDLLogger().Error(
+				"drop materialized view: materialized view log is missing or invalid during dependency cleanup",
+				zap.Int64("mviewID", job.TableID),
+				zap.Int64("baseTableID", baseID),
+				zap.Int64("mlogID", mlogID),
+			)
+			continue
+		}
+		if mlog.MaterializedViewLog.BaseTableID != baseID {
+			// See the missing-MLog branch above. This is a permanent metadata error,
+			// not a retryable DDL failure after the DROP job has started.
+			logutil.DDLLogger().Error(
+				"drop materialized view: materialized view log belongs to a different base table during dependency cleanup",
+				zap.Int64("mviewID", job.TableID),
+				zap.Int64("baseTableID", baseID),
+				zap.Int64("mlogID", mlogID),
+				zap.Int64("mlogBaseTableID", mlog.MaterializedViewLog.BaseTableID),
+			)
+			continue
+		}
+		if !hasMaterializedViewID(mlog.MaterializedViewLog.DependentMViewIDs, job.TableID) {
+			continue
+		}
+		var removed bool
+		mlog.MaterializedViewLog.DependentMViewIDs, removed = removeMaterializedViewID(mlog.MaterializedViewLog.DependentMViewIDs, job.TableID)
+		if removed {
+			extraInfos = append(extraInfos, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: mlog})
+		}
 	}
 	return extraInfos, nil
 }

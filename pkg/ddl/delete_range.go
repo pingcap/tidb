@@ -293,7 +293,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		args, err := model.GetFinishedDropTableArgs(job)

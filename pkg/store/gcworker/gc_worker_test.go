@@ -2402,8 +2402,11 @@ func TestCalcDeleteRangeConcurrency(t *testing.T) {
 func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 	s := createGCWorkerSuite(t)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("create-mv-rollback:20")`))
+	historyJobFailpointEnabled := true
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+		if historyJobFailpointEnabled {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+		}
 	}()
 
 	var gcPlacementRuleCache sync.Map
@@ -2427,4 +2430,38 @@ func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.True(t, got.IsEmpty())
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+	historyJobFailpointEnabled = false
+
+	for _, test := range []struct {
+		name      string
+		failpoint string
+		tableID   int64
+	}{
+		{name: "drop materialized view", failpoint: "drop-mview:20", tableID: 20},
+		{name: "drop materialized view log", failpoint: "drop-mlog:30", tableID: 30},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("`+test.failpoint+`")`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+			}()
+
+			bundleID := fmt.Sprintf("TiDB_DDL_%d", test.tableID)
+			bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1, r2"})
+			require.NoError(t, err)
+			bundle.ID = bundleID
+			require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{bundle}))
+
+			var cache sync.Map
+			dr := util.DelRangeTask{JobID: 1, ElementID: test.tableID}
+			require.NoError(t, doGCPlacementRules(createSession(s.store), 1, dr, &cache))
+			_, ok := cache.Load(test.tableID)
+			require.True(t, ok)
+			got, err := infosync.GetRuleBundle(context.Background(), bundleID)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			require.True(t, got.IsEmpty())
+		})
+	}
 }

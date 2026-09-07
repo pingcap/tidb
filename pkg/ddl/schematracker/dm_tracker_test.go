@@ -770,3 +770,47 @@ func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
 	mlogInfo := mustTableByName(t, tracker, "test", mlogName.O)
 	require.NotNil(t, mlogInfo.MaterializedViewLog)
 }
+
+func TestDropMaterializedViewLog(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	createStmt, err := p.ParseOneStmt("create materialized view log on test.t (a)", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, createStmt.(*ast.CreateMaterializedViewLogStmt)))
+
+	dropStmt, err := p.ParseOneStmt("drop materialized view log on test.t", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.DropMaterializedViewLog(sctx, dropStmt.(*ast.DropMaterializedViewLogStmt)))
+
+	_, err = tracker.TableByName(context.Background(), ast.NewCIStr("test"), model.MaterializedViewLogTableName(ast.NewCIStr("t")))
+	require.ErrorIs(t, err, infoschema.ErrTableNotExists)
+	baseTable := mustTableByName(t, tracker, "test", "t")
+	require.Nil(t, baseTable.MaterializedViewBase)
+}
+
+func TestDropMaterializedViewLogWithDependentMaterializedView(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	createStmt, err := p.ParseOneStmt("create materialized view log on test.t (a)", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, createStmt.(*ast.CreateMaterializedViewLogStmt)))
+
+	mlogName := model.MaterializedViewLogTableName(ast.NewCIStr("t"))
+	mlogTable := mustTableByName(t, tracker, "test", mlogName.O).Clone()
+	mlogTable.MaterializedViewLog.DependentMViewIDs = []int64{123}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), mlogTable))
+
+	dropStmt, err := p.ParseOneStmt("drop materialized view log on test.t", "", "")
+	require.NoError(t, err)
+	err = tracker.DropMaterializedViewLog(sctx, dropStmt.(*ast.DropMaterializedViewLogStmt))
+	require.ErrorContains(t, err, "dependent materialized views exist")
+	require.NotNil(t, mustTableByName(t, tracker, "test", mlogName.O).MaterializedViewLog)
+}
