@@ -66,6 +66,29 @@ var (
 	mockDDLErrOnce = int64(0)
 )
 
+// rollbackTxnError marks an error that must roll back the whole DDL transaction
+// before the job error is persisted.
+type rollbackTxnError struct {
+	cause error
+}
+
+func (e *rollbackTxnError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *rollbackTxnError) Unwrap() error {
+	return e.cause
+}
+
+func newRollbackTxnError(err error) error {
+	return &rollbackTxnError{cause: err}
+}
+
+func isRollbackTxnError(err error) bool {
+	var target *rollbackTxnError
+	return goerrors.As(err, &target)
+}
+
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
 func GetWaitTimeWhenErrorOccurred() time.Duration {
 	return time.Duration(atomic.LoadInt64(&WaitTimeWhenErrorOccurred))
@@ -370,6 +393,7 @@ func JobNeedGC(job *model.Job) bool {
 		}
 		switch job.Type {
 		case model.ActionDropSchema, model.ActionDropTable,
+			model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
 			model.ActionTruncateTable,
 			model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition,
@@ -675,7 +699,17 @@ func (w *worker) transitOneJobStep(
 		// then shouldn't discard the KV modification.
 		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 		// Otherwise, we should discard the KV modification when running job.
-		w.sess.Reset()
+		if isRollbackTxnError(runJobErr) {
+			w.sess.Rollback()
+			txn, txnErr := w.prepareTxn(job)
+			if txnErr != nil {
+				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+				return 0, txnErr
+			}
+			jobCtx.metaMut = meta.NewMutator(txn)
+		} else {
+			w.sess.Reset()
+		}
 		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 		// Result in the retry duration is up to 2 * lease.
 		schemaVer = 0
@@ -987,7 +1021,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onRepairTable(jobCtx, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(jobCtx, job)
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
 		ver, err = w.onDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(jobCtx, job)

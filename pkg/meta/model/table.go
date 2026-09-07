@@ -911,6 +911,7 @@ func (i *MaterializedViewInfo) GetInitBuildState() MViewInitBuildState {
 // MaterializedViewLogInfo is stored in TableInfo for a materialized view log table.
 type MaterializedViewLogInfo struct {
 	BaseTableID              int64            `json:"base_table_id"`
+	DependentMViewIDs        []int64          `json:"dependent_mview_ids,omitempty"`
 	Columns                  []ast.CIStr      `json:"columns"`
 	PurgeMethod              string           `json:"purge_method,omitempty"`
 	PurgeStartWith           string           `json:"purge_start_with,omitempty"`
@@ -946,6 +947,7 @@ func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
 	}
 	clone := &MaterializedViewLogInfo{
 		BaseTableID:           i.BaseTableID,
+		DependentMViewIDs:     append([]int64(nil), i.DependentMViewIDs...),
 		Columns:               append([]ast.CIStr(nil), i.Columns...),
 		PurgeMethod:           i.PurgeMethod,
 		PurgeStartWith:        i.PurgeStartWith,
