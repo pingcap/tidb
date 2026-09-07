@@ -181,7 +181,8 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		offsets := getMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
 		// may get a very low performance. In executor, executes join results before other conditions filter it.
-		if len(offsets) < len(leftJoinKeys) {
+		// And skip the cartesian join case, unless we force to use merge join.
+		if len(offsets) < len(leftJoinKeys) || len(leftJoinKeys) == 0 {
 			continue
 		}
 
@@ -192,8 +193,14 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 			newIsNullEQ = append(newIsNullEQ, isNullEQ[offset])
 		}
 
+<<<<<<< HEAD
 		prefixLen := findMaxPrefixLen(p.rightProperties, rightKeys)
 		if prefixLen == 0 {
+=======
+		prefixLen := findMaxPrefixLen(p.RightProperties, rightKeys)
+		// right side should also be full match.
+		if prefixLen < len(offsets) || prefixLen == 0 {
+>>>>>>> 163c4bed8fa (planner: don't choose merge join unless there's hint or join key fully matched (#59933))
 			continue
 		}
 
