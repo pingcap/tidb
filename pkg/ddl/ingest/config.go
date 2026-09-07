@@ -48,9 +48,12 @@ func genConfig(
 	maxWriteSpeed int,
 	globalSort bool,
 ) *ingestctrl.BackendConfig {
-	workerConcurrency := int32(concurrency * 2)
+	// One worker per slot, matching IMPORT INTO, so that the write-step memory
+	// model sees the CPU count it assumes: a loaded batch holds one range job
+	// per slot, which is the one share getEngineMemoryLimit budgets for it.
+	workerConcurrency := int32(concurrency)
 	if ImporterRangeConcurrencyForTest != nil {
-		workerConcurrency = ImporterRangeConcurrencyForTest.Load() * 2
+		workerConcurrency = ImporterRangeConcurrencyForTest.Load()
 	}
 
 	cfg := &ingestctrl.BackendConfig{

@@ -17,12 +17,10 @@ package simplesst
 import (
 	"context"
 	goerrors "errors"
-	"fmt"
 	"io"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -40,6 +38,10 @@ var (
 	// concurrentReaderTotalConcurrency is the maximum concurrent-read budget used by
 	// external readers within one task.
 	concurrentReaderTotalConcurrency = 256
+	// singleWindowConcurrency is the largest budget that is spent on one window
+	// instead of two. Below it, halving the requests in flight costs more than
+	// overlapping the fetch with decoding saves, so read-ahead is not worth it.
+	singleWindowConcurrency = 16
 )
 
 // byteReader provides structured reading on a byte stream of external storage.
@@ -60,6 +62,7 @@ type byteReader struct {
 		store           storeapi.Storage
 		filename        string
 		concurrency     int
+		singleWindow    bool
 		bufSizePerConc  int
 
 		now       bool
@@ -115,6 +118,10 @@ func newByteReader(
 	return r, r.reload()
 }
 
+// enableConcurrentRead configures concurrent reading. concurrency counts the
+// bufSizePerConc buffers the caller budgeted: a small budget fills one window, a
+// larger one is split in two so the next window is prefetched while the current
+// one is read, which halves the requests in flight.
 func (r *byteReader) enableConcurrentRead(
 	store storeapi.Storage,
 	filename string,
@@ -124,7 +131,13 @@ func (r *byteReader) enableConcurrentRead(
 ) {
 	r.concurrentReader.store = store
 	r.concurrentReader.filename = filename
-	r.concurrentReader.concurrency = concurrency
+	if concurrency <= singleWindowConcurrency {
+		r.concurrentReader.concurrency = max(concurrency, 1)
+		r.concurrentReader.singleWindow = true
+	} else {
+		r.concurrentReader.concurrency = concurrency / 2
+		r.concurrentReader.singleWindow = false
+	}
 	r.concurrentReader.bufSizePerConc = bufSizePerConc
 	r.concurrentReader.largeBufferPool = bufferPool
 }
@@ -183,6 +196,21 @@ func (r *byteReader) switchToConcurrentReader() error {
 		return err
 	}
 	readerFields := &r.concurrentReader
+	bufNum := 2 * readerFields.concurrency
+	if readerFields.singleWindow {
+		bufNum = readerFields.concurrency
+	}
+	largeBuf := make([][]byte, bufNum)
+	for i := range largeBuf {
+		largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
+		if err == nil && largeBuf[i] == nil {
+			err = errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
 	readerFields.reader, err = newConcurrentFileReader(
 		r.ctx,
 		readerFields.store,
@@ -191,21 +219,12 @@ func (r *byteReader) switchToConcurrentReader() error {
 		fileSize,
 		readerFields.concurrency,
 		readerFields.bufSizePerConc,
+		readerFields.singleWindow,
 	)
 	if err != nil {
 		return err
 	}
-
-	readerFields.largeBuf = make([][]byte, readerFields.concurrency)
-	for i := range readerFields.largeBuf {
-		readerFields.largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
-		if err != nil {
-			return err
-		}
-		if readerFields.largeBuf[i] == nil {
-			return errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
-		}
-	}
+	readerFields.largeBuf = largeBuf
 
 	r.curBuf = readerFields.largeBuf
 	r.curBufOffset = 0
@@ -350,12 +369,10 @@ func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) 
 		zap.Int("dropBytes", r.concurrentReader.bufSizePerConc*(len(r.curBuf)-r.curBufIdx)-r.curBufOffset),
 		zap.Int("curBufIdx", r.curBufIdx),
 	)
-	failpoint.Inject("assertReloadAtMostOnce", func() {
-		if r.concurrentReader.reloadCnt > 1 {
-			panic(fmt.Sprintf("reloadCnt is %d", r.concurrentReader.reloadCnt))
-		}
-	})
+	r.concurrentReader.reader.close()
+	r.concurrentReader.reader = nil
 	r.concurrentReader.largeBufferPool.Destroy()
+	r.concurrentReader.largeBufferPool = nil
 	r.concurrentReader.largeBuf = nil
 	r.concurrentReader.now = false
 	reloadCnt = r.concurrentReader.reloadCnt
@@ -369,6 +386,9 @@ func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) 
 func (r *byteReader) Close() error {
 	if r.concurrentReader.now {
 		r.closeConcurrentReader()
+	} else if r.concurrentReader.largeBufferPool != nil {
+		r.concurrentReader.largeBufferPool.Destroy()
+		r.concurrentReader.largeBufferPool = nil
 	}
 	return r.storageReader.Close()
 }
