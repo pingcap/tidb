@@ -9315,6 +9315,14 @@ risks without claiming repository-wide parity.
   executor, and server all-target checks; the Rust-only
   `consume_and_check_exceed` adapter remains intentionally annotated. Ready
   evidence is recorded in `receipts/util_memory_audit.md`.
+- 2026-09-07 (`pkg/util/memory` process-query returns): the complete Go package
+  inventory and the 16-artifact, 12,029-line Rust memory owner were re-read.
+  Rust-only discard diagnostics were removed from `read_mem_stats` and
+  `using_global_mem_arbitration`; allocator sampling and spill/error adapters
+  remain intentionally annotated. The focused regression failed with exactly
+  two diagnostics before the edit and passes after, with 41 memory tests
+  passing, 2 ignored, and the all-target owner check green apart from existing
+  warnings. Evidence is recorded in `receipts/util_memory_audit.md`.
 - 2026-09-06 (`pkg/meta/model` table-mode surface): the complete 23-artifact
   owner inventory was rechecked and `TableMode::can_transition_to` no longer
   emits Go-incompatible Rust-only `#[must_use]` diagnostics. Its deny-on-

@@ -391,7 +391,6 @@ pub fn allocator_live_heap_sample() -> Option<(i64, i64, i64)> {
 }
 
 /// Returns the process memory counters consumed by TiDB's memory controllers.
-#[must_use]
 pub fn read_mem_stats() -> MemStats {
     let rss = current_process_memory_usage()
         .ok()
@@ -432,7 +431,6 @@ pub fn mem_used() -> std::io::Result<u64> {
 }
 
 /// Reports whether the process is using the global memory arbitrator.
-#[must_use]
 pub fn using_global_mem_arbitration() -> bool {
     USING_GLOBAL_MEM_ARBITRATION.load(SeqCst)
 }
@@ -457,5 +455,12 @@ mod tests {
         assert_eq!(parse_server_memory_limit("1GiB").unwrap(), 1 << 30);
         assert_eq!(parse_server_memory_limit("1").unwrap(), 512 << 20);
         assert!(parse_server_memory_limit("100%").is_err());
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn go_process_memory_returns_may_be_ignored() {
+        read_mem_stats();
+        using_global_mem_arbitration();
     }
 }

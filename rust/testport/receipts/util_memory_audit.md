@@ -112,3 +112,37 @@ the benchmark-inclusive `tidb-util` owner check, affected `tidb-chunk`,
 
 No Go source was edited and no external TiKV integration was needed for this
 constructor diagnostic-only alignment.
+
+## Follow-up: discardable process-memory query returns (`2026-09-07`)
+
+The complete 14-artifact, 11,388-line Go package inventory above remains the
+atomic authority. Before this correction, the Rust memory owner was fully
+re-enumerated as 16 source/test artifacts and 12,029 lines, including all
+production modules, nested arbitrator tests, process/platform branches, and
+the crate-level exports and callers. No additional generated output, fixture,
+platform file, or package-local build input exists.
+
+Rust still imposed explicit `#[must_use]` diagnostics on `read_mem_stats` and
+`using_global_mem_arbitration`, the direct process-query counterparts of Go's
+`ReadMemStats` and `UsingGlobalMemArbitration`. Go permits callers to discard
+both results, so those two annotations are removed without changing memory
+sampling or arbitrator state. `allocator_live_heap_sample` remains annotated
+because it is the Rust allocator bridge, and `consume_and_check_exceed`
+remains annotated as the Rust spill/error adapter documented above.
+
+`memory::process::tests::go_process_memory_returns_may_be_ignored` discards
+both corrected values under `#[deny(unused_must_use)]`. Against the pre-fix
+owner it failed with exactly two diagnostics; after removing the annotations
+the focused test passes.
+
+Ready evidence for this bounded Rust-only follow-up:
+
+- focused post-fix regression — 1 passed;
+- complete memory owner test namespace — 41 passed, 2 ignored;
+- benchmark-inclusive `tidb-util` all-target check — passed with existing
+  workspace warnings;
+- pinned nightly rustfmt, `git diff --check`, and repository `make lint` —
+  passed (lint exit 0).
+
+No Go, Bazel, module, Cargo metadata, generated/platform artifact, or fixture
+changed, so `make bazel_prepare` is not required.
