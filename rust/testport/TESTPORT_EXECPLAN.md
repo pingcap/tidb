@@ -10912,3 +10912,7 @@ risks without claiming repository-wide parity.
   clears the previous one — SHOW CREATE drops the clause and omission
   refuses with 1364. Pinned in
   `crates/tidb-session/tests/modify_clears_default_source.rs`.
+- 2026-09-06 (ORDER BY virtual generated pin): ORDER BY and WHERE see a
+  VIRTUAL generated column's recomputed values exactly as a stored column
+  would. Pinned in
+  `crates/tidb-session/tests/order_by_virtual_generated_source.rs`.
