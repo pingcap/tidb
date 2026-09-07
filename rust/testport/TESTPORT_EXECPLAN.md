@@ -10693,3 +10693,13 @@ risks without claiming repository-wide parity.
   the named partition's rows; a new value that fits no partition fails
   Go's 1526 leaving the table unchanged. Pinned in
   `crates/tidb-session/tests/partition_qualified_update_source.rs`.
+- 2026-09-06 (ADD COLUMN self-violating CHECK recorded, NOT FIXED): `alter
+  table t add column b int default -5 check (b > 0)` was ACCEPTED — the
+  column's own DEFAULT violates its inline CHECK. Go/TiDB materialize the
+  new column's default for existing rows through the write path, which
+  validates CHECKs, refusing at DDL with 3819. The port's ALTER ADD COLUMN
+  path (alter_table.rs add_column_spec / the MultiSchemaInfo flow) builds
+  the column without validating the default against the inline CHECK. Fix:
+  validate the new column's default value against its own CHECK in the
+  ALTER add-column flow (the column_default::evaluate machinery already
+  exists). Queued as a bounded alter_table.rs fix.
