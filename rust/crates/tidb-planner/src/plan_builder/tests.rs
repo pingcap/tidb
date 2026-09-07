@@ -1628,3 +1628,45 @@ fn use_index_merge_keeps_its_partition_scope() {
     });
     assert_eq!(matched, 1);
 }
+
+// ***** isolation read engines, the empty-is-unset invariant *****
+
+/// Go's `tidb_isolation_read_engines` can never be EMPTY — the sysvar
+/// validation rejects any value outside {tikv, tiflash, tidb} and the config
+/// default is the joined triple (`config.go:1304`). So an empty value handed
+/// to `set_isolation_read_engines` means "the caller had no session variable
+/// at all" (a bare `StmtContext::default()` in the driver tests), and the
+/// builder must KEEP its config default instead of blanking every access
+/// path with `'tidb_isolation_read_engines' = ''`.
+#[test]
+fn empty_isolation_read_engines_keeps_the_config_default() {
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+
+    // A real value applies.
+    builder.set_isolation_read_engines("tikv");
+    assert_eq!(builder.isolation_read_engines_value, "tikv");
+    assert!(builder.tikv_in_isolation_read);
+    assert!(!builder.tiflash_in_isolation_read);
+
+    // An empty value is "unset": nothing changes — the previous setting
+    // survives and no blank can blank every access path into
+    // "No access path ... 'tidb_isolation_read_engines' = ''".
+    builder.set_isolation_read_engines("");
+    assert_eq!(
+        builder.isolation_read_engines_value, "tikv",
+        "empty must leave the last real setting untouched"
+    );
+    assert!(builder.tikv_in_isolation_read);
+    assert!(!builder.tiflash_in_isolation_read);
+
+    // From a fresh builder the empty value likewise keeps the config default
+    // triple, which is what the driver tests' bare StmtContext relies on.
+    let harness = Harness::new();
+    let mut fresh = harness.builder();
+    fresh.set_isolation_read_engines("");
+    assert_eq!(fresh.isolation_read_engines_value, "tikv,tiflash,tidb");
+    assert!(fresh.tikv_in_isolation_read);
+    assert!(fresh.tiflash_in_isolation_read);
+    assert!(fresh.tidb_in_isolation_read);
+}

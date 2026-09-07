@@ -1083,7 +1083,18 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
 
     /// Installs Go `SessionVars.IsolationReadEngines` for access-path and
     /// `READ_FROM_STORAGE` resolution.
+    ///
+    /// Go's `tidb_isolation_read_engines` can never be EMPTY: the sysvar
+    /// validation rejects any value outside {tikv, tiflash, tidb}
+    /// (`sysvar.go:370-386`) and the config default is the joined triple
+    /// (`config.go:1304`). An empty string here therefore means the caller had
+    /// no session variable to read at all (a bare `StmtContext::default()`),
+    /// not a real setting — keep the builder's config default instead of
+    /// blanking every access path.
     pub fn set_isolation_read_engines(&mut self, engines: &str) {
+        if engines.is_empty() {
+            return;
+        }
         self.isolation_read_engines_value = engines.to_owned();
         self.tikv_in_isolation_read = engines
             .split(',')
