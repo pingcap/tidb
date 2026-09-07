@@ -1651,6 +1651,25 @@ pub fn run_create_table_in(
             Some(_) => {}
         }
     }
+    // Go `checkPrimaryKeyForTTLTable` (`pkg/ddl/ttl.go:155-168`): a TTL table
+    // whose CLUSTERED primary key contains a FLOAT or DOUBLE column is refused
+    // (8153) -- TTL deletes expired rows with SQL predicates, and comparing a
+    // float handle loses precision.
+    if ttl_info.is_some() && clustered {
+        let pk_offsets: &[usize] = match &handle {
+            HandleKind::CommonHandle(offsets) => offsets,
+            HandleKind::IntHandle(offset) => std::slice::from_ref(offset),
+            HandleKind::RowId => &[],
+        };
+        if pk_offsets.iter().any(|offset| {
+            matches!(
+                columns[*offset].field_type.code(),
+                FieldTypeCode::Float | FieldTypeCode::Double
+            )
+        }) {
+            return Err(DriverError::UnsupportedPrimaryKeyTypeWithTtl);
+        }
+    }
     table.set_ttl_info(ttl_info);
     // Go `handleTableOptions`: `SHARD_ROW_ID_BITS = n` is recorded on the
     // TableInfo and read by `AllocHandleIDs`, which composes those HIGH bits

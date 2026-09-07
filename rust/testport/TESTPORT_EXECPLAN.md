@@ -10874,3 +10874,10 @@ risks without claiming repository-wide parity.
   REMOVE TTL clears (no-op without a config). Pins:
   `crates/tidb-session/tests/alter_ttl_source.rs` (3 tests, 8
   assertions). Suite diff vs baseline: zero net-new failures.
+- 2026-09-06 (TTL clustered-PK fix, REAL DIVERGENCE): Go's
+  `checkPrimaryKeyForTTLTable` (`pkg/ddl/ttl.go:155-168`) refuses a TTL
+  table whose clustered PK contains FLOAT/DOUBLE (8153); the port
+  accepted it. CREATE now walks the clustered handle's columns. Pin:
+  `crates/tidb-session/tests/ttl_clustered_pk_source.rs` (FLOAT/DOUBLE
+  refused, int fine, float without TTL fine). Suite diff vs baseline:
+  zero net-new failures.

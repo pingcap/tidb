@@ -119,6 +119,9 @@ pub enum DriverError {
     /// interval-only ALTER TTL option on a table without a TTL config,
     /// carrying the option name.
     SetTtlOptionForNonTtlTable(String),
+    /// Go `dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL` (8153): a TTL table
+    /// whose clustered primary key contains a FLOAT or DOUBLE column.
+    UnsupportedPrimaryKeyTypeWithTtl,
     /// Go `dbterror.ErrUnsupportedLocalTempTableDDL` (8200), carrying the
     /// statement name: a local temporary table exists only in the session,
     /// so the DDL job every one of these would need cannot be submitted.

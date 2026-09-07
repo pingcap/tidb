@@ -226,6 +226,11 @@ impl DriverError {
             tidb_error::tidb::errcode::ErrSetTTLOptionForNonTTLTable,
             format!("Cannot set {option} on a table without TTL config"),
         ),
+        // Go: "Unsupported clustered primary key type FLOAT/DOUBLE for TTL".
+        DriverError::UnsupportedPrimaryKeyTypeWithTtl => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrUnsupportedPrimaryKeyTypeWithTTL,
+            tidb_error::tidb::errname::ErrUnsupportedPrimaryKeyTypeWithTTL.raw,
+        ),
         DriverError::UnsupportedLocalTempTableDDL(statement) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
             format!("TiDB doesn't support {statement} for local temporary table"),
