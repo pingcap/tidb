@@ -9941,3 +9941,7 @@ risks without claiming repository-wide parity.
   invalid JSON fails with "Invalid JSON text" (3141); '2024-2-3' normalizes;
   '2024-13-40' fails with "Incorrect datetime value ... at row 1" (1292).
   Pinned in `tests/json_datetime_write_source.rs`.
+- 2026-09-06 (INSERT SELECT pin): the source query runs over its own tables;
+  computed projections (`a + 10`, `concat(b, '!')`) and WHERE filtering land
+  in the target with correct affected-rows accounting. Pinned in
+  `tests/insert_select_source.rs`.
