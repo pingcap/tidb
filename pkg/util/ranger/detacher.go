@@ -28,6 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util/intest"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
+>>>>>>> d87ec2b1884 (planner: RegardNULLAsPoint should be true as default (#62194))
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
@@ -133,7 +138,17 @@ func getPotentialEqOrInColOffset(sctx planctx.PlanContext, expr expression.Expre
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(evalCtx, chunk.Row{})
+<<<<<<< HEAD
 				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
+=======
+				intest.AssertFunc(func() bool {
+					if sctx.ExprCtx.ConnectionID() == 0 {
+						return sctx.RegardNULLAsPoint
+					}
+					return true
+				})
+				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
+>>>>>>> d87ec2b1884 (planner: RegardNULLAsPoint should be true as default (#62194))
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
 					return -1
