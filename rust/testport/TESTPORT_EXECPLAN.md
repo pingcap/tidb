@@ -10195,3 +10195,6 @@ risks without claiming repository-wide parity.
   grouping (top-2 groups by count); HAVING accepts the SELECT alias (MySQL
   extension) and bare aggregates. Pinned in
   `crates/tidb-session/tests/group_having_alias_source.rs`.
+- 2026-09-06 (derived-table pin): an outer query filters a grouped
+  subquery (`c > 1`) and the derived result joins back to the base table.
+  Pinned in `crates/tidb-session/tests/derived_table_agg_source.rs`.
