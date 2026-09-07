@@ -11292,3 +11292,6 @@ risks without claiming repository-wide parity.
   processes and NULL in others (arg arrives as Null at eval time);
   suspected hash-seed-dependent path in the argument wrapping. NOT pinned
   (flaky); queued behind the shared JSON eval region.
+- 2026-09-06 (JSON_EXTRACT multi-path pin): multi-path array collection,
+  missing-path omission, all-missing NULL, and array-index paths. Pinned
+  in `crates/tidb-session/tests/json_extract_multi_source.rs`.
