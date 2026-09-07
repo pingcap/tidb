@@ -47,4 +47,20 @@ fn index_visibility_flips() {
         .run("alter table t alter index idx visible")
         .unwrap();
     assert_eq!(visibility(&mut session), "YES");
+
+    // And back: a plain index goes invisible.
+    session
+        .run("alter table t alter index idx invisible")
+        .unwrap();
+    assert_eq!(visibility(&mut session), "NO");
+
+    // Column-level INVISIBLE is NOT in the oracle grammar — refused.
+    let error = session
+        .run("alter table t add column ghost int invisible")
+        .expect_err("no column-level invisible")
+        .to_string();
+    assert!(
+        error.contains("check the manual that corresponds"),
+        "{error}"
+    );
 }

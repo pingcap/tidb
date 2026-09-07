@@ -11074,3 +11074,8 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (string/number coercion pin): comparisons coerce strings by
   their leading numeric prefix ('abc' = 0, '1e2' = 100). Pinned in
   `crates/tidb-session/tests/string_number_coercion_source.rs`.
+- 2026-09-06 (visibility round-trip extension): the index-visibility pin
+  now covers VISIBLE -> INVISIBLE too, and documents that column-level
+  INVISIBLE is refused (absent from the oracle's column-option grammar,
+  ddl_table_parser.go:265). Extended in
+  `crates/tidb-session/tests/invisible_index_source.rs`.
