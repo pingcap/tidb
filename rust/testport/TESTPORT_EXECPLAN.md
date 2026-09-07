@@ -11225,3 +11225,6 @@ risks without claiming repository-wide parity.
   final-sigma hazard (Σ -> σ via the simple mapping, not the word-final
   ς a full Unicode fold produces), and NULL propagation. Pinned in
   `crates/tidb-session/tests/lower_upper_case_source.rs`.
+- 2026-09-06 (REPLACE/SPACE pin): replace-all expansion, no-op and empty
+  search strings, SPACE's negative clamp, and NULL propagation. Pinned
+  in `crates/tidb-session/tests/replace_space_source.rs`.
