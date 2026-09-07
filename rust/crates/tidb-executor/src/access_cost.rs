@@ -1553,7 +1553,9 @@ enum StringMatchKind<'a> {
 /// `ast.RegexpLike`, and `GetExprInsideIsTruth` unwrapping a NOT wrapper).
 /// This AST carries `NOT LIKE`'s negation on the node, so a NOT wrapper only
 /// appears around parenthesized or already-negated shapes.
-fn string_match_shape(expr: &tidb_ast::Expr) -> Option<(&tidb_ast::Expr, &tidb_ast::Expr, bool, StringMatchKind<'_>)> {
+fn string_match_shape(
+    expr: &tidb_ast::Expr,
+) -> Option<(&tidb_ast::Expr, &tidb_ast::Expr, bool, StringMatchKind<'_>)> {
     match strip_parens(expr) {
         tidb_ast::Expr::Like {
             expr,
@@ -1561,16 +1563,14 @@ fn string_match_shape(expr: &tidb_ast::Expr) -> Option<(&tidb_ast::Expr, &tidb_a
             not,
             ilike,
             escape,
-        } => Some((
-            expr,
-            pattern,
-            *not,
-            StringMatchKind::Like { ilike, escape },
-        )),
+        } => Some((expr, pattern, *not, StringMatchKind::Like { ilike, escape })),
         tidb_ast::Expr::Regexp { expr, pattern, not } => {
             Some((expr, pattern, *not, StringMatchKind::Regexp))
         }
-        tidb_ast::Expr::Unary(op @ (tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword), inner) => {
+        tidb_ast::Expr::Unary(
+            op @ (tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword),
+            inner,
+        ) => {
             let (expr, pattern, not, kind) = string_match_shape(inner)?;
             Some((expr, pattern, !not, kind))
         }
@@ -1630,9 +1630,7 @@ fn string_match_selectivity(
             }
             // The estimator's own gate only reaches binary-collation string
             // columns, so the case-sensitive regexp matcher is exact.
-            StringMatchKind::Regexp => {
-                tidb_expr::regexp_match_bin_collation(value, pattern)?
-            }
+            StringMatchKind::Regexp => tidb_expr::regexp_match_bin_collation(value, pattern)?,
         };
         Some(if negated { !matched } else { matched })
     };
@@ -2122,7 +2120,6 @@ mod tests {
         );
         assert!((actual - 0.525).abs() < 1e-12, "{actual} != 0.525");
     }
-
 
     #[test]
     fn regexp_estimates_from_topn_and_histogram_anchors() {

@@ -24,12 +24,12 @@ use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 mod correlated;
 mod defaults;
 
-use correlated::{DmlExpression, UpdateExpression, dml_table_scope};
+use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
 
 pub(crate) use defaults::{
-    ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse, PreparedNamedDefault,
-    PreparedOnUpdateNow, ResolvedDefaultColumn, column_default, column_metadata,
-    materialize_column_default, prepare_named_defaults, rewrite_with_prepared_defaults,
+    column_default, column_metadata, materialize_column_default, prepare_named_defaults,
+    rewrite_with_prepared_defaults, ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse,
+    PreparedNamedDefault, PreparedOnUpdateNow, ResolvedDefaultColumn,
 };
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against

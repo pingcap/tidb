@@ -9770,3 +9770,9 @@ risks without claiming repository-wide parity.
   UPDATE on non-timestamp rejection, datetime CURRENT_TIMESTAMP forms accepted,
   CURRENT_TIMESTAMP expression default on int rejected, plain expression
   default accepted. Five pins in `tests/default_on_update_source.rs`.
+- 2026-09-06 (strict-mode insert truncate pins): strict insert of an
+  over-long varchar value → 1406 "Data too long for column 'b' at row 1";
+  non-strict insert → truncate-and-store. Both via the existing
+  `write_cast` DataTooLong arm; `StmtContext::default()` models
+  `sql_mode = ''`, which is why the first probe silently stored. Two pins in
+  `tests/insert_strict_truncate_source.rs`.

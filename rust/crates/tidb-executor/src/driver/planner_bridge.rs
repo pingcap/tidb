@@ -25,20 +25,20 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expr_util::normal_form::extract_filters_from_dnfs;
+use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::ZonedNoResolver;
 use tidb_expr::simple_expr::compose_dnf_condition;
 use tidb_planner::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
 use tidb_planner::expression_rewriter::ColumnIdAllocator;
 use tidb_planner::find_best_task::coster::Ver2Coster;
-use tidb_planner::find_best_task::dispatch::{DispatchContext, find_best_task};
+use tidb_planner::find_best_task::dispatch::{find_best_task, DispatchContext};
 use tidb_planner::logical::cte::CteClass;
-use tidb_planner::logical::fold::{Descend, OwnedRewrite, fold_owned};
-use tidb_planner::logical::rule::{DisabledLogicalRules, RuleContext, flags, logical_optimize};
+use tidb_planner::logical::fold::{fold_owned, Descend, OwnedRewrite};
+use tidb_planner::logical::rule::{flags, logical_optimize, DisabledLogicalRules, RuleContext};
 use tidb_planner::logical::{
-    BaseLogicalPlan, LogicalPlan, LogicalSelection, prepare_possible_properties,
+    prepare_possible_properties, BaseLogicalPlan, LogicalPlan, LogicalSelection,
 };
 use tidb_planner::physical::PhysicalPlan;
 use tidb_planner::physical_property::PhysicalProperty;
@@ -46,9 +46,9 @@ use tidb_planner::plan_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_planner::stats_info::{HistColl, StatsInfo};
 
-use super::FromTable;
 use super::catalog::{Catalog, TableEntry};
 use super::from::FromScope;
+use super::FromTable;
 
 enum ListColumnsLocated {
     Full,
