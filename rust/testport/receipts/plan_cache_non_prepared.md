@@ -198,3 +198,28 @@ plan-cache wiring. Until then this receipt's admission face (AST-level fast
 checks + checker walk) is the complete ported half; plans whose OPTIMIZED
 shape Go would refuse can be cached here, which is a known, bounded divergence
 owned by the physical-plan batch.
+
+## Capacity resolution — aligned to Go's unified variable (2026-09-06)
+
+An earlier round read the deprecated `tidb_non_prepared_plan_cache_size`
+FIRST for compatibility with this port's own pinned tests, falling back to
+`tidb_session_plan_cache_size`. Go master's funnel has no such fallback:
+the stmt cache is sized from `s.SessionPlanCacheSize` alone
+(`session.go:2927`, lazily at first `AddNonPreparedPlanCacheStmt`), and the
+deprecated name's SET handler writes an ORPHAN field (zero readers) plus
+warning 1287 (`sysvar.go:1634-1641`). Reading the deprecated name first was
+therefore Rust-only behavior.
+
+Fixed: `non_prepared_plan_cache_capacity` reads only
+`tidb_session_plan_cache_size` (default 100 = `DefTiDBSessionPlanCacheSize`
+kept as the defensive fallback); the bound test now sets the unified name.
+The deprecated SET → warning-1287 → readable-value contract is untouched
+(`tests_session_var_hooks` 23/23). Known sub-boundary: Go snapshots the size
+when the LRU is first created, while the Rust funnel reads the variable per
+statement — observable only for a mid-session resize AFTER cached statements
+exist, pinned tests set the size before any statement.
+
+Regression: `the_cache_is_bounded_by_its_size_variable` (now on the unified
+name) fails-before by construction — under the deprecated-first resolution
+the unified-name SET could not drive eviction. Suite 26 passed + 1 ignored;
+`tests_session_var_hooks` 23 passed.

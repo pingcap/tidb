@@ -613,12 +613,14 @@ fn two_tables_are_admitted_and_three_are_refused() {
 }
 
 /// The cache is bounded: with room for one entry, alternating between two
-/// shapes evicts before either can be hit again.
+/// shapes evicts before either can be hit again. Go sizes the stmt cache from
+/// the unified `tidb_session_plan_cache_size` (`session.go:2927`); the
+/// deprecated `tidb_non_prepared_plan_cache_size` is an orphaned name there.
 #[test]
 fn the_cache_is_bounded_by_its_size_variable() {
     let mut session = cache_session();
     session
-        .run("set tidb_non_prepared_plan_cache_size = 1")
+        .run("set tidb_session_plan_cache_size = 1")
         .expect("resize");
 
     session

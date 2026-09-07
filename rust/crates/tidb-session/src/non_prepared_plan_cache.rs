@@ -1249,20 +1249,16 @@ impl crate::Session {
     }
 
     fn non_prepared_plan_cache_capacity(&self) -> usize {
-        // The pinned surface: the deprecated `tidb_non_prepared_plan_cache_size`
-        // name drives the capacity this port's tests and callers set; the
-        // unified `tidb_session_plan_cache_size` remains the fallback default
-        // (both resolve to 100 when untouched).
+        // Go's capacity comes from the unified `tidb_session_plan_cache_size`
+        // ONLY (`session.go:2927`, `NewSimpleLRUCache(uint(s.SessionPlanCacheSize))`).
+        // The deprecated `tidb_non_prepared_plan_cache_size` writes an orphan
+        // field plus warning 1287 and has no readers — the Rust funnel reads
+        // nothing it wouldn't. The `unwrap_or(100)` is the defensive default
+        // matching `DefTiDBSessionPlanCacheSize`.
         self.vars
-            .get_system("tidb_non_prepared_plan_cache_size")
+            .get_system("tidb_session_plan_cache_size")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
-            .or_else(|| {
-                self.vars
-                    .get_system("tidb_session_plan_cache_size")
-                    .ok()
-                    .and_then(|value| value.parse::<usize>().ok())
-            })
             .unwrap_or(100)
     }
 
