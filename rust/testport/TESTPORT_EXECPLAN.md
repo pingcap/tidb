@@ -10095,3 +10095,7 @@ risks without claiming repository-wide parity.
   internal "LogicalCTE.DeriveStats: seed physical plan is nil" — recorded as
   a planner-boundary gap alongside the uncorrelated scalar-subquery record
   (see `docs/uncorrelated-scalar-subquery-divergence.md`'s class).
+- 2026-09-06 (LIKE/RENAME pins): CREATE TABLE LIKE copies structure without
+  rows and keeps independent storage; RENAME TABLE carries the rows and the
+  old name goes missing (1146). Pinned in
+  `crates/tidb-session/tests/like_rename_lifecycle_source.rs`.
