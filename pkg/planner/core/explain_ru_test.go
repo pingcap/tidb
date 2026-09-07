@@ -64,6 +64,442 @@ func TestExplainAnalyzeRUFormat(t *testing.T) {
 	}
 }
 
+func TestExplainAnalyzeRUIncreasesWithScannedData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	const cumRUColumn = 4
+
+	insertRows := func(table string) {
+		var sql strings.Builder
+		sql.WriteString("insert into ")
+		sql.WriteString(table)
+		sql.WriteString(" values ")
+		for i := 1; i <= 100; i++ {
+			if i > 1 {
+				sql.WriteString(", ")
+			}
+			aText := strconv.Itoa(i)
+			sql.WriteString("(")
+			sql.WriteString(aText)
+			sql.WriteString(", concat('row-', ")
+			sql.WriteString(aText)
+			sql.WriteString(", '-', repeat('x', 1024)), ")
+			sql.WriteString(strconv.Itoa(i % 10))
+			sql.WriteString(")")
+		}
+		tk.MustExec(sql.String())
+	}
+	explainRU := func(tb testing.TB, sql string, param int) (float64, [][]any) {
+		tb.Helper()
+		paramSQL := strings.Replace(sql, "?", strconv.Itoa(param), 1)
+		require.NotEqualf(tb, sql, paramSQL, "sql should contain one parameter marker: %s", sql)
+		require.NotContains(tb, paramSQL, "?")
+		rows := tk.MustQuery("explain analyze format = 'ru' " + paramSQL).Rows()
+		require.NotEmpty(tb, rows)
+		require.Greater(tb, len(rows[0]), cumRUColumn)
+		ruText, ok := rows[0][cumRUColumn].(string)
+		require.True(tb, ok)
+		require.NotEmpty(tb, ruText)
+		ru, err := strconv.ParseFloat(ruText, 64)
+		require.NoError(tb, err)
+		return ru, rows
+	}
+	requireOperators := func(tb testing.TB, rows [][]any, operators ...string) {
+		tb.Helper()
+		for _, operator := range operators {
+			found := false
+			for _, row := range rows {
+				id, ok := row[0].(string)
+				require.True(tb, ok)
+				if strings.Contains(id, operator) {
+					found = true
+					break
+				}
+			}
+			require.Truef(tb, found, "operator %s not found in rows %v", operator, rows)
+		}
+	}
+
+	tk.MustExec("drop table if exists t_unistore_ru_param_pk, t_unistore_ru_param_scan, t_unistore_ru_param_idx, t_unistore_ru_param_index_merge, t_unistore_ru_param_join_left, t_unistore_ru_param_join_right")
+	tk.MustExec("create table t_unistore_ru_param_pk(a int primary key, b varchar(2048), c int)")
+	tk.MustExec("create table t_unistore_ru_param_scan(a int, b varchar(2048), c int)")
+	tk.MustExec("create table t_unistore_ru_param_idx(a int, b varchar(2048), c int, key idx_a_b(a, b(128)))")
+	tk.MustExec("create table t_unistore_ru_param_index_merge(a int, b varchar(2048), c int, key idx_a(a), key idx_c(c))")
+	tk.MustExec("create table t_unistore_ru_param_join_left(a int primary key, b varchar(2048), c int)")
+	tk.MustExec("create table t_unistore_ru_param_join_right(a int primary key, b varchar(2048), c int)")
+	insertRows("t_unistore_ru_param_pk")
+	insertRows("t_unistore_ru_param_scan")
+	insertRows("t_unistore_ru_param_idx")
+	insertRows("t_unistore_ru_param_index_merge")
+	insertRows("t_unistore_ru_param_join_left")
+	insertRows("t_unistore_ru_param_join_right")
+
+	cases := []struct {
+		name              string
+		sql               string
+		expectedOperators []string
+		smallParam        int
+		largeParam        int
+	}{
+		{
+			name:              "table range scan",
+			sql:               "select * from t_unistore_ru_param_pk where a < ?",
+			expectedOperators: []string{"TableReader", "TableRangeScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		{
+			name:              "table full scan",
+			sql:               "select * from t_unistore_ru_param_scan limit ?",
+			expectedOperators: []string{"Limit", "TableFullScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		{
+			name:              "index scan",
+			sql:               "select a from t_unistore_ru_param_idx use index(idx_a_b) where a < ?",
+			expectedOperators: []string{"IndexReader", "IndexRangeScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		{
+			name:              "index lookup",
+			sql:               "select * from t_unistore_ru_param_idx use index(idx_a_b) where a < ?",
+			expectedOperators: []string{"IndexLookUp", "IndexRangeScan", "TableRowIDScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		{
+			name:              "selection",
+			sql:               "select * from t_unistore_ru_param_pk where a < ? and c >= 0",
+			expectedOperators: []string{"Selection", "TableRangeScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		{
+			name:              "projection",
+			sql:               "select a + c from t_unistore_ru_param_pk where a < ?",
+			expectedOperators: []string{"Projection", "TableRangeScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		// {
+		// 	name:              "hash join",
+		// 	sql:               "select /*+ hash_join(l, r) */ l.a, r.b from t_unistore_ru_param_join_left l join t_unistore_ru_param_join_right r on l.a = r.a where l.a < ?",
+		// 	expectedOperators: []string{"HashJoin", "TableRangeScan"},
+		// 	smallParam:        10,
+		// 	largeParam:        90,
+		// },
+		{
+			name:              "index join",
+			sql:               "select /*+ inl_join(l, r) */ l.a, r.b from t_unistore_ru_param_join_left l join t_unistore_ru_param_join_right r on l.a = r.a where l.a < ?",
+			expectedOperators: []string{"IndexJoin", "TableRangeScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		{
+			name:              "index hash join",
+			sql:               "select /*+ inl_hash_join(l, r) */ l.a, r.b from t_unistore_ru_param_join_left l join t_unistore_ru_param_join_right r on l.a = r.a where l.a < ?",
+			expectedOperators: []string{"IndexHashJoin", "TableRangeScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		{
+			name:              "merge join",
+			sql:               "select /*+ merge_join(l, r) */ l.a, r.b from t_unistore_ru_param_join_left l join t_unistore_ru_param_join_right r on l.a = r.a where l.a < ?",
+			expectedOperators: []string{"MergeJoin", "TableRangeScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		// {
+		// 	name:              "hash aggregation",
+		// 	sql:               "select /*+ hash_agg() */ c, count(*) from t_unistore_ru_param_pk where a < ? group by c",
+		// 	expectedOperators: []string{"HashAgg", "TableRangeScan"},
+		// 	smallParam:        10,
+		// 	largeParam:        90,
+		// },
+		{
+			name:              "stream aggregation",
+			sql:               "select /*+ stream_agg() */ c, count(*) from t_unistore_ru_param_index_merge use index(idx_c) where c < ? group by c",
+			expectedOperators: []string{"StreamAgg", "IndexRangeScan"},
+			smallParam:        2,
+			largeParam:        9,
+		},
+		{
+			name:              "sort",
+			sql:               "select * from t_unistore_ru_param_scan where c < ? order by a",
+			expectedOperators: []string{"Sort", "TableFullScan"},
+			smallParam:        2,
+			largeParam:        9,
+		},
+		{
+			name:              "topn",
+			sql:               "select * from t_unistore_ru_param_pk where a < ? order by c, a limit 10",
+			expectedOperators: []string{"TopN", "TableRangeScan"},
+			smallParam:        20,
+			largeParam:        90,
+		},
+		{
+			name:              "union all",
+			sql:               "select a, b from t_unistore_ru_param_pk where a < ? union all select a, b from t_unistore_ru_param_pk where a < 10",
+			expectedOperators: []string{"Union", "TableRangeScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		{
+			name:              "apply",
+			sql:               "select l.a, (select /*+ no_decorrelate() */ r.b from t_unistore_ru_param_join_right r where r.a = l.a) from t_unistore_ru_param_join_left l where l.a < ?",
+			expectedOperators: []string{"Apply", "TableRangeScan"},
+			smallParam:        10,
+			largeParam:        90,
+		},
+		// {
+		// 	name:              "index merge",
+		// 	sql:               "select /*+ use_index_merge(t_unistore_ru_param_index_merge, idx_a, idx_c) */ * from t_unistore_ru_param_index_merge where a < ? or c = 1",
+		// 	expectedOperators: []string{"IndexMerge", "IndexRangeScan", "TableRowIDScan"},
+		// 	smallParam:        10,
+		// 	largeParam:        90,
+		// },
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			smallRU, smallRows := explainRU(t, tt.sql, tt.smallParam)
+			largeRU, largeRows := explainRU(t, tt.sql, tt.largeParam)
+			requireOperators(t, smallRows, tt.expectedOperators...)
+			requireOperators(t, largeRows, tt.expectedOperators...)
+			require.Greaterf(t, largeRU, smallRU, "sql: %s, small param: %d, large param: %d", tt.sql, tt.smallParam, tt.largeParam)
+		})
+	}
+}
+
+func TestExplainAnalyzeRUIncreasesWithComputedData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	const cumRUColumn = 4
+
+	explainRU := func(tb testing.TB, sql string) (float64, [][]any) {
+		tb.Helper()
+		rows := tk.MustQuery("explain analyze format = 'ru' " + sql).Rows()
+		require.NotEmptyf(tb, rows, "sql: %s", sql)
+		require.Greaterf(tb, len(rows[0]), cumRUColumn, "sql: %s", sql)
+		ruText, ok := rows[0][cumRUColumn].(string)
+		require.Truef(tb, ok, "sql: %s", sql)
+		require.NotEmptyf(tb, ruText, "sql: %s", sql)
+		ru, err := strconv.ParseFloat(ruText, 64)
+		require.NoErrorf(tb, err, "sql: %s", sql)
+		return ru, rows
+	}
+	requireOperators := func(tb testing.TB, rows [][]any, operators ...string) {
+		tb.Helper()
+		for _, operator := range operators {
+			found := false
+			for _, row := range rows {
+				id, ok := row[0].(string)
+				require.True(tb, ok)
+				if strings.Contains(id, operator) {
+					found = true
+					break
+				}
+			}
+			require.Truef(tb, found, "operator %s not found in rows %v", operator, rows)
+		}
+	}
+	insertComputeRows := func(table string, uniqueA bool) {
+		var sql strings.Builder
+		sql.WriteString("insert into ")
+		sql.WriteString(table)
+		sql.WriteString(" values ")
+		for i := 1; i <= 100; i++ {
+			if i > 1 {
+				sql.WriteString(", ")
+			}
+			a := 1
+			if uniqueA {
+				a = i
+			}
+			sql.WriteString("(")
+			sql.WriteString(strconv.Itoa(a))
+			sql.WriteString(", 1, 1, 1)")
+		}
+		tk.MustExec(sql.String())
+	}
+
+	tk.MustExec("drop table if exists t_unistore_ru_compute, t_unistore_ru_compute_idx, t_unistore_ru_compute_join_left, t_unistore_ru_compute_join_right")
+	tk.MustExec("create table t_unistore_ru_compute(a int, b int, c int, d int)")
+	tk.MustExec("create table t_unistore_ru_compute_idx(a int, b int, c int, d int, key idx_c_abd(c, a, b, d))")
+	tk.MustExec("create table t_unistore_ru_compute_join_left(a int primary key, b int, c int, d int)")
+	tk.MustExec("create table t_unistore_ru_compute_join_right(a int primary key, b int, c int, d int)")
+	insertComputeRows("t_unistore_ru_compute", false)
+	insertComputeRows("t_unistore_ru_compute_idx", false)
+	insertComputeRows("t_unistore_ru_compute_join_left", true)
+	insertComputeRows("t_unistore_ru_compute_join_right", true)
+
+	type computeSQL struct {
+		sql               string
+		expectedOperators []string
+	}
+	cases := []struct {
+		name string
+		sqls []computeSQL
+	}{
+		{
+			name: "selection condition count",
+			sqls: []computeSQL{
+				{
+					sql:               "select * from t_unistore_ru_compute where a = 1",
+					expectedOperators: []string{"Selection", "TableFullScan"},
+				},
+				{
+					sql:               "select * from t_unistore_ru_compute where a = 1 and b = 1",
+					expectedOperators: []string{"Selection", "TableFullScan"},
+				},
+				{
+					sql:               "select * from t_unistore_ru_compute where a = 1 and b = 1 and c = 1",
+					expectedOperators: []string{"Selection", "TableFullScan"},
+				},
+			},
+		},
+		{
+			name: "projection expression count",
+			sqls: []computeSQL{
+				{
+					sql:               "select a + b from t_unistore_ru_compute where c = 1 and d = 1",
+					expectedOperators: []string{"Projection", "Selection", "TableFullScan"},
+				},
+				{
+					sql:               "select a + b, b + c from t_unistore_ru_compute where c = 1 and d = 1",
+					expectedOperators: []string{"Projection", "Selection", "TableFullScan"},
+				},
+				{
+					sql:               "select a + b, b + c, c + d from t_unistore_ru_compute where c = 1 and d = 1",
+					expectedOperators: []string{"Projection", "Selection", "TableFullScan"},
+				},
+			},
+		},
+		{
+			name: "sort item count",
+			sqls: []computeSQL{
+				{
+					sql:               "select * from t_unistore_ru_compute order by b",
+					expectedOperators: []string{"Sort", "TableFullScan"},
+				},
+				{
+					sql:               "select * from t_unistore_ru_compute order by b, c",
+					expectedOperators: []string{"Sort", "TableFullScan"},
+				},
+				{
+					sql:               "select * from t_unistore_ru_compute order by b, c, d",
+					expectedOperators: []string{"Sort", "TableFullScan"},
+				},
+			},
+		},
+		{
+			name: "topn item count",
+			sqls: []computeSQL{
+				{
+					sql:               "select * from t_unistore_ru_compute order by b limit 10",
+					expectedOperators: []string{"TopN", "TableFullScan"},
+				},
+				{
+					sql:               "select * from t_unistore_ru_compute order by b, c limit 10",
+					expectedOperators: []string{"TopN", "TableFullScan"},
+				},
+				{
+					sql:               "select * from t_unistore_ru_compute order by b, c, d limit 10",
+					expectedOperators: []string{"TopN", "TableFullScan"},
+				},
+			},
+		},
+		{
+			name: "stream aggregation function count",
+			sqls: []computeSQL{
+				{
+					sql:               "select /*+ stream_agg() */ c, count(*) from t_unistore_ru_compute_idx use index(idx_c_abd) where c >= 0 and a >= 0 and b >= 0 and d >= 0 group by c",
+					expectedOperators: []string{"StreamAgg", "IndexRangeScan"},
+				},
+				{
+					sql:               "select /*+ stream_agg() */ c, count(*), sum(a) from t_unistore_ru_compute_idx use index(idx_c_abd) where c >= 0 and a >= 0 and b >= 0 and d >= 0 group by c",
+					expectedOperators: []string{"StreamAgg", "IndexRangeScan"},
+				},
+				{
+					sql:               "select /*+ stream_agg() */ c, count(*), sum(a), sum(b), sum(d) from t_unistore_ru_compute_idx use index(idx_c_abd) where c >= 0 and a >= 0 and b >= 0 and d >= 0 group by c",
+					expectedOperators: []string{"StreamAgg", "IndexRangeScan"},
+				},
+			},
+		},
+		// {
+		// 	name: "hash aggregation function count",
+		// 	sqls: []computeSQL{
+		// 		{
+		// 			sql:               "select /*+ hash_agg() */ a, count(*) from t_unistore_ru_compute where b = 1 and c = 1 group by a",
+		// 			expectedOperators: []string{"HashAgg", "Selection", "TableFullScan"},
+		// 		},
+		// 		{
+		// 			sql:               "select /*+ hash_agg() */ a, count(*), sum(b) from t_unistore_ru_compute where b = 1 and c = 1 group by a",
+		// 			expectedOperators: []string{"HashAgg", "Selection", "TableFullScan"},
+		// 		},
+		// 		{
+		// 			sql:               "select /*+ hash_agg() */ a, count(*), sum(b), sum(c), sum(d) from t_unistore_ru_compute where b = 1 and c = 1 group by a",
+		// 			expectedOperators: []string{"HashAgg", "Selection", "TableFullScan"},
+		// 		},
+		// 	},
+		// },
+		// {
+		// 	name: "hash join condition count",
+		// 	sqls: []computeSQL{
+		// 		{
+		// 			sql:               "select /*+ hash_join(l, r) */ l.a, l.b, l.c, r.b, r.c from t_unistore_ru_compute_join_left l join t_unistore_ru_compute_join_right r on l.a = r.a",
+		// 			expectedOperators: []string{"HashJoin", "TableFullScan"},
+		// 		},
+		// 		{
+		// 			sql:               "select /*+ hash_join(l, r) */ l.a, l.b, l.c, r.b, r.c from t_unistore_ru_compute_join_left l join t_unistore_ru_compute_join_right r on l.a = r.a and l.b = r.b",
+		// 			expectedOperators: []string{"HashJoin", "TableFullScan"},
+		// 		},
+		// 		{
+		// 			sql:               "select /*+ hash_join(l, r) */ l.a, l.b, l.c, r.b, r.c from t_unistore_ru_compute_join_left l join t_unistore_ru_compute_join_right r on l.a = r.a and l.b = r.b and l.c = r.c",
+		// 			expectedOperators: []string{"HashJoin", "TableFullScan"},
+		// 		},
+		// 	},
+		// },
+		{
+			name: "index join condition count",
+			sqls: []computeSQL{
+				{
+					sql:               "select /*+ inl_join(l, r) */ l.a, l.b, l.c, r.b, r.c from t_unistore_ru_compute_join_left l join t_unistore_ru_compute_join_right r on l.a = r.a",
+					expectedOperators: []string{"IndexJoin", "TableRangeScan"},
+				},
+				{
+					sql:               "select /*+ inl_join(l, r) */ l.a, l.b, l.c, r.b, r.c from t_unistore_ru_compute_join_left l join t_unistore_ru_compute_join_right r on l.a = r.a and l.b = r.b",
+					expectedOperators: []string{"IndexJoin", "TableRangeScan"},
+				},
+				{
+					sql:               "select /*+ inl_join(l, r) */ l.a, l.b, l.c, r.b, r.c from t_unistore_ru_compute_join_left l join t_unistore_ru_compute_join_right r on l.a = r.a and l.b = r.b and l.c = r.c",
+					expectedOperators: []string{"IndexJoin", "TableRangeScan"},
+				},
+			},
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			var previousRU float64
+			var previousSQL string
+			for i, query := range tt.sqls {
+				currentRU, rows := explainRU(t, query.sql)
+				requireOperators(t, rows, query.expectedOperators...)
+				if i > 0 {
+					require.Greaterf(t, currentRU, previousRU, "previous sql: %s, current sql: %s", previousSQL, query.sql)
+				}
+				previousRU = currentRU
+				previousSQL = query.sql
+			}
+		})
+	}
+}
+
 func TestExplainAnalyzeRUFormatEndToEndMonotonicity(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
