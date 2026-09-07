@@ -10935,3 +10935,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (ODKU generated refusal pin): ODKU assigning to a generated
   column refuses with the same ErrBadGeneratedColumn text. Pinned in
   `crates/tidb-session/tests/odku_generated_refusal_source.rs`.
+- 2026-09-06 (SHOW CREATE VIEW pin): the full Go header
+  (ALGORITHM/DEFINER/SQL SECURITY), the column list, and the
+  schema-qualified alias-restored body round-trip. Pinned in
+  `crates/tidb-session/tests/show_create_view_header_source.rs`.
