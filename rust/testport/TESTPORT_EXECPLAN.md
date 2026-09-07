@@ -10240,14 +10240,16 @@ risks without claiming repository-wide parity.
   -- the planner projected the expression into a child column), so the
   empty bitmap lives in the CHILD chunk: TableReader_10 over the cop-tier
   parallel HashAgg_5, whose group-column emission builds output without
-  the null bitmap. Runtime probe refinement (HASHAGG_DEBUG at
-  parallel.rs:1453): the ROOT's integer_columns = [1] indexes the PLANNED
-  child schema, but the runtime reader chunk reports rows=3 with
-  column(1).rows() = 0 — the reader's ACTUAL layout does not carry the
-  column the planner indexed (column pruning / schema-order mismatch
-  between the planned Projection and the reader's emitted columns). The
-  fix must reconcile integer_columns' index against the runtime child
-  schema, or make the reader emit the planned layout.
+  the null bitmap. ROOT CAUSE (runtime probe at parallel.rs:1453): the
+  cop-tier parallel pipeline's output carries ONLY finished agg results —
+  each group's GROUP-BY columns are never emitted (the serial path survives
+  only because planners usually make a `firstrow(group_col)` aggregate
+  double as the group column; expression group keys break that). Fix: the
+  parallel final output must prepend the DECODED group-by datums per group
+  (decode each group's encoded key per the group_by expressions' field
+  types, mirroring Go's final worker which writes group columns into the
+  chunk before the agg results), and the reader schema/indexes must align
+  with that layout.
 - 2026-09-06 (SHOW charset/collation + DISTINCT pin): SHOW CHARSET (7
   charsets incl. utf8mb4) and SHOW COLLATION (utf8mb4_bin) list their
   entries; DISTINCT dedups with ORDER BY; constant SELECTs work without
