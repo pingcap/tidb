@@ -34,6 +34,7 @@ use std::sync::{Arc, RwLock};
 #[cfg(test)]
 use tidb_datatype::FieldTypeCode;
 use tidb_datatype::{Datum, FieldType};
+use tidb_hack::go_to_lower;
 
 /// Go `UserVarsReader`: read access to the session's user-defined variables.
 pub trait UserVarsReader {
@@ -87,7 +88,7 @@ impl UserVars {
     /// Go `UnsetUserVar`: removes both the value and the type. This is the
     /// one entry point that lowercases its argument itself.
     pub fn unset_user_var(&self, var_name: &str) {
-        let var_name = var_name.to_lowercase();
+        let var_name = go_to_lower(var_name);
         let mut inner = self.write();
         inner.values.remove(&var_name);
         inner.types.remove(&var_name);

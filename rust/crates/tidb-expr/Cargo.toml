@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 stacker = { workspace = true }
+tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }

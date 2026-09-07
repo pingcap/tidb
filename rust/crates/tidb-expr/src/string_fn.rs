@@ -24,6 +24,7 @@ use crate::{Datum, EvalError};
 use tidb_datatype::{
     find_encoding, get_default_collation, Collation, FieldType, GoString, TransformOp,
 };
+use tidb_hack::go_to_lower;
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
 pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
@@ -115,7 +116,7 @@ fn go_simple_case(text: &str, upper: bool) -> String {
             let mut mapped = if upper {
                 source.to_uppercase().collect::<Vec<_>>()
             } else {
-                source.to_lowercase().collect::<Vec<_>>()
+                go_to_lower(source.to_string()).chars().collect::<Vec<_>>()
             };
             match mapped.len() {
                 1 => mapped.remove(0),

@@ -14,6 +14,7 @@ workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 # `tikv.go`'s value encodings are built from `pkg/util/codec`'s primitives.
+tidb-hack = { path = "../tidb-hack" }
 tidb-codec = { path = "../tidb-codec" }
 # `Lock.ToLockInfo` answers the real `kvrpcpb.LockInfo`.
 tidb-proto = { path = "../tidb-proto" }

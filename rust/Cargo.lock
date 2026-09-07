@@ -3615,6 +3615,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-error",
+ "tidb-hack",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
@@ -3762,6 +3763,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tidb-ast",
+ "tidb-hack",
  "tidb-lexer",
  "tidb-mysql",
 ]
@@ -4339,6 +4341,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-distsql",
+ "tidb-hack",
  "tidb-proto",
  "tidb-tablecodec",
  "tidb-txnkv",

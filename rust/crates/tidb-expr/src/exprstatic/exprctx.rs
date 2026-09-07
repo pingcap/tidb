@@ -37,6 +37,7 @@ use super::evalctx::{
     WARN_INT, WINDOWING_USE_HIGH_PRECISION,
 };
 use crate::exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
+use tidb_hack::go_to_lower;
 
 /// Go `exprCtxState`: the internal state of an [`ExprContext`], kept separate
 /// so that an [`ExprCtxOption`] can only run inside a constructor.
@@ -411,7 +412,7 @@ impl ExprContext {
                 .load_session_vars_internal(session_vars, sys_vars),
         )));
         for name in sys_vars.keys() {
-            match name.to_lowercase().as_str() {
+            match go_to_lower(name).as_str() {
                 CHARACTER_SET_CONNECTION | COLLATION_CONNECTION => {
                     let (charset, collation) = session_vars.charset_info();
                     opts.push(with_charset(charset, collation));

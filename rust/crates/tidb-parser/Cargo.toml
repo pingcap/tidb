@@ -23,6 +23,7 @@ harness = true
 workspace = true
 
 [dependencies]
+tidb-hack = { path = "../tidb-hack" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-mysql = { path = "../tidb-mysql" }

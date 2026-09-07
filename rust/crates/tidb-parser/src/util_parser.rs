@@ -36,6 +36,7 @@ use std::error::Error;
 use std::fmt;
 
 use tidb_ast::{DmlStmt, InsertStmt, RestoreContext, RestoreFlags, Stmt, Visitable, Visitor};
+use tidb_hack::go_to_lower;
 
 /// Source `ErrPatternNotMatch`: patterns doesn't match.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -148,8 +149,8 @@ pub fn simple_cases(node: &Stmt, default_db: &str, origin: &str) -> Option<Strin
     if origin[..paren_pos].contains('.') {
         return Some(origin.to_owned());
     }
-    let lower = origin[..paren_pos].to_lowercase();
-    let pos = find_table_pos(&lower, &table.to_lowercase())?;
+    let lower = go_to_lower(&origin[..paren_pos]);
+    let pos = find_table_pos(&lower, &go_to_lower(table))?;
     let mut builder = String::with_capacity(origin.len() + schema.len() + default_db.len() + 1);
     builder.push_str(&origin[..pos]);
     if schema.is_empty() {

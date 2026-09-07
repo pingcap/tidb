@@ -38,6 +38,7 @@ use tidb_proto::tipb;
 use tidb_codec::table_key::RecordHandle;
 
 use crate::mvcc_store::MvccStore;
+use tidb_hack::go_to_lower;
 
 /// Go `kv.ReqTypeDAG` / `ReqTypeAnalyze` / `ReqTypeChecksum`
 /// (`pkg/kv/kv.go:375-377`).
@@ -3849,7 +3850,7 @@ fn eval_bytes(
             ) {
                 let units = units(&text);
                 let folded: String = match sig {
-                    SimpleSig::LowerUtf8 => units.iter().collect::<String>().to_lowercase(),
+                    SimpleSig::LowerUtf8 => go_to_lower(units.iter().collect::<String>()),
                     SimpleSig::Lower => units
                         .iter()
                         .map(|c| (*c as u8).to_ascii_lowercase() as char)
@@ -4764,7 +4765,7 @@ pub fn eval_expr(
                     let fold = |bytes: &[u8]| -> String {
                         let text = std::str::from_utf8(bytes).unwrap_or_default();
                         if collator.compare(b"a", b"A").is_eq() {
-                            text.to_lowercase()
+                            go_to_lower(text)
                         } else {
                             text.to_owned()
                         }

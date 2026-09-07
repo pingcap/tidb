@@ -15,6 +15,7 @@
 //! Source-owned native policy from Go `pkg/expression/infer_pushdown.go`.
 
 use tidb_datatype::{EvalType, FieldType, FieldTypeCode};
+use tidb_hack::go_to_lower;
 use tidb_proto::tipb::ScalarFuncSig;
 
 /// Go `kv.StoreType`, kept local to the expression policy so this crate does
@@ -139,7 +140,7 @@ const FUNC_NAME_TO_ALIAS: &[(&str, &str)] = &[
 /// through `funcName2Alias` when it has an entry.
 #[must_use]
 pub fn blacklist_name(name: &str) -> String {
-    let lowered = name.to_lowercase();
+    let lowered = go_to_lower(name);
     FUNC_NAME_TO_ALIAS
         .iter()
         .find(|(from, _)| *from == lowered)
@@ -157,7 +158,7 @@ pub fn blacklist_name(name: &str) -> String {
 #[must_use]
 pub fn blacklist_store_mask(store_types: &str) -> u32 {
     let mut mask = 0;
-    for word in store_types.to_lowercase().split(',') {
+    for word in go_to_lower(store_types).split(',') {
         mask |= match word {
             "tikv" => 1 << PushDownStore::TiKv as u8,
             "tiflash" => 1 << PushDownStore::TiFlash as u8,
