@@ -370,26 +370,46 @@ func TestMultiSchemaChangeRenameTable(t *testing.T) {
 	tk.MustExec("create table t (a int default 1, b int default 2, index t(a, b));")
 	tk.MustExec("insert into t values (1, 2);")
 	var wg sync.WaitGroup
+	failpointCh := make(chan struct{}, 1)
+	hookCh := make(chan struct{}, 1)
+	errCh := make(chan error, 1)
+	var once sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		switch job.SchemaState {
-		case model.StateNone:
-			wg.Add(1)
-			go func() {
-				_, err := tk.Exec("alter table t rename column b to c, change column a e bigint default 3;")
-				require.Error(t, err)
-				wg.Done()
-			}()
+		select {
+		case failpointCh <- struct{}{}:
+		default:
+		}
+		if job.Type == model.ActionRenameTable && job.TableName == "t" && job.SchemaState == model.StateNone {
+			once.Do(func() {
+				hookCh <- struct{}{}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_, err := tk.Exec("alter table t rename column b to c, change column a e bigint default 3;")
+					errCh <- err
+				}()
+			})
 		}
 	})
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t rename to t1")
-	wg.Wait()
+	select {
+	case <-failpointCh:
+		select {
+		case <-hookCh:
+		default:
+			require.FailNow(t, "rename table hook was not hit")
+		}
+		wg.Wait()
+		require.Error(t, <-errCh)
+	default:
+	}
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
 	tk2.MustExec("admin check table t1;")
 	tk2.MustExec("alter table t1 rename column b to c, change column a e bigint default 3;")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 }
 func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	store := testkit.CreateMockStore(t)
