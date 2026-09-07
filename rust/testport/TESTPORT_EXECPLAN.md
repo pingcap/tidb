@@ -9812,3 +9812,8 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (UPDATE accounting pins): changed-value updates count 1,
   same-value updates count 0 by default, and CLIENT_FOUND_ROWS counts the
   matching row even unchanged. Pinned in `tests/update_accounting_source.rs`.
+- 2026-09-06 (auto-increment LAST_INSERT_ID flow pin): an ALLOCATED id is
+  published and answers LAST_INSERT_ID() after the boundary promotion; an
+  EXPLICIT id (5) leaves it untouched (Go only feeds the OK-packet fallback);
+  the next allocation (6) moves it. Flow verified 1 -> 1 -> 6 exactly as Go;
+  pinned in `tests/auto_inc_last_insert_id_flow_source.rs`.
