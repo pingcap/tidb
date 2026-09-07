@@ -10978,3 +10978,9 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (UPDATE ORDER BY + LIMIT pin): the ordered, limited row set is
   materialized before the update pass. Pinned in
   `crates/tidb-session/tests/update_order_limit_source.rs`.
+- 2026-09-06 (RENAME INDEX pin): ALTER TABLE RENAME INDEX keeps uniqueness —
+  SHOW INDEX lists the new name with Non_unique 0 and the dup insert
+  refuses against the renamed key. Pinned in
+  `crates/tidb-session/tests/rename_index_source.rs`. Note: a stray bare
+  `git stash pop` briefly applied the sibling stash; recovered via
+  `git reset --hard` with the entry preserved (no content lost).
