@@ -3264,8 +3264,8 @@ func TestTimeBuiltin(t *testing.T) {
 	// result.Check(testkit.Rows("801:00:00.000000"))
 	// result = tk.MustQuery("select time('12003-12-10 01:02:03.000123')")
 	// result.Check(testkit.Rows("<nil>")
-	// result = tk.MustQuery("select time('')")
-	// result.Check(testkit.Rows("<nil>")
+	result = tk.MustQuery("select time('')")
+	result.Check(testkit.Rows("<nil>"))
 	// result = tk.MustQuery("select time('2003-12-10-10 01:02:03.000123')")
 	// result.Check(testkit.Rows("00:20:03")
 

@@ -256,7 +256,7 @@ func ParseTimeZone(s string) (*time.Location, error) {
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
 	// The time zone's value should in [-12:59,+14:00].
-	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
+	if (strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-")) && len(s) > 1 {
 		d, _, err := types.ParseDuration(types.DefaultStmtNoWarningContext, s[1:], 0)
 		if err == nil {
 			if s[0] == '-' {
