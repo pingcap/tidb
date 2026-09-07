@@ -10309,3 +10309,7 @@ risks without claiming repository-wide parity.
   allocates implicitly and refuses explicit insertion with TiDB's message
   naming @@allow_auto_random_explicit_insert. Pinned in
   `crates/tidb-session/tests/auto_random_alter_rebase_source.rs`.
+- 2026-09-06 (null-safe equality + SHOW DATABASES pins): `<=>` matches NULL
+  to NULL where `=` yields UNKNOWN; `<=> NULL` answers directly; SHOW
+  DATABASES lists created schemas beside system ones. Pinned in
+  `crates/tidb-session/tests/null_eq_show_databases_source.rs`.
