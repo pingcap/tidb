@@ -10975,3 +10975,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (DELETE ORDER BY + LIMIT pin): the ordered, limited row set is
   materialized before the delete pass. Pinned in
   `crates/tidb-session/tests/delete_order_limit_source.rs`.
+- 2026-09-06 (UPDATE ORDER BY + LIMIT pin): the ordered, limited row set is
+  materialized before the update pass. Pinned in
+  `crates/tidb-session/tests/update_order_limit_source.rs`.
