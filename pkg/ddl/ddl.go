@@ -171,9 +171,9 @@ const (
 )
 
 var (
-	// EnableSplitTableRegion is a flag to decide whether to split a new region for
-	// a newly created table. It takes effect only if the Storage supports split
-	// region.
+	// EnableSplitTableRegion controls whether to split a new Region for a newly
+	// created table without explicit split options. It takes effect only if the
+	// Storage supports splitting Regions.
 	EnableSplitTableRegion = uint32(0)
 )
 

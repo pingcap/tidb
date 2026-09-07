@@ -1440,7 +1440,10 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 		return
 	}
 	sp, ok := store.(kv.SplittableStore)
-	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+	explicitSplit := tbInfo.PreSplitRegions > 0 || hasSplitPolicies(tbInfo)
+	// split-table controls implicit table-boundary splitting. Explicit split
+	// options should take effect regardless of that configuration.
+	if !ok || (atomic.LoadUint32(&EnableSplitTableRegion) == 0 && !explicitSplit) {
 		return
 	}
 	var preSplit func()

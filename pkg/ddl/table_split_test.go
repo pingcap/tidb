@@ -65,6 +65,24 @@ func TestTableSplit(t *testing.T) {
 	)`)
 	defer dom.Close()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+
+	tk.MustExec("create table t_implicit_split_disabled (a bigint)")
+	re := tk.MustQuery("show table t_implicit_split_disabled regions")
+	require.Len(t, re.Rows(), 1)
+
+	// Explicit split options should take effect even when automatic table splitting is disabled.
+	tk.MustExec(`create table t_pre_split_disabled (
+		a bigint
+	) shard_row_id_bits = 2 pre_split_regions = 2`)
+	re = tk.MustQuery("show table t_pre_split_disabled regions")
+	require.Len(t, re.Rows(), 4)
+
+	tk.MustExec(`create table t_split_policy_disabled (
+		a bigint primary key
+	) split between (0) and (10000) regions 4`)
+	re = tk.MustQuery("show table t_split_policy_disabled regions")
+	require.Len(t, re.Rows(), 4)
+
 	infoSchema := dom.InfoSchema()
 	require.NotNil(t, infoSchema)
 	tbl, err := infoSchema.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb"))
