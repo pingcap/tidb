@@ -10672,3 +10672,8 @@ risks without claiming repository-wide parity.
   passes NULL rows (UNKNOWN is not a violation), refuses negatives, and
   accepts positives. Pinned in
   `crates/tidb-session/tests/check_is_null_allowance_source.rs`.
+- 2026-09-06 (virtual CHECK NULL-allowance pin): `b = IF(a % 2 = 0, NULL,
+  a)` virtual column with `check (b is null or b > 0)` — even rows
+  materialize NULL which passes (UNKNOWN), odd rows store themselves.
+  Pinned in
+  `crates/tidb-session/tests/check_virtual_null_allowance_source.rs`.
