@@ -505,6 +505,13 @@ fn show_create_table_text(
             tidb_util::format::output_format(table.comment())
         ));
     }
+    // Go `ShowCreateTable` (`executor/show.go:1383-1387`): the MySQL-compatible
+    // ungated `AUTO_INCREMENT=%d`, printed when the table has an auto-increment
+    // column and the allocator's next value exceeds 1 (fresh tables with no
+    // inserts print nothing).
+    if let Some(next) = table.next_auto_increment().filter(|next| *next > 1) {
+        out.push_str(&format!(" AUTO_INCREMENT={next}"));
+    }
     // Go `ShowCreateTable`: printed only when the table set one.
     if table.auto_id_cache() != 0 {
         out.push_str(&format!(

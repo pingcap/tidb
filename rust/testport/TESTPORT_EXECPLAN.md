@@ -10822,3 +10822,14 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (RENAME auto-inc pin): RENAME TABLE preserves the auto-increment
   counter — the renamed table continues from the previous max. Pinned in
   `crates/tidb-session/tests/rename_preserves_auto_inc_source.rs`.
+- 2026-09-06 (AUTO_INCREMENT table option fix, REAL DIVERGENCE): Go
+  `ShowCreateTable` (executor/show.go:1383-1387) prints the ungated
+  MySQL-compatible `AUTO_INCREMENT=<next>` whenever the table has an
+  auto-increment column and the allocator's next value exceeds 1; the port
+  printed nothing. show.rs now prints it before AUTO_ID_CACHE, sourced from
+  the same accessor SHOW TABLE STATUS reports. Pins:
+  `crates/tidb-session/tests/auto_inc_show_create_source.rs` (fresh table
+  prints nothing; ids 1,2 → `AUTO_INCREMENT=3`; ALTER...100 → 100, then
+  post-insert → 101; option rides outside the version gate). Stash-verified
+  suite diff: zero new failures (229 baseline vs 226 with-fix, all named
+  stashes preserved).
