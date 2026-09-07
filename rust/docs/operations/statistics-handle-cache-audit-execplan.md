@@ -73,3 +73,31 @@ sibling files outside this batch's scope). No Go or Bazel source changed, so
   catalog on success or failure.
 - No Go or Bazel source changed, so `make bazel_prepare` is not required for
   this Rust-only package batch.
+
+## 2026-09-06 delta-load duration histogram (closed loop)
+
+The root-package line-level walk completed this date verified every remaining
+consumer of `pkg/metrics` inside the cache package and found exactly one gap:
+Go's `Update` observes `StatsDeltaLoadHistogram` through a `defer`
+(`statscache.go:127`), and no Rust crate carried the family. Fixed in commit
+`14aa3803548c`:
+
+- `tidb-stats-handle-cache-metrics::STATS_DELTA_LOAD_HISTOGRAM` — Go-exact
+  identity (`tidb_statistics_stats_delta_load_duration_seconds`, help string
+  verbatim, `ExponentialBuckets(0.01, 2, 24)`), single registration in the
+  default registry, `stats_delta_load_histogram()` accessor.
+- `tidb-stats-handle-cache::DeltaLoadDurationGuard` — `Drop` observes elapsed
+  seconds; constructed at the top of `update_from_source`, reproducing
+  Go's defer-on-every-exit-path semantics (success, source error,
+  cancellation).
+- Regression `update_observes_the_stats_delta_load_duration_histogram_on_every_exit`
+  pins +1 sample on a completed refresh and +1 on a cancelled refresh.
+
+Root-package walk evidence (same date, `PROGRESS-zcode.md`): `Update`'s
+fourteen semantic steps, `GetNextCheckVersionWithOffset` (`LeaseOffset=5`,
+saturating clamp), `replace`/`CostGauge`, quota-gated `UpdateStatsCache`,
+`Close`/`Clear`/`MemConsumed`, and the inner `put` retry loop
+(`fetch_max` ≡ Go's forward-only CAS) all verified equivalent.
+`StatsDeltaUpdateHistogram`'s consumer lives in
+`pkg/statistics/handle/usage/session_stats_collect.go` — the sibling
+statistics session's domain, not this package's.

@@ -6477,6 +6477,28 @@ d8d033a882 (rust: align pkg/ddl mview job envelope metadata with Go master)
       full inventory and Ready gates are in
       `receipts/statistics_handle_cache_audit.md`; the living implementation
       log is `docs/operations/statistics-handle-cache-audit-execplan.md`.
+      SUPERSEDED 2026-09-06: the pinned repository Go tree does NOT carry
+      upstream #69955 — `stats_table_row_cache.go` is present at the tip and
+      `pkg/executor/infoschema_reader.go` consumes the process-wide cache — so
+      the statement-local substitution dropped real Go behavior and was
+      reversed. `StatsTableRowCache` was RESTORED to parity (batch refresh
+      with both-reads-or-nothing, upsert-only merge, warn-and-serve-stale
+      reader contract) in `src/stats_table_row_cache.rs`; the receipt's
+      "restored to parity (2026-09-06)" section is the authoritative record.
+- [x] Restore the process-wide `StatsTableRowCache` contract (2026-09-06):
+      `get_table_rows`/`get_col_length` zero defaults, `update` (both maps
+      under one lock, upsert-only), `update_by_id(source, ids)` over a
+      `StatsTableRowSizeSource` abstraction — both restricted reads succeed or
+      nothing is copied; first refresh failure reads zeros, later failures
+      serve last-good values, exactly Go's `UpdateByID` + reader fallback.
+- [x] Close the root-cache metrics gap (2026-09-06, commit 14aa3803548c):
+      Go's `Update` observes `StatsDeltaLoadHistogram` via a defer on every
+      exit path (`statscache.go:127`); the family existed nowhere in the
+      workspace. Added `STATS_DELTA_LOAD_HISTOGRAM` (exact Go name, help
+      string, `ExponentialBuckets(0.01, 2, 24)`) to
+      `tidb-stats-handle-cache-metrics` and observe through a Drop guard at
+      the top of `update_from_source`. Regression pins one sample for a
+      completed refresh and one for a cancelled refresh.
 - [x] Audit the complete pinned `pkg/statistics/handle/history` package.
       Remove the maximum-version-only carrier and its three source-absent
       tests. Go owns a session-backed history service with filtering,
