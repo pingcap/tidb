@@ -10567,3 +10567,13 @@ risks without claiming repository-wide parity.
   a multi-column CHECK refuses the drop with Go's 3959 "uses column ...
   hence column cannot be dropped or renamed". Pinned in
   `crates/tidb-session/tests/drop_column_check_dependency_source.rs`.
+- 2026-09-06 (IGNORE multi-row partial-store fix, REAL DIVERGENCE): a
+  multi-row `insert ignore` with a CHECK-violating row stored NOTHING while
+  reporting every row affected — the IGNORE downgrade path still counted
+  the skipped row AND the statement's undo log rewound conforming rows on
+  each later violation. Go's IGNORE skips the offending row only: it is
+  neither stored nor counted, and earlier conforming rows survive. Fix:
+  the downgraded-skip arm no longer counts and no longer undoes. Pin
+  `crates/tidb-session/tests/ignore_multi_row_check_source.rs` fails on
+  the old code and passes with the fix; both sweep failures verified
+  pre-existing on clean HEAD via stash-baseline.

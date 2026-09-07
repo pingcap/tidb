@@ -1272,13 +1272,23 @@ fn run_insert_with_physical(
                     handle,
                     row: row.to_vec(),
                 });
+                inserted += 1;
             }
             Err(error) => {
-                apply_insert_undo(catalog, &database, &table_name, &mut undo, ctx)?;
-                handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
+                let rendered = kv_write_error(error);
+                // Under IGNORE a skipped row counts in NEITHER the stored
+                // rows nor the affected count -- Go's per-row skip writes
+                // nothing and rewinds nothing; earlier conforming rows of
+                // the same statement survive.
+                match handle_partition_write_error(rendered, insert.ignore, ctx) {
+                    Ok(()) => {}
+                    Err(error) => {
+                        apply_insert_undo(catalog, &database, &table_name, &mut undo, ctx)?;
+                        return Err(error);
+                    }
+                }
             }
         }
-        inserted += 1;
     }
     Ok((inserted, first_allocated))
 }
