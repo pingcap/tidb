@@ -293,7 +293,14 @@ fn cast_value_shaped(
         }
     };
     let error = shape.name(error, &source, field_type);
-    if ctx.strict() {
+    // Go `ErrCtx.HandleError` (`datum.go:1311` reaches it via
+    // `HandleTruncate`): the error survives only when STRICT mode is on AND
+    // the statement is not IGNORE — `INSERT IGNORE`/`UPDATE IGNORE` downgrade
+    // every write conversion error to a warning and keep the converted
+    // (truncated/clamped/zero) value. Go itself notes the blanket shape
+    // ("TODO: should not filter all types of errors here"), so the port
+    // mirrors it rather than tightening it.
+    if ctx.strict() && !ctx.ignore_err() {
         return Err(error);
     }
     let reported = error.to_mysql_error();

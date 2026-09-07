@@ -9776,3 +9776,14 @@ risks without claiming repository-wide parity.
   `write_cast` DataTooLong arm; `StmtContext::default()` models
   `sql_mode = ''`, which is why the first probe silently stored. Two pins in
   `tests/insert_strict_truncate_source.rs`.
+- 2026-09-06 (INSERT IGNORE downgrade port, batch #41): probe found the port
+  REJECTING `insert ignore ... values (2, 'abcdef')` (strict) with 1406 where
+  Go IGNORE-downgrades write conversion errors to warnings and stores the
+  converted value (HandleTruncate + IgnoreErr, datum.go:1311; Go notes the
+  blanket shape with "TODO: should not filter all types of errors here"). Fix:
+  the write_cast final gate now errors only when STRICT && !IGNORE; the
+  converted (truncated/clamped/zero) value is stored with the warning
+  otherwise. Pins: IGNORE stores truncated 'abc' (asserted via row readback),
+  IGNORE 'abc' into INT stores the zero value, strict WITHOUT ignore still
+  rejects. DDL-family failure set is a strict subset of the clean-HEAD
+  baseline (zero new).

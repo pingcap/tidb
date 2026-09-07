@@ -1,5 +1,5 @@
 use tidb_executor::{
-    ddl, run_create_table_on, run_insert_on, Catalog, CreateTableSettings, StmtContext,
+    ddl, run_insert_on, Catalog, CreateTableSettings, StmtContext,
 };
 
 fn setup() -> Catalog {
