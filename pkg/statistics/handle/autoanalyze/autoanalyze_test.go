@@ -613,3 +613,33 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	// Vector Index can not trigger auto analyze.
 	require.False(t, h.HandleAutoAnalyze())
 }
+
+func TestCheckAutoAnalyzeWindowLogsUTC(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+
+	// Set window in UTC+8: 03:00 to 18:00 in +08:00 = 19:00 to 10:00 UTC
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustExec("set global tidb_auto_analyze_start_time = '03:00'")
+	tk.MustExec("set global tidb_auto_analyze_end_time = '18:00'")
+
+	se, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	defer dom.SysSessionPool().Put(se)
+	sctx := se.(sessionctx.Context)
+
+	startStr, endStr, _ := autoanalyze.CheckAutoAnalyzeWindow(sctx)
+
+	// The logged start/end must contain UTC offset so operators can compare with UTC log timestamps.
+	require.Contains(t, startStr, "+0000", "start time should be formatted in UTC")
+	require.Contains(t, endStr, "+0000", "end time should be formatted in UTC")
+	require.Equal(t, "19:00 +0000", startStr)
+	require.Equal(t, "10:00 +0000", endStr)
+}

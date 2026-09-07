@@ -379,8 +379,8 @@ func (sa *statsAnalyze) Close() {
 func CheckAutoAnalyzeWindow(sctx sessionctx.Context) (startStr, endStr string, ok bool) {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	start, end, ok := checkAutoAnalyzeWindow(parameters)
-	startStr = start.Format("15:04")
-	endStr = end.Format("15:04")
+	startStr = start.UTC().Format("15:04 -0700")
+	endStr = end.UTC().Format("15:04 -0700")
 	return
 }
 
