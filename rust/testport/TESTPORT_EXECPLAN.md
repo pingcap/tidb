@@ -9969,3 +9969,7 @@ risks without claiming repository-wide parity.
   rebases the allocator (next id 301); NO_AUTO_VALUE_ON_ZERO stores an
   explicit 0 without allocation and the next allocation continues at 1.
   Pinned in `tests/auto_inc_rebase_zero_mode_source.rs`.
+- 2026-09-06 (in-statement duplicate + REPLACE auto-inc pins): IGNORE keeps
+  the first row and skips the later in-statement duplicate while later rows
+  still insert; a plain insert fails; REPLACE on an auto-inc key counts 2
+  (delete + insert). Pinned in `tests/in_statement_duplicate_source.rs`.
