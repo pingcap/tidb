@@ -11089,3 +11089,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (IF/IFNULL + length-edge pin): NULL-falsy IF, the IFNULL
   fallback, and LEFT/RIGHT zero/negative/over-length rules. Pinned in
   `crates/tidb-session/tests/if_ifnull_length_edges_source.rs`.
+- 2026-09-06 (LPAD/RPAD/REVERSE pin): pad cycling, truncation to target
+  length, zero-length, rune-based REVERSE, and REPEAT's negative-count
+  empty. Pinned in
+  `crates/tidb-session/tests/lpad_rpad_reverse_source.rs`.
