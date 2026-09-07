@@ -9873,3 +9873,10 @@ risks without claiming repository-wide parity.
   `CheckConstraintViolated` under ignore. Pin
   `tests/insert_ignore_check_constraint_source.rs` fails on the old code
   and passes with the fix.
+- 2026-09-06 (UPDATE IGNORE x CHECK pin): the IGNORE keyword (statement
+  syntax, not a session mode) downgrades a CHECK violation to a warning and
+  skips the row -- affected 0, row unchanged -- while a plain UPDATE fails
+  with 3819 (update.go:335-341). Verified faithful via the shared
+  handle_partition_write_error downgrade; pinned in
+  `tests/update_ignore_check_constraint_source.rs`. NOTE: Go has no
+  session-level ignore flag; IGNORE is per-statement syntax.
