@@ -10722,3 +10722,7 @@ risks without claiming repository-wide parity.
   the prefix length `(4)`; the `a = a` no-op ODKU over an existing row
   counts 0. Pinned in
   `crates/tidb-session/tests/prefix_show_nop_odku_source.rs`.
+- 2026-09-06 (generated-column SHOW CREATE pin): STORED and VIRTUAL
+  generated columns round-trip through SHOW CREATE with their respective
+  GENERATED ALWAYS AS (...) STORED/VIRTUAL markers. Pinned in
+  `crates/tidb-session/tests/generated_show_create_source.rs`.
