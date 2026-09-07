@@ -11314,3 +11314,6 @@ risks without claiming repository-wide parity.
   outer row out — IN keeps semi semantics where EXISTS does not (see the
   fan-out divergence doc). Pinned in
   `crates/tidb-session/tests/correlated_in_source.rs`.
+- 2026-09-08 (COUNT NULL semantics pin): COUNT(*) vs COUNT(col)'s NULL
+  skip, COUNT(DISTINCT) after the skip, and SUM's all-NULL NULL. Pinned
+  in `crates/tidb-session/tests/count_null_semantics_source.rs`.
