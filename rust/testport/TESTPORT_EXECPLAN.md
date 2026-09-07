@@ -11117,3 +11117,6 @@ risks without claiming repository-wide parity.
   last day across leap years; negative intervals, LAST_DAY, MONTHNAME and
   QUARTER all calendar-correct. Pinned in
   `crates/tidb-session/tests/date_add_clamp_source.rs`.
+- 2026-09-06 (UNIX round-trip pin): unix_timestamp(from_unixtime(n)) is
+  exact in any session zone; EXTRACT and the ADDDATE/SUBDATE aliases.
+  Pinned in `crates/tidb-session/tests/unix_round_trip_source.rs`.
