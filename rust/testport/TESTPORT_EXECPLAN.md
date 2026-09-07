@@ -10005,3 +10005,7 @@ risks without claiming repository-wide parity.
   list (p0: 1,2 / p1: 3,4); a value with no list fails with Go's exact 1526
   text; a p1-qualified DELETE removes exactly p1's rows. Pinned in
   `crates/tidb-session/tests/list_partition_routing_source.rs`.
+- 2026-09-06 (DROP PARTITION pin): `alter table t drop partition p1` removes
+  p1's rows with the partition; other partitions survive; the dropped range
+  disappears — inserting a value only p1 covered now fails with Go's 1526.
+  Pinned in `crates/tidb-session/tests/drop_partition_source.rs`.
