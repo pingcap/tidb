@@ -11083,3 +11083,6 @@ risks without claiming repository-wide parity.
   UNHEX pads odd digit counts with a leading '0' per the oracle's own
   `d = "0" + d` (builtin_string.go:1851-1854), and invalid digits are NULL.
   Pinned in `crates/tidb-session/tests/hex_unhex_source.rs`.
+- 2026-09-06 (COALESCE/NULLIF pin): first-non-NULL selection, all-NULL ->
+  NULL, equality-to-NULL NULLIF, and their composition. Pinned in
+  `crates/tidb-session/tests/coalesce_nullif_source.rs`.
