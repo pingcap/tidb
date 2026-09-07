@@ -64,6 +64,9 @@ pub struct DagContext {
     pub start_ts: u64,
     /// The request's time zone, parsed but unresolved (module header).
     pub time_zone: TimeZoneSpec,
+    /// Go `DAGRequest.Flags`: controls error-tolerance in expression
+    /// evaluation (truncate-as-warning, ignore-truncate, etc.).
+    pub flags: u64,
 }
 
 /// Go `buildDAG`'s three-way time-zone switch, as DATA: empty name is a
@@ -402,7 +405,12 @@ fn exec_index_scan(
             {
                 Ok(values) if values.iter().all(|v| v.is_some_and(|v| v != 0)) => {}
                 Ok(_) => continue,
-                Err(message) => return other_error(&message),
+                Err(message) => {
+                    if context.flags & 2 != 0 {
+                        continue;
+                    }
+                    return other_error(&message);
+                }
             }
             if let Some(aggregator) = aggregator.as_mut() {
                 if let Err(message) = aggregator.update(&row) {
@@ -1412,6 +1420,7 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
     Ok(DagContext {
         key_ranges: req.ranges.clone(),
         start_ts: req.start_ts,
+        flags: dag_req.flags.unwrap_or(0),
         time_zone,
         // Go `buildDAG`: the session default is 4 when the request omits
         // the field (`variable.DefDivPrecisionIncrement`).
