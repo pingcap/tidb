@@ -288,6 +288,9 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 		"explain.txt",
 		"global_bindings.sql",
 		"meta.txt",
+		"schema/planreplayer.a.schema.txt",
+		"schema/planreplayer.b.schema.txt",
+		"schema/planreplayer.c.schema.txt",
 		"schema/planreplayer.t.schema.txt",
 		"schema/planreplayer.v.schema.txt",
 		"schema/planreplayer2.t.schema.txt",
@@ -295,9 +298,15 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 		"session_bindings.sql",
 		"sql/sql0.sql",
 		"sql_meta.toml",
+		"stats/planreplayer.a.json",
+		"stats/planreplayer.b.json",
+		"stats/planreplayer.c.json",
 		"stats/planreplayer.t.json",
 		"stats/planreplayer.v.json",
 		"stats/planreplayer2.t.json",
+		"statsMem/planreplayer.a.txt",
+		"statsMem/planreplayer.b.txt",
+		"statsMem/planreplayer.c.txt",
 		"statsMem/planreplayer.t.txt",
 		"statsMem/planreplayer.v.txt",
 		"statsMem/planreplayer2.t.txt",
@@ -331,10 +340,19 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	}()
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("use planReplayer")
+	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 0;`)
 	tk.MustExec("drop table planReplayer.t")
 	tk.MustExec("drop table planReplayer2.t")
 	tk.MustExec("drop table planReplayer.v")
+<<<<<<< HEAD
 	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+=======
+	tk.MustExec("drop table planReplayer.a")
+	tk.MustExec("drop table planReplayer.b")
+	tk.MustExec("drop table planReplayer.c")
+	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
+	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
+>>>>>>> 1f32c8e0052 (domain: fix the issue where defining FKs in a circular manner causes an infinite loop (#60987))
 
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
@@ -454,7 +472,7 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 		require.NoError(t, err)
 	}()
 	tk := testkit.NewDBTestKit(t, db)
-
+	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 0;`)
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("create database planReplayer2")
 	tk.MustExec("use planReplayer")
@@ -469,10 +487,40 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	tk.MustExec("create table planReplayer2.t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer.v(id) ON DELETE CASCADE);")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
+<<<<<<< HEAD
 	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
+=======
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b), author_id int, b_id int, FOREIGN KEY (b_id) REFERENCES B(id),FOREIGN KEY (author_id) REFERENCES planReplayer2.t(a) ON DELETE CASCADE) placement policy p;")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+>>>>>>> 1f32c8e0052 (domain: fix the issue where defining FKs in a circular manner causes an infinite loop (#60987))
 	require.NoError(t, err)
-
+	// defining FKs in a circular manner
+	tk.MustExec(`CREATE TABLE A (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    b_id INT,
+    FOREIGN KEY (b_id) REFERENCES B(id)
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`CREATE TABLE B (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    c_id INT,
+    FOREIGN KEY (c_id) REFERENCES C(id)
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`CREATE TABLE C(
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    a_id INT,
+    FOREIGN KEY (a_id) REFERENCES A(id)
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
 	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
 	require.True(t, rows.Next(), "unexpected data")
