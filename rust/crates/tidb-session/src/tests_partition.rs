@@ -1369,7 +1369,10 @@ fn a_partition_selection_reads_only_those_partitions() {
         .to_mysql_error();
     assert_eq!(rendered.code, 1735);
     assert_eq!(rendered.message, "Unknown partition 'nosuch' in table 'h'");
-    // An UNPARTITIONED table has no name to resolve, so the same 1735.
+    // An UNPARTITIONED table hits Go's dedicated branch: planbuilder's
+    // buildDataSource raises ErrPartitionClauseOnNonpartitioned (1747)
+    // ("logical_plan_builder.go:5046") when a PARTITION clause names a
+    // non-partitioned table.
     session.run("CREATE TABLE q (a int)").unwrap();
     assert_eq!(
         session
@@ -1377,7 +1380,7 @@ fn a_partition_selection_reads_only_those_partitions() {
             .expect_err("no partition of an unpartitioned table")
             .to_mysql_error()
             .code,
-        1735
+        1747
     );
 }
 
