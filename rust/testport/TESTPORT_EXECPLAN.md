@@ -10651,3 +10651,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (NULL-last ordering idiom pin): `order by (s is null), s`
   sends NULL rows to the end via the boolean expression key. Pinned in
   `crates/tidb-session/tests/null_last_order_idiom_source.rs`.
+- 2026-09-06 (NOT EXISTS anti-join pin): correlated NOT EXISTS keeps only
+  the rows of `l` with no match in `r`. Pinned in
+  `crates/tidb-session/tests/not_exists_anti_join_source.rs`.
