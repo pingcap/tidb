@@ -609,6 +609,10 @@ fn run_alter_table_in_inner(
                 spec,
                 ..
             }) => add_partition_action(catalog, &database, &name, *if_not_exists, spec, ctx)?,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Coalesce {
+                count,
+                ..
+            }) => coalesce_partition_action(catalog, &database, &name, *count, ctx)?,
             // The four metadata-only actions: a name or a flag changes while
             // every column id, column offset and index entry stays put. See
             // the `alter_metadata` module doc for why they belong together.
@@ -978,6 +982,47 @@ fn truncate_partition_action(
     table
         .truncate_partitions(&ordinals, &replacement_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("truncate partition", error))
+}
+
+/// Go `CoalescePartitions` (`pkg/ddl/executor.go:2751-2778`): reduce a
+/// HASH table's partition count by `count`, re-hashing every row. Refusals
+/// in Go's order: a non-partitioned table (1505), a non-HASH method (1509),
+/// a count below one (1515), and a count that would remove the last
+/// partition (1508).
+fn coalesce_partition_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    count: u64,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let new_count = {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... COALESCE PARTITION needs a storage-backed table",
+            ));
+        };
+        let Some(partition) = table.partition() else {
+            return Err(DriverError::PartitionManagementOnNonpartitioned);
+        };
+        if !matches!(partition.kind, crate::partition_routing::PartitionKind::Hash) {
+            return Err(DriverError::CoalesceOnlyOnHashPartition);
+        }
+        if count < 1 {
+            return Err(DriverError::CoalescePartitionNoPartition);
+        }
+        if count as usize >= partition.definitions.len() {
+            return Err(DriverError::PartitionDropLast);
+        }
+        partition.definitions.len() - count as usize
+    };
+    let new_ids: Vec<i64> = (0..new_count).map(|_| catalog.allocate_table_id()).collect();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("the table was resolved above")
+    };
+    table
+        .coalesce_hash_partitions(&new_ids, ctx)
+        .map_err(|error| crate::driver::kv_read_error("coalesce partition", error))
 }
 
 fn drop_partition_action(

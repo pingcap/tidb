@@ -590,6 +590,12 @@ pub enum DriverError {
     PartitionDropLast,
     /// Go `dbterror.ErrOnlyOnRangeListPartition` (1512).
     PartitionOnlyRangeList(&'static str),
+    /// Go `dbterror.ErrCoalesceOnlyOnHashPartition` (1509): COALESCE
+    /// PARTITION on a RANGE or LIST table.
+    CoalesceOnlyOnHashPartition,
+    /// Go `ast.ErrCoalescePartitionNoPartition` (1515): COALESCE PARTITION
+    /// with a count below one.
+    CoalescePartitionNoPartition,
     /// Go `dbterror.ErrUniqueKeyNeedAllFieldsInPf` (1503), carrying the kind
     /// of key Go names (`CLUSTERED INDEX`).
     PartitionUniqueKeyNeedAllFields(String),

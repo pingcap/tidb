@@ -1455,6 +1455,16 @@ impl DriverError {
             1512,
             format!("{operation} PARTITION can only be used on RANGE/LIST partitions"),
         ),
+        // Go: "COALESCE PARTITION can only be used on HASH/KEY partitions".
+        DriverError::CoalesceOnlyOnHashPartition => MysqlError::new(
+            1509,
+            "COALESCE PARTITION can only be used on HASH/KEY partitions",
+        ),
+        // Go: "At least one partition must be coalesced".
+        DriverError::CoalescePartitionNoPartition => MysqlError::new(
+            1515,
+            "At least one partition must be coalesced",
+        ),
         DriverError::PartitionUniqueKeyNeedAllFields(kind) => MysqlError::new(
             1503,
             format!("A {kind} must include all columns in the table's partitioning function"),

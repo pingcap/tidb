@@ -11029,3 +11029,14 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (IN-subquery pin): IN and NOT IN with a subquery operand work
   (distinct from the recorded scalar-subquery gap). Pinned in
   `crates/tidb-session/tests/in_subquery_semi_join_source.rs`.
+- 2026-09-06 (COALESCE PARTITION fix, REAL DIVERGENCE): Go's
+  `CoalescePartitions` (executor.go:2751-2778 + hashPartitionManagement)
+  reduces a HASH table's partition count and re-hashes every row; the port
+  refused it as unserved. Implemented end to end: KvTable
+  `coalesce_hash_partitions` re-inserts all rows through the normal write
+  path (Int handles preserved, clustered handles recomputed), definitions
+  regenerate as p0.., and Go's refusal order is kept (1505 non-partitioned,
+  1509 non-HASH, 1515 count < 1, 1508 last partition). Pins:
+  `crates/tidb-session/tests/coalesce_partition_source.rs`. The stale
+  "unserved" list in tests_partition.rs drops its COALESCE line. The
+  tests_explain common-handle failure is stash-verified pre-existing.
