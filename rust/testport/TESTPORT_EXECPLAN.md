@@ -10183,3 +10183,7 @@ risks without claiming repository-wide parity.
   GROUP_CONCAT sorts per group and SEPARATOR changes the glue; BIT folds
   over {3,1,2} answer AND=0, OR=3, XOR=0 (unsigned). Pinned in
   `crates/tidb-session/tests/group_concat_bit_aggs_source.rs`.
+- 2026-09-06 (three-valued IN + USING pin): NOT IN over a NULL-containing
+  list answers nothing (UNKNOWN propagates); IN keeps only concrete
+  matches; USING joins merge the join column and pair sides. Pinned in
+  `crates/tidb-session/tests/three_valued_in_using_source.rs`.
