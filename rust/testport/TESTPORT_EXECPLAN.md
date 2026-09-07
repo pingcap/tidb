@@ -10796,3 +10796,6 @@ risks without claiming repository-wide parity.
   column — INSERT and UPDATE — fail with Go's exact ErrBadGeneratedColumn
   text. Pinned in
   `crates/tidb-session/tests/generated_write_refusal_source.rs`.
+- 2026-09-06 (reserved-word quoting pin): SHOW CREATE backtick-quotes
+  reserved-word column names. Pinned in
+  `crates/tidb-session/tests/reserved_word_show_create_source.rs`.
