@@ -10664,3 +10664,7 @@ risks without claiming repository-wide parity.
   update b = -1` — the ODKU update's CHECK violation is downgraded by
   IGNORE; affected 0 and the stored row is untouched. Pinned in
   `crates/tidb-session/tests/ignore_odku_check_source.rs`.
+- 2026-09-06 (aliased view pin): CREATE VIEW with an explicit column list
+  exposes the base columns under the aliases, and SHOW CREATE VIEW
+  round-trips the column list. Pinned in
+  `crates/tidb-session/tests/view_column_aliases_source.rs`.
