@@ -50,6 +50,7 @@ use crate::mysql_bootstrap::local_now_datetime6;
 use crate::mysql_system_tables::SystemTableError;
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::stats_watch::{SharedStats, StatsSnapshot, TableStatsState};
+use tidb_hack::GoToLower;
 
 /// The two startup shapes selected by Go `Domain.initStats`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,12 +128,12 @@ pub fn load_table_stats_from_cluster<
         let info = catalog
             .databases
             .iter()
-            .find(|database| database.info.name.lowercase() == schema.to_lowercase())
+            .find(|database| database.info.name.lowercase() == schema.go_to_lower())
             .and_then(|database| {
                 database
                     .tables
                     .iter()
-                    .find(|stored| stored.name.lowercase() == table.to_lowercase())
+                    .find(|stored| stored.name.lowercase() == table.go_to_lower())
             })
             .ok_or_else(|| SystemTableError::Missing {
                 name: format!("{schema}.{table}"),

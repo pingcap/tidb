@@ -76,6 +76,7 @@ use crate::mysql_bootstrap::{local_now_datetime6, utc_now_timestamp};
 use crate::mysql_system_tables::SystemTableError;
 use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+use tidb_hack::GoToLower;
 
 const ANALYZE_JOB_MAX_DELTA: i64 = 10_000_000;
 const ANALYZE_JOB_DUMP_INTERVAL: Duration = Duration::from_secs(5);
@@ -830,7 +831,7 @@ fn final_column_choice(
         let column = table
             .cols()
             .iter_deref()
-            .find(|column| column.read().name.lowercase() == name.to_lowercase())
+            .find(|column| column.read().name.lowercase() == name.go_to_lower())
             .ok_or_else(|| {
                 ClusterAnalyzeError::Other(format!(
                     "column `{name}` does not exist in `{}`",
@@ -910,12 +911,12 @@ fn find_statement_table<'catalog>(
     catalog
         .databases
         .iter()
-        .find(|database| database.info.name.lowercase() == statement.schema.to_lowercase().as_str())
+        .find(|database| database.info.name.lowercase() == statement.schema.go_to_lower().as_str())
         .and_then(|database| {
             database
                 .tables
                 .iter()
-                .find(|stored| stored.name.lowercase() == statement.table.to_lowercase().as_str())
+                .find(|stored| stored.name.lowercase() == statement.table.go_to_lower().as_str())
         })
         .ok_or_else(|| {
             ClusterAnalyzeError::Other(
@@ -2478,7 +2479,7 @@ fn selected_columns<S: crate::cluster_catalog::MetaSnapshot>(
                 let column = table
                     .cols()
                     .iter_deref()
-                    .find(|column| column.read().name.lowercase() == name.to_lowercase())
+                    .find(|column| column.read().name.lowercase() == name.go_to_lower())
                     .ok_or_else(|| {
                         crate::cluster_stats_write::StatsWriteError::MissingTable(format!(
                             "column `{name}` does not exist in `{}`",

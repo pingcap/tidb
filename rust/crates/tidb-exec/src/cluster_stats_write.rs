@@ -77,6 +77,7 @@ use crate::system_row_write::{
     defaults_row, delete_clustered_row, delete_row, insert_row, rewrite_rowid_row, row_id_of,
     store_clustered_row, RowEncodeError, RowValues,
 };
+use tidb_hack::GoToLower;
 
 /// Go's `mysql` schema name.
 const SYSTEM_DB: &str = "mysql";
@@ -716,7 +717,7 @@ pub fn plan_analyze_options_write<S: MetaSnapshot>(
                     table
                         .cols()
                         .iter_deref()
-                        .find(|column| column.read().name.lowercase() == name.to_lowercase())
+                        .find(|column| column.read().name.lowercase() == name.go_to_lower())
                         .map(|column| column.read().id.to_string())
                 })
                 .collect::<Vec<_>>()

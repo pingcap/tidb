@@ -3525,6 +3525,7 @@ dependencies = [
  "tidb-error",
  "tidb-executor",
  "tidb-expr",
+ "tidb-hack",
  "tidb-log",
  "tidb-meta",
  "tidb-metadef",

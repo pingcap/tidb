@@ -13,6 +13,7 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }

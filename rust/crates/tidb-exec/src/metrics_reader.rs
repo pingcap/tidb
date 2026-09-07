@@ -120,6 +120,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeZone};
 use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
+use tidb_hack::GoToLower;
 
 /// Go `promReadTimeout` (`metrics_reader.go:43`).
 ///
@@ -576,7 +577,7 @@ impl<Tz: TimeZone> MetricRetriever<Tz> {
                 value = self
                     .extractor
                     .label_conditions
-                    .get(&label.to_lowercase())
+                    .get(&label.go_to_lower())
                     .map(gen_label_condition_values)
                     .unwrap_or_default();
             }

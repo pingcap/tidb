@@ -28,6 +28,7 @@
 use std::fmt;
 
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+use tidb_hack::GoToLower;
 use tidb_meta::{key, value};
 use tidb_model::column::ColumnInfo;
 use tidb_model::db::DBInfo;
@@ -160,8 +161,8 @@ impl ClusterCatalog {
     /// Finds one table by case-insensitive schema and table name.
     #[must_use]
     pub fn find_table(&self, schema: &str, table: &str) -> Option<(&DBInfo, &TableInfo)> {
-        let schema = schema.to_lowercase();
-        let table = table.to_lowercase();
+        let schema = schema.go_to_lower();
+        let table = table.go_to_lower();
         self.databases
             .iter()
             .filter(|database| database.info.name.lowercase() == schema)

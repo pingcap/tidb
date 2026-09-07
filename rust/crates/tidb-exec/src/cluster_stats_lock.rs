@@ -26,6 +26,7 @@ use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError,
 use crate::system_row_write::{
     defaults_row, delete_clustered_row, store_clustered_row, RowEncodeError, RowValues,
 };
+use tidb_hack::GoToLower;
 
 const LOCK_TABLE: &str = "stats_table_locked";
 const META_TABLE: &str = "stats_meta";
@@ -184,8 +185,8 @@ pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
             return Err(ClusterStatsLockApplyError::Plan(
                 ClusterStatsLockError::Invalid(format!(
                     "table {}.{} is not a partition table",
-                    target.schema.to_lowercase(),
-                    target.table.to_lowercase()
+                    target.schema.go_to_lower(),
+                    target.table.go_to_lower()
                 )),
             ));
         };
@@ -206,17 +207,17 @@ pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
                 .next()
                 .ok_or_else(|| {
                     ClusterStatsLockApplyError::Plan(ClusterStatsLockError::UnknownPartition {
-                        partition: written.to_lowercase(),
+                        partition: written.go_to_lower(),
                         table: table.name.original().to_owned(),
                     })
                 })?;
-            partitions.insert(definition.0, written.to_lowercase());
+            partitions.insert(definition.0, written.go_to_lower());
         }
         let displayed = if statement.lock {
             format!(
                 "{}.{}",
-                target.schema.to_lowercase(),
-                target.table.to_lowercase()
+                target.schema.go_to_lower(),
+                target.table.go_to_lower()
             )
         } else {
             format!("{}.{}", target.schema, target.table)
@@ -242,8 +243,8 @@ pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
                             definition.id,
                             format!(
                                 "{}.{} partition ({})",
-                                target.schema.to_lowercase(),
-                                target.table.to_lowercase(),
+                                target.schema.go_to_lower(),
+                                target.table.go_to_lower(),
                                 definition.name.lowercase()
                             ),
                         )
@@ -257,8 +258,8 @@ pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
                     partition_info,
                     full_name: format!(
                         "{}.{}",
-                        target.schema.to_lowercase(),
-                        target.table.to_lowercase()
+                        target.schema.go_to_lower(),
+                        target.table.go_to_lower()
                     ),
                 },
             );

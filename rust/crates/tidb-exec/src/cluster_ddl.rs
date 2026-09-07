@@ -74,6 +74,7 @@ use crate::table_info_build::{
     build_table_info_with_context, default_ddl_statement_context, resolve_charset_collation,
     ClusteredIndexDefMode, GENERIC_ERROR_CODE,
 };
+use tidb_hack::GoToLower;
 
 pub use crate::table_info_build::DdlAdmissionError;
 
@@ -1956,7 +1957,7 @@ fn apply_add_column(
     if_not_exists: bool,
     context: &tidb_executor::StmtContext,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
-    let wanted = column.name.to_lowercase();
+    let wanted = column.name.go_to_lower();
     if info
         .columns
         .iter_deref()
@@ -2021,7 +2022,7 @@ fn locate_offset_to_move(
         tidb_ast::ColumnPosition::Default => Ok(current_offset),
         tidb_ast::ColumnPosition::First => Ok(0),
         tidb_ast::ColumnPosition::After(name) => {
-            let wanted = name.to_lowercase();
+            let wanted = name.go_to_lower();
             let mut anchor = None;
             for column in info.columns.iter_deref() {
                 let column = column.read();
@@ -2106,7 +2107,7 @@ fn apply_drop_column(
     column: &str,
     if_exists: bool,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
-    let wanted = column.to_lowercase();
+    let wanted = column.go_to_lower();
     let Some(dropped_offset) = info
         .columns
         .iter_deref()
@@ -2782,7 +2783,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
             let constraint = stored
                 .constraints
                 .iter_deref()
-                .find(|constraint| constraint.read().name.lowercase() == name.to_lowercase())
+                .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
                 .ok_or_else(|| {
                     DdlPlanError::Admission(DdlAdmissionError::with_code(
                         tidb_error::tidb::errcode::ErrConstraintNotFound,
@@ -2813,7 +2814,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
             let constraint = stored
                 .constraints
                 .iter_deref()
-                .find(|constraint| constraint.read().name.lowercase() == name.to_lowercase())
+                .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
                 .ok_or_else(|| {
                     DdlPlanError::Admission(DdlAdmissionError::with_code(
                         tidb_error::tidb::errcode::ErrConstraintNotFound,
@@ -2859,7 +2860,7 @@ fn new_check_constraint_job(
     job.version = get_job_ver_in_use();
     job.schema_id = schema_id;
     job.table_id = table.id;
-    job.schema_name = schema.to_lowercase().into();
+    job.schema_name = schema.go_to_lower().into();
     job.table_name = table.name.lowercase().to_owned().into();
     job.type_ = action;
     job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
@@ -5483,7 +5484,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             ))?);
             diff.action_type = ActionType::ACTION_DROP_SCHEMA;
             diff.schema_id = db_id;
-            if !tidb_metadef::is_mem_or_sys_db(&name.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&name.go_to_lower()) {
                 let tables_per_event = if database.tables.len() > 100_000 {
                     500
                 } else {
@@ -5734,7 +5735,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             for (offset, constraint) in info.constraints.iter_deref().enumerate() {
                 let mut constraint = constraint.write();
                 constraint.name =
-                    CiString::new(format!("{}_chk_{}", table.to_lowercase(), offset + 1));
+                    CiString::new(format!("{}_chk_{}", table.go_to_lower(), offset + 1));
                 constraint.table = CiString::new(table.clone());
             }
             info.table_cache_status_type = tidb_model::TableCacheStatusType::DISABLE;
@@ -5771,7 +5772,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 schema_change_events.push((-1, SchemaChangeEvent::create_table(info)));
             }
         }
@@ -5915,7 +5916,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 schema_change_events.push((-1, SchemaChangeEvent::create_table(info)));
             }
         }
@@ -6280,7 +6281,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 let modified = tidb_model::column::find_column_info(&info.columns, column)
                     .expect("the altered auto-random column is present")
                     .read()
@@ -6387,7 +6388,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             };
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 if adding {
                     let added = info
                         .partition
@@ -6541,10 +6542,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 });
             }
             exchange_partition_label_swap = Some(ExchangePartitionLabelSwap {
-                partitioned_schema: schema.to_lowercase(),
+                partitioned_schema: schema.go_to_lower(),
                 partitioned_table: stored_partitioned.name.lowercase().to_owned(),
                 partition: original_definition.name.lowercase().to_owned(),
-                standalone_schema: standalone_schema.to_lowercase(),
+                standalone_schema: standalone_schema.go_to_lower(),
                 standalone_table: stored_standalone.name.lowercase().to_owned(),
                 partition_id: original_standalone_id,
                 standalone_id: original_partition_id,
@@ -6658,7 +6659,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 "after the exchange, please analyze related table of the exchange to update statistics"
                     .to_owned(),
             );
-            if !tidb_metadef::is_mem_or_sys_db(&standalone_schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&standalone_schema.go_to_lower()) {
                 schema_change_events.push((
                     -1,
                     SchemaChangeEvent::exchange_partition(
@@ -6746,7 +6747,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_TRUNCATE_TABLE_PARTITION;
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 let new_by_name = info
                     .partition
                     .as_ref()
@@ -6838,12 +6839,12 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_ADD_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 let added = info
                     .columns
                     .iter_deref()
                     .find(|candidate| {
-                        candidate.read().name.lowercase() == column.name.to_lowercase()
+                        candidate.read().name.lowercase() == column.name.go_to_lower()
                     })
                     .expect("the applied column is present")
                     .read()
@@ -6885,7 +6886,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             to,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let wanted = from.to_lowercase();
+            let wanted = from.go_to_lower();
             let Some(position) = stored
                 .columns
                 .iter_deref()
@@ -6911,7 +6912,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     error.message,
                 )));
             }
-            let new_name = to.to_lowercase();
+            let new_name = to.go_to_lower();
             if new_name != wanted
                 && stored
                     .columns
@@ -6948,11 +6949,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 let modified = info
                     .columns
                     .iter_deref()
-                    .find(|candidate| candidate.read().name.lowercase() == to.to_lowercase())
+                    .find(|candidate| candidate.read().name.lowercase() == to.go_to_lower())
                     .expect("the renamed column is present")
                     .read()
                     .clone_like_go();
@@ -6976,7 +6977,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let wanted = rename_from
                 .as_deref()
                 .unwrap_or(column.name.as_str())
-                .to_lowercase();
+                .go_to_lower();
             let Some(position) = stored
                 .columns
                 .iter_deref()
@@ -6991,7 +6992,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     table: table.clone(),
                 });
             };
-            let new_name = column.name.to_lowercase();
+            let new_name = column.name.go_to_lower();
             if new_name != wanted
                 && stored
                     .columns
@@ -7067,7 +7068,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // the column as its own anchor, which Go answers as
             // ErrColumnNotExists on THAT column rather than as a no-op.
             if let tidb_ast::ColumnPosition::After(anchor) = requested_position {
-                if anchor.to_lowercase() == wanted {
+                if anchor.go_to_lower() == wanted {
                     return Err(DdlPlanError::UnknownColumn {
                         column: rename_from
                             .as_deref()
@@ -7093,7 +7094,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 let modified = info
                     .columns
                     .iter_deref()
@@ -7154,7 +7155,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                             &context.0,
                         )?;
                         if matches!(outcome, AlterColumnOutcome::Applied)
-                            && !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase())
+                            && !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower())
                         {
                             let added = tidb_model::column::find_column_info(
                                 &info.columns,
@@ -7227,7 +7228,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                         });
                         if add_index_count > 1 {
                             merged_added_indexes.push(added.read().clone_like_go());
-                        } else if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+                        } else if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                             schema_change_events.push((
                                 sequence as i64,
                                 SchemaChangeEvent::add_indexes(
@@ -7326,7 +7327,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 }
             }
             if !merged_added_indexes.is_empty()
-                && !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase())
+                && !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower())
             {
                 let sequence = actions.len() - add_index_count;
                 schema_change_events.push((
@@ -7441,7 +7442,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = new_table_id;
             diff.old_table_id = old_table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 schema_change_events.push((
                     -1,
                     SchemaChangeEvent::truncate_table(info, stored.clone_like_go()),
@@ -7492,7 +7493,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_DROP_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 schema_change_events
                     .push((-1, SchemaChangeEvent::drop_table(stored.clone_like_go())));
             }
@@ -7585,7 +7586,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_ADD_INDEX;
             diff.schema_id = db_id;
             diff.table_id = table_id;
-            if !tidb_metadef::is_mem_or_sys_db(&schema.to_lowercase()) {
+            if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                 schema_change_events.push((
                     -1,
                     SchemaChangeEvent::add_indexes(
@@ -7644,7 +7645,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     if *invisible { "invisible" } else { "visible" }
                 )));
             }
-            let wanted = index.to_lowercase();
+            let wanted = index.go_to_lower();
             let mut info = stored.clone_like_go();
             // Go `setIndexVisibility` walks EVERY index and sets each one
             // whose name matches, rather than stopping at the first.
@@ -7912,8 +7913,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     "index `{from}` on `{schema}`.`{table}` already has that name"
                 )));
             }
-            let from_lower = from.to_lowercase();
-            let to_lower = to.to_lowercase();
+            let from_lower = from.go_to_lower();
+            let to_lower = to.go_to_lower();
             if from_lower != to_lower {
                 if let Some(existing) = find_index(stored, to) {
                     return Err(DdlPlanError::DuplicateKeyName(
@@ -7958,7 +7959,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let mut info = stored.clone_like_go();
             // Go resolves the target column before it looks at the new
             // default at all, and a non-public one reads as absent.
-            let wanted = column.to_lowercase();
+            let wanted = column.go_to_lower();
             let Some(target) = info.columns.iter_deref().find(|candidate| {
                 let candidate = candidate.read();
                 candidate.name.lowercase() == wanted
@@ -8329,7 +8330,7 @@ fn check_varchar_field_length(flen: i64, name: &str, to_charset: &str) -> Result
 /// Go `isColumnWithIndex`: whether any index names this column, which is what
 /// makes a collation change require rewriting the stored entries.
 fn is_column_with_index(name: &str, table: &TableInfo) -> bool {
-    let wanted = name.to_lowercase();
+    let wanted = name.go_to_lower();
     table.indices.iter_deref().any(|index| {
         index
             .read()
@@ -8393,12 +8394,12 @@ fn plan_rename_tables(
     let mut changed = BTreeMap::new();
     let mut results = Vec::with_capacity(pairs.len());
     for pair in pairs {
-        let from_schema = pair.from_schema.to_lowercase();
-        let to_schema = pair.to_schema.to_lowercase();
+        let from_schema = pair.from_schema.go_to_lower();
+        let to_schema = pair.to_schema.go_to_lower();
         if !database_ids.contains_key(&from_schema) {
             return Err(DdlPlanError::UnknownDatabase(pair.from_schema.clone()));
         }
-        let from_key = table_name_key(&from_schema, &pair.from_table.to_lowercase());
+        let from_key = table_name_key(&from_schema, &pair.from_table.go_to_lower());
         let Some(state) = namespace.get(&from_key) else {
             return Err(DdlPlanError::TableNotExists {
                 schema: pair.from_schema.clone(),
@@ -8408,7 +8409,7 @@ fn plan_rename_tables(
         let Some(&new_schema_id) = database_ids.get(&to_schema) else {
             return Err(DdlPlanError::UnknownDatabase(pair.to_schema.clone()));
         };
-        let to_key = table_name_key(&to_schema, &pair.to_table.to_lowercase());
+        let to_key = table_name_key(&to_schema, &pair.to_table.go_to_lower());
         if namespace.contains_key(&to_key) {
             return Err(DdlPlanError::TableExists {
                 schema: pair.to_schema.clone(),
@@ -8606,7 +8607,7 @@ fn find_database<'catalog>(
     catalog: &'catalog ClusterCatalog,
     name: &str,
 ) -> Option<&'catalog crate::cluster_catalog::LoadedDatabase> {
-    let name = name.to_lowercase();
+    let name = name.go_to_lower();
     catalog
         .databases
         .iter()
@@ -8617,7 +8618,7 @@ fn find_table<'database>(
     database: &'database crate::cluster_catalog::LoadedDatabase,
     name: &str,
 ) -> Option<&'database TableInfo> {
-    let name = name.to_lowercase();
+    let name = name.go_to_lower();
     database
         .tables
         .iter()
@@ -9054,7 +9055,7 @@ fn parse_mview_attributes(attrs: Option<&str>) -> Result<(i64, i64, bool), DdlPl
                 format!("invalid ATTRIBUTES format: {kv:?}"),
             )));
         }
-        let key = kv[..pos].trim().to_lowercase();
+        let key = kv[..pos].trim().go_to_lower();
         let value = kv[pos + 1..].trim();
         if key.is_empty() || value.is_empty() {
             return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
@@ -9086,7 +9087,7 @@ fn parse_mview_attributes(attrs: Option<&str>) -> Result<(i64, i64, bool), DdlPl
                     alert_overdue_sec = parsed;
                 }
             }
-            ATTR_ALERT_REFRESH_FAILED => match value.to_lowercase().as_str() {
+            ATTR_ALERT_REFRESH_FAILED => match value.go_to_lower().as_str() {
                 "yes" => alert_refresh_failed = true,
                 "no" => alert_refresh_failed = false,
                 _ => {
@@ -9157,26 +9158,26 @@ fn resolve_mview_column_name<'map>(
         ))
     };
     let qualifier_matches = |qualifier: &str| {
-        qualifier == base_table.to_lowercase()
+        qualifier == base_table.go_to_lower()
             || from_alias
-                .map(|alias| qualifier == alias.to_lowercase())
+                .map(|alias| qualifier == alias.go_to_lower())
                 .unwrap_or(false)
     };
     match path.len() {
         1 => {}
         2 => {
-            if !qualifier_matches(&path[0].to_lowercase()) {
+            if !qualifier_matches(&path[0].go_to_lower()) {
                 return Err(unknown_column());
             }
         }
         3 => {
-            if !qualifier_matches(&path[1].to_lowercase()) {
+            if !qualifier_matches(&path[1].go_to_lower()) {
                 return Err(unknown_column());
             }
         }
         _ => return Err(unknown_column()),
     }
-    let name = path.last().expect("non-empty column path").to_lowercase();
+    let name = path.last().expect("non-empty column path").go_to_lower();
     if !base_col_map.contains_key(&name) {
         return Err(unknown_column());
     }
@@ -9283,11 +9284,11 @@ impl<'a> BaseTableResolver<'a> {
             _ => return None,
         };
         if let Some(qualifier) = qualifier {
-            let qualifier = qualifier.to_lowercase();
-            let matches_table = qualifier == self.base_table.to_lowercase();
+            let qualifier = qualifier.go_to_lower();
+            let matches_table = qualifier == self.base_table.go_to_lower();
             let matches_alias = self
                 .from_alias
-                .map(|alias| qualifier == alias.to_lowercase())
+                .map(|alias| qualifier == alias.go_to_lower())
                 .unwrap_or(false);
             if !matches_table && !matches_alias {
                 return None;
@@ -9484,7 +9485,7 @@ fn plan_validate_materialized_view_query(
                         "CREATE MATERIALIZED VIEW does not support DISTINCT aggregate function",
                     )));
                 }
-                let lower_name = name.to_lowercase();
+                let lower_name = name.go_to_lower();
                 if !matches!(lower_name.as_str(), "count" | "sum" | "min" | "max") {
                     return Err(DdlPlanError::Admission(DdlAdmissionError::unsupported(
                         format!(
@@ -9702,7 +9703,7 @@ fn build_create_materialized_view_log_job(
     let mut job = Job::default();
     job.version = get_job_ver_in_use();
     job.schema_id = database.info.id;
-    job.schema_name = schema.to_lowercase().into();
+    job.schema_name = schema.go_to_lower().into();
     job.table_name = mlog_table_info.name.lowercase().to_owned().into();
     job.type_ = ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG;
     job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
@@ -9711,12 +9712,12 @@ fn build_create_materialized_view_log_job(
     job.sql_mode = context.ddl_sql_mode();
     job.involving_schema_info = GoSharedSlice::from_vec(vec![
         tidb_model::InvolvingSchemaInfo {
-            database: schema.to_lowercase().into(),
+            database: schema.go_to_lower().into(),
             table: mlog_table_info.name.lowercase().to_owned().into(),
             ..tidb_model::InvolvingSchemaInfo::default()
         },
         tidb_model::InvolvingSchemaInfo {
-            database: schema.to_lowercase().into(),
+            database: schema.go_to_lower().into(),
             table: base.name.lowercase().to_owned().into(),
             ..tidb_model::InvolvingSchemaInfo::default()
         },
@@ -9827,15 +9828,15 @@ fn build_materialized_view_log_table_info(
     let mut seen_cols = std::collections::HashSet::with_capacity(create.columns.len());
     let mut col_defs = Vec::with_capacity(create.columns.len() + 2);
     for col in &create.columns {
-        let lower = col.to_lowercase();
+        let lower = col.go_to_lower();
         if !seen_cols.insert(lower.clone()) {
             return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
                 tidb_error::tidb::errcode::ErrDupFieldName,
                 format!("Duplicate column name '{col}'"),
             )));
         }
-        if lower == tidb_model::MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME.to_lowercase()
-            || lower == tidb_model::MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME.to_lowercase()
+        if lower == tidb_model::MATERIALIZED_VIEW_LOG_DML_TYPE_COLUMN_NAME.go_to_lower()
+            || lower == tidb_model::MATERIALIZED_VIEW_LOG_OLD_NEW_COLUMN_NAME.go_to_lower()
         {
             return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
                 tidb_error::tidb::errcode::ErrDupFieldName,
@@ -10250,7 +10251,7 @@ fn build_create_materialized_view_job(
     let mut job = Job::default();
     job.version = get_job_ver_in_use();
     job.schema_id = database.info.id;
-    job.schema_name = schema.to_lowercase().into();
+    job.schema_name = schema.go_to_lower().into();
     job.table_name = mview_table_info.name.lowercase().to_owned().into();
     job.type_ = ActionType::ACTION_CREATE_MATERIALIZED_VIEW;
     job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
@@ -10259,17 +10260,17 @@ fn build_create_materialized_view_job(
     job.sql_mode = context.ddl_sql_mode();
     job.involving_schema_info = GoSharedSlice::from_vec(vec![
         tidb_model::InvolvingSchemaInfo {
-            database: schema.to_lowercase().into(),
+            database: schema.go_to_lower().into(),
             table: mview_table_info.name.lowercase().to_owned().into(),
             ..tidb_model::InvolvingSchemaInfo::default()
         },
         tidb_model::InvolvingSchemaInfo {
-            database: schema.to_lowercase().into(),
+            database: schema.go_to_lower().into(),
             table: base.name.lowercase().to_owned().into(),
             ..tidb_model::InvolvingSchemaInfo::default()
         },
         tidb_model::InvolvingSchemaInfo {
-            database: schema.to_lowercase().into(),
+            database: schema.go_to_lower().into(),
             table: mlog.name.lowercase().to_owned().into(),
             ..tidb_model::InvolvingSchemaInfo::default()
         },

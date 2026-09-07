@@ -68,6 +68,7 @@ use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::storage::StorageError;
+use tidb_hack::GoToLower;
 use tidb_pd_client::PdClient;
 use tidb_txnkv::pd_capability::{CapabilityTimestampSource, TimestampFutureWait};
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext, UnaryCancellation};
@@ -1632,7 +1633,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 /// for the statement.
 fn classify(error: OptimisticCoordinatorError) -> StorageError {
     let message = error.to_string();
-    let lowered = message.to_lowercase();
+    let lowered = message.go_to_lower();
     let retryable = [
         "region", "epoch", "lock", "leader", "stale", "budget", "deadline",
     ]

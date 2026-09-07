@@ -15,6 +15,8 @@
 //! Native implementation of the next-generation read-only-variable predicate
 //! from Go `pkg/sessionctx/vardef/runtime.go`.
 
+use tidb_hack::GoToLower;
+
 /// Variable names treated as read-only by the next-generation kernel.
 pub const NEXTGEN_READ_ONLY_VARIABLES: &[&str] = &[
     "tidb_enable_metadata_lock",
@@ -28,6 +30,6 @@ pub const NEXTGEN_READ_ONLY_VARIABLES: &[&str] = &[
 /// Returns whether `name` is read-only in the next-generation kernel.
 #[must_use]
 pub fn is_read_only_var_in_nextgen(name: &str) -> bool {
-    let name = name.to_lowercase();
+    let name = name.go_to_lower();
     NEXTGEN_READ_ONLY_VARIABLES.contains(&name.as_str())
 }

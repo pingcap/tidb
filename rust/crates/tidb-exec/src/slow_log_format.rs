@@ -64,6 +64,7 @@ use crate::exec_details::{
 use crate::ruv2_metrics::{format_ruv2_summary, RuV2Metrics, RuV2Weights};
 use crate::slow_log_float::format_go_float64;
 use crate::used_stats::UsedStatsInfoForTable;
+use tidb_hack::GoToLower;
 
 /// Go `SlowLogRowPrefixStr`: slow log row prefix.
 pub const SLOW_LOG_ROW_PREFIX_STR: &str = "# ";
@@ -810,11 +811,7 @@ pub fn slow_log_format(session: &SlowLogSessionSnapshot, items: &SlowQueryLogIte
     }
 
     if !session.current_db.is_empty() {
-        write_slow_log_item(
-            &mut buf,
-            SLOW_LOG_DB_STR,
-            &session.current_db.to_lowercase(),
-        );
+        write_slow_log_item(&mut buf, SLOW_LOG_DB_STR, &session.current_db.go_to_lower());
     }
     if !items.index_names.is_empty() {
         write_slow_log_item(&mut buf, SLOW_LOG_INDEX_NAMES_STR, &items.index_names);
@@ -1076,7 +1073,7 @@ pub fn slow_log_format(session: &SlowLogSessionSnapshot, items: &SlowQueryLogIte
     if session.current_db_changed {
         // Go also clears s.CurrentDBChanged here; the immutable snapshot
         // leaves that reset to the caller.
-        let _ = writeln!(buf, "use {};", session.current_db.to_lowercase());
+        let _ = writeln!(buf, "use {};", session.current_db.go_to_lower());
     }
 
     buf.push_str(&items.sql);
