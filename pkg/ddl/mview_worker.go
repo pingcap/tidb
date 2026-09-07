@@ -1115,10 +1115,27 @@ func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, dr
 			return nil, errors.Trace(err)
 		}
 		if mlog == nil || mlog.MaterializedViewLog == nil {
-			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("drop materialized view: invalid materialized view log")
+			// The executor rejects this corrupted metadata before submitting the job.
+			// Do not leave an already-started DROP job retrying in delete-only state.
+			logutil.DDLLogger().Error(
+				"drop materialized view: materialized view log is missing or invalid during dependency cleanup",
+				zap.Int64("mviewID", job.TableID),
+				zap.Int64("baseTableID", baseID),
+				zap.Int64("mlogID", mlogID),
+			)
+			continue
 		}
 		if mlog.MaterializedViewLog.BaseTableID != baseID {
-			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("drop materialized view: invalid materialized view log metadata")
+			// See the missing-MLog branch above. This is a permanent metadata error,
+			// not a retryable DDL failure after the DROP job has started.
+			logutil.DDLLogger().Error(
+				"drop materialized view: materialized view log belongs to a different base table during dependency cleanup",
+				zap.Int64("mviewID", job.TableID),
+				zap.Int64("baseTableID", baseID),
+				zap.Int64("mlogID", mlogID),
+				zap.Int64("mlogBaseTableID", mlog.MaterializedViewLog.BaseTableID),
+			)
+			continue
 		}
 		if !hasMaterializedViewID(mlog.MaterializedViewLog.DependentMViewIDs, job.TableID) {
 			continue
