@@ -11165,3 +11165,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (QUOTE/ORD pin): re-parseable QUOTE output, ASCII zero on
   empty, and ORD's multibyte leading-byte arithmetic. Pinned in
   `crates/tidb-session/tests/quote_ord_source.rs`.
+- 2026-09-06 (:= assignment pin): the := operator inside SELECT yields the
+  assigned value, persists the variable across statements, and supports
+  chained reads of earlier assignments. Pinned in
+  `crates/tidb-session/tests/assign_operator_source.rs`.
