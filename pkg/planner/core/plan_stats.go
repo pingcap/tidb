@@ -36,10 +36,15 @@ type collectPredicateColumnsPoint struct{}
 
 func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
+<<<<<<< HEAD:pkg/planner/core/plan_stats.go
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
 	}
 	predicateNeeded := variable.EnableColumnTracking.Load()
+=======
+	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
+		(plan.SCtx().GetSessionVars().InternalSQLScanUserTable && plan.SCtx().GetSessionVars().InRestrictedSQL), "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
+>>>>>>> e54fe94984f (planner: TTL scan can trigger sync/async load/generateRuntimeFilter (#62616)):pkg/planner/core/rule_collect_plan_stats.go
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	histNeeded := syncWait > 0
 	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
@@ -143,9 +148,14 @@ type syncWaitStatsLoadPoint struct{}
 
 func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
+<<<<<<< HEAD:pkg/planner/core/plan_stats.go
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
 	}
+=======
+	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
+		(plan.SCtx().GetSessionVars().InRestrictedSQL && plan.SCtx().GetSessionVars().InternalSQLScanUserTable), "SyncWaitStatsLoadPoint should not be called in restricted SQL mode")
+>>>>>>> e54fe94984f (planner: TTL scan can trigger sync/async load/generateRuntimeFilter (#62616)):pkg/planner/core/rule_collect_plan_stats.go
 	if plan.SCtx().GetSessionVars().StmtCtx.IsSyncStatsFailed {
 		return plan, planChanged, nil
 	}
