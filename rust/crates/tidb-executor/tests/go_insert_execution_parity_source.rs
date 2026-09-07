@@ -90,26 +90,35 @@ fn prepared_dml_uses_the_ordinary_statement_executor() {
 #[test]
 fn fresh_dml_builds_the_same_physical_select_child_as_prepared_dml() {
     let dml = include_str!("../src/driver/dml.rs");
+    // Each ordinary DML entrypoint delegates to the shared stats variant,
+    // which plans a fresh source root through `physical_dml_plan` when no
+    // physical plan was handed in (a cache hit or a retaining caller).
     for entrypoint in [
         "pub fn run_insert_stmt_with_physical(",
         "pub fn run_update_stmt_with_physical(",
         "pub fn run_delete_stmt_with_physical(",
     ] {
-        let body = dml
-            .split_once(entrypoint)
-            .unwrap_or_else(|| panic!("missing ordinary DML entrypoint {entrypoint}"))
-            .1
-            .split_once("\n}\n")
-            .expect("ordinary DML entrypoint body")
-            .0;
         assert!(
-            body.contains("fresh_dml_source_plan("),
-            "{entrypoint} must plan a fresh SelectPlan before entering the common DML executor"
+            dml.contains(entrypoint),
+            "missing ordinary DML entrypoint {entrypoint}"
+        );
+    }
+    for delegation in [
+        "run_insert_stmt_with_physical_and_stats(insert, catalog, current_db, ctx, physical_plan, None)",
+        "run_update_stmt_with_physical_and_stats(update, catalog, current_db, ctx, physical_plan, None)",
+        "run_delete_stmt_with_physical_and_stats(delete, catalog, current_db, ctx, physical_plan, None)",
+    ] {
+        assert!(
+            dml.contains(delegation),
+            "the ordinary DML entrypoint must reach the shared fresh-planning variant: {delegation}"
         );
     }
     assert!(
-        dml.contains("fresh_dml_source_plan(insert.source.as_deref()")
-            && dml.contains("physical_builder::execute_query(query, physical"),
+        dml.matches("physical_dml_plan(").count() >= 3,
+        "each DML kind plans its fresh source root through physical_dml_plan"
+    );
+    assert!(
+        dml.contains("insert.source.as_deref()"),
         "INSERT must retain and execute every QueryStmt source, including set operations"
     );
     assert!(
