@@ -28,6 +28,7 @@ func TestStatusHandlerReportsProgress(t *testing.T) {
 	d.metrics.totalChunks.Store(8)
 	d.metrics.completedChunks.Store(2)
 	d.metrics.progressReady.Store(true)
+	d.RefreshStatus()
 
 	rec := httptest.NewRecorder()
 	statusHandler(tcontext.Background(), d)(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
@@ -62,6 +63,46 @@ func TestStatusHandlerOmitsProgressBeforeChunksAreCounted(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
 	require.NotContains(t, raw, "progressPercent")
 	require.NotContains(t, raw, "progress")
+}
+
+func TestStatusHandlerDoesNotUpdateSpeed(t *testing.T) {
+	conf := defaultConfigForTest(t)
+	d := &Dumper{conf: conf, speedRecorder: NewSpeedRecorder()}
+	d.metrics = newMetrics(conf.PromFactory, nil)
+	lastUpdateTime := d.speedRecorder.lastUpdateTime
+
+	for range 2 {
+		AddGauge(d.metrics.finishedSizeGauge, 4096)
+		rec := httptest.NewRecorder()
+		statusHandler(tcontext.Background(), d)(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, lastUpdateTime, d.speedRecorder.lastUpdateTime)
+		require.Zero(t, d.speedRecorder.lastFinished)
+		require.Zero(t, d.speedRecorder.speedBPS)
+	}
+
+	d.RefreshStatus()
+	snapshot := d.GetStatus()
+	lastUpdateTime = d.speedRecorder.lastUpdateTime
+	AddGauge(d.metrics.finishedSizeGauge, 4096)
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	for range cap(responses) {
+		go func() {
+			rec := httptest.NewRecorder()
+			statusHandler(tcontext.Background(), d)(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+			responses <- rec
+		}()
+	}
+	for range cap(responses) {
+		rec := <-responses
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got DumpStatus
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.Equal(t, *snapshot, got)
+	}
+	require.Equal(t, lastUpdateTime, d.speedRecorder.lastUpdateTime)
+	require.Equal(t, snapshot.FinishedBytes, d.speedRecorder.lastFinished)
+	require.Equal(t, snapshot.CurrentSpeedBPS, d.speedRecorder.speedBPS)
 }
 
 // TestMetricsHandlerServesTheDumperRegistry pins the fix for an endpoint that

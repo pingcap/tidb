@@ -78,9 +78,8 @@ func metricsHandler(d *Dumper) http.Handler {
 	return promhttp.Handler()
 }
 
-// statusHandler reports how far the dump has got, as JSON. The same numbers
-// reach the log every logProgressTick, but a caller driving a progress bar
-// should not have to scrape log lines to find them.
+// statusHandler serves the latest dump status snapshot as JSON.
+// The progress loop refreshes it every statusRefreshTick independently of HTTP polling.
 func statusHandler(tctx *tcontext.Context, d *Dumper) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if d == nil {

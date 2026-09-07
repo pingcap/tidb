@@ -74,6 +74,7 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
+	status        atomic.Pointer[DumpStatus]
 }
 
 // NewDumper returns a new Dumper
