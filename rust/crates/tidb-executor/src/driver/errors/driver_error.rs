@@ -115,6 +115,10 @@ pub enum DriverError {
     /// Go `dbterror.ErrTTLColumnCannotDrop` (8149): the column named by the
     /// TTL config cannot be dropped while the config stands.
     TtlColumnCannotDrop(String),
+    /// Go `dbterror.ErrSetTTLOptionForNonTTLTable` (8150): an enable-only or
+    /// interval-only ALTER TTL option on a table without a TTL config,
+    /// carrying the option name.
+    SetTtlOptionForNonTtlTable(String),
     /// Go `dbterror.ErrUnsupportedLocalTempTableDDL` (8200), carrying the
     /// statement name: a local temporary table exists only in the session,
     /// so the DDL job every one of these would need cannot be submitted.

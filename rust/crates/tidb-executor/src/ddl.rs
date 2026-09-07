@@ -617,7 +617,7 @@ pub fn resolve_database_charset(
 /// on an existing `TTLInfo` -- so the `TTL=` clause is what decides. Their
 /// defaults are Go's: `TTL_ENABLE` is ON and the job interval is
 /// `DefaultTTLJobInterval`.
-fn ttl_info_from_options(
+pub(crate) fn ttl_info_from_options(
     options: &[tidb_ast::TableOption],
 ) -> Result<Option<tidb_model::TTLInfo>, DriverError> {
     let mut info: Option<tidb_model::TTLInfo> = None;

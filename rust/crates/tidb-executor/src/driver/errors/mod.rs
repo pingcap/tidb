@@ -221,6 +221,11 @@ impl DriverError {
             tidb_error::tidb::errcode::ErrTTLColumnCannotDrop,
             format!("Cannot drop column '{column}': needed in TTL config"),
         ),
+        // Go: "Cannot set %s on a table without TTL config".
+        DriverError::SetTtlOptionForNonTtlTable(option) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrSetTTLOptionForNonTTLTable,
+            format!("Cannot set {option} on a table without TTL config"),
+        ),
         DriverError::UnsupportedLocalTempTableDDL(statement) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
             format!("TiDB doesn't support {statement} for local temporary table"),

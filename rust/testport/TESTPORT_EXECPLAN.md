@@ -10863,3 +10863,14 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/ttl_config_validation_source.rs`. Suite diff
   vs stash-verified baseline: zero net-new failures (218 with-fix vs 226
   baseline, all deltas within the known flake set).
+- 2026-09-06 (ALTER TTL fix, REAL DIVERGENCE): Go supports the ALTER TTL
+  family (`executor.go:1934-1952` AlterTableTTLInfoOrEnable,
+  `executor.go:3905` AlterTableRemoveTTL, merge rules in
+  `pkg/ddl/ttl.go:54-90`); the port refused every form with "not
+  supported yet". Implemented as one pre-scanned group per ALTER: full
+  `TTL=` re-definition validated like CREATE and inheriting the existing
+  enable/interval unless explicitly given; enable/interval-only flips
+  need a config (8150 "Cannot set %s on a table without TTL config");
+  REMOVE TTL clears (no-op without a config). Pins:
+  `crates/tidb-session/tests/alter_ttl_source.rs` (3 tests, 8
+  assertions). Suite diff vs baseline: zero net-new failures.

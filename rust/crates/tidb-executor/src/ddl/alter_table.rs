@@ -536,6 +536,15 @@ fn run_alter_table_in_inner(
             tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
                 add_index_constraint_action(catalog, &database, &name, index, ctx)?;
             }
+            // Go `AlterTableRemoveTTL` (`pkg/ddl/executor.go:3905`): clears the
+            // table's TTL config; a table without one is a no-op.
+            tidb_ast::AlterTableAction::RemoveTtl(_) => {
+                if let Some(crate::TableEntry::Kv(table)) =
+                    catalog.table_mut_in(&database, &name)
+                {
+                    table.set_ttl_info(None);
+                }
+            }
             // `ALTER TABLE x RENAME TO y` is the same operation as
             // `RENAME TABLE x TO y`.
             tidb_ast::AlterTableAction::RenameTable { new_name } => {
@@ -1819,6 +1828,17 @@ fn set_table_options_action(
     // `Some(Some(name))` records a policy to resolve after the mutable table
     // borrow is released. `None` means this ALTER has no placement option.
     let mut pending_placement: Option<Option<String>> = None;
+    // Go `executor.go:1934-1952`: TTL options in an ALTER reach
+    // `AlterTableTTLInfoOrEnable` as ONE group, so they are pre-scanned here
+    // and applied after the per-option loop.
+    let pending_ttl = options.iter().any(|option| {
+        matches!(
+            option,
+            tidb_ast::TableOption::Ttl { .. }
+                | tidb_ast::TableOption::TtlEnable(_)
+                | tidb_ast::TableOption::TtlJobInterval(_)
+        )
+    });
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -1919,6 +1939,11 @@ fn set_table_options_action(
                     Some(policy_name.clone())
                 });
             }
+            tidb_ast::TableOption::Ttl { .. }
+            | tidb_ast::TableOption::TtlEnable(_)
+            | tidb_ast::TableOption::TtlJobInterval(_) => {
+                // Consumed by the group apply after this loop.
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE table option is not supported yet",
@@ -1928,6 +1953,9 @@ fn set_table_options_action(
     }
     if let Some(charset) = pending_charset {
         table.set_charset(charset);
+    }
+    if pending_ttl {
+        alter_ttl_info_or_enable(table, options)?;
     }
     if let Some(policy_name) = pending_placement {
         let reference = match policy_name {
@@ -3946,6 +3974,87 @@ fn drop_column_action(
             .map_err(check_constraint_table_error)?;
     }
     Ok(())
+}
+
+/// Go `AlterTableTTLInfoOrEnable` (`pkg/ddl/executor.go:3851-3903`) plus the
+/// `onAlterTTLInfo` merge rules (`pkg/ddl/ttl.go:54-90`): the TTL options of
+/// one ALTER form ONE group. A full `TTL=` re-definition is validated like
+/// CREATE and inherits the existing `TTL_ENABLE`/`TTL_JOB_INTERVAL` unless
+/// this ALTER also carries them; the enable/interval-only forms need an
+/// existing config (`ErrSetTTLOptionForNonTTLTable`, 8150).
+fn alter_ttl_info_or_enable(
+    table: &mut crate::KvTable,
+    options: &[tidb_ast::TableOption],
+) -> Result<(), DriverError> {
+    let mut info = super::ttl_info_from_options(options)?;
+    let mut explicit_enable: Option<bool> = None;
+    let mut explicit_interval: Option<String> = None;
+    for option in options {
+        match option {
+            tidb_ast::TableOption::TtlEnable(enabled) => explicit_enable = Some(*enabled),
+            tidb_ast::TableOption::TtlJobInterval(interval) => {
+                explicit_interval = Some(interval.clone());
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(built) = info.as_mut() {
+        // Go runs `checkTTLInfoValid` on the NEW config before the job.
+        validate_ttl_column(table, built.column_name.original())?;
+        // The merge rules: an explicit enable/interval wins; otherwise the
+        // existing config's survives a re-definition.
+        if let Some(current) = table.ttl_info() {
+            if explicit_enable.is_none() {
+                built.enable = current.enable;
+            }
+            if explicit_interval.is_none() {
+                built.job_interval = current.job_interval.clone();
+            }
+        }
+        table.set_ttl_info(info);
+        return Ok(());
+    }
+
+    let Some(current) = table.ttl_info() else {
+        // Go: both enable-only and interval-only refuse on a non-TTL table.
+        if explicit_enable.is_some() {
+            return Err(DriverError::SetTtlOptionForNonTtlTable(
+                "TTL_ENABLE".to_owned(),
+            ));
+        }
+        if let Some(_) = explicit_interval {
+            return Err(DriverError::SetTtlOptionForNonTtlTable(
+                "TTL_JOB_INTERVAL".to_owned(),
+            ));
+        }
+        return Ok(());
+    };
+    let mut updated = current.clone();
+    if let Some(enabled) = explicit_enable {
+        updated.enable = enabled;
+    }
+    if let Some(interval) = explicit_interval {
+        updated.job_interval = interval;
+    }
+    table.set_ttl_info(Some(updated));
+    Ok(())
+}
+
+/// Go `checkTTLInfoValid` -> `checkTTLInfoColumnType` (`pkg/ddl/ttl.go
+/// :141-149`): the TTL column must exist and be a time type.
+fn validate_ttl_column(table: &crate::KvTable, named: &str) -> Result<(), DriverError> {
+    match table
+        .columns
+        .iter()
+        .find(|column| column.name.eq_ignore_ascii_case(named))
+    {
+        None => Err(DriverError::UnknownColumnInTtlConfig(named.to_owned())),
+        Some(column) if !column.field_type.code().is_type_time() => {
+            Err(DriverError::UnsupportedColumnInTtlConfig(named.to_owned()))
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 #[cfg(test)]
