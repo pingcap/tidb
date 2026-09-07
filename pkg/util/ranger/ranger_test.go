@@ -2660,4 +2660,21 @@ func TestBinCollationRangeForIndex(t *testing.T) {
 	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, accessConds))
 	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))
 	require.Equal(t, "[[\"\\x00A\\x00B\\x00C\",\"\\x00A\\x00B\\x00C\"]]", fmt.Sprintf("%v", ranges))
+
+	tk.MustExec("drop table if exists t_binary_literal")
+	tk.MustExec(`create table t_binary_literal (
+		a bigint primary key,
+		b bigint not null,
+		c varchar(64) character set utf8mb4 collate utf8mb4_general_ci not null,
+		key idx_bc (b, c)
+	)`)
+	tk.MustExec("insert into t_binary_literal values (1, 42, 'Alice'), (2, 42, 'alice')")
+	tk.MustQuery(`
+		select a, c
+		from t_binary_literal force index (idx_bc)
+		where b = 42
+			and c = _binary'Alice'
+			and cast(c as binary) = cast(_binary'Alice' as binary)
+		order by a
+	`).Check(testkit.Rows("1 Alice"))
 }
