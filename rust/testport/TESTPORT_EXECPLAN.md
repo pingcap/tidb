@@ -11235,3 +11235,6 @@ risks without claiming repository-wide parity.
   rules — 0/beyond-pos unchanged, negative length splices to end, NULL
   propagates. Pinned in
   `crates/tidb-session/tests/insert_fn_splice_source.rs`.
+- 2026-09-06 (multibyte positions pin): LOCATE/INSTR report character
+  positions, BIT_LENGTH counts bits, LPAD's target is characters. Pinned
+  in `crates/tidb-session/tests/multibyte_position_source.rs`.
