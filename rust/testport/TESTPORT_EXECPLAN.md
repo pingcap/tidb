@@ -11124,3 +11124,6 @@ risks without claiming repository-wide parity.
   per group (NULL rows hit ELSE) and CASE-inside-COUNT skips NULL else
   rows. Pinned in
   `crates/tidb-session/tests/conditional_aggregation_source.rs`.
+- 2026-09-06 (GROUP_CONCAT ORDER/DISTINCT pin): inner ORDER BY sorts each
+  group, DISTINCT dedupes before ordering, and SEPARATOR is verbatim.
+  Pinned in `crates/tidb-session/tests/group_concat_order_source.rs`.
