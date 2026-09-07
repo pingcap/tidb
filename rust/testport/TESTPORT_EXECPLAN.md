@@ -11103,3 +11103,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (CEIL/FLOOR/TRUNCATE pin): direction-of-rounding for negatives
   and TRUNCATE's digit cutting including negative decimal places. Pinned
   in `crates/tidb-session/tests/ceil_floor_truncate_source.rs`.
+- 2026-09-06 (GREATEST/LEAST/RAND pin): NULL propagation in GREATEST/LEAST
+  and seeded-RAND determinism within [0, 1). Pinned in
+  `crates/tidb-session/tests/greatest_least_rand_source.rs`.
