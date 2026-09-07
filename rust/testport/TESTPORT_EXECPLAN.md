@@ -10451,3 +10451,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (DEFAULT(col) function pin): the function form resolves each
   named column to its own declared default (b -> 7, c -> 9). Pinned in
   `crates/tidb-session/tests/default_function_values_source.rs`.
+- 2026-09-06 (ADD COLUMN FIRST pin): `add column ... first` positions the
+  new column at the head of the row layout. Complements the AFTER pin.
+  Pinned in `crates/tidb-session/tests/add_column_first_source.rs`.
