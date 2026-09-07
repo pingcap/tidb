@@ -10394,3 +10394,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (ADD PARTITION MAXVALUE pin): adding any partition after a
   MAXVALUE definition fails with Go's exact `ErrPartitionMaxvalue` text
   (1493). Pinned in `crates/tidb-session/tests/add_partition_errors_source.rs`.
+- 2026-09-06 (SHOW ENGINES pin): a single InnoDB row with the DEFAULT
+  support flag and TiDB's transaction/row-lock/FK description. Pinned in
+  `crates/tidb-session/tests/show_engines_source.rs`.
