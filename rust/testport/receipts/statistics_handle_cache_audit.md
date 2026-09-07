@@ -213,3 +213,39 @@ Ready validation for this Rust-only follow-up:
 No runtime, cache-algorithm, compatibility, or performance behavior changed;
 the regression is compile-time return-contract evidence. No Go/Bazel/module or
 import graph changed, so `make bazel_prepare` remains unnecessary.
+
+## 2026-09-06 delta-load histogram observation (this batch)
+
+Go `StatsCacheImpl.Update` observes `tidbmetrics.StatsDeltaLoadHistogram`
+through a `defer` (`statscache.go:127`), so the total refresh duration lands
+on the histogram on EVERY exit path — success, source error, and mid-loop
+cancellation alike. The Rust `update_from_source` had no observation and no
+Rust crate carried the family (workspace grep: zero matches), which was a
+missing-Go-behavior gap in this package.
+
+Fix, following the `tidb-planner::metrics` precedent of placing a Go-central
+`pkg/metrics` family beside its only consumer with the exact Go identity:
+
+- `tidb-stats-handle-cache-metrics` gains `STATS_DELTA_LOAD_HISTOGRAM`:
+  namespace `tidb`, subsystem `statistics`, name
+  `stats_delta_load_duration_seconds`, Go's help string verbatim, buckets
+  `exponential_buckets(0.01, 2.0, 24)` (10ms to ~23.5h, =
+  `prometheus.ExponentialBuckets(0.01, 2, 24)`), registered once in the
+  default registry, exposed via `stats_delta_load_histogram()`.
+- `tidb-stats-handle-cache` gains `DeltaLoadDurationGuard` whose `Drop`
+  observes the elapsed seconds; the guard is created at the top of
+  `update_from_source`, reproducing Go's defer-on-all-paths semantics.
+
+Regression: `update_observes_the_stats_delta_load_duration_histogram_on_every_exit`
+pins one new sample for a completed refresh AND one for a cancelled refresh
+(fail-before: the family did not exist in the workspace before this batch, so
+no observation could occur and the test could not compile).
+
+Ready validation (this batch):
+
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-stats-handle-cache --lib` (13 passed, including the new regression);
+- `cargo +nightly-2026-08-22 test --offline --locked -p tidb-stats-handle-cache-metrics` (all green);
+- `cargo +nightly-2026-08-22 clippy --offline --locked -p tidb-stats-handle-cache -p tidb-stats-handle-cache-metrics` (no diagnostics in the two crates);
+- `cargo +nightly-2026-08-22 fmt -- --check` (clean for the touched crates).
+
+No Go/Bazel/module source changed; `make bazel_prepare` is not required.

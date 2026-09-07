@@ -16,7 +16,9 @@
 
 use std::sync::{LazyLock, RwLock};
 
-use prometheus::{Counter, CounterVec, Gauge, GaugeVec, Opts};
+use prometheus::{
+    exponential_buckets, Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, Opts,
+};
 
 #[derive(Clone)]
 struct MetricsVars {
@@ -103,6 +105,34 @@ metric_accessor!(evict_counter, evict_counter, Counter);
 metric_accessor!(reject_counter, reject_counter, Counter);
 metric_accessor!(cost_gauge, cost_gauge, Gauge);
 metric_accessor!(capacity_gauge, capacity_gauge, Gauge);
+
+/// Go `pkg/metrics.StatsDeltaLoadHistogram`, observed by the cache package's
+/// `Update` (`statscache.go:127`) on every exit path. Go places this family in
+/// the central `pkg/metrics` crate; the port keeps it beside its only
+/// consumer, with the exact Go name, help string, and buckets
+/// (`prometheus.ExponentialBuckets(0.01, 2, 24)` — 10ms to ~23.5h).
+static STATS_DELTA_LOAD_HISTOGRAM: LazyLock<Histogram> = LazyLock::new(|| {
+    let metric = Histogram::with_opts(
+        HistogramOpts::new(
+            "stats_delta_load_duration_seconds",
+            "Bucketed histogram of processing time for the background statistics loading job",
+        )
+        .namespace("tidb")
+        .subsystem("statistics")
+        .buckets(exponential_buckets(0.01, 2.0, 24).expect("24 positive buckets")),
+    )
+    .expect("valid stats delta load histogram");
+    prometheus::default_registry()
+        .register(Box::new(metric.clone()))
+        .expect("stats delta load histogram is registered once");
+    metric
+});
+
+/// Clones Go `StatsDeltaLoadHistogram`.
+#[must_use]
+pub fn stats_delta_load_histogram() -> Histogram {
+    STATS_DELTA_LOAD_HISTOGRAM.clone()
+}
 
 #[cfg(test)]
 mod tests {

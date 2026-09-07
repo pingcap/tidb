@@ -20,7 +20,7 @@ pub use stats_table_row_cache::{StatsTableRowCache, StatsTableRowSizeSource, Tab
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tidb_stats::{CopyIntent, Table};
 use tidb_stats_handle_cache_internal::StatsCacheInner;
@@ -111,6 +111,20 @@ pub struct StatsCacheImpl {
     cache: RwLock<Arc<StatsCache>>,
 }
 
+/// Go `Update`'s deferred `tidbmetrics.StatsDeltaLoadHistogram.Observe`:
+/// the total refresh duration is observed on EVERY exit path — success,
+/// source error, and cancellation alike — so the observation rides a guard's
+/// `Drop`.
+struct DeltaLoadDurationGuard {
+    start: Instant,
+}
+
+impl Drop for DeltaLoadDurationGuard {
+    fn drop(&mut self) {
+        metrics::stats_delta_load_histogram().observe(self.start.elapsed().as_secs_f64());
+    }
+}
+
 #[allow(clippy::len_without_is_empty)]
 impl StatsCacheImpl {
     /// Go `NewStatsCacheImpl`.
@@ -187,6 +201,9 @@ impl StatsCacheImpl {
     where
         S: StatsRefreshSource,
     {
+        let _delta_load_guard = DeltaLoadDurationGuard {
+            start: Instant::now(),
+        };
         let targeted = !physical_ids.is_empty();
         if targeted {
             physical_ids.sort_unstable();
@@ -823,5 +840,39 @@ mod tests {
             Err(UpdateError::Cancelled)
         );
         assert_eq!(cache.len(), 0);
+    }
+
+    /// Go `Update` observes `StatsDeltaLoadHistogram` through a `defer`, so
+    /// the observation fires on every exit path — a completed refresh and a
+    /// mid-loop cancellation each must bump the histogram's sample count.
+    #[test]
+    fn update_observes_the_stats_delta_load_duration_histogram_on_every_exit() {
+        let histogram = metrics::stats_delta_load_histogram();
+        let cache =
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+        let source = RefreshSource {
+            rows: vec![StatsMetaRow {
+                version: 1,
+                physical_id: 1,
+                ..StatsMetaRow::default()
+            }],
+            metadata: HashMap::from([(1, 1)]),
+            loaded: HashMap::from([(1, Ok(Some(table(1, 0))))]),
+            requested: Mutex::new(Vec::new()),
+            loaded_ids: Mutex::new(Vec::new()),
+        };
+
+        let before = histogram.get_sample_count();
+        cache
+            .update_from_source(&source, Vec::new(), || false)
+            .unwrap();
+        assert_eq!(histogram.get_sample_count(), before + 1);
+
+        let before = histogram.get_sample_count();
+        assert_eq!(
+            cache.update_from_source(&source, Vec::new(), || true),
+            Err(UpdateError::Cancelled)
+        );
+        assert_eq!(histogram.get_sample_count(), before + 1);
     }
 }

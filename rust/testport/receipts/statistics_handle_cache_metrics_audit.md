@@ -54,3 +54,25 @@ gates were checked without claiming private collector identity as parity.
 completion is blocked on the atomic `pkg/metrics` owner: private vectors in
 this leaf would change registry identity, reset/gather behavior, and every
 consumer's shared parent handles.
+
+## 2026-09-06 addendum: state and delta-load histogram
+
+Two updates against the blocker text above:
+
+1. The leaf crate has since landed the real eight vars (`miss`/`hit`/`update`
+   /`del`/`evict`/`reject` counters, `track`/`capacity` gauges) behind
+   `InitMetricsVars`, registering its own `stats_cache_op`/`stats_cache_val`
+   families in the default registry. This remains private family identity —
+   Go binds children of the shared `pkg/metrics.StatsCacheCounter` /
+   `StatsCacheGauge` vectors — accepted under the same precedent as
+   `tidb-planner::metrics` until a central `pkg/metrics` port exists. The
+   blocker on collector identity stands documented, not resolved.
+2. This batch adds Go `pkg/metrics.StatsDeltaLoadHistogram` (Go master
+   `pkg/metrics/stats.go:158`; consumed by the cache package's `Update`,
+   `statscache.go:127`) to this crate as `STATS_DELTA_LOAD_HISTOGRAM` with
+   the exact Go name (`tidb_statistics_stats_delta_load_duration_seconds`),
+   help string, and `ExponentialBuckets(0.01, 2, 24)` buckets, plus the
+   `stats_delta_load_histogram()` accessor. This family is consumed by no
+   other Rust crate, so per-crate ownership preserves single-registration
+   identity. Consumption and the defer-on-every-exit-path observation are
+   covered in `statistics_handle_cache_audit.md`'s same-dated section.
