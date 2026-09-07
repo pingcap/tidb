@@ -9460,6 +9460,21 @@ risks without claiming repository-wide parity.
   explicitly blocked by the unrelated missing `allow_agg_push_down` field in
   `tests/core_logical_cte_topn_prune_source.rs:75`. Evidence is recorded in
   `receipts/planner_property.md`.
+- 2026-09-08 (`pkg/planner/cascades/pattern` return contracts): current Go
+  master `aec988ea500d` was re-read as the complete five-artifact, 449-line
+  package, including both production files, all five source tests, the BUILD
+  target, and the absence of fixtures, generated/platform variants, and
+  nested packages. The complete planner pattern owner, source-derived
+  aggregate test, and direct consumers were inventoried. Nine Rust-only
+  `#[must_use]` diagnostics were removed from direct Go-shaped engine labels
+  and membership, operand labels/matching/classification, and pattern
+  matching/construction returns; native bit conversion adapters remain
+  annotated. The focused deny-on-discard regression failed before the fix
+  with exactly nine diagnostics and passes after; the owner regression and
+  planner library check pass. The generated five-test aggregate remains
+  blocked before execution by the unrelated missing `allow_agg_push_down`
+  field in `tests/core_logical_cte_topn_prune_source.rs:75`. Evidence is
+  recorded in `receipts/planner_cascades_pattern.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

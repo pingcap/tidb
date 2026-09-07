@@ -42,7 +42,6 @@ impl EngineType {
     }
 
     /// Returns the source diagnostic label.
-    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::TiDb => "EngineTiDB",
@@ -88,7 +87,6 @@ impl EngineTypeSet {
     }
 
     /// Reports whether this set contains the given engine bit.
-    #[must_use]
     pub const fn contains(self, engine: EngineType) -> bool {
         self.0 & engine.bits() != 0
     }

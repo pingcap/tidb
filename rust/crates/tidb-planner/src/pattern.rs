@@ -121,7 +121,6 @@ pub enum Operand {
 
 impl Operand {
     /// Returns the source diagnostic name.
-    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Any => "OperandAny",
@@ -150,7 +149,6 @@ impl Operand {
     }
 
     /// Reports whether two operands match, including wildcard semantics.
-    #[must_use]
     pub const fn matches(self, other: Self) -> bool {
         matches!(self, Self::Any) || matches!(other, Self::Any) || self as u8 == other as u8
     }
@@ -163,7 +161,6 @@ impl std::fmt::Display for Operand {
 }
 
 /// Maps a typed logical operator to its source pattern operand.
-#[must_use]
 pub const fn get_operand(operator: LogicalOperatorKind) -> Operand {
     match operator {
         LogicalOperatorKind::Apply => Operand::Apply,
@@ -203,13 +200,11 @@ pub struct Pattern {
 
 impl Pattern {
     /// Reports whether both operand and engine metadata match.
-    #[must_use]
     pub const fn matches(&self, operand: Operand, engine: EngineType) -> bool {
         self.engine_types.contains(engine) && self.operand.matches(operand)
     }
 
     /// Reports whether this node is an operand wildcard for the engine.
-    #[must_use]
     pub const fn matches_operand_any(&self, engine: EngineType) -> bool {
         self.engine_types.contains(engine) && matches!(self.operand, Operand::Any)
     }
@@ -224,7 +219,6 @@ impl Pattern {
 }
 
 /// Constructs a pattern node without children.
-#[must_use]
 pub const fn new_pattern(operand: Operand, engine_types: EngineTypeSet) -> Pattern {
     Pattern {
         operand,
@@ -234,7 +228,6 @@ pub const fn new_pattern(operand: Operand, engine_types: EngineTypeSet) -> Patte
 }
 
 /// Constructs a pattern node with source-ordered children.
-#[must_use]
 pub fn build_pattern(
     operand: Operand,
     engine_types: EngineTypeSet,
@@ -244,5 +237,27 @@ pub fn build_pattern(
         operand,
         engine_types,
         children: children.into_iter().collect(),
+    }
+}
+
+#[cfg(test)]
+mod return_contract_tests {
+    use super::{build_pattern, get_operand, new_pattern, LogicalOperatorKind, Operand};
+    use crate::pattern_engine::{EngineType, EngineTypeSet};
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        EngineType::TiDb.as_str();
+        EngineTypeSet::ALL.contains(EngineType::TiDb);
+        Operand::Any.as_str();
+        Operand::Any.matches(Operand::Join);
+        get_operand(LogicalOperatorKind::Join);
+
+        let pattern = new_pattern(Operand::Any, EngineTypeSet::ALL);
+        pattern.matches(Operand::Join, EngineType::TiDb);
+        pattern.matches_operand_any(EngineType::TiDb);
+        new_pattern(Operand::Join, EngineTypeSet::ALL);
+        build_pattern(Operand::Join, EngineTypeSet::ALL, []);
     }
 }
