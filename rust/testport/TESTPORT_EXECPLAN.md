@@ -9924,3 +9924,7 @@ risks without claiming repository-wide parity.
   leaves the stored row untouched (insert.go:218); `delete ... limit n`
   removes exactly n matching rows. Pinned in
   `tests/odku_ignore_check_delete_limit_source.rs`.
+- 2026-09-06 (BINARY/YEAR write pins): short BINARY(4) zero-pads; year 2024
+  stores as-is; 2156 under strict fails with Go's "Out of range value for
+  column 'y' at row 1" (1264) and under IGNORE clamps to the 2155 boundary.
+  Pinned in `tests/binary_year_write_source.rs`.
