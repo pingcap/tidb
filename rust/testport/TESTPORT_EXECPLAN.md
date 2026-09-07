@@ -10963,3 +10963,6 @@ risks without claiming repository-wide parity.
   returns NULL (sequence_state.go:42-52 "not cached" flag) and populates
   after the first NEXTVAL. Pinned in
   `crates/tidb-session/tests/lastval_session_state_source.rs`.
+- 2026-09-06 (VALUES(col) in ODKU pin): the VALUES(col) function inside ON
+  DUPLICATE KEY UPDATE reads the NEW row's would-be value. Pinned in
+  `crates/tidb-session/tests/odku_values_function_source.rs`.
