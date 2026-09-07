@@ -10229,3 +10229,13 @@ risks without claiming repository-wide parity.
   to preserve the captured contract; the general nullable-no-default case
   (no NO_DEFAULT_VALUE flag) stores NULL, and a NOT NULL no-default insert
   still fails 1364 under strict — both verified in the same probe.
+- 2026-09-06 (GROUP BY expression panic recorded, NOT FIXED): `select v % 3
+  from g group by v % 3` panics the parallel HashAgg partial worker at
+  crates/tidb-chunk/src/column.rs:262 (`is_null` indexes an empty
+  null_bitmap) — surfacing as "parallel HashAgg partial worker terminated".
+  `group by v` on the same table works, so the trigger is the EXPRESSION
+  group key in the parallel path: a 0-row chunk's key column is probed with
+  is_null(0). Suspect the parallel worker's row loop not guarding an empty
+  chunk (hash_agg.rs is_null call sites ~:2296/:2324). Fix needs the
+  parallel HashAgg worker's chunk-drain guard; recorded before the next
+  batch so it does not get lost.
