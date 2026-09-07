@@ -10776,3 +10776,6 @@ risks without claiming repository-wide parity.
   SHOW CREATE as the version-gated column comment
   `/*T![auto_rand] AUTO_RANDOM(4) */`. Pinned in
   `crates/tidb-session/tests/auto_random_show_create_source.rs`.
+- 2026-09-06 (ON UPDATE CURRENT_TIMESTAMP pin): the clause round-trips
+  through SHOW CREATE. Pinned in
+  `crates/tidb-session/tests/show_create_on_update_source.rs`.
