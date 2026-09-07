@@ -113,6 +113,33 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
+<<<<<<< HEAD
+=======
+var (
+	_ RowCountListener = (*EmptyRowCntListener)(nil)
+	_ RowCountListener = (*distTaskRowCntListener)(nil)
+	_ RowCountListener = (*localRowCntListener)(nil)
+)
+
+// RowCountListener is invoked when some index records are flushed to disk or imported to TiKV.
+type RowCountListener interface {
+	Written(rowCnt int)
+	SetTotal(total int)
+}
+
+// EmptyRowCntListener implements a noop RowCountListener.
+type EmptyRowCntListener struct{}
+
+// Written implements RowCountListener.
+func (*EmptyRowCntListener) Written(_ int) {}
+
+// SetTotal implements RowCountListener.
+func (*EmptyRowCntListener) SetTotal(_ int) {}
+
+// MockDMLExecutionBeforeScan is only used for test.
+var MockDMLExecutionBeforeScan func()
+
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
@@ -148,10 +175,25 @@ func NewAddIndexIngestPipeline(
 	}
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
+<<<<<<< HEAD
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool, tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
+=======
+	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
+		if MockDMLExecutionBeforeScan != nil {
+			MockDMLExecutionBeforeScan()
+		}
+	})
+
+	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
+		reorgMeta.GetBatchSize(), rm, backendCtx)
+	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
+		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
