@@ -10481,3 +10481,7 @@ risks without claiming repository-wide parity.
   an int-PK-handle table is refused with Go's 8200 text, while a heap
   table round-trips SHARD_ROW_ID_BITS=2 through SHOW CREATE. Pinned in
   `crates/tidb-session/tests/auto_inc_option_shard_bits_source.rs`.
+- 2026-09-06 (mid-session sql_mode switch pin): under the session's initial
+  strict mode an over-long insert fails 1406; after `set sql_mode = ''` in
+  the SAME session the identical insert truncates and stores. Pinned in
+  `crates/tidb-session/tests/sql_mode_switch_source.rs`.
