@@ -10972,3 +10972,6 @@ risks without claiming repository-wide parity.
   (existing rows would violate). Pinned in
   `crates/tidb-session/tests/add_column_default_check_validation_source.rs`;
   the standing-queue entry is retired.
+- 2026-09-06 (DELETE ORDER BY + LIMIT pin): the ordered, limited row set is
+  materialized before the delete pass. Pinned in
+  `crates/tidb-session/tests/delete_order_limit_source.rs`.
