@@ -1204,8 +1204,9 @@ func (d *Datum) convertToString(ctx Context, target *FieldType) (Datum, error) {
 	default:
 		return invalidConv(d, target.GetType())
 	}
-	if err == nil {
-		s, err = ProduceStrWithSpecifiedTp(s, target, ctx, true)
+	s, err1 := ProduceStrWithSpecifiedTp(s, target, ctx, true)
+	if err == nil && err1 != nil {
+		err = err1
 	}
 	ret.SetString(s, target.GetCollate())
 	if target.GetCharset() == charset.CharsetBin {
