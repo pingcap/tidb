@@ -10293,3 +10293,10 @@ risks without claiming repository-wide parity.
   over {1,2} yields {11,12} without a feedback loop; `max(a) + 100`
   appends one row from the current snapshot. Pinned in
   `crates/tidb-session/tests/self_insert_select_source.rs`.
+- 2026-09-06 (JSON arrow + bitwise pins): `j -> '$.a'` extracts the JSON
+  value, `j ->> '$.b'` extracts UNQUOTED (the parser desugars both to
+  JSON_EXTRACT/JSON_UNQUOTE — Go's own grammar shape); the bitwise family
+  (&,|,^,<<,>>,~) folds over unsigned BIGINT (~5 = 2^64-6). Pinned in
+  `crates/tidb-session/tests/json_arrow_bitwise_source.rs`. The arrow
+  operators are restricted to a BARE COLUMN on the left (Go's SimpleIdent
+  rule) — a string literal on the left is a genuine ParseError.
