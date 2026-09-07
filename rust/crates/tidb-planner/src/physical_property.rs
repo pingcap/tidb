@@ -75,7 +75,6 @@ impl MppPartitionType {
     }
 
     /// Returns the source `ToExchangeType` mapping.
-    #[must_use]
     pub const fn exchange_kind(self) -> ExchangeKind {
         match self {
             Self::Broadcast => ExchangeKind::Broadcast,
@@ -98,7 +97,6 @@ pub enum PhysicalPropMatchResult {
 
 impl PhysicalPropMatchResult {
     /// Returns whether the property is considered matched by the source.
-    #[must_use]
     pub const fn matched(self) -> bool {
         matches!(self, Self::Matched | Self::MatchedNeedMergeSort)
     }
@@ -167,7 +165,6 @@ impl MppPartitionColumn {
     }
 
     /// Go `MPPPartitionColumn.Equal`.
-    #[must_use]
     pub fn equal(&self, other: &Self) -> bool {
         (self.collate_id >= 0 || self.collate_id == other.collate_id)
             && self.col.unique_id == other.col.unique_id
@@ -188,7 +185,6 @@ impl MppPartitionColumn {
     }
 
     /// Go `MPPPartitionColumn.hashCode`.
-    #[must_use]
     pub fn hash_code(&self) -> Vec<u8> {
         let mut code = Vec::new();
         encode_column_id(&mut code, self.col.unique_id);
@@ -204,14 +200,12 @@ impl MppPartitionColumn {
     }
 
     /// Source-shaped owned memory accounting.
-    #[must_use]
     pub fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>() + self.col.orig_name.capacity()
     }
 }
 
 /// Select partition columns at the source-provided match offsets.
-#[must_use]
 pub fn choose_partition_keys(
     keys: &[MppPartitionColumn],
     matches: &[usize],
@@ -220,13 +214,11 @@ pub fn choose_partition_keys(
 }
 
 /// Go `GetCollateIDByNameForPartition`.
-#[must_use]
 pub fn collate_id_for_partition(name: &str) -> i32 {
     tidb_datatype::rewrite_new_collation_id_if_needed(tidb_datatype::collation_name_to_id(name))
 }
 
 /// Go `GetCollateNameByIDForPartition`.
-#[must_use]
 pub fn collate_name_for_partition(id: i32) -> String {
     tidb_datatype::collation_id_to_name(tidb_datatype::restore_collation_id_if_needed(id))
 }
@@ -250,7 +242,6 @@ pub struct IndexJoinRuntimeProp {
 
 impl IndexJoinRuntimeProp {
     /// Go `IndexJoinRuntimeProp.CloneEssentialFields`.
-    #[must_use]
     pub fn clone_essential_fields(&self) -> Self {
         self.clone()
     }
@@ -265,13 +256,11 @@ pub struct PartialOrderInfo {
 
 impl PartialOrderInfo {
     /// Go `PartialOrderInfo.AllSameOrder`.
-    #[must_use]
     pub fn all_same_order(&self) -> (bool, bool) {
         all_same_order(&self.sort_items)
     }
 
     /// Source-shaped owned memory accounting.
-    #[must_use]
     pub fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>() + self.sort_items.capacity() * std::mem::size_of::<SortItem>()
     }
@@ -290,7 +279,6 @@ pub struct PartialOrderMatchResult {
 
 impl PartialOrderMatchResult {
     /// Source-shaped owned memory accounting.
-    #[must_use]
     pub fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>()
             + self
@@ -407,13 +395,11 @@ impl SortItem {
     }
 
     /// Source-shaped owned memory accounting.
-    #[must_use]
     pub fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>() + self.col.orig_name.capacity()
     }
 
     /// Go `SortItem.Hash64`'s structural identity.
-    #[must_use]
     pub fn hash64(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -422,7 +408,6 @@ impl SortItem {
     }
 
     /// Go `SortItem.Equals`.
-    #[must_use]
     pub fn equals(&self, other: &Self) -> bool {
         self == other
     }
@@ -445,7 +430,6 @@ fn column_string(column: &tidb_expr::column::Column) -> String {
 }
 
 /// Go `ExplainPartitionBy` with the source normalized-column behavior.
-#[must_use]
 pub fn explain_partition_by(partition_by: &[SortItem], normalized: bool) -> String {
     if partition_by.is_empty() {
         return String::new();
@@ -465,7 +449,6 @@ pub fn explain_partition_by(partition_by: &[SortItem], normalized: bool) -> Stri
 }
 
 /// Go `ExplainColumnList`.
-#[must_use]
 pub fn explain_column_list(columns: &[MppPartitionColumn]) -> Vec<u8> {
     columns
         .iter()
@@ -551,7 +534,6 @@ impl Default for PhysicalProperty {
 impl PhysicalProperty {
     /// `property.NewPhysicalProperty`: a required order over `cols`, all in
     /// the same direction.
-    #[must_use]
     pub fn new(
         task_tp: TaskType,
         cols: &[i64],
@@ -577,7 +559,6 @@ impl PhysicalProperty {
     }
 
     /// Go `NewPhysicalProperty`, retaining complete column values.
-    #[must_use]
     pub fn new_from_columns(
         task_tp: TaskType,
         cols: &[tidb_expr::column::Column],
@@ -599,7 +580,6 @@ impl PhysicalProperty {
     /// (the clone defaults to false — an enforcer admission never rides
     /// down to a child property), and `indexJoinProp` is "default not to
     /// clone".
-    #[must_use]
     pub fn clone_essential_fields(&self) -> Self {
         Self {
             sort_items: self.sort_items.clone(),
@@ -621,7 +601,6 @@ impl PhysicalProperty {
 
     /// Go `NeedMPPExchangeByEquivalence`: whether a child hash key lies
     /// outside every equivalence closure of the required partition keys.
-    #[must_use]
     pub fn need_mpp_exchange_by_equivalence(
         &self,
         current_partition_columns: &[MppPartitionColumn],
@@ -647,7 +626,6 @@ impl PhysicalProperty {
 
     /// Go `IsSubsetOf`: return source-key offsets matching every required
     /// partition column, or `None` when any requirement is absent.
-    #[must_use]
     pub fn is_subset_of(&self, keys: &[MppPartitionColumn]) -> Option<Vec<usize>> {
         if self.mpp_partition_cols.len() > keys.len() {
             return None;
@@ -659,7 +637,6 @@ impl PhysicalProperty {
     }
 
     /// Go `AllColsFromSchema`.
-    #[must_use]
     pub fn all_cols_from_schema(&self, schema: &tidb_expr::schema::Schema) -> bool {
         self.sort_items.iter().all(|item| {
             schema
@@ -670,13 +647,11 @@ impl PhysicalProperty {
     }
 
     /// Go `IsFlashProp`.
-    #[must_use]
     pub const fn is_flash_prop(&self) -> bool {
         matches!(self.task_tp, TaskType::Mpp)
     }
 
     /// Go `GetAllPossibleChildTaskTypes`.
-    #[must_use]
     pub fn all_possible_child_task_types(&self) -> Vec<TaskType> {
         if self.task_tp == TaskType::Root {
             vec![
@@ -690,7 +665,6 @@ impl PhysicalProperty {
     }
 
     /// `IsSortItemEmpty`: whether the order property is empty.
-    #[must_use]
     pub fn is_sort_item_empty(&self) -> bool {
         self.sort_items.is_empty()
     }
@@ -700,7 +674,6 @@ impl PhysicalProperty {
     /// — same column (`EqualColumn` is `UniqueID` equality) and same
     /// direction. Both empty answers true, which is why the empty-sort check
     /// must run FIRST wherever Go runs it first.
-    #[must_use]
     pub fn is_sort_item_all_for_partition(&self) -> bool {
         self.sort_items_for_partition.len() == self.sort_items.len()
             && self
@@ -714,7 +687,6 @@ impl PhysicalProperty {
 
     /// `NeedKeepOrder`: whether the property requires maintaining order.
     ///
-    #[must_use]
     pub fn need_keep_order(&self) -> bool {
         !self.is_sort_item_empty() || self.partial_order_info.is_some()
     }
@@ -723,13 +695,11 @@ impl PhysicalProperty {
     ///
     /// An EMPTY property answers `(true, false)`, which is what makes an
     /// unordered parent demand an ASCENDING child order rather than no answer.
-    #[must_use]
     pub fn all_same_order(&self) -> (bool, bool) {
         all_same_order(&self.sort_items)
     }
 
     /// `IsPrefix`: whether this order is a prefix of `other`'s.
-    #[must_use]
     pub fn is_prefix(&self, other: &Self) -> bool {
         if self.sort_items.len() > other.sort_items.len() {
             return false;
@@ -743,7 +713,6 @@ impl PhysicalProperty {
     }
 
     /// `GetSortDescForKeepOrder`: the direction a keep-order scan must run.
-    #[must_use]
     pub fn sort_desc_for_keep_order(&self) -> bool {
         self.partial_order_info
             .as_ref()
@@ -755,7 +724,6 @@ impl PhysicalProperty {
     }
 
     /// Go `GetSortItemsForKeepOrder`, prioritizing partial order.
-    #[must_use]
     pub fn sort_items_for_keep_order(&self) -> Vec<SortItem> {
         self.partial_order_info
             .as_ref()
@@ -767,7 +735,6 @@ impl PhysicalProperty {
     }
 
     /// Go `HashCode`, with every source field included in the same order.
-    #[must_use]
     pub fn hash_code(&self) -> Vec<u8> {
         let mut code = Vec::new();
         encode_bool(&mut code, self.can_add_enforcer);
@@ -819,7 +786,6 @@ impl PhysicalProperty {
     }
 
     /// Source-shaped owned memory accounting for the package fields.
-    #[must_use]
     pub fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.sort_items.capacity() * std::mem::size_of::<SortItem>()
@@ -834,7 +800,6 @@ impl PhysicalProperty {
 }
 
 /// Go `SortItemsFromCols`.
-#[must_use]
 pub fn sort_items_from_columns(columns: &[tidb_expr::column::Column], desc: bool) -> Vec<SortItem> {
     columns
         .iter()
@@ -871,7 +836,6 @@ fn encode_sort_items(code: &mut Vec<u8>, items: &[SortItem]) {
 }
 
 /// Go `NeedEnforceExchanger`.
-#[must_use]
 pub fn need_enforce_exchanger(
     current_type: MppPartitionType,
     current_hash_cols: &[MppPartitionColumn],
@@ -1153,5 +1117,71 @@ mod required_property_tests {
         ] {
             assert_ne!(changed.hash_code(), base_hash);
         }
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        use super::{
+            choose_partition_keys, collate_id_for_partition, collate_name_for_partition,
+            explain_column_list, explain_partition_by, need_enforce_exchanger,
+            sort_items_from_columns, IndexJoinRuntimeProp, MppPartitionColumn, MppPartitionType,
+            PartialOrderInfo, PartialOrderMatchResult, PhysicalPropMatchResult, PhysicalProperty,
+            SortItem, TaskType,
+        };
+        use tidb_expr::schema::Schema;
+        use tidb_funcdep::FdSet;
+
+        let column = tidb_expr::column::Column::default();
+        let partition = MppPartitionColumn::new(1, 0);
+        partition.equal(&partition);
+        partition.hash_code();
+        partition.memory_usage();
+        choose_partition_keys(std::slice::from_ref(&partition), &[0]);
+        collate_id_for_partition("utf8mb4_bin");
+        collate_name_for_partition(46);
+
+        let runtime = IndexJoinRuntimeProp {
+            other_conditions: Vec::new(),
+            outer_join_keys: Vec::new(),
+            inner_join_keys: Vec::new(),
+            avg_inner_row_count: 0.0,
+            table_range_scan: false,
+        };
+        runtime.clone_essential_fields();
+
+        let partial = PartialOrderInfo::default();
+        partial.all_same_order();
+        partial.memory_usage();
+        PartialOrderMatchResult::default().memory_usage();
+
+        let sort = SortItem::new(1, false);
+        sort.memory_usage();
+        sort.hash64();
+        sort.equals(&sort);
+        explain_partition_by(std::slice::from_ref(&sort), false);
+        explain_column_list(std::slice::from_ref(&partition));
+
+        let property = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
+        PhysicalProperty::new_from_columns(TaskType::Root, &[column.clone()], false, f64::MAX, false);
+        property.clone_essential_fields();
+        property.need_mpp_exchange_by_equivalence(&[], &FdSet::new());
+        property.is_subset_of(&[]);
+        property.all_cols_from_schema(&Schema::default());
+        property.is_flash_prop();
+        property.all_possible_child_task_types();
+        property.is_sort_item_empty();
+        property.is_sort_item_all_for_partition();
+        property.need_keep_order();
+        property.all_same_order();
+        property.is_prefix(&property);
+        property.sort_desc_for_keep_order();
+        property.sort_items_for_keep_order();
+        property.hash_code();
+        property.memory_usage();
+        sort_items_from_columns(&[column], false);
+        need_enforce_exchanger(MppPartitionType::Any, &[], &property, None);
+        PhysicalPropMatchResult::Matched.matched();
+        MppPartitionType::Broadcast.exchange_kind();
     }
 }

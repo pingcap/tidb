@@ -37,8 +37,18 @@ pub struct LogicalProperty {
 
 impl LogicalProperty {
     /// Go `NewLogicalProp`: return the zero-valued property.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LogicalProperty;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn logical_property_return_may_be_ignored_like_go() {
+        LogicalProperty::new();
     }
 }

@@ -175,7 +175,6 @@ impl StatsInfo {
     /// down to `expect_cnt` — but only when it is genuinely smaller, and only
     /// when the row count is above 1.0, Go's own overflow guard ("if
     /// s.RowCount is too small, it will cause overflow").
-    #[must_use]
     pub fn scale_by_expect_cnt(&self, expect_cnt: f64, skew_ratio: f64) -> Self {
         if expect_cnt >= self.row_count {
             return self.clone();
@@ -186,7 +185,6 @@ impl StatsInfo {
         self.clone()
     }
 
-    #[must_use]
     /// Scale row count and every NDV using Go's `ScaleNDVFunc` behavior.
     pub fn scale(&self, factor: f64, skew_ratio: f64) -> Self {
         let scale_ndv = crate::cardinality::derive_stats::scale_ndv;
@@ -240,13 +238,11 @@ impl StatsInfo {
     }
 
     /// Returns the source `int64(RowCount)` truncation toward zero.
-    #[must_use]
     pub fn count(&self) -> i64 {
         self.row_count as i64
     }
 
     /// Go `GetGroupNDV4Cols`: exact match after sorting requested column IDs.
-    #[must_use]
     pub fn group_ndv_for_cols(&self, cols: &[tidb_expr::column::Column]) -> Option<&GroupNdv> {
         if cols.is_empty() || self.group_ndvs.is_empty() {
             return None;
@@ -294,7 +290,6 @@ impl std::fmt::Display for StatsInfo {
 }
 
 /// Go `ToString`, used by statistics tests.
-#[must_use]
 pub fn group_ndvs_to_string(groups: &[GroupNdv]) -> String {
     let values = groups
         .iter()
@@ -313,7 +308,6 @@ pub fn group_ndvs_to_string(groups: &[GroupNdv]) -> String {
 }
 
 /// Go `DeriveLimitStats`.
-#[must_use]
 pub fn derive_limit_stats(child: &StatsInfo, limit_count: f64) -> StatsInfo {
     child.derive_limit_stats(limit_count)
 }
@@ -340,7 +334,7 @@ fn source_min(left: f64, right: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{HistColl, StatsInfo};
+    use super::{derive_limit_stats, group_ndvs_to_string, HistColl, StatsInfo};
     use crate::cardinality::ndv::GroupNdv;
     use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
     use tidb_expr::column::Column;
@@ -401,5 +395,17 @@ mod tests {
         );
         assert!(profile.group_ndv_for_cols(&[nine]).is_none());
         assert!(profile.group_ndv_for_cols(&[]).is_none());
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn stats_info_returns_may_be_ignored_like_go() {
+        let profile = StatsInfo::new(10.0, [(1, 5.0)]);
+        profile.scale_by_expect_cnt(5.0, 1.0);
+        profile.scale(0.5, 1.0);
+        profile.count();
+        profile.group_ndv_for_cols(&[]);
+        group_ndvs_to_string(&[]);
+        derive_limit_stats(&profile, 5.0);
     }
 }

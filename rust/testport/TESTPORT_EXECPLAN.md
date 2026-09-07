@@ -9444,6 +9444,22 @@ risks without claiming repository-wide parity.
   failed before the fix with exactly four diagnostics and passes after; all
   five owner tests and executor/session all-target checks pass. Evidence is
   recorded in `receipts/util_deadlockhistory.md`.
+- 2026-09-07 (`pkg/planner/property` return contracts): current Go master
+  `aec988ea500d` was re-read as the complete six-artifact, 1,242-line package,
+  including all four production files, the exchange-equivalence test and
+  helpers, the BUILD target, and the absence of fixtures, generated/platform
+  variants, and nested packages. The complete property owner modules and the
+  direct executor planner consumer were inventoried. Forty-three Rust-only
+  `#[must_use]` diagnostics were removed from direct Go-shaped logical,
+  physical, partition, exchange, statistics, and formatting returns; native
+  enum-conversion and ownership-constructor adapters remain annotated.
+  Focused deny-on-discard regressions failed before the fix with 36 physical
+  diagnostics plus one logical and six stats diagnostics, and pass after; the
+  owner suites pass 1/1 logical, 4/4 stats, and 11/11 physical tests, with
+  planner and executor library checks green. The all-target planner sweep is
+  explicitly blocked by the unrelated missing `allow_agg_push_down` field in
+  `tests/core_logical_cte_topn_prune_source.rs:75`. Evidence is recorded in
+  `receipts/planner_property.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
