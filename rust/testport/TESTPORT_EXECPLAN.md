@@ -9766,3 +9766,7 @@ risks without claiming repository-wide parity.
   verified faithful — engine whitelist (innodb accepted, unknown rejected),
   union 8232, insert_method 8233. Four pins in
   `tests/table_options_source.rs`.
+- 2026-09-06 (DEFAULT/ON UPDATE pins): literal-default-on-int rejection, ON
+  UPDATE on non-timestamp rejection, datetime CURRENT_TIMESTAMP forms accepted,
+  CURRENT_TIMESTAMP expression default on int rejected, plain expression
+  default accepted. Five pins in `tests/default_on_update_source.rs`.
