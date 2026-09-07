@@ -1709,11 +1709,13 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 		var start time.Time
 		waitDur := defOOMRiskCheckDur
 		for {
-			if globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota) {
-				defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
-				break
+			if !globalMemArbitrator.AtMemRisk() {
+				if globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota) {
+					defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
+					break
+				}
+				globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
 			}
-			globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
 			if s.sessionPlanCache != nil && s.sessionPlanCache.Size() > 0 {
 				s.sessionPlanCache.DeleteAll()
 			}
@@ -2585,12 +2587,14 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 		var start time.Time
 		waitDur := defOOMRiskCheckDur
 		for {
-			if globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota) {
-				quotaReserved += compilePlanMemQuota
-				defer releaseCommonQuota()
-				break
+			if !globalMemArbitrator.AtMemRisk() {
+				if globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota) {
+					quotaReserved += compilePlanMemQuota
+					defer releaseCommonQuota()
+					break
+				}
+				globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -compilePlanMemQuota)
 			}
-			globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -compilePlanMemQuota)
 			if s.sessionPlanCache != nil && s.sessionPlanCache.Size() > 0 {
 				s.sessionPlanCache.DeleteAll()
 			}
