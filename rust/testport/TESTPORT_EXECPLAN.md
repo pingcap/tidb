@@ -10187,3 +10187,7 @@ risks without claiming repository-wide parity.
   list answers nothing (UNKNOWN propagates); IN keeps only concrete
   matches; USING joins merge the join column and pair sides. Pinned in
   `crates/tidb-session/tests/three_valued_in_using_source.rs`.
+- 2026-09-06 (anti-join/CROSS JOIN pin): LEFT JOIN + `r.id IS NULL` keeps
+  only unmatched left rows (1,3); CROSS JOIN yields the full Cartesian
+  product (3x1). Pinned in
+  `crates/tidb-session/tests/anti_join_cross_join_source.rs`.
