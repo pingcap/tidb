@@ -10598,3 +10598,7 @@ risks without claiming repository-wide parity.
   LAST-WIN (no 1110), and a single-table `DELETE ... ORDER BY a` without
   LIMIT is accepted — both differ from MySQL but match TiDB. Pinned in
   `crates/tidb-session/tests/dup_set_and_delete_orderby_source.rs`.
+- 2026-09-06 (UNION type-unification pin): arms of different types unify to
+  the common result type — int 1 renders as '1' beside 'abc', a NULL arm
+  stays NULL beside 7. Pinned in
+  `crates/tidb-session/tests/union_type_unification_source.rs`.
