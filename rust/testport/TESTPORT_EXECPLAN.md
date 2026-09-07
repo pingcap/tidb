@@ -10191,3 +10191,7 @@ risks without claiming repository-wide parity.
   only unmatched left rows (1,3); CROSS JOIN yields the full Cartesian
   product (3x1). Pinned in
   `crates/tidb-session/tests/anti_join_cross_join_source.rs`.
+- 2026-09-06 (GROUP BY composition pins): ORDER BY+LIMIT applies after
+  grouping (top-2 groups by count); HAVING accepts the SELECT alias (MySQL
+  extension) and bare aggregates. Pinned in
+  `crates/tidb-session/tests/group_having_alias_source.rs`.
