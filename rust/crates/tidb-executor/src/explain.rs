@@ -377,27 +377,34 @@ fn physical_operator_name(
 
 fn physical_access(plan: &PhysicalPlan, catalog: &Catalog) -> Option<AccessObject> {
     match plan {
-        PhysicalPlan::TableReader(reader) => reader
-            .table_plan
-            .as_deref()
-            .and_then(dynamic_partition_access),
-        PhysicalPlan::IndexReader(reader) => reader
-            .index_plan
-            .as_deref()
-            .and_then(dynamic_partition_access),
-        PhysicalPlan::IndexLookUpReader(reader) => reader
-            .index_plan
-            .as_deref()
-            .and_then(dynamic_partition_access),
-        PhysicalPlan::IndexMergeReader(reader) => reader
-            .partial_plans_raw
-            .first()
-            .and_then(dynamic_partition_access),
-        PhysicalPlan::TableScan(scan) => Some(AccessObject::Scan(table_access(
-            catalog,
-            scan.table_id,
-            scan.table_as_name.as_deref(),
-        ))),
+        // Go's reader operators carry NO access object of their own: the
+        // reached partitions annotate the child scan (`table:t,
+        // partition:p1,P2`), so the reader row's access-object cell is empty
+        // and the scan row holds the combined text.
+        PhysicalPlan::TableReader(_)
+        | PhysicalPlan::IndexReader(_)
+        | PhysicalPlan::IndexLookUpReader(_)
+        | PhysicalPlan::IndexMergeReader(_) => None,
+        PhysicalPlan::TableScan(scan) => {
+            let mut access = AccessObject::Scan(table_access(
+                catalog,
+                scan.table_id,
+                scan.table_as_name.as_deref(),
+            ));
+            // Dynamic partition pruning reaches several partitions from one
+            // logical scan: fold their names into the scan's own access
+            // object, definition-ordered, as Go's `partition:p1,P2` does.
+            if let Some(object) = &scan.dynamic_partition_access {
+                if let AccessObject::Scan(scan_object) = &mut access {
+                    for name in &object.partitions {
+                        if !scan_object.partitions.contains(name) {
+                            scan_object.partitions.push(name.clone());
+                        }
+                    }
+                }
+            }
+            Some(access)
+        }
         PhysicalPlan::TableSample(sample) => Some(AccessObject::Scan(table_access(
             catalog,
             sample.physical_table_id,
