@@ -10554,3 +10554,7 @@ risks without claiming repository-wide parity.
   inside DML expressions identically). Pin
   `crates/tidb-session/tests/uservar_in_update_source.rs` fails on the old
   code and passes with the fix; the sequence pins stay green.
+- 2026-09-06 (uservar INSERT/DELETE pin): `INSERT VALUES (@k, @v)` binds
+  the session's variables and a DELETE's WHERE predicate compares against
+  them. Pinned in
+  `crates/tidb-session/tests/uservar_insert_delete_source.rs`.
