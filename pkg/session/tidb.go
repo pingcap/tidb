@@ -307,7 +307,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 // handlePendingSQLKillerSignal avoids the more expensive HandleSignal path
 // when there is no pending cancellation.
 func handlePendingSQLKillerSignal(sessVars *variable.SessionVars) error {
-	if sessVars.SQLKiller.GetKillSignal() == 0 {
+	if sessVars.SQLKiller.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
 		return nil
 	}
 	return sessVars.SQLKiller.HandleSignal()

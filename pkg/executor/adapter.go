@@ -533,13 +533,11 @@ func (a *ExecStmt) getMaxExecutionTime() uint64 {
 		}
 		return vars.DMLMaxExecutionTime
 	}
-	_, isCommit := a.StmtNode.(*ast.CommitStmt)
-	if !isCommit {
-		if executePlan, ok := a.Plan.(*plannercore.Execute); ok {
-			_, isCommit = executePlan.Stmt.(*ast.CommitStmt)
-		}
+	stmt := a.StmtNode
+	if executePlan, ok := a.Plan.(*plannercore.Execute); ok {
+		stmt = executePlan.Stmt
 	}
-	if isCommit {
+	if _, isCommit := stmt.(*ast.CommitStmt); isCommit {
 		if vars.BatchCommit {
 			return 0
 		}
@@ -718,8 +716,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
-	// Resolve the timeout before replacing a prepared EXECUTE plan with its underlying plan.
-	// This preserves COMMIT classification for prepared statements.
+	// For prepared statements, a.StmtNode remains an ExecuteStmt.
+	// Resolve the timeout before unwrapping a.Plan so getMaxExecutionTime
+	// can inspect Execute.Stmt to recognize COMMIT.
 	maxExecutionTime := a.getMaxExecutionTime()
 
 	// must set plan according to the `Execute` plan before getting planDigest
