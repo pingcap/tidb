@@ -10509,3 +10509,9 @@ risks without claiming repository-wide parity.
   definition in Go's restore form — CONSTRAINT name + the expression in
   `((`a` + `b` > 0))` shape. Pinned in
   `crates/tidb-session/tests/show_create_check_source.rs`.
+- 2026-09-06 (constrained-table cleanliness pin): the seeding INSERT is
+  refused 3819, so later UPDATEs over a CHECK-attached table evaluate
+  cleanly with nothing to violate. Pinned in
+  `crates/tidb-session/tests/check_constrained_table_stays_clean_source.rs`.
+  (An "unchanged rows skip checks" probe premise was unreachable — a
+  violating row cannot exist inside an attached table via SQL.)
