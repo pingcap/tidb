@@ -58,6 +58,7 @@ go_test(
         "//pkg/util/table-filter",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_ngaut_pools//:pools",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
