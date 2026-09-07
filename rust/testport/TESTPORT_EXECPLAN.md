@@ -10677,3 +10677,8 @@ risks without claiming repository-wide parity.
   materialize NULL which passes (UNKNOWN), odd rows store themselves.
   Pinned in
   `crates/tidb-session/tests/check_virtual_null_allowance_source.rs`.
+- 2026-09-06 (sequence function family pin): NEXTVAL allocates 1,2;
+  LASTVAL(seq) answers the last allocation; SETVAL(seq, 50) repositions
+  (next 51); zero-arg LASTVAL fails Go's 1582 (Go arity 1,1 —
+  builtin.go:1001); DROP SEQUENCE removes it. Pinned in
+  `crates/tidb-session/tests/sequence_function_family_source.rs`.
