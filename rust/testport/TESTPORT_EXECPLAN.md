@@ -10323,3 +10323,7 @@ risks without claiming repository-wide parity.
   in INSERT SELECT dedups across arms (3 distinct rows land); `FOR UPDATE`
   parses and reads normally in the single-session harness. Pinned in
   `crates/tidb-session/tests/insert_select_union_dedup_source.rs`.
+- 2026-09-06 (ordinal refs + union-derived pin): ordinal ORDER BY/GROUP BY
+  (positions) resolve to SELECT-list expressions; a UNION inside a derived
+  table composes with the outer ORDER BY/LIMIT. Pinned in
+  `crates/tidb-session/tests/ordinal_union_derived_source.rs`.
