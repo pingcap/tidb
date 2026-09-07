@@ -10944,3 +10944,6 @@ risks without claiming repository-wide parity.
   parser (no ALTER VIEW arm in stmt_parser.go's ALTER dispatch; GO parse
   errors at line 1 col 10). Pinned in
   `crates/tidb-session/tests/nested_view_and_alter_view_source.rs`.
+- 2026-09-06 (OR REPLACE view pin): CREATE OR REPLACE VIEW redefines an
+  existing view in place (view_parser.go:40-42). Pinned in
+  `crates/tidb-session/tests/or_replace_view_source.rs`.
