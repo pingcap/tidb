@@ -985,7 +985,8 @@ type StorageClassStatusResp struct {
 
 // CollectStorageClassStatusWithCtx collects a physical table's status from one
 // TiKV store. The target remains SQL-facing IA or STANDARD on the wire. A ready
-// replica currently matches the target and has no known unfinished conversion.
+// replica currently matches the target and has no pending or transiting record
+// in its local schema worker. Independent Raft/apply work is not tracked.
 // The counters are a point-in-time observation without a schema-version proof.
 func CollectStorageClassStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, target string) (StorageClassStatusResp, error) {
 	statURL := fmt.Sprintf("%s://%s/kvengine/storage_class_status?keyspace_id=%d&table_id=%d&target=%s",
