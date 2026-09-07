@@ -11252,3 +11252,7 @@ risks without claiming repository-wide parity.
   charset DECODE (so char(22823 using utf8mb4) = "Y'", verified against
   convertToBytes + OpDecode), DATE_FORMAT %b/%c short forms and %r.
   Pinned in `crates/tidb-session/tests/char_using_fmt_source.rs`.
+- 2026-09-06 (FORMAT/ROUND-digits pin): FORMAT's thousands separators and
+  ROUND's negative digit positions, with TiDB's dual rounding conventions
+  (float half-away vs decimal half-even) pinned side by side. Pinned in
+  `crates/tidb-session/tests/format_round_digits_source.rs`.
