@@ -10515,3 +10515,6 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/check_constrained_table_stays_clean_source.rs`.
   (An "unchanged rows skip checks" probe premise was unreachable — a
   violating row cannot exist inside an attached table via SQL.)
+- 2026-09-06 (partitioned CHECK pin): CHECK violations are refused in every
+  partition while conforming rows land normally. Pinned in
+  `crates/tidb-session/tests/check_partitioned_source.rs`.
