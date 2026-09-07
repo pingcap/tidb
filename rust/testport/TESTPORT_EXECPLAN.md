@@ -9432,6 +9432,18 @@ risks without claiming repository-wide parity.
   behavior is unchanged. The focused regression failed before the fix with
   exactly one diagnostic and passes after; all 162 owner tests and affected
   all-target checks pass. Evidence is recorded in `receipts/util_replayer.md`.
+- 2026-09-07 (`pkg/util/deadlockhistory` return contracts): current Go master
+  `c767f6fd8c01` was re-read as the complete four-artifact, 669-line package,
+  including all four source test identities, `TestMain`, the BUILD target, and
+  the absence of fixtures, generated/platform variants, and nested packages.
+  The `tidb-executor::deadlock_history` owner and its direct executor/session
+  consumers were inventoried. Four Rust-only `#[must_use]` diagnostics were
+  removed from Go-shaped error conversion, datum conversion, history
+  construction, and history reads; retention, IDs, timestamp precision,
+  nullability, and deadlock conversion are unchanged. The focused regression
+  failed before the fix with exactly four diagnostics and passes after; all
+  five owner tests and executor/session all-target checks pass. Evidence is
+  recorded in `receipts/util_deadlockhistory.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

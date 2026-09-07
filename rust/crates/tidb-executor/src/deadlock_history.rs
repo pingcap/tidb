@@ -70,7 +70,6 @@ pub struct DeadlockRecord {
 }
 
 /// Builds a record from TiKV's complete deadlock error payload.
-#[must_use]
 pub fn err_deadlock_to_deadlock_record(detail: &DeadlockDetail) -> DeadlockRecord {
     let wait_chain = detail
         .wait_chain
@@ -107,7 +106,6 @@ pub fn err_deadlock_to_deadlock_record(detail: &DeadlockDetail) -> DeadlockRecor
 
 impl DeadlockRecord {
     /// Returns one package-owned DEADLOCKS column for one wait-cycle edge.
-    #[must_use]
     pub fn to_datum(&self, wait_chain_idx: usize, column_name: &str) -> Datum {
         match column_name {
             COL_DEADLOCK_ID => Datum::UInt(self.id),
@@ -157,7 +155,6 @@ pub struct DeadlockHistory {
 
 impl DeadlockHistory {
     /// Creates an empty history with `capacity` retained records.
-    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
             state: Mutex::new(HistoryState {
@@ -195,7 +192,6 @@ impl DeadlockHistory {
     }
 
     /// Returns an ordered snapshot from oldest to newest.
-    #[must_use]
     pub fn get_all(&self) -> Vec<Arc<DeadlockRecord>> {
         self.lock().deadlocks.iter().cloned().collect()
     }
@@ -504,5 +500,25 @@ mod tests {
         history.resize(2);
         history.push(record(time));
         assert_eq!(history.get_all()[0].id, 5);
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn deadlock_history_returns_may_be_ignored_like_go() {
+        let detail = DeadlockDetail {
+            lock_ts: 0,
+            lock_key: Vec::new(),
+            deadlock_key_hash: 0,
+            deadlock_key: Vec::new(),
+            is_retryable: false,
+            wait_chain: Vec::new(),
+        };
+        err_deadlock_to_deadlock_record(&detail);
+
+        let record = record(timestamp(2021, 5, 14, 15, 28, 30, 123_456));
+        record.to_datum(0, super::COL_DEADLOCK_ID);
+        DeadlockHistory::new(1);
+        let history = DeadlockHistory::new(1);
+        history.get_all();
     }
 }
