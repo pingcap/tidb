@@ -10562,3 +10562,8 @@ risks without claiming repository-wide parity.
   writes while a NOT ENFORCED sibling on the same table does not — each
   constraint's state is independent. Pinned in
   `crates/tidb-session/tests/mixed_enforced_checks_source.rs`.
+- 2026-09-06 (DROP COLUMN x CHECK pins): a CHECK whose SOLE dependency is
+  the dropped column is removed along with it (Go's lazy invalidation);
+  a multi-column CHECK refuses the drop with Go's 3959 "uses column ...
+  hence column cannot be dropped or renamed". Pinned in
+  `crates/tidb-session/tests/drop_column_check_dependency_source.rs`.
