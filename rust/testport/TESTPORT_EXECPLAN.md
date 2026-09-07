@@ -11228,3 +11228,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (REPLACE/SPACE pin): replace-all expansion, no-op and empty
   search strings, SPACE's negative clamp, and NULL propagation. Pinned
   in `crates/tidb-session/tests/replace_space_source.rs`.
+- 2026-09-06 (math edges pin): SQRT(-1) -> NULL, POW's negative-fractional
+  out-of-range error, SIGN/ABS sign rules. Pinned in
+  `crates/tidb-session/tests/math_edge_source.rs`.
