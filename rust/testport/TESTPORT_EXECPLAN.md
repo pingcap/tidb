@@ -10072,3 +10072,7 @@ risks without claiming repository-wide parity.
   this tip (windows, vars, plan-cache switches) are byte-identical on the
   pre-corruption clean-HEAD run — sibling in-flight select-path breakage,
   none attributable to this loop's batches.
+- 2026-09-06 (set-operation pins): UNION dedups, UNION ALL keeps the
+  multiset, EXCEPT subtracts+dedups, INTERSECT keeps shared values, and a
+  trailing ORDER BY/LIMIT composes globally. Pinned in
+  `crates/tidb-session/tests/set_operations_source.rs`.
