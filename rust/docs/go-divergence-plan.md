@@ -110,11 +110,19 @@ Then, independently of each other:
   Decide whether the compiled expression should hold names and resolve at
   evaluation time; remapping the three mutators leaves the next one free to
   forget.
-- **#196 — identifier case mapping.** Run the one‑line comparison first
-  (`strings.ToLower` versus `to_lowercase` on `ΟΔΟΣ`); the claim is derived from
-  spec reading, not observation, and a rank‑1 deserves the ten seconds. If it
-  holds, the scope is every `to_lowercase()` on an identifier, not just
-  `CiString`. #203's `Ä`/`ä` finding is the same question from the DDL side.
+- **#196 — identifier case mapping.** CONFIRMED (2026-09-07, both sides
+  executed): Go `strings.ToLower("ΟΔΟΣ")` = `οδοσ` (simple mapping, U+03C3
+  everywhere) while Rust `str::to_lowercase` = `οδος` (word-end FINAL
+  sigma U+03C2); Turkish `İ` folds to `i` in Go but to `i` + combining
+  dot in Rust. `go_to_lower` (tidb-util `stringutil.rs`) now provides the
+  Go-exact per-rune simple mapping — exhaustive enumeration shows U+0130
+  is the only code point whose full lowercase is multi-character, so
+  first-char + the `İ` entry reproduces Go's table for every input; the
+  Greek final-sigma rule never applies to a per-character pass. Remaining
+  scope: the ~238 production `to_lowercase()` sites across 14 crates need
+  a per-crate triage into identifier paths (migrate to `go_to_lower`) and
+  value paths (audit separately). #203's `Ä`/`ä` finding is the same
+  question from the DDL side.
 - **#197 — preserve unknown enum values.** `index_type` and partition type
   collapse to 0; five AST enums hard‑fail. Go keeps the raw int and says why.
   Decide the policy once for all seven.
