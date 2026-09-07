@@ -10594,3 +10594,7 @@ risks without claiming repository-wide parity.
   dst.b when the two tables declare their columns in different orders —
   the column LIST maps by name onto the SELECT's output positions. Pinned
   in `crates/tidb-session/tests/insert_select_position_map_source.rs`.
+- 2026-09-06 (TiDB-vs-MySQL compat pins): a duplicated SET column applies
+  LAST-WIN (no 1110), and a single-table `DELETE ... ORDER BY a` without
+  LIMIT is accepted — both differ from MySQL but match TiDB. Pinned in
+  `crates/tidb-session/tests/dup_set_and_delete_orderby_source.rs`.
