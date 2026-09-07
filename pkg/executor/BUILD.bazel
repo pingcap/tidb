@@ -395,6 +395,7 @@ go_test(
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
         "//pkg/executor/sortexec",
+        "//pkg/executor/unionexec",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
