@@ -10577,16 +10577,12 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/ignore_multi_row_check_source.rs` fails on
   the old code and passes with the fix; both sweep failures verified
   pre-existing on clean HEAD via stash-baseline.
-- 2026-09-06 (prefix unique index uniqueness recorded, NOT FIXED): a UNIQUE
-  prefix index (`unique index uq (s(4))`) does not enforce uniqueness on
-  the prefix — 'abcdef' then 'abcxyz' (same 4-char prefix 'abcd') both
-  store, where Go refuses the second with "Duplicate entry 'abcd' for key
-  't.uq'". The ADD INDEX path records prefix_lengths (indexes.rs:488
-  key_part_length_with_max) and index_entries::index_values cuts values by
-  them — but the insert-time conflicting-key comparison evidently does not
-  use the cut values, so the collision is missed. Related: SHOW INDEX does
-  not print Sub_part, and point-get refuses prefix unique indexes
-  ("a retained index point-get requires a non-prefix unique index"). Fix:
-  route the write-path uniqueness comparison through index_values' cut
-  values; then the entry text must print the PREFIX value ('abcd').
-  Queued as a bounded kv_table/index_entries fix.
+- 2026-09-06 (prefix unique index VERIFIED FAITHFUL — record corrected):
+  an earlier entry claimed prefix-unique uniqueness was not enforced. That
+  was probe error: 'abcxyz' does not share the 4-char prefix of 'abcdef'
+  ('abcx' vs 'abcd'), and the true collision ('abcdxyz') IS refused with
+  "Duplicate entry 'abcd' for key 't.uq'". The cut machinery
+  (index_entries::index_values / index_prefix_cut) and the conflicting-key
+  lookup are correct. Remaining minor items: SHOW INDEX does not print
+  Sub_part; a SELECT over a prefix unique index takes a scan (no point
+  get) rather than erroring — both verified fine at session level.
