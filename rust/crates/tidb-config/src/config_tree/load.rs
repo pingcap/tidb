@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::config::Config;
 use crate::deploymode::Mode;
+use tidb_hack::go_to_lower;
 
 /// A config-load error (Go's `ErrConfigValidationFailed` and plain errors).
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -195,7 +196,7 @@ const HIDE_CONFIG: &[&str] = &["performance.index-usage-sync-lease"];
 
 /// Go `ContainHiddenConfig`.
 pub fn contain_hidden_config(value: &str) -> bool {
-    let value = value.to_lowercase();
+    let value = go_to_lower(value);
     HIDE_CONFIG
         .iter()
         .chain(REMOVED_CONFIG.iter())

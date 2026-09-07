@@ -48,6 +48,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tidb_log::{Field, Value};
 
 use crate::logutil;
+use crate::stringutil::go_to_lower;
 use crate::tracing::{self, TraceContext};
 
 pub use crate::tracing::{Event, Sink, TraceCategory};
@@ -126,7 +127,7 @@ pub fn get_enabled_categories() -> TraceCategory {
 ///
 /// Returns Go's `unsupported trace event mode` message for anything else.
 pub fn normalize_mode(mode: &str) -> Result<&'static str, String> {
-    match mode.trim().to_lowercase().as_str() {
+    match go_to_lower(mode.trim()).as_str() {
         MODE_OFF | "0" | "false" => Ok(MODE_OFF),
         MODE_BASE => Ok(MODE_BASE),
         MODE_FULL => Ok(MODE_FULL),

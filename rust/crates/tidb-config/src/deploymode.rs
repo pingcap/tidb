@@ -34,6 +34,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::kerneltype;
+use tidb_hack::go_to_lower;
 
 const PREMIUM_NAME: &str = "premium";
 const PREMIUM_RESERVED_NAME: &str = "premium_reserved";
@@ -94,7 +95,7 @@ pub(crate) fn store_for_test(mode: Mode) {
 
 /// Parses a deployment mode string, case-insensitively (Go `Parse`).
 pub fn parse(s: &str) -> Result<Mode, String> {
-    match s.to_lowercase().as_str() {
+    match go_to_lower(s).as_str() {
         PREMIUM_NAME => Ok(Mode::Premium),
         PREMIUM_RESERVED_NAME => Ok(Mode::PremiumReserved),
         STARTER_NAME => Ok(Mode::Starter),

@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use tidb_hack::go_to_lower;
 
 const METRIC_LABEL_PREFIX: &str = "keyspace_meta_";
 const SLOW_LOG_FIELD_PREFIX: &str = "Keyspace_meta_";
@@ -109,7 +110,7 @@ impl KeyspaceObservability {
                         field.metric_label
                     ));
                 }
-                let key = field.metric_label.to_lowercase();
+                let key = go_to_lower(&field.metric_label);
                 if !key.starts_with(METRIC_LABEL_PREFIX) {
                     return Err(format!(
                         "[keyspace-observability.fields.{i}] metric-label {:?} must start with {METRIC_LABEL_PREFIX:?}",
@@ -136,7 +137,7 @@ impl KeyspaceObservability {
                         field.slow_log_field
                     ));
                 }
-                let key = field.slow_log_field.to_lowercase();
+                let key = go_to_lower(&field.slow_log_field);
                 if slow_log_fields.insert(key, ()).is_some() {
                     return Err(format!(
                         "[keyspace-observability.fields.{i}] duplicated slow-log-field {:?}",
@@ -145,7 +146,7 @@ impl KeyspaceObservability {
                 }
             }
             if !field.stmt_log_field.is_empty() {
-                let key = field.stmt_log_field.to_lowercase();
+                let key = go_to_lower(&field.stmt_log_field);
                 if stmt_log_fields.insert(key, ()).is_some() {
                     return Err(format!(
                         "[keyspace-observability.fields.{i}] duplicated stmt-log-field {:?}",

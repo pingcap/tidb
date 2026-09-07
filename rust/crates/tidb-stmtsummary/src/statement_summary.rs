@@ -34,6 +34,7 @@ use tikv_client::RuDetails;
 use crate::reader::StmtSummaryChecker;
 
 use crate::evicted::StmtSummaryByDigestEvicted;
+use tidb_util::stringutil::go_to_lower;
 
 /// Go `MaxEncodedPlanSizeInBytes`: the upper limit of the size of the plan and
 /// the binary plan in the stmt summary. Go declares it as a mutable package
@@ -1145,9 +1146,9 @@ impl StmtSummaryByDigest {
             if !buffer.is_empty() {
                 buffer.push(',');
             }
-            buffer.push_str(&value.db.to_lowercase());
+            buffer.push_str(&go_to_lower(&value.db));
             buffer.push('.');
-            buffer.push_str(&value.table.to_lowercase());
+            buffer.push_str(&go_to_lower(&value.table));
         }
         let table_names = buffer;
 

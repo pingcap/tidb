@@ -89,6 +89,7 @@ use tidb_exec::exec_details::{
 };
 use tidb_util::plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
 use tidb_util::ppcpuusage::CpuUsages;
+use tidb_util::stringutil::go_to_lower;
 use tikv_client::util::ExecDetailsSnapshot;
 use tikv_client::RuDetails;
 
@@ -504,9 +505,9 @@ pub fn new_stmt_record(info: &StmtExecInfo) -> StmtRecord {
         if !buffer.is_empty() {
             buffer.push(',');
         }
-        buffer.push_str(&value.db.to_lowercase());
+        buffer.push_str(&go_to_lower(&value.db));
         buffer.push('.');
-        buffer.push_str(&value.table.to_lowercase());
+        buffer.push_str(&go_to_lower(&value.table));
     }
     let table_names = buffer;
     let mut plan_digest = info.plan_digest.clone();

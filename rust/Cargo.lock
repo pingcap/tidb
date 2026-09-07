@@ -3324,6 +3324,7 @@ dependencies = [
  "serde",
  "serde_ignored",
  "serde_json",
+ "tidb-hack",
  "tidb-naming",
  "tidb-tikvutil",
  "toml",

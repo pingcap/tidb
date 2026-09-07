@@ -50,6 +50,7 @@ use crate::keyspace_observability::{
 use crate::store::StoreType;
 use crate::tiflash::is_valid_auto_scaler_config;
 use crate::tikvcfg;
+use tidb_hack::go_to_lower;
 
 // Config number limitations (Go `pkg/config` consts).
 const MAX_LOG_FILE_SIZE: i64 = 4096;
@@ -857,7 +858,7 @@ impl Config {
         }
         // Security: spilled-file encryption method (lowercased).
         self.security.spilled_file_encryption_method =
-            self.security.spilled_file_encryption_method.to_lowercase();
+            go_to_lower(&self.security.spilled_file_encryption_method);
         let method = &self.security.spilled_file_encryption_method;
         if method != SPILLED_FILE_ENCRYPTION_METHOD_PLAINTEXT
             && method != SPILLED_FILE_ENCRYPTION_METHOD_AES128_CTR
@@ -1513,7 +1514,7 @@ metric-label = "keyspace_meta_label_a"
             if ok {
                 assert_eq!(
                     c.security.spilled_file_encryption_method,
-                    m.to_lowercase(),
+                    go_to_lower(m),
                     "Go Valid lowercases the stored value"
                 );
             }

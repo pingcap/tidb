@@ -46,6 +46,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, FixedOffset, Local};
 use tidb_log::{Entry, Field, Level, TextEncoder};
 
+use crate::stringutil::go_to_lower;
 use file_sink::{RotatingFile, SharedSink, Sink};
 
 /// Default size of log files in MB (Go `DefaultLogMaxSize`).
@@ -176,7 +177,7 @@ impl AtomicLevel {
 
 /// Parses a zap level string, case-insensitively.
 pub fn parse_level(s: &str) -> Result<Level, String> {
-    match s.to_lowercase().as_str() {
+    match go_to_lower(s).as_str() {
         "debug" => Ok(Level::Debug),
         "info" | "" => Ok(Level::Info),
         "warn" => Ok(Level::Warn),

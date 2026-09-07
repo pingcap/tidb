@@ -22,6 +22,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 
+pub use tidb_hack::go_to_lower;
 use tidb_mysql::SqlMode;
 
 /// An invalid quoted string.
@@ -481,28 +482,6 @@ pub fn lower_one_string_excluding_escape_char(value: &mut [u8], escape: u8) -> u
     actual_escape
 }
 
-/// Go `strings.ToLower`: the per-rune SIMPLE lowercase mapping
-/// (`unicode.ToLower`), with none of Unicode's conditional special
-/// casing -- Greek final sigma stays `σ` at a word's end and `İ` folds
-/// to plain `i`, both of which diverge from Rust's `str::to_lowercase`.
-/// Verified per rune: U+0130 is the only code point whose full
-/// lowercase mapping is multi-character, so first-character + the `İ`
-/// entry reproduces Go's table exactly.
-pub fn go_to_lower(input: impl AsRef<str>) -> String {
-    input
-        .as_ref()
-        .chars()
-        .map(|character| {
-            let mut lowered = character.to_lowercase();
-            let first = lowered.next().unwrap_or(character);
-            if lowered.next().is_some() && character == '\u{0130}' {
-                return 'i';
-            }
-            first
-        })
-        .collect()
-}
-
 /// Escapes `?` for a glob path pattern.
 pub fn escape_glob_question_mark(value: impl AsRef<[u8]>) -> String {
     let mut escaped = String::new();
@@ -701,22 +680,6 @@ mod tests {
             ("aaa".to_owned(), "bbb".to_owned()),
         ]);
         assert_eq!(build_string_from_labels(&labels), "aaa=bbb,ccc=ddd");
-    }
-
-    #[test]
-    fn go_to_lower_matches_go_simple_mapping() {
-        // The plan's #196 one-line reproduction: Greek capital sigma has
-        // a word-end final form that Rust's `str::to_lowercase` picks
-        // and Go never does.
-        assert_eq!(go_to_lower("ΟΔΟΣ"), "οδοσ");
-        assert_ne!("ΟΔΟΣ".to_lowercase(), "οδοσ");
-        // Turkish İ: Go's simple table folds to plain `i`; Rust's full
-        // mapping appends the combining dot.
-        assert_eq!(go_to_lower("\u{0130}"), "i");
-        assert_ne!("\u{0130}".to_lowercase(), "i");
-        // ASCII and already-lowercase text pass through.
-        assert_eq!(go_to_lower("AbC_01"), "abc_01");
-        assert_eq!(go_to_lower("中文"), "中文");
     }
 
     #[test]

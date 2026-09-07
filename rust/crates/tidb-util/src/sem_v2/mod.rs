@@ -87,6 +87,7 @@ use std::sync::{Arc, RwLock};
 use tidb_log::Value;
 
 use crate::logutil;
+use crate::stringutil::go_to_lower;
 use sql_rule::sql_rule_by_name;
 
 // Go `vardef` constants, inlined (see the module boundaries).
@@ -255,7 +256,7 @@ impl std::fmt::Debug for SemImpl {
 impl SemImpl {
     /// Go `semImpl.isInvisibleSchema`.
     pub fn is_invisible_schema(&self, db_name: &str) -> bool {
-        self.restricted_databases.contains(&db_name.to_lowercase())
+        self.restricted_databases.contains(&go_to_lower(db_name))
     }
 
     /// Go `semImpl.isInvisibleTable`.

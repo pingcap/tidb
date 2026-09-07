@@ -17,6 +17,8 @@
 //! The tikvcfg-embedded fields use [`crate::tikvcfg`]; the actual TiKV
 //! client is `tikv/client-rust`.
 
+use tidb_hack::go_to_lower;
+
 pub mod big_sections;
 pub mod config;
 mod errmsg;
@@ -46,7 +48,7 @@ pub use sections::{
 /// Validates a zap log level string (Go's final `Config.Valid` check via
 /// `zap.AtomicLevel.UnmarshalText`).
 pub fn parse_log_level(level: &str) -> Result<(), String> {
-    match level.to_lowercase().as_str() {
+    match go_to_lower(level).as_str() {
         "debug" | "info" | "warn" | "warning" | "error" | "dpanic" | "panic" | "fatal" | "" => {
             Ok(())
         }

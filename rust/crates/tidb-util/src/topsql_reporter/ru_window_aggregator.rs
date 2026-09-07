@@ -396,6 +396,7 @@ mod tests {
     use crate::topsql_stmtstats::{default_ru_version, BinaryDigest, RuIncrement, RuKey};
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use tidb_hack::go_to_lower;
 
     /// The two late-drop counters are process-global and the Go test binary
     /// runs these cases sequentially; the cases that read counter deltas are
@@ -1062,7 +1063,7 @@ mod tests {
 
         let record_count = cs.ru_records_min.max(1);
         let marker = if cs.sql_meta_match_marker.is_empty() {
-            format!("topru_gen_{}", cs.goal_id.to_lowercase())
+            format!("topru_gen_{}", go_to_lower(cs.goal_id))
         } else {
             cs.sql_meta_match_marker.to_owned()
         };
