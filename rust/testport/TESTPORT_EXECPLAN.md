@@ -10641,3 +10641,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (ADD INDEX IF NOT EXISTS pin): the first run creates the index
   and the second run is a no-op — exactly one `kb` entry on the table.
   Pinned in `crates/tidb-session/tests/add_index_if_not_exists_source.rs`.
+- 2026-09-06 (standalone index statement pins): CREATE INDEX / CREATE
+  UNIQUE INDEX / DROP INDEX ... ON all work and the unique index enforces
+  on later writes. Pinned in
+  `crates/tidb-session/tests/standalone_index_statements_source.rs`.
