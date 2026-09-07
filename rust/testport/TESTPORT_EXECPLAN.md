@@ -10147,3 +10147,6 @@ risks without claiming repository-wide parity.
   removes the highest rows first. Session pins in
   `crates/tidb-session/tests/odku_mixed_refs_source.rs` fail on the old
   code and pass with the fix.
+- 2026-09-06 (autocommit-off pin): with autocommit = 0 an INSERT opens a
+  txn — visible in-session, persists on COMMIT, reverts on ROLLBACK.
+  Pinned in `crates/tidb-session/tests/autocommit_off_source.rs`.
