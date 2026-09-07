@@ -10542,3 +10542,7 @@ risks without claiming repository-wide parity.
   LIKE, and DISTINCT all fold case (DISTINCT keeps the first-seen spelling),
   while `= BINARY 'apple'` restores byte-exact matching. Pinned in
   `crates/tidb-session/tests/ci_collation_binary_override_source.rs`.
+- 2026-09-06 (collation mismatch + GROUP BY folding pin): GROUP BY on a CI
+  column folds case into one group; mixing explicit bin/general_ci
+  collations in one comparison fails with Go's exact 1267 text. Pinned in
+  `crates/tidb-session/tests/collation_mismatch_group_folding_source.rs`.
