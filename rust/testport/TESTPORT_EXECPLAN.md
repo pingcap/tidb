@@ -10782,3 +10782,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (CASE-driven UPDATE pin): a CASE in SET drives per-row values —
   the self-referencing branch keeps the row unchanged. Pinned in
   `crates/tidb-session/tests/update_case_mixed_rows_source.rs`.
+- 2026-09-06 (SHOW COLUMNS LIKE pin): `SHOW COLUMNS FROM t LIKE 'name%'`
+  restricts the listing to matching columns. Pinned in
+  `crates/tidb-session/tests/show_columns_like_source.rs`.
