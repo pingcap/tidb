@@ -11304,3 +11304,9 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (only_full_group_by pin): a non-grouped, non-aggregated SELECT
   column refuses under the default mode; the grouped aggregate answers.
   Pinned in `crates/tidb-session/tests/only_full_group_by_source.rs`.
+- 2026-09-08 (parallel HashAgg family datapoints): `select distinct <expr>`
+  silently returns zero rows; `group by <expr>` panics in the parallel
+  partial worker; the hashagg concurrency variables do not bypass the
+  parallel path. All belong to the recorded expression-group family
+  (root cause: group keys never decoded into the final output); the
+  datapoints are logged in PROGRESS.md for whoever takes the fix.
