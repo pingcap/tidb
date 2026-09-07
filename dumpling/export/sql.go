@@ -1072,24 +1072,52 @@ type tableName struct {
 	table string
 }
 
-func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {
+// parseColumnExtra reports what the EXTRA field of SHOW COLUMNS says about one
+// column. MySQL joins the markers with spaces, so EXTRA holds values such as
+// "VIRTUAL GENERATED INVISIBLE" or "auto_increment INVISIBLE" and must be read
+// token by token. Only "VIRTUAL GENERATED" and "STORED GENERATED" mark a
+// generated column; the unrelated single token "DEFAULT_GENERATED" does not.
+func parseColumnExtra(extra string) (generated, invisible bool) {
+	tokens := strings.Fields(extra)
+	for i, token := range tokens {
+		switch token {
+		case "GENERATED":
+			if i > 0 && (tokens[i-1] == "VIRTUAL" || tokens[i-1] == "STORED") {
+				generated = true
+			}
+		case "INVISIBLE":
+			invisible = true
+		}
+	}
+	return generated, invisible
+}
+
+func getWritableColumnNames(
+	tctx *tcontext.Context,
+	db *BaseConn,
+	dbName, tableName string,
+) (sourceColumns []string, hasGeneratedColumn, hasInvisibleColumn bool, err error) {
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
-	sourceColumns := make([]string, 0)
-	hasGeneratedColumn := false
+	sourceColumns = make([]string, 0)
 	for _, oneRow := range results {
 		fieldName, extra := oneRow[0], oneRow[1]
-		switch extra {
-		case "STORED GENERATED", "VIRTUAL GENERATED":
+		generated, invisible := parseColumnExtra(extra)
+		if generated {
 			hasGeneratedColumn = true
 			continue
 		}
+		// An invisible column is writable, so it stays in the dump. SELECT *
+		// never returns it, so the caller must not shorten the field list to "*".
+		if invisible {
+			hasInvisibleColumn = true
+		}
 		sourceColumns = append(sourceColumns, fieldName)
 	}
-	return sourceColumns, hasGeneratedColumn, nil
+	return sourceColumns, hasGeneratedColumn, hasInvisibleColumn, nil
 }
 
 func buildWhereClauses(handleColNames []string, handleVals [][]string) []string {

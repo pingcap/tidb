@@ -1871,3 +1871,29 @@ func TestGetSpecifiedColumnValuesAndClose(t *testing.T) {
 	err = mock.ExpectationsWereMet()
 	require.NoError(t, err)
 }
+
+func TestParseColumnExtra(t *testing.T) {
+	// The EXTRA values below are what MySQL 8.4 reports for SHOW COLUMNS.
+	testCases := []struct {
+		extra     string
+		generated bool
+		invisible bool
+	}{
+		{"", false, false},
+		{"auto_increment", false, false},
+		{"VIRTUAL GENERATED", true, false},
+		{"STORED GENERATED", true, false},
+		{"INVISIBLE", false, true},
+		{"auto_increment INVISIBLE", false, true},
+		{"VIRTUAL GENERATED INVISIBLE", true, true},
+		{"STORED GENERATED INVISIBLE", true, true},
+		// A column with a default expression is not a generated column.
+		{"DEFAULT_GENERATED", false, false},
+		{"DEFAULT_GENERATED on update CURRENT_TIMESTAMP", false, false},
+	}
+	for _, testCase := range testCases {
+		generated, invisible := parseColumnExtra(testCase.extra)
+		require.Equal(t, testCase.generated, generated, "extra: %q", testCase.extra)
+		require.Equal(t, testCase.invisible, invisible, "extra: %q", testCase.extra)
+	}
+}

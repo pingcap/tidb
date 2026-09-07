@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -916,6 +917,60 @@ func TestColumnProjectionGeneratedColumn(t *testing.T) {
 	require.Equal(t, []string{"INT"}, columnTypes(projection.sourceTypes))
 	require.Equal(t, []string{"id"}, columnNames(projection.selectedTypes))
 	require.Equal(t, []string{"INT"}, columnTypes(projection.selectedTypes))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionInvisibleColumn(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+	// MySQL 8.0.23+ reports the generated invisible primary key as
+	// "auto_increment INVISIBLE" and a declared invisible column as "INVISIBLE".
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("my_row_id", "bigint(20) unsigned", "NO", "PRI", nil, "auto_increment INVISIBLE").
+			AddRow("name", "varchar(12)", "YES", "", nil, "").
+			AddRow("hidden", "int(11)", "YES", "", nil, "INVISIBLE"))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `my_row_id`,`name`,`hidden` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("my_row_id").OfType("BIGINT", uint64(0)),
+			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
+			sqlmock.NewColumn("hidden").OfType("INT", int64(0)),
+		).AddRow(1, "alice", 7))
+
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
+	require.True(t, ok)
+	// "*" would return only `name`, so the field list must stay explicit.
+	require.Equal(t, "`my_row_id`,`name`,`hidden`", projection.selectField)
+	require.Equal(t, []string{"my_row_id", "name", "hidden"}, columnNames(projection.sourceTypes))
+	require.Equal(t, []string{"my_row_id", "name", "hidden"}, columnNames(projection.selectedTypes))
+	require.Len(t, projection.selectedTypes, len(strings.Split(projection.selectField, ",")))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionInvisibleGeneratedColumn(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+	// A generated column that is also invisible reports "VIRTUAL GENERATED INVISIBLE".
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("generated", "int(11)", "YES", "", nil, "VIRTUAL GENERATED INVISIBLE"))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+		).AddRow(1))
+
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
+	require.True(t, ok)
+	require.Equal(t, "`id`", projection.selectField)
+	require.Equal(t, []string{"id"}, columnNames(projection.sourceTypes))
+	require.Equal(t, []string{"id"}, columnNames(projection.selectedTypes))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
