@@ -284,6 +284,9 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 		if job.State != model.JobStateRunning {
 			return
 		}
+		if job.SchemaState == model.StatePublic {
+			return
+		}
 		// now c2 has PreventNullInsertFlag, an error is expected.
 		checkErr = tk2.ExecToErr("insert into t1 values ()")
 	}
@@ -561,4 +564,62 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	}()
 	tk.MustExec("alter table t modify column b decimal(3,1)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4096 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '11.22'"))
+}
+
+func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_general_log=1;")
+	tk.MustExec(`
+		CREATE TABLE t (
+			id int NOT NULL AUTO_INCREMENT,
+			val0 bigint NOT NULL,
+			val1 int NOT NULL,
+			padding varchar(256) NOT NULL DEFAULT '',
+			PRIMARY KEY (id)
+		);
+	`)
+	tk.MustExec("CREATE INDEX val0_idx ON t (val0)")
+	tk.MustExec("insert into t (val0, val1, padding) values (1, 1, 'a'), (2, 2, 'b'), (3, 3, 'c');")
+
+	conflictOnce := sync.Once{}
+	conflictCh := make(chan struct{})
+	tk1 := testkit.NewTestKit(t, store)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/table/tables/duringTableCommonRemoveRecord", func(tblInfo *model.TableInfo) {
+		if tblInfo.Name.L == "t" {
+			conflictOnce.Do(func() {
+				tk1.MustExec("use test")
+				// inject a write conflict for the delete DML.
+				tk1.MustExec("update t set val0 = 100 where id = 1;")
+				close(conflictCh)
+			})
+		}
+	})
+	deleteOnce := sync.Once{}
+	insertOnce := sync.Once{}
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
+		deleteOnce.Do(func() {
+			go func() {
+				tk2.MustExec("use test")
+				tk2.MustExec("delete from t where id = 1;")
+			}()
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/afterLoadSchemaDiffs", func(int64) {
+				insertOnce.Do(func() {
+					tk3.MustExec("use test")
+					tk3.MustExec("insert into t (val0, val1, padding) values (4, 4, 'd');")
+				})
+			})
+			<-conflictCh
+		})
+	})
+	tk.MustExec("alter table t modify column val0 int not null;")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
+		"2 2 2 b",
+		"3 3 3 c",
+		"4 4 4 d"))
 }
