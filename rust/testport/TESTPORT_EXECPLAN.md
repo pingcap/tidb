@@ -10802,3 +10802,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (DEFAULT keyword pin): the DEFAULT keyword inside INSERT
   VALUES takes the column's default. Pinned in
   `crates/tidb-session/tests/default_keyword_values_source.rs`.
+- 2026-09-06 (scalar subquery in VALUES): `insert into d (a) values
+  ((select max(a) from s))` hits the recorded uncorrelated-scalar-subquery
+  family (rewriter boundary, sibling stream); divergence doc extended with
+  the VALUES form.

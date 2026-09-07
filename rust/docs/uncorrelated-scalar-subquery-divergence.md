@@ -15,7 +15,12 @@ select (select max(v) from s) from t;             -- Go: constant column
 select a from t where a = (select max(v) from s); -- Go: works
 delete from t where a = (select max(a) from t);   -- Go: works
 update t set b = (select count(*) from s);        -- Go: works
+insert into d (a) values ((select max(a) from s)); -- Go: works (VALUES form)
 ```
+
+The VALUES form surfaces a slightly different internal text ("expression
+form is not yet supported by the rewriter") but is the same planner/rewriter
+boundary family, recorded 2026-09-06.
 
 The port fails all four with the internal text "uncorrelated scalar-subquery
 evaluation is not available to the planner" — see
