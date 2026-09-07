@@ -11019,3 +11019,6 @@ risks without claiming repository-wide parity.
   padded literal comparison, CHAR retrieval stripping, VARCHAR padded
   match. Pinned in
   `crates/tidb-session/tests/trailing_space_pad_source.rs`.
+- 2026-09-06 (LIKE escape pin): default backslash escape, custom ESCAPE
+  character, and `\_` literal-underscore forms all behave per MySQL. Pinned
+  in `crates/tidb-session/tests/like_escape_source.rs`.
