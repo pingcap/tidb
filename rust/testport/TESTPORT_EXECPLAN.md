@@ -10919,3 +10919,8 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (GROUP BY virtual generated pin): GROUP BY and DISTINCT run on
   a VIRTUAL generated column's recomputed values. Pinned in
   `crates/tidb-session/tests/group_by_virtual_generated_source.rs`.
+- 2026-09-06 (rename generated base pin): RENAME COLUMN of a generated
+  column's base refuses with 3108 — Go's
+  checkModifyColumnWithGeneratedColumnsConstraint (modify_column.go:1415)
+  does not rewrite the expression either. Pinned in
+  `crates/tidb-session/tests/rename_generated_base_source.rs`.
