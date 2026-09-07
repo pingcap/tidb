@@ -11176,3 +11176,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (theta join pin): a self-join with an inequality ON emits
   exactly the strictly-increasing pairs. Pinned in
   `crates/tidb-session/tests/theta_self_join_source.rs`.
+- 2026-09-06 (CROSS/NATURAL join pin): CROSS JOIN's nested-loop cartesian
+  product and NATURAL JOIN's shared-column key with duplicate-column
+  projection. Pinned in
+  `crates/tidb-session/tests/cross_natural_join_source.rs`.
