@@ -11026,3 +11026,6 @@ risks without claiming repository-wide parity.
   (hex = 61000000), 1-byte literals don't compare equal, and the explicit
   NUL-padded form does. Pinned in
   `crates/tidb-session/tests/binary_zero_pad_source.rs`.
+- 2026-09-06 (IN-subquery pin): IN and NOT IN with a subquery operand work
+  (distinct from the recorded scalar-subquery gap). Pinned in
+  `crates/tidb-session/tests/in_subquery_semi_join_source.rs`.
