@@ -10034,3 +10034,7 @@ risks without claiming repository-wide parity.
   tidb_enable_check_constraint on, a violation on a later joined row fails
   the whole multi-table UPDATE with 3819 and rolls back earlier rows'
   changes. Pinned in `crates/tidb-session/tests/multi_update_check_source.rs`.
+- 2026-09-06 (CHECK-clause restriction pins): non-deterministic functions are
+  named in 3814 (rand/now), subqueries hit generic 3815, auto-increment
+  column refs hit 3818, and plain comparisons pass. Pinned in
+  `crates/tidb-session/tests/check_clause_restrictions_source.rs`.
