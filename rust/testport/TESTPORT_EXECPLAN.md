@@ -10279,3 +10279,8 @@ risks without claiming repository-wide parity.
   (3819 on violations) and succeeds once the data is clean; DROP CHECK
   removes the constraint. Pinned in
   `crates/tidb-session/tests/named_check_lifecycle_source.rs`.
+- 2026-09-06 (CHECK over virtual generated column pin): the constraint is
+  evaluated against the MATERIALIZED virtual value at write time — INSERT
+  a=60 (virtual b=120) fails 3819 and stores nothing; a=40 (b=80) passes.
+  Complements the stored-column pin. Pinned in
+  `crates/tidb-session/tests/check_over_virtual_source.rs`.
