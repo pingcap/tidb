@@ -10772,3 +10772,7 @@ risks without claiming repository-wide parity.
   Pinned in `crates/tidb-session/tests/shard_pre_split_combined_source.rs`.
   (Note: an int-PK table refuses SHARD_ROW_ID_BITS with 8200 — the shard
   bits apply to heap tables with _tidb_rowid.)
+- 2026-09-06 (AUTO_RANDOM shard width pin): the shard width round-trips in
+  SHOW CREATE as the version-gated column comment
+  `/*T![auto_rand] AUTO_RANDOM(4) */`. Pinned in
+  `crates/tidb-session/tests/auto_random_show_create_source.rs`.
