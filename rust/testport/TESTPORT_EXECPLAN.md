@@ -11330,3 +11330,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (ROW_COUNT pin): ROW_COUNT() reports the previous statement's
   affected rows. Pinned in
   `crates/tidb-session/tests/row_count_fn_source.rs`.
+- 2026-09-08 (LAST_INSERT_ID(expr) pin): the argument form stores and
+  returns the session value; LAST_INSERT_ID() reads it back. Pinned in
+  `crates/tidb-session/tests/last_insert_id_expr_source.rs`.
