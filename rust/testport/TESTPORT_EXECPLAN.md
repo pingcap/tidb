@@ -10518,3 +10518,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (partitioned CHECK pin): CHECK violations are refused in every
   partition while conforming rows land normally. Pinned in
   `crates/tidb-session/tests/check_partitioned_source.rs`.
+- 2026-09-06 (DESCRIBE generated + qualified SHOW pin): DESCRIBE marks a
+  virtual generated column with "VIRTUAL GENERATED" in Extra; SHOW COLUMNS
+  resolves a schema-qualified target. Pinned in
+  `crates/tidb-session/tests/describe_generated_show_qualified_source.rs`.
