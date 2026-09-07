@@ -11068,3 +11068,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (IS TRUE family pin): IS TRUE/IS FALSE/IS UNKNOWN with NULL
   semantics and their IS NOT forms. Pinned in
   `crates/tidb-session/tests/is_truth_value_source.rs`.
+- 2026-09-06 (DIV/modulo pin): truncate-toward-zero DIV, dividend-sign
+  modulo, NULL-on-zero, and decimal truncation. Pinned in
+  `crates/tidb-session/tests/div_mod_semantics_source.rs`.
