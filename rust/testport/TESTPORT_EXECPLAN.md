@@ -10160,3 +10160,7 @@ risks without claiming repository-wide parity.
   reports column/type/NULL/key shapes; SHOW CREATE TABLE prints the
   canonical clustered-PK + ENGINE/CHARSET/COLLATE DDL. Pinned in
   `crates/tidb-session/tests/show_family_source.rs`.
+- 2026-09-06 (multi-dup ODKU pin): two duplicates + one fresh insert report
+  Go's 5 affected rows (2 per update + 1 insert); dup rows take the
+  assignment value and the fresh row lands. Pinned in
+  `crates/tidb-session/tests/odku_multi_row_accounting_source.rs`.
