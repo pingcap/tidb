@@ -105,7 +105,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 
 	// mysql.user backup from older TiDB may miss Operate_view_priv. It cannot be
 	// loaded physically, but logical restore can fill the target default value and
-	// execute a fixed compatibility SQL after copying rows into mysql.user.
+	// execute a fixed compatibility expression while copying rows into mysql.user.
 	mockedUserTI = cloneTableInfoWithoutColumn(userTI, "Operate_view_priv")
 	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
@@ -120,7 +120,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 
 	// mysql.db backup from older TiDB may miss Operate_view_priv. It cannot be
 	// loaded physically, but logical restore can fill the missing column by the
-	// configured compatibility SQL.
+	// configured compatibility expression.
 	mockedDBTI := cloneTableInfoWithoutColumn(dbTI, "Operate_view_priv")
 	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
@@ -240,29 +240,25 @@ func TestBuildSystemTableReplaceColumns(t *testing.T) {
 	require.NoError(t, err)
 
 	oldUserTI := cloneTableInfoWithoutColumn(userTI, "Operate_view_priv")
-	columnNames, updateSQLs, err := snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "user", oldUserTI, userTI)
+	columnNames, columnExpressions, err := snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "user", oldUserTI, userTI)
 	require.NoError(t, err)
-	require.NotContains(t, columnNames, "`operate_view_priv`")
-	require.Len(t, updateSQLs, 1)
-	require.Contains(t, updateSQLs[0], "UPDATE `mysql`.`user` AS dst JOIN `__tidb_br_temporary_mysql`.`user` AS src")
-	require.Contains(t, updateSQLs[0], "dst.`Super_priv` = 'Y'")
-	require.NotContains(t, updateSQLs[0], "src.`Super_priv`")
+	require.Contains(t, columnNames, "`operate_view_priv`")
+	require.Len(t, columnExpressions, len(columnNames))
+	require.Contains(t, columnExpressions, "IF(`Super_priv` = 'Y', 'Y', 'N')")
 
 	dbTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("db"))
 	require.NoError(t, err)
 	oldDBTI := cloneTableInfoWithoutColumn(dbTI, "Operate_view_priv")
-	columnNames, updateSQLs, err = snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "db", oldDBTI, dbTI)
-	require.NoError(t, err)
-	require.NotContains(t, columnNames, "`operate_view_priv`")
-	require.Len(t, updateSQLs, 1)
-	require.Contains(t, updateSQLs[0], "UPDATE `mysql`.`db` AS dst JOIN `__tidb_br_temporary_mysql`.`db` AS src")
-	require.Contains(t, updateSQLs[0], "dst.`DB` = src.`DB`")
-	require.Contains(t, updateSQLs[0], "dst.`Operate_view_priv` = 'N'")
-
-	columnNames, updateSQLs, err = snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "user", userTI, userTI)
+	columnNames, columnExpressions, err = snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "db", oldDBTI, dbTI)
 	require.NoError(t, err)
 	require.Contains(t, columnNames, "`operate_view_priv`")
-	require.Empty(t, updateSQLs)
+	require.Len(t, columnExpressions, len(columnNames))
+	require.Contains(t, columnExpressions, "'N'")
+
+	columnNames, columnExpressions, err = snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "user", userTI, userTI)
+	require.NoError(t, err)
+	require.Contains(t, columnNames, "`operate_view_priv`")
+	require.Contains(t, columnExpressions, "`operate_view_priv`")
 
 	downstreamWithFutureColumn := userTI.Clone()
 	downstreamWithFutureColumn.Columns = append(downstreamWithFutureColumn.Columns, &model.ColumnInfo{Name: ast.NewCIStr("future_priv")})

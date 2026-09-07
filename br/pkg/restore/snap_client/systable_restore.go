@@ -34,8 +34,8 @@ const (
 )
 
 type compatibleMissingBackupSystemTableColumn struct {
-	requiredColumns []string
-	updateSQL       string
+	requiredColumns  []string
+	selectExpression string
 }
 
 var (
@@ -44,14 +44,13 @@ var (
 	compatibleMissingBackupSystemTableColumns = map[string]map[string]compatibleMissingBackupSystemTableColumn{
 		sysUserTableName: {
 			operateViewPrivColumnName: {
-				requiredColumns: []string{"host", "user", strings.ToLower(mysql.SuperPriv.ColumnString())},
-				updateSQL:       "UPDATE %[1]s AS dst JOIN %[2]s AS src ON dst.`Host` = src.`Host` AND dst.`User` = src.`User` SET dst.`Operate_view_priv` = 'Y' WHERE dst.`Super_priv` = 'Y'",
+				requiredColumns:  []string{strings.ToLower(mysql.SuperPriv.ColumnString())},
+				selectExpression: "IF(`Super_priv` = 'Y', 'Y', 'N')",
 			},
 		},
 		sysDBTableName: {
 			operateViewPrivColumnName: {
-				requiredColumns: []string{"host", "db", "user"},
-				updateSQL:       "UPDATE %[1]s AS dst JOIN %[2]s AS src ON dst.`Host` = src.`Host` AND dst.`DB` = src.`DB` AND dst.`User` = src.`User` SET dst.`Operate_view_priv` = 'N'",
+				selectExpression: "'N'",
 			},
 		},
 	}
@@ -410,15 +409,14 @@ func buildSystemTableReplaceColumns(
 	}
 
 	columnNames := make([]string, 0, len(downstreamTable.Columns))
-	updateSQLs := make([]string, 0)
-	targetTable := utils.EncloseDBAndTable(dbName, tableName)
-	temporaryTable := utils.EncloseDBAndTable(utils.TemporaryDBName(dbName).L, tableName)
+	columnExpressions := make([]string, 0, len(downstreamTable.Columns))
 	for _, col := range downstreamTable.Columns {
 		_, ok := upstreamColMap[col.Name.L]
 		if !ok {
 			if canLoadSystemTableWithMissingBackupColumn(dbName, tableName, col.Name.L, upstreamColMap) {
 				columnConfig, _ := getCompatibleMissingBackupSystemTableColumn(tableName, col.Name.L)
-				updateSQLs = append(updateSQLs, fmt.Sprintf(columnConfig.updateSQL, targetTable, temporaryTable))
+				columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+				columnExpressions = append(columnExpressions, columnConfig.selectExpression)
 				continue
 			}
 			return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
@@ -426,12 +424,13 @@ func buildSystemTableReplaceColumns(
 				upstreamTable.Name.O, col.Name, col.FieldType.String())
 		}
 		columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+		columnExpressions = append(columnExpressions, utils.EncloseName(col.Name.L))
 	}
 	if len(columnNames) == 0 {
 		return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
 			"no compatible columns for system table restore, table: %s", upstreamTable.Name.O)
 	}
-	return columnNames, updateSQLs, nil
+	return columnNames, columnExpressions, nil
 }
 
 func hasAllColumns(columns map[string]*model.ColumnInfo, requiredColumns []string) bool {
@@ -448,7 +447,7 @@ func canLoadSystemTableWithMissingBackupColumn(dbName, tableName, columnName str
 		return false
 	}
 	columnConfig, ok := getCompatibleMissingBackupSystemTableColumn(tableName, columnName)
-	return ok && columnConfig.updateSQL != "" && hasAllColumns(backupColumns, columnConfig.requiredColumns)
+	return ok && columnConfig.selectExpression != "" && hasAllColumns(backupColumns, columnConfig.requiredColumns)
 }
 
 func getCompatibleMissingBackupSystemTableColumn(
@@ -670,24 +669,17 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 			}
 		}
 		// target column order may different with source cluster
-		columnNames, updateSQLs, err := buildSystemTableReplaceColumns(dbName, tableName, ti, downstreamTable)
+		columnNames, columnExpressions, err := buildSystemTableReplaceColumns(dbName, tableName, ti, downstreamTable)
 		if err != nil {
 			return err
 		}
 		columnListStr := strings.Join(columnNames, ",")
+		columnExpressionStr := strings.Join(columnExpressions, ",")
 		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s;",
 			utils.EncloseDBAndTable(db.Name.L, tableName),
-			columnListStr, columnListStr,
+			columnListStr, columnExpressionStr,
 			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
-		if err := execSQL(ctx, replaceIntoSQL); err != nil {
-			return err
-		}
-		for _, updateSQL := range updateSQLs {
-			if err := execSQL(ctx, updateSQL); err != nil {
-				return err
-			}
-		}
-		return nil
+		return execSQL(ctx, replaceIntoSQL)
 	}
 
 	renameSQL := fmt.Sprintf("RENAME TABLE %s TO %s;",
@@ -738,8 +730,8 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
 				// Some system tables can gain columns in newer TiDB versions. In that case
-				// logical restore can omit the missing columns and execute configured
-				// compatibility SQLs, but physical loading must fall back because the
+				// logical restore can fill the missing columns with configured
+				// compatibility expressions, but physical loading must fall back because the
 				// upstream snapshot does not contain those columns.
 				if canLoadSystemTableWithMissingBackupColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L, backupColMap) {
 					log.Warn("missing column in backup data",
