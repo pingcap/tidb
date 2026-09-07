@@ -154,9 +154,14 @@ func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, 
 }
 
 func TestRealTiKVIndexLookUpPushDown(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithRetainData())
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	dbName := fmt.Sprintf("test_index_lookup_pushdown_%d", time.Now().UnixNano())
+	tk.MustExec("create database " + dbName)
+	tk.MustExec("use " + dbName)
+	t.Cleanup(func() {
+		tk.MustExec("drop database if exists " + dbName)
+	})
 	tk.MustExec("create table t(id bigint primary key, a bigint, b bigint, index a(a))")
 	seed := time.Now().UnixNano()
 	logutil.BgLogger().Info("Run TestRealTiKVIndexLookUpPushDown with seed", zap.Int64("seed", seed))
