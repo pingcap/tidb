@@ -10264,4 +10264,4 @@ risks without claiming repository-wide parity.
   with "point-get output column is outside the row" — the point-get plan
   over an expression index cannot emit non-indexed output columns
   (planner/executor index seam; fix needs the point-get table-lookup
- 回 path for expression indexes).
+ path back to the table for expression indexes).
