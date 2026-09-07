@@ -3,7 +3,7 @@
 Comparison source: Go `origin/master` at commit
 `1c1a334d2be1dce64888b6e1f054462c566b0734` (2026-09-02).
 
-This receipt records the complete package inventory and two bounded parity
+This receipt records the complete package inventory and bounded parity
 batches implemented in the Go package and Rust `tidb-vardef` owner. It does
 not claim the full `pkg/sessionctx/vardef` package is transcreated: the other
 mutable runtime globals, the Go `SysVar` registry, `SessionVars`, and
@@ -29,12 +29,26 @@ There are no package fixtures, generated files, platform-specific variants, or
 additional nested build targets. The Go source has 2 production test cases and
 3 benchmarks; no failpoint is used by this package.
 
-The Rust owner inventory is `Cargo.toml`, `lib.rs`, `tidb_vars.rs`,
-`defaults.rs`, `bounds.rs`, `modes.rs`, `global_sysvar_initial.rs`, the three
-in-crate test modules, and the external `tests/tidb_vars_source.rs` carrier.
-The owner now includes the plan-replayer retention atomic and its source
-regression; the remaining Go runtime/session registry is explicitly
-unclaimed.
+The Rust owner has exactly 11 tracked artifacts: `Cargo.toml`, `lib.rs`,
+`tidb_vars.rs`, `defaults.rs`, `bounds.rs`, `modes.rs`,
+`global_sysvar_initial.rs`, the three in-crate test modules, and the external
+`tests/tidb_vars_source.rs` carrier. All 5,851 pre-edit lines were read for the
+2026-09-07 Rust-only return-contract batch; after its focused regression and
+six annotation removals the owner has 5,862 lines. The manifest is a
+dependency-free workspace member with no features or custom build script; its
+lock entry is likewise a dependency-free leaf. Fourteen workspace manifests
+depend on it, while the affected production call sites are in `tidb-session`
+and `tidb-schemaver`. The test build contains 106 library tests (45 runnable,
+61 explicitly ignored) and four external source tests after this batch. There
+are no fixtures, examples, benchmarks, fuzz targets, source includes,
+generated inputs/outputs, or platform-specific variants.
+
+This shared Rust crate also carries two explicitly separate Go-package
+surfaces: `global_system_variable_initial_value` belongs to
+`pkg/sessionctx/variable`, and `to_mpp_version` belongs to `pkg/kv`. They are
+not folded into this `pkg/sessionctx/vardef` batch. The owner includes the
+plan-replayer retention atomic and its source regression; the remaining Go
+runtime/session registry is explicitly unclaimed.
 
 ## Go-master delta and parity decisions
 
@@ -78,7 +92,58 @@ representation in an `AtomicI64`, preserving Go's `time.Duration` contract;
 the domain GC caller and `pkg/sessionctx/variable` registration remain
 separate package boundaries.
 
+## 2026-09-07 Rust-only return-contract alignment
+
+Under the user's Rust-only scope, six direct Go-shaped scalar returns no
+longer impose a Rust-only `#[must_use]` diagnostic:
+
+* `plan_replayer_file_retention_time`;
+* `is_mdl_enabled` and `is_read_only_var_in_next_gen`;
+* `tidb_opt_enable_clustered`;
+* `ExchangeCompressionMode::name` and
+  `ExchangeCompressionMode::to_tipb_compression_value`.
+
+The focused external regression uses `#[deny(unused_must_use)]` and discards
+all six values exactly as their Go callers may. It failed before the edit with
+exactly six compiler diagnostics and passes afterward. The correction changes
+no value, type, branch, atomic ordering, or production call site.
+
+Six annotations remain deliberately. The memory-alarm ratio,
+circuit-breaker threshold, and OOM-action functions are Rust accessors created
+for source globals rather than direct Go return contracts.
+`to_exchange_compression_mode` returns Rust `Option`, whose value is inherently
+must-use even without a function annotation. The other two annotations are on
+the separate `pkg/sessionctx/variable` and `pkg/kv` surfaces described above.
+No Go source, test, Bazel file, module file, or import was changed in this
+Rust-only batch, so `make bazel_prepare` is not required.
+
 ## Validation (Ready profile)
+
+The 2026-09-07 Rust-only batch ran:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-vardef --test tidb_vars_source direct_vardef_source_returns_may_be_ignored -- --exact --test-threads=1
+1 passed, 0 failed
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 nextest run --offline --locked --manifest-path rust/Cargo.toml -p tidb-vardef --no-fail-fast
+49 passed, 0 failed, 61 skipped
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-vardef --all-targets
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-session -p tidb-schemaver --all-targets
+
+rustfmt +nightly-2026-08-22 --edition 2021 --check rust/crates/tidb-vardef/src/lib.rs rust/crates/tidb-vardef/src/modes.rs rust/crates/tidb-vardef/tests/tidb_vars_source.rs
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+
+git diff --check
+```
+
+The owner and downstream checks emit only pre-existing warnings in untouched
+code, including the known missing documentation on
+`TIDB_MERGE_PARTITION_STATS_CONCURRENCY`; they complete successfully.
+
+Earlier package batches used the following Go-master source and Rust gates:
 
 Go-master source tests, run in a detached worktree at the exact comparison
 commit:

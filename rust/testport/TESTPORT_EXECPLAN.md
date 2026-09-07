@@ -41,6 +41,17 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`pkg/sessionctx/vardef` scalar return contracts): all 11 tracked
+  Rust owner artifacts (5,851 pre-edit lines), every function and test,
+  workspace/lock registration, 14 direct dependency edges, production callers,
+  and the fixture/generated/platform/custom-build surface were inventoried
+  before editing. Six direct Go-shaped scalar returns no longer impose
+  Rust-only discarded-return diagnostics; the focused source regression failed
+  with exactly six diagnostics before the correction and passes afterward.
+  Six native or separately owned annotations remain, including the inherent
+  `Option` boundary. All 49 active owner tests, owner and production-caller
+  all-target compilation, scoped formatting, Ready lint, and diff hygiene
+  pass. Evidence is in `receipts/sessionctx_vardef_audit.md`.
 - 2026-09-07 (`pkg/planner/util/coretestsdk` return contracts): the complete
   two-artifact/1,193-line Rust owner, all functions, four tests, workspace and
   lock registration, five dependency edges, caller/downstream surface, build

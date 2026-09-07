@@ -15,12 +15,29 @@
 //! Source tests for `pkg/sessionctx/vardef/tidb_vars_test.go`.
 
 use tidb_vardef::{
-    is_mdl_enabled, is_read_only_var_in_next_gen, plan_replayer_file_retention_time,
-    set_enable_mdl, set_plan_replayer_file_retention_time, tidb_vars::TIDB_DDL_DISK_QUOTA,
-    tidb_vars::TIDB_DDL_ENABLE_FAST_REORG, tidb_vars::TIDB_DDL_REORG_MAX_WRITE_SPEED,
-    tidb_vars::TIDB_ENABLE_DIST_TASK, tidb_vars::TIDB_ENABLE_MDL,
+    is_mdl_enabled, is_read_only_var_in_next_gen,
+    modes::{tidb_opt_enable_clustered, ExchangeCompressionMode},
+    plan_replayer_file_retention_time, set_enable_mdl, set_plan_replayer_file_retention_time,
+    tidb_vars::TIDB_DDL_DISK_QUOTA,
+    tidb_vars::TIDB_DDL_ENABLE_FAST_REORG,
+    tidb_vars::TIDB_DDL_REORG_MAX_WRITE_SPEED,
+    tidb_vars::TIDB_ENABLE_DIST_TASK,
+    tidb_vars::TIDB_ENABLE_MDL,
     tidb_vars::TIDB_MAX_DIST_TASK_NODES,
 };
+
+/// Direct Go `pkg/sessionctx/vardef` returns may be ignored without adding a
+/// Rust-only discarded-return diagnostic.
+#[test]
+#[deny(unused_must_use)]
+fn direct_vardef_source_returns_may_be_ignored() {
+    plan_replayer_file_retention_time();
+    is_mdl_enabled(false);
+    is_read_only_var_in_next_gen("ordinary_variable");
+    tidb_opt_enable_clustered("INT_ONLY");
+    ExchangeCompressionMode::FAST.name();
+    ExchangeCompressionMode::FAST.to_tipb_compression_value();
+}
 
 struct RestoreMdl(bool);
 

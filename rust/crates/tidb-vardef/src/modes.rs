@@ -38,7 +38,6 @@ impl ClusteredIndexDefMode {
 /// Go `TiDBOptEnableClustered`: converts a `tidb_enable_clustered_index` option
 /// string to a [`ClusteredIndexDefMode`]. Any value other than `"ON"`/`"OFF"`
 /// (the Go `On`/`Off` constants) falls back to int-only.
-#[must_use]
 pub fn tidb_opt_enable_clustered(opt: &str) -> ClusteredIndexDefMode {
     match opt {
         _ if opt == ON => ClusteredIndexDefMode::ON,
@@ -82,7 +81,6 @@ impl ExchangeCompressionMode {
     /// which maps any non-NONE/FAST/HC value to `NONE`; the proto names are
     /// inlined here (verified against `tipb.CompressionMode_name`) so this crate
     /// needs no dependency on the not-yet-ported proto stack.
-    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::UNSPECIFIED => Self::UNSPECIFIED_NAME,
@@ -94,7 +92,6 @@ impl ExchangeCompressionMode {
 
     /// Go `(ExchangeCompressionMode).ToTipbCompressionMode`, returning the
     /// `tipb.CompressionMode` integer value (NONE for anything but FAST/HC).
-    #[must_use]
     pub fn to_tipb_compression_value(self) -> i32 {
         match self {
             Self::FAST => 1,

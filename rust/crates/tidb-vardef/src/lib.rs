@@ -136,7 +136,6 @@ pub fn set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(value: f64) {
 }
 
 /// Loads Go `vardef.GetPlanReplayerFileRetentionTime` as nanoseconds.
-#[must_use]
 pub fn plan_replayer_file_retention_time() -> i64 {
     PLAN_REPLAYER_FILE_RETENTION_TIME.load(Ordering::SeqCst)
 }
@@ -172,7 +171,6 @@ pub fn set_oom_action(value: &str) {
 ///
 /// NextGen cannot disable metadata locking; classic mode reads the mutable
 /// value changed by [`set_enable_mdl`].
-#[must_use]
 pub fn is_mdl_enabled(next_gen: bool) -> bool {
     next_gen || ENABLE_MDL.load(Ordering::SeqCst)
 }
@@ -184,7 +182,6 @@ pub fn set_enable_mdl(enabled: bool) {
 
 /// Go `IsReadOnlyVarInNextGen`: checks whether a system variable name is
 /// read-only in the next-generation kernel.
-#[must_use]
 pub fn is_read_only_var_in_next_gen(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
