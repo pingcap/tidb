@@ -1,6 +1,8 @@
 # `pkg/util/cdcutil` — Go-master parity audit receipt
 
-Go authority: `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
+Original full-audit Go authority: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec`. The corrective return-contract
+follow-up below refreshes the authority to `c767f6fd8c01e9dcb459767611c0c1d4110d210d`.
 
 ## Complete inventory
 
@@ -55,3 +57,41 @@ failpoints, so the failpoint wrapper is not applicable.
   access shape is unchanged.
 - Not verified locally: a live production PD-etcd adapter; the package-level
   source matrix and ordinary Rust boundary cover the implemented logic.
+
+## 2026-09-07 corrective return-contract follow-up
+
+Current Go master `c767f6fd8c01e9dcb459767611c0c1d4110d210d`
+was read package-completely before the Rust edit. The inventory remains exactly
+four artifacts and 489 lines: `cdc.go` (265), `cdc_test.go` (167),
+`export_for_test.go` (27), and `BUILD.bazel` (30). The full production surface
+includes both key versions, the three key constants, changefeed key builders,
+the etcd client loader/checkpoint/filter pipeline, `CDCNameSet` save/query/
+message methods, and the two exported changefeed queries. The test surface is
+one top-level embedded-etcd test plus its two helpers and the test-only
+flattened-name accessor. There is still no `doc.go`, `TestMain`, fixture,
+testdata, benchmark/fuzz target, example, generated/platform/build-tag
+variant, nested package, or other build input. All four files are byte-identical
+to current Go master.
+
+The complete 17-artifact, 11,721-line pre-edit `tidb-domain` crate and all
+references to its self-contained `cdcutil.rs` owner were inventoried. Existing
+behavior remains unchanged: legacy/namespaced key parsing, cluster validation,
+state/checkpoint fallback, invalid-TS filtering, grouping, and user-message
+formatting. This follow-up removes only the Rust-exclusive `#[must_use]`
+diagnostics from `CDCNameSet::is_empty` and `CDCNameSet::message_to_user`, the
+direct counterparts of Go's discardable `Empty` and `MessageToUser` methods.
+
+The focused `#[deny(unused_must_use)]` regression failed before the fix with
+exactly two unused-return diagnostics and passes after it. Ready evidence:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-domain --lib cdcutil::tests::cdc_name_set_returns_may_be_ignored_like_go -- --exact --nocapture` — failed before the fix with exactly two diagnostics, then passed 1/1.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-domain --lib -- --test-threads=1` — passed 160/160.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-domain --all-targets` — passed with pre-existing warnings.
+- `rustfmt +nightly-2026-08-22 --edition 2021 --check rust/crates/tidb-domain/src/cdcutil.rs` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed.
+- `git diff --check` — passed.
+
+This is Rust/testport-only work. No Go source, Go import, Go test, Bazel file,
+or module dependency changed, so `make bazel_prepare` is not required. The Go
+embedded-etcd test has no TiDB failpoints, so the failpoint wrapper is not
+applicable.

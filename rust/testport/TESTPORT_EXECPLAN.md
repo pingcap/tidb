@@ -9400,6 +9400,17 @@ risks without claiming repository-wide parity.
   before the fix with exactly four diagnostics and passes after; all 159 owner
   tests and all affected all-target checks pass. Evidence is recorded in
   `receipts/util_domainutil.md`.
+- 2026-09-07 (`pkg/util/cdcutil` name-set return contracts): current Go master
+  `c767f6fd8c01` was re-read as the complete four-artifact, 489-line package,
+  including its production pipeline, embedded-etcd test/helpers, test export,
+  Bazel target, and the absence of all other variant/fixture surfaces. The
+  complete 17-artifact, 11,721-line pre-edit `tidb-domain` crate and all
+  `cdcutil` references were inventoried. `CDCNameSet::is_empty` and
+  `CDCNameSet::message_to_user` no longer impose Rust-only `#[must_use]`
+  diagnostics; CDC parsing, filtering, grouping, and formatting behavior are
+  unchanged. The focused regression failed before the fix with exactly two
+  diagnostics and passes after; all 160 owner tests and the owner all-target
+  check pass. Evidence is recorded in `receipts/util_cdcutil.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

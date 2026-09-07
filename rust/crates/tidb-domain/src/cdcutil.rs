@@ -112,13 +112,11 @@ impl CDCNameSet {
     }
 
     /// Returns true when no changefeed is stored.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.changefeeds.is_empty()
     }
 
     /// Converts the set to TiDB's user-facing message.
-    #[must_use]
     pub fn message_to_user(&self) -> String {
         let mut output = "found CDC changefeed(s): ".to_owned();
         for (cluster_namespace, changefeeds) in &self.changefeeds {
@@ -399,5 +397,13 @@ mod tests {
                 "default/default/st-ok"
             ]
         );
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn cdc_name_set_returns_may_be_ignored_like_go() {
+        let names = CDCNameSet::default();
+        names.is_empty();
+        names.message_to_user();
     }
 }
