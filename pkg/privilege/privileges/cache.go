@@ -1741,7 +1741,8 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	var gs []string //nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false
-	account := formatAccountName(user, host)
+	sqlMode := ctx.GetSessionVars().SQLMode
+	account := formatAccountName(user, host, sqlMode)
 	// Some privileges may granted from role inheritance.
 	// We should find these inheritance relationship.
 	allRoles := p.FindAllUserEffectiveRoles(user, host, roles)
@@ -1813,7 +1814,6 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		return true
 	})
 
-	sqlMode := ctx.GetSessionVars().SQLMode
 	for dbName, priv := range dbPrivTable {
 		dbName = stringutil.Escape(dbName, sqlMode)
 		g := dbPrivToString(priv)
@@ -1902,7 +1902,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	if ok {
 		sortedRes := make([]string, 0, 10)
 		for k := range edgeTable.roleList {
-			tmp := formatAccountName(k.Username, k.Hostname)
+			tmp := formatAccountName(k.Username, k.Hostname, sqlMode)
 			sortedRes = append(sortedRes, tmp)
 		}
 		slices.Sort(sortedRes)
@@ -1967,8 +1967,8 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	return gs
 }
 
-func formatAccountName(user, host string) string {
-	return stringutil.Escape(user, mysql.ModeNone) + "@" + stringutil.Escape(host, mysql.ModeNone)
+func formatAccountName(user, host string, sqlMode mysql.SQLMode) string {
+	return stringutil.Escape(user, sqlMode) + "@" + stringutil.Escape(host, sqlMode)
 }
 
 type columnStr = string

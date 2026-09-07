@@ -582,6 +582,12 @@ func TestShowCreateUser(t *testing.T) {
 	tk.MustQuery("SHOW CREATE USER 'test`show'@'%'").
 		Check(testkit.Rows("CREATE USER `test``show`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
+	tk.MustExec(`CREATE USER 'test"show'@'%'`)
+	tk.MustExec("SET SQL_MODE='ANSI_QUOTES'")
+	tk.MustQuery(`SHOW CREATE USER 'test"show'@'%'`).
+		Check(testkit.Rows(`CREATE USER "test""show"@"%" IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT`))
+	tk.MustExec("SET SQL_MODE=DEFAULT")
+
 	// Case: the user exists but the host portion doesn't match
 	err := tk.QueryToErr("show create user 'test_show_create_user'@'asdf';")
 	require.Equal(t, exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'test_show_create_user'@'asdf'").Error(), err.Error())

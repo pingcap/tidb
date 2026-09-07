@@ -2236,8 +2236,8 @@ func TestShowGrantsSQLMode(t *testing.T) {
 
 	ctx.GetSessionVars().SQLMode = mysql.SetSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeANSIQuotes)
 	testShowGrantsSQLMode(t, tk, []string{
-		"GRANT USAGE ON *.* TO `show_sql_mode`@`localhost`",
-		"GRANT SELECT ON \"test\".* TO `show_sql_mode`@`localhost`",
+		"GRANT USAGE ON *.* TO \"show_sql_mode\"@\"localhost\"",
+		"GRANT SELECT ON \"test\".* TO \"show_sql_mode\"@\"localhost\"",
 	})
 }
 
