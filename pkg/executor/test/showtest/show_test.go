@@ -592,10 +592,10 @@ func TestShowCreateUser(t *testing.T) {
 
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, nil, nil)
 	tk.MustQuery("show create user current_user").
-		Check(testkit.Rows("CREATE USER `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
+		Check(testkit.Rows("CREATE USER `root`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
 	tk.MustQuery("show create user current_user()").
-		Check(testkit.Rows("CREATE USER `root`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
+		Check(testkit.Rows("CREATE USER `root`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
 	tk.MustExec("create user 'check_priv'")
 
@@ -608,7 +608,7 @@ func TestShowCreateUser(t *testing.T) {
 
 	// "show create user" for current user doesn't check privileges.
 	tk1.MustQuery("show create user current_user").
-		Check(testkit.Rows("CREATE USER `check_priv`@`127.0.0.1` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
+		Check(testkit.Rows("CREATE USER `check_priv`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"))
 
 	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`.
 	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' BY 'temp_passwd'")

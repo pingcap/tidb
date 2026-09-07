@@ -1984,8 +1984,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
 	}
 
-	account := stringutil.Escape(e.User.Username, mysql.ModeNone) + "@" +
-		stringutil.Escape(e.User.Hostname, mysql.ModeNone)
+	account := stringutil.Escape(userName, mysql.ModeNone) + "@" +
+		stringutil.Escape(hostName, mysql.ModeNone)
 	showStr := fmt.Sprintf("CREATE USER %s IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
 		account, authPlugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
