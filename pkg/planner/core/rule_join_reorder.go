@@ -222,6 +222,7 @@ type joinTypeWithExtMsg struct {
 	outerBindCondition []expression.Expression
 }
 
+<<<<<<< HEAD
 func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
@@ -230,6 +231,16 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logi
 	tracer.traceJoinReorder(p)
 	appendJoinReorderTraceStep(tracer, p, opt)
 	return p, planChanged, err
+=======
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
+	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder {
+		p, err := joinorder.Optimize(p)
+		return p, false, err
+	}
+	p, err := s.optimizeRecursive(p.SCtx(), p)
+	return p, false, err
+>>>>>>> 20b231fac20 (planner: enable cd-c algorithm by default for join reorder (#66349))
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
