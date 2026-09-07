@@ -25,7 +25,6 @@ pub const WRITE_CF_NAME: &str = "write";
 pub const DEFAULT_CF_NAME: &str = "default";
 
 /// Go `GetPartitionIDMap`: maps old physical ID to new physical ID.
-#[must_use]
 pub fn get_partition_id_map(new_table: &TableInfo, old_table: &TableInfo) -> BTreeMap<i64, i64> {
     let mut table_id_map = BTreeMap::new();
 
@@ -58,7 +57,6 @@ pub fn get_partition_id_map(new_table: &TableInfo, old_table: &TableInfo) -> BTr
 }
 
 /// Go `GetTableIDMap`: maps old table ID to new table ID, partitions included.
-#[must_use]
 pub fn get_table_id_map(new_table: &TableInfo, old_table: &TableInfo) -> BTreeMap<i64, i64> {
     let mut table_id_map = get_partition_id_map(new_table, old_table);
     table_id_map.insert(old_table.id, new_table.id);
@@ -66,7 +64,6 @@ pub fn get_table_id_map(new_table: &TableInfo, old_table: &TableInfo) -> BTreeMa
 }
 
 /// Go `GetIndexIDMap`: maps old index ID to new index ID by index name.
-#[must_use]
 pub fn get_index_id_map(new_table: &TableInfo, old_table: &TableInfo) -> BTreeMap<i64, i64> {
     let mut index_id_map = BTreeMap::new();
     for src_index in old_table.indices.iter_deref() {
@@ -81,7 +78,6 @@ pub fn get_index_id_map(new_table: &TableInfo, old_table: &TableInfo) -> BTreeMa
 }
 
 /// Go `TruncateTS`: drops the trailing eight-byte commit timestamp.
-#[must_use]
 pub fn truncate_ts(key: &[u8]) -> &[u8] {
     if key.is_empty() {
         return &[];
@@ -95,7 +91,6 @@ pub fn truncate_ts(key: &[u8]) -> &[u8] {
 /// Go `EncodeKeyPrefix`: mem-comparable-encodes the whole eight-byte groups of
 /// `key` and appends the ungrouped tail raw, so the result stays a valid
 /// *prefix* of the encoding of any key starting with `key`.
-#[must_use]
 pub fn encode_key_prefix(key: &[u8]) -> Vec<u8> {
     let mut encoded_prefix = Vec::new();
     let ungrouped_len = key.len() % 8;
