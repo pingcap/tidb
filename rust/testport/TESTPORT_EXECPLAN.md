@@ -11120,3 +11120,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (UNIX round-trip pin): unix_timestamp(from_unixtime(n)) is
   exact in any session zone; EXTRACT and the ADDDATE/SUBDATE aliases.
   Pinned in `crates/tidb-session/tests/unix_round_trip_source.rs`.
+- 2026-09-06 (conditional aggregation pin): CASE inside SUM pivots signs
+  per group (NULL rows hit ELSE) and CASE-inside-COUNT skips NULL else
+  rows. Pinned in
+  `crates/tidb-session/tests/conditional_aggregation_source.rs`.
