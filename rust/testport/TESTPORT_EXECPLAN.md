@@ -10274,3 +10274,8 @@ risks without claiming repository-wide parity.
   with Go's 1582 (Go's arity is exactly 1). Pinned in
   `crates/tidb-session/tests/sequence_lastval_setval_source.rs`. (An
   earlier "NULL return" suspicion was a double-execution probe artifact.)
+- 2026-09-06 (named CHECK lifecycle pin): the given name appears in
+  refusals; NOT ENFORCED disables; re-ENFORCING validates existing rows
+  (3819 on violations) and succeeds once the data is clean; DROP CHECK
+  removes the constraint. Pinned in
+  `crates/tidb-session/tests/named_check_lifecycle_source.rs`.
