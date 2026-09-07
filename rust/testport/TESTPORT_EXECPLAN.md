@@ -10172,3 +10172,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (unique NULL semantics pin): two NULLs coexist under a UNIQUE
   index while a concrete duplicate fails with Go's entry/key text. Pinned
   in `crates/tidb-session/tests/unique_null_semantics_source.rs`.
+- 2026-09-06 (NULL order/group pin): NULLs sort first ascending and last
+  descending, and GROUP BY folds them into one bucket (count 2). Pinned in
+  `crates/tidb-session/tests/null_order_group_source.rs`.
