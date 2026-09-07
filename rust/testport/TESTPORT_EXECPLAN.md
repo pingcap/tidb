@@ -11127,3 +11127,11 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (GROUP_CONCAT ORDER/DISTINCT pin): inner ORDER BY sorts each
   group, DISTINCT dedupes before ordering, and SEPARATOR is verbatim.
   Pinned in `crates/tidb-session/tests/group_concat_order_source.rs`.
+- 2026-09-06 (MIN/MAX strings pin): lexicographic MIN/MAX with NULLs
+  ignored and empty-string ordering. Pinned in
+  `crates/tidb-session/tests/min_max_string_source.rs`.
+  Parallel-HashAgg note EXTENDED: the recorded expression-group panic now
+  also reproduces for a SCALAR `variance(v)` / `std(v)` (parallel.rs:1404,
+  `self.truncated` empty at finish time — the field is sized from the
+  constructor's agg_funcs but the parallel finish indexes the PIPELINE
+  plan's function list). Still queued behind the shared parallel region.
