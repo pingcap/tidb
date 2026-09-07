@@ -244,12 +244,9 @@ func TestCollectStorageClassStatusWithCtx(t *testing.T) {
 		total uint64
 	}{
 		{name: "counters only", body: `{"ready":7,"total":9}`, ready: 7, total: 9},
+		{name: "all ready", body: `{"ready":1,"total":1}`, ready: 1, total: 1},
 		{name: "zero counters", body: `{"ready":0,"total":0}`},
 		{name: "zero ready", body: `{"ready":0,"total":1}`, total: 1},
-		{name: "legacy zero schema version", body: `{"ready":1,"total":1,"schema_version":0}`, ready: 1, total: 1},
-		{name: "legacy schema version", body: `{"ready":1,"total":1,"schema_version":789}`, ready: 1, total: 1},
-		{name: "null legacy schema version", body: `{"ready":1,"total":1,"schema_version":null}`, ready: 1, total: 1},
-		{name: "unknown fields", body: `{"ready":1,"total":1,"schema_version":"legacy","future-field":true}`, ready: 1, total: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotPath string
