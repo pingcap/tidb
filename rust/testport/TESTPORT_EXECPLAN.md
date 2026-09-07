@@ -10951,3 +10951,7 @@ risks without claiming repository-wide parity.
   with Go's exact texts (planbuilder.go:4123, ErrNonUpdatableTable 1288,
   logical_plan_builder.go:6626). Pinned in
   `crates/tidb-session/tests/dml_on_view_refusal_source.rs`.
+- 2026-09-06 (ALTER SEQUENCE pin): ALTER SEQUENCE INCREMENT BY applies the
+  new step to subsequent NEXTVAL draws (asserted as consecutive spacing;
+  the absolute first value is cache-block dependent). Pinned in
+  `crates/tidb-session/tests/alter_sequence_increment_source.rs`.
