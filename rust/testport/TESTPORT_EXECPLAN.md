@@ -11159,3 +11159,6 @@ risks without claiming repository-wide parity.
   "abc" reference vectors, CRC-32's standard check value, and NULL
   propagation. Pinned in
   `crates/tidb-session/tests/hash_family_source.rs`.
+- 2026-09-06 (base conversion pin): CONV cross-base translation, BIN/OCT
+  projections, and the RFC 4648 TO_BASE64/FROM_BASE64 round trip. Pinned
+  in `crates/tidb-session/tests/base_conversion_source.rs`.
