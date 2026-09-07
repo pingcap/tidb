@@ -10127,3 +10127,8 @@ risks without claiming repository-wide parity.
   dash-separated "Duplicate entry '1-x' for key 't.PRIMARY'"; a conflict-free
   REPLACE counts 1 (plain insert accounting). Pinned in
   `crates/tidb-session/tests/composite_key_shapes_source.rs`.
+- 2026-09-06 (BIT write + partition-qualified UPDATE pins): BIT(3) stores
+  b'101' as 5 and refuses 8 with "Data too long" (convertToMysqlBit);
+  `update t partition (p0)` moves only p0's rows (the named-partition fix
+  inherited through UPDATE). Pinned in
+  `crates/tidb-session/tests/bit_write_partition_update_source.rs`.
