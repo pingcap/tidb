@@ -203,3 +203,62 @@ id	task	access object	operator info
 IndexReader	root		index:Selection
 └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t.uuid, "7dce58ba-ba84-4297-94cf-c23cf3a39ed3")
   └─IndexRangeScan	cop[tikv]	table:t, index:idx_uuid(uuid)	range:["7dce58ba-ba84-4297-94cf-c23cf3a39ed3","7dce58ba-ba84-4297-94cf-c23cf3a39ed3"], keep order:false, stats:pseudo
+drop table if exists t_latin1;
+create table t_latin1 (c varchar(10) charset latin1);
+show create table t_latin1;
+Table	Create Table
+t_latin1	CREATE TABLE `t_latin1` (
+  `c` varchar(10) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t_latin1;
+create table t_latin1 (c varchar(10) charset latin1 collate latin1_swedish_ci, key(c));
+show create table t_latin1;
+Table	Create Table
+t_latin1	CREATE TABLE `t_latin1` (
+  `c` varchar(10) CHARACTER SET latin1 COLLATE latin1_swedish_ci DEFAULT NULL,
+  KEY `c` (`c`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert into t_latin1 values (_latin1 0x61), (_latin1 0x41), (_latin1 0xC4), (_latin1 0xE4), (_latin1 0xD6);
+select hex(c) from t_latin1 where c = _latin1 0x41 order by hex(c);
+hex(c)
+41
+select hex(c) from t_latin1 where c = _latin1 0xC4 order by hex(c);
+hex(c)
+C4
+select hex(c) from t_latin1 where c = _latin1 0xD6 order by hex(c);
+hex(c)
+D6
+select hex(c) from t_latin1 order by c, hex(c);
+hex(c)
+41
+61
+C4
+D6
+E4
+select hex(c) from t_latin1 where c like _latin1 0x41 order by hex(c);
+hex(c)
+41
+select count(distinct c) from t_latin1;
+count(distinct c)
+5
+drop table if exists t_latin1;
+drop table if exists t_latin1_pos;
+create table t_latin1_pos (c_bin varchar(10) charset latin1 collate latin1_bin, c_ci varchar(10) charset latin1 collate latin1_swedish_ci);
+insert into t_latin1_pos values (_latin1 0xC3A978, _latin1 0xC3A978), (_latin1 0x61C462, _latin1 0x61C462);
+select hex(c_bin), locate(_latin1 0x78, c_bin), locate(_latin1 0x78, c_ci) from t_latin1_pos order by hex(c_bin);
+hex(c_bin)	locate(_latin1 0x78, c_bin)	locate(_latin1 0x78, c_ci)
+61C462	0	0
+C3A978	3	3
+select hex(c_bin), instr(c_bin, _latin1 0x78), instr(c_ci, _latin1 0x78) from t_latin1_pos order by hex(c_bin);
+hex(c_bin)	instr(c_bin, _latin1 0x78)	instr(c_ci, _latin1 0x78)
+61C462	0	0
+C3A978	3	3
+select hex(c_bin), locate(_latin1 0x58, c_bin), locate(_latin1 0x58, c_ci) from t_latin1_pos order by hex(c_bin);
+hex(c_bin)	locate(_latin1 0x58, c_bin)	locate(_latin1 0x58, c_ci)
+61C462	0	0
+C3A978	0	0
+select hex(c_bin), locate(_latin1 0xE4, c_bin), locate(_latin1 0xE4, c_ci) from t_latin1_pos order by hex(c_bin);
+hex(c_bin)	locate(_latin1 0xE4, c_bin)	locate(_latin1 0xE4, c_ci)
+61C462	0	0
+C3A978	0	0
+drop table if exists t_latin1_pos;

@@ -96,8 +96,19 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	return nil
 }
 
+// collationBlocksPushDown reports whether ft is collated with something the storage
+// layer cannot evaluate, so the expression has to be computed in TiDB. See
+// collate.SupportedByStorage for why this must be checked here rather than left to
+// the storage layer to reject.
+func collationBlocksPushDown(ft *types.FieldType) bool {
+	return !collate.SupportedByStorage(ft.GetCollate())
+}
+
 func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType(pc.ctx)
+	if collationBlocksPushDown(ft) {
+		return nil
+	}
 	d, err := expr.Eval(pc.ctx, chunk.Row{})
 	if err != nil {
 		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo(pc.ctx)), zap.Error(err))
@@ -227,6 +238,12 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
+	// Checked regardless of checkType: a projection pushes bare columns down without
+	// type checks, and the storage layer would still read the collation off the field
+	// type it is handed.
+	if collationBlocksPushDown(column.GetType(pc.ctx)) {
+		return nil
+	}
 	if checkType {
 		switch column.GetType(pc.ctx).GetType() {
 		case mysql.TypeBit:
@@ -261,6 +278,12 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
+	// The arguments are checked by the recursive ExprToPB calls below, but a function
+	// can be collated with something its arguments are not, for example an explicit
+	// COLLATE on a cast.
+	if collationBlocksPushDown(expr.RetType) {
+		return nil
+	}
 	// Check whether this function has ProtoBuf signature.
 	pbCode := expr.Function.PbCode()
 	if pbCode <= tipb.ScalarFuncSig_Unspecified {
