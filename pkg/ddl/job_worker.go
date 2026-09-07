@@ -658,7 +658,20 @@ func (w *worker) transitOneJobStep(
 	}()
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
+	restoreStorageClassTransitionStep := checkpointStorageClassTransitionStep(w.sess, txn, job)
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
+	if restoreStorageClassTransitionStep != nil {
+		var stagingErr *storageClassTransitionStagingError
+		if goerrors.As(runJobErr, &stagingErr) {
+			// History SQL can release earlier TableInfo and history writes from
+			// the statement buffer, so Reset alone cannot discard this step.
+			restoreStorageClassTransitionStep()
+			schemaVer = 0
+			// Preserve the saved raw arguments, not decoded args mutated by a
+			// sub-job whose metadata changes were just rolled back.
+			updateRawArgs = false
+		}
+	}
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 

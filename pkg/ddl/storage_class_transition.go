@@ -373,6 +373,9 @@ func insertRunningStorageClassTransition(
 		partitionName = operation.PartitionName
 		partitionID = operation.PartitionID
 	}
+	failpoint.Inject("mockInsertStorageClassTransitionError", func() {
+		failpoint.Return(errors.New("injected storage class transition history insertion failure"))
+	})
 	_, err = se.Execute(ctx,
 		`INSERT INTO mysql.tidb_storage_class_transition_history
 		 (table_schema, table_name, table_id, partition_name, partition_id, direction, state,
