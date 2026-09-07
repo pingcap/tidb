@@ -55,7 +55,7 @@ type DeleteExec struct {
 	ignoreErr bool
 }
 
-func addDeleteRowsColMultiply(total, delta int64) int64 {
+func addDMLRowsColMultiply(total, delta int64) int64 {
 	if delta <= 0 || total == math.MaxInt64 {
 		return total
 	}
@@ -168,7 +168,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			rowsColMultiply = addDeleteRowsColMultiply(rowsColMultiply, int64(columnCount))
+			rowsColMultiply = addDMLRowsColMultiply(rowsColMultiply, int64(columnCount))
 			rowCount++
 			datumRow = datumRow[:0]
 		}
@@ -286,7 +286,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 			if err != nil {
 				return false
 			}
-			rowsColMultiply = addDeleteRowsColMultiply(rowsColMultiply, int64(len(val.handleVal)))
+			rowsColMultiply = addDMLRowsColMultiply(rowsColMultiply, int64(len(val.handleVal)))
 			return true
 		})
 		if err != nil {
