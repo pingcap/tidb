@@ -396,15 +396,14 @@ func TestGcTTLManagerSingle(t *testing.T) {
 	defer func() {
 		serviceSafePointTTL = oldTTL
 	}()
+	defer manager.close()
 
 	err := manager.addOneJob(ctx, "test", uint64(time.Now().Unix()))
 	require.NoError(t, err)
 
-	time.Sleep(2*time.Second + 10*time.Millisecond)
-
-	// after 2 seconds, must at least update 5 times
-	val := pdClient.count.Load()
-	require.GreaterOrEqual(t, val, int32(5))
+	require.Eventually(t, func() bool {
+		return pdClient.count.Load() >= 5
+	}, 3*time.Second, 10*time.Millisecond)
 
 	// after remove the job, there are no job remain, gc ttl needn't to be updated
 	manager.removeOneJob("test")
