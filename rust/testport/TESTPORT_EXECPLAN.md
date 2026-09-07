@@ -10685,3 +10685,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (SHOW CREATE quoting pin): mixed-case and reserved-word column
   names round-trip backquoted through SHOW CREATE TABLE. Pinned in
   `crates/tidb-session/tests/show_create_quoting_source.rs`.
+- 2026-09-06 (partition-qualified DELETE pin): `delete from t partition
+  (p0) where a >= 1` removes only p0's rows — the qualifier restricts the
+  read and the p1 rows survive. Pinned in
+  `crates/tidb-session/tests/partition_qualified_delete_source.rs`.
