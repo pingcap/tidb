@@ -10612,3 +10612,9 @@ risks without claiming repository-wide parity.
   session dispatch for it. Queued as a parser+session feature (both files
   sibling-owned); the homogeneous forms (`set @x = 42` and mixed
   `set @x = 42, @y = 43`) already work and are pinned.
+- 2026-09-06 (idempotent DDL pin): DROP DATABASE IF EXISTS on a missing
+  database is a no-op; ADD COLUMN IF NOT EXISTS adds once and no-ops after.
+  Minor record: ADD COLUMN ... AFTER <missing> answers a DROP-shaped text
+  ("Can't DROP 'nope'...") where Go's ADD-time resolution would answer 1054
+  "Unknown column" — low-priority text nuance. Pinned in
+  `crates/tidb-session/tests/idempotent_ddl_source.rs`.
