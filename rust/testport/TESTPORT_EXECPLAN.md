@@ -10252,3 +10252,7 @@ risks without claiming repository-wide parity.
   charsets incl. utf8mb4) and SHOW COLLATION (utf8mb4_bin) list their
   entries; DISTINCT dedups with ORDER BY; constant SELECTs work without
   FROM. Pinned in `crates/tidb-session/tests/show_charset_distinct_source.rs`.
+- 2026-09-06 (HASH row-movement pin): an UPDATE moving a row across a HASH
+  bucket (`4` -> `5`, p1 -> p2) relocates it; the old partition stops
+  answering. Pinned in
+  `crates/tidb-session/tests/hash_row_movement_source.rs`.
