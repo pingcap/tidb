@@ -229,9 +229,57 @@ pub fn go_to_lower(input: impl AsRef<str>) -> String {
         .collect()
 }
 
+/// Go `strings.ToUpper`: the per-rune SIMPLE uppercase mapping
+/// (`unicode.ToUpper`). Rust's full uppercase expands 102 code points
+/// to multiple characters (`ß` -> `SS`, the Latin and Armenian
+/// ligatures, the Greek iota-subscript vowels); Go's simple table
+/// leaves the ligatures and `ß` unchanged and folds the 27 Greek
+/// iota-subscript forms to their dropped-subscript vowel.
+pub fn go_to_upper(input: impl AsRef<str>) -> String {
+    input
+        .as_ref()
+        .chars()
+        .map(|character| {
+            let mut lowered = character.to_uppercase();
+            let first = lowered.next().unwrap_or(character);
+            if lowered.next().is_some() {
+                // Go's simple table for the multi-character expansions.
+                return match character as u32 {
+                    0x1F80..=0x1F87 | 0x1F90..=0x1F97 | 0x1FA0..=0x1FA7 => {
+                        char::from_u32(character as u32 + 8)
+                            .expect("iota-subscript block maps inside Unicode")
+                    }
+                    0x1FB3 => '\u{1FBC}',
+                    0x1FC3 => '\u{1FCC}',
+                    0x1FF3 => '\u{1FFC}',
+                    // `ß`, `ŉ`, and the ligatures: Go leaves them alone.
+                    _ => character,
+                };
+            }
+            first
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod case_tests {
-    use super::go_to_lower;
+    use super::{go_to_lower, go_to_upper};
+
+    #[test]
+    fn go_to_upper_matches_go_simple_mapping() {
+        // `straße` stays `STRAßE` (TiDB's captured behavior): the full
+        // uppercase of `ß` would be "SS".
+        assert_eq!(go_to_upper("stra\u{00DF}e"), "STRA\u{00DF}E");
+        assert_ne!("stra\u{00DF}e".to_uppercase(), "STRA\u{00DF}E");
+        // The Greek iota-subscript vowels take Go's dropped-subscript
+        // simple form, NOT the identity and NOT the multi-char expansion.
+        assert_eq!(go_to_upper("\u{1FA4}"), "\u{1FAC}");
+        assert_ne!("\u{1FA4}".to_uppercase(), "\u{1FAC}");
+        assert_eq!(go_to_upper("\u{1FB3}"), "\u{1FBC}");
+        // ASCII and already-uppercase text pass through.
+        assert_eq!(go_to_upper("aBc_01"), "ABC_01");
+        assert_eq!(go_to_upper("中文"), "中文");
+    }
 
     #[test]
     fn go_to_lower_matches_go_simple_mapping() {

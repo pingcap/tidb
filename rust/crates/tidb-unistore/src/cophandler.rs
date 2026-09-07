@@ -38,7 +38,7 @@ use tidb_proto::tipb;
 use tidb_codec::table_key::RecordHandle;
 
 use crate::mvcc_store::MvccStore;
-use tidb_hack::go_to_lower;
+use tidb_hack::{go_to_lower, go_to_upper};
 
 /// Go `kv.ReqTypeDAG` / `ReqTypeAnalyze` / `ReqTypeChecksum`
 /// (`pkg/kv/kv.go:375-377`).
@@ -3855,7 +3855,7 @@ fn eval_bytes(
                         .iter()
                         .map(|c| (*c as u8).to_ascii_lowercase() as char)
                         .collect(),
-                    SimpleSig::UpperUtf8 => units.iter().collect::<String>().to_uppercase(),
+                    SimpleSig::UpperUtf8 => go_to_upper(units.iter().collect::<String>()),
                     _ => units
                         .iter()
                         .map(|c| (*c as u8).to_ascii_uppercase() as char)

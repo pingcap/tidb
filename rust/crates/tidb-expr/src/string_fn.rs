@@ -24,7 +24,7 @@ use crate::{Datum, EvalError};
 use tidb_datatype::{
     find_encoding, get_default_collation, Collation, FieldType, GoString, TransformOp,
 };
-use tidb_hack::go_to_lower;
+use tidb_hack::{go_to_lower, go_to_upper};
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
 pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
@@ -91,39 +91,23 @@ pub(crate) fn case_convert(vals: &[Datum], upper: bool) -> Result<Datum, EvalErr
     }
 }
 
-/// Go's case mapping, which is SIMPLE (one rune in, one rune out) where
-/// Rust's is FULL.
-///
 /// TiDB maps case with `strings.ToUpper`/`ToLower`
-/// (`parser/charset/encoding_base.go`), and those walk the string applying
-/// `unicode.ToUpper`/`ToLower` per rune -- a table lookup that has no entry
-/// for a rune whose uppercase needs more than one rune, so it is left alone.
-/// Rust's `str::to_uppercase` applies the FULL mapping instead, which expands
-/// such runes.
+/// (`parser/charset/encoding_base.go`), which walk the string applying the
+/// SIMPLE per-rune mappings `unicode.ToUpper`/`ToLower`. Rust's
+/// `str::to_uppercase`/`to_lowercase` apply the FULL mappings instead,
+/// which diverge on 103 code points: `ß` expands to "SS", the ligatures
+/// (ﬁ, ﬄ) and Turkish `İ` grow extra characters, and the 27 Greek
+/// iota-subscript vowels change to a DIFFERENT single vowel
+/// (U+1FA4 -> U+1FAC) rather than expanding.
 ///
-/// The visible difference: `upper('straße')` is `STRAßE` in TiDB and was
-/// `STRASSE` here, because U+00DF's full uppercase is the two-char "SS" while
-/// its simple uppercase is itself. The same split covers the ligatures
-/// (`ﬁ`, `ﬄ`) and the other multi-char expansions.
-///
-/// Taking the full mapping only when it produces exactly one char IS the
-/// simple mapping for these runes: a rune whose full and simple mappings
-/// agree yields one char, and a rune that would expand is the one Go leaves
-/// unchanged.
+/// `tidb_hack::go_to_upper`/`go_to_lower` reproduce Go's simple tables
+/// exactly; see their docs for the per-code-point argument.
 fn go_simple_case(text: &str, upper: bool) -> String {
-    text.chars()
-        .map(|source| {
-            let mut mapped = if upper {
-                source.to_uppercase().collect::<Vec<_>>()
-            } else {
-                go_to_lower(source.to_string()).chars().collect::<Vec<_>>()
-            };
-            match mapped.len() {
-                1 => mapped.remove(0),
-                _ => source,
-            }
-        })
-        .collect()
+    if upper {
+        go_to_upper(text)
+    } else {
+        go_to_lower(text)
+    }
 }
 
 #[cfg(test)]
