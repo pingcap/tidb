@@ -2032,13 +2032,7 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
         crate::tests_support::row_text(session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2)"));
     let shape: Vec<(String, String, String)> = plain
         .iter()
-        .map(|row| {
-            (
-                without_plan_id(&row[0]),
-                row[1].clone(),
-                row[3].clone(),
-            )
-        })
+        .map(|row| (without_plan_id(&row[0]), row[1].clone(), row[3].clone()))
         .collect();
     assert_eq!(
         shape,
@@ -2073,9 +2067,7 @@ fn a_residual_conjunct_keeps_the_static_per_partition_batch_point_get() {
         .skip(1)
         .map(|row| {
             (
-                without_plan_id(
-                    &row[0].trim_start_matches([' ', '│', '├', '└', '─']),
-                ),
+                without_plan_id(&row[0].trim_start_matches([' ', '│', '├', '└', '─'])),
                 row[1].clone(),
                 row[3].clone(),
                 row[4].clone(),

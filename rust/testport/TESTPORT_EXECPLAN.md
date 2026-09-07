@@ -10755,3 +10755,7 @@ risks without claiming repository-wide parity.
   that an FK referential action needs (ON DELETE SET NULL) is refused with
   Go's exact 3823 text. Pinned in
   `crates/tidb-session/tests/check_fk_action_column_source.rs`.
+- 2026-09-06 (DROP DATABASE x CHECK pin): DROP DATABASE removes a schema
+  containing CHECK-attached tables without refusal (the constraint dies
+  with the schema). Pinned in
+  `crates/tidb-session/tests/drop_database_with_check_source.rs`.
