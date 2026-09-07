@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/soheilhy/cmux"
 )
 
@@ -61,21 +62,51 @@ func startDumplingService(tctx *tcontext.Context, addr string, d *Dumper) error 
 	return err
 }
 
-// metricsHandler serves the metrics this Dumper records, which live in the
-// registry its config names rather than the process-wide default one. Serving
-// the default registry instead - as this endpoint used to - answered every
-// scrape with the Go and process collectors and none of the dump counters,
-// because nothing ever registers those with it.
-//
-// A registry that cannot be gathered from is not an error worth failing over:
-// the endpoint falls back to the default handler so /metrics keeps answering.
+// metricsHandler serves the configured dump metrics while retaining the metric
+// families exposed by the default handler. Registerers that do not implement
+// Gatherer retain the default handler's behavior.
 func metricsHandler(d *Dumper) http.Handler {
+	gatherer := prometheus.DefaultGatherer
 	if d != nil && d.conf != nil {
-		if gatherer, ok := d.conf.PromRegistry.(prometheus.Gatherer); ok {
-			return promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{})
+		if configured, ok := d.conf.PromRegistry.(prometheus.Gatherer); ok {
+			gatherer = metricsGatherer{configured: configured, previous: gatherer}
 		}
 	}
-	return promhttp.Handler()
+	return promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer,
+		promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}))
+}
+
+type metricsGatherer struct {
+	configured prometheus.Gatherer
+	previous   prometheus.Gatherer
+}
+
+func (g metricsGatherer) Gather() ([]*dto.MetricFamily, error) {
+	configured, err := g.configured.Gather()
+	if err != nil {
+		return configured, err
+	}
+	// The CLI already installs its registry as DefaultGatherer.
+	if registry, ok := g.configured.(*prometheus.Registry); ok && registry == g.previous {
+		return configured, nil
+	}
+	previous, err := g.previous.Gather()
+	if err != nil {
+		return configured, err
+	}
+	names := make(map[string]struct{}, len(configured))
+	result := make([]*dto.MetricFamily, 0, len(configured)+len(previous))
+	result = append(result, configured...)
+	for _, family := range configured {
+		names[family.GetName()] = struct{}{}
+	}
+	// Prefer the configured family when both sources expose the same name.
+	for _, family := range previous {
+		if _, exists := names[family.GetName()]; !exists {
+			result = append(result, family)
+		}
+	}
+	return result, nil
 }
 
 // statusHandler serves the latest dump status snapshot as JSON.

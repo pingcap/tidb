@@ -19,6 +19,20 @@ const (
 	statusRefreshTick = 5 * time.Second
 )
 
+func (d *Dumper) startLogProgress(tctx *tcontext.Context) func() {
+	ctx, cancel := tctx.WithCancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.runLogProgress(ctx)
+	}()
+	return func() {
+		cancel()
+		// Publish the final snapshot before Dump returns or releases resources.
+		<-done
+	}
+}
+
 func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 	d.RefreshStatus()
 	defer d.RefreshStatus()
@@ -85,11 +99,16 @@ type DumpStatus struct {
 	ProgressPercent *float64 `json:"progressPercent,omitempty"`
 }
 
-// GetStatus returns the latest status snapshot without updating the speed recorder.
-// Callers must not modify the returned snapshot. Before the first refresh it is empty.
+// GetStatus returns an independent copy of the latest status snapshot without
+// updating the speed recorder. Before the first refresh it is empty.
 func (d *Dumper) GetStatus() *DumpStatus {
 	if status := d.status.Load(); status != nil {
-		return status
+		result := *status
+		if status.ProgressPercent != nil {
+			percent := *status.ProgressPercent
+			result.ProgressPercent = &percent
+		}
+		return &result
 	}
 	return &DumpStatus{}
 }

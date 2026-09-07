@@ -301,9 +301,8 @@ func (d *Dumper) Dump() (dumpErr error) {
 	summary.SetUnit(summary.BackupUnit)
 	defer summary.Summary(summary.BackupUnit)
 
-	logProgressCtx, logProgressCancel := tctx.WithCancel()
-	go d.runLogProgress(logProgressCtx)
-	defer logProgressCancel()
+	stopLogProgress := d.startLogProgress(tctx)
+	defer stopLogProgress()
 
 	tableDataStartTime := time.Now()
 
