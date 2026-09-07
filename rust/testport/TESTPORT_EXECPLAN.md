@@ -10648,3 +10648,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (CREATE INDEX IF NOT EXISTS pin): the standalone form creates
   once and no-ops after. Pinned in
   `crates/tidb-session/tests/create_index_if_not_exists_source.rs`.
+- 2026-09-06 (NULL-last ordering idiom pin): `order by (s is null), s`
+  sends NULL rows to the end via the boolean expression key. Pinned in
+  `crates/tidb-session/tests/null_last_order_idiom_source.rs`.
