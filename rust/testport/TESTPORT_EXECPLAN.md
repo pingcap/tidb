@@ -11283,3 +11283,12 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (UUID pin): the 8-4-4-4-12 hyphenated shape, version-1
   nibble, session-stable node block, and cross-call uniqueness. Pinned
   in `crates/tidb-session/tests/uuid_shape_source.rs`.
+- 2026-09-06 (JSON_PRETTY partial fix, recorded flaky): the builtin failed
+  with "not yet built for chunk evaluation" — fixed by adding the
+  JSON_PRETTY arm to the typed dispatch (builtin_ext/json/mod.rs) and the
+  missing name in `builtin_return_type_before_ret_tp`'s text() list
+  (rewriter/result_type.rs). REMAINING: evaluation is NONDETERMINISTIC —
+  the same statement returns the correct Go-Indent layout in some
+  processes and NULL in others (arg arrives as Null at eval time);
+  suspected hash-seed-dependent path in the argument wrapping. NOT pinned
+  (flaky); queued behind the shared JSON eval region.

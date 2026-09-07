@@ -1468,7 +1468,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "json_extract" | "json_object" | "json_array" | "json_keys" | "json_quote"
         | "json_unquote" | "json_type" | "json_set" | "json_insert" | "json_replace"
         | "json_remove" | "json_array_append" | "json_array_insert" | "json_merge"
-        | "json_merge_preserve" | "json_merge_patch" => text(),
+        | "json_merge_preserve" | "json_merge_patch" | "json_pretty" => text(),
         "json_contains"
         | "json_contains_path"
         | "json_length"

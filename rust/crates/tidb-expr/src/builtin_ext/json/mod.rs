@@ -147,6 +147,7 @@ pub(crate) fn dispatch_typed(
         ("JSON_REPLACE", 3..) => Some(json_modify(vals, arg_types, JsonModifyMode::Replace)),
         ("JSON_ARRAY_APPEND", 3..) => Some(json_array_append(vals, arg_types)),
         ("JSON_ARRAY_INSERT", 3..) => Some(json_array_insert(vals, arg_types)),
+        ("JSON_PRETTY", 1) => Some(json_pretty(&vals[0])),
         _ => None,
     }
 }
