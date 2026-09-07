@@ -462,10 +462,19 @@ func (p *PhysicalExpand) ExplainInfo() string {
 	var str strings.Builder
 	str.WriteString("group set num:")
 	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
+<<<<<<< HEAD
 	str.WriteString(", groupingID:")
 	str.WriteString(p.GroupingIDCol.StringWithCtx(perrors.RedactLogDisable))
 	str.WriteString(", ")
 	str.WriteString(p.GroupingSets.StringWithCtx(perrors.RedactLogDisable))
+=======
+	if p.GroupingIDCol != nil {
+		str.WriteString(", groupingID:")
+		str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
+		str.WriteString(", ")
+	}
+	str.WriteString(p.GroupingSets.StringWithCtx(ectx, perrors.RedactLogDisable))
+>>>>>>> a16aedeb9f1 (planner: fix expand operator shouldn't keep child keys && fix grouping function forget to encode their func meta (#62558))
 	return str.String()
 }
 
