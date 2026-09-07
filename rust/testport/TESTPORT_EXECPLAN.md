@@ -9817,3 +9817,7 @@ risks without claiming repository-wide parity.
   EXPLICIT id (5) leaves it untouched (Go only feeds the OK-packet fallback);
   the next allocation (6) moves it. Flow verified 1 -> 1 -> 6 exactly as Go;
   pinned in `tests/auto_inc_last_insert_id_flow_source.rs`.
+- 2026-09-06 (ROW_COUNT flow pin): the boundary promotion composes with the
+  affected-rows accounting -- 2-row insert -> 2, ODKU duplicate update -> 2,
+  SELECT -> -1, no-op UPDATE -> 0 (select.go:1234-1240). Pinned in
+  `tests/row_count_flow_source.rs`.
