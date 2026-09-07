@@ -717,3 +717,25 @@ The bare conditions answer their non-NULL truth. With this round every
 carried cast id but the now-anchored `CastDurationAsTime` 54 evaluates,
 and the cast matrix is closed except for refinements that need the
 wire to carry field types (target kinds, precision, union clamps).
+
+## The JSON value functions (3 ids)
+
+`JsonReplaceSig` 5006, `JsonArrayAppendSig` 5013, and
+`JsonMergePatchSig` 5015 land as value functions over the JSON
+channel -- no projection executor is needed for the coprocessor
+predicate shapes, because each answer composes wherever a JSON
+operand composes today. REPLACE applies its (path, value) pairs in
+order through Go's `jsonModify` replace mode (existing paths re-write,
+missing paths stay); ARRAY_APPEND walks its pairs, refuses wildcard
+paths, treats a missing path as a no-op, and answers NULL for a
+non-array cell (Go's array-cell error folded); MERGE_PATCH follows
+MySQL's RFC 7396 reading with any SQL NULL argument answering NULL.
+A literal NULL value operand wraps as the JSON null literal for the
+first two, matching Go's `CreateBinaryJSON(nil)`. The port rides the
+datatype crate's existing `modify`/`extract`/`merge_patch_binary_json`
+primitives and the wire's own shape: Go wraps each value operand in a
+cast at build time, so the evaluator reads JSON-typed children only.
+Bare value functions answer their non-NULL truth. With these, the
+carried-sig refusal surface is down to `CastDurationAsTime` (a
+now-anchored convert) and the session-timezone-anchored
+`UnixTimestamp*`/`FromUnixTime*` family.

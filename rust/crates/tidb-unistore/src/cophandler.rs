@@ -1914,6 +1914,16 @@ pub enum SimpleSig {
     CastJsonAsTime,
     /// See [`SimpleSig::CastJsonAsInt`].
     CastJsonAsDuration,
+    /// `JSON_REPLACE` over (doc, path, value, ...): Go `jsonModify` with
+    /// the replace mode -- existing paths re-write, missing paths stay.
+    JsonReplaceSig,
+    /// `JSON_ARRAY_APPEND` over (doc, path, value, ...): the value goes
+    /// to the array at one exact path; a missing path is a no-op and a
+    /// non-array cell answers NULL.
+    JsonArrayAppendSig,
+    /// `JSON_MERGE_PATCH` over n documents: MySQL's RFC 7396 reading --
+    /// any SQL NULL argument answers NULL.
+    JsonMergePatchSig,
     /// `CastIntAsReal`/`CastRealAsReal`/`CastDecimalAsReal`: widening to
     /// binary64 (`AS REAL`); a bare cast answers its own truth.
     CastIntAsReal,
@@ -2494,6 +2504,9 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::CastJsonAsReal => SimpleSig::CastJsonAsReal,
             tipb::ScalarFuncSig::CastJsonAsTime => SimpleSig::CastJsonAsTime,
             tipb::ScalarFuncSig::CastJsonAsDuration => SimpleSig::CastJsonAsDuration,
+            tipb::ScalarFuncSig::JsonReplaceSig => SimpleSig::JsonReplaceSig,
+            tipb::ScalarFuncSig::JsonArrayAppendSig => SimpleSig::JsonArrayAppendSig,
+            tipb::ScalarFuncSig::JsonMergePatchSig => SimpleSig::JsonMergePatchSig,
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             // Go reads the comparison's collation off the `ScalarFunc`'s own
             // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
@@ -2742,6 +2755,102 @@ fn eval_json(
                     to_json(tidb_datatype::BinaryJSONValue::Duration(widened))
                 }
                 _ => eval_json(children.first(), row, div_precision_increment),
+            }
+        }
+        // The JSON value functions answer documents. A literal NULL
+        // value operand wraps as the JSON null literal (Go
+        // `CreateBinaryJSON(nil)`) for REPLACE and ARRAY_APPEND, while
+        // MERGE_PATCH follows MySQL's reading: any NULL argument
+        // answers NULL.
+        SimpleExpr::Func(
+            sig @ (SimpleSig::JsonReplaceSig
+            | SimpleSig::JsonArrayAppendSig
+            | SimpleSig::JsonMergePatchSig),
+            children,
+        ) => {
+            let json_arg = |index: usize| -> Option<tidb_datatype::BinaryJSON> {
+                match children.get(index) {
+                    Some(SimpleExpr::Null) => tidb_datatype::BinaryJSON::from_typed_value(
+                        &tidb_datatype::BinaryJSONValue::Null,
+                    )
+                    .ok(),
+                    _ => eval_json(children.get(index), row, div_precision_increment),
+                }
+            };
+            let pair = |index: usize| -> Option<(
+                tidb_datatype::JSONPathExpression,
+                tidb_datatype::BinaryJSON,
+            )> {
+                let raw = eval_bytes(children.get(index), row, div_precision_increment)?;
+                let path =
+                    tidb_datatype::parse_json_path_expr(&String::from_utf8_lossy(&raw)).ok()?;
+                let value = json_arg(index + 1)?;
+                Some((path, value))
+            };
+            match sig {
+                SimpleSig::JsonReplaceSig => {
+                    let doc = eval_json(children.first(), row, div_precision_increment)?;
+                    let mut paths = Vec::new();
+                    let mut values = Vec::new();
+                    let mut index = 1;
+                    while index + 1 < children.len() {
+                        let (path, value) = pair(index)?;
+                        paths.push(path);
+                        values.push(value);
+                        index += 2;
+                    }
+                    doc.modify(&paths, &values, tidb_datatype::JSONModifyType::Replace)
+                        .ok()
+                }
+                SimpleSig::JsonArrayAppendSig => {
+                    let mut doc = eval_json(children.first(), row, div_precision_increment)?;
+                    let mut index = 1;
+                    while index + 1 < children.len() {
+                        let (path, value) = pair(index)?;
+                        if path.could_match_multiple_values() {
+                            // Go: `ErrInvalidJSONPathMultipleSelection`.
+                            return None;
+                        }
+                        let Some(target) = doc.extract(std::slice::from_ref(&path)).ok().flatten()
+                        else {
+                            // Go: a missing path is a no-op.
+                            index += 2;
+                            continue;
+                        };
+                        if target.type_code() != tidb_datatype::JSON_TYPE_CODE_ARRAY {
+                            // Go: `ErrInvalidJSONPathArrayCell` folded.
+                            return None;
+                        }
+                        let count = target.element_count().ok()?;
+                        let mut items = Vec::with_capacity(count + 1);
+                        for cell in 0..count {
+                            let element = target.array_get(cell).ok()?.expect("within count");
+                            items.push(tidb_datatype::BinaryJSONValue::Binary(element));
+                        }
+                        items.push(tidb_datatype::BinaryJSONValue::Binary(value));
+                        let appended = tidb_datatype::BinaryJSON::from_typed_value(
+                            &tidb_datatype::BinaryJSONValue::Array(items),
+                        )
+                        .ok()?;
+                        doc = doc
+                            .modify(&[path], &[appended], tidb_datatype::JSONModifyType::Set)
+                            .ok()?;
+                        index += 2;
+                    }
+                    Some(doc)
+                }
+                SimpleSig::JsonMergePatchSig => {
+                    let mut values = Vec::with_capacity(children.len());
+                    for index in 0..children.len() {
+                        values.push(eval_json(
+                            children.get(index),
+                            row,
+                            div_precision_increment,
+                        )?);
+                    }
+                    tidb_datatype::merge_patch_binary_json(&values).ok()?
+                }
+                _ => None,
             }
         }
         _ => None,
@@ -4548,7 +4657,10 @@ pub fn eval_expr(
                 | SimpleSig::CastStringAsJson
                 | SimpleSig::CastTimeAsJson
                 | SimpleSig::CastDurationAsJson
-                | SimpleSig::CastJsonAsJson => {
+                | SimpleSig::CastJsonAsJson
+                | SimpleSig::JsonReplaceSig
+                | SimpleSig::JsonArrayAppendSig
+                | SimpleSig::JsonMergePatchSig => {
                     // A bare JSON cast as a condition answers its own
                     // non-NULL truth (Go `ToBool` over the rendering).
                     let answered = eval_json(Some(expr), row, div_precision_increment).is_some();
@@ -6843,6 +6955,90 @@ mod tests {
         assert_eq!(eval_time(Some(&as_time), &date_row, 4), Some(expected));
         // A bare JSON cast as a condition answers its non-NULL truth.
         let bare = SimpleExpr::Func(SimpleSig::CastIntAsJson, vec![SimpleExpr::Int(7)]);
+        assert_eq!(eval_expr(&bare, &[], 4).expect("evals"), Some(1));
+    }
+    #[test]
+    fn json_value_functions_compose_over_the_json_channel() {
+        let json_leaf =
+            |text: &str| SimpleExpr::Json(tidb_datatype::BinaryJSON::parse(text).expect("parses"));
+        // JSON_REPLACE re-writes an existing path only.
+        let replaced = eval_json(
+            Some(&SimpleExpr::Func(
+                SimpleSig::JsonReplaceSig,
+                vec![
+                    json_leaf(r#"{"a": 1, "b": 2}"#),
+                    SimpleExpr::Bytes(b"$.a".to_vec()),
+                    SimpleExpr::Func(SimpleSig::CastIntAsJson, vec![SimpleExpr::Int(9)]),
+                    SimpleExpr::Bytes(b"$.missing".to_vec()),
+                    SimpleExpr::Func(SimpleSig::CastIntAsJson, vec![SimpleExpr::Int(0)]),
+                ],
+            )),
+            &[],
+            4,
+        )
+        .expect("evals");
+        let path_a = tidb_datatype::parse_json_path_expr("$.a").expect("path");
+        assert_eq!(
+            replaced.extract(&[path_a]).expect("extracts"),
+            tidb_datatype::BinaryJSON::parse("9").ok()
+        );
+        // JSON_ARRAY_APPEND grows the array at one exact path.
+        let appended = eval_json(
+            Some(&SimpleExpr::Func(
+                SimpleSig::JsonArrayAppendSig,
+                vec![
+                    json_leaf(r#"{"a": [1]}"#),
+                    SimpleExpr::Bytes(b"$.a".to_vec()),
+                    // Go wraps the value operand in CastIntAsJson at
+                    // build time -- the wire carries the cast.
+                    SimpleExpr::Func(SimpleSig::CastIntAsJson, vec![SimpleExpr::Int(2)]),
+                ],
+            )),
+            &[],
+            4,
+        )
+        .expect("evals");
+        let path_a = tidb_datatype::parse_json_path_expr("$.a").expect("path");
+        let cell = appended
+            .extract(&[path_a])
+            .expect("extracts")
+            .expect("present");
+        assert_eq!(cell.element_count(), Ok(2));
+        // A non-array cell answers NULL (Go's array-cell error folded).
+        let not_array = SimpleExpr::Func(
+            SimpleSig::JsonArrayAppendSig,
+            vec![
+                json_leaf(r#"{"a": 1}"#),
+                SimpleExpr::Bytes(b"$.a".to_vec()),
+                SimpleExpr::Func(SimpleSig::CastIntAsJson, vec![SimpleExpr::Int(2)]),
+            ],
+        );
+        assert_eq!(eval_json(Some(&not_array), &[], 4), None);
+        // JSON_MERGE_PATCH folds documents; any NULL argument answers
+        // NULL.
+        let merged = eval_json(
+            Some(&SimpleExpr::Func(
+                SimpleSig::JsonMergePatchSig,
+                vec![json_leaf(r#"{"a": 1}"#), json_leaf(r#"{"a": {"b": 2}}"#)],
+            )),
+            &[],
+            4,
+        )
+        .expect("evals");
+        let path_a = tidb_datatype::parse_json_path_expr("$.a").expect("path");
+        let nested = merged
+            .extract(&[path_a])
+            .expect("extracts")
+            .expect("present");
+        assert_eq!(nested.element_count(), Ok(1));
+        let with_null = SimpleExpr::Func(
+            SimpleSig::JsonMergePatchSig,
+            vec![json_leaf(r#"{"a": 1}"#), SimpleExpr::Null],
+        );
+        assert_eq!(eval_json(Some(&with_null), &[], 4), None);
+        // A bare value function as a condition answers its non-NULL
+        // truth.
+        let bare = SimpleExpr::Func(SimpleSig::JsonMergePatchSig, vec![json_leaf(r#"{"a": 1}"#)]);
         assert_eq!(eval_expr(&bare, &[], 4).expect("evals"), Some(1));
     }
 }
