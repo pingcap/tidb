@@ -9827,3 +9827,15 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (DML expression pin): VALUES and SET evaluate scalar
   expressions; an UPDATE may reference its own column with the new value
   feeding later assignments. Pinned in `tests/dml_expression_values_source.rs`.
+- 2026-09-06 (VALUES arity 1136 port, REAL DIVERGENCE): the port rejected
+  arity mismatches with the non-Go string "VALUES arity does not match the
+  column list" where Go raises coded `ErrWrongValueCountOnRow` (1136,
+  "Column count doesn't match value count at row %d") -- row 1 against the
+  column list (planbuilder.go:4349), row i+1 for a later row whose width
+  differs from the first (:4361), and always row 1 for INSERT SELECT
+  (:4474). Fix: new `DriverError::WrongValueCountOnRow { row }` variant +
+  1136 render; both emit sites now carry the 1-based row number. Pin
+  `values_arity_error_source.rs` fails on clean HEAD (old text, no code)
+  and passes with the fix. HEAD-wide executor failures (~120, aggregates/
+  access_path ordering) verified pre-existing on clean HEAD -- sibling
+  in-flight, untouched.

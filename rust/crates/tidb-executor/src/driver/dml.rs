@@ -581,9 +581,11 @@ fn run_insert_with_physical(
             };
             let arity_is_checked = index > 0 || names_a_column || width > 0;
             if arity_is_checked && width != expected {
-                return Err(DriverError::unsupported(
-                    "VALUES arity does not match the column list",
-                ));
+                // Go's planner check (planbuilder.go:4349/:4361): row 1 answers
+                // to the column list, later rows to the first row's width --
+                // both report `ErrWrongValueCountOnRow` with the 1-based row
+                // number.
+                return Err(DriverError::WrongValueCountOnRow { row: index + 1 });
             }
             previous_width = width;
 
@@ -700,9 +702,9 @@ fn run_insert_with_physical(
                 previous_width
             };
             if width != expected {
-                return Err(DriverError::unsupported(
-                    "VALUES arity does not match the column list",
-                ));
+                // Go's INSERT SELECT check (planbuilder.go:4474) always
+                // reports row 1.
+                return Err(DriverError::WrongValueCountOnRow { row: 1 });
             }
             previous_width = width;
         }

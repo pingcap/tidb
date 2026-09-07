@@ -423,6 +423,11 @@ impl DriverError {
         DriverError::UnknownIndex(name) => {
             MysqlError::new(1091, format!("index {name} doesn't exist"))
         }
+        // Go: "Column count doesn't match value count at row %d" (1136).
+        DriverError::WrongValueCountOnRow { row } => MysqlError::new(
+            1136,
+            format!("Column count doesn't match value count at row {row}"),
+        ),
         // Go: "Multiple primary key defined".
         DriverError::MultiplePrimaryKey => {
             MysqlError::new(1068, "Multiple primary key defined".to_owned())

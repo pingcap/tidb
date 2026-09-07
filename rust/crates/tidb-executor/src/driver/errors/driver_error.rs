@@ -1002,6 +1002,12 @@ pub enum DriverError {
         /// The violated key's name.
         key: String,
     },
+    /// Go `ErrWrongValueCountOnRow` (1136): a VALUES row's width does not
+    /// match the column list (row 1) or the preceding row's width (row N).
+    WrongValueCountOnRow {
+        /// Go's 1-based row number in the statement.
+        row: usize,
+    },
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
