@@ -374,6 +374,51 @@ JOIN
 	})
 }
 
+// TestIssue70645DNFCollationExtraction verifies that ExtractFiltersFromDNFs
+// (pkg/expression/util.go's extractFiltersFromDNF) does not drop a
+// collation-distinct predicate that only differs from another DNF branch's
+// predicate by an explicit COLLATE clause. See
+// https://github.com/pingcap/tidb/issues/70645: extractFiltersFromDNF used to
+// decide "the same condition occurs in every DNF branch" purely by
+// Expression.HashCode(), which ignored collation, so
+// `(c='A' collate utf8mb4_general_ci AND b=1) OR (c='A' collate utf8mb4_bin AND b=2)`
+// was wrongly rewritten as if the two collation-distinct `c='A'` predicates
+// were the same condition, silently dropping the stronger utf8mb4_bin one.
+func TestIssue70645DNFCollationExtraction(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`drop table if exists issue70645_t1, issue70645_t2`)
+		tk.MustExec(`create table issue70645_t1(id int primary key, c varchar(10) collate utf8mb4_general_ci, b int)`)
+		tk.MustExec(`create table issue70645_t2(id int primary key, x int)`)
+		tk.MustExec(`insert into issue70645_t1 values (1,'A',1),(2,'a',1),(3,'A',2),(4,'a',2)`)
+		tk.MustExec(`insert into issue70645_t2 values (1,1),(2,1),(3,2),(4,2)`)
+
+		dnf := `(c='A' collate utf8mb4_general_ci and b=1) or (c='A' collate utf8mb4_bin and b=2)`
+
+		// Plain WHERE on a single table: only rows 1, 2 (general_ci branch, b=1)
+		// and 3 (bin branch, b=2) qualify; row 4 ('a', b=2) must not match the
+		// utf8mb4_bin branch.
+		tk.MustQuery(`select /* issue:70645 */ id from issue70645_t1 where ` + dnf + ` order by id`).
+			Check(testkit.Rows("1", "2", "3"))
+
+		// Inner join ON clause containing the DNF.
+		tk.MustQuery(`select /* issue:70645 */ issue70645_t1.id from issue70645_t1 join issue70645_t2 ` +
+			`on issue70645_t1.id=issue70645_t2.id and (` + dnf + `) order by issue70645_t1.id`).
+			Check(testkit.Rows("1", "2", "3"))
+
+		// Left outer join WHERE clause containing the DNF.
+		tk.MustQuery(`select /* issue:70645 */ issue70645_t1.id from issue70645_t1 left join issue70645_t2 ` +
+			`on issue70645_t1.id=issue70645_t2.id where (` + dnf + `) order by issue70645_t1.id`).
+			Check(testkit.Rows("1", "2", "3"))
+
+		// DELETE driven by a join whose ON clause contains the DNF: only rows
+		// 1-3 should be removed, leaving row 4.
+		tk.MustExec(`delete issue70645_t1 from issue70645_t1 join issue70645_t2 ` +
+			`on issue70645_t1.id=issue70645_t2.id and (` + dnf + `)`)
+		tk.MustQuery(`select id from issue70645_t1 order by id`).Check(testkit.Rows("4"))
+	})
+}
+
 func TestIndexJoinInnerRowCountUsesUsableJoinKeys(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
