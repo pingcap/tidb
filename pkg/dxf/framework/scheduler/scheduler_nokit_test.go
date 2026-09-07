@@ -748,6 +748,147 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
+	t.Run("test task state change cancels prepare", func(t *testing.T) {
+		originalInterval := CheckTaskFinishedInterval
+		CheckTaskFinishedInterval = 10 * time.Millisecond
+		t.Cleanup(func() {
+			CheckTaskFinishedInterval = originalInterval
+		})
+
+		subCtrl := gomock.NewController(t)
+		defer subCtrl.Finish()
+		subTaskMgr := mock.NewMockTaskManager(subCtrl)
+		subExt := schmock.NewMockExtension(subCtrl)
+		taskWithPrepare := task
+		taskWithPrepare.ExtraParams.PrepareMode = proto.PrepareModeRequired
+		subScheduler := createScheduler(&taskWithPrepare, true, subTaskMgr, subCtrl)
+		subScheduler.Extension = subExt
+
+		prepareStarted := make(chan struct{})
+		prepareCanceled := make(chan struct{})
+		releasePrepare := make(chan struct{})
+		subExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, _ storage.TaskHandle, _ *proto.Task) error {
+				close(prepareStarted)
+				select {
+				case <-ctx.Done():
+					close(prepareCanceled)
+					return ctx.Err()
+				case <-releasePrepare:
+					return nil
+				}
+			})
+
+		cancelledTask := taskWithPrepare
+		cancelledTask.State = proto.TaskStateCancelling
+		subTaskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), task.ID).
+			Return(&cancelledTask.TaskBase, nil).
+			AnyTimes()
+
+		preparePersisted := false
+		subTaskMgr.EXPECT().SwitchTaskStepAfterPrepare(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(context.Context, *proto.Task) (bool, error) {
+				preparePersisted = true
+				return false, nil
+			}).
+			AnyTimes()
+
+		done := make(chan error, 1)
+		go func() {
+			done <- subScheduler.onPending()
+		}()
+		<-prepareStarted
+
+		wasCanceled := false
+		select {
+		case <-prepareCanceled:
+			wasCanceled = true
+		case <-time.After(time.Second):
+			close(releasePrepare)
+		}
+
+		require.NoError(t, <-done)
+		require.True(t, wasCanceled)
+		require.False(t, preparePersisted)
+		require.True(t, subCtrl.Satisfied())
+	})
+
+	t.Run("test task state change cancels plan", func(t *testing.T) {
+		originalInterval := CheckTaskFinishedInterval
+		CheckTaskFinishedInterval = 10 * time.Millisecond
+		t.Cleanup(func() {
+			CheckTaskFinishedInterval = originalInterval
+		})
+
+		subCtrl := gomock.NewController(t)
+		defer subCtrl.Finish()
+		subTaskMgr := mock.NewMockTaskManager(subCtrl)
+		subExt := schmock.NewMockExtension(subCtrl)
+		taskForPlan := task
+		subScheduler := createScheduler(&taskForPlan, true, subTaskMgr, subCtrl)
+		subScheduler.Extension = subExt
+
+		subExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+		subExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{":4000"}, nil)
+
+		planStarted := make(chan struct{})
+		planCanceled := make(chan struct{})
+		releasePlan := make(chan struct{})
+		subExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(
+				ctx context.Context,
+				_ storage.TaskHandle,
+				_ *proto.Task,
+				_ []string,
+				_ proto.Step,
+			) ([][]byte, error) {
+				close(planStarted)
+				select {
+				case <-ctx.Done():
+					close(planCanceled)
+					return nil, ctx.Err()
+				case <-releasePlan:
+					return nil, nil
+				}
+			})
+
+		cancelledTask := taskForPlan
+		cancelledTask.State = proto.TaskStateCancelling
+		subTaskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), task.ID).
+			Return(&cancelledTask.TaskBase, nil).
+			AnyTimes()
+
+		planPersisted := false
+		subTaskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).
+			DoAndReturn(func(context.Context) (map[string]int, error) {
+				planPersisted = true
+				return nil, nil
+			}).
+			AnyTimes()
+		subTaskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil).
+			AnyTimes()
+
+		done := make(chan error, 1)
+		go func() {
+			done <- subScheduler.switch2NextStep()
+		}()
+		<-planStarted
+
+		wasCanceled := false
+		select {
+		case <-planCanceled:
+			wasCanceled = true
+		case <-time.After(time.Second):
+			close(releasePlan)
+		}
+
+		require.NoError(t, <-done)
+		require.True(t, wasCanceled)
+		require.False(t, planPersisted)
+		require.True(t, subCtrl.Satisfied())
+	})
+
 	t.Run("test revertTask", func(t *testing.T) {
 		scheduler.task.Store(&schTask)
 
