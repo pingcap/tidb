@@ -11327,3 +11327,6 @@ risks without claiming repository-wide parity.
   output shapes (id, default flag, PAD SPACE, description, maxlen,
   InnoDB DEFAULT row). Pinned in
   `crates/tidb-session/tests/metadata_show_shapes_source.rs`.
+- 2026-09-08 (ROW_COUNT pin): ROW_COUNT() reports the previous statement's
+  affected rows. Pinned in
+  `crates/tidb-session/tests/row_count_fn_source.rs`.
