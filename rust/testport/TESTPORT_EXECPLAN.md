@@ -11336,3 +11336,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (JSON_MERGE_PRESERVE pin): array concatenation, object deep
   merge, and scalar wrapping. Pinned in
   `crates/tidb-session/tests/json_merge_preserve_source.rs`.
+- 2026-09-08 (JSON_SEARCH pin): 'one' first-path mode, 'all' array mode,
+  %-wildcard matching, and the no-match NULL. Pinned in
+  `crates/tidb-session/tests/json_search_source.rs`.
