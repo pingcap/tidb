@@ -11001,3 +11001,13 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (SHOW CREATE DATABASE pin): the version-gated charset comment
   and the non-default collation form round-trip (show.go:1704-1743).
   Pinned in `crates/tidb-session/tests/show_create_database_source.rs`.
+- 2026-09-06 (session-info audit): verified faithful — `database()`/
+  `schema()` (current db), `version()` placeholder, `found_rows()`,
+  LASTVAL-family state. Recorded NOT FIXED: `connection_id()` returns
+  NULL in a serverless session where Go returns the int64 id (0 for a
+  bare session; builtin_info.go:432-437 returns `int64(data.ConnectionID)`
+  unconditionally). The expr arm (scalar_function.rs "connection_id" →
+  None => Null) should become UInt(0) on the None path, but connection
+  identity is owned by the sibling server-tier stream — queued there.
+  `user()`/`current_user()` NULL matches Go's missing-user state, which
+  errors internally; both are unreachable with a real session.
