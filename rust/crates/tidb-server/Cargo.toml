@@ -27,6 +27,7 @@ rustls-pemfile.workspace = true
 sha1.workspace = true
 sha2.workspace = true
 subtle.workspace = true
+tidb-hack = { path = "../tidb-hack" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }

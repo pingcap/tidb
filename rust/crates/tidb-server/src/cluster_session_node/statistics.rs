@@ -20,6 +20,7 @@ use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_session::privilege::GlobalPriv;
 
 use crate::sql_node::{QuerySession, SqlQueryError, WriteOutcome};
+use tidb_hack::GoToLower;
 
 use super::{
     ClusterServerSession, ClusterTransactions, SharedClusterCatalog, ER_TABLEACCESS_DENIED_ERROR,
@@ -405,8 +406,8 @@ impl ClusterServerSession {
                     1105,
                     format!(
                         "No predicate column has been collected yet for table {}.{}, so only indexes and the columns composing the indexes will be analyzed",
-                        statement.schema.to_lowercase(),
-                        statement.table.to_lowercase()
+                        statement.schema.go_to_lower(),
+                        statement.table.go_to_lower()
                     ),
                 );
             }

@@ -3930,6 +3930,7 @@ dependencies = [
  "tidb-error",
  "tidb-exec",
  "tidb-executor",
+ "tidb-hack",
  "tidb-log",
  "tidb-metadef",
  "tidb-model",

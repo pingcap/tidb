@@ -95,6 +95,7 @@ use crate::sql_node::{
 };
 use crate::transaction_overlay_result_set::{OverlayHandleSource, TransactionOverlayResultSet};
 use crate::wire_status::WireStatus;
+use tidb_hack::GoToLower;
 
 mod query_observability;
 mod schema_following;
@@ -1091,13 +1092,13 @@ fn loaded_table_refusal_error(
     refusals: &[LoadedTableRefusal],
     message: &str,
 ) -> Option<SqlQueryError> {
-    let lowered = message.to_lowercase();
+    let lowered = message.go_to_lower();
     for refusal in refusals {
-        if lowered.contains(&refusal.name.to_lowercase()) {
+        if lowered.contains(&refusal.name.go_to_lower()) {
             return Some(SqlQueryError::unknown(refusal.to_string()));
         }
         if let Some((_, table)) = refusal.name.split_once('.') {
-            if lowered.contains(&format!("table: {}", table.to_lowercase())) {
+            if lowered.contains(&format!("table: {}", table.go_to_lower())) {
                 return Some(SqlQueryError::unknown(refusal.to_string()));
             }
         }

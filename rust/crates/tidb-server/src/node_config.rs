@@ -29,6 +29,7 @@ use std::time::Duration;
 
 use tidb_config::config_tree::Config as SourceConfig;
 use tidb_config::kerneltype;
+use tidb_hack::GoToLower;
 use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorageSpec};
@@ -1452,7 +1453,7 @@ fn validate_columns(option: &str, columns: &[ConfiguredReadColumn]) -> Result<()
     let mut ids = HashSet::with_capacity(columns.len());
     let mut clustered_primary_keys = 0;
     for column in columns {
-        if !names.insert(column.name.to_lowercase()) {
+        if !names.insert(column.name.go_to_lower()) {
             return Err(invalid(
                 option,
                 "column names must be unique case-insensitively",
@@ -1495,7 +1496,7 @@ fn validate_load_tables(
     }
     let mut names = HashSet::with_capacity(load_tables.len());
     for loaded in load_tables {
-        let name = (loaded.database.to_lowercase(), loaded.table.to_lowercase());
+        let name = (loaded.database.go_to_lower(), loaded.table.go_to_lower());
         if !names.insert(name.clone()) {
             return Err(invalid(
                 "--load-table",
@@ -1504,7 +1505,7 @@ fn validate_load_tables(
         }
         if read_tables
             .iter()
-            .any(|table| (table.database.to_lowercase(), table.table.to_lowercase()) == name)
+            .any(|table| (table.database.go_to_lower(), table.table.go_to_lower()) == name)
         {
             return Err(invalid(
                 "--load-table",
@@ -1531,7 +1532,7 @@ fn validate_read_tables(
     let mut names = HashSet::with_capacity(tables.len());
     let mut ids = HashSet::with_capacity(tables.len());
     for table in tables {
-        if !names.insert((table.database.to_lowercase(), table.table.to_lowercase())) {
+        if !names.insert((table.database.go_to_lower(), table.table.go_to_lower())) {
             return Err(invalid(
                 "--read-table",
                 "table names must be unique case-insensitively within each database",

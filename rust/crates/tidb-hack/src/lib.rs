@@ -255,6 +255,10 @@ impl<T: AsRef<str>> GoToUpper for T {
     }
 }
 
+/// Go `strings.ToUpper`: the per-rune SIMPLE uppercase mapping
+/// (`unicode.ToUpper`). Delegates to the generated
+/// `tidb-mysql::simple_case` table (Go `unicode.CaseRanges`, Unicode
+/// 15.0.0), which is the authoritative implementation.
 pub fn go_to_upper(input: impl AsRef<str>) -> String {
     tidb_mysql::to_uppercase(input.as_ref())
 }
