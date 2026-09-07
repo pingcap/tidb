@@ -9992,3 +9992,8 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/partition_qualified_write_source.rs`; the 7
   partition-family failures verified pre-existing on clean HEAD via
   stash-baseline.
+- 2026-09-06 (partition row-movement pin): an UPDATE moving a row across a
+  partition boundary (`1` -> `15`, p0 -> p1) relocates the row; the moved
+  row is addressable only from its new partition (verified with
+  partition-qualified reads). Pinned at session level in
+  `crates/tidb-session/tests/partition_row_movement_source.rs`.
