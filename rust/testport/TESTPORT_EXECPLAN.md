@@ -10268,3 +10268,9 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (SEQUENCE pin): CREATE SEQUENCE with START/INCREMENT allocates
   10/15/20 through NEXTVAL and DROP SEQUENCE removes it. Pinned in
   `crates/tidb-session/tests/sequence_lifecycle_source.rs`.
+- 2026-09-06 (sequence helper pins): LASTVAL(seq) answers the last allocated
+  value; forward SETVAL(seq, n) reports n and the next allocation continues
+  past it; backwards SETVAL reports NULL (no-op); zero-arg LASTVAL fails
+  with Go's 1582 (Go's arity is exactly 1). Pinned in
+  `crates/tidb-session/tests/sequence_lastval_setval_source.rs`. (An
+  earlier "NULL return" suspicion was a double-execution probe artifact.)
