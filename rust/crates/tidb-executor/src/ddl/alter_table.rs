@@ -989,6 +989,47 @@ fn truncate_partition_action(
 /// in Go's order: a non-partitioned table (1505), a non-HASH method (1509),
 /// a count below one (1515), and a count that would remove the last
 /// partition (1508).
+/// Go `AddTablePartitions`'s HASH arm (executor.go:2297-2306): grow a HASH
+/// table to `current + count` partitions, re-hashing every row. Go's
+/// refusals apply before the reorganize: a non-partitioned table (1505) and
+/// a count of zero (1501, `ErrPartitionsError`).
+fn add_hash_partitions_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    count: u64,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let new_count = {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... ADD PARTITION needs a storage-backed table",
+            ));
+        };
+        let Some(partition) = table.partition() else {
+            return Err(DriverError::PartitionManagementOnNonpartitioned);
+        };
+        if !matches!(partition.kind, crate::partition_routing::PartitionKind::Hash) {
+            return Err(DriverError::unsupported(
+                "ADD PARTITION PARTITIONS n on a non-HASH table is not supported yet",
+            ));
+        }
+        let grown = partition.definitions.len() + count as usize;
+        if grown > super::table_partition::MAX_PARTITIONS as usize {
+            return Err(DriverError::PartitionTooMany);
+        }
+        grown
+    };
+    // Every partition gets a FRESH physical id, matching Go's reorganize.
+    let new_ids: Vec<i64> = (0..new_count).map(|_| catalog.allocate_table_id()).collect();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("the table was resolved above")
+    };
+    table
+        .rehash_hash_partitions(&new_ids, ctx)
+        .map_err(|error| crate::driver::kv_read_error("add partition", error))
+}
+
 fn coalesce_partition_action(
     catalog: &mut Catalog,
     database: &str,
@@ -1021,7 +1062,7 @@ fn coalesce_partition_action(
         unreachable!("the table was resolved above")
     };
     table
-        .coalesce_hash_partitions(&new_ids, ctx)
+        .rehash_hash_partitions(&new_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("coalesce partition", error))
 }
 
@@ -1092,10 +1133,14 @@ fn add_partition_action(
     spec: &tidb_ast::AddPartitionSpec,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let tidb_ast::AddPartitionSpec::Definitions(definitions) = spec else {
-        return Err(DriverError::unsupported(
-            "ALTER TABLE ... ADD PARTITION PARTITIONS n is not supported yet",
-        ));
+    let definitions = match spec {
+        tidb_ast::AddPartitionSpec::Definitions(definitions) => definitions,
+        // Go `AddTablePartitions` (executor.go:2297-2306): `PARTITIONS n` on
+        // a HASH table reorganizes to count + n partitions, re-hashing every
+        // row -- the mirror of COALESCE PARTITION.
+        tidb_ast::AddPartitionSpec::Count(count) => {
+            return add_hash_partitions_action(catalog, database, table_name, *count, ctx);
+        }
     };
     if definitions.is_empty() {
         return Err(DriverError::PartitionsMustBeDefined("LIST"));

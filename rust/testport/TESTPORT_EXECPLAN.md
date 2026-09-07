@@ -11040,3 +11040,12 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/coalesce_partition_source.rs`. The stale
   "unserved" list in tests_partition.rs drops its COALESCE line. The
   tests_explain common-handle failure is stash-verified pre-existing.
+- 2026-09-06 (ADD PARTITION PARTITIONS n fix, REAL DIVERGENCE): Go's
+  `AddTablePartitions` (executor.go:2297-2306) routes the `PARTITIONS n`
+  form on a HASH table through hashPartitionManagement — grow + re-hash;
+  the port refused it as unserved. Implemented by refactoring the COALESCE
+  machinery into a shared `rehash_hash_partitions` (fresh physical ids for
+  the whole set, rows re-inserted through the normal write path). Pins:
+  `crates/tidb-session/tests/add_hash_partitions_source.rs` (grow 2->4,
+  partition-qualified reads agree; non-HASH refusal kept). The stale
+  "unserved" line drops from tests_partition.rs.

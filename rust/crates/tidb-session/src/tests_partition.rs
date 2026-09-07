@@ -3411,7 +3411,6 @@ fn unserved_partition_management_is_refused_not_ignored() {
         "ALTER TABLE pm REORGANIZE PARTITION p0, p1 INTO \
          (PARTITION q0 VALUES LESS THAN (20))",
         "ALTER TABLE pm EXCHANGE PARTITION p0 WITH TABLE plain",
-        "ALTER TABLE pmh ADD PARTITION PARTITIONS 2",
         "ALTER TABLE plain PARTITION BY HASH (a) PARTITIONS 2",
     ];
     for sql in unserved {

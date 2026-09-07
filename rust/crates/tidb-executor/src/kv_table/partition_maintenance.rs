@@ -297,9 +297,11 @@ impl KvTable {
     /// Rebuilds a HASH table to `new_ids.len()` partitions, redistributing
     /// every row by the new modulus. Go `hashPartitionManagement`
     /// (`pkg/ddl/executor.go:2782-2814`) reaches the same observable state
-    /// through `ReorganizePartitions`: all rows are re-hashed, the surviving
-    /// definitions are renumbered `p0..`, and the old physical tables retire.
-    pub(crate) fn coalesce_hash_partitions(
+    /// through `ReorganizePartitions`: all rows are re-hashed, the
+    /// definitions are renumbered `p0..`, and the old physical tables
+    /// retire. COALESCE shrinks to this count; ADD PARTITION PARTITIONS n
+    /// grows to it.
+    pub(crate) fn rehash_hash_partitions(
         &mut self,
         new_ids: &[i64],
         ctx: &crate::StmtContext,
