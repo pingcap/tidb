@@ -11212,3 +11212,7 @@ risks without claiming repository-wide parity.
   TableFullScan with keep-order/stats, and Point_Get with handle for PK
   equality under FORMAT='brief'). Pinned in
   `crates/tidb-session/tests/explain_plan_source.rs`.
+- 2026-09-06 (qualifier writes pin): INSERT outside the named partition set
+  refuses; DELETE scoped to the wrong partition sees nothing; the right
+  partition deletes. Pinned in
+  `crates/tidb-session/tests/partition_qualifier_writes_source.rs`.
