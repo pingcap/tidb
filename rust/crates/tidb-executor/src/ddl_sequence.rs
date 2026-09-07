@@ -22,6 +22,7 @@ use crate::driver::{split_table_path_pub, SequenceDef};
 use crate::sequence::{SequenceAllocator, SequenceInfo};
 use crate::{Catalog, DriverError, SchemaErrorKind};
 use tidb_ast::SequenceOption;
+use tidb_hack::GoToLower;
 
 /// Go `model.Default*Sequence*Value`: the defaults depend on the SIGN of the
 /// increment, and only apply to the bounds the statement left unwritten.
@@ -157,7 +158,7 @@ fn build_sequence_info(
 /// Go's qualified name in a sequence error, which is LOWERCASED
 /// (`ident.Schema.L`, `ident.Name.L`) -- captured as `'test.nosuch'`.
 fn qualified(database: &str, name: &str) -> String {
-    format!("{}.{}", database.to_lowercase(), name.to_lowercase())
+    format!("{}.{}", database.go_to_lower(), name.go_to_lower())
 }
 
 /// Go passes `TableOption.StrValue` to

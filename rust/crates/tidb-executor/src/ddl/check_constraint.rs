@@ -27,6 +27,7 @@ use tidb_model::table::ConstraintInfo;
 use tidb_model::{ColumnInfo, SchemaState};
 
 use crate::StmtContext;
+use tidb_hack::GoToLower;
 
 const MAX_CONSTRAINT_IDENTIFIER_LEN: usize = 64;
 
@@ -136,7 +137,7 @@ pub fn build_constraint_infos(
 
     let mut used_names = non_fk_constraint_names
         .into_iter()
-        .map(|name| name.to_lowercase())
+        .map(|name| name.go_to_lower())
         .collect::<HashSet<_>>();
 
     // Go validates every explicit name before assigning generated names. An
@@ -150,7 +151,7 @@ pub fn build_constraint_infos(
         else {
             continue;
         };
-        if !used_names.insert(name.to_lowercase()) {
+        if !used_names.insert(name.go_to_lower()) {
             return Err(CheckConstraintError::new(
                 tidb_error::tidb::errcode::ErrCheckConstraintDupName,
                 format!("Duplicate check constraint name '{name}'."),
@@ -335,7 +336,7 @@ fn validate_expression_ast(name: &str, expression: &Expr) -> Result<(), CheckCon
                 )),
                 Expr::Default(_) => Some(disallowed_named_function(self.name, "default")),
                 Expr::Func { name, .. } if is_disallowed_function(name) => {
-                    Some(disallowed_named_function(self.name, &name.to_lowercase()))
+                    Some(disallowed_named_function(self.name, &name.go_to_lower()))
                 }
                 _ => None,
             };

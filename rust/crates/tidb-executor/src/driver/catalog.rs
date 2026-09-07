@@ -24,6 +24,7 @@
 
 use super::*;
 use crate::kv_table::TableCharset;
+use tidb_hack::GoToLower;
 
 pub(crate) mod sync_load;
 
@@ -679,7 +680,7 @@ impl Catalog {
         );
         let schema = self
             .databases
-            .get_mut(&database.to_lowercase())
+            .get_mut(&database.go_to_lower())
             .ok_or_else(|| {
                 DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
             })?;
@@ -692,7 +693,7 @@ impl Catalog {
         }
         schema
             .tables
-            .insert(name.to_lowercase(), std::sync::Arc::new(table));
+            .insert(name.go_to_lower(), std::sync::Arc::new(table));
         self.foreign_keys_present |= table_has_foreign_keys;
         self.version += 1;
         Ok(())
@@ -733,7 +734,7 @@ impl Catalog {
     /// must not disagree.
     #[must_use]
     pub fn table_names(&self, database: &str) -> Option<Vec<String>> {
-        let database = self.databases.get(&database.to_lowercase())?;
+        let database = self.databases.get(&database.go_to_lower())?;
         let mut names: Vec<String> = database
             .tables
             .iter()
@@ -750,14 +751,14 @@ impl Catalog {
     /// Whether `database` exists (Go `is.SchemaExists`).
     #[must_use]
     pub fn has_database(&self, database: &str) -> bool {
-        self.databases.contains_key(&database.to_lowercase())
+        self.databases.contains_key(&database.go_to_lower())
     }
 
     /// The effective defaults stored on a database.
     #[must_use]
     pub fn database_charset(&self, database: &str) -> Option<TableCharset> {
         self.databases
-            .get(&database.to_lowercase())
+            .get(&database.go_to_lower())
             .map(|database| database.charset)
     }
 
@@ -765,7 +766,7 @@ impl Catalog {
     #[must_use]
     pub fn database_definition(&self, database: &str) -> Option<(String, TableCharset)> {
         self.databases
-            .get(&database.to_lowercase())
+            .get(&database.go_to_lower())
             .map(|database| (database.name.clone(), database.charset))
     }
 
@@ -874,7 +875,7 @@ impl Catalog {
     /// Creates a database with its resolved charset and collation defaults.
     pub fn create_database_with_charset(&mut self, database: &str, charset: TableCharset) -> bool {
         self.bump_metadata_version();
-        let key = database.to_lowercase();
+        let key = database.go_to_lower();
         if self.databases.contains_key(&key) {
             return false;
         }
@@ -917,7 +918,7 @@ impl Catalog {
         charset: TableCharset,
     ) -> bool {
         self.bump_metadata_version();
-        let key = database.to_lowercase();
+        let key = database.go_to_lower();
         self.next_database_id = self.next_database_id.max(id);
         if let Some(existing) = self.databases.get_mut(&key) {
             let changed =
@@ -959,14 +960,14 @@ impl Catalog {
         to_name: &str,
     ) -> bool {
         self.bump_metadata_version();
-        let to_key = to_database.to_lowercase();
+        let to_key = to_database.go_to_lower();
         if !self.databases.contains_key(&to_key) {
             return false;
         }
         let Some(source) = self
             .databases
-            .get_mut(&from_database.to_lowercase())
-            .and_then(|database| database.tables.remove(&from_name.to_lowercase()))
+            .get_mut(&from_database.go_to_lower())
+            .and_then(|database| database.tables.remove(&from_name.go_to_lower()))
         else {
             return false;
         };
@@ -983,7 +984,7 @@ impl Catalog {
             .get_mut(&to_key)
             .expect("destination schema was checked above")
             .tables
-            .insert(to_name.to_lowercase(), source);
+            .insert(to_name.go_to_lower(), source);
         self.version += 1;
         true
     }
@@ -991,8 +992,8 @@ impl Catalog {
     /// Drops one table, reporting whether it existed.
     pub fn drop_table_in(&mut self, database: &str, name: &str) -> bool {
         self.bump_metadata_version();
-        let dropped = match self.databases.get_mut(&database.to_lowercase()) {
-            Some(database) => database.tables.remove(&name.to_lowercase()).is_some(),
+        let dropped = match self.databases.get_mut(&database.go_to_lower()) {
+            Some(database) => database.tables.remove(&name.go_to_lower()).is_some(),
             None => false,
         };
         self.version += u64::from(dropped);
@@ -1003,7 +1004,7 @@ impl Catalog {
     /// raises `ErrDBDropExists` (1008) unless `IF EXISTS` was written.
     pub fn drop_database(&mut self, database: &str) -> bool {
         self.bump_metadata_version();
-        let dropped = self.databases.remove(&database.to_lowercase()).is_some();
+        let dropped = self.databases.remove(&database.go_to_lower()).is_some();
         self.version += u64::from(dropped);
         dropped
     }
@@ -1024,9 +1025,9 @@ impl Catalog {
 
     pub(crate) fn get_in(&self, database: &str, name: &str) -> Option<&TableEntry> {
         self.databases
-            .get(&database.to_lowercase())?
+            .get(&database.go_to_lower())?
             .tables
-            .get(&name.to_lowercase())
+            .get(&name.go_to_lower())
             .map(|entry| &**entry)
     }
 
@@ -2037,7 +2038,7 @@ impl Catalog {
     /// Never: the schema is created just above when it is missing.
     pub fn register_mem_in(&mut self, database: &str, name: &str, table: MemTable) {
         self.bump_metadata_version();
-        let key = database.to_lowercase();
+        let key = database.go_to_lower();
         if !self.databases.contains_key(&key) {
             self.next_database_id += 1;
             self.databases.insert(
@@ -2089,8 +2090,8 @@ impl Catalog {
         table: KvTable,
     ) -> Result<(), DriverError> {
         self.bump_metadata_version();
-        let folded_database = database.to_lowercase();
-        let folded_name = name.to_lowercase();
+        let folded_database = database.go_to_lower();
+        let folded_name = name.go_to_lower();
         let schema = self.databases.get_mut(&folded_database).ok_or_else(|| {
             DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
         })?;

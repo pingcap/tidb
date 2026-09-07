@@ -229,6 +229,32 @@ pub fn go_to_lower(input: impl AsRef<str>) -> String {
 /// the generated `tidb-mysql::simple_case` table (Go
 /// `unicode.CaseRanges`, Unicode 15.0.0), the authoritative
 /// implementation.
+/// Method-form of [`go_to_lower`] for in-place call-site migration: a
+/// blanket impl over `AsRef<str>` so `.to_lowercase()` call sites can
+/// switch to `.go_to_lower()` without restructuring the receiver.
+pub trait GoToLower {
+    /// Go `strings.ToLower` over this value's text.
+    fn go_to_lower(&self) -> String;
+}
+
+impl<T: AsRef<str>> GoToLower for T {
+    fn go_to_lower(&self) -> String {
+        go_to_lower(self)
+    }
+}
+
+/// Method-form of [`go_to_upper`]; see [`GoToLower`].
+pub trait GoToUpper {
+    /// Go `strings.ToUpper` over this value's text.
+    fn go_to_upper(&self) -> String;
+}
+
+impl<T: AsRef<str>> GoToUpper for T {
+    fn go_to_upper(&self) -> String {
+        go_to_upper(self)
+    }
+}
+
 pub fn go_to_upper(input: impl AsRef<str>) -> String {
     tidb_mysql::to_uppercase(input.as_ref())
 }

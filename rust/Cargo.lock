@@ -3574,6 +3574,7 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-funcdep",
+ "tidb-hack",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",

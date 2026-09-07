@@ -84,6 +84,7 @@ use tidb_expr::expression::Expression;
 use index_entries::duplicate_value_text;
 pub(in crate::kv_table) use index_entries::index_entry_handle;
 pub(crate) use index_entries::IndexEntryForCheck;
+use tidb_hack::GoToLower;
 use tidb_tablecodec::encode_table_row;
 use tidb_txnkv::{CommonHandle, Key};
 
@@ -1021,14 +1022,14 @@ impl KvTable {
         let mut names = std::collections::HashMap::with_capacity(renamed.len());
         for (offset, info) in renamed.iter_mut().enumerate() {
             let old = info.name.lowercase().to_owned();
-            let new = format!("{}_chk_{}", table_name.to_lowercase(), offset + 1);
+            let new = format!("{}_chk_{}", table_name.go_to_lower(), offset + 1);
             info.name = tidb_ast::CiString::new(new.clone());
             info.table = tidb_ast::CiString::new(table_name);
             names.insert(old, new);
         }
         let mut compiled = self.check_constraints.as_ref().clone();
         for constraint in &mut compiled {
-            if let Some(name) = names.get(&constraint.name.to_lowercase()) {
+            if let Some(name) = names.get(&constraint.name.go_to_lower()) {
                 constraint.name.clone_from(name);
             }
         }
@@ -2806,7 +2807,7 @@ impl KvTable {
                     not: true,
                 } => match expr.as_ref() {
                     tidb_ast::Expr::Column(path) => path.last().is_some_and(|name| {
-                        not_null.insert(name.to_lowercase());
+                        not_null.insert(name.go_to_lower());
                         true
                     }),
                     _ => false,
@@ -2820,7 +2821,7 @@ impl KvTable {
         offsets.iter().all(|offset| {
             self.columns
                 .get(*offset)
-                .is_some_and(|column| not_null.contains(&column.name.to_lowercase()))
+                .is_some_and(|column| not_null.contains(&column.name.go_to_lower()))
         })
     }
 

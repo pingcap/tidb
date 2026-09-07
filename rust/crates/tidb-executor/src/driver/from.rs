@@ -20,6 +20,7 @@
 //! plus the [`FromScope`] that names its output columns for the rewriter.
 
 use super::*;
+use tidb_hack::GoToLower;
 pub(crate) type MaterializedRelation = (Vec<(String, FieldType)>, Vec<Vec<Datum>>);
 
 /// An internal qualifier that parsed SQL can never produce. Plain EXPLAIN
@@ -206,9 +207,9 @@ impl ScopeResolver<'_> {
         let database = table.database.as_deref()?;
         Some(format!(
             "{}.{}.{}",
-            database.to_lowercase(),
-            table.name.to_lowercase(),
-            column.0.to_lowercase()
+            database.go_to_lower(),
+            table.name.go_to_lower(),
+            column.0.go_to_lower()
         ))
     }
 }

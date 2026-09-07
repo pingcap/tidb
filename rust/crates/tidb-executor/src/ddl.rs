@@ -364,6 +364,7 @@ use crate::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableC
 use crate::SchemaErrorKind;
 use tidb_ast::{ColumnDef, DdlStmt, Stmt};
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+use tidb_hack::GoToLower;
 use tidb_model::column::ColumnInfo;
 
 /// Go `setNoDefaultValueFlag` (`pkg/ddl/add_column.go:1093`) marks a final
@@ -2023,7 +2024,7 @@ fn column_dependent_error(
             DriverError::DependentByGeneratedColumn(column.to_owned())
         }
         ColumnDependent::Partition => {
-            DriverError::DependentByPartitionFunctional(column.to_lowercase())
+            DriverError::DependentByPartitionFunctional(column.go_to_lower())
         }
     }
 }

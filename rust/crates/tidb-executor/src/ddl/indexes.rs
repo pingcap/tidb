@@ -29,6 +29,7 @@
 //! comments record as captured from TiDB.
 
 use super::{Catalog, DdlStmt, DriverError, KvColumn, KvIndex, Stmt};
+use tidb_hack::GoToLower;
 
 /// Go `GetName4AnonymousIndex` (`pkg/ddl/executor.go`): choose a free name
 /// for an index whose statement omitted one. The first key column supplies
@@ -347,7 +348,7 @@ pub(crate) fn reject_duplicate_index_columns(
     let mut seen = std::collections::HashSet::with_capacity(parts.len());
     for part in parts {
         if let tidb_ast::IndexPart::Column { name, .. } = part {
-            if !seen.insert(name.to_lowercase()) {
+            if !seen.insert(name.go_to_lower()) {
                 return Err(DriverError::DuplicateColumnName(name.clone()));
             }
         }

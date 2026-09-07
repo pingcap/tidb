@@ -42,6 +42,7 @@ use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableChars
 use crate::kv_table::KvForeignKey;
 use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
 use tidb_datatype::{Charset, Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_hack::GoToLower;
 
 /// Runs an `ALTER TABLE`, applying its actions in source order.
 ///
@@ -264,7 +265,7 @@ fn reject_multi_schema_same_column_or_index(
         kind: &str,
     ) -> Result<(), DriverError> {
         for name in names {
-            let canonical = name.to_lowercase();
+            let canonical = name.go_to_lower();
             if seen.contains(&canonical) {
                 return Err(DriverError::DdlCoded {
                     errno: 8200,

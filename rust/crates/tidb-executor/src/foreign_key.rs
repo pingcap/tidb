@@ -96,6 +96,7 @@ use tidb_datatype::Datum;
 
 use crate::driver::{Catalog, DriverError, TableEntry};
 use crate::kv_table::{FkAction, KvForeignKey};
+use tidb_hack::GoToLower;
 
 /// MySQL's `FK_MAX_CASCADE_DEL`: the deepest a cascade may recurse before Go
 /// raises `ErrFkExceedMaxDepth` (3008).
@@ -831,8 +832,8 @@ pub(crate) fn check_modify_column(
                     constraint: foreign_key.name.clone(),
                     child_table: format!(
                         "{}.{}",
-                        child_db.to_lowercase(),
-                        child_table.to_lowercase()
+                        child_db.go_to_lower(),
+                        child_table.go_to_lower()
                     ),
                 });
             }

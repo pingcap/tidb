@@ -25,6 +25,7 @@ use tidb_datatype::Datum;
 use tidb_stats::StatsLockTransaction;
 
 use crate::{Catalog, DriverError, SchemaErrorKind, StmtContext, TableEntry};
+use tidb_hack::GoToLower;
 
 /// Executes one parsed `LOCK STATS` or `UNLOCK STATS` through the ordinary
 /// catalog-backed executor path and returns Go's optional warning text.
@@ -53,8 +54,8 @@ pub fn execute_catalog_stats_lock(
         let Some(partition) = table.partition() else {
             return Err(DriverError::unsupported(format!(
                 "table {}.{} is not a partition table",
-                database.to_lowercase(),
-                table_name.to_lowercase()
+                database.go_to_lower(),
+                table_name.go_to_lower()
             )));
         };
         let mut partition_names = BTreeMap::new();
@@ -64,14 +65,14 @@ pub fn execute_catalog_stats_lock(
                 .iter()
                 .find(|definition| definition.name.eq_ignore_ascii_case(written_name))
                 .ok_or_else(|| DriverError::UnknownPartition {
-                    partition: written_name.to_lowercase(),
+                    partition: written_name.go_to_lower(),
                     table: table.name.clone(),
                 })?;
-            partition_names.insert(definition.id, written_name.to_lowercase());
+            partition_names.insert(definition.id, written_name.go_to_lower());
         }
         let table_id = table.table_id;
         let displayed_table = if lock {
-            format!("{}.{}", database.to_lowercase(), table_name.to_lowercase())
+            format!("{}.{}", database.go_to_lower(), table_name.go_to_lower())
         } else {
             format!("{database}.{table_name}")
         };
@@ -107,9 +108,9 @@ pub fn execute_catalog_stats_lock(
                         definition.id,
                         format!(
                             "{}.{} partition ({})",
-                            database.to_lowercase(),
-                            table_name.to_lowercase(),
-                            definition.name.to_lowercase()
+                            database.go_to_lower(),
+                            table_name.go_to_lower(),
+                            definition.name.go_to_lower()
                         ),
                     )
                 })
@@ -119,7 +120,7 @@ pub fn execute_catalog_stats_lock(
             table.table_id,
             tidb_stats::StatsLockTable {
                 partition_info,
-                full_name: format!("{}.{}", database.to_lowercase(), table_name.to_lowercase()),
+                full_name: format!("{}.{}", database.go_to_lower(), table_name.go_to_lower()),
             },
         );
     }

@@ -84,6 +84,7 @@ use tidb_util::compress::{GzipReaderPool, GzipWriterPool};
 
 use crate::access_cost::TableStatistics;
 use crate::kv_table::KvTable;
+use tidb_hack::GoToLower;
 
 /// The `TableInfo` subset Go `TableStatsFromJSON` reads.
 ///
@@ -143,7 +144,7 @@ impl LoadStatsTableSchema {
                 .enumerate()
                 .map(|(offset, column)| LoadStatsColumnSchema {
                     id: column.id,
-                    name: column.name.to_lowercase(),
+                    name: column.name.go_to_lower(),
                     field_type: column.field_type.clone(),
                     primary_key: table.pk_handle_offset() == Some(offset)
                         || primary_index_offsets.contains(&offset),
@@ -154,7 +155,7 @@ impl LoadStatsTableSchema {
                 .iter()
                 .map(|index| LoadStatsIndexSchema {
                     id: index.id,
-                    name: index.name.to_lowercase(),
+                    name: index.name.go_to_lower(),
                     columns: index
                         .column_offsets
                         .iter()
@@ -164,7 +165,7 @@ impl LoadStatsTableSchema {
                                 .get(*offset)
                                 .expect("index column offset outside table columns")
                                 .name
-                                .to_lowercase()
+                                .go_to_lower()
                         })
                         .collect(),
                     mv_index: table.mv_key_part_source(index.id).is_some(),
@@ -536,7 +537,7 @@ pub fn gen_json_table_from_stats(
             .as_ref()
             .expect("column has no metadata")
             .name
-            .to_lowercase();
+            .go_to_lower();
         columns.insert(
             name,
             Some(stats_item_to_json(
@@ -559,7 +560,7 @@ pub fn gen_json_table_from_stats(
             .as_ref()
             .expect("index has no metadata")
             .name
-            .to_lowercase();
+            .go_to_lower();
         indices.insert(
             name,
             Some(stats_item_to_json(
@@ -577,7 +578,7 @@ pub fn gen_json_table_from_stats(
         indices: Some(indices),
         partitions: None,
         database_name: database_name.to_owned(),
-        table_name: table_name.to_lowercase(),
+        table_name: table_name.go_to_lower(),
         predicate_columns,
         count: table.hist_coll.realtime_count,
         modify_count: table.hist_coll.modify_count,
@@ -787,7 +788,7 @@ fn column_from_json(
         fm_sketch: fmsketch_from_json(json.fm_sketch.as_ref()),
         info: Some(ColumnInfo {
             id: column.id,
-            name: column.name.to_lowercase(),
+            name: column.name.go_to_lower(),
             primary_key,
         }),
         histogram,
@@ -822,7 +823,7 @@ fn index_from_json(
         fm_sketch: None,
         info: Some(IndexInfo {
             id: index.id,
-            name: index.name.to_lowercase(),
+            name: index.name.go_to_lower(),
             columns: index.columns.clone(),
             mv_index: index.mv_index,
         }),
@@ -876,7 +877,7 @@ pub fn statistics_table_from_json_schema(
                 // against the raw map key. Dumps write lowercase keys
                 // (`GenJSONTableFromStats` uses `.Name.L`), so an uppercase
                 // key matches nothing there and must match nothing here.
-                if index.name.to_lowercase() != *name {
+                if index.name.go_to_lower() != *name {
                     continue;
                 }
                 let item = index_from_json(index, entry, physical_id)?;
@@ -893,7 +894,7 @@ pub fn statistics_table_from_json_schema(
             let entry = entry.as_ref().expect("column stats JSON entry is null");
             for column in &table.columns {
                 // Same rule as the index loop: `colInfo.Name.L != id`.
-                if column.name.to_lowercase() != *name {
+                if column.name.go_to_lower() != *name {
                     continue;
                 }
                 let is_handle = table.pk_is_handle && column.primary_key;
