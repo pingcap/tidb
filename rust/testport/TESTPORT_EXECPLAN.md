@@ -11151,3 +11151,7 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/set_membership_source.rs`.
   Observed: JSON_OBJECTAGG works (BinaryJSON datum; rendered bytes not
   asserted — the projection goes through the JSON envelope).
+- 2026-09-06 (time conversions pin): TIME_TO_SEC/SEC_TO_TIME inverse round
+  trip, MAKEDATE day-of-year, MAKETIME composition, and PERIOD_ADD/
+  PERIOD_DIFF YYMM arithmetic. Pinned in
+  `crates/tidb-session/tests/time_conversion_source.rs`.
