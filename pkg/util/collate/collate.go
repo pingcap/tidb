@@ -51,14 +51,6 @@ var (
 const (
 	// DefaultLen is set for datum if the string datum don't know its length.
 	DefaultLen = 0
-	// first byte of a 2-byte encoding starts 110 and carries 5 bits of data
-	b2Mask = 0x1F // 0001 1111
-	// first byte of a 3-byte encoding starts 1110 and carries 4 bits of data
-	b3Mask = 0x0F // 0000 1111
-	// first byte of a 4-byte encoding starts 11110 and carries 3 bits of data
-	b4Mask = 0x07 // 0000 0111
-	// non-first bytes start 10 and carry 6 bits of data
-	mbMask = 0x3F // 0011 1111
 )
 
 // Collator provides functionality for comparing strings for a given
@@ -282,32 +274,6 @@ func sign(i int) int {
 		return 1
 	}
 	return 0
-}
-
-// decode rune by hand
-func decodeRune(s string, si int) (r rune, newIndex int) {
-	b := s[si]
-	switch runeLen(b) {
-	case 1:
-		r = rune(b)
-		newIndex = si + 1
-	case 2:
-		r = rune(b&b2Mask)<<6 |
-			rune(s[1+si]&mbMask)
-		newIndex = si + 2
-	case 3:
-		r = rune(b&b3Mask)<<12 |
-			rune(s[si+1]&mbMask)<<6 |
-			rune(s[si+2]&mbMask)
-		newIndex = si + 3
-	default:
-		r = rune(b&b4Mask)<<18 |
-			rune(s[si+1]&mbMask)<<12 |
-			rune(s[si+2]&mbMask)<<6 |
-			rune(s[si+3]&mbMask)
-		newIndex = si + 4
-	}
-	return
 }
 
 func runeLen(b byte) int {
