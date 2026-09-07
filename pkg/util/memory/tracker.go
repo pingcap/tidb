@@ -964,9 +964,10 @@ const (
 
 type memArbitrator struct {
 	*MemArbitrator
-	ctx    *ArbitrationContext
-	killer *sqlkiller.SQLKiller
-	budget struct {
+	ctx     *ArbitrationContext
+	killer  *sqlkiller.SQLKiller
+	maxUsed *atomicutil.Int64
+	budget  struct {
 		smallB *TrackedConcurrentBudget
 		mu     struct {
 			bigB      ConcurrentBudget // bigB.Used (aks growThreshold): threshold to pull from upstream (95% * bigB.Capacity)
@@ -984,6 +985,7 @@ type memArbitrator struct {
 	state       struct {
 		sync.Mutex
 		atomic.Int32 // states: the current state of memArbitrator
+		reset        func()
 	}
 	prevMaxMem int64
 
@@ -1118,36 +1120,24 @@ func (m *memArbitrator) intoBigBudget() bool {
 		return false
 	}
 
-	root, err := m.EmplaceRootPool(m.uid)
+	_, root, err := m.EmplaceRootPool(m.uid)
+
 	if err != nil {
 		panic(err)
 	}
 
-	{ // internal session stats
-		delta := int64(0)
-		if oriCtx := root.entry.ctx.Load(); oriCtx != nil {
-			if oriHelper, ok := oriCtx.arbitrateHelper.(*memArbitrator); ok && oriHelper.isInternal {
-				delta--
-			}
-		}
-		if m.isInternal {
-			delta++
-		}
-		if delta != 0 {
-			globalArbitrator.metrics.pools.internalSession.Add(delta)
-		}
-	}
-
 	smallUsed := max(0, m.smallBudgetUsed())
 
-	if !m.RestartEntryByContext(root, m.ctx) {
+	if ok, reset := m.RestartEntryByContext(root, m.ctx); !ok {
 		panic("failed to init mem pool")
+	} else {
+		m.state.reset = reset
 	}
 
 	m.state.Store(memArbitratorStateIntoBigBudget)
 
-	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > m.buffer.size.Load() {
-		m.tryToUpdateBuffer(maxMemHint, m.approxUnixTimeSec())
+	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > 0 {
+		m.updateBuffer(maxMemHint)
 	}
 
 	{
@@ -1163,7 +1153,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	m.addBigBudgetUsed(smallUsed)
 
-	m.bigBudget().Pool = root.entry.pool
+	m.bigBudget().Pool = root.pool
 
 	if m.reserveSize > 0 {
 		m.reserveBigBudget(m.reserveSize)
@@ -1263,13 +1253,16 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		globalArbitrator.metrics.pools.internal.Add(-1)
 	}
 
-	if !exception && m.digestID != InvalidDigestID {
-		m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
-	}
+	m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
 
 	if m.useBigBudget() {
 		m.bigBudget().Stop()
 		m.ResetRootPoolByID(m.uid, maxConsumed, !exception)
+	}
+
+	if m.state.reset != nil {
+		m.state.reset()
+		m.state.reset = nil
 	}
 	return true
 }
@@ -1309,12 +1302,14 @@ func (t *Tracker) InitMemArbitrator(
 		MemArbitrator: g,
 		uid:           uid,
 		killer:        killer,
+		maxUsed:       &t.maxConsumed,
 		digestID:      digestID,
 		reserveSize:   explicitReserveSize,
 		isInternal:    isInternal,
 	}
 	t.MemArbitrator = m
 	m.ctx = NewArbitrationContext(
+		m.digestID,
 		m,
 		memPriority,
 		waitAverse,
@@ -1342,12 +1337,6 @@ func (t *Tracker) InitMemArbitrator(
 	return true
 }
 
-func (m *memArbitrator) Finish() {
-	if m.isInternal { // internal session stats
-		globalArbitrator.metrics.pools.internalSession.Add(-1)
-	}
-}
-
 func (m *memArbitrator) Done() <-chan struct{} {
 	if m.killer == nil {
 		return nil
@@ -1362,9 +1351,17 @@ func (m *memArbitrator) Stop(reason ArbitratorStopReason) bool {
 	return true
 }
 
-func (m *memArbitrator) HeapInuse() int64 {
+func (m *memArbitrator) MemUsage() (res MemUsage) {
 	if m.useBigBudget() {
-		return m.bigBudgetUsed()
+		used := m.bigBudgetUsed()
+		return MemUsage{
+			RootPoolUsed: used,
+			HeapInuse:    used,
+			MaxHeapUsed:  max(m.maxUsed.Load(), m.prevMaxMem),
+		}
 	}
-	return 0
+	return MemUsage{
+		HeapInuse:   max(m.smallBudgetUsed(), m.bigBudgetUsed()),
+		MaxHeapUsed: max(m.maxUsed.Load(), m.prevMaxMem),
+	}
 }
