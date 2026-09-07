@@ -10212,3 +10212,7 @@ risks without claiming repository-wide parity.
   '=' and LIKE case-sensitive ('a' != 'A'); explicit utf8mb4_general_ci
   collation makes them equal; a _bin column keeps LIKE strict. Pinned in
   `crates/tidb-session/tests/collation_case_sensitivity_source.rs`.
+- 2026-09-06 (CHECK over generated column pin): the constraint is evaluated
+  against the REGENERATED value — INSERT a=60 (b=120) and UPDATE a across
+  the boundary both fail 3819 with nothing stored; a=40 (b=80) passes.
+  Pinned in `crates/tidb-session/tests/check_over_generated_source.rs`.
