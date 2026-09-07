@@ -10843,3 +10843,9 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/compression_option_source.rs` (round-trip,
   ALTER re-set, last-wins at CREATE, fresh-table prints nothing).
   Suite diff vs stash-verified baseline: zero net-new failures.
+- 2026-09-06 (AFFINITY option recorded, NOT FIXED): the port silently
+  ignores `AFFINITY = '<level>'` (invalid levels included); Go validates
+  (ErrInvalidTableAffinity), records, and SHOW CREATE prints the gated
+  marker. Executor-side wiring is queued behind the sibling affinity
+  stream (server tier already syncs the flag). Plan + oracle positions in
+  `rust/docs/table-option-affinity-divergence.md`.
