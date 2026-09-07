@@ -10495,3 +10495,7 @@ risks without claiming repository-wide parity.
   strict mode an over-long insert fails 1406; after `set sql_mode = ''` in
   the SAME session the identical insert truncates and stores. Pinned in
   `crates/tidb-session/tests/sql_mode_switch_source.rs`.
+- 2026-09-06 (schema lifecycle pin): USE on a missing database fails 1049;
+  DROP DATABASE removes the schema and leaves the session with no current
+  DB (1046 "No database selected"). Pinned in
+  `crates/tidb-session/tests/schema_lifecycle_errors_source.rs`.
