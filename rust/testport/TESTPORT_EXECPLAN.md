@@ -11110,3 +11110,6 @@ risks without claiming repository-wide parity.
   DECIMAL(3,1) rounds 1.999 -> 2.0, and BINARY forces byte-exact
   comparison. Pinned in
   `crates/tidb-session/tests/cast_wraps_binary_source.rs`.
+- 2026-09-06 (DATE_FORMAT/DATEDIFF pin): %W %M %e weekday/name rendering,
+  DATEDIFF across a year boundary, and TIMESTAMPDIFF hour arithmetic.
+  Pinned in `crates/tidb-session/tests/date_format_datediff_source.rs`.
