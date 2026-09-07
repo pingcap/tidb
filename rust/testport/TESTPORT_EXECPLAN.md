@@ -10284,3 +10284,7 @@ risks without claiming repository-wide parity.
   a=60 (virtual b=120) fails 3819 and stores nothing; a=40 (b=80) passes.
   Complements the stored-column pin. Pinned in
   `crates/tidb-session/tests/check_over_virtual_source.rs`.
+- 2026-09-06 (DISTINCT aggregate pins): COUNT vs COUNT(DISTINCT), SUM vs
+  SUM(DISTINCT) (DECIMAL fold asserted by digit bytes), multi-column
+  COUNT(DISTINCT a, b) counting tuples, and the semantics under GROUP BY.
+  Pinned in `crates/tidb-session/tests/distinct_aggregates_source.rs`.
