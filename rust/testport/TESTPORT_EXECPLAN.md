@@ -10248,3 +10248,7 @@ risks without claiming repository-wide parity.
   between the planned Projection and the reader's emitted columns). The
   fix must reconcile integer_columns' index against the runtime child
   schema, or make the reader emit the planned layout.
+- 2026-09-06 (SHOW charset/collation + DISTINCT pin): SHOW CHARSET (7
+  charsets incl. utf8mb4) and SHOW COLLATION (utf8mb4_bin) list their
+  entries; DISTINCT dedups with ORDER BY; constant SELECTs work without
+  FROM. Pinned in `crates/tidb-session/tests/show_charset_distinct_source.rs`.
