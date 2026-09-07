@@ -10779,3 +10779,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (ON UPDATE CURRENT_TIMESTAMP pin): the clause round-trips
   through SHOW CREATE. Pinned in
   `crates/tidb-session/tests/show_create_on_update_source.rs`.
+- 2026-09-06 (CASE-driven UPDATE pin): a CASE in SET drives per-row values —
+  the self-referencing branch keeps the row unchanged. Pinned in
+  `crates/tidb-session/tests/update_case_mixed_rows_source.rs`.
