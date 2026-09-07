@@ -76,6 +76,8 @@ type reorgCtx struct {
 	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
+	// snapshotVer records the read timestamp produced by a reorg worker.
+	snapshotVer uint64
 	// maxProgress is the historical maximum progress to prevent progress regression.
 	maxProgress atomicutil.Float64
 
@@ -310,6 +312,14 @@ func (rc *reorgCtx) getRowCount() int64 {
 	return row
 }
 
+func (rc *reorgCtx) setSnapshotVer(snapshotVer uint64) {
+	atomic.StoreUint64(&rc.snapshotVer, snapshotVer)
+}
+
+func (rc *reorgCtx) getSnapshotVer() uint64 {
+	return atomic.LoadUint64(&rc.snapshotVer)
+}
+
 // setMaxProgress updates the maximum progress if the new progress is greater.
 // It returns the current maximum progress (which may be unchanged if newProgress <= oldMax).
 // This prevents progress regression when statistics change during backfill.
@@ -431,6 +441,9 @@ func (w *worker) runReorgJob(
 			}
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
+			if snapshotVer := rc.getSnapshotVer(); snapshotVer != 0 {
+				job.SnapshotVer = snapshotVer
+			}
 			if err != nil {
 				logutil.DDLLogger().Warn("run reorg job done",
 					zap.Int64("jobID", reorgInfo.ID),

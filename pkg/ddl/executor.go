@@ -113,6 +113,8 @@ type Executor interface {
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	CreateMaterializedView(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewStmt) error
+	CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
@@ -541,6 +543,10 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
+	// Store-count check is shared by every table in the batch.
+	// The Columnar Storage gate is deferred until shouldModifyTiFlashReplica
+	// finds a table that actually needs a job, matching AlterTableSetTiFlashReplica
+	// (batch no-ops must not fail when the gate is OFF).
 	err = checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
@@ -549,6 +555,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	var originVersion int64
 	var pendingCount uint32
 	forceCheck := false
+	columnarGateChecked := false
 
 	logutil.DDLLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
@@ -582,6 +589,15 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			sctx.GetSessionVars().StmtCtx.AppendNote(err)
 			skip++
 			continue
+		}
+
+		// SET TIFLASH REPLICA 0 stays allowed when the flag is OFF.
+		if tiflashReplica.Count > 0 && !columnarGateChecked {
+			err = checkColumnarStorageEnabled(sctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			columnarGateChecked = true
 		}
 
 		// Alter `tiflashCheckPendingTablesLimit` tables are handled, we need to check if we have reached threshold.
@@ -1145,6 +1161,9 @@ func (e *executor) createTableWithInfoJob(
 	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), ctx.GetStore(), dbName, tbInfo); err != nil {
 		return nil, err
 	}
+	if err := checkColumnarStorageEnabledForNewTable(ctx, tbInfo); err != nil {
+		return nil, err
+	}
 
 	var actionType model.ActionType
 	switch {
@@ -1239,14 +1258,26 @@ func (e *executor) CreateTableWithInfo(
 			scatterScope = val
 		}
 
-		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
-		if e.startMode == BR {
-			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tbInfo); err != nil {
-				return errors.Trace(err)
-			}
+		if err := e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return errors.Trace(err)
+}
+
+func (e *executor) createTableWithInfoPost(
+	ctx sessionctx.Context,
+	tbInfo *model.TableInfo,
+	schemaID int64,
+	scatterScope string,
+) error {
+	preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+	if e.startMode == BR {
+		if err := handleAutoIncID(e.getAutoIDRequirement(), schemaID, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
@@ -1340,11 +1371,8 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
-		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
-		if e.startMode == BR {
-			if err := handleAutoIncID(e.getAutoIDRequirement(), jobW.Job, tblArgs.TableInfo); err != nil {
-				return errors.Trace(err)
-			}
+		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
@@ -3843,10 +3871,16 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 		return e.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
-	checkTiFlash := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
-
-	if checkTiFlash {
-		err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	// Two independent pre-checks:
+	//  - replica count vs live TiFlash stores (when cse.columnar-store-type is not "columnar")
+	//  - cluster Columnar Storage gate, only when adding replicas
+	//    (SET TIFLASH REPLICA 0 stays allowed when the flag is OFF)
+	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if replicaInfo.Count > 0 {
+		err = checkColumnarStorageEnabled(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4024,8 +4058,9 @@ func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
-	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
-	if !tiflashEnabled {
+	// Callers can invoke this unconditionally. Classic TiFlash is absent when
+	// cse.columnar-store-type is "columnar", so there is no store count to check.
+	if !config.GetGlobalConfig().CSE.IsTiFlashEnabled() {
 		return nil
 	}
 	// Check the tiflash replica count should be less than the total tiflash stores.
@@ -4037,6 +4072,87 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 		return errors.Errorf("the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiflashStoreCnt)
 	}
 	return nil
+}
+
+// globalVarGetter is the subset of *domain.Domain used by the columnar-storage
+// DDL gate. pkg/ddl cannot import pkg/domain because domain already imports ddl.
+type globalVarGetter interface {
+	GetGlobalVar(name string) (string, error)
+}
+
+// checkColumnarStorageEnabled checks whether the cluster allows creating TiFlash replicas.
+// It reads tidb_columnar_storage_enabled from the domain sysvar cache (memory, no PD RPC).
+func checkColumnarStorageEnabled(ctx sessionctx.Context) error {
+	if !config.GetGlobalConfig().CSE.IsColumnarStoreEnabled() {
+		return nil
+	}
+	keyspace := ctx.GetStore().GetKeyspace()
+	failpoint.Inject("mockColumnarStorageEnabledCheckFail", func() {
+		failpoint.Return(dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace))
+	})
+	do, ok := ctx.GetDomain().(globalVarGetter)
+	if !ok || do == nil {
+		logutil.DDLLogger().Warn("failed to read tidb_columnar_storage_enabled for columnar storage check: domain is unavailable")
+		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
+	}
+	val, err := do.GetGlobalVar(vardef.TiDBColumnarStorageEnabled)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to read tidb_columnar_storage_enabled for columnar storage check",
+			zap.Error(err))
+		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
+	}
+	failpoint.Inject("mockColumnarStorageEnabledValue", func(v failpoint.Value) {
+		if s, ok := v.(string); ok {
+			val = s
+		}
+	})
+	// Fail-closed: only explicit opt-in values (ON/1) are accepted.
+	// Cache entries such as "0", "OFF", empty, or any other unknown string
+	// are treated as not enabled (SET GLOBAL normalizes to ON/OFF).
+	if !variable.TiDBOptOn(val) {
+		logutil.DDLLogger().Warn("columnar storage gate rejected tidb_columnar_storage_enabled value",
+			zap.String("value", val),
+			zap.String("keyspace", keyspace))
+		return dbterror.ErrTiFlashColumnarStorageNotEnabled.GenWithStackByArgs(keyspace, val)
+	}
+	return nil
+}
+
+func tableHasColumnarIndex(tbInfo *model.TableInfo) bool {
+	for _, idx := range tbInfo.Indices {
+		if idx.IsColumnarIndex() {
+			return true
+		}
+	}
+	return false
+}
+
+func wrapColumnarStorageGateForColumnarIndex(err error) error {
+	if err == nil {
+		return nil
+	}
+	if dbterror.ErrTiFlashColumnarStorageNotEnabled.Equal(err) {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("Columnar Storage is not enabled")
+	}
+	return err
+}
+
+// checkColumnarStorageEnabledForNewTable rejects persisting TiFlash replica
+// metadata on CREATE TABLE / CREATE TABLE LIKE when Columnar Storage is off.
+// CREATE TABLE with a columnar index is remapped to ErrUnsupportedAddColumnarIndex
+// because the user intent is adding the index, not SET TIFLASH REPLICA.
+func checkColumnarStorageEnabledForNewTable(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	if tbInfo.TiFlashReplica == nil || tbInfo.TiFlashReplica.Count == 0 {
+		return nil
+	}
+	err := checkColumnarStorageEnabled(ctx)
+	if err == nil {
+		return nil
+	}
+	if tableHasColumnarIndex(tbInfo) {
+		return wrapColumnarStorageGateForColumnarIndex(err)
+	}
+	return err
 }
 
 // AlterTableAddStatistics would register extended statistics for a table.
@@ -4850,7 +4966,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
-	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4880,6 +4996,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			SQLMode:                 sqlMode,
 			Global:                  false,
 			IsPK:                    true,
+			AutoPreSplit:            autoPreSplit,
 			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
@@ -4986,6 +5103,9 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 
 	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return errors.Trace(err)
+	}
+	if err := checkColumnarStorageEnabled(ctx); err != nil {
+		return wrapColumnarStorageGateForColumnarIndex(err)
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
@@ -5167,7 +5287,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5206,6 +5326,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
+			AutoPreSplit:            autoPreSplit,
 			SplitOpt:                splitOpt,
 			ConditionString:         conditionString,
 		}},
@@ -5225,13 +5346,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
-func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {
+func buildIndexPreSplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, bool, error) {
 	if indexOpt == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	opt := indexOpt.SplitOpt
 	if opt == nil {
-		return nil, nil
+		return nil, indexOpt.AutoPreSplit, nil
 	}
 	if len(opt.ValueLists) > 0 {
 		valLists := make([][]string, 0, len(opt.ValueLists))
@@ -5242,7 +5363,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 				rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 				err := exp.Restore(rCtx)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, false, errors.Trace(err)
 				}
 				values = append(values, sb.String())
 			}
@@ -5251,7 +5372,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		return &model.IndexArgSplitOpt{
 			Num:        opt.Num,
 			ValueLists: valLists,
-		}, nil
+		}, false, nil
 	}
 
 	lowers := make([]string, 0, len(opt.Lower))
@@ -5260,7 +5381,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 		err := expL.Restore(rCtx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		lowers = append(lowers, sb.String())
 	}
@@ -5270,21 +5391,21 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 		err := expU.Restore(rCtx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
 		}
 		uppers = append(uppers, sb.String())
 	}
 	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if opt.Num > maxSplitRegionNum {
-		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+		return nil, false, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
 	} else if opt.Num < 1 {
-		return nil, errors.Errorf("Split index region num should be greater than 0")
+		return nil, false, errors.Errorf("Split index region num should be greater than 0")
 	}
 	return &model.IndexArgSplitOpt{
 		Lower: lowers,
 		Upper: uppers,
 		Num:   opt.Num,
-	}, nil
+	}, false, nil
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
@@ -7583,6 +7704,8 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
+	case model.ActionCreateMaterializedView:
+		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	default:
 		return getIntervalFromPolicy(normalDDLIntervalPolicy, i)
 	}

@@ -970,7 +970,10 @@ func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, 
 type ColumnarStatusResp struct {
 	Ready            uint `json:"ready"`
 	VectorIndexReady uint `json:"vector-index-ready"`
+	FtsIndexReady    uint `json:"fts-index-ready"`
 	Total            uint `json:"total"`
+	// HasFtsIndexReady reports whether the JSON payload contains "fts-index-ready".
+	HasFtsIndexReady bool `json:"-"`
 }
 
 // CollectColumnarStatusWithCtx collects the columnar status from the TiKV status API.
@@ -1010,9 +1013,23 @@ func CollectColumnarStatusWithCtx(ctx context.Context, statusAddress string, key
 	if err != nil {
 		return columnarStatus, errors.Trace(err)
 	}
-	err = json.Unmarshal(body, &columnarStatus)
+	type columnarStatusPayload struct {
+		Ready            uint  `json:"ready"`
+		VectorIndexReady uint  `json:"vector-index-ready"`
+		FtsIndexReady    *uint `json:"fts-index-ready"`
+		Total            uint  `json:"total"`
+	}
+	var payload columnarStatusPayload
+	err = json.Unmarshal(body, &payload)
 	if err != nil {
 		return columnarStatus, errors.Trace(err)
+	}
+	columnarStatus.Ready = payload.Ready
+	columnarStatus.VectorIndexReady = payload.VectorIndexReady
+	columnarStatus.Total = payload.Total
+	if payload.FtsIndexReady != nil {
+		columnarStatus.HasFtsIndexReady = true
+		columnarStatus.FtsIndexReady = *payload.FtsIndexReady
 	}
 	if columnarStatus.Ready != columnarStatus.Total {
 		logutil.BgLogger().Info("columnar status not ready", zap.Uint("ready", columnarStatus.Ready), zap.Uint("total", columnarStatus.Total))
