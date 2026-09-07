@@ -9956,3 +9956,8 @@ risks without claiming repository-wide parity.
   (deferred scalar sites, executor-side QueryStmt evaluation, 1242/NULL
   semantics) in `docs/uncorrelated-scalar-subquery-divergence.md`; queued
   behind the sibling in-flight planner stream that owns the rewriter region.
+- 2026-09-06 (DELETE subquery pins): EXISTS (correlated), IN, and NOT IN
+  subquery predicates in DELETE each remove exactly the right rows. An
+  apparent IN-subquery failure during probing was a harness artifact (the
+  probe's second catalog never populated the subquery's table); no port
+  change needed. Pinned in `tests/delete_subquery_source.rs`.
