@@ -10175,3 +10175,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (NULL order/group pin): NULLs sort first ascending and last
   descending, and GROUP BY folds them into one bucket (count 2). Pinned in
   `crates/tidb-session/tests/null_order_group_source.rs`.
+- 2026-09-06 (aggregate edge pins): over an empty table COUNT(*)/COUNT(a)
+  answer 0 with SUM/MAX NULL in a single scalar row; GROUP BY over empty
+  answers none; HAVING without GROUP BY filters the scalar row. Pinned in
+  `crates/tidb-session/tests/aggregate_edge_semantics_source.rs`.
