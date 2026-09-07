@@ -10789,3 +10789,6 @@ risks without claiming repository-wide parity.
   column referenced by a VIRTUAL generated column fails with Go's exact
   ErrDependentByGeneratedColumn text. Pinned in
   `crates/tidb-session/tests/virtual_generated_dependency_source.rs`.
+- 2026-09-06 (LIKE copies generated pin): CREATE TABLE LIKE copies the
+  generated column; the copy computes on insert. Pinned in
+  `crates/tidb-session/tests/like_copies_generated_source.rs`.
