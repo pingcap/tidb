@@ -11317,3 +11317,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (COUNT NULL semantics pin): COUNT(*) vs COUNT(col)'s NULL
   skip, COUNT(DISTINCT) after the skip, and SUM's all-NULL NULL. Pinned
   in `crates/tidb-session/tests/count_null_semantics_source.rs`.
+- 2026-09-08 (INTERSECT/EXCEPT pin): set semantics with dedup plus Go's own
+  EXCEPT ALL refusal text (logical_plan_builder.go:2311). Pinned in
+  `crates/tidb-session/tests/intersect_except_source.rs`.
