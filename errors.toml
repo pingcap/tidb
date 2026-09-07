@@ -1426,6 +1426,11 @@ error = '''
 `%s` is unsupported on temporary tables.
 '''
 
+["ddl:8028"]
+error = '''
+Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`
+'''
+
 ["ddl:8148"]
 error = '''
 Field '%-.192s' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP

@@ -18,16 +18,21 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"os/user"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
@@ -142,6 +148,61 @@ func TestClassicS3ExternalID(t *testing.T) {
 		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
 		tk.MustQuery("select * from test.t").Check(testkit.Rows())
 	})
+}
+
+// TestImportIntoRejectsConcurrentAddIndex is a regression test for
+// https://github.com/pingcap/tidb/issues/70580: a concurrent
+// ALTER TABLE ... ADD UNIQUE INDEX that lands between IMPORT INTO's planning
+// (NewImportPlan, which snapshots the table schema) and task submission must
+// cause the IMPORT INTO statement to fail, instead of silently succeeding
+// against a schema that no longer matches the table (which would leave the
+// new index un-backfilled for the imported rows).
+func TestImportIntoRejectsConcurrentAddIndex(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("import from server disk is not supported in nextgen")
+	}
+	username, err := user.Current()
+	require.NoError(t, err)
+	if username.Name == "root" {
+		t.Skip("it cannot run as root")
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, v int)")
+
+	tempDir := t.TempDir()
+	csvPath := filepath.Join(tempDir, "data.csv")
+	require.NoError(t, os.WriteFile(csvPath, []byte("1,1\n2,2\n"), 0o644))
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan",
+		func(*plannercore.ImportInto) {
+			// runs on a second session, simulating a concurrent client racing
+			// the IMPORT INTO statement right after it captured the table's
+			// schema snapshot but before it reaches task submission.
+			ddlTK := testkit.NewTestKit(t, store)
+			ddlTK.MustExec("use test")
+			ddlTK.MustExec("alter table t add unique index kv(v)")
+		})
+
+	// disable_precheck: the CDC/PiTR precheck needs a real etcd client, which
+	// this mock-store test environment doesn't provide; unrelated to the
+	// schema-race guard under test.
+	err = tk.QueryToErr(fmt.Sprintf("IMPORT INTO t FROM '%s' WITH disable_precheck", csvPath))
+	require.True(t, dbterror.ErrInfoSchemaChanged.Equal(err), "expected ErrInfoSchemaChanged, got: %v", err)
+
+	// the table must not be left stuck in import mode by the rejected statement.
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+	// the new index must be usable and empty; nothing was silently imported
+	// past it.
+	tk.MustExec("insert into t values (1, 1)")
+	err = tk.ExecToErr("insert into t values (2, 1)")
+	require.Error(t, err, "unique index kv should reject the duplicate value")
 }
 
 func TestNextGenS3ExternalID(t *testing.T) {

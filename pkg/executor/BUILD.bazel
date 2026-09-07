@@ -527,6 +527,7 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/deadlockhistory",
