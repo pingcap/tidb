@@ -11276,3 +11276,7 @@ risks without claiming repository-wide parity.
   DATE() projection, CURTIME's minimum rendering, and NOW()'s full
   datetime width — shape contracts, no wall-clock values. Pinned in
   `crates/tidb-session/tests/clock_shape_source.rs`.
+- 2026-09-06 (BIT_COUNT/promotion pin): BIT_COUNT's 64-bit population
+  count, DATE_FORMAT NULL propagation, and IFNULL's string promotion.
+  Pinned in
+  `crates/tidb-session/tests/bitcount_null_promote_source.rs`.
