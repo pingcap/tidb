@@ -10759,3 +10759,6 @@ risks without claiming repository-wide parity.
   containing CHECK-attached tables without refusal (the constraint dies
   with the schema). Pinned in
   `crates/tidb-session/tests/drop_database_with_check_source.rs`.
+- 2026-09-06 (multi-CHECK ordering pin): multiple CHECK constraints print
+  in declaration order in SHOW CREATE (chk_b before chk_c). Pinned in
+  `crates/tidb-session/tests/multi_check_order_source.rs`.
