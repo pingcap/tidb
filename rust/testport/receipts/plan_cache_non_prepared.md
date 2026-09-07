@@ -168,3 +168,33 @@ in-flight cluster, not this batch): `tests_binding` (7),
 `tests_prepared_plan_cache::expression_and_aggregate_parameters_rebuild_on_cache_hits`
 (chunk panic from the expr-lowering batch),
 `vars::tests::prepared_plan_cache_switch_uses_go_typed_state`.
+
+## Post-optimization cacheability gate — BOUNDARY, blocked on the physical plan (2026-09-06)
+
+Go's `generateNewPlan` runs `isPlanCacheable(sctx, p, paramNum, limitParamNum,
+hasSubQuery)` on the OPTIMIZED plan before putting it into the cache
+(`plan_cache.go:384-391`, checker at `plan_cacheable_checker.go:565`). The
+gate reads:
+
+1. `tidb_enable_plan_cache_for_param_limit` (when LIMIT was parameterized);
+2. `tidb_enable_plan_cache_for_subquery` (when the statement has subqueries);
+3. `tidb_plan_cache_max_plan_size` (`pp.MemoryUsage()` cap);
+4. `isPhysicalPlanCacheable` — a recursive physical-tree walk: non-cacheable
+   reasons attached to operators, TableDual-with-params, TiFlash
+   PhysicalTableReader, Shuffle, MemTable, IndexMerge over multi-valued
+   indexes (unless `tidb_enable_plan_cache_for_generated_cols`), full-scan
+   arms under IndexMerge, and PhysicalApply.
+
+A refusal records `SetSkipPlanCache(reason)` and the plan EXECUTES but is not
+cached. The Rust funnel puts the retained plan unconditionally after a
+successful build: the three sysvar NAMES exist in `tidb-vardef` (constants
+only), but no Rust code consumes them as a cache gate, and the retained-plan
+architecture has no `MemoryUsage`/physical-shape walker.
+
+Porting this gate faithfully requires the retained physical plan tree
+(`tidb-executor` `physical_builder.rs` — sibling executor owner) and is
+logged in `PROGRESS-zcode.md` under the same blocked cluster as the instance
+plan-cache wiring. Until then this receipt's admission face (AST-level fast
+checks + checker walk) is the complete ported half; plans whose OPTIMIZED
+shape Go would refuse can be cached here, which is a known, bounded divergence
+owned by the physical-plan batch.
