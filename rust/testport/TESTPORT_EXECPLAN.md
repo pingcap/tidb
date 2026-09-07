@@ -10924,3 +10924,7 @@ risks without claiming repository-wide parity.
   checkModifyColumnWithGeneratedColumnsConstraint (modify_column.go:1415)
   does not rewrite the expression either. Pinned in
   `crates/tidb-session/tests/rename_generated_base_source.rs`.
+- 2026-09-06 (DEFAULT-on-generated pin): the DEFAULT keyword in VALUES is
+  accepted for a generated column and takes the generated value —
+  contrasting with the explicit-value refusal (3108). Pinned in
+  `crates/tidb-session/tests/default_keyword_generated_source.rs`.
