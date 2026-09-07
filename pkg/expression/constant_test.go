@@ -271,6 +271,59 @@ func TestConstantFolding(t *testing.T) {
 	}
 }
 
+func TestConstantFoldingCaseWithoutElse(t *testing.T) {
+	ctx := mock.NewContext().GetExprCtx()
+	tests := []struct {
+		name string
+		expr Expression
+	}{
+		{
+			name: "false condition",
+			expr: newFunction(ctx, ast.Case, newLonglong(0), newLonglong(1)),
+		},
+		{
+			name: "null condition",
+			expr: newFunction(ctx, ast.Case, NewNull(), newString("unreachable", "utf8mb4_bin")),
+		},
+		{
+			name: "multiple unmatched conditions",
+			expr: newFunction(ctx, ast.Case, newLonglong(0), newLonglong(1), NewNull(), newLonglong(2)),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectedType := tt.expr.GetType(ctx.GetEvalCtx()).Clone()
+			folded := FoldConstant(ctx, tt.expr)
+			constant, ok := folded.(*Constant)
+			require.True(t, ok)
+			require.True(t, constant.Value.IsNull())
+			require.Equal(t, expectedType, constant.RetType)
+		})
+	}
+
+	t.Run("deferred condition", func(t *testing.T) {
+		sctx := mock.NewContext()
+		ctx := sctx.GetExprCtx()
+		sctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(0))
+		condition := &Constant{ParamMarker: &ParamMarker{order: 0}, RetType: newIntFieldType()}
+		caseExpr := newFunction(ctx, ast.Case, condition, newLonglong(1))
+
+		folded := FoldConstant(ctx, caseExpr)
+		require.Same(t, caseExpr, folded)
+		_, isNull, err := folded.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
+		require.NoError(t, err)
+		require.True(t, isNull)
+
+		sctx.GetSessionVars().PlanCacheParams.Reset()
+		sctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(1))
+		value, isNull, err := folded.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, int64(1), value)
+	})
+}
+
 func TestConstantFoldingCharsetConvert(t *testing.T) {
 	ctx := mock.NewContext()
 	tests := []struct {
