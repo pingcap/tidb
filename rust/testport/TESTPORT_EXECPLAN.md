@@ -10132,3 +10132,6 @@ risks without claiming repository-wide parity.
   `update t partition (p0)` moves only p0's rows (the named-partition fix
   inherited through UPDATE). Pinned in
   `crates/tidb-session/tests/bit_write_partition_update_source.rs`.
+- 2026-09-06 (TRUNCATE rebase + ROLLBACK pins): TRUNCATE TABLE resets the
+  auto-inc counter (next id 1); BEGIN/ROLLBACK reverts in-transaction
+  writes. Pinned in `crates/tidb-session/tests/truncate_rebase_txn_source.rs`.
