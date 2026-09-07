@@ -11191,3 +11191,11 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (UPDATE IGNORE x FK pin): the FK-violating ignored UPDATE is
   skipped with the row untouched; a valid ignored UPDATE lands. Pinned in
   `crates/tidb-session/tests/update_ignore_fk_source.rs`.
+- 2026-09-06 (correlated EXISTS fan-out recorded, REAL DIVERGENCE): a
+  correlated EXISTS with multiple inner matches duplicates the outer row
+  (`select a from u where exists (select 1 from s where x = a * 10)`
+  returns 1,2,2 for a 2-row table) — the decorrelated branch loses semi
+  semantics. Full reproduction + diagnosis + 3-step plan in
+  `rust/docs/correlated-exists-fanout-divergence.md`; queued behind the
+  sibling planner stream (shared semi-apply region). The correlated scalar
+  in the SELECT list and correlated EXISTS with unique inner keys work.
