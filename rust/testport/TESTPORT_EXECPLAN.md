@@ -10966,3 +10966,9 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (VALUES(col) in ODKU pin): the VALUES(col) function inside ON
   DUPLICATE KEY UPDATE reads the NEW row's would-be value. Pinned in
   `crates/tidb-session/tests/odku_values_function_source.rs`.
+- 2026-09-06 (ADD COLUMN self-violating default pin): the previously
+  recorded gap is CLOSED — `add column c int default (-1) check (c >= 0)`
+  on a non-empty table refuses with 3819 and rolls the column add back
+  (existing rows would violate). Pinned in
+  `crates/tidb-session/tests/add_column_default_check_validation_source.rs`;
+  the standing-queue entry is retired.
