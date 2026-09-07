@@ -123,9 +123,19 @@ Then, independently of each other:
   a per-crate triage into identifier paths (migrate to `go_to_lower`) and
   value paths (audit separately). #203's `Ä`/`ä` finding is the same
   question from the DDL side.
-- **#197 — preserve unknown enum values.** `index_type` and partition type
-  collapse to 0; five AST enums hard‑fail. Go keeps the raw int and says why.
-  Decide the policy once for all seven.
+- **#197 — preserve unknown enum values.** PARTIALLY VERIFIED (2026-09-08):
+  `PartitionType(pub i64)` and `ColumnarIndexType(pub u8)` already use
+  newtype wrappers that carry raw integers through serialization
+  unchanged -- the partition JSON adapter's doc comment explicitly
+  guards against collapsing unnamed values. The five AST enums that
+  hard-fail are `PrimaryKeyStorage`, `PrimaryKeyType`,
+  `ReferentialAction`, `RunawayActionType`, `RunawayWatchType`, and
+  `RunawayOptionType` (tidb-ast/src/model.rs): these are fieldless
+  Rust enums that reject unrecognized integer values at deserialization.
+  The fix is the same per-enum: add a
+  `Unknown(<raw>)` variant or a newtype wrapper, matching Go's
+  pass-through behavior. Small per-enum but seven of them; the house
+  style (PartitionType's newtype + serde adapter) is the template.
 
 ## Phase 3 — What clients see
 
