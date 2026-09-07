@@ -3795,6 +3795,7 @@ dependencies = [
  "sha2",
  "tidb-ast",
  "tidb-codec",
+ "tidb-hack",
  "tidb-model",
  "tidb-tablecodec",
 ]
@@ -4212,6 +4213,7 @@ dependencies = [
  "fail",
  "tidb-ast",
  "tidb-datatype",
+ "tidb-hack",
  "tidb-model",
  "tidb-resolve",
  "tidb-sqlexec",
