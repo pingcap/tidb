@@ -181,9 +181,20 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 
 	b.writeColNames([]*model.ColumnInfo{b.tbl.TimeColumn}, false)
 	b.restoreCtx.WritePlain(" < ")
-	b.restoreCtx.WritePlain("FROM_UNIXTIME(")
-	b.restoreCtx.WritePlain(strconv.FormatInt(expire.Unix(), 10))
-	b.restoreCtx.WritePlain(")")
+	if b.tbl.TimeColumn.GetType() == mysql.TypeTimestamp {
+		// TTL worker sessions execute in UTC. For TIMESTAMP, the expiration
+		// frontier is an instant, so FROM_UNIXTIME preserves that exact instant.
+		b.restoreCtx.WritePlain("FROM_UNIXTIME(")
+		b.restoreCtx.WritePlain(strconv.FormatInt(expire.Unix(), 10))
+		b.restoreCtx.WritePlain(")")
+	} else {
+		// DATE and DATETIME have wall-clock semantics. expire is normalized to
+		// the global time zone by the scan worker; write that wall-clock value as
+		// a DATETIME constant so executing this SQL in UTC does not shift it.
+		b.restoreCtx.WriteKeyWord("CAST(")
+		b.restoreCtx.WriteString(expire.Format(time.DateTime))
+		b.restoreCtx.WriteKeyWord(" AS DATETIME)")
+	}
 	b.hasWriteExpireCond = true
 	return nil
 }
