@@ -3859,6 +3859,14 @@ fn drop_column_action(
             table: table_name.to_owned(),
         });
     }
+    // Go `checkDropColumnWithTTLConfig` (`pkg/ddl/ttl.go:152-159`): the column
+    // a TTL config names cannot be dropped while the config stands
+    // (`ErrTTLColumnCannotDrop`, 8149); the TTL_ENABLE clause must go first.
+    if let Some(info) = table.ttl_info() {
+        if info.column_name.lowercase() == column_name.to_ascii_lowercase() {
+            return Err(DriverError::TtlColumnCannotDrop(column_name.to_owned()));
+        }
+    }
     // Go `checkIsDroppableColumn` (`pkg/ddl/executor.go`) runs `isDroppableColumn`
     // and then `checkDropColumnWithPartitionConstraint`, which is the pair
     // `column_dependent` answers: with `index idx((a+b))`, `drop column a` is

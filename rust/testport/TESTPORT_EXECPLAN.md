@@ -10853,3 +10853,13 @@ risks without claiming repository-wide parity.
   SHOW CREATE as three version-gated markers (`TTL=`, `TTL_ENABLE`,
   `TTL_JOB_INTERVAL`); `TTL_ENABLE` takes a quoted string literal. Pinned
   in `crates/tidb-session/tests/ttl_show_create_source.rs`.
+- 2026-09-06 (TTL config validation fix, REAL DIVERGENCE): Go's
+  `checkTTLInfoValid` (`pkg/ddl/ttl.go`) refuses a TTL column that is
+  missing (1054 "Unknown column 'x' in 'TTL config'") or not a time type
+  (8148 expect DATETIME, DATE or TIMESTAMP), and
+  `checkDropColumnWithTTLConfig` refuses dropping the TTL column (8149
+  "needed in TTL config"); the port accepted all three. CREATE now
+  validates existence + type; DROP COLUMN checks the config. Pins:
+  `crates/tidb-session/tests/ttl_config_validation_source.rs`. Suite diff
+  vs stash-verified baseline: zero net-new failures (218 with-fix vs 226
+  baseline, all deltas within the known flake set).

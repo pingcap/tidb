@@ -202,6 +202,25 @@ impl DriverError {
             tidb_error::tidb::errcode::ErrTempTableNotAllowedWithTTL,
             tidb_error::tidb::errname::ErrTempTableNotAllowedWithTTL.raw,
         ),
+        // Go: "Unknown column '%-.192s' in '%-.192s'" with the TTL clause name.
+        DriverError::UnknownColumnInTtlConfig(column) => MysqlError::new(
+            1054,
+            format!("Unknown column '{column}' in 'TTL config'"),
+        ),
+        // Go: "Field '%-.192s' is of a not supported type for TTL config,
+        // expect DATETIME, DATE or TIMESTAMP".
+        DriverError::UnsupportedColumnInTtlConfig(column) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrUnsupportedColumnInTTLConfig,
+            format!(
+                "Field '{column}' is of a not supported type for TTL config, \
+                 expect DATETIME, DATE or TIMESTAMP"
+            ),
+        ),
+        // Go: "Cannot drop column '%-.192s': needed in TTL config".
+        DriverError::TtlColumnCannotDrop(column) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrTTLColumnCannotDrop,
+            format!("Cannot drop column '{column}': needed in TTL config"),
+        ),
         DriverError::UnsupportedLocalTempTableDDL(statement) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
             format!("TiDB doesn't support {statement} for local temporary table"),

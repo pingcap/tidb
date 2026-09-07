@@ -1635,6 +1635,22 @@ pub fn run_create_table_in(
     if ttl_info.is_some() && temporary != tidb_model::TempTableType::NONE {
         return Err(DriverError::TempTableNotAllowedWithTTL);
     }
+    // Go `checkTTLInfoValid` -> `checkTTLInfoColumnType` (`pkg/ddl/ttl.go
+    // :141-149`): the TTL column must EXIST (missing names fail `ErrBadField`
+    // with "TTL config" as the clause) and be a time type -- DATE, DATETIME
+    // or TIMESTAMP (`ErrUnsupportedColumnInTTLConfig`, 8148).
+    if let Some(info) = ttl_info.as_ref() {
+        let named = info.column_name.original();
+        match table.columns.iter().find(|column| column.name.eq_ignore_ascii_case(named)) {
+            None => {
+                return Err(DriverError::UnknownColumnInTtlConfig(named.to_owned()));
+            }
+            Some(column) if !column.field_type.code().is_type_time() => {
+                return Err(DriverError::UnsupportedColumnInTtlConfig(named.to_owned()));
+            }
+            Some(_) => {}
+        }
+    }
     table.set_ttl_info(ttl_info);
     // Go `handleTableOptions`: `SHARD_ROW_ID_BITS = n` is recorded on the
     // TableInfo and read by `AllocHandleIDs`, which composes those HIGH bits

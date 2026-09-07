@@ -106,6 +106,15 @@ pub enum DriverError {
     /// Go `dbterror.ErrTempTableNotAllowedWithTTL` (8151): `TTL` on a
     /// temporary table (`checkTTLInfoValid`).
     TempTableNotAllowedWithTTL,
+    /// Go `ErrBadField` (1054) against the "TTL config" clause: the column a
+    /// `TTL =` definition names does not exist (`checkTTLInfoColumnType`).
+    UnknownColumnInTtlConfig(String),
+    /// Go `dbterror.ErrUnsupportedColumnInTTLConfig` (8148): the TTL column
+    /// is not a DATETIME, DATE or TIMESTAMP.
+    UnsupportedColumnInTtlConfig(String),
+    /// Go `dbterror.ErrTTLColumnCannotDrop` (8149): the column named by the
+    /// TTL config cannot be dropped while the config stands.
+    TtlColumnCannotDrop(String),
     /// Go `dbterror.ErrUnsupportedLocalTempTableDDL` (8200), carrying the
     /// statement name: a local temporary table exists only in the session,
     /// so the DDL job every one of these would need cannot be submitted.
