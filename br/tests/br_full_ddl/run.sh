@@ -23,6 +23,7 @@ RESTORE_LOG=LOG=/$TEST_DIR/restore.log
 BACKUP_STAT=/$TEST_DIR/backup_stat
 RESOTRE_STAT=/$TEST_DIR/restore_stat
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 
 run_sql "CREATE DATABASE $DB;"
 go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
@@ -37,6 +38,23 @@ for i in $(seq $DDL_COUNT); do
     if (( RANDOM % 2 )); then
         run_sql "USE $DB; ALTER TABLE $TABLE DROP INDEX FIELD$i;"
     fi
+done
+
+# wait until the index creation/drop is done
+retry_cnt=0
+while true; do
+    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = '$DB' AND TABLE_NAME = '$TABLE' AND STATE != 'synced';"
+    if grep -Fq "1. row" $res_file; then
+        cat $res_file
+        retry_cnt=$((retry_cnt+1))
+        if [ "$retry_cnt" -gt 50 ]; then
+            echo 'the wait lag is too large'
+            exit 1
+        fi
+        continue
+    fi
+
+    break
 done
 
 # run analyze to generate stats
