@@ -11248,3 +11248,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (calendar/time arith pin): YEARWEEK's year-of-week convention,
   ODBC DAYOFWEEK, DAYOFYEAR, and midnight-crossing ADDTIME/SUBTIME.
   Pinned in `crates/tidb-session/tests/calendar_time_arith_source.rs`.
+- 2026-09-06 (CHAR()/format pin): CHAR's big-endian byte composition plus
+  charset DECODE (so char(22823 using utf8mb4) = "Y'", verified against
+  convertToBytes + OpDecode), DATE_FORMAT %b/%c short forms and %r.
+  Pinned in `crates/tidb-session/tests/char_using_fmt_source.rs`.
