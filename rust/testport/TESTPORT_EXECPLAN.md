@@ -11057,3 +11057,7 @@ risks without claiming repository-wide parity.
   PartitionGlobalIndexNeeded — the sibling global-index stream's model;
   Go's own CREATE check passes such indexes silently
   (partition.go:4708-4736), so CREATE parity holds.
+- 2026-09-06 (out-of-range UPDATE pin): UPDATE moving a row beyond every
+  partition refuses with 1526 and the row stays put; the PK includes the
+  partition column per the CREATE-time 1503 rule. Pinned in
+  `crates/tidb-session/tests/update_partition_out_of_range_source.rs`.
