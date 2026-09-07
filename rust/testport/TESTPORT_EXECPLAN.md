@@ -9330,6 +9330,14 @@ risks without claiming repository-wide parity.
   owner and passes with all four table-mode tests plus affected model/meta/
   executor/exec all-target checks; Ready evidence is recorded in
   `receipts/meta_model_materialized_view.md`.
+- 2026-09-07 (`pkg/meta/model` table-info return contracts): the complete
+  23-artifact Go inventory and 42-artifact, 32,466-line Rust owner were
+  re-read. Twenty-nine Rust-only `#[must_use]` diagnostics were removed from
+  direct table metadata getters, finders, predicates, and formatting helpers;
+  the four ownership/equality adapters remain annotated. The focused
+  deny-on-discard regression failed with exactly 29 diagnostics before the
+  edit and passes after; all 255 `tidb-model` tests and its all-target check
+  pass. Evidence is recorded in `receipts/meta_model_materialized_view.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

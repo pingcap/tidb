@@ -215,3 +215,38 @@ Ready `make lint`, and diff hygiene. The existing `nextgen` cfg and two
 
 No Go, Bazel, Cargo manifest/dependency, module, or import graph changed, so
 the Bazel prepare gate does not require `make bazel_prepare`.
+
+## Corrective Rust return-contract alignment — `table.go` (2026-09-07)
+
+The complete 23-artifact `pkg/meta/model` inventory above remains the atomic
+Go authority. Before this follow-up, the Rust owner was re-enumerated as 42
+tracked artifacts and 32,466 lines, including every production module, nested
+test/support source, crate manifest, integration target, and all table-info
+callers. No generated input/output, platform variant, fixture, benchmark, or
+crate-local build script exists in the owner.
+
+Go permits discarding the 29 direct table metadata getters, finders,
+predicates, and formatting helpers covered by this batch. Rust had marked all
+29 with explicit `#[must_use]` diagnostics, so those annotations are removed
+without changing metadata lookup, pointer identity, partition/column/index
+selection, storage-class formatting, or table-kind state. The four
+`clone_like_go`, `clone_pointer`, `equals_id`, and `equals` annotations remain
+because they are explicit ownership/equality adapters rather than discardable
+metadata queries.
+
+`table_info::tests::go_table_info_returns_may_be_ignored_like_go` discards all
+29 corrected values under `#[deny(unused_must_use)]`. Against the pre-fix
+owner, the focused compile failed with exactly 29 diagnostics; after the
+annotation removal the focused test passes.
+
+Ready evidence for this bounded Rust-only follow-up:
+
+- focused post-fix regression — 1 passed;
+- complete `tidb-model` library suite — 255 passed;
+- `tidb-model --all-targets` check — passed with existing `nextgen` and
+  `unused_mut` warnings;
+- pinned nightly rustfmt and `git diff --check` — passed;
+- repository Ready `make lint` — passed (lint exit 0).
+
+No Go, Bazel, Cargo metadata, generated/platform artifact, or fixture changed,
+so `make bazel_prepare` is not required.
