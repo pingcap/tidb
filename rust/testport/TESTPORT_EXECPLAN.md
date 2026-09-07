@@ -10932,3 +10932,6 @@ risks without claiming repository-wide parity.
   table places the replacement row by the partition function and the
   partition-qualified read agrees. Pinned in
   `crates/tidb-session/tests/replace_partitioned_source.rs`.
+- 2026-09-06 (ODKU generated refusal pin): ODKU assigning to a generated
+  column refuses with the same ErrBadGeneratedColumn text. Pinned in
+  `crates/tidb-session/tests/odku_generated_refusal_source.rs`.
