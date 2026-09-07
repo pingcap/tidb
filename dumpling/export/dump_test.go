@@ -810,6 +810,34 @@ func TestTableMetaView(t *testing.T) {
 	require.Empty(t, meta.SelectedField())
 	require.Zero(t, meta.SelectedLen())
 	require.NoError(t, mock.ExpectationsWereMet())
+
+	t.Run("rejects views before schema queries", func(t *testing.T) {
+		tctx, mock, baseConn := newMockDumpConn(t)
+		conf := DefaultConfig()
+		conf.Tables = NewDatabaseTables().
+			AppendTables(database, []string{table}, []uint64{0}).
+			AppendViews(database, "v")
+		conf.columnFilter = newColumnFilterConfigForTest(t,
+			columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"id"}},
+		)
+
+		mock.ExpectQuery("SHOW COLUMNS FROM").
+			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+				AddRow("id", "int(11)", "NO", "PRI", nil, "").
+				AddRow("secret", "varchar(12)", "YES", "", nil, ""))
+		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf(
+			"SELECT `id`,`secret` FROM `%s`.`%s` LIMIT 1",
+			database,
+			table,
+		))).WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			sqlmock.NewColumn("secret").OfType("VARCHAR", ""),
+		).AddRow(1, "hidden"))
+
+		err := prepareColumnProjection(tctx, conf, baseConn)
+		require.EqualError(t, err, "schema output with an active column filter is not supported when the dump includes views")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
 }
 
 func TestColumnProjection(t *testing.T) {

@@ -167,8 +167,8 @@ columns = ["*", "!c3"]
 	require.Equal(t, []string{"c3"}, selectedFields)
 	require.Equal(t, []int{2}, selectedIndexes)
 
-	_, err = parseConfigFromArgsForTestWithErr(t, "--column-filter-file", path)
-	require.ErrorContains(t, err, "--column-filter-file requires --no-schemas/-m")
+	conf = parseConfigFromArgsForTest(t, "--column-filter-file", path)
+	require.False(t, conf.NoSchemas)
 
 	_, err = parseConfigFromArgsForTestWithErr(t,
 		"--no-schemas",
@@ -217,10 +217,10 @@ func TestParseColumnFilterFlag(t *testing.T) {
 		require.ErrorContains(t, err, "--column-filter filter 0 requires at least one column rule")
 	}
 
-	_, err = parseConfigFromArgsForTestWithErr(t,
+	conf = parseConfigFromArgsForTest(t,
 		"--column-filter", `{ matcher = ["db.t"], columns = ["*"] }`,
 	)
-	require.ErrorContains(t, err, "--column-filter requires --no-schemas/-m")
+	require.False(t, conf.NoSchemas)
 
 	_, err = parseConfigFromArgsForTestWithErr(t,
 		"--no-schemas",
@@ -259,7 +259,7 @@ func TestColumnFilterOptions(t *testing.T) {
 	)
 
 	conf = DefaultConfig()
-	require.ErrorContains(t, validateColumnFilterOptions(conf, flagColumnFilterFile), "--column-filter-file requires --no-schemas/-m")
+	require.NoError(t, validateColumnFilterOptions(conf, flagColumnFilterFile))
 }
 
 func writeColumnFilterFileForTest(t *testing.T, content string) string {
