@@ -10448,3 +10448,6 @@ risks without claiming repository-wide parity.
   stored row is untouched. Pinned in
   `crates/tidb-session/tests/odku_check_violation_source.rs`. The full
   CHECK x ODKU matrix is now covered (violation refused / IGNORE skips).
+- 2026-09-06 (DEFAULT(col) function pin): the function form resolves each
+  named column to its own declared default (b -> 7, c -> 9). Pinned in
+  `crates/tidb-session/tests/default_function_values_source.rs`.
