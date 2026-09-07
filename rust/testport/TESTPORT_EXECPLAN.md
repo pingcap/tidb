@@ -11216,3 +11216,8 @@ risks without claiming repository-wide parity.
   refuses; DELETE scoped to the wrong partition sees nothing; the right
   partition deletes. Pinned in
   `crates/tidb-session/tests/partition_qualifier_writes_source.rs`.
+- 2026-09-06 (SET NAMES pin): SET NAMES ... COLLATE switches
+  collation_connection; an unknown charset name refuses (at parse level;
+  Go reports 1115 at bind — recorded as a minor text-layer difference,
+  not pinned). Pinned in
+  `crates/tidb-session/tests/set_names_collation_source.rs`.
