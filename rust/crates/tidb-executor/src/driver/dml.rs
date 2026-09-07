@@ -1312,7 +1312,12 @@ fn handle_partition_write_error(
 ) -> Result<(), DriverError> {
     match error {
         error @ (DriverError::NoPartitionForValue(_)
-        | DriverError::RowDoesNotMatchGivenPartitionSet)
+        | DriverError::RowDoesNotMatchGivenPartitionSet
+        // Go's `batchCheckAndInsert` (the IGNORE path) downgrades a violated
+        // CHECK to a warning and skips the row, exactly like a duplicate key
+        // (`insert_common.go:1364-1370`); a plain insert still fails the
+        // statement from `addRecord`.
+        | DriverError::CheckConstraintViolated(_))
             if ignore =>
         {
             let warning = error.to_mysql_error();

@@ -9850,3 +9850,11 @@ risks without claiming repository-wide parity.
   tidb_enable_check_constraint at CREATE (OFF drops with one warning);
   attached constraints reject violating INSERTs with Go's 3819 text and let
   conforming rows pass. Pinned in `tests/check_constraint_write_source.rs`.
+- 2026-09-06 (IGNORE x CHECK port, REAL DIVERGENCE): the port FAILED the
+  whole statement with 3819 on `insert ignore` over a CHECK-violating row;
+  Go's `batchCheckAndInsert` downgrades the violation to a warning and skips
+  the row like a duplicate key (insert_common.go:1364-1370). Fix:
+  `handle_partition_write_error` now also downgrades
+  `CheckConstraintViolated` under ignore. Pin
+  `tests/insert_ignore_check_constraint_source.rs` fails on the old code
+  and passes with the fix.
