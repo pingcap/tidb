@@ -1067,7 +1067,7 @@ All block issues had been identified. However some part of design may need some 
 
 * On-premise backup and restore
 
-4. setup a enviroment with LVM disk
+4. setup an environment with LVM disk
 
   1. prepare a lvm snapshot script
 
