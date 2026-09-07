@@ -27,11 +27,13 @@ use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::aggregation::{names, AggFuncDesc, AggFunctionMode, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
+use tidb_expr::expr_util::exprs_has_side_effects;
 use tidb_expr::expr_util::extract::{
     extract_columns_from_col_op_col, extract_columns_map_from_expressions,
 };
-use tidb_expr::expr_util::exprs_has_side_effects;
-use tidb_expr::expr_util::substitute::{column_substitute, column_substitute_impl, SubstituteOptions};
+use tidb_expr::expr_util::substitute::{
+    column_substitute, column_substitute_impl, SubstituteOptions,
+};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
@@ -416,7 +418,10 @@ fn try_to_push_down_agg(
 /// Go `splitPartialAgg` (`rule_aggregation_push_down.go:362`): rewrite `agg`
 /// into its FINAL mode in place and return the PARTIAL half to push. `None`
 /// means Go's `partial == nil` — the aggregation is untouched.
-fn split_partial_agg(ctx: &RuleContext<'_>, agg: &mut LogicalAggregation) -> Option<LogicalAggregation> {
+fn split_partial_agg(
+    ctx: &RuleContext<'_>,
+    agg: &mut LogicalAggregation,
+) -> Option<LogicalAggregation> {
     let original = AggInfo {
         agg_funcs: agg.agg_funcs.clone(),
         group_by_items: agg.group_by_items.clone(),
@@ -493,8 +498,9 @@ fn push_agg_cross_union(
         // TODO(upstream): if there is a duplicated first_row function, we can
         // delete it. Go builds this firstrow from the ORIGINAL group-by item
         // and copies the leading aggregate's mode.
-        let mut first_row = AggFuncDesc::new(&NoColumns, names::FIRST_ROW, vec![gby_expr.clone()], false)
-            .map_err(|error| PlanError::internal(error.to_string()))?;
+        let mut first_row =
+            AggFuncDesc::new(&NoColumns, names::FIRST_ROW, vec![gby_expr.clone()], false)
+                .map_err(|error| PlanError::internal(error.to_string()))?;
         first_row.mode = agg
             .agg_funcs
             .first()
@@ -511,7 +517,9 @@ fn push_agg_cross_union(
                     LogicalProjection::TYPE,
                     new_agg.base.base.query_block_offset(),
                 );
-                proj_base.base.set_schema(new_agg.base.base.schema().cloned());
+                proj_base
+                    .base
+                    .set_schema(new_agg.base.base.schema().cloned());
                 proj_base
                     .base
                     .set_output_names(new_agg.base.base.output_names().to_vec());
@@ -707,8 +715,13 @@ fn cross_projection(
 
     let mut new_gby_items = Vec::with_capacity(agg.group_by_items.len());
     for gby_item in &agg.group_by_items {
-        let outcome =
-            column_substitute_impl(gby_item, &projection_schema, &projection_expressions, true, &opts);
+        let outcome = column_substitute_impl(
+            gby_item,
+            &projection_schema,
+            &projection_expressions,
+            true,
+            &opts,
+        );
         if outcome.has_fail {
             no_side_effects = false;
             break;
@@ -807,11 +820,7 @@ fn cross_projection(
                     break 'types;
                 }
             }
-            for (item_offset, new_item) in new_order_per_func[offset]
-                .iter()
-                .flatten()
-                .enumerate()
-            {
+            for (item_offset, new_item) in new_order_per_func[offset].iter().flatten().enumerate() {
                 let old_expr = &old_order_per_func[offset][item_offset].expr;
                 let (Some(old_type), Some(new_type)) =
                     (eval_type_of(old_expr), eval_type_of(&new_item.expr))
@@ -969,7 +978,9 @@ fn push_down_over_join(
         let Some(pushed_child) = pushed_agg.base.children().first().cloned() else {
             continue;
         };
-        if let Some(expressions) = try_to_eliminate_aggregation(ctx, pushed_agg, &pushed_child, false)? {
+        if let Some(expressions) =
+            try_to_eliminate_aggregation(ctx, pushed_agg, &pushed_child, false)?
+        {
             let grand = pushed_agg
                 .base
                 .take_children()
@@ -1028,9 +1039,7 @@ fn agg_push_down(ctx: &RuleContext<'_>, plan: LogicalPlan) -> Result<LogicalPlan
                 .next()
                 .ok_or_else(|| PlanError::internal("aggregation has no child"))?;
             plan = match child {
-                LogicalPlan::Join(join)
-                    if check_valid_join(&join) && ctx.allow_agg_push_down =>
-                {
+                LogicalPlan::Join(join) if check_valid_join(&join) && ctx.allow_agg_push_down => {
                     push_down_over_join(ctx, agg, join)?
                 }
                 LogicalPlan::Projection(projection) => {
@@ -1107,8 +1116,8 @@ impl LogicalOptRule for AggregationPushDownSolver {
 mod tests {
     use super::*;
     use crate::logical::data_source::DataSource;
-    use crate::logical::LogicalPartitionUnionAll;
     use crate::logical::rule_tests::test_context;
+    use crate::logical::LogicalPartitionUnionAll;
     use crate::plan_base::PlanIdAllocator;
     use crate::stats_info::StatsInfo;
     use tidb_ast::CiString;
@@ -1185,8 +1194,8 @@ mod tests {
         equality: Option<(i64, i64)>,
     ) -> LogicalPlan {
         let mut base = BaseLogicalPlan::new(allocator, LogicalJoin::TYPE, 1);
-        let schema = merge_schema(left.schema(), right.schema())
-            .unwrap_or_else(|| Schema::new(Vec::new()));
+        let schema =
+            merge_schema(left.schema(), right.schema()).unwrap_or_else(|| Schema::new(Vec::new()));
         base.base.set_schema(Some(schema));
         let mut join = LogicalJoin::new(base, join_type);
         if let Some((l, r)) = equality {
@@ -1323,9 +1332,7 @@ mod tests {
         context.allow_agg_push_down = true;
         let left = data_source(&allocator, 1, "a", 10.0);
         let right = data_source(&allocator, 2, "b", 10.0);
-        let plan = agg_over_join_tree(
-            &allocator, left, right, LogicalJoinType::Inner, 1, 2,
-        );
+        let plan = agg_over_join_tree(&allocator, left, right, LogicalJoinType::Inner, 1, 2);
 
         let (optimized, changed) = AggregationPushDownSolver.optimize(&context, plan).unwrap();
         assert!(!changed);
@@ -1378,9 +1385,7 @@ mod tests {
         let context = test_context(&allocator);
         let left = data_source(&allocator, 1, "a", 10.0);
         let right = data_source(&allocator, 2, "b", 10.0);
-        let plan = agg_over_join_tree(
-            &allocator, left, right, LogicalJoinType::Inner, 1, 2,
-        );
+        let plan = agg_over_join_tree(&allocator, left, right, LogicalJoinType::Inner, 1, 2);
 
         let (optimized, changed) = AggregationPushDownSolver.optimize(&context, plan).unwrap();
         assert!(!changed);
@@ -1521,7 +1526,10 @@ mod tests {
             panic!("root must stay an aggregation");
         };
         // The aggregate's argument was substituted through the projection.
-        assert!(matches!(agg.agg_funcs[0].args()[0], Expression::ScalarFunction(_)));
+        assert!(matches!(
+            agg.agg_funcs[0].args()[0],
+            Expression::ScalarFunction(_)
+        ));
     }
 
     #[test]
@@ -1560,12 +1568,7 @@ mod tests {
         context.allow_agg_push_down = true;
         let left = data_source(&allocator, 1, "a", 10.0);
         let right = data_source(&allocator, 2, "b", 10.0);
-        let union = union_node(
-            &allocator,
-            false,
-            vec![left, right],
-            vec![column(100)],
-        );
+        let union = union_node(&allocator, false, vec![left, right], vec![column(100)]);
         let plan = aggregation_node(
             &allocator,
             vec![agg_func(names::COUNT, column(100))],
@@ -1605,12 +1608,7 @@ mod tests {
         context.allow_agg_push_down = true;
         let left = data_source(&allocator, 1, "a", 10.0);
         let right = data_source(&allocator, 2, "b", 10.0);
-        let union = union_node(
-            &allocator,
-            false,
-            vec![left, right],
-            vec![column(100)],
-        );
+        let union = union_node(&allocator, false, vec![left, right], vec![column(100)]);
         let plan = aggregation_node(
             &allocator,
             vec![agg_func(names::VAR_SAMP, column(100))],
@@ -1628,12 +1626,7 @@ mod tests {
         let context = test_context(&allocator);
         let left = data_source(&allocator, 1, "a", 10.0);
         let right = data_source(&allocator, 2, "b", 10.0);
-        let union = union_node(
-            &allocator,
-            true,
-            vec![left, right],
-            vec![column(100)],
-        );
+        let union = union_node(&allocator, true, vec![left, right], vec![column(100)]);
         let plan = aggregation_node(
             &allocator,
             vec![agg_func(names::COUNT, column(100))],
