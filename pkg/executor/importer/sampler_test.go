@@ -228,7 +228,7 @@ func TestSampleIndexSizeRatio(t *testing.T) {
 			dataStore: &trackingStorage{reader: reader},
 			logger:    zap.NewNop(),
 		}
-		_, err = ctrl.getParser(context.Background(), newChunk())
+		_, _, err = ctrl.getParser(context.Background(), newChunk())
 		require.Error(t, err)
 		require.True(t, reader.closed)
 	})
