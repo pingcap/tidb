@@ -16,6 +16,7 @@ func NewClient(tlsConf *tls.Config) *http.Client {
 	if tlsConf != nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.TLSClientConfig = tlsConf
+		transport.IdleConnTimeout = 30 * time.Second
 		cli.Transport = transport
 	}
 	return cli
