@@ -26,7 +26,6 @@ use crate::serverinfo_syncer::Syncer;
 
 /// Go `GenerateExecID`: formats the advertised IP and SQL port with
 /// `net.JoinHostPort` semantics.
-#[must_use]
 pub fn generate_exec_id(info: &ServerInfo) -> String {
     if info.static_info.ip.contains(':') {
         format!("[{}]:{}", info.static_info.ip, info.static_info.port)
@@ -36,13 +35,11 @@ pub fn generate_exec_id(info: &ServerInfo) -> String {
 }
 
 /// Go `MatchServerInfo`: whether `scheduler_id` identifies a listed server.
-#[must_use]
 pub fn match_server_info(server_infos: &[ServerInfo], scheduler_id: &str) -> bool {
     find_server_info(server_infos, scheduler_id) >= 0
 }
 
 /// Go `FindServerInfo`: returns the first matching index, or `-1`.
-#[must_use]
 pub fn find_server_info(server_infos: &[ServerInfo], scheduler_id: &str) -> isize {
     server_infos
         .iter()
@@ -54,7 +51,6 @@ pub fn find_server_info(server_infos: &[ServerInfo], scheduler_id: &str) -> isiz
 ///
 /// Discovery errors, an empty server map, and a missing ID all return the
 /// empty string.
-#[must_use]
 pub fn generate_subtask_exec_id(syncer: &Syncer, id: &str) -> String {
     let Ok(server_infos) = syncer.all_server_info() else {
         return String::new();
@@ -63,7 +59,6 @@ pub fn generate_subtask_exec_id(syncer: &Syncer, id: &str) -> String {
 }
 
 /// Go `GenerateSubtaskExecID4Test`: resolves `id` from mock server state.
-#[must_use]
 pub fn generate_subtask_exec_id_for_test(
     server_infos: &HashMap<String, ServerInfo>,
     id: &str,
@@ -102,5 +97,18 @@ mod tests {
             };
             assert_eq!(generate_exec_id(&info), expected);
         }
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn disttask_returns_may_be_ignored_like_go() {
+        let info = ServerInfo::default();
+        generate_exec_id(&info);
+        match_server_info(std::slice::from_ref(&info), "");
+        find_server_info(std::slice::from_ref(&info), "");
+
+        let syncer = Syncer::new(ServerInfo::default(), None);
+        generate_subtask_exec_id(&syncer, "missing");
+        generate_subtask_exec_id_for_test(&HashMap::new(), "missing");
     }
 }

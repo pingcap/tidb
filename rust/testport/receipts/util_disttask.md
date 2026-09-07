@@ -1,6 +1,8 @@
 # `pkg/util/disttask` — Go-master parity audit receipt
 
-Go authority: `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
+Original full-audit Go authority: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec`. The corrective return-contract
+follow-up below refreshes the authority to `c767f6fd8c01e9dcb459767611c0c1d4110d210d`.
 
 ## Complete inventory
 
@@ -54,3 +56,38 @@ applicable.
   server list and constant-time in the infosync map.
 - Not verified locally: a live distributed-task infosync deployment; the
   source test and Rust owner test cover the package logic.
+
+## 2026-09-07 corrective return-contract follow-up
+
+Current Go master `c767f6fd8c01e9dcb459767611c0c1d4110d210d`
+was read package-completely before the Rust edit. The inventory remains exactly
+three artifacts and 133 lines: `idservice.go` (71), `idservice_test.go` (38),
+and `BUILD.bazel` (24). The production surface is exactly `GenerateExecID`,
+`MatchServerInfo`, `FindServerInfo`, `GenerateSubtaskExecID`, and the test-only
+`GenerateSubtaskExecID4Test`; the source test is the single
+`TestGenServerID` with all five IPv4/IPv6/empty/out-of-range-port vectors.
+There is still no `doc.go`, `TestMain`, fixture, testdata, benchmark/fuzz
+target, example, generated/platform/build-tag variant, nested package, or
+other build input. All three artifacts are byte-identical to current Go
+master, and the package has no TiDB failpoint use.
+
+The complete 17-artifact, 11,727-line pre-edit `tidb-domain` crate,
+`disttask.rs`, its server-info/syncer dependencies, and all Rust references
+were inventoried. The module remains the sole Rust owner. This follow-up
+removes only the Rust-exclusive `#[must_use]` diagnostics from all five direct
+Go function counterparts. `JoinHostPort` formatting, first-match membership,
+the `-1` sentinel, and empty-string discovery/missing-ID behavior are
+unchanged.
+
+The focused `#[deny(unused_must_use)]` regression failed before the fix with
+exactly five unused-return diagnostics and passes after it. Ready evidence:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-domain --lib disttask::tests::disttask_returns_may_be_ignored_like_go -- --exact --nocapture` — failed before the fix with exactly five diagnostics, then passed 1/1.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-domain --lib -- --test-threads=1` — passed 161/161.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-domain --all-targets` — passed with pre-existing warnings.
+- `rustfmt +nightly-2026-08-22 --edition 2021 --check rust/crates/tidb-domain/src/disttask.rs` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed.
+- `git diff --check` — passed.
+
+This is Rust/testport-only work. No Go source, Go import, Go test, Bazel file,
+or module dependency changed, so `make bazel_prepare` is not required.

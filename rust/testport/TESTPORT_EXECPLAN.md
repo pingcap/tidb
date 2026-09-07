@@ -9411,6 +9411,17 @@ risks without claiming repository-wide parity.
   unchanged. The focused regression failed before the fix with exactly two
   diagnostics and passes after; all 160 owner tests and the owner all-target
   check pass. Evidence is recorded in `receipts/util_cdcutil.md`.
+- 2026-09-07 (`pkg/util/disttask` return contracts): current Go master
+  `c767f6fd8c01` was re-read as the complete three-artifact, 133-line package,
+  including all five production functions, the source test and every vector,
+  the Bazel targets, and the absence of all other variant/fixture surfaces.
+  The complete 17-artifact, 11,727-line pre-edit `tidb-domain` crate, sole
+  `disttask` owner, dependencies, and references were inventoried. All five
+  Go-shaped functions no longer impose Rust-only `#[must_use]` diagnostics;
+  formatting, first-match lookup, sentinel, and missing-ID behavior are
+  unchanged. The focused regression failed before the fix with exactly five
+  diagnostics and passes after; all 161 owner tests and the owner all-target
+  check pass. Evidence is recorded in `receipts/util_disttask.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
