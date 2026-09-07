@@ -1489,3 +1489,49 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	require.Equal(t, 6, int(globalStats2.RealtimeCount))
 	require.Equal(t, 2, int(globalStats2.ModifyCount))
 }
+
+func TestLoadStatsForBitColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+
+	testCases := []struct {
+		len                   int
+		lowerBound            string
+		expectedLowerBoundHex string
+		upperBound            string
+		expectedUpperBoundHex string
+	}{
+		// 0 -> 0 -> "0" -> 30
+		{1, "0", "30", "1", "31"},
+		{2, "2", "32", "3", "33"},
+		// "0" -> 48 -> "48" -> 3438
+		{6, `"0"`, "3438", `"1"`, "3439"},
+		// "a" -> 97 -> "97" -> 3937
+		{7, `"a"`, "3937", `"b"`, "3938"},
+	}
+	for i, testCase := range testCases {
+		tableName := fmt.Sprintf("t%d", i)
+
+		tk.MustExec(fmt.Sprintf("create table %s(a bit(%d));", tableName, testCase.len))
+		tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+		require.NoError(t, err)
+
+		tk.MustExec(fmt.Sprintf("insert into %s values (%s), (%s);", tableName, testCase.lowerBound, testCase.upperBound))
+		tk.MustExec(fmt.Sprintf("analyze table %s all columns with 0 topn;", tableName))
+
+		h := dom.StatsHandle()
+		_, err = h.TableStatsFromStorage(tbl.Meta(), tbl.Meta().ID, true, 0)
+		require.NoError(t, err)
+
+		tk.MustQuery(
+			fmt.Sprintf("SELECT hex(lower_bound), hex(upper_bound) FROM mysql.stats_buckets WHERE table_id = %d ORDER BY lower_bound", tbl.Meta().ID),
+		).Check(testkit.Rows(
+			fmt.Sprintf("%s %s", testCase.expectedLowerBoundHex, testCase.expectedLowerBoundHex),
+			fmt.Sprintf("%s %s", testCase.expectedUpperBoundHex, testCase.expectedUpperBoundHex),
+		))
+
+		tk.MustExec("drop table " + tableName)
+	}
+}
