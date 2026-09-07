@@ -9762,3 +9762,7 @@ risks without claiming repository-wide parity.
   three asserted regressions (clamp-to-15 accept, in-range accept, clustered
   8200) in `tests/shard_row_id_bits_source.rs`. DDL-family failure set is
   byte-identical to clean HEAD (10 pre-existing sibling/environmental).
+- 2026-09-06 (table-option pins): `checkUnsupportedTableOptions`/`checkTableEngine`
+  verified faithful — engine whitelist (innodb accepted, unknown rejected),
+  union 8232, insert_method 8233. Four pins in
+  `tests/table_options_source.rs`.
