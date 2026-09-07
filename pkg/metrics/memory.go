@@ -45,9 +45,11 @@ var (
 
 	GlobalMemArbitratorTaskExecCounter prometheus.CounterVec
 	GlobalMemArbitratorSubTasks        struct {
-		ForceKillParse prometheus.Counter
-		ForceKillPlan  prometheus.Counter
-		NoLimit        prometheus.Counter
+		CancelWaitAversePlan    prometheus.Counter
+		CancelStandardModePlan  prometheus.Counter
+		ForceKillParse          prometheus.Counter
+		ForceKillPlan           prometheus.Counter
+		NoLimit                 prometheus.Counter
 	}
 
 	counters struct {
@@ -117,6 +119,8 @@ func InitMemoryMetrics() {
 	GlobalMemArbitratorSubEvents.PoolInitMediumQuota = GlobalMemArbitratorEventCounter.WithLabelValues("pool-init-medium-quota")
 	GlobalMemArbitratorSubEvents.PoolInitNone = GlobalMemArbitratorEventCounter.WithLabelValues("pool-init-none")
 
+	GlobalMemArbitratorSubTasks.CancelWaitAversePlan = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-wait-averse-plan")
+	GlobalMemArbitratorSubTasks.CancelStandardModePlan = GlobalMemArbitratorTaskExecCounter.WithLabelValues("cancel-standard-mode-plan")
 	GlobalMemArbitratorSubTasks.ForceKillParse = GlobalMemArbitratorTaskExecCounter.WithLabelValues("force-kill-parse")
 	GlobalMemArbitratorSubTasks.ForceKillPlan = GlobalMemArbitratorTaskExecCounter.WithLabelValues("force-kill-plan")
 	GlobalMemArbitratorSubTasks.NoLimit = GlobalMemArbitratorTaskExecCounter.WithLabelValues("nolimit")
