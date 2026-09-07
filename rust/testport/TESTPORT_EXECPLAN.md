@@ -10424,3 +10424,7 @@ risks without claiming repository-wide parity.
   (An earlier session-probe used a fixture whose CREATE predates the
   set-global, so its constraint was never attached — the "OK" there was a
   fixture artifact, not an enforcement gap.)
+- 2026-09-06 (CASCADE-parent TRUNCATE pin): TRUNCATE of a parent referenced
+  by an ON DELETE CASCADE child still fails with Go's exact
+  ErrTruncateIllegalForeignKey text — the guard ignores the action type.
+  Pinned in `crates/tidb-session/tests/truncate_cascade_parent_source.rs`.
