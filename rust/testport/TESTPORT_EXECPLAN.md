@@ -10256,3 +10256,12 @@ risks without claiming repository-wide parity.
   bucket (`4` -> `5`, p1 -> p2) relocates it; the old partition stops
   answering. Pinned in
   `crates/tidb-session/tests/hash_row_movement_source.rs`.
+- 2026-09-06 (expression-index write pin + read gap record): a UNIQUE
+  expression index `((lower(s)))` enforces the COMPUTED value ('Hello' vs
+  'HELLO' collide with Go's entry text) — pinned in
+  `crates/tidb-session/tests/expression_index_write_source.rs`. READ GAP
+  recorded (NOT FIXED): `select a from t where lower(s) = 'hello'` fails
+  with "point-get output column is outside the row" — the point-get plan
+  over an expression index cannot emit non-indexed output columns
+  (planner/executor index seam; fix needs the point-get table-lookup
+ 回 path for expression indexes).
