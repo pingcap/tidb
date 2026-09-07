@@ -11140,3 +11140,6 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/bitwise_aggregates_source.rs`.
   Datapoint for the sibling column.rs:262 panic stream: ANY_VALUE over a
   GROUP BY also triggers it.
+- 2026-09-06 (multibyte length pin): CHAR_LENGTH vs OCTET_LENGTH,
+  character-positioned SUBSTRING/MID, and CONVERT ... USING. Pinned in
+  `crates/tidb-session/tests/multibyte_length_source.rs`.
