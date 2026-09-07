@@ -10,10 +10,27 @@ create table t (a int, b int as (a+3));
 -- error 3108
 alter table t change a c int not null;
 
-# TestIssue24321
-# Note, the result is not the same with MySQL, since the limitation of the current modify column implementation.
+# TestIssue24321 / TestIssue43455
+# Only metadata-only and safe collation-only changes are allowed for a column with
+# generated column dependencies. See https://github.com/pingcap/tidb/issues/43455
 drop table if exists t2;
 create table t2(id int, a int, b int generated always as (abs(a)) virtual);
--- error 3106
+-- error 8200
 alter table t2 modify column a bigint;
+# Changes that need reorg are still prohibited.
+-- error 8200
+alter table t2 modify column a varchar(20);
 
+# Positive case: metadata-only change should succeed.
+drop table if exists t3;
+create table t3(a int default 1, b int generated always as (a+1) virtual);
+alter table t3 modify column a int default 2;
+insert into t3(a) values (10);
+select * from t3;
+
+# Positive case: safe collation-only change should succeed.
+drop table if exists t4;
+create table t4(a char collate utf8mb4_bin, b varchar(10), c varchar(20) as (concat(a, b))) charset utf8mb4 collate utf8mb4_bin;
+alter table t4 modify column a char character set utf8mb4 collate utf8mb4_unicode_ci;
+insert into t4(a, b) values ('x', 'y');
+select a, b, c from t4;

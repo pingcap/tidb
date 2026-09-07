@@ -1860,8 +1860,6 @@ func GetModifiableColumnJob(
 	if newColName.L == model.ExtraHandleName.L {
 		return nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
-	errG := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)
-
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
 		c := table.FindCol(t.Cols(), newColName.L)
@@ -1871,8 +1869,8 @@ func GetModifiableColumnJob(
 
 		// And also check the generated columns dependency, if some generated columns
 		// depend on this column, we can't rename the column name.
-		if errG != nil {
-			return nil, errors.Trace(errG)
+		if err := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
@@ -1929,7 +1927,9 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 	mayNeedChangeColData := !noReorgDataStrict(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
-	if mayNeedChangeColData {
+	shouldCheckGeneratedColumnDependency := mayNeedChangeColData ||
+		needCheckGeneratedColumnDependencyForNoReorg(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+	if shouldCheckGeneratedColumnDependency {
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1980,11 +1980,8 @@ func GetModifiableColumnJob(
 	if err = checkModifyGeneratedColumn(sctx, schema.Name, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if errG != nil {
-		// According to issue https://github.com/pingcap/tidb/issues/24321,
-		// changing the type of a column involving generating a column is prohibited.
-		return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs(errG.Error())
-	}
+	// NOTE: We only relax the generated dependency check for metadata-only changes
+	// and the narrow no-reorg collation-only path needed by issue 43455.
 
 	if t.Meta().TTLInfo != nil {
 		// the column referenced by TTL should be a time type
@@ -2107,6 +2104,68 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 		// conversion between float and double needs reorganization, see issue #31372
 	}
 
+	return false
+}
+
+func needCheckGeneratedColumnDependencyForNoReorg(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
+	// When modifying a generated column itself, leave it to checkModifyGeneratedColumn
+	// instead of the dependency check for base columns.
+	if oldCol.IsGenerated() {
+		return false
+	}
+
+	// The normal generated-column restriction is only relevant when another generated
+	// column or expression index depends on the modified column.
+	if ok, _, _ := hasDependentByGeneratedColumn(tblInfo, oldCol.Name); !ok {
+		return false
+	}
+	// Metadata-only changes do not change existing row values or generated expression results.
+	if oldCol.FieldType.Equal(&newCol.FieldType) {
+		return false
+	}
+
+	// Issue 43455 needs this narrow collation-only path. The base column bytes stay the
+	// same, so we only skip the dependency check when every dependent expression is known
+	// to preserve its result bytes under the new collation.
+	if isCharChange(oldCol, newCol) && oldCol.GetCharset() == newCol.GetCharset() &&
+		!collate.CompatibleCollate(oldCol.GetCollate(), newCol.GetCollate()) &&
+		allDependentGeneratedExprsPreserveStringResultBytes(tblInfo, oldCol.Name) {
+		return false
+	}
+
+	return true
+}
+
+func allDependentGeneratedExprsPreserveStringResultBytes(tblInfo *model.TableInfo, oldColName ast.CIStr) bool {
+	for _, col := range tblInfo.Columns {
+		if _, ok := col.Dependences[oldColName.L]; !ok {
+			continue
+		}
+		expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
+		if err != nil || !generatedExprPreservesStringResultBytes(expr) {
+			return false
+		}
+	}
+	return true
+}
+
+func generatedExprPreservesStringResultBytes(expr ast.ExprNode) bool {
+	switch x := expr.(type) {
+	case *ast.ParenthesesExpr:
+		return generatedExprPreservesStringResultBytes(x.Expr)
+	case *ast.ColumnNameExpr, ast.ValueExpr:
+		return true
+	case *ast.FuncCallExpr:
+		if x.FnName.L != ast.Concat {
+			return false
+		}
+		for _, arg := range x.Args {
+			if !generatedExprPreservesStringResultBytes(arg) {
+				return false
+			}
+		}
+		return true
+	}
 	return false
 }
 
