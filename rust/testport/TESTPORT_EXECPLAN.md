@@ -11259,3 +11259,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (STRCMP/<=> pin): STRCMP's -1/0/1 and <=> NULL-safe equality
   vs the NULL-yielding plain = operator. Pinned in
   `crates/tidb-session/tests/strcmp_null_safe_source.rs`.
+- 2026-09-06 (aggregate arithmetic pin): sum(v)/count(*) keeps DECIMAL's
+  extended scale (2.3333), SUM of INT returns DECIMAL, COUNT stays
+  integer. Pinned in
+  `crates/tidb-session/tests/aggregate_arith_source.rs`.
