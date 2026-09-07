@@ -10088,3 +10088,10 @@ risks without claiming repository-wide parity.
   CREATE OR REPLACE redefines, writes through the view fail with TiDB's
   "insert into view ... is not supported now", and DROP VIEW removes it.
   Pinned in `crates/tidb-session/tests/view_lifecycle_source.rs`.
+- 2026-09-06 (CTE pins + multi-reference record): non-recursive CTEs filter
+  their source and RECURSIVE CTEs iterate to their bound (1..5) — pinned in
+  `crates/tidb-session/tests/cte_source.rs`. A CTE referenced TWICE in one
+  statement (`... from (select * from c) x, c y ...`) fails with the planner
+  internal "LogicalCTE.DeriveStats: seed physical plan is nil" — recorded as
+  a planner-boundary gap alongside the uncorrelated scalar-subquery record
+  (see `docs/uncorrelated-scalar-subquery-divergence.md`'s class).
