@@ -156,6 +156,40 @@ func TestDXFAPI(t *testing.T) {
 		require.EqualValues(t, 2, out.PerKeyspace["ks1"])
 	})
 
+	t.Run("nodes api", func(t *testing.T) {
+		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET method", func() (*http.Response, error) {
+			return ts.PostStatus("/dxf/nodes", "", bytes.NewBuffer([]byte("")))
+		})
+
+		tm, ctx := setupTaskManager(t)
+		_, err := tm.ExecuteSQLWithNewSession(ctx, "delete from mysql.dist_framework_meta")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := tm.ExecuteSQLWithNewSession(ctx, "delete from mysql.dist_framework_meta")
+			require.NoError(t, err)
+			require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
+		})
+
+		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus("/dxf/nodes")
+		})
+		require.JSONEq(t, "[]", string(body))
+
+		_, err = tm.ExecuteSQLWithNewSession(ctx, `
+			insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
+			values (":4002", "background", 8, -1), (":4001", "", 4, -1)`)
+		require.NoError(t, err)
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus("/dxf/nodes")
+		})
+		var nodes []map[string]any
+		require.NoError(t, json.Unmarshal(body, &nodes))
+		require.Equal(t, []map[string]any{
+			{"host": ":4001", "role": "", "cpu_count": float64(4)},
+			{"host": ":4002", "role": "background", "cpu_count": float64(8)},
+		}, nodes)
+	})
+
 	t.Run("max concurrent task api", func(t *testing.T) {
 		restore := proto.SetMaxConcurrentTaskForTest(proto.DefaultMaxConcurrentTask)
 		defer restore()
@@ -623,6 +657,7 @@ func TestDXFMaintenanceAPINotAvailableInUserKeyspace(t *testing.T) {
 	ts.StatusPort = testutil.GetPortFromTCPAddr(ts.server.StatusListenerAddr())
 
 	for _, path := range []string{
+		"/dxf/nodes",
 		"/dxf/schedule/task_cleanup_batch_size",
 		"/dxf/schedule/max_concurrent_task",
 	} {
