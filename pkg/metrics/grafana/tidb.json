@@ -15320,6 +15320,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
+          "decimals": 0,
           "title": "Task Status",
           "tooltip": {
             "shared": true,
@@ -15341,7 +15342,8 @@
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
+              "show": true,
+              "decimals": 0
             },
             {
               "format": "short",

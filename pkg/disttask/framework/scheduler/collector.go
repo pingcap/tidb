@@ -23,10 +23,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var subtaskCollector = newCollector()
+var disttaskCollector = newCollector()
 
 func init() {
-	prometheus.MustRegister(subtaskCollector)
+	prometheus.MustRegister(disttaskCollector)
 }
 
 // Because the exec_id of a subtask may change, after all tasks
@@ -37,13 +37,20 @@ func init() {
 // Therefore, a custom collector is used.
 type collector struct {
 	subtaskInfo atomic.Pointer[[]*proto.SubtaskBase]
+	taskInfo    atomic.Pointer[[]*proto.TaskBase]
 
+	tasks           *prometheus.Desc
 	subtasks        *prometheus.Desc
 	subtaskDuration *prometheus.Desc
 }
 
 func newCollector() *collector {
 	return &collector{
+		tasks: prometheus.NewDesc(
+			"tidb_disttask_task_status",
+			"Number of tasks.",
+			[]string{"task_type", "status"}, nil,
+		),
 		subtasks: prometheus.NewDesc(
 			"tidb_disttask_subtasks",
 			"Number of subtasks.",
@@ -59,12 +66,45 @@ func newCollector() *collector {
 
 // Describe implements the prometheus.Collector interface.
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.tasks
 	ch <- c.subtasks
 	ch <- c.subtaskDuration
 }
 
 // Collect implements the prometheus.Collector interface.
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
+	c.collectTasks(ch)
+	c.collectSubtasks(ch)
+}
+
+func (c *collector) collectTasks(ch chan<- prometheus.Metric) {
+	p := c.taskInfo.Load()
+	if p == nil {
+		return
+	}
+	tasks := *p
+	// task type => state => cnt
+	taskTypeStateCnt := make(map[string]map[string]int)
+	for _, task := range tasks {
+		tp := task.Type.String()
+		if _, ok := taskTypeStateCnt[tp]; !ok {
+			taskTypeStateCnt[tp] = make(map[string]int)
+		}
+		state := task.State.String()
+		taskTypeStateCnt[tp][state]++
+	}
+	for tp, stateCnt := range taskTypeStateCnt {
+		for state, cnt := range stateCnt {
+			ch <- prometheus.MustNewConstMetric(c.tasks, prometheus.GaugeValue,
+				float64(cnt),
+				tp,
+				state,
+			)
+		}
+	}
+}
+
+func (c *collector) collectSubtasks(ch chan<- prometheus.Metric) {
 	p := c.subtaskInfo.Load()
 	if p == nil {
 		return
