@@ -64,6 +64,8 @@ func TestExplainAnalyzeRUFormat(t *testing.T) {
 	}
 }
 
+// TestExplainAnalyzeRUIncreasesWithScannedData verifies that, for the same SQL
+// shape, RU increases when the query scans more rows.
 func TestExplainAnalyzeRUIncreasesWithScannedData(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -274,6 +276,9 @@ func TestExplainAnalyzeRUIncreasesWithScannedData(t *testing.T) {
 	}
 }
 
+// TestExplainAnalyzeRUIncreasesWithComputedData verifies that, when scanning
+// the same amount of data, RU increases as the SQL become more complex and
+// performs more computation.
 func TestExplainAnalyzeRUIncreasesWithComputedData(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
