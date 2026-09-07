@@ -45,8 +45,14 @@ func updateParentJobFromProxy(parentJob, proxyJob *model.Job) {
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	jobCtx.inInnerRunOneJobStep = true
+	jobCtx.deferStorageClassTransitionStaging = false
+	jobCtx.pendingStorageClassTransitions = nil
+	jobCtx.sharedMultiSchemaVersion = 0
 	defer func() {
 		jobCtx.inInnerRunOneJobStep = false
+		jobCtx.deferStorageClassTransitionStaging = false
+		jobCtx.pendingStorageClassTransitions = nil
+		jobCtx.sharedMultiSchemaVersion = 0
 	}()
 	metaMut := jobCtx.metaMut
 	if job.MultiSchemaInfo.Revertible {
@@ -110,14 +116,22 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 
 		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
+		processedSubJobs := make([]int, 0, len(job.MultiSchemaInfo.SubJobs))
+		restoreProcessedSubJobs := func() {
+			for _, i := range processedSubJobs {
+				job.MultiSchemaInfo.SubJobs[i] = &subJobs[i]
+			}
+		}
 		// Step the sub-jobs to the non-revertible states all at once.
 		// We only generate 1 schema version for these sub-job.
 		actionTypes := make([]model.ActionType, 0, len(job.MultiSchemaInfo.SubJobs))
+		jobCtx.deferStorageClassTransitionStaging = true
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if sub.IsFinished() {
 				continue
 			}
 			subJobs[i] = *sub
+			processedSubJobs = append(processedSubJobs, i)
 			prevSubState := sub.State
 			proxyJob := sub.ToProxyJob(job, i)
 			if schemaVersionGenerated {
@@ -130,9 +144,19 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
+				jobCtx.sharedMultiSchemaVersion = proxyJobVer
 			}
 			sub.FromProxyJob(&proxyJob, proxyJobVer)
 			job.ResumeReason = proxyJob.ResumeReason
+			if proxyJob.IsPausingOrPausedBySystemForKVDiskFull() {
+				// Promoting the pause commits changes made by preceding sub-jobs,
+				// so their deferred history must be committed with them.
+				jobCtx.deferStorageClassTransitionStaging = false
+				if err = w.flushPendingStorageClassTransitions(jobCtx); err != nil {
+					restoreProcessedSubJobs()
+					return 0, err
+				}
+			}
 			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
 				return ver, nil
 			}
@@ -154,6 +178,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			}
 			actionTypes = append(actionTypes, sub.Type)
 		}
+		jobCtx.deferStorageClassTransitionStaging = false
 		if len(actionTypes) > 1 {
 			// only single table schema changes can be put into a multi-schema-change
 			// job except AddForeignKey which is handled separately in the first loop.
@@ -168,6 +193,13 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			}); err != nil {
 				return ver, err
 			}
+		}
+		if err = w.flushPendingStorageClassTransitions(jobCtx); err != nil {
+			// Staging is part of the same transaction as the TableInfo changes.
+			// Restore the in-memory sub-jobs so the outer worker can roll the
+			// transaction back and retry the whole batch.
+			restoreProcessedSubJobs()
+			return 0, err
 		}
 		// All the sub-jobs are non-revertible.
 		job.MarkNonRevertible()
