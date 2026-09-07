@@ -10751,3 +10751,7 @@ risks without claiming repository-wide parity.
   Go's exact 3822 text, and dropping a nonexistent CHECK fails with the
   "Constraint 'nope' does not exist." refusal. Pinned in
   `crates/tidb-session/tests/check_name_errors_source.rs`.
+- 2026-09-06 (CHECK x FK referential-action pin): a CHECK naming a column
+  that an FK referential action needs (ON DELETE SET NULL) is refused with
+  Go's exact 3823 text. Pinned in
+  `crates/tidb-session/tests/check_fk_action_column_source.rs`.
