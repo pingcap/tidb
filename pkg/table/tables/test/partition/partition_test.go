@@ -2291,6 +2291,91 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 	}
 }
 
+func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
+	limitSizeOfTest := true
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "PartitionByIntExtensive"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`set @@tidb_enable_global_index = ON`)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + schemaName)
+	tk2.MustExec(`set @@tidb_enable_global_index = ON`)
+
+	tBase := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b), key (c,b), unique key idx_dc(d,c), key(e))`
+	t2Str := `create table t2 ` + tBase
+	tStr := `create table t ` + tBase
+
+	rows := 100
+	pkInserts := 20
+	pkUpdates := 20
+	pkDeletes := 10 // Enough to delete half of what is inserted?
+	thirdUintRange := 1 << 32 / 2
+	thirdUintRangeStr := fmt.Sprintf("%d", thirdUintRange)
+	twoThirdUintRangeStr := fmt.Sprintf("%d", 2*thirdUintRange)
+	tStart := []string{
+		// Non partitioned
+		tStr,
+		// RANGE COLUMNS
+		tStr + ` partition by range (a) (partition pFirst values less than (` + thirdUintRangeStr + `),` +
+			`partition pMid values less than (` + twoThirdUintRangeStr + `), partition pLast values less than (maxvalue))`,
+		// KEY
+		tStr + ` partition by key(b) partitions 5`,
+		// HASH
+		tStr + ` partition by hash(a) partitions 5`,
+		// HASH with function
+		tStr + ` partition by hash(a DIV 3) partitions 5`,
+	}
+	if limitSizeOfTest {
+		tStart = tStart[:2]
+	}
+	quarterUintRange := 1 << 30
+	quarterUintRangeStr := fmt.Sprintf("%d", quarterUintRange)
+	halfUintRangeStr := fmt.Sprintf("%d", 2*quarterUintRange)
+	threeQuarterUintRangeStr := fmt.Sprintf("%d", 3*quarterUintRange)
+	tAlter := []string{
+		// RANGE COLUMNS
+		//`alter table t partition by range columns (b) (partition pFirst values less than ("m"), partition pLast values less than (MAXVALUE))`,
+		// RANGE COLUMNS
+		`alter table t partition by range (a+2) (partition pFirst values less than (` + quarterUintRangeStr + `),` +
+			`partition pLowMid values less than (` + halfUintRangeStr + `),` +
+			`partition pHighMid values less than (` + threeQuarterUintRangeStr + `),` +
+			`partition pLast values less than (maxvalue))`,
+		// KEY
+		`alter table t partition by key(b) partitions 3`,
+		// Hash
+		`alter table t partition by hash(a) partitions 7`,
+	}
+	if limitSizeOfTest {
+		tAlter = tAlter[:2]
+	}
+
+	seed := gotime.Now().UnixNano()
+	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	reorgRand := rand.New(rand.NewSource(seed))
+	for _, createSQL := range tStart {
+		for _, alterSQL := range tAlter {
+			tk.MustExec(createSQL)
+			tk.MustExec(t2Str)
+			getNewPK := getNewIntPK()
+			getValues := getIntValuesUniqueFunc()
+			checkDMLInAllStates(t, tk, tk2, schemaName, alterSQL, rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+			tk.MustExec(`drop table t`)
+			tk.MustExec(`drop table t2`)
+		}
+	}
+	for _, createSQL := range tStart[1:] {
+		tk.MustExec(createSQL)
+		tk.MustExec(t2Str)
+		getNewPK := getNewIntPK()
+		getValues := getIntValuesUniqueFunc()
+		checkDMLInAllStates(t, tk, tk2, schemaName, "alter table t remove partitioning", rows, pkInserts, pkUpdates, pkDeletes, reorgRand, getNewPK, getValues)
+		tk.MustExec(`drop table t`)
+		tk.MustExec(`drop table t2`)
+	}
+}
+
 func getNewIntPK() func(map[string]struct{}, string, *rand.Rand) string {
 	return func(m map[string]struct{}, suf string, reorgRand *rand.Rand) string {
 		uintPK := reorgRand.Uint32()
@@ -2316,6 +2401,25 @@ func getIntValuesFunc() func(string, bool, *rand.Rand) string {
 		return fmt.Sprintf(s,
 			pk,
 			randStr(reorgRand.Intn(19), reorgRand),
+			cnt, //reorgRand.Int31(),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
+			reorgRand.Float64(),
+			randStr(512+reorgRand.Intn(1024), reorgRand))
+	}
+}
+
+func getIntValuesUniqueFunc() func(string, bool, *rand.Rand) string {
+	cnt := 0
+	return func(pk string, asAssignment bool, reorgRand *rand.Rand) string {
+		s := `(%s, '%s', %d, '%s', '%s', %f, '%s')`
+		if asAssignment {
+			s = `a = %s, b = '%s', c = %d,  d = '%s', e = '%s', f = %f, g = '%s'`
+		}
+		cnt++
+		return fmt.Sprintf(s,
+			pk,
+			randStr(reorgRand.Intn(19), reorgRand)+pk,
 			cnt, //reorgRand.Int31(),
 			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
 			gotime.Unix(413487608+int64(reorgRand.Intn(1705689644)), 0).Format("2006-01-02T15:04:05"),
@@ -3034,6 +3138,16 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	require.NoError(t, hookErr)
 	tk.MustExec(`admin check table t`)
 	tk.MustExec(`admin check table t2`)
+	res := tk.MustQuery(`select * from t`)
+	res2 := tk.MustQuery(`select * from t2`)
+	require.Equal(t, res.Sort().Rows(), res2.Sort().Rows())
+	res = tk.MustQuery(`select * from t order by a`)
+	res2 = tk.MustQuery(`select * from t2 order by a`)
+	require.Equal(t, res.Rows(), res2.Rows())
+	// b may be empty string and allows different order, so also do additional Sort
+	res = tk.MustQuery(`select * from t order by b`).Sort()
+	res2 = tk.MustQuery(`select * from t2 order by b`).Sort()
+	require.Equal(t, res.Rows(), res2.Rows())
 	tk.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select * from t except select * from t2 LIMIT 1`).Check(testkit.Rows())
