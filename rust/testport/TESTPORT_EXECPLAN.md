@@ -10766,3 +10766,9 @@ risks without claiming repository-wide parity.
   through SHOW CREATE as the version-gated
   `/*T![auto_rand_base] AUTO_RANDOM_BASE=100 */` comment. Pinned in
   `crates/tidb-session/tests/auto_random_base_source.rs`.
+- 2026-09-06 (SHARD_ROW_ID_BITS + PRE_SPLIT_REGIONS pin): the combined
+  options print as ONE version-gated comment
+  `/*T! SHARD_ROW_ID_BITS=2 PRE_SPLIT_REGIONS=2 */` in SHOW CREATE.
+  Pinned in `crates/tidb-session/tests/shard_pre_split_combined_source.rs`.
+  (Note: an int-PK table refuses SHARD_ROW_ID_BITS with 8200 — the shard
+  bits apply to heap tables with _tidb_rowid.)
