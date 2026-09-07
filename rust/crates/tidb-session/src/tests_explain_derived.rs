@@ -67,11 +67,30 @@ fn derived_session() -> Session {
 #[test]
 fn a_derived_table_is_its_subquery_s_own_plan() {
     let mut session = derived_session();
+    // Operator ids shift with the session's statement history: strip the
+    // `_N` suffixes from the operator cells before matching the shape.
+    let strip_id = |line: &str| -> String {
+        line.split('|')
+            .map(|cell| match cell.rsplit_once('_') {
+                Some((prefix, suffix))
+                    if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) =>
+                {
+                    prefix.to_owned()
+                }
+                _ => cell.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    let shape: Vec<String> = plan(&mut session, "explain select * from (select * from t) x")
+        .into_iter()
+        .map(|row| strip_id(&row))
+        .collect();
     assert_eq!(
-        plan(&mut session, "explain select * from (select * from t) x"),
+        shape,
         vec![
-            "TableReader_2|10000.00|root||data:TableFullScan",
-            "└─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "TableReader|10000.00|root||data:TableFullScan",
+            "└─TableFullScan|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // The rows the same query returns are unchanged by being described: a
