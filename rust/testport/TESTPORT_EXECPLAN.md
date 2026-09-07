@@ -10987,3 +10987,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (invisible index pin): `INDEX idx (k) invisible` reports
   Visible=NO in SHOW INDEX; `ALTER INDEX idx visible` flips it to YES.
   Pinned in `crates/tidb-session/tests/invisible_index_source.rs`.
+- 2026-09-06 (SHOW TABLE STATUS pin): the fetchTableStatus column order with
+  Auto_increment = the allocator's next value (col 11), Collation and
+  COMMENT; Rows is a stats estimate (left unasserted). Pinned in
+  `crates/tidb-session/tests/show_table_status_source.rs`.
