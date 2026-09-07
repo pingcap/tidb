@@ -67,6 +67,22 @@ func TestConcurrentMap(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestConcurrentMapLazyShardInitialization(t *testing.T) {
+	m := newConcurrentMap()
+	for i := range m {
+		require.Nil(t, m[i].items.M)
+	}
+
+	first := &entry{Ptr: chunk.RowPtr{ChkIdx: 1, RowIdx: 2}}
+	m.Insert(0, first)
+	require.NotNil(t, m[0].items.M)
+	require.Nil(t, m[1].items.M)
+
+	got, ok := m.Get(0)
+	require.True(t, ok)
+	require.Same(t, first, got)
+}
+
 func TestConcurrentMapMemoryUsage(t *testing.T) {
 	m := newConcurrentMap()
 	memUsage := int64(0)

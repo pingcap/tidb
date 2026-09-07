@@ -123,20 +123,49 @@ func newColumn(ts, capacity int) *Column {
 
 // newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
 func newFixedLenColumn(elemLen, capacity int) *Column {
-	return &Column{
-		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, getInitDataMemCap(capacity, elemLen)),
-		nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
+	var col *Column
+	if elemLen == sizeInt64 && capacity == InitialCapacity {
+		storage := &fixedLen8ColumnStorage{}
+		storage.col.elemBuf = storage.elemBuf[:]
+		storage.col.nullBitmap = storage.nullBitmap[:0]
+		col = &storage.col
+	} else {
+		col = &Column{
+			elemBuf:    make([]byte, elemLen),
+			nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
+		}
 	}
+	col.data = make([]byte, 0, getInitDataMemCap(capacity, elemLen))
+	return col
+}
+
+type fixedLen8ColumnStorage struct {
+	col        Column
+	elemBuf    [sizeInt64]byte
+	nullBitmap [InitialCapacity / 8]byte
 }
 
 // newVarLenColumn creates a variable length Column with initial data capacity.
 func newVarLenColumn(capacity int) *Column {
-	return &Column{
-		offsets:    make([]int64, 1, getInitOffsetsCap(capacity)),
-		data:       make([]byte, 0, getInitDataMemCap(capacity, estimatedElemLen)),
-		nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
+	if capacity != InitialCapacity {
+		return &Column{
+			offsets:    make([]int64, 1, getInitOffsetsCap(capacity)),
+			data:       make([]byte, 0, getInitDataMemCap(capacity, estimatedElemLen)),
+			nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
+		}
 	}
+
+	storage := &varLenColumnStorage{}
+	storage.col.offsets = storage.offsets[:1]
+	storage.col.data = make([]byte, 0, getInitDataMemCap(capacity, estimatedElemLen))
+	storage.col.nullBitmap = storage.nullBitmap[:0]
+	return &storage.col
+}
+
+type varLenColumnStorage struct {
+	col        Column
+	offsets    [InitialCapacity + 1]int64
+	nullBitmap [(InitialCapacity + 7) / 8]byte
 }
 
 func getInitDataMemCap(capacity int, elemLen int) int64 {

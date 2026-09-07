@@ -25,7 +25,7 @@ const ShardCount = 320
 
 // A "thread" safe map of type string:Anything.
 // To avoid lock bottlenecks this map is dived to several (ShardCount) map shards.
-type concurrentMap []*concurrentMapShared
+type concurrentMap []concurrentMapShared
 
 // A "thread" safe string to anything map.
 type concurrentMapShared struct {
@@ -35,20 +35,12 @@ type concurrentMapShared struct {
 
 // newConcurrentMap creates a new concurrent map.
 func newConcurrentMap() concurrentMap {
-	m := make(concurrentMap, ShardCount)
-	for i := range ShardCount {
-		m[i] = &concurrentMapShared{}
-		m[i].items.Init(make(map[uint64]*entry))
-		if intest.InTest {
-			m[i].items.MockSeedForTest()
-		}
-	}
-	return m
+	return make(concurrentMap, ShardCount)
 }
 
 // getShard returns shard under given key
 func (m concurrentMap) getShard(hashKey uint64) *concurrentMapShared {
-	return m[hashKey%uint64(ShardCount)]
+	return &m[hashKey%uint64(ShardCount)]
 }
 
 // Insert inserts a value in a shard safely
@@ -57,6 +49,12 @@ func (m concurrentMap) Insert(key uint64, value *entry) (memDelta int64) {
 	shard.Lock()
 	oldValue := shard.items.M[key]
 	value.Next = oldValue
+	if shard.items.M == nil {
+		shard.items.Init(make(map[uint64]*entry))
+		if intest.InTest {
+			shard.items.MockSeedForTest()
+		}
+	}
 	memDelta += shard.items.Set(key, value)
 	shard.Unlock()
 	return memDelta
@@ -85,7 +83,7 @@ type IterCb func(key uint64, e *entry)
 // all elements in a map.
 func (m concurrentMap) IterCb(fn IterCb) {
 	for idx := range m {
-		shard := (m)[idx]
+		shard := &m[idx]
 		shard.RLock()
 		for key, value := range shard.items.M {
 			fn(key, value)

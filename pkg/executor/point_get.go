@@ -135,7 +135,7 @@ type PointGetExecutor struct {
 	done             bool
 	lock             bool
 	lockWaitTime     int64
-	rowDecoder       *rowcodec.ChunkDecoder
+	rowDecoder       rowcodec.ChunkDecoder
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -145,7 +145,8 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *runtimeStatsWithSnapshot
+	stats     *runtimeStatsWithSnapshot
+	resultSet recordSet
 }
 
 // GetPhysID returns the physical id used, either the table's id or a partition's ID
@@ -197,7 +198,7 @@ func (e *PointGetExecutor) Recreated(p *physicalop.PointGetPlan, ctx sessionctx.
 // Note: since this function is also used by Recreated function, thus we can't rely on member field's default value
 // for example: we need to explicitly set e.stats to nil when e.RuntimeStats() is nil
 func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
-	decoder := NewRowDecoder(e.Ctx(), p.Schema(), p.TblInfo)
+	initRowDecoder(&e.rowDecoder, e.Ctx(), p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
@@ -211,7 +212,6 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 		e.lock = false
 		e.lockWaitTime = 0
 	}
-	e.rowDecoder = decoder
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
@@ -228,11 +228,8 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	})
 
 	if e.RuntimeStats() != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.stats = &runtimeStatsWithSnapshot{}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, &e.stats.SnapshotRuntimeStats)
 	} else {
 		e.stats = nil
 	}
@@ -434,7 +431,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	sctx := e.BaseExecutor.Ctx()
 	schema := e.Schema()
-	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, &e.rowDecoder)
 	if err != nil {
 		return err
 	}
@@ -832,24 +829,19 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 }
 
 type runtimeStatsWithSnapshot struct {
-	*txnsnapshot.SnapshotRuntimeStats
+	txnsnapshot.SnapshotRuntimeStats
 }
 
 func (e *runtimeStatsWithSnapshot) String() string {
-	if e.SnapshotRuntimeStats != nil {
-		return e.SnapshotRuntimeStats.String()
-	}
-	return ""
+	return e.SnapshotRuntimeStats.String()
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
-	newRs := &runtimeStatsWithSnapshot{}
-	if e.SnapshotRuntimeStats != nil {
-		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats
+	snapshotStats := e.SnapshotRuntimeStats.Clone()
+	return &runtimeStatsWithSnapshot{
+		SnapshotRuntimeStats: *snapshotStats,
 	}
-	return newRs
 }
 
 // Merge implements the RuntimeStats interface.
@@ -858,14 +850,7 @@ func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
-	if tmp.SnapshotRuntimeStats != nil {
-		if e.SnapshotRuntimeStats == nil {
-			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats
-			return
-		}
-		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
-	}
+	e.SnapshotRuntimeStats.Merge(&tmp.SnapshotRuntimeStats)
 }
 
 // Tp implements the RuntimeStats interface.

@@ -98,7 +98,6 @@ import (
 	clientkv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
-	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -5773,6 +5772,10 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 
 // NewRowDecoder creates a chunk decoder for new row format row value decode.
 func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
+	return initRowDecoder(nil, ctx, schema, tbl)
+}
+
+func initRowDecoder(decoder *rowcodec.ChunkDecoder, ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
 	getColInfoByID := func(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		for _, col := range tbl.Columns {
 			if col.ID == colID {
@@ -5821,7 +5824,11 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		chk.AppendDatum(i, &d)
 		return nil
 	}
-	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().Location())
+	if decoder == nil {
+		return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().Location())
+	}
+	decoder.Reset(reqCols, pkCols, defVal, ctx.GetSessionVars().Location())
+	return decoder
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan) exec.Executor {
@@ -5878,11 +5885,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), plan.GetAvgRowSize()))
 	}
 	if e.RuntimeStats() != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.stats = &runtimeStatsWithSnapshot{}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, &e.stats.SnapshotRuntimeStats)
 	}
 
 	if plan.IndexInfo != nil {
