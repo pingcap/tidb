@@ -666,6 +666,96 @@
           "3 3 <nil>",
           "2 <nil> <nil>"
         ]
+      },
+      {
+        "SQL": "select A.id from A where (A.val in (select val from B)) or false",
+        "Plan": [
+          "HashJoin root  semi join, left side:TableReader, equal:[eq(test.a.val, test.b.val)]",
+          "├─TableReader(Build) root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select A.id from A where (A.val in (select val from B)) or 1 = 0",
+        "Plan": [
+          "HashJoin root  semi join, left side:TableReader, equal:[eq(test.a.val, test.b.val)]",
+          "├─TableReader(Build) root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select A.id from A where false or (A.val in (select val from B))",
+        "Plan": [
+          "HashJoin root  semi join, left side:TableReader, equal:[eq(test.a.val, test.b.val)]",
+          "├─TableReader(Build) root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select A.id from A where (A.val not in (select val from B where val is not null)) or false",
+        "Plan": [
+          "HashJoin root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.a.val, test.b.val)]",
+          "├─TableReader(Build) root  data:Selection",
+          "│ └─Selection cop[tikv]  not(isnull(test.b.val))",
+          "│   └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "4",
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select A.id from A where (A.val in (select val from B)) and true",
+        "Plan": [
+          "HashJoin root  inner join, equal:[eq(test.a.val, test.b.val)]",
+          "├─HashAgg(Build) root  group by:test.b.val, funcs:firstrow(test.b.val)->test.b.val",
+          "│ └─TableReader root  data:HashAgg",
+          "│   └─HashAgg cop[tikv]  group by:test.b.val, ",
+          "│     └─Selection cop[tikv]  not(isnull(test.b.val))",
+          "│       └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.a.val))",
+          "    └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select A.id, (A.val in (select val from B)) or false from A",
+        "Plan": [
+          "Projection root  test.a.id, or(Column, 0)->Column",
+          "└─HashJoin root  CARTESIAN left outer semi join, left side:TableReader, other cond:eq(test.a.val, test.b.val)",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) root  data:TableFullScan",
+          "    └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>",
+          "3 <nil>",
+          "4 <nil>",
+          "<nil> <nil>"
+        ]
       }
     ]
   }
