@@ -10502,3 +10502,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (three-part name pin): `db.table.column` resolves in the
   SELECT list, in WHERE predicates, and as a schema-qualified INSERT
   target. Pinned in `crates/tidb-session/tests/three_part_names_source.rs`.
+- 2026-09-06 (SHOW CREATE FK pin): SHOW CREATE TABLE carries the named
+  CONSTRAINT with its REFERENCES clause and ON DELETE action. Pinned in
+  `crates/tidb-session/tests/show_create_fk_source.rs`.
