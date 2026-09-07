@@ -14,9 +14,16 @@ import (
 	"go.uber.org/zap"
 )
 
-const logProgressTick = 2 * time.Minute
+const (
+	logProgressTick   = 2 * time.Minute
+	statusRefreshTick = 5 * time.Second
+)
 
 func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
+	d.RefreshStatus()
+	defer d.RefreshStatus()
+	statusTicker := time.NewTicker(statusRefreshTick)
+	defer statusTicker.Stop()
 	logProgressTicker := time.NewTicker(logProgressTick)
 	failpoint.Inject("EnableLogProgress", func() {
 		logProgressTicker.Stop()
@@ -31,21 +38,25 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 		case <-tctx.Done():
 			tctx.L().Debug("stopping log progress")
 			return
+		case <-statusTicker.C:
+			d.RefreshStatus()
 		case <-logProgressTicker.C:
 			nanoseconds := float64(time.Since(lastCheckpoint).Nanoseconds())
+			// Keep the average over the log interval independent of snapshot age.
+			finishedBytes := ReadGauge(d.metrics.finishedSizeGauge)
 			s := d.GetStatus()
 			tctx.L().Info("progress",
-				zap.String("tables", fmt.Sprintf("%.0f/%.0f (%.1f%%)", s.CompletedTables, float64(d.totalTables), s.CompletedTables/float64(d.totalTables)*100)),
+				zap.String("tables", fmt.Sprintf("%.0f/%.0f (%.1f%%)", s.CompletedTables, float64(s.TotalTables), s.CompletedTables/float64(s.TotalTables)*100)),
 				zap.String("finished rows", fmt.Sprintf("%.0f", s.FinishedRows)),
 				zap.String("estimate total rows", fmt.Sprintf("%.0f", s.EstimateTotalRows)),
 				zap.String("finished size", units.HumanSize(s.FinishedBytes)),
-				zap.Float64("average speed(MiB/s)", (s.FinishedBytes-lastBytes)/(1048576e-9*nanoseconds)),
+				zap.Float64("average speed(MiB/s)", (finishedBytes-lastBytes)/(1048576e-9*nanoseconds)),
 				zap.Float64("recent speed bps", s.CurrentSpeedBPS),
 				zap.String("chunks progress", s.Progress),
 			)
 
 			lastCheckpoint = time.Now()
-			lastBytes = s.FinishedBytes
+			lastBytes = finishedBytes
 		}
 	}
 }
@@ -70,9 +81,20 @@ type DumpStatus struct {
 	ProgressPercent *float64 `json:"progressPercent,omitempty"`
 }
 
-// GetStatus returns the status of dumping by reading metrics.
+// GetStatus returns the latest status snapshot without updating the speed recorder.
+// Callers must not modify the returned snapshot. Before the first refresh it is empty.
 func (d *Dumper) GetStatus() *DumpStatus {
+	if status := d.status.Load(); status != nil {
+		return status
+	}
+	return &DumpStatus{}
+}
+
+// RefreshStatus samples metrics and publishes a new status snapshot.
+// The progress loop is the sole refresher, so readers cannot change the speed's sampling window.
+func (d *Dumper) RefreshStatus() {
 	ret := &DumpStatus{}
+	defer d.status.Store(ret)
 	ret.TotalTables = atomic.LoadInt64(&d.totalTables)
 	ret.CompletedTables = ReadCounter(d.metrics.finishedTablesCounter)
 	ret.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
@@ -83,7 +105,7 @@ func (d *Dumper) GetStatus() *DumpStatus {
 		// chunks will be zero when upstream has no data
 		if d.metrics.totalChunks.Load() == 0 {
 			ret.setProgress(1)
-			return ret
+			return
 		}
 		progress := float64(d.metrics.completedChunks.Load()) / float64(d.metrics.totalChunks.Load())
 		if progress > 1 {
@@ -92,7 +114,6 @@ func (d *Dumper) GetStatus() *DumpStatus {
 		}
 		ret.setProgress(progress)
 	}
-	return ret
 }
 
 // setProgress records one progress value in both the shapes callers need:
