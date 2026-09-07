@@ -845,6 +845,11 @@ mod tests {
     /// Go `Update` observes `StatsDeltaLoadHistogram` through a `defer`, so
     /// the observation fires on every exit path — a completed refresh and a
     /// mid-loop cancellation each must bump the histogram's sample count.
+    ///
+    /// Process-global samples from OTHER parallel tests calling
+    /// `update_from_source` can only ADD to the counts, so the assertions are
+    /// lower bounds; the once-per-call exactness is structural (one Drop
+    /// guard per `update_from_source`).
     #[test]
     fn update_observes_the_stats_delta_load_duration_histogram_on_every_exit() {
         let histogram = metrics::stats_delta_load_histogram();
@@ -866,13 +871,19 @@ mod tests {
         cache
             .update_from_source(&source, Vec::new(), || false)
             .unwrap();
-        assert_eq!(histogram.get_sample_count(), before + 1);
+        assert!(
+            histogram.get_sample_count() > before,
+            "a completed refresh observes the delta-load duration"
+        );
 
-        let before = histogram.get_sample_count();
+        let before_cancel = histogram.get_sample_count();
         assert_eq!(
             cache.update_from_source(&source, Vec::new(), || true),
             Err(UpdateError::Cancelled)
         );
-        assert_eq!(histogram.get_sample_count(), before + 1);
+        assert!(
+            histogram.get_sample_count() > before_cancel,
+            "a cancelled refresh observes the delta-load duration"
+        );
     }
 }

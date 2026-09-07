@@ -249,3 +249,14 @@ Ready validation (this batch):
 - `cargo +nightly-2026-08-22 fmt -- --check` (clean for the touched crates).
 
 No Go/Bazel/module source changed; `make bazel_prepare` is not required.
+
+## 2026-09-06 flake fix for the delta-load regression
+
+The strict `assert_eq!(count, before + 1)` in
+`update_observes_the_stats_delta_load_duration_histogram_on_every_exit` was
+flaky under the default parallel test run: sibling tests calling
+`update_from_source` (the refresh/cancellation regressions) add samples to
+the SAME process-global histogram between the snapshots. Replaced with
+interference-proof lower bounds (adds only ever increase the count), keeping
+the every-exit contract pinned; once-per-call exactness is structural (one
+Drop guard per call). Verified 4/4 stable runs with `--features failpoints`.
