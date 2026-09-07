@@ -378,7 +378,7 @@ impl RuntimeFilterType {
 pub fn to_runtime_filter_type(session_var_value: &str) -> Option<Vec<RuntimeFilterType>> {
     let mut types = Vec::new();
     for type_name in session_var_value.split(',') {
-        let rf_type = RuntimeFilterType::from_name(&type_name.to_uppercase())?;
+        let rf_type = RuntimeFilterType::from_name(&go_to_upper(type_name))?;
         if !types.contains(&rf_type) {
             types.push(rf_type);
         }
@@ -422,6 +422,7 @@ impl RuntimeFilterMode {
 
 use crate::vars::SessionVars;
 use crate::varsutil::{tidb_opt_int64, tidb_opt_positive_int32};
+use tidb_util::stringutil::go_to_upper;
 use tidb_vardef::tidb_vars as names;
 
 /// The stored text a Go `SetSession` closure would receive: the session's

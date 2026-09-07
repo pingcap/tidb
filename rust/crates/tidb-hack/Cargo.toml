@@ -17,6 +17,7 @@ unsafe_code = "allow"
 all = "warn"
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
 foldhash.workspace = true
 hashbrown.workspace = true
 

@@ -22,7 +22,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 
-pub use tidb_hack::go_to_lower;
+pub use tidb_hack::{go_to_lower, go_to_upper};
 use tidb_mysql::SqlMode;
 
 /// An invalid quoted string.

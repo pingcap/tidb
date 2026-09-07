@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB sessionctx/vardef: system-variable name constants (Rust rewrite)."
 
 [dependencies]
+tidb-hack = { path = "../tidb-hack" }
 
 [lints]
 workspace = true

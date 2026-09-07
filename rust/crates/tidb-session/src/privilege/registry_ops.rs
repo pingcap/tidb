@@ -25,6 +25,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::Ordering;
 
 use super::*;
+use tidb_util::stringutil::go_to_upper;
 
 fn compare_host(left: &str, right: &str) -> Comparison {
     if left == "%" || right == "%" {
@@ -80,8 +81,8 @@ fn database_matches(pattern: &str, database: &str) -> bool {
     // before applying its binary wildcard matcher.  MySQL identifiers may
     // contain non-ASCII letters, so preserve the same Unicode case mapping
     // here instead of silently making those grants case-sensitive.
-    let database = database.to_uppercase();
-    let pattern = pattern.to_uppercase();
+    let database = go_to_upper(database);
+    let pattern = go_to_upper(pattern);
     wildcard_match(database.as_bytes(), pattern.as_bytes())
 }
 

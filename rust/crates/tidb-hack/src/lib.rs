@@ -213,20 +213,11 @@ mod tests {
 /// to plain `i`, both of which diverge from Rust's `str::to_lowercase`.
 /// Verified per rune: U+0130 is the only code point whose full
 /// lowercase mapping is multi-character, so first-character + the `İ`
-/// entry reproduces Go's table exactly.
+/// entry reproduces Go's table exactly. Delegates to the generated
+/// `tidb-mysql::simple_case` table (Go `unicode.CaseRanges`, Unicode
+/// 15.0.0), which is the authoritative implementation.
 pub fn go_to_lower(input: impl AsRef<str>) -> String {
-    input
-        .as_ref()
-        .chars()
-        .map(|character| {
-            let mut lowered = character.to_lowercase();
-            let first = lowered.next().unwrap_or(character);
-            if lowered.next().is_some() && character == '\u{0130}' {
-                return 'i';
-            }
-            first
-        })
-        .collect()
+    tidb_mysql::to_lowercase(input.as_ref())
 }
 
 /// Go `strings.ToUpper`: the per-rune SIMPLE uppercase mapping
@@ -234,31 +225,12 @@ pub fn go_to_lower(input: impl AsRef<str>) -> String {
 /// to multiple characters (`ß` -> `SS`, the Latin and Armenian
 /// ligatures, the Greek iota-subscript vowels); Go's simple table
 /// leaves the ligatures and `ß` unchanged and folds the 27 Greek
-/// iota-subscript forms to their dropped-subscript vowel.
+/// iota-subscript forms to their dropped-subscript vowel. Delegates to
+/// the generated `tidb-mysql::simple_case` table (Go
+/// `unicode.CaseRanges`, Unicode 15.0.0), the authoritative
+/// implementation.
 pub fn go_to_upper(input: impl AsRef<str>) -> String {
-    input
-        .as_ref()
-        .chars()
-        .map(|character| {
-            let mut lowered = character.to_uppercase();
-            let first = lowered.next().unwrap_or(character);
-            if lowered.next().is_some() {
-                // Go's simple table for the multi-character expansions.
-                return match character as u32 {
-                    0x1F80..=0x1F87 | 0x1F90..=0x1F97 | 0x1FA0..=0x1FA7 => {
-                        char::from_u32(character as u32 + 8)
-                            .expect("iota-subscript block maps inside Unicode")
-                    }
-                    0x1FB3 => '\u{1FBC}',
-                    0x1FC3 => '\u{1FCC}',
-                    0x1FF3 => '\u{1FFC}',
-                    // `ß`, `ŉ`, and the ligatures: Go leaves them alone.
-                    _ => character,
-                };
-            }
-            first
-        })
-        .collect()
+    tidb_mysql::to_uppercase(input.as_ref())
 }
 
 #[cfg(test)]

@@ -19,6 +19,7 @@
 //! the established rewrite pattern.
 
 use crate::tidb_vars::{OFF, ON};
+use tidb_hack::go_to_upper;
 
 /// Go `ClusteredIndexDefMode` (an `int`): the default clustering behavior for a
 /// primary key.
@@ -109,7 +110,7 @@ impl ExchangeCompressionMode {
 /// value (which equals the corresponding `ExchangeCompressionMode` value).
 #[must_use]
 pub fn to_exchange_compression_mode(name: &str) -> Option<ExchangeCompressionMode> {
-    let upper = name.to_uppercase();
+    let upper = go_to_upper(name);
     match upper.as_str() {
         "UNSPECIFIED" => Some(ExchangeCompressionMode::UNSPECIFIED),
         "NONE" => Some(ExchangeCompressionMode::NONE),
@@ -202,7 +203,7 @@ pub const MPP_VERSION_UNSPECIFIED: i64 = -1;
 /// `[-1, 3]`. `None` is Go's `false`, the illegal value.
 #[must_use]
 pub fn to_mpp_version(name: &str) -> Option<i64> {
-    let upper = name.to_uppercase();
+    let upper = go_to_upper(name);
     if upper == MPP_VERSION_UNSPECIFIED_NAME {
         return Some(MPP_VERSION_UNSPECIFIED);
     }

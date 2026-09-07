@@ -3650,6 +3650,7 @@ version = "0.0.0"
 dependencies = [
  "foldhash 0.1.5",
  "hashbrown 0.15.5",
+ "tidb-mysql",
 ]
 
 [[package]]
@@ -4402,6 +4403,9 @@ dependencies = [
 [[package]]
 name = "tidb-vardef"
 version = "0.0.0"
+dependencies = [
+ "tidb-hack",
+]
 
 [[package]]
 name = "tidb-workloadrepo"
