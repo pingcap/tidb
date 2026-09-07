@@ -313,11 +313,15 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	return err
 }
 
+<<<<<<< HEAD
 func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	if j.stage != regionScanned {
 		return nil
 	}
 
+=======
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWriteResult, err error) {
+>>>>>>> cc0925eeafc (Lightning: Attempt to return writeTooSlow when we experience write timeout. (#61346))
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
@@ -330,8 +334,32 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	})
 
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
+	// set a timeout for the write operation, if it takes too long, we will return with common.ErrWriteTooSlow and let caller retry the whole job instead of being stuck forever.
+	timeout := 15 * time.Minute
+	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
 	defer cancel()
+
+	// A defer function to handle all DeadlineExceeded errors that may occur
+	// during the write operation using this context with 15 minutes timeout.
+	// When the error is "context deadline exceeded", we will check if the cause
+	// is common.ErrWriteTooSlow and return the common.ErrWriteTooSlow instead so
+	// our caller would be able to retry this doWrite operation. By doing this
+	// defer we are hoping to handle all DeadlineExceeded error during this
+	// write, either from gRPC stream or write limiter WaitN operation.
+	wctx := ctx
+	defer func() {
+		if err == nil {
+			return
+		}
+		if errors.Cause(err) == context.DeadlineExceeded {
+			if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+				log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv",
+					zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
+					zap.Int("limit-size", local.writeLimiter.Limit()))
+				err = errors.Trace(cause) // return the common.ErrWriteTooSlow instead to let caller retry it
+			}
+		}
+	}()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
@@ -462,6 +490,19 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
 
+	// preparation work for the write timeout fault injection, only enabled if the following failpoint is enabled
+	wcancel := func() {}
+	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
+		var innerTimeout time.Duration
+		// GO_FAILPOINTS action supplies the duration in
+		ms, _ := val.(int)
+		innerTimeout = time.Duration(ms) * time.Millisecond
+		log.FromContext(ctx).Info("Injecting a timeout to write context.")
+		wctx, wcancel = context.WithTimeoutCause(
+			ctx, innerTimeout, common.ErrWriteTooSlow)
+	})
+	defer wcancel()
+
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 		preparedMsg := &grpc.PreparedMsg{}
@@ -472,7 +513,25 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		}
 
 		for i := range clients {
-			if err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size)); err != nil {
+			// original ctx would be used when failpoint is not enabled
+			// that new context would be used when failpoint is enabled
+			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))
+			if err != nil {
+				// We expect to encounter two types of errors here:
+				// 1. context.DeadlineExceeded — occurs when the calculated delay is
+				//    less than the remaining time in the context, but the context
+				//    expires while sleeping.
+				// 2. "rate: Wait(n=%d) would exceed context deadline" — a fast-fail
+				//    path triggered when the delay already exceeds the remaining
+				//    time for context before sleeping.
+				//
+				// Unfortunately, we cannot precisely control when the context will
+				// expire, so both scenarios are valid and expected.
+				// Fortunately, the "rate: Wait" error is already treated as
+				// retryable, so we only need to explicitly handle
+				// context.DeadlineExceeded here.
+				// We rely on the defer function at the top of doWrite to handle it
+				// for us in general.
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
