@@ -9912,3 +9912,10 @@ risks without claiming repository-wide parity.
   ErrForeignKeyCannotDropParent texts naming the child; multi-row DELETE
   with a mid-statement FK restrict verified atomic (restrict pre-checks all
   rows, nothing deleted). Pinned in `tests/fk_table_lifecycle_source.rs`.
+- 2026-09-06 (user-variable session pins): bare `@x` reads NULL when unset
+  (string-typed NULL via the getvar_string lowering), `@x := 7` assigns and
+  reads back, and the running-total idiom answers NULL;NULL;NULL while
+  uninitialized (Go's SETVAR never stores NULL) then 10;30;60 once
+  initialized. The executor-only harness deliberately has no bare-@x
+  lowering -- the session's VariableBinder owns it. Pinned in
+  `crates/tidb-session/tests/user_variable_source.rs`.
