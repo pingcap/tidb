@@ -10762,3 +10762,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (multi-CHECK ordering pin): multiple CHECK constraints print
   in declaration order in SHOW CREATE (chk_b before chk_c). Pinned in
   `crates/tidb-session/tests/multi_check_order_source.rs`.
+- 2026-09-06 (AUTO_RANDOM_BASE pin): `auto_random_base = 100` round-trips
+  through SHOW CREATE as the version-gated
+  `/*T![auto_rand_base] AUTO_RANDOM_BASE=100 */` comment. Pinned in
+  `crates/tidb-session/tests/auto_random_base_source.rs`.
