@@ -547,8 +547,174 @@ func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	return false
 }
 
+<<<<<<< HEAD
 func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas []model.CIStr) error {
 	useStatsCache := e.updateStatsCacheIfNeed()
+=======
+func (e *memtableRetriever) setDataFromOneTable(
+	sctx sessionctx.Context,
+	loc *time.Location,
+	checker privilege.Manager,
+	schema ast.CIStr,
+	table *model.TableInfo,
+	rows [][]types.Datum,
+	useStatsCache bool,
+) ([][]types.Datum, error) {
+	collation := table.Collate
+	if collation == "" {
+		collation = mysql.DefaultCollationName
+	}
+	createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+
+	createOptions := ""
+
+	if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+		return rows, nil
+	}
+	pkType := "NONCLUSTERED"
+	if !table.IsView() {
+		if table.GetPartitionInfo() != nil {
+			createOptions = "partitioned"
+		} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
+			createOptions = "cached=on"
+		}
+		var autoIncID any
+		hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
+		if hasAutoIncID {
+			autoIncID = getAutoIncrementID(e.is, sctx, table)
+		}
+		tableType := "BASE TABLE"
+		if util.IsSystemView(schema.L) {
+			tableType = "SYSTEM VIEW"
+		}
+		if table.IsSequence() {
+			tableType = "SEQUENCE"
+		}
+		if table.HasClusteredIndex() {
+			pkType = "CLUSTERED"
+		}
+		shardingInfo := infoschema.GetShardingInfo(schema, table)
+		var policyName any
+		if table.PlacementPolicyRef != nil {
+			policyName = table.PlacementPolicyRef.Name.O
+		}
+
+		var rowCount, avgRowLength, dataLength, indexLength uint64
+		if useStatsCache {
+			// Even for partitioned tables, we must update the stats cache for the main table itself.
+			// This is necessary because the global index length from the table also needs to be included.
+			// For further details, see: https://github.com/pingcap/tidb/issues/54173
+			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+			if err != nil {
+				return rows, err
+			}
+			if table.GetPartitionInfo() != nil {
+				// needs to update all partitions for partition table.
+				for _, pi := range table.GetPartitionInfo().Definitions {
+					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
+					if err != nil {
+						return rows, err
+					}
+				}
+			}
+			rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
+		}
+
+		record := types.MakeDatums(
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.O,              // TABLE_SCHEMA
+			table.Name.O,          // TABLE_NAME
+			tableType,             // TABLE_TYPE
+			"InnoDB",              // ENGINE
+			uint64(10),            // VERSION
+			"Compact",             // ROW_FORMAT
+			rowCount,              // TABLE_ROWS
+			avgRowLength,          // AVG_ROW_LENGTH
+			dataLength,            // DATA_LENGTH
+			uint64(0),             // MAX_DATA_LENGTH
+			indexLength,           // INDEX_LENGTH
+			uint64(0),             // DATA_FREE
+			autoIncID,             // AUTO_INCREMENT
+			createTime,            // CREATE_TIME
+			nil,                   // UPDATE_TIME
+			nil,                   // CHECK_TIME
+			collation,             // TABLE_COLLATION
+			nil,                   // CHECKSUM
+			createOptions,         // CREATE_OPTIONS
+			table.Comment,         // TABLE_COMMENT
+			table.ID,              // TIDB_TABLE_ID
+			shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
+			pkType,                // TIDB_PK_TYPE
+			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+		)
+		rows = append(rows, record)
+		e.recordMemoryConsume(record)
+	} else {
+		record := types.MakeDatums(
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.O,              // TABLE_SCHEMA
+			table.Name.O,          // TABLE_NAME
+			"VIEW",                // TABLE_TYPE
+			nil,                   // ENGINE
+			nil,                   // VERSION
+			nil,                   // ROW_FORMAT
+			nil,                   // TABLE_ROWS
+			nil,                   // AVG_ROW_LENGTH
+			nil,                   // DATA_LENGTH
+			nil,                   // MAX_DATA_LENGTH
+			nil,                   // INDEX_LENGTH
+			nil,                   // DATA_FREE
+			nil,                   // AUTO_INCREMENT
+			createTime,            // CREATE_TIME
+			nil,                   // UPDATE_TIME
+			nil,                   // CHECK_TIME
+			nil,                   // TABLE_COLLATION
+			nil,                   // CHECKSUM
+			nil,                   // CREATE_OPTIONS
+			"VIEW",                // TABLE_COMMENT
+			table.ID,              // TIDB_TABLE_ID
+			nil,                   // TIDB_ROW_ID_SHARDING_INFO
+			pkType,                // TIDB_PK_TYPE
+			nil,                   // TIDB_PLACEMENT_POLICY_NAME
+		)
+		rows = append(rows, record)
+		e.recordMemoryConsume(record)
+	}
+	return rows, nil
+}
+
+func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
+	if len(columns) <= 3 {
+		for _, colInfo := range columns {
+			switch colInfo.Name.L {
+			case "table_schema":
+			case "table_name":
+			case "table_catalog":
+			default:
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
+	for str := range predicates {
+		switch str {
+		case "table_name":
+		case "table_schema":
+		case "table_catalog":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
+	var rows [][]types.Datum
+>>>>>>> 2214bd07fc6 (statistics: Remove the ineffective dirty IDs from the row count cache (#56287))
 	checker := privilege.GetPrivilegeManager(sctx)
 
 	var rows [][]types.Datum
