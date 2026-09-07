@@ -10785,3 +10785,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (SHOW COLUMNS LIKE pin): `SHOW COLUMNS FROM t LIKE 'name%'`
   restricts the listing to matching columns. Pinned in
   `crates/tidb-session/tests/show_columns_like_source.rs`.
+- 2026-09-06 (virtual generated dependency pin): DROP COLUMN of a base
+  column referenced by a VIRTUAL generated column fails with Go's exact
+  ErrDependentByGeneratedColumn text. Pinned in
+  `crates/tidb-session/tests/virtual_generated_dependency_source.rs`.
