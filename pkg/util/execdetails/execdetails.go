@@ -159,6 +159,12 @@ const (
 	CommitBackoffTimeStr = "Commit_backoff_time"
 	// BackoffTypesStr means the backoff type.
 	BackoffTypesStr = "Backoff_types"
+	// PrewriteBackoffTypesStr means the backoff types during transaction prewrite.
+	PrewriteBackoffTypesStr = "Prewrite_Backoff_types"
+	// CommitBackoffTypesStr means the backoff types during transaction commit.
+	CommitBackoffTypesStr = "Commit_Backoff_types"
+	// CopBackoffTypesStr means the backoff types during coprocessor execution.
+	CopBackoffTypesStr = "Cop_backoff_types"
 	// SlowestPrewriteRPCDetailStr means the details of the slowest RPC during the transaction 2pc prewrite process.
 	SlowestPrewriteRPCDetailStr = "Slowest_prewrite_rpc_detail"
 	// CommitPrimaryRPCDetailStr means the details of the slowest RPC during the transaction 2pc commit process.
@@ -282,10 +288,10 @@ func (d ExecDetails) String() string {
 			parts = append(parts, CommitBackoffTimeStr+": "+strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64))
 		}
 		if len(commitDetails.Mu.PrewriteBackoffTypes) > 0 {
-			parts = append(parts, "Prewrite_"+BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.PrewriteBackoffTypes))
+			parts = append(parts, PrewriteBackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.PrewriteBackoffTypes))
 		}
 		if len(commitDetails.Mu.CommitBackoffTypes) > 0 {
-			parts = append(parts, "Commit_"+BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.CommitBackoffTypes))
+			parts = append(parts, CommitBackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.CommitBackoffTypes))
 		}
 		if commitDetails.Mu.SlowestPrewrite.ReqTotalTime > 0 {
 			parts = append(parts, SlowestPrewriteRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+
@@ -398,10 +404,10 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 			fields = append(fields, zap.String("commit_backoff_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64)+"s")))
 		}
 		if len(commitDetails.Mu.PrewriteBackoffTypes) > 0 {
-			fields = append(fields, zap.String("Prewrite_"+BackoffTypesStr, fmt.Sprintf("%v", commitDetails.Mu.PrewriteBackoffTypes)))
+			fields = append(fields, zap.String(PrewriteBackoffTypesStr, fmt.Sprintf("%v", commitDetails.Mu.PrewriteBackoffTypes)))
 		}
 		if len(commitDetails.Mu.CommitBackoffTypes) > 0 {
-			fields = append(fields, zap.String("Commit_"+BackoffTypesStr, fmt.Sprintf("%v", commitDetails.Mu.CommitBackoffTypes)))
+			fields = append(fields, zap.String(CommitBackoffTypesStr, fmt.Sprintf("%v", commitDetails.Mu.CommitBackoffTypes)))
 		}
 		if commitDetails.Mu.SlowestPrewrite.ReqTotalTime > 0 {
 			fields = append(fields, zap.String(SlowestPrewriteRPCDetailStr, "total:"+strconv.FormatFloat(commitDetails.Mu.SlowestPrewrite.ReqTotalTime.Seconds(), 'f', 3, 64)+

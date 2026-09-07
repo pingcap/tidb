@@ -943,6 +943,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 	})
 	var row []types.Datum
 	user := ""
+	var copBackoffTypes []string
 	tz := sctx.GetSessionVars().Location()
 	startFlag := false
 	for index, line := range log {
@@ -953,6 +954,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			row = make([]types.Datum, len(e.outputCols))
 			user = ""
+			copBackoffTypes = copBackoffTypes[:0]
 			valid := e.setColumnValue(sctx, row, tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], e.checker, fileLine)
 			if valid {
 				startFlag = true
@@ -984,6 +986,12 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					host := parseUserOrHostValue(fields[1])
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogHostStr, host, e.checker, fileLine)
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
+					field, _, ok := strings.Cut(line, variable.SlowLogSpaceMarkStr)
+					const totalTimesSuffix = "_total_times"
+					if ok && len(field) > len(variable.SlowLogCopBackoffPrefix)+len(totalTimesSuffix) && strings.HasSuffix(field, totalTimesSuffix) {
+						backoffType := field[len(variable.SlowLogCopBackoffPrefix) : len(field)-len(totalTimesSuffix)]
+						copBackoffTypes = append(copBackoffTypes, backoffType)
+					}
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogBackoffDetail, line, e.checker, fileLine)
 				} else if strings.HasPrefix(line, variable.SlowLogWarnings+variable.SlowLogSpaceMarkStr) {
 					line = line[len(variable.SlowLogWarnings+variable.SlowLogSpaceMarkStr):]
@@ -1023,6 +1031,11 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				}
 				// Get the sql string, and mark the start flag to false.
 				_ = e.setColumnValue(sctx, row, tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.checker, fileLine)
+				if len(copBackoffTypes) > 0 {
+					slices.Sort(copBackoffTypes)
+					copBackoffTypes = slices.Compact(copBackoffTypes)
+					_ = e.setColumnValue(sctx, row, tz, execdetails.CopBackoffTypesStr, fmt.Sprintf("%v", copBackoffTypes), e.checker, fileLine)
+				}
 				e.setDefaultValue(row)
 				e.memConsume(types.EstimatedMemUsage(row, 1))
 				data = append(data, row)
@@ -1153,7 +1166,8 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			row[columnIdx] = types.NewFloat64Datum(v)
 			return true, nil
 		}, nil
-	case variable.SlowLogUserStr, variable.SlowLogHostStr, execdetails.BackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
+	case variable.SlowLogUserStr, variable.SlowLogHostStr, execdetails.BackoffTypesStr, execdetails.PrewriteBackoffTypesStr,
+		execdetails.CommitBackoffTypesStr, execdetails.CopBackoffTypesStr, variable.SlowLogDBStr, variable.SlowLogIndexNamesStr, variable.SlowLogDigestStr,
 		variable.SlowLogStatsInfoStr, variable.SlowLogCopProcAddr, variable.SlowLogCopWaitAddr, variable.SlowLogPlanDigest,
 		variable.SlowLogPrevStmt, variable.SlowLogQuerySQLStr, variable.SlowLogWarnings, variable.SlowLogSessAliasStr,
 		variable.SlowLogResourceGroup, variable.SlowLogRequestUnitV2Detail, execdetails.ReadPoolTaskDetailsStr:

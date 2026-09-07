@@ -251,6 +251,16 @@ func TestSlowQuery(t *testing.T) {
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	_, err = f.WriteString(`
+# Time: 2018-01-01T00:00:00+08:00
+# Backoff_types: [txnLock]
+select /* legacy backoff types */ 1;
+# Time: 2018-01-01T00:00:01+08:00
+# Prewrite_Backoff_types: [txnLock]
+# Commit_Backoff_types: [regionMiss]
+# Cop_backoff_txnLockFast_total_times: 2 Cop_backoff_txnLockFast_total_time: 0.2 Cop_backoff_txnLockFast_max_time: 0.1 Cop_backoff_txnLockFast_max_addr: 127.0.0.1 Cop_backoff_txnLockFast_avg_time: 0.1 Cop_backoff_txnLockFast_p90_time: 0.1
+# Cop_backoff_txnLockFast_total_times: 1 Cop_backoff_txnLockFast_total_time: 0.1
+# Cop_backoff_regionMiss_total_times: 1 Cop_backoff_regionMiss_total_time: 0.1 Cop_backoff_regionMiss_max_time: 0.1 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.1 Cop_backoff_regionMiss_p90_time: 0.1
+select /* phase-specific backoff types */ 1;
 # Time: 2019-01-01T00:00:00+08:00
 # Request_unit_v2: 123.45
 # Request_unit_v2_detail: total_ru:123.45, tidb_ru:100.00, tikv_ru:20.00, tiflash_ru:3.45
@@ -312,6 +322,16 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 
 	tk.MustExec("set @@time_zone='+08:00'")
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' " +
+		"and table_name = 'CLUSTER_SLOW_QUERY' and column_name in " +
+		"('PREWRITE_BACKOFF_TYPES', 'COMMIT_BACKOFF_TYPES', 'COP_BACKOFF_TYPES') order by ordinal_position").
+		Check(testkit.Rows("Prewrite_Backoff_types", "Commit_Backoff_types", "Cop_backoff_types"))
+	tk.MustQuery("select concat(backoff_types, '|', prewrite_backoff_types, '|', commit_backoff_types, '|', cop_backoff_types) " +
+		"from information_schema.slow_query where query = 'select /* legacy backoff types */ 1;'").
+		Check(testkit.Rows("[txnLock]|||"))
+	tk.MustQuery("select concat(backoff_types, '|', prewrite_backoff_types, '|', commit_backoff_types, '|', cop_backoff_types) " +
+		"from information_schema.slow_query where query = 'select /* phase-specific backoff types */ 1;'").
+		Check(testkit.Rows("|[txnLock]|[regionMiss]|[regionMiss txnLockFast]"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-16 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("2"))
 	// Cover tidb issue 34320
