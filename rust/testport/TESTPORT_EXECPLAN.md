@@ -9965,3 +9965,7 @@ risks without claiming repository-wide parity.
   limit 2` updates rows 3 and 2 only; a multi-table UPDATE via join applies
   to the filtered join rows. Pinned in
   `tests/update_order_limit_multi_source.rs`.
+- 2026-09-06 (auto-inc rebase + zero-mode pins): `update t set id = 300`
+  rebases the allocator (next id 301); NO_AUTO_VALUE_ON_ZERO stores an
+  explicit 0 without allocation and the next allocation continues at 1.
+  Pinned in `tests/auto_inc_rebase_zero_mode_source.rs`.
