@@ -329,13 +329,14 @@ fn exec_index_scan(
         None => None,
     };
     let mut rows = Vec::new();
+    let mut eval_warnings = Vec::new();
     let mut emitted = 0_usize;
     // Go keeps the kept rows in a bounded heap; this lowering buffers every
     // surviving row and sorts once -- the same N rows in the same key order,
     // without the intermediate evictions.
     let mut topn_rows: Vec<(Vec<Datum>, Vec<Datum>)> = Vec::new();
     if aggregation.is_none() && limit == 0 {
-        return encode_default_rows(rows, &timezone);
+        return encode_default_rows(rows, &timezone, std::mem::take(&mut eval_warnings));
     }
     let descending = idx_scan.desc();
     let mut ranges = context.key_ranges.iter().collect::<Vec<_>>();
@@ -407,6 +408,10 @@ fn exec_index_scan(
                 Ok(_) => continue,
                 Err(message) => {
                     if context.flags & 2 != 0 {
+                        eval_warnings.push(tipb::Error {
+                            code: Some(1265),
+                            msg: Some(message),
+                        });
                         continue;
                     }
                     return other_error(&message);
@@ -497,12 +502,13 @@ fn exec_index_scan(
             rows.push(projected);
         }
     }
-    encode_default_rows(rows, &timezone)
+    encode_default_rows(rows, &timezone, eval_warnings)
 }
 
 fn encode_default_rows(
     rows: Vec<Vec<tidb_datatype::Datum>>,
     timezone: &tidb_datatype::SessionTimeZone,
+    warnings: Vec<tipb::Error>,
 ) -> coprocessor::Response {
     let mut chunks = Vec::new();
     let mut current = Vec::new();
@@ -535,7 +541,10 @@ fn encode_default_rows(
             ..tipb::Chunk::default()
         });
     }
+    let warning_count = warnings.len() as i64;
     let select = tipb::SelectResponse {
+        warnings,
+        warning_count: Some(warning_count),
         chunks,
         encode_type: Some(tipb::EncodeType::TypeDefault as i32),
         ..tipb::SelectResponse::default()
