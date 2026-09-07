@@ -10833,3 +10833,13 @@ risks without claiming repository-wide parity.
   post-insert → 101; option rides outside the version gate). Stash-verified
   suite diff: zero new failures (229 baseline vs 226 with-fix, all named
   stashes preserved).
+- 2026-09-06 (COMPRESSION table option fix, REAL DIVERGENCE): Go's
+  `handleTableOptions` (create_table.go:964-965) stores the COMPRESSION
+  string verbatim (shared by CREATE and ALTER; the loop overwrites, last
+  wins) and `ShowCreateTable` (executor/show.go:1373-1375) prints
+  ` COMPRESSION='<v>'` before AUTO_INCREMENT when non-empty. The port
+  accepted the option syntactically and dropped it. Now recorded on
+  KvTable, applied in both DDL paths, and printed by SHOW CREATE. Pins:
+  `crates/tidb-session/tests/compression_option_source.rs` (round-trip,
+  ALTER re-set, last-wins at CREATE, fresh-table prints nothing).
+  Suite diff vs stash-verified baseline: zero net-new failures.

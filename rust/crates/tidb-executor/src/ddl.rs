@@ -534,6 +534,16 @@ pub(crate) fn column_comment_option(options: &[tidb_ast::ColumnOption]) -> Optio
     })
 }
 
+/// The final `COMPRESSION=` option a CREATE or ALTER TABLE applies, stored
+/// verbatim (Go `handleTableOptions`, `create_table.go:964-965`; the loop
+/// overwrites so the last option wins).
+pub(crate) fn table_compression_option(options: &[tidb_ast::TableOption]) -> Option<String> {
+    options.iter().rev().find_map(|option| match option {
+        tidb_ast::TableOption::Compression(value) => Some(value.clone()),
+        _ => None,
+    })
+}
+
 pub(crate) fn table_comment_option(
     options: &[tidb_ast::TableOption],
     table: &str,
@@ -1567,6 +1577,12 @@ pub fn run_create_table_in(
     table.set_charset(table_charset);
     if let Some(comment) = table_comment_option(&create.table_options, name, ctx)? {
         table.set_comment(comment);
+    }
+    // Go `handleTableOptions` (`create_table.go:964-965`): the COMPRESSION
+    // string is stored verbatim, no validation, last one wins (later options
+    // overwrite `tbInfo.Compression`).
+    if let Some(compression) = table_compression_option(&create.table_options) {
+        table.set_compression(compression);
     }
     match &handle {
         HandleKind::RowId => {}

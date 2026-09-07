@@ -521,6 +521,10 @@ pub struct KvTable {
     /// Go `TableInfo.Comment`, persisted by CREATE/ALTER TABLE and served by
     /// metadata statements.
     comment: String,
+    /// Go `TableInfo.Compression`, persisted by CREATE/ALTER TABLE and
+    /// printed by `SHOW CREATE TABLE` when non-empty. Unvalidated, exactly
+    /// like Go (`create_table.go:964-965` stores whatever string arrives).
+    compression: String,
     /// Go `TableInfo.AutoIDCache`: how many ids one reservation takes. Zero
     /// is Go's "unset"; `SHOW CREATE TABLE` prints it only when set.
     auto_id_cache: i64,
@@ -854,6 +858,7 @@ impl KvTable {
             storage_statistics: (0, 0, 0, 0),
             partition_storage_statistics: std::collections::BTreeMap::new(),
             name: String::new(),
+            compression: String::new(),
             columns: std::sync::Arc::new(columns),
             hidden_columns: 0,
             mv_key_part_sources: std::collections::BTreeMap::new(),
@@ -1018,6 +1023,7 @@ impl KvTable {
         }
         copy.charset = self.charset;
         copy.comment = self.comment.clone();
+        copy.compression = self.compression.clone();
         let mut renamed = self.check_constraint_infos.as_ref().clone();
         let mut names = std::collections::HashMap::with_capacity(renamed.len());
         for (offset, info) in renamed.iter_mut().enumerate() {
@@ -1606,6 +1612,18 @@ impl KvTable {
     #[must_use]
     pub fn comment(&self) -> &str {
         &self.comment
+    }
+
+    /// The table's `COMPRESSION` setting. Go records whatever string the
+    /// option carries and `SHOW CREATE TABLE` prints it only when non-empty.
+    #[must_use]
+    pub fn compression(&self) -> &str {
+        &self.compression
+    }
+
+    /// Replaces the table's `COMPRESSION` setting.
+    pub fn set_compression(&mut self, compression: String) {
+        self.compression = compression;
     }
 
     /// Marks the columns whose encoding is the clustered row handle, which Go

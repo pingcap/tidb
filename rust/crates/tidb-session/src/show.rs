@@ -505,6 +505,11 @@ fn show_create_table_text(
             tidb_util::format::output_format(table.comment())
         ));
     }
+    // Go `ShowCreateTable` (`executor/show.go:1373-1375`): the compression
+    // setting, printed before the auto-increment option when non-empty.
+    if !table.compression().is_empty() {
+        out.push_str(&format!(" COMPRESSION='{}'", table.compression()));
+    }
     // Go `ShowCreateTable` (`executor/show.go:1383-1387`): the MySQL-compatible
     // ungated `AUTO_INCREMENT=%d`, printed when the table has an auto-increment
     // column and the allocator's next value exceeds 1 (fresh tables with no

@@ -1842,6 +1842,11 @@ fn set_table_options_action(
             tidb_ast::TableOption::Comment(comment) => {
                 table.set_comment(super::normalize_table_comment(comment, name, ctx)?);
             }
+            tidb_ast::TableOption::Compression(value) => {
+                // Go `handleTableOptions` stores the string verbatim; ALTER
+                // reaches the same loop (`create_table.go:964-965`).
+                table.set_compression(value.clone());
+            }
             tidb_ast::TableOption::CharacterSet(_) | tidb_ast::TableOption::Collate(_) => {}
             tidb_ast::TableOption::ForceAutoIncrement(value) => {
                 let next = value.parse::<u64>().map_err(|_| {
