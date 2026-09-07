@@ -2919,23 +2919,23 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 	}
 
 	m.entryMap.contextCache.Range(func(_, value any) bool {
-		e := value.(*rootPoolEntry)
-		if e.notRunning() {
+		entry := value.(*rootPoolEntry)
+		if entry.arbitratorMu.underKill.start || entry.notRunning() {
 			return true
 		}
 
-		if ctx := e.ctx.Load(); ctx.available() {
+		if ctx := entry.ctx.Load(); ctx.available() {
 			memoryUsed := ctx.arbitrateHelper.MemUsage().HeapInuse
 			if memoryUsed <= 0 {
 				return true
 			}
-			m.addUnderKill(e, memoryUsed, m.innerTime())
+			m.addUnderKill(entry, memoryUsed, m.innerTime())
 			reclaimed += memoryUsed
 			ctx.stop(ArbitratorOOMRiskKill)
 			newKillNum++
-			m.execMetrics.Risk.OOMKill[e.ctx.memPriority]++
-			if m.removeTask(e) {
-				e.windUp(0, ArbitrateFail)
+			m.execMetrics.Risk.OOMKill[entry.ctx.memPriority]++
+			if m.removeTask(entry) {
+				entry.windUp(0, ArbitrateFail)
 			}
 
 			if reclaimed >= required {

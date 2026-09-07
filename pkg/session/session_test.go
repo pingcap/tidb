@@ -307,4 +307,24 @@ func TestMemArbitratorSession(t *testing.T) {
 		buildMemArbitratorDigestID(normalizedSQL, nil, "db1"),
 		buildMemArbitratorDigestID(normalizedSQL, nil, "db2"))
 	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", db3Table, "db1"))
+
+	t.Run("wait for memory risk to clear", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			checks := 0
+			start := time.Now()
+			err := waitForMemRiskToClear(context.Background(), func() bool {
+				checks++
+				return checks == 1
+			})
+			require.NoError(t, err)
+			require.Equal(t, 2, checks)
+			require.Equal(t, defOOMRiskCheckDur, time.Since(start))
+		})
+	})
+
+	t.Run("stop waiting when context is canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.ErrorIs(t, waitForMemRiskToClear(ctx, func() bool { return true }), context.Canceled)
+	})
 }

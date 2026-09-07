@@ -124,7 +124,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1516,10 +1515,7 @@ const (
 	bypassSQLToken
 	isSelectSQLToken
 
-	defOOMRiskCheckDur   = time.Millisecond * 100 // 100ms: sleep duration when mem-arbitrator is at memory risk
-	defSuffixSplitDot    = ", "
-	defSuffixParseSQL    = defSuffixSplitDot + "path=ParseSQL"
-	defSuffixCompilePlan = defSuffixSplitDot + "path=CompilePlan"
+	defOOMRiskCheckDur = time.Millisecond * 100 // 100ms: sleep duration when mem-arbitrator is at memory risk
 
 	// mem quota for compiling plan per token.
 	// 1. prepare tpc-c
@@ -1692,6 +1688,25 @@ func approxCompilePlanMemQuota(sql string, hasSelect bool) int64 {
 	return tokenCnt * defCompilePlanQuotaPerToken
 }
 
+func waitForMemRiskToClear(ctx context.Context, atMemRisk func() bool) error {
+	ticker := time.NewTicker(defOOMRiskCheckDur)
+	defer ticker.Stop()
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !atMemRisk() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	globalMemArbitrator := memory.GlobalMemArbitrator()
 	execUseArbitrator := false
@@ -1710,15 +1725,8 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 			if s.sessionPlanCache != nil {
 				s.sessionPlanCache.DeleteAll()
 			}
-			for globalMemArbitrator.AtMemRisk() {
-				if globalMemArbitrator.AtOOMRisk() {
-					metrics.GlobalMemArbitratorSubTasks.ForceKillParse.Inc()
-					return nil, nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixParseSQL, uid)
-				}
-				if err := ctx.Err(); err != nil {
-					return nil, nil, err
-				}
-				time.Sleep(defOOMRiskCheckDur)
+			if err := waitForMemRiskToClear(ctx, globalMemArbitrator.AtMemRisk); err != nil {
+				return nil, nil, err
 			}
 		}
 
@@ -2577,15 +2585,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 			if s.sessionPlanCache != nil {
 				s.sessionPlanCache.DeleteAll()
 			}
-			for globalMemArbitrator.AtMemRisk() {
-				if globalMemArbitrator.AtOOMRisk() {
-					metrics.GlobalMemArbitratorSubTasks.ForceKillPlan.Inc()
-					return nil, exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorOOMRiskKill.String()+defSuffixCompilePlan, sessVars.ConnectionID)
-				}
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-				time.Sleep(defOOMRiskCheckDur)
+			if err := waitForMemRiskToClear(ctx, globalMemArbitrator.AtMemRisk); err != nil {
+				return nil, err
 			}
 		}
 
