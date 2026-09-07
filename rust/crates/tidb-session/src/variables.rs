@@ -1172,14 +1172,20 @@ impl Session {
     /// substitution happens here too. An unknown `@@x` is Go's 1193, while an
     /// unset `@x` is NULL rather than an error, as in MySQL.
     pub(crate) fn bind_variables(&self, stmt: &mut Stmt) -> Result<(), DriverError> {
-        let Stmt::Query(query) = stmt else {
-            return Ok(());
-        };
         let mut binder = VariableBinder {
             session: self,
             error: None,
         };
-        if !query.accept(&mut binder) {
+        // Go resolves `@@x` and `@x` inside DML too (a WHERE predicate, an
+        // UPDATE SET expression, an INSERT VALUES row), so the walk covers
+        // query AND Dml statements. DDL and session statements keep their
+        // own handling and stay untouched.
+        let accepted = match stmt {
+            Stmt::Query(query) => query.accept(&mut binder),
+            Stmt::Dml(dml) => dml.accept(&mut binder),
+            _ => true,
+        };
+        if !accepted {
             return Err(binder
                 .error
                 .expect("variable traversal stops only after recording an error"));

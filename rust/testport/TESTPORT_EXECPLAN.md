@@ -10546,3 +10546,11 @@ risks without claiming repository-wide parity.
   column folds case into one group; mixing explicit bin/general_ci
   collations in one comparison fails with Go's exact 1267 text. Pinned in
   `crates/tidb-session/tests/collation_mismatch_group_folding_source.rs`.
+- 2026-09-06 (uservar-in-UPDATE fix, REAL DIVERGENCE): `update t set b =
+  @x` failed with "expression form is not yet supported by the rewriter" —
+  the session's bind_variables pass only walked Query statements, so DML
+  never had @x/@@x atoms lowered. Fix: bind_variables now walks Dml
+  statements through the same VariableBinder (Go resolves session variables
+  inside DML expressions identically). Pin
+  `crates/tidb-session/tests/uservar_in_update_source.rs` fails on the old
+  code and passes with the fix; the sequence pins stay green.
