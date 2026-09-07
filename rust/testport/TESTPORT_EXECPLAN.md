@@ -10387,3 +10387,7 @@ risks without claiming repository-wide parity.
   excludes the NULL row. Pinned in
   `crates/tidb-session/tests/between_edge_semantics_source.rs`. Also fixed
   the SHOW INDEX pin's row-shape assertion (rows helper joins cells).
+- 2026-09-06 (RENAME COLUMN on partitioned table pin): the data carries, the
+  old name is unknown, and SHOW CREATE TABLE keeps the renamed column AND
+  the full PARTITION BY clause. Pinned in
+  `crates/tidb-session/tests/rename_column_partitioned_show_source.rs`.
