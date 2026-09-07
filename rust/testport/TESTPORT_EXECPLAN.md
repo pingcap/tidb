@@ -10391,3 +10391,6 @@ risks without claiming repository-wide parity.
   old name is unknown, and SHOW CREATE TABLE keeps the renamed column AND
   the full PARTITION BY clause. Pinned in
   `crates/tidb-session/tests/rename_column_partitioned_show_source.rs`.
+- 2026-09-06 (ADD PARTITION MAXVALUE pin): adding any partition after a
+  MAXVALUE definition fails with Go's exact `ErrPartitionMaxvalue` text
+  (1493). Pinned in `crates/tidb-session/tests/add_partition_errors_source.rs`.
