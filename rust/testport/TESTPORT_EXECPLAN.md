@@ -10747,3 +10747,7 @@ risks without claiming repository-wide parity.
   constraint 't_chk_1' references other column."), while the equivalent
   table-level CHECK is accepted and enforces. Pinned in
   `crates/tidb-session/tests/check_column_scope_source.rs`.
+- 2026-09-06 (CHECK name errors pin): a duplicate CHECK name fails with
+  Go's exact 3822 text, and dropping a nonexistent CHECK fails with the
+  "Constraint 'nope' does not exist." refusal. Pinned in
+  `crates/tidb-session/tests/check_name_errors_source.rs`.
