@@ -10590,3 +10590,7 @@ risks without claiming repository-wide parity.
   visible as `Warning | 1406 | Data too long for column 'b' at row 1` with
   `@@warning_count` = 1. Pinned in
   `crates/tidb-session/tests/show_warnings_truncate_source.rs`.
+- 2026-09-06 (INSERT SELECT position-map pin): src.x -> dst.a and src.y ->
+  dst.b when the two tables declare their columns in different orders —
+  the column LIST maps by name onto the SELECT's output positions. Pinned
+  in `crates/tidb-session/tests/insert_select_position_map_source.rs`.
