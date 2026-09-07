@@ -71,8 +71,13 @@ func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
 	m *stream.TableMappingManager,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	routeFingerprint ...string,
 ) error {
-	return rc.SaveIdMapWithFailPoints(ctx, m, logCheckpointMetaManager)
+	fingerprint := ""
+	if len(routeFingerprint) > 0 {
+		fingerprint = routeFingerprint[0]
+	}
+	return rc.SaveIdMapWithFailPoints(ctx, m, logCheckpointMetaManager, fingerprint)
 }
 
 func (rc *LogClient) TEST_initSchemasMap(
@@ -80,7 +85,11 @@ func (rc *LogClient) TEST_initSchemasMap(
 	restoreTS uint64,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) ([]*backuppb.PitrDBMap, error) {
-	return rc.loadSchemasMap(ctx, restoreTS, logCheckpointMetaManager)
+	backupMeta, err := rc.loadSchemasMap(ctx, restoreTS, logCheckpointMetaManager)
+	if err != nil {
+		return nil, err
+	}
+	return backupMeta.GetDbMaps(), nil
 }
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.

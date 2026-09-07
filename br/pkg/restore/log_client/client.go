@@ -748,6 +748,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	snapshotRestoreDataSize uint64,
+	routeFingerprint string,
 ) (string, string, uint64, error) {
 	rc.useCheckpoint = true
 
@@ -763,6 +764,11 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 		meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return "", "", 0, errors.Trace(err)
+		}
+		if meta.RouteFingerprint != routeFingerprint {
+			return "", "", 0, errors.Errorf(
+				"restore rename rules do not match the log restore checkpoint: checkpoint fingerprint %q, current fingerprint %q",
+				meta.RouteFingerprint, routeFingerprint)
 		}
 
 		if meta.RocksDBMaxBackgroundJobs != "" {
@@ -792,6 +798,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 		GcRatio:                  gcRatio,
 		RocksDBMaxBackgroundJobs: rocksDBMaxBackgroundJobs,
 		SnapshotRestoreDataSize:  snapshotRestoreDataSize,
+		RouteFingerprint:         routeFingerprint,
 		TiFlashItems:             items,
 	}); err != nil {
 		return gcRatio, rocksDBMaxBackgroundJobs, snapshotRestoreDataSize, errors.Trace(err)
@@ -1161,29 +1168,44 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	loadSavedIDMap bool,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	tableMappingManager *stream.TableMappingManager,
+	currentRouteFingerprint string,
 ) error {
 	var (
 		err        error
-		dbMaps     []*backuppb.PitrDBMap
+		backupMeta *backuppb.BackupMeta
 		dbReplaces map[stream.UpstreamID]*stream.DBReplace
 	)
+	validateRouteFingerprint := func(meta *backuppb.BackupMeta) error {
+		if meta == nil || meta.GetPitrIdMapRouteFingerprint() == currentRouteFingerprint {
+			return nil
+		}
+		return errors.Errorf(
+			"restore rename rules do not match the previous PiTR ID map: persisted fingerprint %q, current fingerprint %q",
+			meta.GetPitrIdMapRouteFingerprint(), currentRouteFingerprint)
+	}
 
 	// this is a retry, id map saved last time, load it from external storage
 	if loadSavedIDMap {
 		log.Info("try to load previously saved pitr id maps")
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.restoreTS, logCheckpointMetaManager)
+		backupMeta, err = rc.loadSchemasMap(ctx, rc.restoreTS, logCheckpointMetaManager)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if err := validateRouteFingerprint(backupMeta); err != nil {
+			return err
 		}
 	}
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
+	if len(backupMeta.GetDbMaps()) <= 0 && !hasFullBackupStorageConfig {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
+		backupMeta, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if err := validateRouteFingerprint(backupMeta); err != nil {
+			return err
 		}
 		err := rc.validateNoTiFlashReplica()
 		if err != nil {
@@ -1191,6 +1213,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 		}
 	}
 
+	dbMaps := backupMeta.GetDbMaps()
 	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Error("no id maps found")
 		return errors.New("no base id map found from saved id or last restored PiTR")
@@ -1598,24 +1621,26 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 			continue
 		}
 
-		// verify schema exists in info schema
-		_, exists := infoSchema.SchemaByID(dbReplace.DbID)
-		if !exists {
-			log.Info("schema doesn't exist in info schema, skipping",
-				zap.Int64("schemaID", dbReplace.DbID), zap.String("schemaName", dbReplace.Name))
-			continue
-		}
-
 		for _, tableReplace := range dbReplace.TableMap {
 			if tableReplace.FilteredOut {
+				continue
+			}
+			dbID := tableReplace.EffectiveDBID(dbReplace)
+			dbName := tableReplace.EffectiveDBName(dbReplace)
+
+			// A cross-schema table route can target a schema different from the
+			// DBReplace that owns the upstream table ID.
+			if _, exists := infoSchema.SchemaByID(dbID); !exists {
+				log.Info("schema doesn't exist in info schema, skipping",
+					zap.Int64("schemaID", dbID), zap.String("schemaName", dbName))
 				continue
 			}
 
 			// verify table exists in info schema and is in restore mode
 			tbl, exist := infoSchema.TableByID(ctx, tableReplace.TableID)
-			if !exist || tbl.Meta().DBID != dbReplace.DbID {
+			if !exist || tbl.Meta().DBID != dbID {
 				log.Info("table doesn't exist in info schema, skipping",
-					zap.Int64("schemaID", dbReplace.DbID),
+					zap.Int64("schemaID", dbID),
 					zap.Int64("tableID", tableReplace.TableID),
 					zap.String("tableName", tableReplace.Name))
 				continue
@@ -1631,7 +1656,6 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 				continue
 			}
 
-			dbID := dbReplace.DbID
 			tableID := tableReplace.TableID
 			// TODO, use batch when available in DDL
 			log.Info("altering table mode", zap.Int64("schemaID", dbID), zap.Any("table id", tableID))
@@ -1665,11 +1689,12 @@ func (rc *LogClient) RebaseAutoIncrementIDForSepAutoIncTables(ctx context.Contex
 			if tableReplace.FilteredOut {
 				continue
 			}
-			if err := rc.rebaseAutoIncrementIDForTable(ctx, store, infoSchema, dbReplace.DbID, tableReplace.TableID); err != nil {
+			dbID := tableReplace.EffectiveDBID(dbReplace)
+			if err := rc.rebaseAutoIncrementIDForTable(ctx, store, infoSchema, dbID, tableReplace.TableID); err != nil {
 				// Best effort: a single table failing to rebase must not abort the
 				// whole restore, so log and continue.
 				log.Warn("failed to rebase auto-increment allocator after PiTR log replay",
-					zap.Int64("schemaID", dbReplace.DbID),
+					zap.Int64("schemaID", dbID),
 					zap.Int64("tableID", tableReplace.TableID),
 					zap.String("tableName", tableReplace.Name),
 					zap.Error(err))
@@ -2391,18 +2416,87 @@ func (rc *LogClient) SaveIdMapWithFailPoints(
 	ctx context.Context,
 	manager *stream.TableMappingManager,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	routeFingerprint string,
 ) error {
+	if err := rc.EnsureTableRouteTargetDatabases(ctx, manager); err != nil {
+		return errors.Trace(err)
+	}
+
 	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
 	})
 
-	if err := rc.saveIDMap(ctx, manager, logCheckpointMetaManager); err != nil {
+	if err := rc.saveIDMap(ctx, manager, logCheckpointMetaManager, routeFingerprint); err != nil {
 		return errors.Trace(err)
 	}
 
 	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
 	})
+	return nil
+}
+
+// EnsureTableRouteTargetDatabases creates the target schemas needed only by
+// table-level cross-schema routes. These schemas are deliberately created
+// outside DBInfo replay, so their lifetime is not owned by any source database.
+func (rc *LogClient) EnsureTableRouteTargetDatabases(
+	ctx context.Context,
+	manager *stream.TableMappingManager,
+) error {
+	return rc.ensureTableRouteTargetDatabases(ctx, manager, true)
+}
+
+// ValidateTableRouteTargetDatabases verifies that every target schema from a
+// persisted ID map still exists with the persisted ID. A resume must not create
+// a replacement schema because that would invalidate the saved mapping.
+func (rc *LogClient) ValidateTableRouteTargetDatabases(
+	ctx context.Context,
+	manager *stream.TableMappingManager,
+) error {
+	return rc.ensureTableRouteTargetDatabases(ctx, manager, false)
+}
+
+func (rc *LogClient) ensureTableRouteTargetDatabases(
+	ctx context.Context,
+	manager *stream.TableMappingManager,
+	allowCreate bool,
+) error {
+	targets, err := manager.TableRouteTargetDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, target := range targets {
+		if dbInfo, exists := rc.dom.InfoSchema().SchemaByName(ast.NewCIStr(target.Name)); exists {
+			if dbInfo.ID != target.ID {
+				return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
+					"target database %s has downstream ID %d, expected %d", target.Name, dbInfo.ID, target.ID)
+			}
+			continue
+		}
+		if !allowCreate {
+			return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
+				"persisted table-route target database %s is missing; refusing to create a new schema during PiTR resume",
+				target.Name)
+		}
+		if rc.unsafeSession == nil {
+			return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
+				"cannot create target database %s without a restore session", target.Name)
+		}
+		if err := rc.unsafeSession.CreateDatabaseOnExistError(ctx, &model.DBInfo{
+			ID:   target.ID,
+			Name: ast.NewCIStr(target.Name),
+		}); err != nil {
+			return errors.Annotatef(err, "failed to create table-route target database %s", target.Name)
+		}
+		dbInfo, exists := rc.dom.InfoSchema().SchemaByName(ast.NewCIStr(target.Name))
+		if !exists {
+			return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
+				"created target database %s is not visible in the information schema", target.Name)
+		}
+		if err := manager.RebindTableRouteTargetDatabaseID(target.Name, target.ID, dbInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
@@ -2555,23 +2649,25 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 				if !ok {
 					return errors.Errorf("the deleted table(upstream ID: %d) has no record in replace map", upstreamTableID)
 				}
+				targetDBID := tableReplace.EffectiveDBID(dbReplace)
+				targetDBName := tableReplace.EffectiveDBName(dbReplace)
 
 				args := &model.RefreshMetaArgs{
-					SchemaID:      dbReplace.DbID,
+					SchemaID:      targetDBID,
 					TableID:       tableReplace.TableID,
-					InvolvedDB:    dbReplace.Name,
+					InvolvedDB:    targetDBName,
 					InvolvedTable: tableReplace.Name,
 				}
 
 				log.Info("refreshing deleted table meta",
-					zap.Int64("schemaID", dbReplace.DbID),
-					zap.String("dbName", dbReplace.Name),
+					zap.Int64("schemaID", targetDBID),
+					zap.String("dbName", targetDBName),
 					zap.Any("tableID", tableReplace.TableID),
 					zap.String("tableName", tableReplace.Name))
 				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
 					return errors.Annotatef(err,
 						"failed to refresh meta for deleted table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
-						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
+						targetDBID, tableReplace.TableID, targetDBName, tableReplace.Name)
 				}
 				deletedTableCount++
 			}
@@ -2609,7 +2705,7 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 
 	// First, handle database-only operations
 	for upstreamDBID, dbReplace := range schemasReplace.DbReplaceMap {
-		if dbReplace.FilteredOut {
+		if !dbReplace.RestoresDatabaseMetadata() {
 			continue
 		}
 
@@ -2651,21 +2747,23 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 						continue
 					}
 				}
+				targetDBID := tableReplace.EffectiveDBID(dbReplace)
+				targetDBName := tableReplace.EffectiveDBName(dbReplace)
 
 				args := &model.RefreshMetaArgs{
-					SchemaID:      dbReplace.DbID,
+					SchemaID:      targetDBID,
 					TableID:       tableReplace.TableID,
-					InvolvedDB:    dbReplace.Name,
+					InvolvedDB:    targetDBName,
 					InvolvedTable: tableReplace.Name,
 				}
 				log.Info("refreshing regular table meta",
-					zap.Int64("schemaID", dbReplace.DbID),
-					zap.String("dbName", dbReplace.Name),
+					zap.Int64("schemaID", targetDBID),
+					zap.String("dbName", targetDBName),
 					zap.Any("tableID", tableReplace.TableID),
 					zap.String("tableName", tableReplace.Name))
 				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
 					return errors.Annotatef(err, "failed to refresh meta for table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
-						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
+						targetDBID, tableReplace.TableID, targetDBName, tableReplace.Name)
 				}
 				regularCount++
 			}

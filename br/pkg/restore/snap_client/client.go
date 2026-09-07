@@ -1100,6 +1100,16 @@ func (rc *SnapClient) CreatePolicies(ctx context.Context, policyMap *sync.Map) e
 
 // CreateDatabases creates databases. If the client has the db pool, it would create it.
 func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Database) error {
+	plans := make([]*restoreutils.DatabaseRestorePlan, 0, len(dbs))
+	for _, db := range dbs {
+		plans = append(plans, &restoreutils.DatabaseRestorePlan{Source: db, Target: db.Info.Clone()})
+	}
+	return rc.CreateDatabasesWithPlan(ctx, plans)
+}
+
+// CreateDatabasesWithPlan creates the target databases without modifying the
+// source metadata loaded from the backup.
+func (rc *SnapClient) CreateDatabasesWithPlan(ctx context.Context, plans []*restoreutils.DatabaseRestorePlan) error {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create database")
 		return nil
@@ -1107,31 +1117,31 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 
 	if len(rc.dbPool) == 0 {
 		log.Info("create databases sequentially")
-		for _, db := range dbs {
-			exists, err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
+		for _, plan := range plans {
+			exists, err := rc.db.CreateDatabase(ctx, plan.Target, rc.supportPolicy, rc.policyMap)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if exists {
-				db.SetReusedByPITR()
+			if exists && plan.Source != nil {
+				plan.Source.SetReusedByPITR()
 			}
 		}
 		return nil
 	}
 
-	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)), zap.Int("number of db", len(dbs)))
+	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)), zap.Int("number of db", len(plans)))
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
-	for _, db_ := range dbs {
-		db := db_
+	for _, plan_ := range plans {
+		plan := plan_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
-			exists, err := conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := conn.CreateDatabase(ectx, plan.Target, rc.supportPolicy, rc.policyMap)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if exists {
-				db.SetReusedByPITR()
+			if exists && plan.Source != nil {
+				plan.Source.SetReusedByPITR()
 			}
 			return nil
 		})
@@ -1144,16 +1154,16 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 // 1. tables that already exists in the restored cluster.
 // 2. tables that are created by executing ddl jobs.
 // so, only tables in incremental restoration will be added to the map
-func (rc *SnapClient) generateRebasedTables(tables []*metautil.Table) {
+func (rc *SnapClient) generateRebasedTables(plans []*restoreutils.TableRestorePlan) {
 	if !rc.IsIncremental() {
 		// in full restoration, all tables are created by Session.CreateTable, and all tables' info is updated.
 		rc.rebasedTablesMap = make(map[restore.UniqueTableName]bool)
 		return
 	}
 
-	rc.rebasedTablesMap = make(map[restore.UniqueTableName]bool, len(tables))
-	for _, table := range tables {
-		rc.rebasedTablesMap[restore.UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}] = true
+	rc.rebasedTablesMap = make(map[restore.UniqueTableName]bool, len(plans))
+	for _, plan := range plans {
+		rc.rebasedTablesMap[restore.UniqueTableName{DB: plan.TargetDB.Name.String(), Table: plan.TargetInfo.Name.String()}] = true
 	}
 }
 
@@ -1170,12 +1180,30 @@ func (rc *SnapClient) CreateTables(
 	tables []*metautil.Table,
 	newTS uint64,
 ) ([]*restoreutils.CreatedTable, error) {
-	log.Info("start create tables", zap.Int("total count", len(tables)))
-	rc.generateRebasedTables(tables)
+	plans := make([]*restoreutils.TableRestorePlan, 0, len(tables))
+	for _, table := range tables {
+		plans = append(plans, &restoreutils.TableRestorePlan{
+			Source:     table,
+			TargetDB:   table.DB.Clone(),
+			TargetInfo: table.Info.Clone(),
+		})
+	}
+	return rc.CreateTablesWithPlan(ctx, plans, newTS)
+}
+
+// CreateTablesWithPlan creates routed target tables while retaining the source
+// table metadata for ID rewrite, SST lookup, checksums, and statistics.
+func (rc *SnapClient) CreateTablesWithPlan(
+	ctx context.Context,
+	plans []*restoreutils.TableRestorePlan,
+	newTS uint64,
+) ([]*restoreutils.CreatedTable, error) {
+	log.Info("start create tables", zap.Int("total count", len(plans)))
+	rc.generateRebasedTables(plans)
 
 	// try to restore tables in batch
 	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
-		tables, err := rc.createTablesBatch(ctx, tables, newTS)
+		tables, err := rc.createTablesBatch(ctx, plans, newTS)
 		if err == nil {
 			return tables, nil
 		} else if !utils.FallBack2CreateTable(err) {
@@ -1187,53 +1215,58 @@ func (rc *SnapClient) CreateTables(
 
 	// restore tables in db pool
 	if len(rc.dbPool) > 0 {
-		return rc.createTablesSingle(ctx, rc.dbPool, tables, newTS)
+		return rc.createTablesSingle(ctx, rc.dbPool, plans, newTS)
 	}
 	// restore tables in one db
-	return rc.createTablesSingle(ctx, []*tidallocdb.DB{rc.db}, tables, newTS)
+	return rc.createTablesSingle(ctx, []*tidallocdb.DB{rc.db}, plans, newTS)
 }
 
 func (rc *SnapClient) createTables(
 	ctx context.Context,
 	db *tidallocdb.DB,
-	tables []*metautil.Table,
+	plans []*restoreutils.TableRestorePlan,
 	newTS uint64,
 ) ([]*restoreutils.CreatedTable, error) {
 	log.Info("client to create tables")
+	targetTables := make([]*metautil.Table, 0, len(plans))
+	for _, plan := range plans {
+		targetTables = append(targetTables, plan.TargetTable())
+	}
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
+		err := db.CreateTables(ctx, targetTables, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	cts := make([]*restoreutils.CreatedTable, 0, len(tables))
+	cts := make([]*restoreutils.CreatedTable, 0, len(plans))
 	var tablesWithMergeOption []*restoreutils.CreatedTable
 
-	for _, table := range tables {
-		newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
+	for _, plan := range plans {
+		newTableInfo, err := restore.GetTableSchema(rc.dom, plan.TargetDB.Name, plan.TargetInfo.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
+		if newTableInfo.IsCommonHandle != plan.Source.Info.IsCommonHandle {
 			return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
 				"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
-				restore.TransferBoolToValue(table.Info.IsCommonHandle),
-				table.Info.IsCommonHandle,
+				restore.TransferBoolToValue(plan.Source.Info.IsCommonHandle),
+				plan.Source.Info.IsCommonHandle,
 				newTableInfo.IsCommonHandle)
 		}
-		rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
+		rules := restoreutils.GetRewriteRules(newTableInfo, plan.Source.Info, newTS, true)
 		ct := &restoreutils.CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,
-			OldTable:    table,
+			OldTable:    plan.Source,
+			TargetDB:    plan.TargetDB.Name,
 		}
 		log.Debug("new created tables", zap.Any("table", ct))
 		cts = append(cts, ct)
 
 		// Collect tables that need merge_option (either table-level or partition-level)
-		if table.IsMergeOptionAllowed || len(table.PartitionMergeOptionAllowed) > 0 {
+		if plan.Source.IsMergeOptionAllowed || len(plan.Source.PartitionMergeOptionAllowed) > 0 {
 			tablesWithMergeOption = append(tablesWithMergeOption, ct)
 		}
 	}
@@ -1266,8 +1299,8 @@ func (rc *SnapClient) setMergeOptionForTables(ctx context.Context, createdTables
 		if table.IsMergeOptionAllowed {
 			rule := label.NewRule()
 			// Use .L (lowercase) to match DDL behavior for case-insensitive matching
-			dbName := table.DB.Name.L
-			tableName := table.Info.Name.L
+			dbName := ct.TargetDBName().L
+			tableName := newTableInfo.Name.L
 			// Set labels including merge_option before calling Reset()
 			rule.Labels = []pdhttp.RegionLabel{
 				{Key: "merge_option", Value: "allow"},
@@ -1303,8 +1336,8 @@ func (rc *SnapClient) setMergeOptionForTables(ctx context.Context, createdTables
 
 					rule := label.NewRule()
 					// Use .L (lowercase) to match DDL behavior for case-insensitive matching
-					dbName := table.DB.Name.L
-					tableName := table.Info.Name.L
+					dbName := ct.TargetDBName().L
+					tableName := newTableInfo.Name.L
 					partitionName := oldDef.Name.L
 					// Set labels including merge_option before calling Reset()
 					rule.Labels = []pdhttp.RegionLabel{
@@ -1359,16 +1392,23 @@ func SortTablesBySchemaID(tables []*metautil.Table) []*metautil.Table {
 	return orderedTables
 }
 
-func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) (
+func (rc *SnapClient) createTablesBatch(ctx context.Context, plans []*restoreutils.TableRestorePlan, newTS uint64) (
 	[]*restoreutils.CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 
 	// sort tables by schema ID to ensure tables in the same schema are processed together
-	orderedTables := SortTablesBySchemaID(tables)
+	orderedPlans := make([]*restoreutils.TableRestorePlan, len(plans))
+	copy(orderedPlans, plans)
+	sort.SliceStable(orderedPlans, func(i, j int) bool {
+		if orderedPlans[i].Source.DB.ID != orderedPlans[j].Source.DB.ID {
+			return orderedPlans[i].Source.DB.ID < orderedPlans[j].Source.DB.ID
+		}
+		return orderedPlans[i].Source.Info.ID < orderedPlans[j].Source.Info.ID
+	})
 
-	numOfTables := len(orderedTables)
+	numOfTables := len(orderedPlans)
 	createdTables := struct {
 		sync.Mutex
 		tables []*restoreutils.CreatedTable
@@ -1380,10 +1420,10 @@ func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.
 		end := min(lastSent+int(rc.batchDdlSize), numOfTables)
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
-		tableSlice := orderedTables[lastSent:end]
+		planSlice := orderedPlans[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
-			cts, err := rc.createTables(ectx, db, tableSlice, newTS) // ddl job for [lastSent:i)
+			cts, err := rc.createTables(ectx, db, planSlice, newTS) // ddl job for [lastSent:i)
 			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
 				if val.(bool) {
 					err = errors.New("sample error without extra message")
@@ -1411,33 +1451,35 @@ func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.
 func (rc *SnapClient) createTable(
 	ctx context.Context,
 	db *tidallocdb.DB,
-	table *metautil.Table,
+	plan *restoreutils.TableRestorePlan,
 	newTS uint64,
 ) (*restoreutils.CreatedTable, error) {
+	targetTable := plan.TargetTable()
 	if rc.IsSkipCreateSQL() {
-		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
+		log.Info("skip create table and alter autoIncID", zap.Stringer("table", plan.TargetInfo.Name))
 	} else {
-		err := db.CreateTable(ctx, table, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
+		err := db.CreateTable(ctx, targetTable, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
+	newTableInfo, err := restore.GetTableSchema(rc.dom, plan.TargetDB.Name, plan.TargetInfo.Name)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
+	if newTableInfo.IsCommonHandle != plan.Source.Info.IsCommonHandle {
 		return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
 			"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
-			restore.TransferBoolToValue(table.Info.IsCommonHandle),
-			table.Info.IsCommonHandle,
+			restore.TransferBoolToValue(plan.Source.Info.IsCommonHandle),
+			plan.Source.Info.IsCommonHandle,
 			newTableInfo.IsCommonHandle)
 	}
-	rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
+	rules := restoreutils.GetRewriteRules(newTableInfo, plan.Source.Info, newTS, true)
 	et := &restoreutils.CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
-		OldTable:    table,
+		OldTable:    plan.Source,
+		TargetDB:    plan.TargetDB.Name,
 	}
 	return et, nil
 }
@@ -1445,7 +1487,7 @@ func (rc *SnapClient) createTable(
 func (rc *SnapClient) createTablesSingle(
 	ctx context.Context,
 	dbPool []*tidallocdb.DB,
-	tables []*metautil.Table,
+	plans []*restoreutils.TableRestorePlan,
 	newTS uint64,
 ) ([]*restoreutils.CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
@@ -1455,24 +1497,24 @@ func (rc *SnapClient) createTablesSingle(
 		sync.Mutex
 		tables []*restoreutils.CreatedTable
 	}{
-		tables: make([]*restoreutils.CreatedTable, 0, len(tables)),
+		tables: make([]*restoreutils.CreatedTable, 0, len(plans)),
 	}
-	for _, tbl := range tables {
-		table := tbl
+	for _, plan_ := range plans {
+		plan := plan_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := dbPool[id%uint64(len(dbPool))]
-			rt, err := rc.createTable(ectx, db, table, newTS)
+			rt, err := rc.createTable(ectx, db, plan, newTS)
 			if err != nil {
 				log.Error("create table failed",
 					zap.Error(err),
-					zap.Stringer("db", table.DB.Name),
-					zap.Stringer("table", table.Info.Name))
+					zap.Stringer("db", plan.TargetDB.Name),
+					zap.Stringer("table", plan.TargetInfo.Name))
 				return errors.Trace(err)
 			}
 			rater.Inc()
 			rater.L().Info("table created",
-				zap.Stringer("table", table.Info.Name),
-				zap.Stringer("database", table.DB.Name))
+				zap.Stringer("table", plan.TargetInfo.Name),
+				zap.Stringer("database", plan.TargetDB.Name))
 
 			createdTables.Lock()
 			createdTables.tables = append(createdTables.tables, rt)

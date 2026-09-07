@@ -72,8 +72,9 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":br_lib"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
+        "//br/pkg/task",
         "//pkg/testkit/testmain",
         "//pkg/util/memory",
         "@com_github_stretchr_testify//require",
