@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -125,4 +126,43 @@ func TestMetricsHandlerServesTheDumperRegistry(t *testing.T) {
 	body, err := io.ReadAll(rec.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), "dumpling_dump_finished_rows 42")
+	require.Contains(t, string(body), "go_goroutines ")
+	require.Contains(t, string(body), "process_cpu_seconds_total ")
+	require.Contains(t, string(body), "promhttp_metric_handler_requests_total")
+}
+
+func TestMetricsHandlerPreservesConfiguredMetricFamilies(t *testing.T) {
+	conf := defaultConfigForTest(t)
+	d := &Dumper{conf: conf}
+	d.metrics = newMetrics(conf.PromFactory, nil)
+	d.metrics.registerTo(conf.PromRegistry)
+	defer d.metrics.unregisterFrom(conf.PromRegistry)
+	// Both registries expose this name. The configured family must win
+	// without producing duplicate-metric errors on the scrape.
+	configured := prometheus.NewGauge(prometheus.GaugeOpts{Name: "go_goroutines", Help: "Configured test value."})
+	configured.Set(123)
+	conf.PromRegistry.MustRegister(configured)
+
+	rec := httptest.NewRecorder()
+	metricsHandler(d).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "go_goroutines 123\n")
+	require.Contains(t, rec.Body.String(), "process_cpu_seconds_total ")
+}
+
+func TestMetricsHandlerWithSharedDefaultGatherer(t *testing.T) {
+	conf := defaultConfigForTest(t)
+	d := &Dumper{conf: conf}
+	d.metrics = newMetrics(conf.PromFactory, nil)
+	d.metrics.registerTo(conf.PromRegistry)
+	defer d.metrics.unregisterFrom(conf.PromRegistry)
+	previous := prometheus.DefaultGatherer
+	prometheus.DefaultGatherer = conf.PromRegistry.(prometheus.Gatherer)
+	t.Cleanup(func() { prometheus.DefaultGatherer = previous })
+	AddGauge(d.metrics.finishedRowsGauge, 42)
+
+	rec := httptest.NewRecorder()
+	metricsHandler(d).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "dumpling_dump_finished_rows 42")
 }

@@ -34,7 +34,7 @@ func TestGetParameters(t *testing.T) {
 	AddGauge(d.metrics.finishedRowsGauge, 30)
 	AddCounter(d.metrics.estimateTotalRowsCounter, 40)
 
-	require.Same(t, initial, d.GetStatus())
+	require.Equal(t, initial, d.GetStatus())
 	d.RefreshStatus()
 	mid = d.GetStatus()
 	require.EqualValues(t, float64(10), mid.CompletedTables)
@@ -42,6 +42,49 @@ func TestGetParameters(t *testing.T) {
 	require.EqualValues(t, float64(30), mid.FinishedRows)
 	require.EqualValues(t, float64(40), mid.EstimateTotalRows)
 	require.Zero(t, initial.FinishedBytes)
+}
+
+func TestGetStatusReturnsIndependentSnapshots(t *testing.T) {
+	conf := defaultConfigForTest(t)
+	d := &Dumper{conf: conf, speedRecorder: NewSpeedRecorder()}
+	d.metrics = newMetrics(conf.PromFactory, nil)
+	AddGauge(d.metrics.finishedSizeGauge, 500)
+	d.metrics.totalChunks.Store(4)
+	d.metrics.completedChunks.Store(1)
+	d.metrics.progressReady.Store(true)
+	d.RefreshStatus()
+
+	first, second := d.GetStatus(), d.GetStatus()
+	first.FinishedBytes = 999
+	*first.ProgressPercent = 100
+	for _, snapshot := range []*DumpStatus{second, d.GetStatus()} {
+		require.EqualValues(t, 500, snapshot.FinishedBytes)
+		require.EqualValues(t, 25, *snapshot.ProgressPercent)
+	}
+}
+
+func TestStopLogProgressPublishesFinalStatus(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		conf := defaultConfigForTest(t)
+		d := &Dumper{conf: conf, speedRecorder: NewSpeedRecorder()}
+		d.metrics = newMetrics(conf.PromFactory, nil)
+		d.metrics.totalChunks.Store(4)
+		d.metrics.completedChunks.Store(1)
+		d.metrics.progressReady.Store(true)
+		stop := d.startLogProgress(tcontext.Background())
+		defer stop()
+		synctest.Wait()
+		require.EqualValues(t, 25, *d.GetStatus().ProgressPercent)
+
+		AddGauge(d.metrics.finishedSizeGauge, 500)
+		d.metrics.completedChunks.Store(4)
+		// Use the same stop function that Dump defers; callers must not need
+		// an additional wait before reading the final snapshot.
+		stop()
+		final := d.GetStatus()
+		require.EqualValues(t, 500, final.FinishedBytes)
+		require.EqualValues(t, 100, *final.ProgressPercent)
+	})
 }
 
 func TestRunLogProgressRefreshesStatus(t *testing.T) {
@@ -99,7 +142,7 @@ func TestRunLogProgressRefreshesStatus(t *testing.T) {
 		AddGauge(d.metrics.finishedSizeGauge, 1000)
 		time.Sleep(5 * time.Second)
 		synctest.Wait()
-		require.Same(t, final, d.GetStatus())
+		require.Equal(t, final, d.GetStatus())
 		require.Len(t, logs.FilterMessage("progress").All(), 1)
 	})
 }
