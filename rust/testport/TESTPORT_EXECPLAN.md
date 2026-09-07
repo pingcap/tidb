@@ -10900,3 +10900,7 @@ risks without claiming repository-wide parity.
   parenthesized (`DEFAULT (rand())`, `DEFAULT (CURRENT_DATE)`). Verified
   faithful, no fix. Pinned in
   `crates/tidb-session/tests/expression_default_fold_source.rs`.
+- 2026-09-06 (DEFAULT_GENERATED pin): SHOW COLUMNS marks an expression
+  default with DEFAULT_GENERATED in Extra and reports the bare expression
+  text in Default (column.go:456, NewColDesc). Pinned in
+  `crates/tidb-session/tests/show_columns_default_generated_source.rs`.
