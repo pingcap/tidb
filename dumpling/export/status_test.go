@@ -10,6 +10,7 @@ import (
 
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -100,6 +101,37 @@ func TestRunLogProgressRefreshesStatus(t *testing.T) {
 		synctest.Wait()
 		require.Same(t, final, d.GetStatus())
 		require.Len(t, logs.FilterMessage("progress").All(), 1)
+	})
+}
+
+func TestRunLogProgressFailpointRefreshesStatus(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/dumpling/export/EnableLogProgress", "return()")
+	synctest.Test(t, func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		tctx, cancel := tcontext.Background().WithLogger(log.NewAppLogger(zap.New(core))).WithCancel()
+		defer cancel()
+		conf := defaultConfigForTest(t)
+		d := &Dumper{tctx: tctx, conf: conf, speedRecorder: NewSpeedRecorder(), totalTables: 1}
+		d.metrics = newMetrics(conf.PromFactory, nil)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			d.runLogProgress(tctx)
+		}()
+		synctest.Wait()
+		require.Empty(t, d.GetStatus().Progress)
+
+		// Short integration dumps finish before the normal five-second refresh.
+		d.metrics.totalChunks.Store(4)
+		d.metrics.completedChunks.Store(1)
+		d.metrics.progressReady.Store(true)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		cancel()
+		<-done
+		entries := logs.FilterMessage("progress").All()
+		require.Len(t, entries, 1)
+		require.Equal(t, "25.00 %", entries[0].ContextMap()["chunks progress"])
 	})
 }
 

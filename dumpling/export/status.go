@@ -41,6 +41,10 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 		case <-statusTicker.C:
 			d.RefreshStatus()
 		case <-logProgressTicker.C:
+			// Integration tests shorten the log interval below the snapshot refresh interval.
+			failpoint.Inject("EnableLogProgress", func() {
+				d.RefreshStatus()
+			})
 			nanoseconds := float64(time.Since(lastCheckpoint).Nanoseconds())
 			// Keep the average over the log interval independent of snapshot age.
 			finishedBytes := ReadGauge(d.metrics.finishedSizeGauge)
