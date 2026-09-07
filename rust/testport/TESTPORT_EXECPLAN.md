@@ -11162,3 +11162,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (base conversion pin): CONV cross-base translation, BIN/OCT
   projections, and the RFC 4648 TO_BASE64/FROM_BASE64 round trip. Pinned
   in `crates/tidb-session/tests/base_conversion_source.rs`.
+- 2026-09-06 (QUOTE/ORD pin): re-parseable QUOTE output, ASCII zero on
+  empty, and ORD's multibyte leading-byte arithmetic. Pinned in
+  `crates/tidb-session/tests/quote_ord_source.rs`.
