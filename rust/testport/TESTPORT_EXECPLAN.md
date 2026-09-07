@@ -10235,7 +10235,10 @@ risks without claiming repository-wide parity.
   null_bitmap) — surfacing as "parallel HashAgg partial worker terminated".
   `group by v` on the same table works, so the trigger is the EXPRESSION
   group key in the parallel path: a 0-row chunk's key column is probed with
-  is_null(0). Suspect the parallel worker's row loop not guarding an empty
-  chunk (hash_agg.rs is_null call sites ~:2296/:2324). Fix needs the
-  parallel HashAgg worker's chunk-drain guard; recorded before the next
-  batch so it does not get lost.
+  is_null(0). Backtrace refinement: the ROOT HashAgg took the
+  single-integer fast path (parallel.rs:1453, integer_columns = Some([0])
+  -- the planner projected the expression into a child column), so the
+  empty bitmap lives in the CHILD chunk: TableReader_10 over the cop-tier
+  parallel HashAgg_5, whose group-column emission builds output without
+  the null bitmap. Fix site: the parallel HashAgg output chunk
+  construction, not the fold loop (which correctly guards rows).
