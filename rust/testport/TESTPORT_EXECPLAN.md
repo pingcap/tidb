@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`br/pkg/rtree` return contracts): the complete three-module Rust
+  owner (1,678 pre-edit lines), shared manifest/root, workspace/lock entries,
+  every function, ten active tests, one ignored benchmark-shaped test, all
+  internal callers, and non-source build surfaces were inventoried without
+  reopening Go source. Twelve direct Go-shaped scalar/struct results no longer
+  impose Rust-only diagnostics; the valid focused regression failed with
+  exactly twelve diagnostics before the edit and passes afterward. The shared
+  crate passes 33 active tests with two unrelated skips, all-target compilation
+  passes, and Ready evidence is in `receipts/br_rtree.md` and its ExecPlan.
 - 2026-09-07 (`br/pkg/streamhelper/spans` return contracts): the complete
   four-module Rust owner (1,021 pre-edit lines), shared manifest/crate root,
   workspace/lock registration, all functions, four source-derived tests,
