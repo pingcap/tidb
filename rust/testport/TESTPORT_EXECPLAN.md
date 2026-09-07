@@ -9798,3 +9798,6 @@ risks without claiming repository-wide parity.
   keys (1 row), update branch on duplicates (2 rows, Go's accounting),
   VALUES(col) alias referring to the would-be-inserted value. Seven pins in
   `tests/on_duplicate_key_source.rs`.
+- 2026-09-06 (UPDATE accounting pins): changed-value updates count 1,
+  same-value updates count 0 by default, and CLIENT_FOUND_ROWS counts the
+  matching row even unchanged. Pinned in `tests/update_accounting_source.rs`.
