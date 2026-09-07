@@ -10476,3 +10476,8 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/auto_id_cache_create_source.rs` fails on the
   old code and passes with the fix; the ALTER guard and AUTO_RANDOM pins
   stay green.
+- 2026-09-06 (AUTO_INCREMENT option + shard-bits pins): `auto_increment =
+  100` at CREATE seeds the allocator (first id 100); SHARD_ROW_ID_BITS on
+  an int-PK-handle table is refused with Go's 8200 text, while a heap
+  table round-trips SHARD_ROW_ID_BITS=2 through SHOW CREATE. Pinned in
+  `crates/tidb-session/tests/auto_inc_option_shard_bits_source.rs`.
