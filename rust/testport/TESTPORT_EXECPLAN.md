@@ -10908,3 +10908,7 @@ risks without claiming repository-wide parity.
   pre-existing rows keep their values, new omissions take the new default,
   SHOW CREATE reflects it. Pinned in
   `crates/tidb-session/tests/modify_column_default_source.rs`.
+- 2026-09-06 (MODIFY clears default pin): MODIFY COLUMN without a DEFAULT
+  clears the previous one — SHOW CREATE drops the clause and omission
+  refuses with 1364. Pinned in
+  `crates/tidb-session/tests/modify_clears_default_source.rs`.
