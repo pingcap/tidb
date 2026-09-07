@@ -9794,3 +9794,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (REPLACE semantics pin): `replace into` on a duplicate key
   deletes + inserts (2 affected rows, Go's accounting) and the surviving row
   carries the new values. Pinned in `tests/replace_semantics_source.rs`.
+- 2026-09-06 (ON DUPLICATE KEY UPDATE pins): insert branch on non-duplicate
+  keys (1 row), update branch on duplicates (2 rows, Go's accounting),
+  VALUES(col) alias referring to the would-be-inserted value. Seven pins in
+  `tests/on_duplicate_key_source.rs`.
