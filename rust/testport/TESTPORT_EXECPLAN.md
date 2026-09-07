@@ -10397,3 +10397,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (SHOW ENGINES pin): a single InnoDB row with the DEFAULT
   support flag and TiDB's transaction/row-lock/FK description. Pinned in
   `crates/tidb-session/tests/show_engines_source.rs`.
+- 2026-09-06 (SHOW filter pins): `SHOW DATABASES LIKE 'zzz%'` matches the
+  name column; `SHOW DATABASES WHERE database = ...` filters by value;
+  `SHOW COLLATION WHERE charset = ...` restricts to the charset's
+  collations. Pinned in `crates/tidb-session/tests/show_filters_source.rs`.
