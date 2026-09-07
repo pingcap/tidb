@@ -204,8 +204,10 @@ fn scan_ranges_text(ranges: &tidb_planner::ranger::types::Ranges) -> String {
     ranges
         .iter()
         .map(tidb_planner::ranger::types::Range::to_display_string)
+        // Go's EXPLAIN separates multiple intervals with ", " —
+        // `range:[-inf,5), (5,+inf]`.
         .collect::<Vec<_>>()
-        .join(",")
+        .join(", ")
 }
 
 fn table_name(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
