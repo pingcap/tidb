@@ -11049,3 +11049,11 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/add_hash_partitions_source.rs` (grow 2->4,
   partition-qualified reads agree; non-HASH refusal kept). The stale
   "unserved" line drops from tests_partition.rs.
+- 2026-09-06 (multi-partition qualifier pin): `PARTITION (p0, p1)` unions
+  exactly the named partitions' rows. Pinned in
+  `crates/tidb-session/tests/multi_partition_qualifier_source.rs`.
+  Observed (sibling-owned, no action): a partitioned table with a
+  non-partition-column unique key accepts CREATE but refuses writes with
+  PartitionGlobalIndexNeeded — the sibling global-index stream's model;
+  Go's own CREATE check passes such indexes silently
+  (partition.go:4708-4736), so CREATE parity holds.
