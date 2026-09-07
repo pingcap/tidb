@@ -220,10 +220,10 @@ func cleanExternalFiles(ctx context.Context, fileGroup cleanFileGroup) error {
 // CleanExpiredFiles implements scheduler.ExpiredFileCleaner.
 func (*ImportCleaner) CleanExpiredFiles(
 	ctx context.Context,
-	taskMgr scheduler.TaskManager,
+	taskInfoGetter storage.TaskCleanupInfoGetter,
 	cloudStorageURI string,
 ) error {
-	return conflictrows.CleanExpiredFiles(ctx, taskMgr, cloudStorageURI)
+	return conflictrows.CleanConflictRowFiles(ctx, taskInfoGetter, cloudStorageURI)
 }
 
 func sendMeterOnClean(ctx context.Context, task *proto.Task, logger *zap.Logger) error {

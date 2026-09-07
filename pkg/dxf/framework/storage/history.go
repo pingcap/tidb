@@ -143,6 +143,11 @@ type TaskCleanupInfo struct {
 	EndTime *time.Time
 }
 
+// TaskCleanupInfoGetter gets task metadata needed to clean up external files.
+type TaskCleanupInfoGetter interface {
+	GetTaskCleanupInfoByIDs(context.Context, []int64) (map[int64]*TaskCleanupInfo, error)
+}
+
 // GetTaskCleanupInfoByIDs gets task cleanup metadata from active and history tables.
 func (mgr *TaskManager) GetTaskCleanupInfoByIDs(ctx context.Context, taskIDs []int64) (map[int64]*TaskCleanupInfo, error) {
 	result := make(map[int64]*TaskCleanupInfo)

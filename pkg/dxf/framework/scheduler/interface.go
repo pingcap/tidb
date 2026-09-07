@@ -42,7 +42,7 @@ type TaskManager interface {
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
 	// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.
 	GetCleanupTasks(ctx context.Context) (task []*proto.Task, err error)
-	GetTaskCleanupInfoByIDs(context.Context, []int64) (map[int64]storage.TaskCleanupInfo, error)
+	storage.TaskCleanupInfoGetter
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	GCSubtasks(ctx context.Context) error
@@ -270,7 +270,7 @@ type BatchCleaner interface {
 // Manager.Stop waits for an active callback to return after ownership is lost.
 type ExpiredFileCleaner interface {
 	Cleaner
-	CleanExpiredFiles(ctx context.Context, taskMgr TaskManager, cloudStorageURI string) error
+	CleanExpiredFiles(ctx context.Context, taskInfoGetter storage.TaskCleanupInfoGetter, cloudStorageURI string) error
 }
 
 type cleanerFactoryFn func() Cleaner

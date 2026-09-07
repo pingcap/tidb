@@ -16,7 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -70,58 +69,6 @@ type singleCleanerCallRecorder struct {
 	cleanupErr error
 }
 
-type expiredFileCleanerCall struct {
-	ctx             context.Context
-	taskMgr         TaskManager
-	cloudStorageURI string
-}
-
-type expiredFileCleanerCallRecorder struct {
-	mu     sync.Mutex
-	calls  []expiredFileCleanerCall
-	err    error
-	callCh chan struct{}
-	onCall func()
-}
-
-func (r *expiredFileCleanerCallRecorder) Clean(context.Context, *proto.Task) error {
-	return nil
-}
-
-func (r *expiredFileCleanerCallRecorder) CleanExpiredFiles(
-	ctx context.Context,
-	taskMgr TaskManager,
-	cloudStorageURI string,
-) error {
-	r.mu.Lock()
-	r.calls = append(r.calls, expiredFileCleanerCall{
-		ctx:             ctx,
-		taskMgr:         taskMgr,
-		cloudStorageURI: cloudStorageURI,
-	})
-	onCall := r.onCall
-	callCh := r.callCh
-	err := r.err
-	r.mu.Unlock()
-
-	if onCall != nil {
-		onCall()
-	}
-	if callCh != nil {
-		select {
-		case callCh <- struct{}{}:
-		default:
-		}
-	}
-	return err
-}
-
-func (r *expiredFileCleanerCallRecorder) getCalls() []expiredFileCleanerCall {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]expiredFileCleanerCall(nil), r.calls...)
-}
-
 func setCloudStorageURIForTest(t *testing.T, uri string) {
 	t.Helper()
 	originalURI := vardef.CloudStorageURI.Load()
@@ -162,18 +109,33 @@ func TestRunExpiredFileClean(t *testing.T) {
 		store := &storeWithKS{ks: "SYSTEM"}
 		mgr := NewManager(context.Background(), store, taskMgr, "1", proto.NodeResourceForTest)
 
-		first := &expiredFileCleanerCallRecorder{}
-		second := &expiredFileCleanerCallRecorder{}
-		registeredDuringSweep := &expiredFileCleanerCallRecorder{}
-		noExpiredFileCleaner := &singleCleanerCallRecorder{}
+		first := mock.NewMockExpiredFileCleaner(ctrl)
+		second := mock.NewMockExpiredFileCleaner(ctrl)
+		registeredDuringSweep := mock.NewMockExpiredFileCleaner(ctrl)
+		noExpiredFileCleaner := mock.NewMockCleaner(ctrl)
 		var constructorWasUnlocked atomic.Bool
 		var callbackWasUnlocked atomic.Bool
-		first.onCall = func() {
+		var registeredDuringSweepCalls atomic.Int64
+		first.EXPECT().CleanExpiredFiles(mgr.ctx, taskMgr, "s3://bucket/dxf/").DoAndReturn(func(
+			context.Context,
+			storage.TaskCleanupInfoGetter,
+			string,
+		) error {
 			callbackWasUnlocked.Store(registerCleanerFactoryWithoutBlocking(
 				proto.TaskType("registered-by-callback"),
 				func() Cleaner { return registeredDuringSweep },
 			))
-		}
+			return nil
+		}).Times(2)
+		second.EXPECT().CleanExpiredFiles(mgr.ctx, taskMgr, "s3://bucket/dxf/").Return(nil).Times(2)
+		registeredDuringSweep.EXPECT().CleanExpiredFiles(mgr.ctx, taskMgr, "s3://bucket/dxf/").DoAndReturn(func(
+			context.Context,
+			storage.TaskCleanupInfoGetter,
+			string,
+		) error {
+			registeredDuringSweepCalls.Add(1)
+			return nil
+		}).Times(2)
 		RegisterCleanerFactory(proto.ImportInto, func() Cleaner {
 			constructorWasUnlocked.Store(registerCleanerFactoryWithoutBlocking(
 				proto.Backfill,
@@ -192,20 +154,10 @@ func TestRunExpiredFileClean(t *testing.T) {
 
 		require.True(t, constructorWasUnlocked.Load())
 		require.True(t, callbackWasUnlocked.Load())
-		firstCalls := first.getCalls()
-		secondCalls := second.getCalls()
-		require.Len(t, firstCalls, 1)
-		require.Len(t, secondCalls, 1)
-		require.Empty(t, noExpiredFileCleaner.calls)
-		require.Empty(t, registeredDuringSweep.getCalls(), "factories registered during a sweep belong to the next snapshot")
-		for _, call := range []expiredFileCleanerCall{firstCalls[0], secondCalls[0]} {
-			require.Equal(t, mgr.ctx, call.ctx)
-			require.Same(t, taskMgr, call.taskMgr)
-			require.Equal(t, "s3://bucket/dxf/", call.cloudStorageURI)
-		}
+		require.Zero(t, registeredDuringSweepCalls.Load(), "factories registered during a sweep belong to the next snapshot")
 
 		mgr.runExpiredFileClean()
-		require.NotEmpty(t, registeredDuringSweep.getCalls())
+		require.Equal(t, int64(2), registeredDuringSweepCalls.Load())
 	})
 
 	t.Run("errors are isolated and retried", func(t *testing.T) {
@@ -213,17 +165,17 @@ func TestRunExpiredFileClean(t *testing.T) {
 		t.Cleanup(ClearCleanerFactory)
 		setCloudStorageURIForTest(t, "s3://bucket")
 
+		ctrl := gomock.NewController(t)
 		mgr := NewManager(context.Background(), nil, nil, "1", proto.NodeResourceForTest)
-		failed := &expiredFileCleanerCallRecorder{err: errors.New("cleanup failed")}
-		succeeded := &expiredFileCleanerCallRecorder{}
+		failed := mock.NewMockExpiredFileCleaner(ctrl)
+		succeeded := mock.NewMockExpiredFileCleaner(ctrl)
+		failed.EXPECT().CleanExpiredFiles(mgr.ctx, nil, "s3://bucket/dxf/").Return(errors.New("cleanup failed")).Times(2)
+		succeeded.EXPECT().CleanExpiredFiles(mgr.ctx, nil, "s3://bucket/dxf/").Return(nil).Times(2)
 		RegisterCleanerFactory(proto.ImportInto, func() Cleaner { return failed })
 		RegisterCleanerFactory(proto.TaskTypeExample, func() Cleaner { return succeeded })
 
 		mgr.runExpiredFileClean()
 		mgr.runExpiredFileClean()
-
-		require.Len(t, failed.getCalls(), 2)
-		require.Len(t, succeeded.getCalls(), 2)
 	})
 
 	t.Run("empty URI skips factories", func(t *testing.T) {
@@ -231,10 +183,12 @@ func TestRunExpiredFileClean(t *testing.T) {
 		t.Cleanup(ClearCleanerFactory)
 		setCloudStorageURIForTest(t, "")
 
+		ctrl := gomock.NewController(t)
+		cleaner := mock.NewMockExpiredFileCleaner(ctrl)
 		var constructorCalled atomic.Bool
 		RegisterCleanerFactory(proto.ImportInto, func() Cleaner {
 			constructorCalled.Store(true)
-			return &expiredFileCleanerCallRecorder{}
+			return cleaner
 		})
 		mgr := NewManager(context.Background(), nil, nil, "1", proto.NodeResourceForTest)
 
@@ -248,9 +202,22 @@ func TestRunExpiredFileClean(t *testing.T) {
 		t.Cleanup(ClearCleanerFactory)
 		setCloudStorageURIForTest(t, "s3://bucket")
 
+		ctrl := gomock.NewController(t)
 		mgr := NewManager(context.Background(), nil, nil, "1", proto.NodeResourceForTest)
-		first := &expiredFileCleanerCallRecorder{err: context.Canceled, onCall: mgr.Cancel}
-		second := &expiredFileCleanerCallRecorder{err: context.Canceled, onCall: mgr.Cancel}
+		first := mock.NewMockExpiredFileCleaner(ctrl)
+		second := mock.NewMockExpiredFileCleaner(ctrl)
+		var cleanupCalls atomic.Int64
+		for _, cleaner := range []*mock.MockExpiredFileCleaner{first, second} {
+			cleaner.EXPECT().CleanExpiredFiles(mgr.ctx, nil, "s3://bucket/dxf/").DoAndReturn(func(
+				context.Context,
+				storage.TaskCleanupInfoGetter,
+				string,
+			) error {
+				cleanupCalls.Add(1)
+				mgr.Cancel()
+				return context.Canceled
+			}).AnyTimes()
+		}
 		var constructorCalls atomic.Int64
 		RegisterCleanerFactory(proto.ImportInto, func() Cleaner {
 			constructorCalls.Add(1)
@@ -264,7 +231,7 @@ func TestRunExpiredFileClean(t *testing.T) {
 		mgr.runExpiredFileClean()
 
 		require.Equal(t, int64(1), constructorCalls.Load())
-		require.Equal(t, 1, len(first.getCalls())+len(second.getCalls()))
+		require.Equal(t, int64(1), cleanupCalls.Load())
 	})
 }
 
@@ -277,22 +244,34 @@ func TestExpiredFileCleanLoop(t *testing.T) {
 		DefaultExpiredFileCleanInterval = 10 * time.Millisecond
 		t.Cleanup(func() { DefaultExpiredFileCleanInterval = oldInterval })
 
-		recorder := &expiredFileCleanerCallRecorder{
-			err:    errors.New("cleanup failed"),
-			callCh: make(chan struct{}, 8),
-		}
-		RegisterCleanerFactory(proto.ImportInto, func() Cleaner { return recorder })
+		ctrl := gomock.NewController(t)
 		mgr := NewManager(context.Background(), nil, nil, "1", proto.NodeResourceForTest)
+		recorder := mock.NewMockExpiredFileCleaner(ctrl)
+		callCh := make(chan struct{}, 8)
+		var callCount atomic.Int64
+		recorder.EXPECT().CleanExpiredFiles(mgr.ctx, nil, "s3://bucket/dxf/").DoAndReturn(func(
+			context.Context,
+			storage.TaskCleanupInfoGetter,
+			string,
+		) error {
+			callCount.Add(1)
+			select {
+			case callCh <- struct{}{}:
+			default:
+			}
+			return errors.New("cleanup failed")
+		}).AnyTimes()
+		RegisterCleanerFactory(proto.ImportInto, func() Cleaner { return recorder })
 
 		mgr.wg.Run(mgr.expiredFileCleanLoop)
 		for range 2 {
 			select {
-			case <-recorder.callCh:
+			case <-callCh:
 			case <-time.After(5 * time.Second):
 				t.Fatal("timed out waiting for expired file cleanup")
 			}
 		}
-		require.GreaterOrEqual(t, len(recorder.getCalls()), 2, "the ticker must retry after the startup sweep fails")
+		require.GreaterOrEqual(t, callCount.Load(), int64(2), "the ticker must retry after the startup sweep fails")
 		mgr.Cancel()
 		waitDone := make(chan struct{})
 		go func() {
@@ -304,18 +283,28 @@ func TestExpiredFileCleanLoop(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("expired file cleanup loop did not stop after cancellation")
 		}
-		callCount := len(recorder.getCalls())
+		callsAfterStop := callCount.Load()
 		time.Sleep(3 * DefaultExpiredFileCleanInterval)
-		require.Len(t, recorder.getCalls(), callCount)
+		require.Equal(t, callsAfterStop, callCount.Load())
 	})
 
 	t.Run("pre-canceled manager completes one startup sweep", func(t *testing.T) {
 		ClearCleanerFactory()
 		t.Cleanup(ClearCleanerFactory)
 		setCloudStorageURIForTest(t, "s3://bucket")
-		recorder := &expiredFileCleanerCallRecorder{}
-		RegisterCleanerFactory(proto.ImportInto, func() Cleaner { return recorder })
+		ctrl := gomock.NewController(t)
 		mgr := NewManager(context.Background(), nil, nil, "1", proto.NodeResourceForTest)
+		recorder := mock.NewMockExpiredFileCleaner(ctrl)
+		var callCtx context.Context
+		recorder.EXPECT().CleanExpiredFiles(gomock.Any(), nil, "s3://bucket/dxf/").DoAndReturn(func(
+			ctx context.Context,
+			_ storage.TaskCleanupInfoGetter,
+			_ string,
+		) error {
+			callCtx = ctx
+			return nil
+		})
+		RegisterCleanerFactory(proto.ImportInto, func() Cleaner { return recorder })
 		mgr.Cancel()
 
 		mgr.wg.Run(mgr.expiredFileCleanLoop)
@@ -329,9 +318,8 @@ func TestExpiredFileCleanLoop(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("pre-canceled expired file cleanup loop did not exit")
 		}
-		calls := recorder.getCalls()
-		require.Len(t, calls, 1)
-		require.ErrorIs(t, calls[0].ctx.Err(), context.Canceled)
+		require.NotNil(t, callCtx)
+		require.ErrorIs(t, callCtx.Err(), context.Canceled)
 	})
 }
 

@@ -1136,7 +1136,7 @@ func TestGetTaskCleanupInfoByIDs(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, infos, 4)
-	require.Equal(t, storage.TaskCleanupInfo{
+	require.Equal(t, &storage.TaskCleanupInfo{
 		ID: activeTaskID, Type: proto.ImportInto, State: proto.TaskStatePending,
 	}, infos[activeTaskID])
 	for taskID, state := range map[int64]proto.TaskState{
