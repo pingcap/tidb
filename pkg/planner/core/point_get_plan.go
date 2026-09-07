@@ -389,26 +389,17 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		}
 		dVal.Copy(&row[p.HandleColOffset])
 	}
+<<<<<<< HEAD
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx(), row)
 	if err != nil {
+=======
+	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
+	partIdx, err = pt.Meta().Partition.ReplaceWithOverlappingPartitionIdx(partIdx, err)
+	if err != nil || !isInExplicitPartitions(pi, partIdx, p.PartitionNames) {
+>>>>>>> 1e24d396082 (*: Drop partition DDL handling for overlapping partitions during State Changes (#56082))
 		partIdx = -1
 		p.PartitionIdx = &partIdx
 		return true
-	}
-	if len(p.PartitionNames) > 0 {
-		found := false
-		partName := pi.Definitions[partIdx].Name.L
-		for _, name := range p.PartitionNames {
-			if name.L == partName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			partIdx = -1
-			p.PartitionIdx = &partIdx
-			return true
-		}
 	}
 	p.PartitionIdx = &partIdx
 	return false
@@ -667,7 +658,12 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 		for j := range rows[i] {
 			rows[i][j].Copy(&r[p.IndexInfo.Columns[j].Offset])
 		}
+<<<<<<< HEAD
 		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx(), r)
+=======
+		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+		pIdx, err = pTbl.Meta().Partition.ReplaceWithOverlappingPartitionIdx(pIdx, err)
+>>>>>>> 1e24d396082 (*: Drop partition DDL handling for overlapping partitions during State Changes (#56082))
 		if err != nil {
 			// Skip on any error, like:
 			// No matching partition, overflow etc.
@@ -765,7 +761,12 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					d = types.NewIntDatum(handle.IntValue())
 				}
 				d.Copy(&r[p.HandleColOffset])
+<<<<<<< HEAD
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx(), r)
+=======
+				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
+>>>>>>> 1e24d396082 (*: Drop partition DDL handling for overlapping partitions during State Changes (#56082))
 				if err != nil ||
 					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&
