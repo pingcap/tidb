@@ -10428,3 +10428,7 @@ risks without claiming repository-wide parity.
   by an ON DELETE CASCADE child still fails with Go's exact
   ErrTruncateIllegalForeignKey text — the guard ignores the action type.
   Pinned in `crates/tidb-session/tests/truncate_cascade_parent_source.rs`.
+- 2026-09-06 (write ORDER BY/LIMIT pins): `delete ... order by a desc
+  limit 2` removes the two highest rows; `update ... order by a desc limit
+  2` doubles only those two. Pinned in
+  `crates/tidb-session/tests/write_order_limit_source.rs`.
