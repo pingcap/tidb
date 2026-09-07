@@ -10984,3 +10984,6 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/rename_index_source.rs`. Note: a stray bare
   `git stash pop` briefly applied the sibling stash; recovered via
   `git reset --hard` with the entry preserved (no content lost).
+- 2026-09-06 (invisible index pin): `INDEX idx (k) invisible` reports
+  Visible=NO in SHOW INDEX; `ALTER INDEX idx visible` flips it to YES.
+  Pinned in `crates/tidb-session/tests/invisible_index_source.rs`.
