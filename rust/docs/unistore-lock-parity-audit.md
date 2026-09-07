@@ -636,3 +636,24 @@ value functions already on record (`JsonReplaceSig`,
 anchored `UnixTimestamp*`/`FromUnixTime*` pair. The redundant
 `Time::core()` accessor added alongside the date-arithmetic batch is
 dropped in favor of the pre-existing `core_time()`.
+
+## The AS DECIMAL casts (6 ids)
+
+The decimal-answer cast combinations land through the decimal channel
+(`CastIntAsDecimal` 4, `CastRealAsDecimal` 13, `CastDecimalAsDecimal`
+23, `CastStringAsDecimal` 33, `CastTimeAsDecimal` 43,
+`CastDurationAsDecimal` 53), composing as decimal-comparison operands
+and answering their own truth as bare conditions. Each follows Go's
+per-source conversion: `NewDecFromInt`/`NewDecFromUint` by the value's
+sign (the i128 carries the unsigned-ness the wire flag would),
+`FromFloat64` with the truncated warning folded, the identity for the
+already-decimal source, `FromString` after a trim for text (the numeric
+prefix survives, `12.5abc` reads `12.5`), and the `ToNumber` renderings
+(`YYYYMMDDHHMMSS.ffffff`) for time and duration. The union clamp and
+`ProduceDecWithSpecifiedTp` fold away: the seam carries neither the
+`inUnion` marker nor the expression's field type, so the target
+precision/fllen adjustment is an identity here. With this family the
+refusal surface from the closure pass drops to the string, time,
+duration, and json answers of the cast matrix (projection-executor
+course), the three projection value functions, and the session-timezone
+anchored unix-time functions.

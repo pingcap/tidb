@@ -1828,6 +1828,22 @@ pub enum SimpleSig {
     CastStringAsInt,
     /// See [`SimpleSig::CastStringAsInt`].
     CastStringAsReal,
+    /// The `AS DECIMAL` casts: Go's per-source conversions
+    /// (`NewDecFromInt`, `FromFloat64`, the identity, `FromString` after
+    /// a trim, and the `ToNumber` renderings of time and duration) --
+    /// they compose as decimal-comparison operands and a bare cast
+    /// answers its own truth.
+    CastIntAsDecimal,
+    /// See [`SimpleSig::CastIntAsDecimal`].
+    CastRealAsDecimal,
+    /// See [`SimpleSig::CastIntAsDecimal`].
+    CastDecimalAsDecimal,
+    /// See [`SimpleSig::CastIntAsDecimal`].
+    CastStringAsDecimal,
+    /// See [`SimpleSig::CastIntAsDecimal`].
+    CastTimeAsDecimal,
+    /// See [`SimpleSig::CastIntAsDecimal`].
+    CastDurationAsDecimal,
     /// `CastIntAsReal`/`CastRealAsReal`/`CastDecimalAsReal`: widening to
     /// binary64 (`AS REAL`); a bare cast answers its own truth.
     CastIntAsReal,
@@ -2375,6 +2391,12 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::CastDecimalAsReal => SimpleSig::CastDecimalAsReal,
             tipb::ScalarFuncSig::CastStringAsInt => SimpleSig::CastStringAsInt,
             tipb::ScalarFuncSig::CastStringAsReal => SimpleSig::CastStringAsReal,
+            tipb::ScalarFuncSig::CastIntAsDecimal => SimpleSig::CastIntAsDecimal,
+            tipb::ScalarFuncSig::CastRealAsDecimal => SimpleSig::CastRealAsDecimal,
+            tipb::ScalarFuncSig::CastDecimalAsDecimal => SimpleSig::CastDecimalAsDecimal,
+            tipb::ScalarFuncSig::CastStringAsDecimal => SimpleSig::CastStringAsDecimal,
+            tipb::ScalarFuncSig::CastTimeAsDecimal => SimpleSig::CastTimeAsDecimal,
+            tipb::ScalarFuncSig::CastDurationAsDecimal => SimpleSig::CastDurationAsDecimal,
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             // Go reads the comparison's collation off the `ScalarFunc`'s own
             // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
@@ -2424,8 +2446,8 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
 /// other side's cast having been folded at build time -- so a literal arrives
 /// already `MysqlDecimal` and a column arrives as one. An integer column can
 /// still reach here through `dc > i`, where Go wraps the int side in
-/// `CastIntAsDecimal`; that cast is a signature of its own and is refused
-/// above rather than approximated, so only exact decimal operands get here.
+/// `CastIntAsDecimal`; the `AS DECIMAL` cast family composes below, so
+/// cast operands reach here alongside the exact ones.
 fn eval_decimal(
     expr: Option<&SimpleExpr>,
     row: &[tidb_datatype::Datum],
@@ -2461,6 +2483,69 @@ fn eval_decimal(
                 SimpleSig::MinusDecimal => Some(left.sub_mysql(&right).0),
                 SimpleSig::MultiplyDecimal => Some(left.mul_mysql(&right).0),
                 _ => left.rem_mysql(&right),
+            }
+        }
+        // The `AS DECIMAL` casts answer exact decimals: Go's per-source
+        // conversions, with the union clamp folded away -- the seam
+        // carries no field type, so `ProduceDecWithSpecifiedTp` is an
+        // identity here.
+        SimpleExpr::Func(
+            sig @ (SimpleSig::CastIntAsDecimal
+            | SimpleSig::CastRealAsDecimal
+            | SimpleSig::CastDecimalAsDecimal
+            | SimpleSig::CastStringAsDecimal
+            | SimpleSig::CastTimeAsDecimal
+            | SimpleSig::CastDurationAsDecimal),
+            children,
+        ) => {
+            match sig {
+                SimpleSig::CastIntAsDecimal => {
+                    let value = children
+                        .first()
+                        .and_then(|c| eval_expr(c, row, div_precision_increment).ok())
+                        .flatten()?;
+                    // An unsigned source renders through `from_uint` --
+                    // the i128 carries the value without the wire's flag.
+                    if let Ok(signed) = i64::try_from(value) {
+                        Some(tidb_datatype::Decimal::from_my_decimal(
+                            &tidb_datatype::MyDecimal::from_int(signed),
+                        ))
+                    } else {
+                        u64::try_from(value).ok().map(|value| {
+                            tidb_datatype::Decimal::from_my_decimal(
+                                &tidb_datatype::MyDecimal::from_uint(value),
+                            )
+                        })
+                    }
+                }
+                SimpleSig::CastRealAsDecimal => {
+                    let value = eval_real(children.first(), row, div_precision_increment)?;
+                    // Go `FromFloat64`: the truncated warning folds.
+                    Some(tidb_datatype::Decimal::from_my_decimal(
+                        &tidb_datatype::MyDecimal::from_float64(value).0,
+                    ))
+                }
+                SimpleSig::CastDecimalAsDecimal => {
+                    eval_decimal(children.first(), row, div_precision_increment)
+                }
+                SimpleSig::CastStringAsDecimal => {
+                    let raw = eval_bytes(children.first(), row, div_precision_increment)?;
+                    let text = String::from_utf8_lossy(&raw);
+                    // Go trims, then `FromString` (the truncated warning
+                    // folds; the numeric prefix survives).
+                    Some(tidb_datatype::Decimal::from_my_decimal(
+                        &tidb_datatype::MyDecimal::from_string(text.trim().as_bytes()).0,
+                    ))
+                }
+                SimpleSig::CastTimeAsDecimal => {
+                    eval_time(children.first(), row, div_precision_increment)
+                        .map(tidb_datatype::Time::to_number)
+                }
+                SimpleSig::CastDurationAsDecimal => {
+                    eval_duration(children.first(), row, div_precision_increment)
+                        .map(tidb_datatype::MySqlDuration::to_number)
+                }
+                _ => None,
             }
         }
         _ => None,
@@ -3412,7 +3497,13 @@ pub fn eval_expr(
                 | SimpleSig::MinusDecimal
                 | SimpleSig::MultiplyDecimal
                 | SimpleSig::ModDecimal
-                | SimpleSig::DivideDecimal => {
+                | SimpleSig::DivideDecimal
+                | SimpleSig::CastIntAsDecimal
+                | SimpleSig::CastRealAsDecimal
+                | SimpleSig::CastDecimalAsDecimal
+                | SimpleSig::CastStringAsDecimal
+                | SimpleSig::CastTimeAsDecimal
+                | SimpleSig::CastDurationAsDecimal => {
                     eval_decimal(Some(expr), row, div_precision_increment)
                         .map(|value| i128::from(!value.is_zero()))
                 }
@@ -6086,5 +6177,48 @@ mod tests {
             ),
             Some(0)
         );
+    }
+
+    #[test]
+    fn decimal_casts_compose_as_comparison_operands() {
+        use tidb_datatype::{Datum, MyDecimal, Time, TimeType};
+        let dec = |value: i64| {
+            SimpleExpr::Decimal(tidb_datatype::Decimal::from_my_decimal(
+                &MyDecimal::from_int(value),
+            ))
+        };
+        // dc > -5 with the int side widened by CastIntAsDecimal.
+        let condition = SimpleExpr::Func(
+            SimpleSig::GtDecimal,
+            vec![
+                SimpleExpr::Column(0),
+                SimpleExpr::Func(SimpleSig::CastIntAsDecimal, vec![SimpleExpr::Int(-5)]),
+            ],
+        );
+        let row = [Datum::Decimal(tidb_datatype::Decimal::from_my_decimal(
+            &MyDecimal::from_int(-4),
+        ))];
+        assert_eq!(eval_expr(&condition, &row, 4).expect("evals"), Some(1));
+        // A string cast keeps the numeric prefix ("12.5abc" reads 12.5).
+        let string_cast = SimpleExpr::Func(
+            SimpleSig::CastStringAsDecimal,
+            vec![SimpleExpr::Bytes(b"12.5abc".to_vec())],
+        );
+        let below = SimpleExpr::Func(SimpleSig::LtDecimal, vec![string_cast, dec(13)]);
+        assert_eq!(eval_expr(&below, &[], 4).expect("evals"), Some(1));
+        // A time cast renders the YYYYMMDDHHMMSS numeric.
+        let noon = Time::from_date_checked(2024, 3, 5, 14, 30, 45, 0, TimeType::DateTime, 0)
+            .expect("constructs");
+        let equal = SimpleExpr::Func(
+            SimpleSig::EqDecimal,
+            vec![
+                SimpleExpr::Func(SimpleSig::CastTimeAsDecimal, vec![SimpleExpr::Time(noon)]),
+                dec(20_240_305_143_045),
+            ],
+        );
+        assert_eq!(eval_expr(&equal, &[], 4).expect("evals"), Some(1));
+        // A bare cast as a condition answers its own truth.
+        let bare = SimpleExpr::Func(SimpleSig::CastIntAsDecimal, vec![SimpleExpr::Int(0)]);
+        assert_eq!(eval_expr(&bare, &[], 4).expect("evals"), Some(0));
     }
 }
