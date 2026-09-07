@@ -9821,3 +9821,6 @@ risks without claiming repository-wide parity.
   affected-rows accounting -- 2-row insert -> 2, ODKU duplicate update -> 2,
   SELECT -> -1, no-op UPDATE -> 0 (select.go:1234-1240). Pinned in
   `tests/row_count_flow_source.rs`.
+- 2026-09-06 (DELETE and FOUND_ROWS pins): DELETE reports removed rows (0 on
+  no match); FOUND_ROWS() answers the preceding SELECT's returned row count.
+  Pinned in `tests/delete_found_rows_source.rs`.
