@@ -1749,6 +1749,20 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         true,
                     )
                 });
+                // Go marks the scan with `RangeInfo` whenever access
+                // conditions produced ranges (`convertToTableScan`), and
+                // `IsFullScan` then reads false because RangeInfo is set —
+                // so the operator is a TableRangeScan and the EXPLAIN prints
+                // the built range, EVEN when that range spans the whole
+                // domain (as `(0,+inf]` does for `id > 0` on an unsigned
+                // handle). `IsFullRange`-of-contents decides only the
+                // no-access-conditions arm, where Go leaves RangeInfo unset
+                // and the operator reads TableFullScan.
+                let has_access_conditions = if common_handle.is_some() {
+                    common_detach.is_some()
+                } else {
+                    !int_access_conditions.is_empty()
+                };
                 let (ranges, empty_range) = if common_handle.is_some() {
                     common_detach.as_ref().map_or_else(
                         || (crate::ranger::points::full_range(), false),
@@ -1981,13 +1995,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     root.set_plan(point);
                     return Ok(Task::Root(root));
                 }
-                let scan_kind = if ranges
-                    .iter()
-                    .all(|range| range.is_full_range(handle_type.is_unsigned()))
-                {
-                    crate::access_path::ResolvedTableScanKind::Full
-                } else {
+                let scan_kind = if has_access_conditions {
                     crate::access_path::ResolvedTableScanKind::Range
+                } else {
+                    crate::access_path::ResolvedTableScanKind::Full
                 };
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     base,
