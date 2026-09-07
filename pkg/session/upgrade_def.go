@@ -531,7 +531,7 @@ const (
 	// version286 adds the OPERATE VIEW static privilege.
 	version286 = 286
 
-	// version287 adds the split_by column to mysql.tidb_ttl_task for TTL secondary index optimization.
+	// version287 adds scan_index_id to mysql.tidb_ttl_task for index-ordered TTL scans.
 	version287 = 287
 )
 
@@ -2349,5 +2349,5 @@ func upgradeToVer286(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer287(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS split_by bigint DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS scan_index_id bigint DEFAULT NULL")
 }

@@ -203,7 +203,7 @@ func newTTLTaskRows(t *testing.T, tasks ...*cache.TTLTask) []chunk.Row {
 		types.NewFieldType(mysql.TypeDatetime), // status_update_time
 		types.NewFieldType(mysql.TypeString),   // state
 		types.NewFieldType(mysql.TypeDatetime), // created_time
-		types.NewFieldType(mysql.TypeLonglong), // split_by
+		types.NewFieldType(mysql.TypeLonglong), // scan_index_id
 	}, len(tasks))
 	var rows []chunk.Row
 
@@ -264,11 +264,11 @@ func newTTLTaskRows(t *testing.T, tasks ...*cache.TTLTask) []chunk.Row {
 
 		createdTime := types.NewDatum(types.NewTime(types.FromGoTime(task.CreatedTime), mysql.TypeDatetime, types.MaxFsp))
 		c.AppendDatum(12, &createdTime)
-		if task.SplitBy == nil {
+		if task.ScanIndexID == nil {
 			c.AppendNull(13)
 		} else {
-			splitBy := types.NewDatum(*task.SplitBy)
-			c.AppendDatum(13, &splitBy)
+			scanIndexID := types.NewDatum(*task.ScanIndexID)
+			c.AppendDatum(13, &scanIndexID)
 		}
 	}
 

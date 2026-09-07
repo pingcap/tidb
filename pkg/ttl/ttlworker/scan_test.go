@@ -503,7 +503,7 @@ func TestScanTaskDoScan(t *testing.T) {
 			TTLTask: &cache.TTLTask{
 				ExpireTime:     expire,
 				ScanRangeStart: scanRange,
-				SplitBy:        &indexID,
+				ScanIndexID:    &indexID,
 			},
 			tbl:        tbl,
 			statistics: &ttlStatistics{},

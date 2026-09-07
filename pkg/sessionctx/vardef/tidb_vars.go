@@ -1342,7 +1342,7 @@ const (
 	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
 	// limitation, if the storage is not TiKV).
 	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
-	// TiDBTTLEnableIndexScan enables TTL to use secondary indexes on the TTL column for scan tasks.
+	// TiDBTTLEnableIndexScan enables index-ordered TTL scans using suitable secondary or nonclustered primary indexes.
 	TiDBTTLEnableIndexScan = "tidb_ttl_enable_index_scan"
 	// AuthenticationLDAPSASLAuthMethodName defines the authentication method used by LDAP SASL authentication plugin
 	AuthenticationLDAPSASLAuthMethodName = "authentication_ldap_sasl_auth_method_name"

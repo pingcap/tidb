@@ -224,10 +224,10 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 	defer terror.Call(restoreSession)
 
 	var index *model.IndexInfo
-	if t.SplitBy != nil {
-		index = model.FindIndexInfoByID(t.tbl.Indices, *t.SplitBy)
+	if t.ScanIndexID != nil {
+		index = model.FindIndexInfoByID(t.tbl.Indices, *t.ScanIndexID)
 		if index == nil {
-			return errors.Errorf("TTL index with id %d not found", *t.SplitBy)
+			return errors.Errorf("TTL index with id %d not found", *t.ScanIndexID)
 		}
 	}
 	var generator *sqlbuilder.ScanQueryGenerator

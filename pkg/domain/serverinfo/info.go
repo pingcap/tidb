@@ -19,8 +19,10 @@ import (
 	"maps"
 	"os"
 	"path"
+	"strings"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
@@ -46,6 +48,24 @@ const (
 type VersionInfo struct {
 	Version string `json:"version"`
 	GitHash string `json:"git_hash"`
+}
+
+// ParseTiDBVersion extracts and normalizes the TiDB semantic version from the
+// MySQL-compatible server version. Prerelease labels are deliberately ignored
+// for cluster capability checks; build metadata does not affect semver
+// comparison.
+func ParseTiDBVersion(serverVersion string) (*semver.Version, error) {
+	idx := strings.Index(serverVersion, mysql.VersionSeparator)
+	if idx < 0 {
+		return nil, errors.Errorf("unknown server version: %s", serverVersion)
+	}
+	tidbVersion := strings.TrimPrefix(serverVersion[idx+len(mysql.VersionSeparator):], "v")
+	version, err := semver.NewVersion(tidbVersion)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	version.PreRelease = ""
+	return version, nil
 }
 
 // StaticInfo is server static information.

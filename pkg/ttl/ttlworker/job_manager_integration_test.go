@@ -455,7 +455,7 @@ func TestTriggerTTLJobWithIndexScan(t *testing.T) {
 	require.Equal(t, "", tableResult.ErrorMessage)
 	require.Equal(t, "", tableResult.PartitionName)
 
-	tk.MustQuery("select split_by from mysql.tidb_ttl_task where job_id = ?", tableResult.JobID).
+	tk.MustQuery("select scan_index_id from mysql.tidb_ttl_task where job_id = ?", tableResult.JobID).
 		Check(testkit.Rows(strconv.FormatInt(idx.ID, 10)))
 
 	waitTTLJobFinished(t, tk, tblID, timerCli)

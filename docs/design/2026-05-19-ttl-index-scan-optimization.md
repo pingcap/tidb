@@ -106,10 +106,10 @@ Pages are separate SQL statements and do not share one snapshot. If an indexed v
 
 ### Task Splitting
 
-- **PK scan:** tasks are split by PK ranges; `split_by` is `NULL`.
-- **Index scan:** tasks are split by the selected physical index's TiKV region distribution; `split_by` stores the selected **index ID** (`bigint`).
+- **PK scan:** tasks are split by PK ranges; `scan_index_id` is `NULL`.
+- **Index scan:** tasks are split by the selected physical index's TiKV region distribution; `scan_index_id` stores the selected **index ID** (`bigint`).
 
-The `split_by` column in `mysql.tidb_ttl_task` is added as `bigint DEFAULT NULL`. Workers read it to decide which ordering to use. A non-`NULL` value is interpreted as the index ID; if the index no longer exists when the task runs, the worker returns an error for that task.
+The `scan_index_id` column in `mysql.tidb_ttl_task` is added as `bigint DEFAULT NULL`. Workers read it to decide which ordering to use. A non-`NULL` value is interpreted as the index ID; if the index no longer exists when the task runs, the worker returns an error for that task.
 
 In PK scan mode, `scan_range_start` and `scan_range_end` encode primary-key boundaries. In index scan mode, the ranges contain the TTL-column boundary decoded from the selected index's Region boundaries. Persisting that temporal datum with `codec.EncodeKey` flattens it to a packed integer, so index task execution uses table metadata to restore the TTL column type before generating SQL.
 
@@ -120,6 +120,6 @@ Region boundaries are arbitrary byte strings and may truncate a temporal datum o
 ## Compatibility
 
 - `tidb_ttl_enable_index_scan` defaults to `ON`. Tables with a suitable TTL-column secondary or nonclustered primary index will use index-ordered scans.
-- `split_by` defaults to `NULL`, compatible with old tasks.
-- Before creating a TTL job, the TTL manager compares the normalized semantic versions of the current TiDB and all TiDB instances registered in server info. Prerelease labels, build metadata, and Git hashes are ignored. The current process's runtime version is always the comparison baseline, even if its etcd entry is temporarily absent. When mixed versions are visible, the manager skips creating the job so an old worker cannot interpret index boundaries as PK boundaries during a rolling upgrade. This is a best-effort compatibility gate: server-info lookup, an empty result, or version parsing failures are logged, and the job is allowed to use only the PK scan path (`split_by` remains `NULL`). Only a successful, consistent version check enables index scan tasks. Non-blocking results are cached for 10 seconds to coalesce bursts of job creation; a detected mismatch is cached for one minute to avoid frequent etcd reads while the timer retries the job.
+- `scan_index_id` defaults to `NULL`, compatible with old tasks.
+- Before creating a TTL job, the TTL manager compares the normalized semantic versions of the current TiDB and all TiDB instances registered in server info. Prerelease labels, build metadata, and Git hashes are ignored. The current process's runtime version is always the comparison baseline, even if its etcd entry is temporarily absent. When mixed versions are visible, the manager skips creating the job so an old worker cannot interpret index boundaries as PK boundaries during a rolling upgrade. This is a best-effort compatibility gate: server-info lookup, an empty result, or version parsing failures are logged, and the job is allowed to use only the PK scan path (`scan_index_id` remains `NULL`). Only a successful, consistent version check enables index scan tasks. Non-blocking results are cached for 10 seconds to coalesce bursts of job creation; a detected mismatch is cached for one minute to avoid frequent etcd reads while the timer retries the job.
 - No TiKV or protocol changes.

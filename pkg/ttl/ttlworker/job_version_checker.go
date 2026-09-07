@@ -16,14 +16,11 @@ package ttlworker
 
 import (
 	"context"
-	"strings"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -140,7 +137,7 @@ func tiDBServerVersionsConsistent(currentVersion string, serverInfos map[string]
 		return false, errors.New("TiDB server info list is empty")
 	}
 
-	current, err := normalizedTiDBVersion(currentVersion)
+	current, err := serverinfo.ParseTiDBVersion(currentVersion)
 	if err != nil {
 		return false, errors.Wrap(err, "parse current TiDB server version")
 	}
@@ -149,7 +146,7 @@ func tiDBServerVersionsConsistent(currentVersion string, serverInfos map[string]
 		if info == nil {
 			return false, errors.Errorf("TiDB server info is nil, server ID: %s", id)
 		}
-		version, err := normalizedTiDBVersion(info.Version)
+		version, err := serverinfo.ParseTiDBVersion(info.Version)
 		if err != nil {
 			return false, errors.Wrapf(err, "parse TiDB server version, server ID: %s", id)
 		}
@@ -158,20 +155,4 @@ func tiDBServerVersionsConsistent(currentVersion string, serverInfos map[string]
 		}
 	}
 	return consistent, nil
-}
-
-func normalizedTiDBVersion(serverVersion string) (*semver.Version, error) {
-	idx := strings.Index(serverVersion, mysql.VersionSeparator)
-	if idx < 0 {
-		return nil, errors.Errorf("unknown server version: %s", serverVersion)
-	}
-	tidbVersion := strings.TrimPrefix(serverVersion[idx+len(mysql.VersionSeparator):], "v")
-	version, err := semver.NewVersion(tidbVersion)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// Keep this normalization consistent with DDL job version detection. Build
-	// metadata does not affect semver equality, and prerelease labels are ignored.
-	version.PreRelease = ""
-	return version, nil
 }

@@ -71,14 +71,14 @@ func TestUpgradeToVerFunctionsCheck(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, lastVer, "last version in upgradeToVerFunctions should match currentBootstrapVersion")
 }
 
-func TestUpgradeVersion287TTLTaskSplitBy(t *testing.T) {
+func TestUpgradeVersion287TTLTaskScanIndexID(t *testing.T) {
 	defer memory.CleanupGlobalMemArbitratorForTest()
 
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
 	se := CreateSessionAndSetID(t, store)
-	MustExec(t, se, "ALTER TABLE mysql.tidb_ttl_task DROP COLUMN split_by")
+	MustExec(t, se, "ALTER TABLE mysql.tidb_ttl_task DROP COLUMN scan_index_id")
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(version287-1))
@@ -96,7 +96,7 @@ func TestUpgradeVersion287TTLTaskSplitBy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
 
-	rs := MustExecToRecodeSet(t, se, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'mysql' AND table_name = 'tidb_ttl_task' AND column_name = 'split_by'")
+	rs := MustExecToRecodeSet(t, se, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'mysql' AND table_name = 'tidb_ttl_task' AND column_name = 'scan_index_id'")
 	req := rs.NewChunk(nil)
 	require.NoError(t, rs.Next(context.Background(), req))
 	require.Equal(t, 1, req.NumRows())

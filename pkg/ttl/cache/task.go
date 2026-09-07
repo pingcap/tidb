@@ -37,7 +37,7 @@ const selectFromTTLTask = `SELECT LOW_PRIORITY
 	status_update_time,
 	state,
 	created_time,
-	split_by FROM mysql.tidb_ttl_task`
+	scan_index_id FROM mysql.tidb_ttl_task`
 const insertIntoTTLTask = `INSERT LOW_PRIORITY INTO mysql.tidb_ttl_task SET
 	job_id = %?,
 	table_id = %?,
@@ -46,7 +46,7 @@ const insertIntoTTLTask = `INSERT LOW_PRIORITY INTO mysql.tidb_ttl_task SET
 	scan_range_end = %?,
 	expire_time = %?,
 	created_time = %?,
-	split_by = %?`
+	scan_index_id = %?`
 
 // SelectFromTTLTaskWithJobID returns an SQL statement to get all tasks of the specified job in mysql.tidb_ttl_task
 func SelectFromTTLTaskWithJobID(jobID string) (string, []any) {
@@ -77,13 +77,13 @@ func InsertIntoTTLTask(
 	expireTime time.Time,
 	createdTime time.Time,
 ) (string, []any, error) {
-	return InsertIntoTTLTaskWithSplitBy(
+	return InsertIntoTTLTaskWithScanIndexID(
 		loc, jobID, tableID, scanID, scanRangeStart, scanRangeEnd, expireTime, createdTime, nil,
 	)
 }
 
-// InsertIntoTTLTaskWithSplitBy returns an SQL statement to insert a TTL task with its scan index ID.
-func InsertIntoTTLTaskWithSplitBy(
+// InsertIntoTTLTaskWithScanIndexID returns an SQL statement to insert a TTL task with its scan index ID.
+func InsertIntoTTLTaskWithScanIndexID(
 	loc *time.Location,
 	jobID string,
 	tableID int64,
@@ -92,7 +92,7 @@ func InsertIntoTTLTaskWithSplitBy(
 	scanRangeEnd []types.Datum,
 	expireTime time.Time,
 	createdTime time.Time,
-	splitBy *int64,
+	scanIndexID *int64,
 ) (string, []any, error) {
 	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
 	if err != nil {
@@ -102,12 +102,12 @@ func InsertIntoTTLTaskWithSplitBy(
 	if err != nil {
 		return "", nil, err
 	}
-	var splitByArg any
-	if splitBy != nil {
-		splitByArg = *splitBy
+	var scanIndexIDArg any
+	if scanIndexID != nil {
+		scanIndexIDArg = *scanIndexID
 	}
 	return insertIntoTTLTask, []any{jobID, tableID, int64(scanID),
-		rangeStart, rangeEnd, expireTime, createdTime, splitByArg}, nil
+		rangeStart, rangeEnd, expireTime, createdTime, scanIndexIDArg}, nil
 }
 
 // TaskStatus represents the current status of a task
@@ -137,7 +137,7 @@ type TTLTask struct {
 	StatusUpdateTime time.Time
 	State            *TTLTaskState
 	CreatedTime      time.Time
-	SplitBy          *int64
+	ScanIndexID      *int64
 }
 
 // TTLTaskState records the internal states of the ttl task
@@ -162,10 +162,10 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 		ScanID:  row.GetInt64(2),
 	}
 
-	var splitBy *int64
+	var scanIndexID *int64
 	if !row.IsNull(13) {
 		v := row.GetInt64(13)
-		splitBy = &v
+		scanIndexID = &v
 	}
 
 	if !row.IsNull(3) {
@@ -234,7 +234,7 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 		return nil, err
 	}
 
-	task.SplitBy = splitBy
+	task.ScanIndexID = scanIndexID
 
 	return task, nil
 }
