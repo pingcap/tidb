@@ -10939,3 +10939,8 @@ risks without claiming repository-wide parity.
   (ALGORITHM/DEFINER/SQL SECURITY), the column list, and the
   schema-qualified alias-restored body round-trip. Pinned in
   `crates/tidb-session/tests/show_create_view_header_source.rs`.
+- 2026-09-06 (nested view + ALTER VIEW pin): nested views compose; ALTER
+  VIEW is refused by BOTH sides — verified against the live Go oracle
+  parser (no ALTER VIEW arm in stmt_parser.go's ALTER dispatch; GO parse
+  errors at line 1 col 10). Pinned in
+  `crates/tidb-session/tests/nested_view_and_alter_view_source.rs`.
