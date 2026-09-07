@@ -11061,3 +11061,7 @@ risks without claiming repository-wide parity.
   partition refuses with 1526 and the row stays put; the PK includes the
   partition column per the CREATE-time 1503 rule. Pinned in
   `crates/tidb-session/tests/update_partition_out_of_range_source.rs`.
+- 2026-09-06 (COLUMNS partitions pin): RANGE COLUMNS (varchar) and LIST
+  COLUMNS (char) route rows by string semantics with agreeing
+  partition-qualified reads. Pinned in
+  `crates/tidb-session/tests/columns_partition_routing_source.rs`.
