@@ -1412,6 +1412,8 @@ func TestTiFlashAvailableAfterAddPartition(t *testing.T) {
 	pi := tb.Meta().GetPartitionInfo()
 	require.NotNil(t, pi)
 	require.Equal(t, len(pi.Definitions), 2)
+
+	ddl.DisableTiFlashPoll(s.dom.DDL())
 }
 
 func TestTiFlashAvailableAfterDownOneStore(t *testing.T) {
