@@ -9839,3 +9839,6 @@ risks without claiming repository-wide parity.
   and passes with the fix. HEAD-wide executor failures (~120, aggregates/
   access_path ordering) verified pre-existing on clean HEAD -- sibling
   in-flight, untouched.
+- 2026-09-06 (NULL/NOT NULL pins): strict mode rejects NULL into NOT NULL
+  with Go's 1048 message; IGNORE downgrades it and stores the implicit
+  default ''. Pinned in `tests/null_not_null_insert_source.rs`.
