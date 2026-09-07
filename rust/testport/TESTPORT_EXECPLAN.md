@@ -10742,3 +10742,8 @@ risks without claiming repository-wide parity.
   ErrDependentByGeneratedColumn text ("Column 'a' has a generated column
   dependency."). Pinned in
   `crates/tidb-session/tests/generated_dependency_drop_source.rs`.
+- 2026-09-06 (CHECK column-scope pins): a column-level CHECK referencing
+  another column is refused with Go's exact 3813 text ("Column check
+  constraint 't_chk_1' references other column."), while the equivalent
+  table-level CHECK is accepted and enforces. Pinned in
+  `crates/tidb-session/tests/check_column_scope_source.rs`.
