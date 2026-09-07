@@ -211,6 +211,28 @@ func TestTTLInfoClone(t *testing.T) {
 	require.Equal(t, true, ttlInfo.Enable)
 }
 
+func TestMaterializedViewInfoClone(t *testing.T) {
+	info := &MaterializedViewInfo{
+		BaseTableIDs:                    []int64{1, 2},
+		SQLContent:                      "select 1",
+		DefinitionDivPrecisionIncrement: 4,
+		DefinitionTimeZone:              TimeZoneLocation{Name: "UTC"},
+		RefreshScheduleTimeZone:         TimeZoneLocation{Name: "Asia/Shanghai"},
+	}
+	_, err := info.DefinitionTimeZone.GetLocation()
+	require.NoError(t, err)
+
+	clone := info.Clone()
+	require.Equal(t, info.BaseTableIDs, clone.BaseTableIDs)
+	require.Equal(t, info.SQLContent, clone.SQLContent)
+	require.Equal(t, info.DefinitionDivPrecisionIncrement, clone.DefinitionDivPrecisionIncrement)
+	require.Equal(t, info.DefinitionTimeZone.Name, clone.DefinitionTimeZone.Name)
+	require.Equal(t, info.RefreshScheduleTimeZone.Name, clone.RefreshScheduleTimeZone.Name)
+	location, err := clone.DefinitionTimeZone.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, "UTC", location.String())
+}
+
 func TestTTLJobInterval(t *testing.T) {
 	ttlInfo := &TTLInfo{}
 

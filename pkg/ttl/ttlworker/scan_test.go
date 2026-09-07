@@ -111,7 +111,8 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 		require.NotNil(w.t, del)
 		require.NotNil(w.t, del.statistics)
 		require.Same(w.t, w.curTask.tbl, del.tbl)
-		require.Equal(w.t, w.curTask.ExpireTime, del.expire)
+		require.True(w.t, w.curTask.ExpireTime.Equal(del.expire))
+		require.Equal(w.t, time.UTC, del.expire.Location())
 		require.NotEqual(w.t, 0, len(del.rows))
 		return del
 	case <-time.After(10 * time.Second):
@@ -310,7 +311,7 @@ func (t *mockScanTask) selectSQL(i int) string {
 	}
 	return fmt.Sprintf(
 		"SELECT LOW_PRIORITY SQL_NO_CACHE `_tidb_rowid` FROM `test`.`t1` USE INDEX () "+
-			"WHERE `_tidb_rowid` %s %d AND `time` < FROM_UNIXTIME(0) ORDER BY `_tidb_rowid` ASC LIMIT 3",
+			"WHERE `_tidb_rowid` %s %d AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `_tidb_rowid` ASC LIMIT 3",
 		op, i*100,
 	)
 }
@@ -333,7 +334,6 @@ func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlSc
 	r := t.doScan(context.TODO(), t.delCh, t.sessPool)
 	require.NotNil(t.t, t.sessPool.lastSession)
 	require.True(t.t, t.sessPool.lastSession.inPool)
-	require.Greater(t.t, t.sessPool.lastSession.resetTimeZoneCalls, 0)
 	require.NotNil(t.t, r)
 	require.Same(t.t, t.ttlScanTask, r.task)
 	if errString == "" {
@@ -377,7 +377,8 @@ loop:
 		require.NotNil(t.t, del.statistics)
 		require.Same(t.t, t.statistics, del.statistics)
 		require.Same(t.t, t.tbl, del.tbl)
-		require.Equal(t.t, t.ExpireTime, del.expire)
+		require.True(t.t, t.ExpireTime.Equal(del.expire))
+		require.Equal(t.t, time.UTC, del.expire.Location())
 		if i < len(t.sqlRetry)-1 {
 			require.Equal(t.t, 3, len(del.rows))
 			require.Equal(t.t, 1, len(del.rows[2]))
@@ -488,9 +489,9 @@ func TestScanTaskDoScan(t *testing.T) {
 			},
 		}
 
-		loc := time.FixedZone("UTC+8", 8*60*60)
-		boundary := time.Date(2024, 1, 2, 3, 4, 5, 0, loc)
-		encodedRange, err := codec.EncodeKey(loc, nil,
+		globalLoc := time.FixedZone("UTC+8", 8*60*60)
+		boundary := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+		encodedRange, err := codec.EncodeKey(time.UTC, nil,
 			types.NewTimeDatum(types.NewTime(types.FromGoTime(boundary), mysql.TypeTimestamp, 0)))
 		require.NoError(t, err)
 		scanRange, err := codec.Decode(encodedRange, len(encodedRange))
@@ -510,7 +511,8 @@ func TestScanTaskDoScan(t *testing.T) {
 		}
 		pool := newMockSessionPool(t, tbl)
 		defer pool.AssertNoSessionInUse()
-		pool.se.sessionVars.TimeZone = loc
+		pool.se.sessionVars.TimeZone = time.UTC
+		pool.se.globalTimeZone = globalLoc
 		executeCalls := 0
 		pool.se.executeSQL = func(_ context.Context, sql string, _ ...any) ([]chunk.Row, error) {
 			executeCalls++

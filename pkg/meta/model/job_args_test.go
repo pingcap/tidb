@@ -149,6 +149,20 @@ func TestCreateTableArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
 		}
 	})
+	t.Run("create materialized view", func(t *testing.T) {
+		inArgs := &CreateMaterializedViewArgs{
+			TableInfo:    &TableInfo{ID: 102, MaterializedView: &MaterializedViewInfo{BaseTableIDs: []int64{88}}},
+			MLogTableIDs: []int64{99},
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateMaterializedView)))
+			args, err := GetCreateMaterializedViewArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.MLogTableIDs, args.MLogTableIDs)
+		}
+	})
 	t.Run("create view", func(t *testing.T) {
 		inArgs := &CreateTableArgs{
 			TableInfo:      &TableInfo{ID: 122},
@@ -211,12 +225,14 @@ func TestDropTableArgs(t *testing.T) {
 		},
 		FKCheck: true,
 	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropTable)))
-		args, err := GetDropTableArgs(j2)
-		require.NoError(t, err)
-		require.EqualValues(t, inArgs, args)
+	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetDropTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs, args)
+		}
 	}
 	for _, tp := range []ActionType{ActionDropView, ActionDropSequence} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -239,12 +255,14 @@ func TestFinishedDropTableArgs(t *testing.T) {
 		OldPartitionIDs: []int64{1, 2},
 		OldRuleIDs:      []string{"schema/test/a/par1", "schema/test/a/par2"},
 	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropTable)))
-		args, err := GetFinishedDropTableArgs(j2)
-		require.NoError(t, err)
-		require.EqualValues(t, inArgs, args)
+	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, tp)))
+			args, err := GetFinishedDropTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs, args)
+		}
 	}
 }
 

@@ -192,6 +192,17 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		wg.Wait()
 	}()
 
+	// TTL data SQL is executed in UTC so that every TIMESTAMP literal denotes
+	// one unambiguous instant, including during a DST fold. Expiration itself is
+	// still defined by the global time zone. Keep that location on expireTime so
+	// DATE/DATETIME predicates retain their wall-clock semantics, and pass the
+	// same value to both scan and delete workers.
+	globalTimeZone, err := rawSess.GlobalTimeZone(scanCtx)
+	if err != nil {
+		return errors.Wrap(err, "get global time zone for TTL expiration condition")
+	}
+	expireTime := t.ExpireTime.In(globalTimeZone)
+
 	now := rawSess.Now()
 	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, now)
 	if err != nil {
@@ -217,7 +228,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		)
 	}
 
-	sess, restoreSession, err := NewScanSession(scanCtx, rawSess, t.tbl, t.ExpireTime)
+	sess, restoreSession, err := NewScanSession(scanCtx, rawSess, t.tbl, expireTime)
 	if err != nil {
 		return err
 	}
@@ -232,7 +243,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 	}
 	var generator *sqlbuilder.ScanQueryGenerator
 	if index == nil {
-		generator, err = sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
+		generator, err = sqlbuilder.NewScanQueryGenerator(t.tbl, expireTime, t.ScanRangeStart, t.ScanRangeEnd)
 	} else {
 		rangeStart, rangeEnd := t.ScanRangeStart, t.ScanRangeEnd
 		if len(rangeStart) > 0 || len(rangeEnd) > 0 {
@@ -240,23 +251,17 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 			// so codec.Decode restores them as packed uint64 values. Convert them
 			// back to the TTL column type before writing them as SQL literals.
 			//
-			// A TIMESTAMP is stored in UTC, while its SQL literal is interpreted in
-			// the session time zone. ExecuteSQLWithCheck resets the scan session to
-			// @@global.time_zone before executing the SQL, so unflatten it with that
-			// same time zone. The task creator may use a different time zone because
-			// the persisted TIMESTAMP representation is normalized to UTC.
-			loc, err := sess.GlobalTimeZone(scanCtx)
-			if err != nil {
-				return errors.Wrap(err, "get global time zone for TTL index scan range")
-			}
-			if rangeStart, err = unflattenIndexScanRange(rangeStart, t.tbl.TimeColumn, loc); err != nil {
+			// TTL sessions use UTC, and index scan boundaries are encoded in the
+			// task-creation session's UTC location. Unflatten them in UTC as well so
+			// TIMESTAMP boundaries retain their exact instant across DST changes.
+			if rangeStart, err = unflattenIndexScanRange(rangeStart, t.tbl.TimeColumn, time.UTC); err != nil {
 				return errors.Wrap(err, "decode TTL index scan range start")
 			}
-			if rangeEnd, err = unflattenIndexScanRange(rangeEnd, t.tbl.TimeColumn, loc); err != nil {
+			if rangeEnd, err = unflattenIndexScanRange(rangeEnd, t.tbl.TimeColumn, time.UTC); err != nil {
 				return errors.Wrap(err, "decode TTL index scan range end")
 			}
 		}
-		generator, err = sqlbuilder.NewIndexScanQueryGenerator(t.tbl, t.ExpireTime, rangeStart, rangeEnd, index)
+		generator, err = sqlbuilder.NewIndexScanQueryGenerator(t.tbl, expireTime, rangeStart, rangeEnd, index)
 	}
 	if err != nil {
 		return err
@@ -336,7 +341,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 			jobID:      t.JobID,
 			scanID:     t.ScanID,
 			tbl:        t.tbl,
-			expire:     t.ExpireTime,
+			expire:     expireTime,
 			rows:       keyRows,
 			statistics: t.statistics,
 		}

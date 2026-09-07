@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -60,6 +61,60 @@ func newStatementRUOwnerForTest() (*ExecStmt, *statementRUOwner) {
 type statementRUPanicOnceContext struct {
 	context.Context
 	panicked atomic.Bool
+}
+
+type statementRUPointResponseStatsForTest struct {
+	stats util.PointResponseStats
+}
+
+func (s *statementRUPointResponseStatsForTest) String() string {
+	return ""
+}
+
+func (s *statementRUPointResponseStatsForTest) Merge(other execdetails.RuntimeStats) {
+	otherStats, ok := other.(*statementRUPointResponseStatsForTest)
+	if !ok {
+		return
+	}
+	s.stats.Merge(otherStats.stats)
+}
+
+func (s *statementRUPointResponseStatsForTest) Clone() execdetails.RuntimeStats {
+	return &statementRUPointResponseStatsForTest{stats: s.stats}
+}
+
+func (s *statementRUPointResponseStatsForTest) Tp() int {
+	return execdetails.TpRuntimeStatsWithSnapshot
+}
+
+func (s *statementRUPointResponseStatsForTest) GetPointResponseStats() util.PointResponseStats {
+	return s.stats
+}
+
+func statementRUPointResponseStatsForTestFromResponse(
+	detail *kvrpcpb.ScanDetailV2,
+	payloadBytes uint64,
+) util.PointResponseStats {
+	stats := util.PointResponseStats{}
+	stats.RecordResponse(detail, payloadBytes)
+	return stats
+}
+
+func newStatementRUPointLookupPlanForTest(
+	fixture statementRUSimpleSelectFixture,
+	batch bool,
+) base.PhysicalPlan {
+	planCtx := fixture.stmt.Ctx.(*mock.Context)
+	stats := &property.StatsInfo{RowCount: 1}
+	tblInfo := &model.TableInfo{}
+	if batch {
+		return (&physicalop.BatchPointGetPlan{TblInfo: tblInfo}).Init(
+			planCtx, stats, expression.NewSchema(), nil, 0,
+		)
+	}
+	pointPlan := physicalop.PointGetPlan{TblInfo: tblInfo}
+	pointPlan.SetSchema(expression.NewSchema())
+	return pointPlan.Init(planCtx, stats, 0)
 }
 
 func (ctx *statementRUPanicOnceContext) Value(key any) any {
@@ -237,6 +292,198 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Zero(t, calibrationCount.Load())
 	}
+	registerPointStats := func(
+		fixture statementRUSimpleSelectFixture,
+		plan base.Plan,
+		stats util.PointResponseStats,
+	) {
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
+			plan.ID(),
+			&statementRUPointResponseStatsForTest{stats: stats},
+		)
+	}
+	pointLookupFixture := func(t *testing.T, batch bool) (statementRUSimpleSelectFixture, base.PhysicalPlan) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		metrics := execdetails.NewRUV2Metrics()
+		metrics.AddTiKVCoprocessorResponseBytes(29)
+		fixture.stmt.Ctx.GetSessionVars().RUV2Metrics = metrics
+		plan := newStatementRUPointLookupPlanForTest(fixture, batch)
+		fixture.stmt.Plan = plan
+		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+		stmtCtx.SetPlan(plan)
+		stmtCtx.SetFlatPlan(nil)
+		return fixture, plan
+	}
+
+	t.Run("PointGet uses complete point response evidence", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(
+			&kvrpcpb.ScanDetailV2{
+				TotalVersions:         2,
+				ProcessedVersions:     1,
+				ProcessedVersionsSize: 37,
+			},
+			17,
+		))
+
+		requirePublication(t, fixture, statementRURawUnits{
+			ScanBytes:            74,
+			NetBytes:             46,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("BatchPointGet uses complete point response evidence", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, true)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(
+			&kvrpcpb.ScanDetailV2{
+				TotalVersions:         5,
+				ProcessedVersions:     3,
+				ProcessedVersionsSize: 111,
+			},
+			23,
+		))
+
+		requirePublication(t, fixture, statementRURawUnits{
+			ScanBytes:            185,
+			NetBytes:             52,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("registered point operator with no remote response contributes zero", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, util.PointResponseStats{})
+
+		requirePublication(t, fixture, statementRURawUnits{
+			NetBytes:             29,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("recognized point miss contributes zero payload and unavailable scan bytes", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(
+			&kvrpcpb.ScanDetailV2{TotalVersions: 1},
+			0,
+		))
+
+		requirePublication(t, fixture, statementRURawUnits{
+			NetBytes:             29,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		})
+	})
+
+	t.Run("missing point response provider fails closed", func(t *testing.T) {
+		fixture, _ := pointLookupFixture(t, false)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("point response with missing scan detail fails closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(nil, 17))
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("invalid point response fails closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		stats := util.PointResponseStats{}
+		stats.Invalidate()
+		registerPointStats(fixture, plan, stats)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("point evidence registered under a different plan fails closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
+			plan.ID()+1,
+			&statementRUPointResponseStatsForTest{stats: statementRUPointResponseStatsForTestFromResponse(
+				&kvrpcpb.ScanDetailV2{}, 0,
+			)},
+		)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("uncovered nonzero point response values fail closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, util.PointResponseStats{PayloadBytes: 1})
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("nil point snapshot runtime stats fail closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
+			plan.ID(),
+			&runtimeStatsWithSnapshot{},
+		)
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("nil point runtime stats wrapper fails closed", func(t *testing.T) {
+		stats, ok := statementRUPointResponseStatsSnapshot((*runtimeStatsWithSnapshot)(nil))
+		require.True(t, ok)
+		require.False(t, stats.IsValid())
+
+		fixture, plan := pointLookupFixture(t, false)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(
+			plan.ID(),
+			(*runtimeStatsWithSnapshot)(nil),
+		)
+		requireNoPublication(t, fixture)
+	})
+
+	for _, batch := range []bool{false, true} {
+		name := "PointGet"
+		if batch {
+			name = "BatchPointGet"
+		}
+		t.Run(name+" direct and general calculators match", func(t *testing.T) {
+			fixture, plan := pointLookupFixture(t, batch)
+			registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(
+				&kvrpcpb.ScanDetailV2{
+					TotalVersions:         3,
+					ProcessedVersions:     2,
+					ProcessedVersionsSize: 50,
+				},
+				19,
+			))
+			stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+			direct, directOK := calculateStatementRUPointLookup(
+				plan.ID(), stmtCtx.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+				fixture.owner.calculationSetup, true,
+			)
+			general, generalOK := calculateStatementRU(
+				plannercore.FlattenPhysicalPlan(plan, false),
+				stmtCtx.RuntimeStatsColl,
+				fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
+				fixture.owner.calculationSetup,
+				true,
+			)
+			require.True(t, directOK)
+			require.True(t, generalOK)
+			require.Equal(t, general, direct)
+		})
+	}
+
+	t.Run("point terminal error consumes the direct path", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(&kvrpcpb.ScanDetailV2{}, 0))
+		var calibrationCount atomic.Int64
+		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
+			calibrationCount.Add(1)
+		})
+		fixture.stmt.RecordStatementRUFinalOutcome(true)
+		fixture.stmt.finishStatementRUForTest(errors.New("terminal error"))
+		fixture.stmt.finishStatementRUForTest(nil)
+		require.Zero(t, calibrationCount.Load())
+	})
+
+	t.Run("point terminal without root EOF fails closed", func(t *testing.T) {
+		fixture, plan := pointLookupFixture(t, false)
+		registerPointStats(fixture, plan, statementRUPointResponseStatsForTestFromResponse(&kvrpcpb.ScanDetailV2{}, 0))
+		fixture.owner.rootEOF.Store(false)
+		requireNoPublication(t, fixture)
+	})
 
 	t.Run("Analyze uses the sum of logical request estimates", func(t *testing.T) {
 		ctx := mock.NewContext()

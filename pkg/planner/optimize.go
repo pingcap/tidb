@@ -261,7 +261,7 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	}
 
 	// XXX: this should be handled after any bindings are setup.
-	if sessVars.SQLMode.HasStrictMode() && !core.IsReadOnly(node.Node, sessVars) {
+	if sessVars.SQLMode.HasStrictMode() && !core.IsReadOnly(node.Node, sessVars) && !sessVars.InMViewMaintenance {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {

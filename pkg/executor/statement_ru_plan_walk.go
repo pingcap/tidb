@@ -28,6 +28,7 @@ import (
 	plannercoreutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
 
 type statementRUFinalOutcome uint32
@@ -54,6 +55,10 @@ type statementRUOperatorResult struct {
 	state              statementRUOperatorState
 	outputRows         int64
 	outputRowsObserved bool
+}
+
+type statementRUPointResponseStatsProvider interface {
+	GetPointResponseStats() clientutil.PointResponseStats
 }
 
 // statementRUOwner owns the first-record-wins outcome and the first terminal
@@ -168,8 +173,28 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) {
 		sessVars := a.Ctx.GetSessionVars()
 		// The snapshots catch eligibility that disappeared before terminal; the
 		// live checks catch a classification entered after owner installation.
-		if sessVars == nil || owner.restrictedSQLAtInstall || owner.cursorAtInstall ||
+		if sessVars == nil || sessVars.StmtCtx == nil || owner.restrictedSQLAtInstall || owner.cursorAtInstall ||
 			sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
+			return
+		}
+		switch plan := a.Plan.(type) {
+		case *physicalop.PointGetPlan:
+			finalized, publishFinalized = calculateStatementRUPointLookup(
+				plan.ID(),
+				sessVars.StmtCtx.RuntimeStatsColl,
+				sessVars.RUV2Metrics,
+				calculationSetup,
+				owner.rootEOF.Load(),
+			)
+			return
+		case *physicalop.BatchPointGetPlan:
+			finalized, publishFinalized = calculateStatementRUPointLookup(
+				plan.ID(),
+				sessVars.StmtCtx.RuntimeStatsColl,
+				sessVars.RUV2Metrics,
+				calculationSetup,
+				owner.rootEOF.Load(),
+			)
 			return
 		}
 		flat := getFlatPlan(sessVars.StmtCtx)
@@ -193,6 +218,26 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) {
 	if publishFinalized {
 		publishStatementRUFinalizedSnapshot(a, finalized)
 	}
+}
+
+func calculateStatementRUPointLookup(
+	planID int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	metrics *execdetails.RUV2Metrics,
+	setup statementRUCalculationSetup,
+	rootEOF bool,
+) (statementRUFinalizedSnapshot, bool) {
+	if planID <= 0 {
+		return statementRUFinalizedSnapshot{}, false
+	}
+	calculator, ok := newStatementRUTerminalCalculator(metrics, setup, rootEOF)
+	if !ok {
+		return statementRUFinalizedSnapshot{}, false
+	}
+	if collectStatementRUPointLookupEvidence(planID, runtimeStatsColl, &calculator) != statementRUOperatorComplete {
+		return statementRUFinalizedSnapshot{}, false
+	}
+	return calculator.finalize()
 }
 
 // calculateStatementRU directly walks borrowed flat-plan occurrences without
@@ -245,19 +290,12 @@ func calculateStatementRUInternal(
 	rootEOF bool,
 	operatorRUs *plannercore.ExplainRUResult,
 ) (statementRUFinalizedSnapshot, bool) {
-	if !rootEOF || flat == nil || len(flat.Main) == 0 {
+	if flat == nil || len(flat.Main) == 0 {
 		return statementRUFinalizedSnapshot{}, false
 	}
-	calculator := newStatementRUCalculator(setup)
-	// Transport bytes are statement-owned evidence. Read them once; do not
-	// attribute the same aggregate to every Reader occurrence. Missing evidence
-	// contributes zero to the best-effort ResultOnly value.
-	if metrics != nil && !metrics.Bypass() {
-		netBytes := metrics.TiKVCoprocessorResponseBytes()
-		if netBytes < 0 {
-			return statementRUFinalizedSnapshot{}, false
-		}
-		calculator.units.NetBytes = float64(netBytes)
+	calculator, ok := newStatementRUTerminalCalculator(metrics, setup, rootEOF)
+	if !ok {
+		return statementRUFinalizedSnapshot{}, false
 	}
 
 	// The forest consumes only currently visible typed evidence. Response-level
@@ -306,11 +344,28 @@ func calculateStatementRUInternal(
 			return statementRUFinalizedSnapshot{}, false
 		}
 	}
-	finalized, ok := calculator.finalize()
-	if !ok {
-		return statementRUFinalizedSnapshot{}, false
+	return calculator.finalize()
+}
+
+func newStatementRUTerminalCalculator(
+	metrics *execdetails.RUV2Metrics,
+	setup statementRUCalculationSetup,
+	rootEOF bool,
+) (statementRUCalculator, bool) {
+	if !rootEOF {
+		return statementRUCalculator{}, false
 	}
-	return finalized, true
+	calculator := newStatementRUCalculator(setup)
+	// Add the statement-wide RUv2 TiKV coprocessor response bytes once.
+	// Per-reader accounting would count the same aggregate more than once.
+	if metrics != nil && !metrics.Bypass() {
+		netBytes := metrics.TiKVCoprocessorResponseBytes()
+		if netBytes < 0 {
+			return statementRUCalculator{}, false
+		}
+		calculator.units.NetBytes = float64(netBytes)
+	}
+	return calculator, true
 }
 
 type statementRUForestKind uint8
@@ -536,6 +591,18 @@ func calculateStatementRUPlanChildFirst(
 			runtimeStatsColl,
 			calculator,
 			[]base.Plan{origin.IndexPlan, origin.TablePlan},
+		); state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+		// Point Get and Batch Point Get are root-only operators. Their client-go
+		// snapshot stats own both storage scan evidence and logical response
+		// payload, so collect both once at the plan occurrence.
+		if !operator.IsRoot || len(operator.ChildrenIdx) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if state := collectStatementRUPointLookupEvidence(
+			operator.Origin.ID(), runtimeStatsColl, calculator,
 		); state != statementRUOperatorComplete {
 			return statementRUOperatorResult{state: state}
 		}
@@ -984,6 +1051,98 @@ func collectStatementRUReaderScanBytes(
 		}
 	}
 	return statementRUOperatorComplete
+}
+
+func collectStatementRUPointLookupEvidence(
+	planID int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	rootStats, exists := runtimeStatsColl.GetRootStatsIfExists(planID)
+	if !exists || rootStats == nil {
+		return statementRUOperatorUnsupported
+	}
+
+	_, groups := rootStats.MergeStats()
+	var aggregate clientutil.PointResponseStats
+	found := false
+	for _, group := range groups {
+		stats, ok := statementRUPointResponseStatsSnapshot(group)
+		if !ok {
+			continue
+		}
+		found = true
+		if !mergeStatementRUPointResponseStats(&aggregate, stats) {
+			return statementRUOperatorInvalid
+		}
+	}
+	if !found {
+		return statementRUOperatorUnsupported
+	}
+
+	// A valid zero-value snapshot attached to the executed point operator means
+	// no recognized remote response was observed. This is a real local-completion
+	// state (for example a transaction-buffer or lock-cache hit), not missing
+	// runtime stats, and contributes zero remote work.
+	if !aggregate.PayloadComplete() {
+		if aggregate.PayloadBytes != 0 ||
+			aggregate.ScanDetail.TotalKeys != 0 || aggregate.ScanDetail.ProcessedKeys != 0 ||
+			aggregate.ScanDetail.ProcessedKeysSize != 0 {
+			return statementRUOperatorInvalid
+		}
+		return statementRUOperatorComplete
+	}
+	if !aggregate.ScanDetailComplete() {
+		return statementRUOperatorUnsupported
+	}
+
+	scanEvidence := classifyStatementRUScanEvidence(
+		aggregate.ScanDetail.TotalKeys,
+		aggregate.ScanDetail.ProcessedKeys,
+		aggregate.ScanDetail.ProcessedKeysSize,
+	)
+	switch scanEvidence.state {
+	case statementRUScanEvidenceValid:
+		if !addStatementRUScanBytes(calculator, scanEvidence.scanBytes) {
+			return statementRUOperatorInvalid
+		}
+	case statementRUScanEvidenceUnavailable:
+		// Complete response coverage does not give protobuf scalar fields
+		// presence bits. Keep the best-effort value and add no scan bytes.
+	default:
+		return statementRUOperatorInvalid
+	}
+	calculator.units.NetBytes += float64(aggregate.PayloadBytes)
+	return statementRUOperatorComplete
+}
+
+func statementRUPointResponseStatsSnapshot(
+	group execdetails.RuntimeStats,
+) (clientutil.PointResponseStats, bool) {
+	provider, ok := group.(statementRUPointResponseStatsProvider)
+	if !ok {
+		return clientutil.PointResponseStats{}, false
+	}
+	// The promoted getter handles a nil embedded snapshot, but accessing it
+	// through a nil outer wrapper would panic before reaching client-go.
+	if runtimeStats, concrete := group.(*runtimeStatsWithSnapshot); concrete && runtimeStats == nil {
+		invalid := clientutil.PointResponseStats{}
+		invalid.Invalidate()
+		return invalid, true
+	}
+	return provider.GetPointResponseStats(), true
+}
+
+func mergeStatementRUPointResponseStats(
+	aggregate *clientutil.PointResponseStats,
+	stats clientutil.PointResponseStats,
+) bool {
+	if !stats.IsValid() || stats.ScanDetail.TotalKeys < 0 ||
+		stats.ScanDetail.ProcessedKeys < 0 || stats.ScanDetail.ProcessedKeysSize < 0 {
+		return false
+	}
+	aggregate.Merge(stats)
+	return true
 }
 
 func statementRUSortWork(inputRows int64, retainedRows uint64) float64 {
