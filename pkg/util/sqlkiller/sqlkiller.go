@@ -227,9 +227,11 @@ func (killer *SQLKiller) HandleSignal() error {
 		}
 		lastCheckTime := killer.lastCheckTime.Load()
 		if lastCheckTime == nil {
-			killer.lastCheckTime.Store(&now)
+			checkedAt := now
+			killer.lastCheckTime.Store(&checkedAt)
 		} else if now.Sub(*lastCheckTime) > checkConnectionAliveDur {
-			killer.lastCheckTime.Store(&now)
+			checkedAt := now
+			killer.lastCheckTime.Store(&checkedAt)
 			if !(*fn)() {
 				killer.sendKillSignal(QueryInterrupted)
 			}

@@ -70,6 +70,9 @@ type PacketIO struct {
 	zstdLevel            zstd.EncoderLevel
 	sequence             uint8
 	compressedSequence   uint8
+	// pendingOutPacketBytes batches uncompressed OutPacketBytes metric updates
+	// until the protocol flush boundary.
+	pendingOutPacketBytes int
 }
 
 // NewPacketIO creates a new PacketIO with given net.Conn.
@@ -124,6 +127,7 @@ func (p *PacketIO) SetCompressionAlgorithm(ca int) {
 	p.compressedWriter.zstdLevel = p.zstdLevel
 	p.compressedReader = newCompressedReader(p.bufReadConn, ca, &p.compressedSequence)
 	p.compressedReader.zstdLevel = p.zstdLevel
+	p.flushOutPacketBytesMetric()
 	p.bufWriter.Flush()
 }
 
@@ -140,14 +144,13 @@ func (p *PacketIO) SetReadTimeout(timeout time.Duration) {
 
 func (p *PacketIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
-	r := io.NopCloser(p.bufReadConn)
 	if p.readTimeout > 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
 			return nil, err
 		}
 	}
 	if p.compressionAlgorithm == mysql.CompressionNone {
-		if _, err := io.ReadFull(r, header[:]); err != nil {
+		if _, err := io.ReadFull(p.bufReadConn, header[:]); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
@@ -184,17 +187,13 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 		}
 	}
 	if p.compressionAlgorithm == mysql.CompressionNone {
-		if _, err := io.ReadFull(r, data); err != nil {
+		if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
 		if _, err := io.ReadFull(p.compressedReader, data); err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
-	err := r.Close()
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	return data, nil
 }
@@ -243,7 +242,11 @@ func (p *PacketIO) ReadPacket() ([]byte, error) {
 // WritePacket writes data that already have header
 func (p *PacketIO) WritePacket(data []byte) error {
 	length := len(data) - 4
-	server_metrics.OutPacketBytes.Add(float64(len(data)))
+	if p.compressionAlgorithm == mysql.CompressionNone {
+		p.pendingOutPacketBytes += len(data)
+	} else {
+		server_metrics.OutPacketBytes.Add(float64(len(data)))
+	}
 
 	maxPayloadLen := mysql.MaxPayloadLen
 
@@ -261,8 +264,10 @@ func (p *PacketIO) WritePacket(data []byte) error {
 			}
 		} else {
 			if n, err := p.bufWriter.Write(data[:4+maxPayloadLen]); err != nil {
+				p.flushOutPacketBytesMetric()
 				return errors.Trace(mysql.ErrBadConn)
 			} else if n != (4 + maxPayloadLen) {
+				p.flushOutPacketBytesMetric()
 				return errors.Trace(mysql.ErrBadConn)
 			}
 		}
@@ -286,9 +291,11 @@ func (p *PacketIO) WritePacket(data []byte) error {
 		return nil
 	}
 	if n, err := p.bufWriter.Write(data); err != nil {
+		p.flushOutPacketBytesMetric()
 		terror.Log(errors.Trace(err))
 		return errors.Trace(mysql.ErrBadConn)
 	} else if n != len(data) {
+		p.flushOutPacketBytesMetric()
 		return errors.Trace(mysql.ErrBadConn)
 	}
 	p.sequence++
@@ -297,6 +304,7 @@ func (p *PacketIO) WritePacket(data []byte) error {
 
 // Flush flushes buffered data to network.
 func (p *PacketIO) Flush() error {
+	p.flushOutPacketBytesMetric()
 	var err error
 	if p.compressionAlgorithm != mysql.CompressionNone {
 		err = p.compressedWriter.Flush()
@@ -311,6 +319,14 @@ func (p *PacketIO) Flush() error {
 		p.sequence = p.compressedSequence
 	}
 	return err
+}
+
+func (p *PacketIO) flushOutPacketBytesMetric() {
+	if p.pendingOutPacketBytes == 0 {
+		return
+	}
+	server_metrics.OutPacketBytes.Add(float64(p.pendingOutPacketBytes))
+	p.pendingOutPacketBytes = 0
 }
 
 func newCompressedWriter(w io.Writer, ca int, seq *uint8) *compressedWriter {

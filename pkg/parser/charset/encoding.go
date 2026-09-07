@@ -48,6 +48,9 @@ func FindEncoding(charset string) Encoding {
 	if len(charset) == 0 {
 		return EncodingBinImpl
 	}
+	if charset == CharsetUTF8MB4 || charset == CharsetUTF8 {
+		return EncodingUTF8Impl
+	}
 	if e, exist := encodingMap[charset]; exist {
 		return e
 	}

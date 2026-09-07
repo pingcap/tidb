@@ -18,6 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -149,10 +150,12 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 
 	if ok {
 		sessVars := p.sctx.GetSessionVars()
-		logutil.BgLogger().Debug("init txnStartTS with MaxUint64",
-			zap.Uint64("conn", sessVars.ConnectionID),
-			zap.String("text", sessVars.StmtCtx.OriginalSQL),
-		)
+		if ce := log.L().Check(zap.DebugLevel, "init txnStartTS with MaxUint64"); ce != nil {
+			ce.Write(
+				zap.Uint64("conn", sessVars.ConnectionID),
+				zap.String("text", sessVars.StmtCtx.OriginalSQL),
+			)
+		}
 
 		if err = p.forcePrepareConstStartTS(math.MaxUint64); err != nil {
 			logutil.BgLogger().Error("failed init txnStartTS with MaxUint64",

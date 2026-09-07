@@ -51,7 +51,7 @@ type ResultEncoder struct {
 	// dataEncoding can be updated to match the column data charset.
 	dataEncoding charset.Encoding
 
-	buffer *bytes.Buffer
+	buffer bytes.Buffer
 
 	scratch []byte
 
@@ -62,6 +62,8 @@ type ResultEncoder struct {
 	isBinary     bool
 	isNull       bool
 	dataIsBinary bool
+	dataChsID    uint16
+	dataChsValid bool
 }
 
 // NewResultEncoder creates a new ResultEncoder.
@@ -69,7 +71,6 @@ func NewResultEncoder(chs string) *ResultEncoder {
 	return &ResultEncoder{
 		chsName:  chs,
 		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
-		buffer:   &bytes.Buffer{},
 		scratch:  make([]byte, 0, 48),
 		isBinary: chs == charset.CharsetBin,
 		isNull:   len(chs) == 0,
@@ -81,18 +82,26 @@ func NewResultEncoder(chs string) *ResultEncoder {
 // encoder must not be reused afterwards, as the Encode* methods would then
 // re-allocate a temporary buffer on every call.
 func (d *ResultEncoder) Clean() {
-	d.buffer = nil
+	d.buffer = bytes.Buffer{}
 	d.scratch = nil
 }
 
 // UpdateDataEncoding updates the data encoding.
 func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
+	if d.dataChsValid && d.dataChsID == chsID {
+		return
+	}
+	d.dataChsValid = false
 	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
 	if err != nil {
 		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
 	}
 	d.dataEncoding = charset.FindEncodingTakeUTF8AsNoop(chs)
 	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
+	if err == nil {
+		d.dataChsID = chsID
+		d.dataChsValid = true
+	}
 }
 
 // ColumnCharsetID returns the charset ID to advertise for a column in the
@@ -149,7 +158,10 @@ func (d *ResultEncoder) EncodeData(src []byte) []byte {
 
 // encodeWith encodes bytes with the given encoding.
 func (d *ResultEncoder) encodeWith(src []byte, enc charset.Encoding) []byte {
-	data, err := enc.Transform(d.buffer, src, charset.OpEncodeReplace)
+	if enc == charset.EncodingBinImpl {
+		return src
+	}
+	data, err := enc.Transform(&d.buffer, src, charset.OpEncodeReplace)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
