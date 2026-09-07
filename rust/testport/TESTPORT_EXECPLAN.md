@@ -11231,3 +11231,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (math edges pin): SQRT(-1) -> NULL, POW's negative-fractional
   out-of-range error, SIGN/ABS sign rules. Pinned in
   `crates/tidb-session/tests/math_edge_source.rs`.
+- 2026-09-06 (INSERT fn pin): the string-splice INSERT() position/length
+  rules — 0/beyond-pos unchanged, negative length splices to end, NULL
+  propagates. Pinned in
+  `crates/tidb-session/tests/insert_fn_splice_source.rs`.
