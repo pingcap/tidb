@@ -10819,3 +10819,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (TRUNCATE auto-inc reset pin): TRUNCATE TABLE resets the
   auto-increment counter to 1 (DELETE does not). Pinned in
   `crates/tidb-session/tests/truncate_resets_auto_inc_source.rs`.
+- 2026-09-06 (RENAME auto-inc pin): RENAME TABLE preserves the auto-increment
+  counter — the renamed table continues from the previous max. Pinned in
+  `crates/tidb-session/tests/rename_preserves_auto_inc_source.rs`.
