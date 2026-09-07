@@ -10505,3 +10505,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (SHOW CREATE FK pin): SHOW CREATE TABLE carries the named
   CONSTRAINT with its REFERENCES clause and ON DELETE action. Pinned in
   `crates/tidb-session/tests/show_create_fk_source.rs`.
+- 2026-09-06 (SHOW CREATE CHECK pin): SHOW CREATE TABLE carries the CHECK
+  definition in Go's restore form — CONSTRAINT name + the expression in
+  `((`a` + `b` > 0))` shape. Pinned in
+  `crates/tidb-session/tests/show_create_check_source.rs`.
