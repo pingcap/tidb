@@ -11180,3 +11180,7 @@ risks without claiming repository-wide parity.
   product and NATURAL JOIN's shared-column key with duplicate-column
   projection. Pinned in
   `crates/tidb-session/tests/cross_natural_join_source.rs`.
+- 2026-09-06 (UNION derived/branch LIMIT pin): a UNION ALL as a derived
+  table flows through the outer ORDER BY, and parenthesized branches keep
+  per-branch ORDER BY + LIMIT. Pinned in
+  `crates/tidb-session/tests/union_derived_branch_limit_source.rs`.
