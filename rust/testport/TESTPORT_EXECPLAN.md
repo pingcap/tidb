@@ -10362,3 +10362,7 @@ risks without claiming repository-wide parity.
   ANY` passes beyond the subquery min (20,30), `> ALL` beyond the max
   (30); SELECT DISTINCT folds duplicate NULLs into one row. Pinned in
   `crates/tidb-session/tests/any_all_distinct_nulls_source.rs`.
+- 2026-09-06 (set-chain composition pin): `a UNION b EXCEPT c` is
+  left-associative with dedup at each step ({1,2,3,4}−{3,5}={1,2,4}), and
+  the output columns take the FIRST arm's names. Pinned in
+  `crates/tidb-session/tests/set_chain_names_source.rs`.
