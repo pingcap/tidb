@@ -657,3 +657,22 @@ refusal surface from the closure pass drops to the string, time,
 duration, and json answers of the cast matrix (projection-executor
 course), the three projection value functions, and the session-timezone
 anchored unix-time functions.
+
+## The AS CHAR casts (6 ids)
+
+The string-answer cast combinations land through the bytes channel
+(`CastIntAsString` 3, `CastRealAsString` 12, `CastDecimalAsString` 22,
+`CastStringAsString` 32, `CastTimeAsString` 42, `CastDurationAsString`
+52), composing as string-comparison and LIKE operands and answering
+their numeric-prefix truth as bare conditions. Each follows Go's
+per-source rendering: `FormatInt`/`FormatUint` by the value's sign (the
+`TypeYear` "0" -> "0000" special case folds -- no field type on the
+wire), `FormatFloat(val, 'f', -1, 64)`'s shortest no-exponent form
+which is Rust's `Display` for f64, the decimal's text, the pass-through
+for a string source, and the time/duration `String` forms.
+`ProduceStrWithSpecifiedTp` and the binary-type zero padding fold away
+for the same reason as in the decimal family. The cast matrix's
+remaining gap is the time, duration, and json ANSWER casts
+(`CastXAsTime`/`CastXAsDuration`/`CastXAsJson`) plus the int/real
+answers of json sources -- they need the temporal and json channels to
+admit cast sources, which lands with the projection-executor course.

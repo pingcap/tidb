@@ -1844,6 +1844,22 @@ pub enum SimpleSig {
     CastTimeAsDecimal,
     /// See [`SimpleSig::CastIntAsDecimal`].
     CastDurationAsDecimal,
+    /// The `AS CHAR`/`AS STRING` casts: Go's per-source renderings
+    /// (`FormatInt`/`FormatUint` by the source's flag, `FormatFloat`
+    /// shortest-'f', the decimal's text, and the time/duration `String`
+    /// forms; a string source passes through) -- they compose through
+    /// the bytes channel and a bare cast answers its own truth.
+    CastIntAsString,
+    /// See [`SimpleSig::CastIntAsString`].
+    CastRealAsString,
+    /// See [`SimpleSig::CastIntAsString`].
+    CastDecimalAsString,
+    /// See [`SimpleSig::CastIntAsString`].
+    CastStringAsString,
+    /// See [`SimpleSig::CastIntAsString`].
+    CastTimeAsString,
+    /// See [`SimpleSig::CastIntAsString`].
+    CastDurationAsString,
     /// `CastIntAsReal`/`CastRealAsReal`/`CastDecimalAsReal`: widening to
     /// binary64 (`AS REAL`); a bare cast answers its own truth.
     CastIntAsReal,
@@ -2397,6 +2413,12 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::CastStringAsDecimal => SimpleSig::CastStringAsDecimal,
             tipb::ScalarFuncSig::CastTimeAsDecimal => SimpleSig::CastTimeAsDecimal,
             tipb::ScalarFuncSig::CastDurationAsDecimal => SimpleSig::CastDurationAsDecimal,
+            tipb::ScalarFuncSig::CastIntAsString => SimpleSig::CastIntAsString,
+            tipb::ScalarFuncSig::CastRealAsString => SimpleSig::CastRealAsString,
+            tipb::ScalarFuncSig::CastDecimalAsString => SimpleSig::CastDecimalAsString,
+            tipb::ScalarFuncSig::CastStringAsString => SimpleSig::CastStringAsString,
+            tipb::ScalarFuncSig::CastTimeAsString => SimpleSig::CastTimeAsString,
+            tipb::ScalarFuncSig::CastDurationAsString => SimpleSig::CastDurationAsString,
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             // Go reads the comparison's collation off the `ScalarFunc`'s own
             // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
@@ -3209,6 +3231,58 @@ fn eval_bytes(
             result.set_fsp(fsp).ok()?;
             Some(result.to_string().into_bytes())
         }
+        // The `AS CHAR` casts answer their source's text rendering (Go
+        // `builtinCast*AsStringSig`): `ProduceStrWithSpecifiedTp` and
+        // the binary-type zero padding fold away -- the seam carries no
+        // field type.
+        SimpleExpr::Func(
+            sig @ (SimpleSig::CastIntAsString
+            | SimpleSig::CastRealAsString
+            | SimpleSig::CastDecimalAsString
+            | SimpleSig::CastStringAsString
+            | SimpleSig::CastTimeAsString
+            | SimpleSig::CastDurationAsString),
+            children,
+        ) => {
+            match sig {
+                SimpleSig::CastIntAsString => {
+                    let value = children
+                        .first()
+                        .and_then(|c| eval_expr(c, row, div_precision_increment).ok())
+                        .flatten()?;
+                    // Go formats by the source's UNSIGNED flag; the i128
+                    // carries the sign here. The `TypeYear` "0" -> "0000"
+                    // special case folds -- no field type on the wire.
+                    let text = i64::try_from(value)
+                        .map(|signed| signed.to_string())
+                        .unwrap_or_else(|_| format!("{}", value as u64));
+                    Some(text.into_bytes())
+                }
+                // Go `strconv.FormatFloat(val, 'f', -1, 64)`: the
+                // shortest decimal form without an exponent -- Rust's
+                // `Display` for f64.
+                SimpleSig::CastRealAsString => {
+                    let value = eval_real(children.first(), row, div_precision_increment)?;
+                    Some(format!("{value}").into_bytes())
+                }
+                SimpleSig::CastDecimalAsString => {
+                    let value = eval_decimal(children.first(), row, div_precision_increment)?;
+                    Some(value.to_string().into_bytes())
+                }
+                SimpleSig::CastStringAsString => {
+                    eval_bytes(children.first(), row, div_precision_increment)
+                }
+                SimpleSig::CastTimeAsString => {
+                    eval_time(children.first(), row, div_precision_increment)
+                        .map(|time| time.to_string().into_bytes())
+                }
+                SimpleSig::CastDurationAsString => {
+                    eval_duration(children.first(), row, div_precision_increment)
+                        .map(|duration| duration.to_string().into_bytes())
+                }
+                _ => None,
+            }
+        }
         // Go's string-function family: case folding and substring over the
         // byte domain for the binary forms and the rune domain for the
         // UTF8 forms.
@@ -3658,7 +3732,13 @@ pub fn eval_expr(
                 | SimpleSig::Substring2ArgsUtf8
                 | SimpleSig::Substring3Args
                 | SimpleSig::Substring3ArgsUtf8
-                | SimpleSig::Conv => {
+                | SimpleSig::Conv
+                | SimpleSig::CastIntAsString
+                | SimpleSig::CastRealAsString
+                | SimpleSig::CastDecimalAsString
+                | SimpleSig::CastStringAsString
+                | SimpleSig::CastTimeAsString
+                | SimpleSig::CastDurationAsString => {
                     // A bare string function (or CONV) as a condition
                     // answers its `ToBool` truth: the numeric prefix of
                     // the result, non-zero (Go `StrToFloat` -> `ToBool`).
@@ -6220,5 +6300,100 @@ mod tests {
         // A bare cast as a condition answers its own truth.
         let bare = SimpleExpr::Func(SimpleSig::CastIntAsDecimal, vec![SimpleExpr::Int(0)]);
         assert_eq!(eval_expr(&bare, &[], 4).expect("evals"), Some(0));
+    }
+    #[test]
+    fn string_casts_render_each_source_like_go() {
+        // EQString(CAST(x AS CHAR), expected) pins the exact rendering.
+        let cast_eq = |cast: SimpleSig, operand: SimpleExpr, expected: &str| {
+            SimpleExpr::Func(
+                SimpleSig::EqString(46), // utf8mb4_bin
+                vec![
+                    SimpleExpr::Func(cast, vec![operand]),
+                    SimpleExpr::Bytes(expected.as_bytes().to_vec()),
+                ],
+            )
+        };
+        // A negative int renders with the sign (Go `FormatInt`).
+        assert_eq!(
+            eval_expr(
+                &cast_eq(SimpleSig::CastIntAsString, SimpleExpr::Int(-42), "-42"),
+                &[],
+                4,
+            )
+            .expect("evals"),
+            Some(1)
+        );
+        // A real renders in the shortest 'f' form.
+        assert_eq!(
+            eval_expr(
+                &cast_eq(SimpleSig::CastRealAsString, SimpleExpr::Real(2.5), "2.5"),
+                &[],
+                4,
+            )
+            .expect("evals"),
+            Some(1)
+        );
+        // A string source passes through.
+        assert_eq!(
+            eval_expr(
+                &cast_eq(
+                    SimpleSig::CastStringAsString,
+                    SimpleExpr::Bytes(b"text".to_vec()),
+                    "text",
+                ),
+                &[],
+                4,
+            )
+            .expect("evals"),
+            Some(1)
+        );
+        // A time renders in its kind's form.
+        let noon = tidb_datatype::Time::from_date_checked(
+            2024,
+            3,
+            5,
+            14,
+            30,
+            45,
+            0,
+            tidb_datatype::TimeType::DateTime,
+            0,
+        )
+        .expect("constructs");
+        assert_eq!(
+            eval_expr(
+                &cast_eq(
+                    SimpleSig::CastTimeAsString,
+                    SimpleExpr::Time(noon),
+                    "2024-03-05 14:30:45",
+                ),
+                &[],
+                4,
+            )
+            .expect("evals"),
+            Some(1)
+        );
+        // A duration renders `HH:MM:SS` (the wire has no duration leaf;
+        // the source arrives as a column).
+        let span = tidb_datatype::MySqlDuration::from_nanoseconds(3_600_000_000_000, 0)
+            .expect("constructs");
+        let duration_row = [tidb_datatype::Datum::Duration(span)];
+        assert_eq!(
+            eval_expr(
+                &cast_eq(
+                    SimpleSig::CastDurationAsString,
+                    SimpleExpr::Column(0),
+                    "01:00:00",
+                ),
+                &duration_row,
+                4,
+            )
+            .expect("evals"),
+            Some(1)
+        );
+        // A bare cast as a condition answers its numeric-prefix truth:
+        // "-42" reads -42 -> true.
+        let bare = SimpleExpr::Func(SimpleSig::CastIntAsString, vec![SimpleExpr::Int(-42)]);
+        assert_eq!(eval_expr(&bare, &[], 4).expect("evals"), Some(1));
     }
 }
