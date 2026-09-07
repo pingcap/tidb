@@ -10432,3 +10432,8 @@ risks without claiming repository-wide parity.
   limit 2` removes the two highest rows; `update ... order by a desc limit
   2` doubles only those two. Pinned in
   `crates/tidb-session/tests/write_order_limit_source.rs`.
+- 2026-09-06 (ODKU CHECK violation pin): without IGNORE, an ODKU whose
+  UPDATE branch violates a CHECK fails the statement with 3819 and the
+  stored row is untouched. Pinned in
+  `crates/tidb-session/tests/odku_check_violation_source.rs`. The full
+  CHECK x ODKU matrix is now covered (violation refused / IGNORE skips).
