@@ -11266,3 +11266,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (INTERVAL() pin): the first-strictly-greater-pivot index and
   the -1 NULL answer. Pinned in
   `crates/tidb-session/tests/interval_fn_source.rs`.
+- 2026-09-06 (wide IN list pin): a 1000-element IN list matches exactly the
+  500 odd ids. Pinned in
+  `crates/tidb-session/tests/wide_in_list_source.rs`.
