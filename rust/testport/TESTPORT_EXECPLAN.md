@@ -10714,3 +10714,7 @@ risks without claiming repository-wide parity.
   column is NOT added). The 6-test CHECK family stays green; the pin
   `crates/tidb-session/tests/add_column_self_check_source.rs` fails on
   the old code and passes with the fix.
+- 2026-09-06 (RENAME COLUMN x CHECK pin): renaming a CHECK-dependent column
+  is refused with Go's 3959 "uses column ..., hence column cannot be
+  dropped or renamed" (companion to the DROP COLUMN pin). Pinned in
+  `crates/tidb-session/tests/rename_check_dependent_column_source.rs`.
