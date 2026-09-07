@@ -11011,3 +11011,7 @@ risks without claiming repository-wide parity.
   identity is owned by the sibling server-tier stream — queued there.
   `user()`/`current_user()` NULL matches Go's missing-user state, which
   errors internally; both are unreachable with a real session.
+- 2026-09-06 (GROUP BY/HAVING alias pin): SELECT-list aliases resolve in
+  GROUP BY and HAVING (the MySQL extension) — grouping by the aliased
+  column and filtering on the aliased aggregate. Pinned in
+  `crates/tidb-session/tests/group_by_having_alias_source.rs`.
