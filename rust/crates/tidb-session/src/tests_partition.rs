@@ -2741,15 +2741,18 @@ fn an_unknown_partition_name_carries_gos_case_per_statement() {
         rendered.message
     );
 
-    // The SELECT partition list keeps the written case.
+    // The SELECT flow resolves through the same `FindPartitionByName` the
+    // TRUNCATE arm uses: it folds the name (`partition.go:2147`) BEFORE
+    // interpolating, so both errors spell the folded form. Go's `.O` applies
+    // only to the TABLE name in the message.
     let rendered = session
         .run("SELECT * FROM up PARTITION (NoSuch)")
         .expect_err("no such partition")
         .to_mysql_error();
     assert_eq!(rendered.code, 1735);
     assert!(
-        rendered.message.contains("'NoSuch'"),
-        "SELECT keeps the written case as Go's `.O` does, got: {}",
+        rendered.message.contains("'nosuch'"),
+        "SELECT resolves through FindPartitionByName's fold, got: {}",
         rendered.message
     );
 }
