@@ -10586,3 +10586,7 @@ risks without claiming repository-wide parity.
   lookup are correct. Remaining minor items: SHOW INDEX does not print
   Sub_part; a SELECT over a prefix unique index takes a scan (no point
   get) rather than erroring — both verified fine at session level.
+- 2026-09-06 (SHOW WARNINGS pin): a relaxed-mode truncation's downgrade is
+  visible as `Warning | 1406 | Data too long for column 'b' at row 1` with
+  `@@warning_count` = 1. Pinned in
+  `crates/tidb-session/tests/show_warnings_truncate_source.rs`.
