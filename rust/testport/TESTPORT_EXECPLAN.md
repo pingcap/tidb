@@ -11155,3 +11155,7 @@ risks without claiming repository-wide parity.
   trip, MAKEDATE day-of-year, MAKETIME composition, and PERIOD_ADD/
   PERIOD_DIFF YYMM arithmetic. Pinned in
   `crates/tidb-session/tests/time_conversion_source.rs`.
+- 2026-09-06 (hash family pin): MD5/SHA-1/SHA-256 against the published
+  "abc" reference vectors, CRC-32's standard check value, and NULL
+  propagation. Pinned in
+  `crates/tidb-session/tests/hash_family_source.rs`.
