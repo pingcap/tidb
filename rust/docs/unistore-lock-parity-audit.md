@@ -568,3 +568,42 @@ decimal scale. Regressions:
 clock-unit rendering, junk interval numeric prefix, bare truth), and
 `date_add_over_a_duration_column_answers_a_duration` (composite
 HOUR_MINUTE interval plus the refused promoted form).
+
+## MPP dispatch course (mpp.go / kv/mpp.go / mpp_probe.go / mpp_gather.go)
+
+Go's MPP surface is the TiFlash dispatch arm of the coprocessor store
+layer, and the seam leaves it absent on purpose. Go decides MPP at two
+gates: the planner wraps a table plan in `PhysicalExchangeSender` only
+when the table carries a TiFlash replica and the isolation read engines
+allow it, and `useMPPExecution` additionally requires `@@tidb_allow_mpp`
+-- without both, the normal path is the plain TiKV coprocessor path,
+which is exactly the path the seam implements. On top of those gates the
+client side (`pkg/store/copr/mpp.go`) builds and ships fragments:
+`ConstructMPPTasks` reuses `buildBatchCopTasks{ForNonPartitioned,For-
+Partitioned}Table` with the TiFlash store type (partitioned tables
+carry `PartitionIDAndRanges` so each partition's ranges route to its own
+task), `DispatchMPPTask` sends `mpp.DispatchTaskRequest` (TaskMeta with
+query/local/server/task/gather ids, mpp version V0-V3 where V3 is
+v9.0's new string serdes, encoded plan, region and table-region lists)
+over `CmdMPPTask` with a deliberate no-retry policy -- only the stale
+`RetryRegions` echo invalidates region cache entries -- and
+`CancelMPPTasks` fans `CmdMPPCancel` out to every involved store
+address. `mpp_probe.go` feeds the gates: `MPPFailedStoreProber` tracks
+per-store `MPPStoreState` (detect period, recovery TTL) and the
+`MppServerInfoManager` records live TiFlash server info, so the planner
+and `ConstructMPPTasks` see store availability before building tasks.
+
+The Rust side has no MPP machinery at any layer: the planner builds no
+exchange senders (the only tiflash hits are telemetry plan-shape
+reporting), the executor has no gather/exchange pair, the store layer
+has no TiFlash client, and the unistore region cache carries no store
+labels, so a TiFlash-targeted batch-cop build is unreachable -- the
+session variables (`tidb_allow_mpp`, tiflash replica vars in the vardef
+crate) parse but no planner code consults them for a dispatch decision.
+This mirrors a TiKV-only cluster on the Go side, where the same code
+answers every query through the coprocessor path; the MPP course is
+therefore recorded as intentionally absent (client-waiting) rather than
+missing: landing it would require the label-aware region cache, the
+batch-cop task builder, and the exchange executor family together, and
+none of them is reachable while the store serves a single unlabeled
+node.
