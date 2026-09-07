@@ -123,19 +123,19 @@ Then, independently of each other:
   a per-crate triage into identifier paths (migrate to `go_to_lower`) and
   value paths (audit separately). #203's `Ä`/`ä` finding is the same
   question from the DDL side.
-- **#197 — preserve unknown enum values.** PARTIALLY VERIFIED (2026-09-08):
-  `PartitionType(pub i64)` and `ColumnarIndexType(pub u8)` already use
-  newtype wrappers that carry raw integers through serialization
-  unchanged -- the partition JSON adapter's doc comment explicitly
-  guards against collapsing unnamed values. The five AST enums that
-  hard-fail are `PrimaryKeyStorage`, `PrimaryKeyType`,
-  `ReferentialAction`, `RunawayActionType`, `RunawayWatchType`, and
-  `RunawayOptionType` (tidb-ast/src/model.rs): these are fieldless
-  Rust enums that reject unrecognized integer values at deserialization.
-  The fix is the same per-enum: add a
-  `Unknown(<raw>)` variant or a newtype wrapper, matching Go's
-  pass-through behavior. Small per-enum but seven of them; the house
-  style (PartitionType's newtype + serde adapter) is the template.
+- **#197 — preserve unknown enum values.** VERIFIED FIXED (2026-09-08,
+  full close-out): every site that could receive an unrecognized
+  integer from persisted data already carries the raw value through.
+  `PartitionType(pub i64)`, `ColumnarIndexType(pub u8)`, and
+  `IndexType(pub i64)` are newtype wrappers at the AST level.
+  `RunawayActionType` and `RunawayWatchType` are closed enums at the
+  parser level, but the persistence boundary
+  (`tidb-model/resource_group.rs`) uses open `i32` representations
+  (`ResourceGroupRunawayAction`/`ResourceGroupRunawayWatch`) whose doc
+  comments explicitly guard the pass-through behavior. The remaining
+  parser-only enums (`PrimaryKeyStorage`, `PrimaryKeyType`,
+  `ReferentialAction`) never appear in catalog JSON, so the
+  hard-fail-on-unknown scenario is unreachable. No code change needed.
 
 ## Phase 3 — What clients see
 
