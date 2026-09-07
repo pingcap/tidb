@@ -10657,3 +10657,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (DML EXISTS/NOT EXISTS pins): DELETE with NOT EXISTS removes
   only unmatched rows; UPDATE with EXISTS moves only the matched row.
   Pinned in `crates/tidb-session/tests/dml_not_exists_corr_source.rs`.
+- 2026-09-06 (full pipeline composition pin): JOIN + WHERE + GROUP BY +
+  HAVING + ORDER BY + LIMIT composing over a schema join with a folded SUM.
+  Pinned in `crates/tidb-session/tests/full_pipeline_composition_source.rs`.
