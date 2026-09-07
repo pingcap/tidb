@@ -20,7 +20,15 @@ go_test(
     deps = [
         ":prealloc_table_id",
         "//br/pkg/metautil",
+<<<<<<< HEAD:br/pkg/restore/prealloc_table_id/BUILD.bazel
         "//pkg/parser/model",
+=======
+        "//br/pkg/utiltest",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/model",
+        "//pkg/testkit",
+>>>>>>> c08679bccfa (br: fix pre allocate id exceeds bound (#59719)):br/pkg/restore/internal/prealloc_table_id/BUILD.bazel
         "@com_github_stretchr_testify//require",
     ],
 )
