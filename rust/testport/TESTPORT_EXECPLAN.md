@@ -10208,3 +10208,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (cross-schema pin): second-schema DDL/DML, USE switching,
   qualified reads from both schemas, and a cross-schema join. Pinned in
   `crates/tidb-session/tests/cross_database_source.rs`.
+- 2026-09-06 (collation case-sensitivity pin): default utf8mb4_bin makes
+  '=' and LIKE case-sensitive ('a' != 'A'); explicit utf8mb4_general_ci
+  collation makes them equal; a _bin column keeps LIKE strict. Pinned in
+  `crates/tidb-session/tests/collation_case_sensitivity_source.rs`.
