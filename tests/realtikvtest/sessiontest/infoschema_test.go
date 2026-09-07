@@ -15,10 +15,12 @@
 package sessiontest
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -52,8 +54,37 @@ func TestNextGenTiKVRegionStatusDoesNotMixOtherKeyspaces(t *testing.T) {
 		t.Skip("only runs in nextgen kernel")
 	}
 
-	runtimes := realtikvtest.PrepareForCrossKSTest(t, "keyspace1")
-	sysTK := testkit.NewTestKit(t, runtimes[keyspace.System].Store)
+	var closeStores []func() error
+	// Stores are cached, so close them after domains to avoid blocking routines.
+	t.Cleanup(func() {
+		for _, closeStore := range closeStores {
+			require.NoError(t, closeStore())
+		}
+	})
+
+	sysStore, sysDom := realtikvtest.CreateMockStoreAndDomainAndSetup(t,
+		realtikvtest.WithKeyspaceName(keyspace.System),
+		realtikvtest.WithKeepSelfStore(true),
+		realtikvtest.WithAllocPort(true),
+	)
+	closeStores = append(closeStores, sysStore.Close)
+	// This test only needs SYSTEM metadata as query input. Stop the unrelated
+	// SYSTEM TTL manager before bootstrapping the user keyspace so its internal
+	// SQL worker cannot race with bootstrap's global stats hook registration.
+	ttlJobManager := sysDom.TTLJobManager()
+	require.NotNil(t, ttlJobManager)
+	ttlJobManager.Stop()
+	require.NoError(t, ttlJobManager.WaitStopped(context.Background(), 10*time.Second))
+
+	userStore := realtikvtest.CreateMockStoreAndSetup(t,
+		realtikvtest.WithKeyspaceName("keyspace1"),
+		realtikvtest.WithKeepSystemStore(true),
+		realtikvtest.WithKeepSelfStore(true),
+		realtikvtest.WithAllocPort(true),
+	)
+	closeStores = append(closeStores, userStore.Close)
+
+	sysTK := testkit.NewTestKit(t, sysStore)
 	sysTK.MustExec("create database if not exists sys_region_status")
 	sysTK.MustExec("use sys_region_status")
 	sysTK.MustExec("drop table if exists t")
@@ -64,7 +95,7 @@ func TestNextGenTiKVRegionStatusDoesNotMixOtherKeyspaces(t *testing.T) {
 	systemRegionIDs := uniqueSortedRegionIDs(sysTK.MustQuery("show table t regions").Rows())
 	require.NotEmpty(t, systemRegionIDs)
 
-	userTK := testkit.NewTestKit(t, runtimes["keyspace1"].Store)
+	userTK := testkit.NewTestKit(t, userStore)
 	// Physical regions can overlap keyspace boundaries; reject SYSTEM table
 	// metadata leakage instead of treating region IDs as keyspace-owned.
 	userTK.MustQuery(fmt.Sprintf(
