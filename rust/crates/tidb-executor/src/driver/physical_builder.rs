@@ -430,6 +430,34 @@ fn build_table_scan(
         RowDecodeContext::for_query(ctx),
         PushdownStatementContext::from_stmt(ctx).with_plan_id(i64::from(scan.base.base.id())),
     );
+    // Dynamic prune mode keeps ONE logical scan whose read is restricted to
+    // the partitions the planner selected -- the statement's own `PARTITION
+    // (p, ...)` list intersected with whatever the WHERE pruned. Without
+    // this a named-partition statement would read (or in DELETE/UPDATE,
+    // remove) rows living OUTSIDE the named partitions, which Go never
+    // does.
+    if let Some(access) = &scan.dynamic_partition_access {
+        if !access.all_partitions && !access.partitions.is_empty() {
+            let ids = access
+                .partitions
+                .iter()
+                .filter_map(|name| {
+                    table.partition().and_then(|partition| {
+                        partition
+                            .definitions
+                            .iter()
+                            .find(|definition| definition.name.eq_ignore_ascii_case(name))
+                            .map(|definition| definition.id)
+                    })
+                })
+                .collect::<Vec<_>>();
+            if !source.accept_partition_pruning(&ids) {
+                return Err(DriverError::unsupported(
+                    "the physical table scan cannot restrict itself to the named partitions",
+                ));
+            }
+        }
+    }
     if keep.len() != table.logical_data_source_column_count()
         || keep
             .iter()

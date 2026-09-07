@@ -9981,3 +9981,14 @@ risks without claiming repository-wide parity.
   the first row and skips the later in-statement duplicate while later rows
   still insert; a plain insert fails; REPLACE on an auto-inc key counts 2
   (delete + insert). Pinned in `tests/in_statement_duplicate_source.rs`.
+- 2026-09-06 (named-partition restriction wired, REAL DIVERGENCE): a
+  partition-qualified statement (`PARTITION (p0)`) read ALL partitions --
+  `select ... partition (p0)` over-read, `delete ... partition (p0)`
+  removed other partitions' rows. Dynamic prune mode (the default) builds
+  one logical scan carrying `dynamic_partition_access`; the physical build
+  never applied it -- `accept_partition_pruning` had no caller. Fix:
+  `build_table_scan` maps the selected partition names to physical ids and
+  restricts the scan. Session-level pin in
+  `crates/tidb-session/tests/partition_qualified_write_source.rs`; the 7
+  partition-family failures verified pre-existing on clean HEAD via
+  stash-baseline.
