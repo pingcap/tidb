@@ -1,6 +1,8 @@
 # `pkg/util/domainutil` — Go-master parity audit receipt
 
-Go authority: `origin/master` at `c6054025ed4c32ab3672a2a24ea46892714d21ec`.
+Original full-audit Go authority: `origin/master` at
+`c6054025ed4c32ab3672a2a24ea46892714d21ec`. The corrective return-contract
+follow-up below refreshes the authority to `c767f6fd8c01e9dcb459767611c0c1d4110d210d`.
 
 ## Complete inventory
 
@@ -54,3 +56,44 @@ applicable.
   lock-protected and map/set-backed.
 - Not verified locally: full `ADMIN REPAIR TABLE` distributed execution;
   server/session integration remains outside this leaf refresh.
+
+## 2026-09-07 corrective return-contract follow-up
+
+Current Go master `c767f6fd8c01e9dcb459767611c0c1d4110d210d`
+was read package-completely before the Rust edit. The inventory remains exactly
+two artifacts and 207 lines: the 198-line `repair_vars.go` and the 9-line
+`BUILD.bazel`. The production declarations comprise `repairInfo`, global
+`RepairInfo`, `InRepairMode`, `SetRepairMode`, `GetRepairTableList`,
+`GetMustLoadRepairTableListByDB`, `SetRepairTableList`,
+`CheckAndFetchRepairedTable`, `GetRepairedTableInfoByTableName`,
+`RemoveFromRepairInfo`, `repairKeyType`, its constants and `String`, and
+`init`. There are still no Go tests, `TestMain`, fixtures/testdata,
+benchmarks/fuzz targets, examples, generated/platform/build-tag variants, or
+nested packages, and the package is byte-identical to current Go master.
+
+The complete 17-artifact, 11,710-line pre-edit `tidb-domain` crate was also
+inventoried, with `domainutil.rs` confirmed as the sole Rust owner and the
+server startup plus DDL-repair executor test surfaces read as consumers. The
+existing implementation continues to preserve the lock-protected process
+state, Go lowercasing, quarantine, first-matching-database lookup quirk,
+removal transition, and repair-key display strings. This follow-up removes
+only the Rust-exclusive `#[must_use]` diagnostics from the four direct Go
+query methods: `in_repair_mode`, `get_repair_table_list`,
+`get_must_load_repair_table_list_by_db`, and
+`get_repaired_table_info_by_table_name`. Runtime behavior and API types are
+unchanged.
+
+The focused `#[deny(unused_must_use)]` regression failed before the fix with
+exactly four unused-return diagnostics and passes after it. Ready evidence:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-domain --lib domainutil::tests::repair_query_returns_may_be_ignored_like_go -- --exact --nocapture` — failed before the fix with exactly four diagnostics, then passed 1/1.
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-domain --lib -- --test-threads=1` — passed 159/159.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-domain --all-targets` — passed with pre-existing warnings.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-server --all-targets` — passed with pre-existing warnings.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-executor --all-targets` — passed with pre-existing warnings.
+- `rustfmt +nightly-2026-08-22 --edition 2021 --check rust/crates/tidb-domain/src/domainutil.rs` — passed.
+- `PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint` — passed.
+- `git diff --check` — passed.
+
+This is Rust/testport-only work. No Go source, Go import, Go test, Bazel file,
+or module dependency changed, so `make bazel_prepare` is not required.

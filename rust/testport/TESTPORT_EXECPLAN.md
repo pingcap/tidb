@@ -9389,6 +9389,17 @@ risks without claiming repository-wide parity.
   edit and passes after; the owner namespace passes 10/10 tests and the
   `tidb-exec --all-targets` check is green. Evidence is recorded in
   `receipts/util_execdetails.md` and `receipts/util_execdetails_audit.md`.
+- 2026-09-07 (`pkg/util/domainutil` repair-query return contracts): current Go
+  master `c767f6fd8c01` was re-read as the complete two-artifact, 207-line
+  package, including every declaration and the absence of tests, fixtures,
+  generated/platform variants, and nested packages. The complete 17-artifact,
+  11,710-line pre-edit `tidb-domain` crate and its server/executor consumers
+  were inventoried. Four direct Go query methods no longer impose Rust-only
+  `#[must_use]` diagnostics; repair state, lowercasing, quarantine, lookup,
+  removal, and display behavior are unchanged. The focused regression failed
+  before the fix with exactly four diagnostics and passes after; all 159 owner
+  tests and all affected all-target checks pass. Evidence is recorded in
+  `receipts/util_domainutil.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

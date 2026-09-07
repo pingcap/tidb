@@ -66,7 +66,6 @@ impl RepairInfo {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
     /// Go `InRepairMode`.
-    #[must_use]
     pub fn in_repair_mode(&self) -> bool {
         self.read().repair_mode
     }
@@ -77,7 +76,6 @@ impl RepairInfo {
     }
 
     /// Go `GetRepairTableList`.
-    #[must_use]
     pub fn get_repair_table_list(&self) -> Vec<String> {
         self.read().repair_table_list.clone()
     }
@@ -85,7 +83,6 @@ impl RepairInfo {
     /// Go `GetMustLoadRepairTableListByDB`: the ids of this database's
     /// repairing tables. The list is matched lowercased; `table_name2id` "is
     /// case sensitive and needs to be traversed to match the table id".
-    #[must_use]
     pub fn get_must_load_repair_table_list_by_db(
         &self,
         db_name: &str,
@@ -166,7 +163,6 @@ impl RepairInfo {
     /// quarantined table and its database, by lowercased names. Go's loop
     /// RETURNS `(nil, db)` after inspecting the FIRST database whose name
     /// matches — reproduced, quirk included.
-    #[must_use]
     pub fn get_repaired_table_info_by_table_name(
         &self,
         schema_lower_name: &str,
@@ -243,5 +239,20 @@ impl std::fmt::Display for RepairKeyType {
             Self::RepairedTable => "RepairedTable",
             Self::RepairedDatabase => "RepairedDatabase",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn repair_query_returns_may_be_ignored_like_go() {
+        let repair = RepairInfo::new();
+        repair.in_repair_mode();
+        repair.get_repair_table_list();
+        repair.get_must_load_repair_table_list_by_db("test", &HashMap::new());
+        repair.get_repaired_table_info_by_table_name("test", "t");
     }
 }
