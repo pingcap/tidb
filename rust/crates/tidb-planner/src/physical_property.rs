@@ -1163,7 +1163,13 @@ mod required_property_tests {
         explain_column_list(std::slice::from_ref(&partition));
 
         let property = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
-        PhysicalProperty::new_from_columns(TaskType::Root, &[column.clone()], false, f64::MAX, false);
+        PhysicalProperty::new_from_columns(
+            TaskType::Root,
+            &[column.clone()],
+            false,
+            f64::MAX,
+            false,
+        );
         property.clone_essential_fields();
         property.need_mpp_exchange_by_equivalence(&[], &FdSet::new());
         property.is_subset_of(&[]);
