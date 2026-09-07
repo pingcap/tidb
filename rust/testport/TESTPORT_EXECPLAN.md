@@ -10179,3 +10179,7 @@ risks without claiming repository-wide parity.
   answer 0 with SUM/MAX NULL in a single scalar row; GROUP BY over empty
   answers none; HAVING without GROUP BY filters the scalar row. Pinned in
   `crates/tidb-session/tests/aggregate_edge_semantics_source.rs`.
+- 2026-09-06 (GROUP_CONCAT/BIT aggregate pins): ORDER BY inside
+  GROUP_CONCAT sorts per group and SEPARATOR changes the glue; BIT folds
+  over {3,1,2} answer AND=0, OR=3, XOR=0 (unsigned). Pinned in
+  `crates/tidb-session/tests/group_concat_bit_aggs_source.rs`.
