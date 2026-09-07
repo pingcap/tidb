@@ -128,8 +128,8 @@ wire behaviour.
 ## Ranked findings
 
 Counts: **1 wrong-code class with 5 concrete instances**, **6 wrong SQLSTATEs (fixed)**,
-**1 remaining message defect**, **0 missing codes**. F5, F7, and F9 below are
-fixed as of 2026-09-04; the count covers the one still-open message finding.
+**0 remaining message defects**, **0 missing codes**. F5, F7, F8, and F9
+below are fixed (F8 verified 2026-09-05); all message findings closed.
 Ranked by consequence.
 
 ---
