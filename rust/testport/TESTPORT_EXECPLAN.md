@@ -10009,3 +10009,7 @@ risks without claiming repository-wide parity.
   p1's rows with the partition; other partitions survive; the dropped range
   disappears — inserting a value only p1 covered now fails with Go's 1526.
   Pinned in `crates/tidb-session/tests/drop_partition_source.rs`.
+- 2026-09-06 (ADD/TRUNCATE PARTITION pin): ADD PARTITION extends the covered
+  range (25 routes into the new p2); TRUNCATE PARTITION clears p1's rows
+  while keeping its definition (a re-insert routes back). Pinned in
+  `crates/tidb-session/tests/add_truncate_partition_source.rs`.
