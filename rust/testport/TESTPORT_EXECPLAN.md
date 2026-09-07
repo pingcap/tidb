@@ -11100,3 +11100,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (SUBSTRING_INDEX pin): positive/negative/zero counts and the
   missing-delimiter whole-string rule. Pinned in
   `crates/tidb-session/tests/substring_index_source.rs`.
+- 2026-09-06 (CEIL/FLOOR/TRUNCATE pin): direction-of-rounding for negatives
+  and TRUNCATE's digit cutting including negative decimal places. Pinned
+  in `crates/tidb-session/tests/ceil_floor_truncate_source.rs`.
