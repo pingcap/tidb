@@ -11184,3 +11184,7 @@ risks without claiming repository-wide parity.
   table flows through the outer ORDER BY, and parenthesized branches keep
   per-branch ORDER BY + LIMIT. Pinned in
   `crates/tidb-session/tests/union_derived_branch_limit_source.rs`.
+- 2026-09-06 (IGNORE x FK pin): INSERT IGNORE downgrades FK violations to a
+  skipped row (affected 0, nothing stored) while valid rows land; the
+  plain form refuses with the 1452 FK text. Pinned in
+  `crates/tidb-session/tests/ignore_fk_violation_source.rs`.
