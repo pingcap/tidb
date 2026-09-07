@@ -25,14 +25,23 @@ fn on_update_on_non_timestamp_is_rejected() {
 }
 
 #[test]
-fn timestamp_defaults_on_datetime_are_accepted() {
+fn datetime_default_current_timestamp_is_accepted() {
     let mut catalog = Catalog::default();
-    for sql in [
+    run_create_table_on(
         "create table t (a datetime default current_timestamp)",
+        &mut catalog,
+    )
+    .expect("datetime default current_timestamp creates fine");
+}
+
+#[test]
+fn datetime_default_on_update_is_accepted() {
+    let mut catalog = Catalog::default();
+    run_create_table_on(
         "create table t (a datetime default current_timestamp on update current_timestamp)",
-    ] {
-        run_create_table_on(sql, &mut catalog).expect(sql);
-    }
+        &mut catalog,
+    )
+    .expect("datetime default+on update creates fine");
 }
 
 #[test]
