@@ -298,6 +298,8 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitScanBytes).Add(finalized.units.ScanBytes)
 	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitNetBytes).Add(finalized.units.NetBytes)
 	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitFrontendCompileBytes).Add(finalized.units.FrontendCompileBytes)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitHashStateRows).Add(finalized.units.HashStateRows)
+	metrics.RUV3Unit.WithLabelValues(metrics.LblRUV3UnitJoinOutputRows).Add(finalized.units.JoinOutputRows)
 }
 
 func publishStatementRUCalibrationSafely(

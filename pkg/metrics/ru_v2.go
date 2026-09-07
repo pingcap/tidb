@@ -60,6 +60,8 @@ const (
 	LblRUV3UnitScanBytes            = "scan_bytes"
 	LblRUV3UnitNetBytes             = "net_bytes"
 	LblRUV3UnitFrontendCompileBytes = "frontend_compile_bytes"
+	LblRUV3UnitHashStateRows        = "hash_state_rows"
+	LblRUV3UnitJoinOutputRows       = "join_output_rows"
 )
 
 var (
