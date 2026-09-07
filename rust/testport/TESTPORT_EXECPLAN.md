@@ -10522,3 +10522,7 @@ risks without claiming repository-wide parity.
   virtual generated column with "VIRTUAL GENERATED" in Extra; SHOW COLUMNS
   resolves a schema-qualified target. Pinned in
   `crates/tidb-session/tests/describe_generated_show_qualified_source.rs`.
+- 2026-09-06 (TIME boundary pin): the max '838:59:59' stores, over-long
+  '839:00:00' fails strict with Go's 1264 text, and negative durations
+  store ('-100:00:00'). Pinned in
+  `crates/tidb-session/tests/time_boundary_writes_source.rs`.
