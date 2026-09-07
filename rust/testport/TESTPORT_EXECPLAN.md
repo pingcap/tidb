@@ -10602,3 +10602,13 @@ risks without claiming repository-wide parity.
   the common result type — int 1 renders as '1' beside 'abc', a NULL arm
   stays NULL beside 7. Pinned in
   `crates/tidb-session/tests/union_type_unification_source.rs`.
+- 2026-09-06 (mixed SET list recorded, NOT FIXED): `set autocommit = 1, @x
+  = 42` and `set @x = 42, autocommit = 1` both fail to parse — the parser
+  routes a SET to EITHER the system-variable form (parse_set_stmt, a loop
+  of SystemVariableAssignment) OR the user-variable form (SetUserVarStmt,
+  when the FIRST assignment is a @uservar), never mixing. Go's VariableAssignment
+  carries IsUserVar and one SetStmt holds both kinds. Fix: add a user-var
+  arm to parse_set_stmt's loop with a typed assignment union in the AST and
+  session dispatch for it. Queued as a parser+session feature (both files
+  sibling-owned); the homogeneous forms (`set @x = 42` and mixed
+  `set @x = 42, @y = 43`) already work and are pinned.
