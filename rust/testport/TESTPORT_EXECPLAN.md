@@ -9346,6 +9346,16 @@ risks without claiming repository-wide parity.
   focused regression failed with exactly three diagnostics before the edit and
   passes after; policy tests pass 11/11 and shared BDR tests pass 14/14.
   Evidence is recorded in `receipts/ddl_bdr.md`.
+- 2026-09-07 (`pkg/util/execdetails` RUv2 return contracts): the complete
+  eight-artifact Go inventory (5,936 lines) and its `tidb-util` RUv2 owner,
+  `tidb-exec` re-export, and consumer were re-read. Twenty-six Rust-only
+  `#[must_use]` diagnostics were removed from direct Go-shaped constructors,
+  accessors, aggregation, recorder, and formatting returns; atomic counters,
+  nil-option handling, and formatting behavior are unchanged. The focused
+  deny-on-discard regression failed with exactly 26 diagnostics before the
+  edit and passes after; the owner namespace passes 10/10 tests and the
+  `tidb-exec --all-targets` check is green. Evidence is recorded in
+  `receipts/util_execdetails.md` and `receipts/util_execdetails_audit.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

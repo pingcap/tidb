@@ -556,7 +556,6 @@ fn go_i64(v: u64) -> i64 {
 
 impl RuV2Metrics {
     /// Go `NewRUV2Metrics`: creates a new RUv2 metrics container.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -578,7 +577,6 @@ impl RuV2Metrics {
     }
 
     /// Go `Bypass`: whether statement-level RU accounting should be skipped.
-    #[must_use]
     pub fn bypass(&self) -> bool {
         self.bypass.load(Ordering::Relaxed)
     }
@@ -947,13 +945,11 @@ impl RuV2Metrics {
     }
 
     /// Go `ResultChunkCells`.
-    #[must_use]
     pub fn result_chunk_cells(&self) -> i64 {
         self.result_chunk_cells.load(Ordering::Relaxed)
     }
 
     /// Go `ExecutorL5InsertRows`.
-    #[must_use]
     pub fn executor_l5_insert_rows(&self) -> i64 {
         self.load_extra().map_or(0, |extra| {
             extra.executor_l5_insert_rows.load(Ordering::Relaxed)
@@ -961,13 +957,11 @@ impl RuV2Metrics {
     }
 
     /// Go `PlanCnt`.
-    #[must_use]
     pub fn plan_cnt(&self) -> i64 {
         self.plan_cnt.load(Ordering::Relaxed)
     }
 
     /// Go `PlanDeriveStatsPaths`.
-    #[must_use]
     pub fn plan_derive_stats_paths(&self) -> i64 {
         self.load_extra().map_or(0, |extra| {
             extra.plan_derive_stats_paths.load(Ordering::Relaxed)
@@ -975,25 +969,21 @@ impl RuV2Metrics {
     }
 
     /// Go `SessionParserTotal`.
-    #[must_use]
     pub fn session_parser_total(&self) -> i64 {
         self.session_parser_total.load(Ordering::Relaxed)
     }
 
     /// Go `TxnCnt`.
-    #[must_use]
     pub fn txn_cnt(&self) -> i64 {
         self.txn_cnt.load(Ordering::Relaxed)
     }
 
     /// Go `ResourceManagerReadCnt`.
-    #[must_use]
     pub fn resource_manager_read_cnt(&self) -> i64 {
         self.resource_manager_read_cnt.load(Ordering::Relaxed)
     }
 
     /// Go `ResourceManagerWriteCnt`.
-    #[must_use]
     pub fn resource_manager_write_cnt(&self) -> i64 {
         self.load_extra().map_or(0, |extra| {
             extra.resource_manager_write_cnt.load(Ordering::Relaxed)
@@ -1001,27 +991,23 @@ impl RuV2Metrics {
     }
 
     /// Go `WriteKeys`.
-    #[must_use]
     pub fn write_keys(&self) -> i64 {
         self.load_extra()
             .map_or(0, |extra| extra.write_keys.load(Ordering::Relaxed))
     }
 
     /// Go `WriteSize`.
-    #[must_use]
     pub fn write_size(&self) -> i64 {
         self.load_extra()
             .map_or(0, |extra| extra.write_size.load(Ordering::Relaxed))
     }
 
     /// Go `TiKVKVEngineCacheMiss`.
-    #[must_use]
     pub fn tikv_kv_engine_cache_miss(&self) -> i64 {
         self.tikv_kv_engine_cache_miss.load(Ordering::Relaxed)
     }
 
     /// Go `TiKVCoprocessorExecutorIterations`.
-    #[must_use]
     pub fn tikv_coprocessor_executor_iterations(&self) -> i64 {
         self.load_extra().map_or(0, |extra| {
             extra
@@ -1031,7 +1017,6 @@ impl RuV2Metrics {
     }
 
     /// Go `TiKVCoprocessorResponseBytes`.
-    #[must_use]
     pub fn tikv_coprocessor_response_bytes(&self) -> i64 {
         self.load_extra().map_or(0, |extra| {
             extra
@@ -1041,7 +1026,6 @@ impl RuV2Metrics {
     }
 
     /// Go `TiKVRaftstoreStoreWriteTriggerWB`.
-    #[must_use]
     pub fn tikv_raftstore_store_write_trigger_wb(&self) -> i64 {
         self.load_extra().map_or(0, |extra| {
             extra
@@ -1051,21 +1035,18 @@ impl RuV2Metrics {
     }
 
     /// Go `TiKVStorageProcessedKeysBatchGet`.
-    #[must_use]
     pub fn tikv_storage_processed_keys_batch_get(&self) -> i64 {
         self.tikv_storage_processed_keys_batch_get
             .load(Ordering::Relaxed)
     }
 
     /// Go `TiKVStorageProcessedKeysGet`.
-    #[must_use]
     pub fn tikv_storage_processed_keys_get(&self) -> i64 {
         self.tikv_storage_processed_keys_get.load(Ordering::Relaxed)
     }
 
     /// Go `IsZero`: checks whether all metrics are zero (a bypassed
     /// container counts as zero).
-    #[must_use]
     pub fn is_zero(&self) -> bool {
         if self.bypass() {
             return true;
@@ -1103,7 +1084,6 @@ impl RuV2Metrics {
     /// Go `CalculateRUValues`: calculates the current TiDB RU from the
     /// metrics using the provided weights (0 when bypassed; Go's nil
     /// receiver is handled by [`total_ru`]).
-    #[must_use]
     pub fn calculate_ru_values(&self, weights: RuV2Weights) -> f64 {
         if self.bypass() {
             return 0.0;
@@ -1223,7 +1203,6 @@ impl Clone for RuV2Metrics {
 
 /// Go `TotalRU`: the statement RU v2 total as TiDB + TiKV + TiFlash, on a
 /// possibly-nil (Go) receiver.
-#[must_use]
 pub fn total_ru(
     metrics: Option<&RuV2Metrics>,
     weights: RuV2Weights,
@@ -1296,7 +1275,6 @@ pub struct ExecutorMetricRecorder {
 
 impl ExecutorMetricRecorder {
     /// Go `Available`: reports whether this recorder was resolved.
-    #[must_use]
     pub fn available(&self) -> bool {
         self.kind != ExecL1Kind::None
     }
@@ -1318,7 +1296,6 @@ impl ExecutorMetricRecorder {
 
 /// Go `ResolveExecutorMetric`: returns a pre-resolved recorder for hot L1
 /// executor labels, or the zero recorder for everything else.
-#[must_use]
 pub fn resolve_executor_metric(level: i64, label: &str) -> ExecutorMetricRecorder {
     if level != 1 {
         return ExecutorMetricRecorder::default();
@@ -1355,7 +1332,6 @@ fn format_ruv2_label_map(values: &BTreeMap<String, i64>) -> String {
 
 /// Go `FormatRUV2Summary`: formats the RUv2 total and detailed metrics in
 /// one pass over the live metrics.
-#[must_use]
 pub fn format_ruv2_summary(
     metrics: Option<&RuV2Metrics>,
     weights: RuV2Weights,
@@ -1472,7 +1448,6 @@ pub fn format_ruv2_summary(
 }
 
 /// Go `FormatRUV2Total`: formats the RUv2 total into a slow log string.
-#[must_use]
 pub fn format_ruv2_total(
     metrics: Option<&RuV2Metrics>,
     weights: RuV2Weights,
@@ -1483,7 +1458,6 @@ pub fn format_ruv2_total(
 }
 
 /// Go `FormatRUV2Metrics`: formats RUv2 metrics into a compact detail string.
-#[must_use]
 pub fn format_ruv2_metrics(
     metrics: Option<&RuV2Metrics>,
     weights: RuV2Weights,
@@ -1496,6 +1470,39 @@ pub fn format_ruv2_metrics(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn ruv2_returns_may_be_ignored_like_go() {
+        RuV2Metrics::new();
+        let metrics = RuV2Metrics::new();
+        metrics.bypass();
+        metrics.result_chunk_cells();
+        metrics.executor_l5_insert_rows();
+        metrics.plan_cnt();
+        metrics.plan_derive_stats_paths();
+        metrics.session_parser_total();
+        metrics.txn_cnt();
+        metrics.resource_manager_read_cnt();
+        metrics.resource_manager_write_cnt();
+        metrics.write_keys();
+        metrics.write_size();
+        metrics.tikv_kv_engine_cache_miss();
+        metrics.tikv_coprocessor_executor_iterations();
+        metrics.tikv_coprocessor_response_bytes();
+        metrics.tikv_raftstore_store_write_trigger_wb();
+        metrics.tikv_storage_processed_keys_batch_get();
+        metrics.tikv_storage_processed_keys_get();
+        metrics.is_zero();
+        metrics.calculate_ru_values(RuV2Weights::default());
+        total_ru(None, RuV2Weights::default(), 0.0, 0.0);
+        resolve_executor_metric(1, "TableReader");
+        let recorder = resolve_executor_metric(1, "TableReader");
+        recorder.available();
+        format_ruv2_summary(None, RuV2Weights::default(), 0.0, 0.0);
+        format_ruv2_total(None, RuV2Weights::default(), 0.0, 0.0);
+        format_ruv2_metrics(None, RuV2Weights::default(), 0.0, 0.0);
+    }
 
     /// Go `defaultRUV2WeightsForTest`, sourced from
     /// `config.DefaultRUV2Config()`.

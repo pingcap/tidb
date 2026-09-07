@@ -212,3 +212,39 @@ Latest validation evidence:
 - `make lint` and `make bazel_prepare` are required Ready gates after this
   source/API batch. No Rust source changed, so pinned Rust formatting is not
   applicable to this batch.
+
+## Rust-only return-contract alignment (`util/execdetails`, 2026-09-07)
+
+This follow-up keeps the package explicitly unclaimed as a complete
+transcreation, but aligns the already-integrated RUv2 owner with Go's
+discardable-return contract. Before editing, all eight current Go artifacts
+were re-read and inventoried: `BUILD.bazel` (50 lines),
+`execdetails.go` (699), `execdetails_test.go` (1,371), `main_test.go` (32),
+`runtime_stats.go` (1,458), `ruv2_metrics.go` (1,095), `tiflash_stats.go`
+(918), and `util.go` (313), totaling 5,936 lines. The complete declaration
+inventory spans execution-detail merge/string/zap and cop-task methods;
+runtime-stat, hash-state, root/cop snapshot, analyze-byte, concurrency,
+commit, and RU methods; RUv2 context/counter/recorder/getter/calculation/
+formatting methods; TiFlash scan/columnar/wait/network methods; and context,
+percentile, and duration helpers. Every `Test*` in `execdetails_test.go` and
+the `TestMain` harness were checked. The package has no doc.go, fixture,
+testdata, benchmark, fuzz, generated input/output, platform-specific file, or
+build-tag variant.
+
+The Rust owner inventory was also re-read: `rust/crates/tidb-util/src/
+ruv2_metrics.rs` (1,880 lines), its 17-line `tidb-exec` re-export, and the
+1,520-line `tidb-exec/src/exec_details.rs` consumer. Exactly 26 Rust-only
+`#[must_use]` annotations were removed from the direct Go counterparts:
+`RuV2Metrics::new`, `bypass`, all 16 fixed-counter getters, `is_zero`,
+`calculate_ru_values`, `total_ru`, `ExecutorMetricRecorder::available`,
+`resolve_executor_metric`, and `format_ruv2_summary`, `format_ruv2_total`, and
+`format_ruv2_metrics`. No counter, atomic, option/nil, recorder, or formatting
+behavior changed.
+
+The focused regression `ruv2_returns_may_be_ignored_like_go` discards every
+corrected result under `#[deny(unused_must_use)]`. Its pre-fix compile failed
+with exactly 26 diagnostics and the post-fix run passed. The complete
+`ruv2_metrics::` owner namespace passed 10 tests; `tidb-exec --all-targets`
+checked successfully. Pinned nightly rustfmt, `git diff --check`, and Ready
+`make lint` passed. Because this is Rust-only and no Go/Bazel/module/import
+surface changed, `make bazel_prepare` was not required.
