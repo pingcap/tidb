@@ -9787,3 +9787,7 @@ risks without claiming repository-wide parity.
   IGNORE 'abc' into INT stores the zero value, strict WITHOUT ignore still
   rejects. DDL-family failure set is a strict subset of the clean-HEAD
   baseline (zero new).
+- 2026-09-06 (IGNORE dup-key and UPDATE IGNORE pins): `insert ignore` on a
+  duplicate primary key SKIPS the row (0 rows written, original intact);
+  `update ignore` truncates an over-long value with a warning. Both verified
+  faithful and pinned in `tests/insert_ignore_semantics_source.rs`.
