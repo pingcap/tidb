@@ -9936,3 +9936,8 @@ risks without claiming repository-wide parity.
   accepted (1.005 -> 1.01), overflow fails strict with Go's "Out of range
   value for column 'd' at row 1" (1264), IGNORE clamps to 99.99 / 255.
   Pinned in `tests/decimal_int_boundary_source.rs`.
+- 2026-09-06 (JSON/DATETIME write pins): JSON literals parse to the binary
+  form with sorted keys ('{"b": 2, "a": 1}' reads back '{"a": 1, "b": 2}');
+  invalid JSON fails with "Invalid JSON text" (3141); '2024-2-3' normalizes;
+  '2024-13-40' fails with "Incorrect datetime value ... at row 1" (1292).
+  Pinned in `tests/json_datetime_write_source.rs`.
