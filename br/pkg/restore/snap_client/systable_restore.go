@@ -29,8 +29,9 @@ import (
 )
 
 const (
-	sysUserTableName = "user"
-	sysDBTableName   = "db"
+	sysUserTableName     = "user"
+	sysDBTableName       = "db"
+	sysBindInfoTableName = "bind_info"
 )
 
 type compatibleMissingBackupSystemTableColumn struct {
@@ -51,6 +52,11 @@ var (
 		sysDBTableName: {
 			operateViewPrivColumnName: {
 				selectExpression: "'N'",
+			},
+		},
+		sysBindInfoTableName: {
+			"last_used_date": {
+				selectExpression: "NULL",
 			},
 		},
 	}

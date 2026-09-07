@@ -171,7 +171,15 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	// bind_info is also a recoverable system table and should be checked.
 	bindInfoTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("bind_info"))
 	require.NoError(t, err)
-	mockedBindInfoTI := cloneTableInfoWithoutColumn(bindInfoTI, "source")
+	mockedBindInfoTI := cloneTableInfoWithoutColumn(bindInfoTI, "last_used_date")
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedBindInfoTI,
+	}}, false)
+	require.NoError(t, err)
+	require.False(t, canLoadSysTablePhysical)
+
+	mockedBindInfoTI = cloneTableInfoWithoutColumn(bindInfoTI, "source")
 	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedBindInfoTI,
@@ -254,6 +262,15 @@ func TestBuildSystemTableReplaceColumns(t *testing.T) {
 	require.Contains(t, columnNames, "`operate_view_priv`")
 	require.Len(t, columnExpressions, len(columnNames))
 	require.Contains(t, columnExpressions, "'N'")
+
+	bindInfoTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("bind_info"))
+	require.NoError(t, err)
+	oldBindInfoTI := cloneTableInfoWithoutColumn(bindInfoTI, "last_used_date")
+	columnNames, columnExpressions, err = snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "bind_info", oldBindInfoTI, bindInfoTI)
+	require.NoError(t, err)
+	require.Contains(t, columnNames, "`last_used_date`")
+	require.Len(t, columnExpressions, len(columnNames))
+	require.Contains(t, columnExpressions, "NULL")
 
 	columnNames, columnExpressions, err = snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "user", userTI, userTI)
 	require.NoError(t, err)
@@ -516,9 +533,13 @@ func TestRestoreSystemSchemasUpgradeOperateViewPrivilege(t *testing.T) {
 		tableName    = "br_restore_operate_view_table"
 		keepUserName = "br_restore_operate_keep"
 		keepDBName   = "br_restore_operate_keep_db"
+		bindSQL      = "select /* br_restore_bind_info */ 1"
+		sqlDigest    = "br_restore_bind_sql_digest"
+		planDigest   = "br_restore_bind_plan_digest"
 	)
 	cleanup := func() {
 		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' OR sql_digest='%s' OR plan_digest='%s'", bindSQL, sqlDigest, planDigest))
 		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.tables_priv WHERE User='%s' AND Host='%%' AND DB='%s' AND Table_name='%s'", userName, dbName, tableName))
 		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", userName, dbName))
 		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.user WHERE User='%s' AND Host='%%'", userName))
@@ -538,17 +559,23 @@ func TestRestoreSystemSchemasUpgradeOperateViewPrivilege(t *testing.T) {
 	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.db DROP COLUMN Operate_view_priv")
 	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.tables_priv LIKE mysql.tables_priv")
 	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References') DEFAULT NULL")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.bind_info LIKE mysql.bind_info")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.bind_info DROP COLUMN last_used_date")
 
 	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.user (Host, User, authentication_string, plugin, Super_priv) VALUES ('%%', '%s', '', 'mysql_native_password', 'Y')", userName))
 	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.db (Host, DB, User, Show_view_priv) VALUES ('%%', '%s', '%s', 'Y')", dbName, userName))
 	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.tables_priv (Host, DB, User, Table_name, Table_priv) VALUES ('%%', '%s', '%s', '%s', 'Select,Show View')", dbName, userName, tableName))
+	tk.MustExec(fmt.Sprintf(`INSERT INTO __TiDB_BR_Temporary_mysql.bind_info (
+			original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest
+		) VALUES ('%s', '%s', '%s', 'enabled', '2020-01-01 00:00:00', '2020-01-01 00:00:00', 'utf8mb4', 'utf8mb4_bin', 'manual', '%s', '%s')`,
+		bindSQL, bindSQL, dbName, sqlDigest, planDigest))
 
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
 	tmpSysDB, ok := info.SchemaByName(utils.TemporaryDBName(mysql.SystemDB))
 	require.True(t, ok)
-	backupTables := make([]*metautil.Table, 0, 3)
-	for _, name := range []string{"user", "db", "tables_priv"} {
+	backupTables := make([]*metautil.Table, 0, 4)
+	for _, name := range []string{"user", "db", "tables_priv", "bind_info"} {
 		ti, err := restore.GetTableSchema(cluster.Domain, tmpSysDB.Name, ast.NewCIStr(name))
 		require.NoError(t, err)
 		backupTables = append(backupTables, &metautil.Table{DB: tmpSysDB, Info: ti})
@@ -573,6 +600,8 @@ func TestRestoreSystemSchemasUpgradeOperateViewPrivilege(t *testing.T) {
 		Check(testkit.Rows("N"))
 	tk.MustQuery(fmt.Sprintf("SELECT Operate_view_priv FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", keepUserName, keepDBName)).
 		Check(testkit.Rows("Y"))
+	tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM mysql.bind_info WHERE original_sql='%s' AND last_used_date IS NULL", bindSQL)).
+		Check(testkit.Rows("1"))
 }
 
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
