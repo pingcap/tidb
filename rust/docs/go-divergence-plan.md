@@ -104,12 +104,18 @@ fixtures remain the acceptance oracle.
 
 Then, independently of each other:
 
-- **#202 — name‑key the column references.** Generated‑column expressions,
-  partition expressions and FK columns address columns by offset; three mutators
-  shift offsets and none remaps them. Go is name‑keyed and cannot have this bug.
-  Decide whether the compiled expression should hold names and resolve at
-  evaluation time; remapping the three mutators leaves the next one free to
-  forget.
+- **#202 — name‑key the column references.** INVESTIGATED (2026-09-08):
+  the persisted catalog representations are already name-based —
+  `FKInfo` stores `CiString` column names, `PartitionDefinition` stores
+  text bounds, generated columns store `generated_expr_string` reparsed
+  through name-based resolution. The offset-keyed reference issue
+  applies to the RUNTIME expression tree after planning (where
+  `ColumnRef` nodes carry `offset` fields into the schema column list).
+  The three mutators (`add_column_action`/`modify_column_action`/
+  `drop_column_action`) shift those offsets without remapping. Fix
+  scope: remap `ColumnRef.offset` in the runtime expression trees of
+  generated-column, partition, and FK plans during column-list
+  mutations.
 - **#196 — identifier case mapping.** CLOSED (2026-09-08, migration
   complete across all production crates): ~210 `to_lowercase()`/
   `to_uppercase()` call sites migrated to `tidb_hack`'s `go_to_lower`/
