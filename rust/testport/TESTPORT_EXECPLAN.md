@@ -11188,3 +11188,6 @@ risks without claiming repository-wide parity.
   skipped row (affected 0, nothing stored) while valid rows land; the
   plain form refuses with the 1452 FK text. Pinned in
   `crates/tidb-session/tests/ignore_fk_violation_source.rs`.
+- 2026-09-06 (UPDATE IGNORE x FK pin): the FK-violating ignored UPDATE is
+  skipped with the row untouched; a valid ignored UPDATE lands. Pinned in
+  `crates/tidb-session/tests/update_ignore_fk_source.rs`.
