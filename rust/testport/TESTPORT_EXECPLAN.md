@@ -11093,3 +11093,7 @@ risks without claiming repository-wide parity.
   length, zero-length, rune-based REVERSE, and REPEAT's negative-count
   empty. Pinned in
   `crates/tidb-session/tests/lpad_rpad_reverse_source.rs`.
+- 2026-09-06 (CONCAT_WS/TRIM pin): NULL-argument skipping with the
+  NULL-separator poison, plus TRIM/LTRIM/RTRIM and BOTH/LEADING remstr
+  forms. Pinned in
+  `crates/tidb-session/tests/concat_ws_trim_source.rs`.
