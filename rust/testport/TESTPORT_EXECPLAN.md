@@ -10849,3 +10849,7 @@ risks without claiming repository-wide parity.
   marker. Executor-side wiring is queued behind the sibling affinity
   stream (server tier already syncs the flag). Plan + oracle positions in
   `rust/docs/table-option-affinity-divergence.md`.
+- 2026-09-06 (TTL markers pin): the TTL option family round-trips through
+  SHOW CREATE as three version-gated markers (`TTL=`, `TTL_ENABLE`,
+  `TTL_JOB_INTERVAL`); `TTL_ENABLE` takes a quoted string literal. Pinned
+  in `crates/tidb-session/tests/ttl_show_create_source.rs`.
