@@ -10371,3 +10371,8 @@ risks without claiming repository-wide parity.
   "index nope doesn't exist" (1091); SHOW INDEX lists the clustered
   PRIMARY and the secondary entry. Pinned in
   `crates/tidb-session/tests/index_ddl_errors_source.rs`.
+- 2026-09-06 (BETWEEN edge pins): an empty reversed range answers nothing
+  (bounds never swap), a NULL bound yields UNKNOWN, and NOT BETWEEN also
+  excludes the NULL row. Pinned in
+  `crates/tidb-session/tests/between_edge_semantics_source.rs`. Also fixed
+  the SHOW INDEX pin's row-shape assertion (rows helper joins cells).

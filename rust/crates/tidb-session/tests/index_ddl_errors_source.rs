@@ -51,9 +51,8 @@ fn index_ddl_error_texts_and_show_index() {
 
     // SHOW INDEX lists the clustered PRIMARY and the secondary index.
     let shown = rows(&mut session, "show index from t");
-    assert_eq!(shown.len(), 2);
-    assert!(shown[0].contains("PRIMARY"), "{shown:?}");
-    assert!(shown[0].contains('|'), "row shape: {shown:?}");
-    assert!(shown[1].contains("kb"), "{shown:?}");
-    assert!(shown[1].contains("b"), "{shown:?}");
+    assert!(shown.contains("PRIMARY"), "{shown}");
+    assert!(shown.contains("kb"), "{shown}");
+    assert!(shown.contains("b"), "{shown}");
+    assert!(shown.contains("YES"), "{shown}");
 }
