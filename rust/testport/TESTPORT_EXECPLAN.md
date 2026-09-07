@@ -10099,3 +10099,7 @@ risks without claiming repository-wide parity.
   rows and keeps independent storage; RENAME TABLE carries the rows and the
   old name goes missing (1146). Pinned in
   `crates/tidb-session/tests/like_rename_lifecycle_source.rs`.
+- 2026-09-06 (index enforcement lifecycle pin): ADD UNIQUE INDEX enforces the
+  composite key with the dash-separated "Duplicate entry '5-7' for key
+  't.uq'" format; DROP INDEX removes the enforcement. Pinned in
+  `crates/tidb-session/tests/index_enforcement_lifecycle_source.rs`.
