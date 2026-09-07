@@ -10288,3 +10288,8 @@ risks without claiming repository-wide parity.
   SUM(DISTINCT) (DECIMAL fold asserted by digit bytes), multi-column
   COUNT(DISTINCT a, b) counting tuples, and the semantics under GROUP BY.
   Pinned in `crates/tidb-session/tests/distinct_aggregates_source.rs`.
+- 2026-09-06 (self-referencing INSERT SELECT pin): reading and writing the
+  same table in one statement uses the PRE-statement snapshot — `a + 10`
+  over {1,2} yields {11,12} without a feedback loop; `max(a) + 100`
+  appends one row from the current snapshot. Pinned in
+  `crates/tidb-session/tests/self_insert_select_source.rs`.
