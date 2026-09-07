@@ -9928,3 +9928,7 @@ risks without claiming repository-wide parity.
   stores as-is; 2156 under strict fails with Go's "Out of range value for
   column 'y' at row 1" (1264) and under IGNORE clamps to the 2155 boundary.
   Pinned in `tests/binary_year_write_source.rs`.
+- 2026-09-06 (ENUM/SET write pins): string and numeric literals resolve to
+  members ('y'==2, 3=='z', 'p,r'==5, 2=='q'); out-of-range ENUM fails strict
+  with 1265 and stores the empty enum under IGNORE; unknown SET members
+  truncate strictly. Pinned in `tests/enum_set_write_source.rs`.
