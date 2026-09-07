@@ -11221,3 +11221,7 @@ risks without claiming repository-wide parity.
   Go reports 1115 at bind — recorded as a minor text-layer difference,
   not pinned). Pinned in
   `crates/tidb-session/tests/set_names_collation_source.rs`.
+- 2026-09-06 (LOWER/UPPER pin): ASCII and accented folding, the Greek
+  final-sigma hazard (Σ -> σ via the simple mapping, not the word-final
+  ς a full Unicode fold produces), and NULL propagation. Pinned in
+  `crates/tidb-session/tests/lower_upper_case_source.rs`.
