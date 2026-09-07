@@ -11245,3 +11245,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (JSON mutation pin): SET/REPLACE/INSERT path discipline,
   REMOVE, RFC 7396 merge-patch null deletion, and JSON_CONTAINS. Pinned
   in `crates/tidb-session/tests/json_mutation_source.rs`.
+- 2026-09-06 (calendar/time arith pin): YEARWEEK's year-of-week convention,
+  ODBC DAYOFWEEK, DAYOFYEAR, and midnight-crossing ADDTIME/SUBTIME.
+  Pinned in `crates/tidb-session/tests/calendar_time_arith_source.rs`.
