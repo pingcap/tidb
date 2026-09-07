@@ -91,6 +91,120 @@ func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *t
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
+func TestDropOrTruncateTableRecheckMaterializedViewConstraints(t *testing.T) {
+	tests := []struct {
+		name                string
+		ddl                 string
+		op                  string
+		afterCheckFailpoint string
+	}{
+		{
+			name:                "drop table",
+			ddl:                 "drop table t_drop_or_truncate_mlog_recheck",
+			op:                  "DROP TABLE",
+			afterCheckFailpoint: "github.com/pingcap/tidb/pkg/ddl/afterCheckDropTableMaterializedViewConstraints",
+		},
+		{
+			name:                "truncate table",
+			ddl:                 "truncate table t_drop_or_truncate_mlog_recheck",
+			op:                  "TRUNCATE TABLE",
+			afterCheckFailpoint: "github.com/pingcap/tidb/pkg/ddl/afterCheckTruncateTableMaterializedViewConstraints",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := newMViewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_drop_or_truncate_mlog_recheck (a int)")
+
+			const baseTableName = "t_drop_or_truncate_mlog_recheck"
+			baseTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(baseTableName))
+			require.NoError(t, err)
+			baseTableID := baseTable.Meta().ID
+			mlogTableName := model.MaterializedViewLogTableName(ast.NewCIStr(baseTableName))
+
+			createStartedCh := make(chan struct{})
+			allowCreateCh := make(chan struct{})
+			var createStartedOnce sync.Once
+			var allowCreateOnce sync.Once
+			allowCreate := func() {
+				allowCreateOnce.Do(func() {
+					close(allowCreateCh)
+				})
+			}
+			t.Cleanup(allowCreate)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type != model.ActionCreateMaterializedViewLog || job.TableName != mlogTableName.L {
+					return
+				}
+				createStartedOnce.Do(func() {
+					close(createStartedCh)
+				})
+				<-allowCreateCh
+			})
+
+			createErrCh := make(chan error, 1)
+			go func() {
+				tkCreate := newMViewTestKit(t, store)
+				tkCreate.MustExec("use test")
+				createErrCh <- tkCreate.ExecToErr("create materialized view log on t_drop_or_truncate_mlog_recheck (a)")
+			}()
+			select {
+			case <-createStartedCh:
+			case <-time.After(10 * time.Second):
+				t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG worker")
+			}
+
+			entryCheckDoneCh := make(chan struct{})
+			var entryCheckDoneOnce sync.Once
+			testfailpoint.EnableCall(t, tt.afterCheckFailpoint, func(tableID int64) {
+				if tableID == baseTableID {
+					entryCheckDoneOnce.Do(func() {
+						close(entryCheckDoneCh)
+					})
+				}
+			})
+			ddlErrCh := make(chan error, 1)
+			go func() {
+				tkDDL := newMViewTestKit(t, store)
+				tkDDL.MustExec("use test")
+				ddlErrCh <- tkDDL.ExecToErr(tt.ddl)
+			}()
+			select {
+			case <-entryCheckDoneCh:
+			case <-time.After(10 * time.Second):
+				t.Fatal("timeout waiting for DDL materialized view constraint precheck")
+			}
+
+			allowCreate()
+			select {
+			case err := <-createErrCh:
+				require.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG")
+			}
+			select {
+			case err := <-ddlErrCh:
+				require.ErrorContains(t, err, tt.op+" on base table with materialized view log")
+			case <-time.After(10 * time.Second):
+				t.Fatal("timeout waiting for DDL job")
+			}
+
+			is := dom.InfoSchema()
+			baseTable, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(baseTableName))
+			require.NoError(t, err)
+			require.Equal(t, baseTableID, baseTable.Meta().ID)
+			require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+			mlogTable, ok := is.TableByID(context.Background(), baseTable.Meta().MaterializedViewBase.MLogID)
+			require.True(t, ok)
+			require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
+			require.Equal(t, baseTableID, mlogTable.Meta().MaterializedViewLog.BaseTableID)
+		})
+	}
+}
+
 func TestDropMaterializedViewRefreshInfoFailureRollsBackMetadata(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newMViewTestKit(t, store)

@@ -4471,6 +4471,7 @@ func (e *executor) dropTableObject(
 				if err := checkTableMaterializedViewConstraints(tableInfo.Meta(), "DROP TABLE"); err != nil {
 					return errors.Trace(err)
 				}
+				failpoint.InjectCall("afterCheckDropTableMaterializedViewConstraints", tableInfo.Meta().ID)
 			}
 
 			tempTableType := tableInfo.Meta().TempTableType
@@ -4689,6 +4690,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if err := checkTableMaterializedViewConstraints(tblInfo, "TRUNCATE TABLE"); err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.InjectCall("afterCheckTruncateTableMaterializedViewConstraints", tblInfo.ID)
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}

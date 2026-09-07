@@ -78,6 +78,10 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 	case model.StatePublic:
 		// public -> write only
 		if job.Type == model.ActionDropTable {
+			if err = checkTableMaterializedViewConstraints(tblInfo, "DROP TABLE"); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 			err = checkDropTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, args)
 			if err != nil {
 				return ver, err
@@ -504,6 +508,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
+	}
+	if err = checkTableMaterializedViewConstraints(tblInfo, "TRUNCATE TABLE"); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 	// Copy the old tableInfo for later usage.
 	oldTblInfo := tblInfo.Clone()
