@@ -10205,3 +10205,6 @@ risks without claiming repository-wide parity.
   in the same recorded class as uncorrelated scalar subqueries and static
   partition pruning details. Queued behind the sibling planner stream that
   owns the dispatcher.
+- 2026-09-06 (cross-schema pin): second-schema DDL/DML, USE switching,
+  qualified reads from both schemas, and a cross-schema join. Pinned in
+  `crates/tidb-session/tests/cross_database_source.rs`.
