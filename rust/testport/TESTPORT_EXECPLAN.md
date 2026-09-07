@@ -11205,3 +11205,6 @@ risks without claiming repository-wide parity.
   with an internal error. The half-built state, the missing pieces, and a
   5-step implementation plan are in `rust/docs/rollup-expander-gap.md`.
   Feature-sized; queued.
+- 2026-09-06 (ODKU affected pin): changed duplicates report 2 (MySQL's
+  delete+insert convention), no-op duplicates report 0. Pinned in
+  `crates/tidb-session/tests/odku_noop_affected_source.rs`.
