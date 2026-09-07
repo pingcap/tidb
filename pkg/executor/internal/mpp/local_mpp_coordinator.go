@@ -584,11 +584,9 @@ func (c *localMppCoordinator) dispatchAll(ctx context.Context) {
 		if atomic.LoadUint32(&c.closed) == 1 {
 			break
 		}
-		c.mu.Lock()
-		if task.State == kv.MppTaskReady {
-			task.State = kv.MppTaskRunning
+		if !c.tryStartDispatch(task) {
+			continue
 		}
-		c.mu.Unlock()
 		c.wg.Add(1)
 		boMaxSleep := copr.CopNextMaxBackoff
 		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
@@ -607,6 +605,19 @@ func (c *localMppCoordinator) dispatchAll(ctx context.Context) {
 	c.wg.Wait()
 	close(c.wgDoneChan)
 	close(c.respChan)
+}
+
+func (c *localMppCoordinator) tryStartDispatch(task *kv.MPPDispatchRequest) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Use the same lock as cancelMppTasks so starting and cancelling a task are
+	// ordered. If cancellation wins, dispatchAll skips the task. If dispatch
+	// wins, the task is running and its store is included in the cancel request.
+	if task.State != kv.MppTaskReady {
+		return false
+	}
+	task.State = kv.MppTaskRunning
+	return true
 }
 
 func (c *localMppCoordinator) sendError(err error) {
