@@ -10792,3 +10792,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (LIKE copies generated pin): CREATE TABLE LIKE copies the
   generated column; the copy computes on insert. Pinned in
   `crates/tidb-session/tests/like_copies_generated_source.rs`.
+- 2026-09-06 (generated write refusal pin): explicit writes to a generated
+  column — INSERT and UPDATE — fail with Go's exact ErrBadGeneratedColumn
+  text. Pinned in
+  `crates/tidb-session/tests/generated_write_refusal_source.rs`.
