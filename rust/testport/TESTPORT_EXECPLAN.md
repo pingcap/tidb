@@ -10730,3 +10730,7 @@ risks without claiming repository-wide parity.
   key fails with Go's exact 1553 text "Cannot drop index 'ik': needed in a
   foreign key constraint". Pinned in
   `crates/tidb-session/tests/fk_index_guard_source.rs`.
+- 2026-09-06 (NOT ENFORCED SHOW CREATE pin): SHOW CREATE restores a NOT
+  ENFORCED CHECK with TiDB's version-gated comment form: CONSTRAINT
+  `chk_b` CHECK ((`b` > 0)) /*!80016 NOT ENFORCED */. Pinned in
+  `crates/tidb-session/tests/not_enforced_show_create_source.rs`.
