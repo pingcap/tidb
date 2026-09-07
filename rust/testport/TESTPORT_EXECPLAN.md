@@ -10959,3 +10959,7 @@ risks without claiming repository-wide parity.
   ConstructResultOfShowCreateSequence shape round-trips with defaults
   filled (minvalue 1, maxvalue MaxInt64-1). Pinned in
   `crates/tidb-session/tests/show_create_sequence_source.rs`.
+- 2026-09-06 (LASTVAL session-state pin): LASTVAL before any NEXTVAL
+  returns NULL (sequence_state.go:42-52 "not cached" flag) and populates
+  after the first NEXTVAL. Pinned in
+  `crates/tidb-session/tests/lastval_session_state_source.rs`.
