@@ -10638,3 +10638,6 @@ risks without claiming repository-wide parity.
   groups by the ascending key and sorts the second key descending within
   each group. Pinned in
   `crates/tidb-session/tests/mixed_direction_order_source.rs`.
+- 2026-09-06 (ADD INDEX IF NOT EXISTS pin): the first run creates the index
+  and the second run is a no-op — exactly one `kb` entry on the table.
+  Pinned in `crates/tidb-session/tests/add_index_if_not_exists_source.rs`.
