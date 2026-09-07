@@ -337,7 +337,7 @@ func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskE
 			log.Info("meet task event", zap.Stringer("event", &e))
 			if err := c.onTaskEvent(ctx, e); err != nil {
 				if errors.Cause(e.Err) != context.Canceled {
-					log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
+					log.Warn("listen task meet error, would reopen.", logutil.ShortError(err))
 					return err
 				}
 				return nil
@@ -396,7 +396,7 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 				log.Info("Meet task event", zap.String("category", "log backup advancer"), zap.Stringer("event", &e))
 				if err := c.onTaskEvent(ctx, e); err != nil {
 					if errors.Cause(e.Err) != context.Canceled {
-						log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
+						log.Warn("listen task meet error, would reopen.", logutil.ShortError(err))
 						time.AfterFunc(c.cfg.BackoffTime, func() { c.StartTaskListener(ctx) })
 					}
 					log.Info("Task watcher exits due to some error.", zap.String("category", "log backup advancer"),
