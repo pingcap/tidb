@@ -10366,3 +10366,8 @@ risks without claiming repository-wide parity.
   left-associative with dedup at each step ({1,2,3,4}−{3,5}={1,2,4}), and
   the output columns take the FIRST arm's names. Pinned in
   `crates/tidb-session/tests/set_chain_names_source.rs`.
+- 2026-09-06 (index DDL error pin): duplicate index name fails with Go's
+  "Duplicate key name 'kb'" (1061); dropping a missing index fails with
+  "index nope doesn't exist" (1091); SHOW INDEX lists the clustered
+  PRIMARY and the secondary entry. Pinned in
+  `crates/tidb-session/tests/index_ddl_errors_source.rs`.
