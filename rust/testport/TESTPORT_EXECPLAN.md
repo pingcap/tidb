@@ -10813,3 +10813,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (REPLACE new auto-inc pin): REPLACE that collides allocates a
   NEW auto-increment id for the replacement row (delete + insert). Pinned
   in `crates/tidb-session/tests/replace_new_auto_inc_source.rs`.
+- 2026-09-06 (delete no-id-reuse pin): the auto-increment counter never
+  rewinds — a deleted max-id row's id is not reused. Pinned in
+  `crates/tidb-session/tests/delete_no_id_reuse_source.rs`.
