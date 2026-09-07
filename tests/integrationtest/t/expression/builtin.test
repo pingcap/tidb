@@ -870,6 +870,63 @@ select hex(trim('\t   bar\n   ')), hex(trim('   \rbar   \t'));
 select hex(trim(leading from '   bar')), hex(trim('x' from 'xxxbarxxx')), hex(trim('x' from 'bar')), hex(trim('' from '   bar   '));
 select hex(trim('')), hex(trim('x' from ''));
 select hex(trim(null from 'bar')), hex(trim('x' from null)), hex(trim(null)), hex(trim(leading null from 'bar'));
+drop table if exists t_trim_pushdown;
+create table t_trim_pushdown(
+  id int primary key,
+  c varchar(64) charset utf8mb4 collate utf8mb4_general_ci
+);
+insert into t_trim_pushdown values
+  (1, 'aaaaa'),
+  (2, 'ppp'),
+  (3, 'xyxyx');
+explain format = 'brief' select /*+ read_from_storage(tikv[t_trim_pushdown]) */ id from t_trim_pushdown where trim('aaa' from c) = 'aa' order by id;
+explain format = 'brief' select /*+ read_from_storage(tikv[t_trim_pushdown]) */ id from t_trim_pushdown where trim(both 'pp' from c) = 'p' order by id;
+explain format = 'brief' select /*+ read_from_storage(tikv[t_trim_pushdown]) */ id from t_trim_pushdown where trim(both 'xyx' from c) = 'yx' order by id;
+delete from mysql.expr_pushdown_blacklist where name = 'trim' and store_type = 'tikv,tiflash,tidb' and reason = 'for trim pushdown test';
+admin reload expr_pushdown_blacklist;
+create temporary table trim_push_on(id int primary key);
+insert into trim_push_on select id from t_trim_pushdown where trim('aaa' from c) = 'aa' order by id;
+insert into mysql.expr_pushdown_blacklist values('trim', 'tikv,tiflash,tidb', 'for trim pushdown test');
+admin reload expr_pushdown_blacklist;
+create temporary table trim_push_off(id int primary key);
+insert into trim_push_off select id from t_trim_pushdown where trim('aaa' from c) = 'aa' order by id;
+select ifnull((select group_concat(id order by id) from trim_push_on), '<empty>') as push_on,
+       ifnull((select group_concat(id order by id) from trim_push_off), '<empty>') as push_off,
+       ifnull((select group_concat(id order by id) from trim_push_on), '<empty>') =
+       ifnull((select group_concat(id order by id) from trim_push_off), '<empty>') as same;
+drop temporary table trim_push_on;
+drop temporary table trim_push_off;
+delete from mysql.expr_pushdown_blacklist where name = 'trim' and store_type = 'tikv,tiflash,tidb' and reason = 'for trim pushdown test';
+admin reload expr_pushdown_blacklist;
+create temporary table trim_push_on(id int primary key);
+insert into trim_push_on select id from t_trim_pushdown where trim(both 'pp' from c) = 'p' order by id;
+insert into mysql.expr_pushdown_blacklist values('trim', 'tikv,tiflash,tidb', 'for trim pushdown test');
+admin reload expr_pushdown_blacklist;
+create temporary table trim_push_off(id int primary key);
+insert into trim_push_off select id from t_trim_pushdown where trim(both 'pp' from c) = 'p' order by id;
+select ifnull((select group_concat(id order by id) from trim_push_on), '<empty>') as push_on,
+       ifnull((select group_concat(id order by id) from trim_push_off), '<empty>') as push_off,
+       ifnull((select group_concat(id order by id) from trim_push_on), '<empty>') =
+       ifnull((select group_concat(id order by id) from trim_push_off), '<empty>') as same;
+drop temporary table trim_push_on;
+drop temporary table trim_push_off;
+delete from mysql.expr_pushdown_blacklist where name = 'trim' and store_type = 'tikv,tiflash,tidb' and reason = 'for trim pushdown test';
+admin reload expr_pushdown_blacklist;
+create temporary table trim_push_on(id int primary key);
+insert into trim_push_on select id from t_trim_pushdown where trim(both 'xyx' from c) = 'yx' order by id;
+insert into mysql.expr_pushdown_blacklist values('trim', 'tikv,tiflash,tidb', 'for trim pushdown test');
+admin reload expr_pushdown_blacklist;
+create temporary table trim_push_off(id int primary key);
+insert into trim_push_off select id from t_trim_pushdown where trim(both 'xyx' from c) = 'yx' order by id;
+select ifnull((select group_concat(id order by id) from trim_push_on), '<empty>') as push_on,
+       ifnull((select group_concat(id order by id) from trim_push_off), '<empty>') as push_off,
+       ifnull((select group_concat(id order by id) from trim_push_on), '<empty>') =
+       ifnull((select group_concat(id order by id) from trim_push_off), '<empty>') as same;
+drop temporary table trim_push_on;
+drop temporary table trim_push_off;
+delete from mysql.expr_pushdown_blacklist where name = 'trim' and store_type = 'tikv,tiflash,tidb' and reason = 'for trim pushdown test';
+admin reload expr_pushdown_blacklist;
+drop table if exists t_trim_pushdown;
 drop table if exists t;
 create table t(a char(20), b int, c double, d datetime, e time, f binary(5));
 insert into t values('www.pingcap.com', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01", "HelLo");
