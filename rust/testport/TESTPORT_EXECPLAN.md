@@ -10116,3 +10116,10 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (ADD/DROP COLUMN pin): ADD COLUMN backfills existing rows with
   the default, AFTER positions the column, DROP COLUMN removes it. Pinned
   in `crates/tidb-session/tests/add_drop_column_source.rs`.
+- 2026-09-06 (unknown-column clause texts recorded): unknown columns answer
+  "Unknown column 'x' in 'expression'" in every context; Go reports the
+  resolution site's clause ('field list' / 'where clause' / 'order clause' /
+  ...). The port's resolution lacks per-clause context — fixing it needs a
+  clause label through the ColumnResolver contract and per-clause rewrites in
+  the SELECT builder; recorded rather than half-landed (an in-flight attempt
+  was reverted in the same session). Kept behavior-neutral.
