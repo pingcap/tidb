@@ -9899,3 +9899,11 @@ risks without claiming repository-wide parity.
   `tests/insert_statement_atomicity_source.rs` fail on the old code and
   pass with the fix. The two sweep failures (dml source-text parity
   assertion, spill flake) verified pre-existing on clean HEAD.
+- 2026-09-06 (UPDATE statement atomicity port, REAL DIVERGENCE): a CHECK
+  violation on a LATER row of a multi-row UPDATE failed the statement but
+  LEFT the earlier rewrites applied (row 1 moved to 100). Go runs the write
+  phase in one transaction. The non-ignore staged-write loop now records the
+  applied prefix and replays it in reverse on failure (pre-images come from
+  the rewrites themselves). Pin
+  `tests/update_statement_atomicity_source.rs` fails on the old code and
+  passes with the fix; the CHECK-family pins stay green.

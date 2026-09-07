@@ -3121,9 +3121,23 @@ fn run_update_with_physical(
             let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                 unreachable!("only a byte-backed table stages rewrites")
             };
+            // Go's UPDATE runs in one transaction: a failure on a LATER row
+            // (a violated CHECK, a duplicate key) rolls back the EARLIER rows
+            // this statement already rewrote, while the allocator state does
+            // not rewind. The rewrites carry each row's pre-image, so the
+            // applied prefix replays in reverse on failure.
+            let mut applied: Vec<(crate::kv_table::TableHandle, Vec<Datum>)> = Vec::new();
             for (handle, old_row, new_row) in &rewrites {
-                kv.update_row_with_old_context(handle, Some(old_row), new_row, ctx)
-                    .map_err(kv_write_error)?;
+                match kv.update_row_with_old_context(handle, Some(old_row), new_row, ctx) {
+                    Ok(()) => applied.push((handle.clone(), old_row.clone())),
+                    Err(error) => {
+                        for (undone_handle, undone_row) in applied.drain(..).rev() {
+                            kv.update_row_with_context(&undone_handle, &undone_row, ctx)
+                                .map_err(|e| kv_read_error("rollback restore failed", e))?;
+                        }
+                        return Err(kv_write_error(error));
+                    }
+                }
                 changed += 1;
             }
         }
