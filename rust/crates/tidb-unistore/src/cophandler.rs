@@ -1483,6 +1483,40 @@ pub enum SimpleExpr {
     Func(SimpleSig, Vec<SimpleExpr>),
 }
 
+/// The date-argument channel of one upstream `AddDate`/`SubDate` type
+/// pair: Go `builtinAddSubDateAsStringSig` parses non-temporal sources,
+/// the `DatetimeAny` sig reads typed datetimes, and the `DurationAny`
+/// sig reads durations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DateArithArg {
+    /// The string source: Go `getDateFromString`.
+    String,
+    /// The integer source: Go `getDateFromInt`.
+    Int,
+    /// The binary64 source: Go `getDateFromReal`.
+    Real,
+    /// The decimal source: Go `getDateFromDecimal`.
+    Decimal,
+    /// The datetime source: Go `getDateFromDatetime`.
+    Datetime,
+    /// The duration source: Go `builtinAddSubDateDurationAnySig`.
+    Duration,
+}
+
+/// The interval-argument channel of one upstream `AddDate`/`SubDate`
+/// type pair; every channel reduces to interval text (Go `getInterval*`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IntervalArg {
+    /// Go `getIntervalFromString`.
+    String,
+    /// Go `getIntervalFromInt`.
+    Int,
+    /// Go `getIntervalFromReal`.
+    Real,
+    /// Go `getIntervalFromDecimal`.
+    Decimal,
+}
+
 /// The supported `ScalarFuncSig` subset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SimpleSig {
@@ -1588,6 +1622,21 @@ pub enum SimpleSig {
     /// re-reading the text in one base and re-formatting it in the
     /// other (bases 2..=36; a negative base marks signed in/output).
     Conv,
+    /// `AddDate`/`SubDate` over (date, interval, unit): one upstream id
+    /// per (date channel, interval channel, operation), with the
+    /// duration sources split by their answer kind -- Go
+    /// `builtinAddSubDate{AsString,DatetimeAny,DurationAny}Sig`.
+    AddSubDate {
+        /// `SubDate` negates the interval (Go `c.timeOp`).
+        subtract: bool,
+        /// The date-argument channel.
+        date: DateArithArg,
+        /// The interval-argument channel.
+        interval: IntervalArg,
+        /// The `*Datetime` upstream ids answer a datetime; the plain
+        /// duration ids answer a duration.
+        datetime_result: bool,
+    },
     /// See [`SimpleSig::CharLengthUtf8`].
     UpperUtf8,
     /// See [`SimpleSig::CharLengthUtf8`].
@@ -1937,6 +1986,342 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::Lower => SimpleSig::Lower,
             tipb::ScalarFuncSig::DateFormatSig => SimpleSig::DateFormatSig,
             tipb::ScalarFuncSig::Conv => SimpleSig::Conv,
+            tipb::ScalarFuncSig::AddDateStringString => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::String,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateStringInt => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::String,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateStringDecimal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::String,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateIntString => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Int,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateIntInt => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Int,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDatetimeString => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Datetime,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDatetimeInt => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Datetime,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateStringString => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::String,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateStringInt => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::String,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateStringDecimal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::String,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateIntString => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Int,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateIntInt => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Int,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDatetimeString => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Datetime,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDatetimeInt => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Datetime,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateStringReal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::String,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateIntReal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Int,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateIntDecimal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Int,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDatetimeReal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Datetime,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDatetimeDecimal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Datetime,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDurationString => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDurationInt => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDurationReal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDurationDecimal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateStringReal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::String,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateIntReal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Int,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateIntDecimal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Int,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDatetimeReal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Datetime,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDatetimeDecimal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Datetime,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDurationString => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDurationInt => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDurationReal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDurationDecimal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDurationStringDatetime => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::String,
+                datetime_result: true,
+            },
+            tipb::ScalarFuncSig::AddDateDurationIntDatetime => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Int,
+                datetime_result: true,
+            },
+            tipb::ScalarFuncSig::AddDateDurationRealDatetime => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Real,
+                datetime_result: true,
+            },
+            tipb::ScalarFuncSig::AddDateDurationDecimalDatetime => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Decimal,
+                datetime_result: true,
+            },
+            tipb::ScalarFuncSig::SubDateDurationStringDatetime => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::String,
+                datetime_result: true,
+            },
+            tipb::ScalarFuncSig::SubDateDurationIntDatetime => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Int,
+                datetime_result: true,
+            },
+            tipb::ScalarFuncSig::SubDateDurationRealDatetime => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Real,
+                datetime_result: true,
+            },
+            tipb::ScalarFuncSig::SubDateDurationDecimalDatetime => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Duration,
+                interval: IntervalArg::Decimal,
+                datetime_result: true,
+            },
+            tipb::ScalarFuncSig::AddDateRealString => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Real,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateRealInt => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Real,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateRealReal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Real,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateRealDecimal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Real,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDecimalString => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Decimal,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDecimalInt => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Decimal,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDecimalReal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Decimal,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::AddDateDecimalDecimal => SimpleSig::AddSubDate {
+                subtract: false,
+                date: DateArithArg::Decimal,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateRealString => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Real,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateRealInt => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Real,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateRealReal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Real,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateRealDecimal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Real,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDecimalString => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Decimal,
+                interval: IntervalArg::String,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDecimalInt => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Decimal,
+                interval: IntervalArg::Int,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDecimalReal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Decimal,
+                interval: IntervalArg::Real,
+                datetime_result: false,
+            },
+            tipb::ScalarFuncSig::SubDateDecimalDecimal => SimpleSig::AddSubDate {
+                subtract: true,
+                date: DateArithArg::Decimal,
+                interval: IntervalArg::Decimal,
+                datetime_result: false,
+            },
             tipb::ScalarFuncSig::UpperUtf8 => SimpleSig::UpperUtf8,
             tipb::ScalarFuncSig::Upper => SimpleSig::Upper,
             tipb::ScalarFuncSig::Substring2ArgsUtf8 => SimpleSig::Substring2ArgsUtf8,
@@ -2239,19 +2624,255 @@ fn eval_real(
 
 /// The MySQL duration of one operand: a DURATION leaf, or a DATETIME
 /// leaf's time-of-day (Go `CastTimeAsDuration`).
+/// The parse anchor for Go's `typeCtx` conversions. Go anchors these on
+/// the session time zone; the expression seam carries no session, so it
+/// anchors on UTC.
+fn utc_anchor() -> tidb_datatype::SessionTimeZone {
+    tidb_datatype::SessionTimeZone::Named(chrono_tz::UTC)
+}
+
+/// Go `intervalReformatString`: single units keep the leading numeric
+/// prefix (`^[+-]?[\d]+`, the truncation error folded), `SECOND`
+/// re-renders the text through a decimal, and compound units pass
+/// through for the composite parser.
+fn interval_reformat_string(text: &str, unit: &str) -> String {
+    match unit.to_ascii_uppercase().as_str() {
+        "MICROSECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK" | "MONTH" | "QUARTER" | "YEAR" => {
+            let trimmed = text.trim();
+            let bytes = trimmed.as_bytes();
+            let mut end = usize::from(matches!(bytes.first(), Some(b'+') | Some(b'-')));
+            let digits_from = end;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            if end == digits_from {
+                "0".to_owned()
+            } else {
+                trimmed[..end].to_owned()
+            }
+        }
+        // Go: `dec.FromString` then `ToString` ("1e2" -> "100"); a parse
+        // failure answers "0" with the truncation folded.
+        "SECOND" => {
+            let (dec, _) = tidb_datatype::MyDecimal::from_string(text.as_bytes());
+            String::from_utf8_lossy(&dec.to_string_bytes()).into_owned()
+        }
+        _ => text.to_owned(),
+    }
+}
+
+/// Go `getIntervalFromDecimal`'s unit table: compound units reshape the
+/// decimal text into the composite literal, single units round half-up
+/// to a whole number (Go `intervalDecimalToString`).
+fn interval_reformat_decimal_text(text: &str, unit: &str) -> String {
+    match unit.to_ascii_uppercase().as_str() {
+        "HOUR_MINUTE" | "MINUTE_SECOND" => text.replace('.', ":"),
+        "YEAR_MONTH" => text.replace('.', "-"),
+        "DAY_HOUR" => text.replace('.', " "),
+        "DAY_MINUTE" => format!("0 {}", text.replace('.', ":")),
+        "DAY_SECOND" => format!("0 00:{}", text.replace('.', ":")),
+        "DAY_MICROSECOND" => format!("0 00:00:{text}"),
+        "HOUR_MICROSECOND" => format!("00:00:{text}"),
+        "HOUR_SECOND" => format!("00:{}", text.replace('.', ":")),
+        "MINUTE_MICROSECOND" => format!("00:{text}"),
+        // `SECOND` already reads like the `%f` format.
+        "SECOND" | "SECOND_MICROSECOND" => text.to_owned(),
+        _ => {
+            let (mut dec, _) = tidb_datatype::MyDecimal::from_string(text.as_bytes());
+            dec.round_in_place(0, tidb_datatype::RoundMode::HalfUp);
+            String::from_utf8_lossy(&dec.to_string_bytes()).into_owned()
+        }
+    }
+}
+
+/// Whether the upstream pair answers text: the non-temporal sources
+/// (Go `builtinAddSubDateAsStringSig`).
+fn add_sub_answers_text(sig: &SimpleSig) -> bool {
+    matches!(
+        sig,
+        SimpleSig::AddSubDate {
+            date: DateArithArg::String
+                | DateArithArg::Int
+                | DateArithArg::Real
+                | DateArithArg::Decimal,
+            ..
+        }
+    )
+}
+
+/// The interval text for one operand channel (Go `getInterval*`); the
+/// interval operand sits at index 1 of the `AddDate`/`SubDate` node.
+fn interval_text(
+    children: &[SimpleExpr],
+    row: &[tidb_datatype::Datum],
+    div_precision_increment: i64,
+    kind: IntervalArg,
+    unit: &str,
+) -> Option<String> {
+    match kind {
+        IntervalArg::String => {
+            let raw = eval_bytes(children.get(1), row, div_precision_increment)?;
+            Some(interval_reformat_string(
+                &String::from_utf8_lossy(&raw),
+                unit,
+            ))
+        }
+        IntervalArg::Int => {
+            let value = eval_expr(children.get(1)?, row, div_precision_increment)
+                .ok()
+                .flatten()?;
+            Some(value.to_string())
+        }
+        IntervalArg::Real => {
+            let value = eval_real(children.get(1), row, div_precision_increment)?;
+            Some(format!("{value}"))
+        }
+        IntervalArg::Decimal => {
+            let value = eval_decimal(children.get(1), row, div_precision_increment)?;
+            Some(interval_reformat_decimal_text(&value.to_string(), unit))
+        }
+    }
+}
+
+/// The date operand parsed per its channel for the string-answer forms
+/// (Go `getDateFromString`/`getDateFromInt`/`getDateFromReal`/
+/// `getDateFromDecimal`): a pure-date string stays a date unless the
+/// unit carries a clock, and numeric sources widen the same way.
+fn add_sub_date_operand(
+    children: &[SimpleExpr],
+    row: &[tidb_datatype::Datum],
+    div_precision_increment: i64,
+    kind: DateArithArg,
+    unit: &str,
+) -> Option<tidb_datatype::Time> {
+    use tidb_datatype::TimeType;
+    let zone = utc_anchor();
+    let clock = tidb_datatype::is_clock_unit(unit);
+    match kind {
+        DateArithArg::String => {
+            let raw = eval_bytes(children.first(), row, div_precision_increment)?;
+            let text = String::from_utf8_lossy(&raw).into_owned();
+            let kind = if !tidb_datatype::is_date_format(&text) || clock {
+                TimeType::DateTime
+            } else {
+                TimeType::Date
+            };
+            tidb_datatype::parse_time(&text, kind, 6, false, false, false, &zone)
+                .ok()
+                .map(|parsed| parsed.time)
+        }
+        DateArithArg::Int => {
+            let value = eval_expr(children.first()?, row, div_precision_increment)
+                .ok()
+                .flatten()?;
+            let mut date = tidb_datatype::parse_time_from_int64(
+                i64::try_from(value).ok()?,
+                false,
+                false,
+                &zone,
+            )
+            .ok()?;
+            if clock {
+                date.set_kind(TimeType::DateTime);
+            }
+            Some(date)
+        }
+        DateArithArg::Real => {
+            let value = eval_real(children.first(), row, div_precision_increment)?;
+            let mut date =
+                tidb_datatype::parse_time_from_float64(value, false, false, &zone).ok()?;
+            if clock {
+                date.set_kind(TimeType::DateTime);
+            }
+            Some(date)
+        }
+        DateArithArg::Decimal => {
+            let value = eval_decimal(children.first(), row, div_precision_increment)?;
+            let mut date =
+                tidb_datatype::parse_time_from_decimal(&value, false, false, &zone).ok()?;
+            if clock {
+                date.set_kind(TimeType::DateTime);
+            }
+            Some(date)
+        }
+        // The typed temporal operands answer through the time and
+        // duration channels instead.
+        _ => None,
+    }
+}
+
+/// Go `baseDateArithmetical.add`/`sub` -> `addDate`: the interval text
+/// decomposes into calendar and sub-day parts (`ParseDurationValue`),
+/// the sub-day nanoseconds shift first, and the calendar fields move
+/// with MySQL's month clamping (`types.AddDate`). `SubDate` negates all
+/// four parts. Overflow answers NULL here where Go raises the datetime
+/// function overflow error.
+fn add_sub_time(
+    mut date: tidb_datatype::Time,
+    subtract: bool,
+    unit: &str,
+    interval: &str,
+) -> Option<tidb_datatype::Time> {
+    let parsed = tidb_datatype::parse_duration_value(unit, interval).ok()?;
+    let sign: i64 = if subtract { -1 } else { 1 };
+    let mut core = date.core();
+    core = core.add_duration(sign * parsed.nanoseconds);
+    core = core
+        .add_date(
+            sign * parsed.years,
+            sign * parsed.months,
+            sign * parsed.days,
+        )
+        .ok()?;
+    date.set_core_time(core);
+    Some(date)
+}
+
 fn eval_duration(
     expr: Option<&SimpleExpr>,
     row: &[tidb_datatype::Datum],
+    div_precision_increment: i64,
 ) -> Option<tidb_datatype::MySqlDuration> {
     use tidb_datatype::Datum;
-    match expr? {
+    let expr = expr?;
+    match expr {
         SimpleExpr::Column(offset) => match row.get(*offset) {
             Some(Datum::Duration(value)) => Some(*value),
             Some(Datum::Time(value)) => value.to_duration().ok(),
             _ => None,
         },
         SimpleExpr::Func(SimpleSig::CastTimeAsDuration, children) => {
-            eval_time(children.first(), row).and_then(|time| time.to_duration().ok())
+            eval_time(children.first(), row, div_precision_increment)
+                .and_then(|time| time.to_duration().ok())
+        }
+        // DATE_ADD/DATE_SUB over a duration column answers a duration
+        // (Go `builtinAddSubDateDurationAnySig.evalDuration`): the
+        // interval text extracts to a duration that shifts the source.
+        SimpleExpr::Func(
+            SimpleSig::AddSubDate {
+                subtract,
+                date: DateArithArg::Duration,
+                interval: interval_kind,
+                datetime_result: false,
+            },
+            children,
+        ) => {
+            let duration = eval_duration(children.first(), row, div_precision_increment)?;
+            let unit_raw = eval_bytes(children.get(2), row, div_precision_increment)?;
+            let unit = String::from_utf8_lossy(&unit_raw).into_owned();
+            let interval = interval_text(
+                children,
+                row,
+                div_precision_increment,
+                *interval_kind,
+                &unit,
+            )?;
+            let delta = tidb_datatype::extract_duration_value(&unit, &interval).ok()?;
+            if *subtract {
+                duration.checked_sub(delta).ok()
+            } else {
+                duration.checked_add(delta).ok()
+            }
         }
         _ => None,
     }
@@ -2262,6 +2883,7 @@ fn eval_duration(
 fn eval_time(
     expr: Option<&SimpleExpr>,
     row: &[tidb_datatype::Datum],
+    div_precision_increment: i64,
 ) -> Option<tidb_datatype::Time> {
     use tidb_datatype::Datum;
     let expr = expr?;
@@ -2271,6 +2893,42 @@ fn eval_time(
             Some(Datum::Time(value)) => Some(*value),
             _ => None,
         },
+        // DATE_ADD/DATE_SUB over a datetime column (Go
+        // `builtinAddSubDateDatetimeAnySig.evalTime`; the clock-unit and
+        // timestamp type normalizations of Go's getter are no-ops over
+        // an already-datetime source).
+        SimpleExpr::Func(
+            SimpleSig::AddSubDate {
+                subtract,
+                date: DateArithArg::Datetime,
+                interval: interval_kind,
+                ..
+            },
+            children,
+        ) => {
+            let date = eval_time(children.first(), row, div_precision_increment)?;
+            let unit_raw = eval_bytes(children.get(2), row, div_precision_increment)?;
+            let unit = String::from_utf8_lossy(&unit_raw).into_owned();
+            let interval = interval_text(
+                children,
+                row,
+                div_precision_increment,
+                *interval_kind,
+                &unit,
+            )?;
+            add_sub_time(date, *subtract, &unit, &interval)
+        }
+        // The `Duration*Datetime` upstream ids anchor the duration on
+        // the current date (`d.ConvertToTime`) -- no stable predicate
+        // answers here, so the seam refuses them.
+        SimpleExpr::Func(
+            SimpleSig::AddSubDate {
+                date: DateArithArg::Duration,
+                datetime_result: true,
+                ..
+            },
+            _,
+        ) => None,
         _ => None,
     }
 }
@@ -2394,7 +3052,7 @@ fn eval_bytes(
         // DATE_FORMAT: Go `builtinDateFormatSig` answers through
         // `Time.DateFormat` over the format layout.
         SimpleExpr::Func(SimpleSig::DateFormatSig, children) => {
-            let time = eval_time(children.first(), row)?;
+            let time = eval_time(children.first(), row, div_precision_increment)?;
             let layout = eval_bytes(children.get(1), row, div_precision_increment)?;
             let layout = String::from_utf8_lossy(&layout).into_owned();
             let formatted = time.date_format(&layout).ok()?;
@@ -2416,6 +3074,38 @@ fn eval_bytes(
                 .flatten()
                 .and_then(|value| i64::try_from(value).ok())?;
             conv_convert(&text, from_base, to_base)
+        }
+        // DATE_ADD/DATE_SUB over a non-temporal source answers the
+        // MySQL string form (Go `builtinAddSubDateAsStringSig`): the
+        // parsed source moves by the interval and renders per its kind
+        // and refit fraction.
+        SimpleExpr::Func(sig @ SimpleSig::AddSubDate { .. }, children)
+            if add_sub_answers_text(sig) =>
+        {
+            let unit_raw = eval_bytes(children.get(2), row, div_precision_increment)?;
+            let unit = String::from_utf8_lossy(&unit_raw).into_owned();
+            let (subtract, date_kind, interval_kind) = match sig {
+                SimpleSig::AddSubDate {
+                    subtract,
+                    date,
+                    interval,
+                    ..
+                } => (*subtract, *date, *interval),
+                _ => unreachable!("guarded by add_sub_answers_text"),
+            };
+            let date =
+                add_sub_date_operand(children, row, div_precision_increment, date_kind, &unit)?;
+            if date.is_zero() {
+                // Go answers NULL under the folded wrong-value error.
+                return None;
+            }
+            let interval =
+                interval_text(children, row, div_precision_increment, interval_kind, &unit)?;
+            let mut result = add_sub_time(date, subtract, &unit, &interval)?;
+            // Go refits the fraction: whole seconds render short.
+            let fsp = i64::from(result.core().microsecond() != 0) * 6;
+            result.set_fsp(fsp).ok()?;
+            Some(result.to_string().into_bytes())
         }
         // Go's string-function family: case folding and substring over the
         // byte domain for the binary forms and the rune domain for the
@@ -2872,6 +3562,24 @@ pub fn eval_expr(
                     let value: f64 = numeric.parse().unwrap_or(0.0);
                     Some(i128::from(value != 0.0))
                 }
+                SimpleSig::AddSubDate { .. } => {
+                    // A bare date arithmetic as a condition answers its
+                    // own non-NULL truth (Go `ToBool` over the answer;
+                    // "2000-01-03" reads as 2000 -> true).
+                    let answered = match sig {
+                        SimpleSig::AddSubDate {
+                            date: DateArithArg::Duration,
+                            datetime_result: false,
+                            ..
+                        } => eval_duration(Some(expr), row, div_precision_increment).is_some(),
+                        SimpleSig::AddSubDate {
+                            date: DateArithArg::Datetime,
+                            ..
+                        } => eval_time(Some(expr), row, div_precision_increment).is_some(),
+                        _ => eval_bytes(Some(expr), row, div_precision_increment).is_some(),
+                    };
+                    Some(i128::from(answered))
+                }
                 SimpleSig::DateFormatSig => {
                     // A bare formatted date as a condition answers its
                     // numeric-prefix truth ("20240305" -> truthy).
@@ -2991,8 +3699,8 @@ pub fn eval_expr(
                 | SimpleSig::EqTime
                 | SimpleSig::NeTime => {
                     let (Some(left), Some(right)) = (
-                        eval_time(children.first(), row),
-                        eval_time(children.get(1), row),
+                        eval_time(children.first(), row, div_precision_increment),
+                        eval_time(children.get(1), row, div_precision_increment),
                     ) else {
                         return Ok(None);
                     };
@@ -3077,7 +3785,8 @@ pub fn eval_expr(
                     }
                 }
                 SimpleSig::WeekWithoutMode => {
-                    let Some(time) = eval_time(children.first(), row) else {
+                    let Some(time) = eval_time(children.first(), row, div_precision_increment)
+                    else {
                         return Ok(None);
                     };
                     Some(i128::from(time.core_time().week(0)))
@@ -3104,13 +3813,16 @@ pub fn eval_expr(
                 // column), `Month` reads the calendar month, and `DateDiff`
                 // answers the day difference between two dates.
                 SimpleSig::CastTimeAsDuration => {
-                    let Some(duration) = eval_duration(children.first(), row) else {
+                    let Some(duration) =
+                        eval_duration(children.first(), row, div_precision_increment)
+                    else {
                         return Ok(None);
                     };
                     Some(i128::from(duration.nanoseconds() != 0))
                 }
                 SimpleSig::Date => {
-                    let Some(time) = eval_time(children.first(), row) else {
+                    let Some(time) = eval_time(children.first(), row, div_precision_increment)
+                    else {
                         return Ok(None);
                     };
                     let core = time.core_time();
@@ -3135,39 +3847,48 @@ pub fn eval_expr(
                     Some(i128::from(!date.to_number().is_zero()))
                 }
                 SimpleSig::Hour => {
-                    let Some(duration) = eval_duration(children.first(), row) else {
+                    let Some(duration) =
+                        eval_duration(children.first(), row, div_precision_increment)
+                    else {
                         return Ok(None);
                     };
                     Some(i128::from(duration.hour()))
                 }
                 SimpleSig::Minute => {
-                    let Some(duration) = eval_duration(children.first(), row) else {
+                    let Some(duration) =
+                        eval_duration(children.first(), row, div_precision_increment)
+                    else {
                         return Ok(None);
                     };
                     Some(i128::from(duration.minute()))
                 }
                 SimpleSig::Second => {
-                    let Some(duration) = eval_duration(children.first(), row) else {
+                    let Some(duration) =
+                        eval_duration(children.first(), row, div_precision_increment)
+                    else {
                         return Ok(None);
                     };
                     Some(i128::from(duration.second()))
                 }
                 SimpleSig::MicroSecond => {
-                    let Some(duration) = eval_duration(children.first(), row) else {
+                    let Some(duration) =
+                        eval_duration(children.first(), row, div_precision_increment)
+                    else {
                         return Ok(None);
                     };
                     Some(i128::from(duration.microsecond()))
                 }
                 SimpleSig::Month => {
-                    let Some(time) = eval_time(children.first(), row) else {
+                    let Some(time) = eval_time(children.first(), row, div_precision_increment)
+                    else {
                         return Ok(None);
                     };
                     Some(i128::from(time.core_time().month()))
                 }
                 SimpleSig::DateDiff => {
                     let (Some(left), Some(right)) = (
-                        eval_time(children.first(), row),
-                        eval_time(children.get(1), row),
+                        eval_time(children.first(), row, div_precision_increment),
+                        eval_time(children.get(1), row, div_precision_increment),
                     ) else {
                         return Ok(None);
                     };
@@ -5103,5 +5824,127 @@ mod tests {
             ],
         );
         assert_eq!(eval_expr(&overflow, &[], 4).expect("evals"), None);
+    }
+
+    #[test]
+    fn date_add_follows_mysql_calendar_over_a_column() {
+        use tidb_datatype::{Datum, Time, TimeType};
+        let time = Time::from_date_checked(2024, 3, 5, 14, 30, 45, 0, TimeType::DateTime, 0)
+            .expect("constructs");
+        let row = [Datum::Time(time)];
+        let arith = |subtract: bool, n: i64, unit: &[u8]| {
+            SimpleExpr::Func(
+                SimpleSig::AddSubDate {
+                    subtract,
+                    date: DateArithArg::Datetime,
+                    interval: IntervalArg::Int,
+                    datetime_result: false,
+                },
+                vec![
+                    SimpleExpr::Column(0),
+                    SimpleExpr::Int(n),
+                    SimpleExpr::Bytes(unit.to_vec()),
+                ],
+            )
+        };
+        // DATE_ADD(t, INTERVAL 1 DAY) answers the next same-clock day.
+        let next = eval_time(Some(&arith(false, 1, b"DAY")), &row, 4).expect("evals");
+        assert_eq!(
+            next,
+            Time::from_date_checked(2024, 3, 6, 14, 30, 45, 0, TimeType::DateTime, 0)
+                .expect("constructs")
+        );
+        // DATE_SUB(t, INTERVAL 1 DAY) answers the previous day.
+        let previous = eval_time(Some(&arith(true, 1, b"DAY")), &row, 4).expect("evals");
+        assert_eq!(
+            previous,
+            Time::from_date_checked(2024, 3, 4, 14, 30, 45, 0, TimeType::DateTime, 0)
+                .expect("constructs")
+        );
+        // MySQL clamps month-end overflow: 2024-01-31 + 1 MONTH = 02-29.
+        let january = Time::from_date_checked(2024, 1, 31, 0, 0, 0, 0, TimeType::DateTime, 0)
+            .expect("constructs");
+        let february =
+            eval_time(Some(&arith(false, 1, b"MONTH")), &[Datum::Time(january)], 4).expect("evals");
+        assert_eq!(
+            february,
+            Time::from_date_checked(2024, 2, 29, 0, 0, 0, 0, TimeType::DateTime, 0)
+                .expect("constructs")
+        );
+    }
+
+    #[test]
+    fn date_add_over_text_answers_the_mysql_string_form() {
+        // DATE_ADD('2024-03-05', INTERVAL ...) keeps the pure-date form
+        // for date units and widens to the datetime form for clock
+        // units (Go `getDateFromString`).
+        let add = |interval: &[u8], unit: &[u8]| {
+            SimpleExpr::Func(
+                SimpleSig::AddSubDate {
+                    subtract: false,
+                    date: DateArithArg::String,
+                    interval: IntervalArg::String,
+                    datetime_result: false,
+                },
+                vec![
+                    SimpleExpr::Bytes(b"2024-03-05".to_vec()),
+                    SimpleExpr::Bytes(interval.to_vec()),
+                    SimpleExpr::Bytes(unit.to_vec()),
+                ],
+            )
+        };
+        let eq = |left: SimpleExpr, right: &str| {
+            SimpleExpr::Func(
+                SimpleSig::EqString(46), // utf8mb4_bin
+                vec![left, SimpleExpr::Bytes(right.as_bytes().to_vec())],
+            )
+        };
+        assert_eq!(
+            eval_expr(&eq(add(b"1", b"DAY"), "2024-03-06"), &[], 4).expect("evals"),
+            Some(1)
+        );
+        assert_eq!(
+            eval_expr(&eq(add(b"1", b"HOUR"), "2024-03-05 01:00:00"), &[], 4).expect("evals"),
+            Some(1)
+        );
+        // Junk interval text keeps its numeric prefix: "abc" reads "0".
+        assert_eq!(
+            eval_expr(&eq(add(b"abc", b"DAY"), "2024-03-05"), &[], 4).expect("evals"),
+            Some(1)
+        );
+        // A bare date arithmetic as a condition answers its non-NULL
+        // truth.
+        assert_eq!(
+            eval_expr(&add(b"1", b"DAY"), &[], 4).expect("evals"),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn date_add_over_a_duration_column_answers_a_duration() {
+        use tidb_datatype::{Datum, MySqlDuration};
+        let two_hours = MySqlDuration::from_nanoseconds(7_200_000_000_000, 0).expect("constructs");
+        let row = [Datum::Duration(two_hours)];
+        let arith = |datetime_result: bool| {
+            SimpleExpr::Func(
+                SimpleSig::AddSubDate {
+                    subtract: false,
+                    date: DateArithArg::Duration,
+                    interval: IntervalArg::String,
+                    datetime_result,
+                },
+                vec![
+                    SimpleExpr::Column(0),
+                    SimpleExpr::Bytes(b"1:10".to_vec()),
+                    SimpleExpr::Bytes(b"HOUR_MINUTE".to_vec()),
+                ],
+            )
+        };
+        // 02:00:00 + INTERVAL '1:10' HOUR_MINUTE = 03:10:00.
+        let expected = MySqlDuration::from_nanoseconds(11_400_000_000_000, 0).expect("constructs");
+        assert_eq!(eval_duration(Some(&arith(false)), &row, 4), Some(expected));
+        // The datetime-promoted duration ids anchor on the current date
+        // and answer no stable predicate.
+        assert_eq!(eval_time(Some(&arith(true)), &row, 4), None);
     }
 }

@@ -538,3 +538,33 @@ CONV(-17,10,-18)='-H', the signed-base plain vs wrapped two's-complement
 rendering, the signed clamp at -2^63, invalid base NULL, junk "0") and
 `conv_as_a_condition_answers_numeric_prefix_truth` (bare-truth plus the
 overflow NULL).
+
+## DATE_ADD / DATE_SUB across the upstream type pairs (56 ids)
+
+The full upstream id matrix lands as one `AddSubDate` signature keyed by
+the date-argument channel (`DateArithArg`: string, int, real, decimal,
+datetime, duration), the interval-argument channel (`IntervalArg`), the
+operation, and whether the upstream id answers a datetime. The channels
+mirror Go's getter decomposition: every interval reduces to text
+(`getIntervalFromString`'s numeric-prefix / `SECOND`-decimal reformat,
+the `getIntervalFromDecimal` compound-literal table, plain int/real
+text), and every answer reduces to `add_sub_time` over
+`ParseDurationValue` + sub-day nanoseconds first + `types.AddDate`'s
+month clamping (with `SubDate` negating all four parts). The string
+sources parse through `getDateFromString`'s pure-date-vs-clock-unit
+kind choice; the datetime column form answers through the time channel
+(`DatetimeAny`) and the duration column form through the duration
+channel (`ExtractDurationValue` + `Add`/`Sub`). The eight
+`Duration*Datetime` upstream ids anchor on the current date
+(`d.ConvertToTime`) and answer no stable predicate, so the seam refuses
+them. Narrowings on record: parse-overflow / datetime-overflow errors
+fold to NULL (no error channel on these paths), the parse anchor is UTC
+where Go uses the session zone, and the real interval renders with
+shortest-round-trip formatting where Go formats by the argument's
+decimal scale. Regressions:
+`date_add_follows_mysql_calendar_over_a_column` (next/previous day,
+2024-01-31 + 1 MONTH clamping to 02-29),
+`date_add_over_text_answers_the_mysql_string_form` (pure-date vs
+clock-unit rendering, junk interval numeric prefix, bare truth), and
+`date_add_over_a_duration_column_answers_a_duration` (composite
+HOUR_MINUTE interval plus the refused promoted form).

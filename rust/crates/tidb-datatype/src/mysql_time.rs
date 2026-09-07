@@ -221,6 +221,11 @@ impl Time {
         self.core = core;
     }
 
+    /// Borrows the calendar fields; see [`CoreTime`].
+    pub const fn core(self) -> CoreTime {
+        self.core
+    }
+
     /// Returns `DATE`, `DATETIME`, or `TIMESTAMP`.
     pub const fn kind(self) -> TimeType {
         self.kind
