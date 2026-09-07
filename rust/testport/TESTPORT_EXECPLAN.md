@@ -10135,3 +10135,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (TRUNCATE rebase + ROLLBACK pins): TRUNCATE TABLE resets the
   auto-inc counter (next id 1); BEGIN/ROLLBACK reverts in-transaction
   writes. Pinned in `crates/tidb-session/tests/truncate_rebase_txn_source.rs`.
+- 2026-09-06 (commit pin): START TRANSACTION/BEGIN with COMMIT keep the
+  transaction's writes across the boundary. Pinned in
+  `crates/tidb-session/tests/commit_flow_source.rs`.
