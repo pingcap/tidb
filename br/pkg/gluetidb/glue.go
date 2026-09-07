@@ -158,6 +158,10 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	return nil
 }
 
+func (Glue) GetClient() glue.GlueClient {
+	return glue.ClientCLP
+}
+
 // GetSessionCtx implements glue.Glue
 func (gs *tidbSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
@@ -366,4 +370,8 @@ func (m *MockGlue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func
 		se: m.se,
 	}
 	return fn(glueSession)
+}
+
+func (m *MockGlue) GetClient() glue.GlueClient {
+	return glue.ClientCLP
 }

@@ -167,6 +167,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagStatsConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
+	_ = flags.MarkHidden(flagUseFSR)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -1158,7 +1159,7 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 		}
 	}
 	if !allUnique {
-		return errors.Errorf("Target tables already exist: %s", message)
+		return errors.Annotatef(berrors.ErrTablesAlreadyExisted, "Target tables already exist: %s", message)
 	}
 	return nil
 }
