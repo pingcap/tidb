@@ -10313,3 +10313,7 @@ risks without claiming repository-wide parity.
   to NULL where `=` yields UNKNOWN; `<=> NULL` answers directly; SHOW
   DATABASES lists created schemas beside system ones. Pinned in
   `crates/tidb-session/tests/null_eq_show_databases_source.rs`.
+- 2026-09-06 (date-arith clamping pin): month arithmetic clamps to the last
+  valid day — Jan 31 + 1mo = Feb 29 (leap), Feb 29 + 1yr = Feb 28 (non-
+  leap), Mar 31 - 1mo = Feb 29. Pinned in
+  `crates/tidb-session/tests/date_arith_month_clamp_source.rs`.
