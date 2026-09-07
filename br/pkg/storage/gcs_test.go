@@ -83,6 +83,9 @@ func TestGCS(t *testing.T) {
 	err = stg.DeleteFile(ctx, keyDelete)
 	require.NoError(t, err)
 
+	err = stg.DeleteFile(ctx, keyDelete)
+	require.NoError(t, err)
+
 	exist, err = stg.FileExists(ctx, keyDelete)
 	require.NoError(t, err)
 	require.False(t, exist)
