@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::{Arc, LazyLock};
+use tidb_hack::GoToLower;
 
 use tidb_datatype::{Datum, UNSPECIFIED_LENGTH};
 use tidb_model::{IndexInfo, TableInfo};
@@ -130,7 +131,7 @@ fn parse_analyze_skip_column_types(value: &str) -> BTreeSet<String> {
         "longblob",
     ];
     value
-        .to_lowercase()
+        .go_to_lower()
         .split(',')
         .filter(|column_type| ALLOWED.contains(column_type))
         .map(ToOwned::to_owned)

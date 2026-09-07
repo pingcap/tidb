@@ -16,6 +16,7 @@ intest = ["tidb-util/intest"]
 
 [dependencies]
 fail = { version = "0.4", optional = true }
+tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-model = { path = "../tidb-model" }

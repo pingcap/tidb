@@ -17,6 +17,7 @@
 use crate::common::{ENGINE_LABEL_KEY, ENGINE_LABEL_TIFLASH};
 use crate::errors::{PlacementError, PlacementErrorKind};
 use crate::pd::{LabelConstraint, LabelConstraintOp};
+use tidb_hack::GoToLower;
 
 /// Go `NewConstraint`: creates a constraint from a string.
 ///
@@ -56,7 +57,7 @@ pub fn new_constraint(label: &str) -> Result<LabelConstraint, PlacementError> {
     // Does not allow adding a rule of tiflash.
     if op == LabelConstraintOp::IN
         && key == ENGINE_LABEL_KEY
-        && value.to_lowercase() == ENGINE_LABEL_TIFLASH
+        && value.go_to_lower() == ENGINE_LABEL_TIFLASH
     {
         return Err(PlacementError::wrap(
             PlacementErrorKind::UnsupportedConstraint,

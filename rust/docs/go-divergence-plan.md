@@ -205,3 +205,21 @@ different crates. Phase 1's fixtures gate Phase 2 only.
   `uint64` on purpose‑by‑accident and clamps to the whole table; computing it
   correctly in `f64` gave a point lookup where Go full‑scans. Faithfulness means
   reproducing the overflow, with the Go line cited.
+
+#### #196 closing note (2026-09-08)
+
+The migration is complete across all production crates. Seven batches
+landed ~210 `to_lowercase()`/`to_uppercase()` production call sites to
+the Go simple-rune mapping, carried by `tidb_hack`'s `go_to_lower`/
+`go_to_upper` (free functions + `GoToLower`/`GoToUpper` blanket traits),
+which delegate to the generated `tidb-mysql::simple_case` table (Go
+`unicode.CaseRanges`, Unicode 15.0.0) as the authoritative
+implementation. Batches: session 23, config+stmtsummary+util 19,
+expr+parser+unistore 13, server+planner 25, vardef+exec+session-priv 10,
+executor 62, exec 95, plus scattered placement/datatype/stats-handle-util
+5. Bounded remainders: the tidb-util SEM self-referential uppercase
+checks and `field_type` charset-name output are ASCII-only vocabulary
+where full-vs-simple is indistinguishable; `table_partition`'s local
+per-char helper carries a stale Greek-form comment but is functionally
+correct for lowercase (U+0130 is the only multi-char expansion and it is
+handled).

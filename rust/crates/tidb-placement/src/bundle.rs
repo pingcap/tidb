@@ -16,6 +16,7 @@
 //! the shape PD schedules best.
 
 use std::fmt;
+use tidb_hack::GoToLower;
 
 use serde::Serialize;
 use tidb_codec::encode_bytes;
@@ -296,7 +297,7 @@ pub fn new_bundle_from_sugar_options(
 
     // primaryCount only makes sense when len(regions) > 0, but we compute it
     // here anyway to reuse code.
-    let primary_count = match schedule.to_lowercase().as_str() {
+    let primary_count = match schedule.go_to_lower().as_str() {
         "" | "even" => (followers + 1).div_ceil(regions.len() as u64),
         "majority_in_primary" => {
             // Calculate how many replicas need to be in the primary region for
@@ -689,7 +690,7 @@ impl Bundle {
         let mut new_rules = Vec::with_capacity(self.rules.len());
         for (index, rule) in self.rules.iter().enumerate() {
             let mut copied = rule.clone_rule();
-            copied.id = format!("{}_rule_{index}", policy_name.to_lowercase());
+            copied.id = format!("{}_rule_{index}", policy_name.go_to_lower());
             copied.group_id.clone_from(&self.id);
             copied.start_key_hex.clone_from(&start_key);
             copied.end_key_hex.clone_from(&end_key);
