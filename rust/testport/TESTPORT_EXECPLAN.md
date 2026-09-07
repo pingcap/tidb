@@ -10054,3 +10054,8 @@ risks without claiming repository-wide parity.
   insert fails with Go's 1452 carrying the constraint detail; ON UPDATE
   CASCADE re-points dependents when the parent key moves. Pinned in
   `crates/tidb-session/tests/fk_child_insert_update_cascade_source.rs`.
+- 2026-09-06 (generated-column write pins): assigning a stored generated
+  column fails with Go's exact 3105 text; a plain insert materializes it and
+  an UPDATE that moves the base column regenerates the stored value
+  (3|6 -> 10|20). Pinned in
+  `crates/tidb-session/tests/generated_column_write_source.rs`.
