@@ -11015,3 +11015,7 @@ risks without claiming repository-wide parity.
   GROUP BY and HAVING (the MySQL extension) — grouping by the aliased
   column and filtering on the aliased aggregate. Pinned in
   `crates/tidb-session/tests/group_by_having_alias_source.rs`.
+- 2026-09-06 (PAD SPACE pin): utf8mb4_bin keeps TiDB's PAD-SPACE semantics —
+  padded literal comparison, CHAR retrieval stripping, VARCHAR padded
+  match. Pinned in
+  `crates/tidb-session/tests/trailing_space_pad_source.rs`.
