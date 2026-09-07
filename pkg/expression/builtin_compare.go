@@ -1579,6 +1579,7 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 	}
 	if targetFieldType.GetType() == mysql.TypeBit {
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
+		targetFieldType.AddFlag(mysql.UnsignedFlag)
 	}
 	var intDatum types.Datum
 	// Disable AllowNegativeToUnsigned to make sure return 0 when underflow happens.
