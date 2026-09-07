@@ -11079,3 +11079,7 @@ risks without claiming repository-wide parity.
   INVISIBLE is refused (absent from the oracle's column-option grammar,
   ddl_table_parser.go:265). Extended in
   `crates/tidb-session/tests/invisible_index_source.rs`.
+- 2026-09-06 (HEX/UNHEX pin): HEX(-1) renders the 64-bit two's complement,
+  UNHEX pads odd digit counts with a leading '0' per the oracle's own
+  `d = "0" + d` (builtin_string.go:1851-1854), and invalid digits are NULL.
+  Pinned in `crates/tidb-session/tests/hex_unhex_source.rs`.
