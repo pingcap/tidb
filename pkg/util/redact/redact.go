@@ -280,3 +280,71 @@ func (t TaskInfoRedacted) String() string {
 
 	return proto.CompactTextString(&infoCopy)
 }
+
+// Any redacts any value by converting to string and applying redaction.
+// This is useful for generic value redaction when the exact type is not known.
+// It handles nil values gracefully and applies the current redaction mode.
+func Any(value any) string {
+	if value == nil {
+		return "NULL"
+	}
+	return Value(fmt.Sprintf("%v", value))
+}
+
+// Args formats and redacts SQL arguments/parameters for logging.
+// It wraps the arguments in parentheses and separates them with commas,
+// similar to SQL parameter formatting: (?, ?, ?) or (value1, value2, value3)
+// depending on the redaction mode. This is particularly useful for logging
+// SQL execution details while protecting sensitive data.
+func Args(args []any) string {
+	if len(args) == 0 {
+		return "()"
+	}
+
+	var b strings.Builder
+	b.WriteString("(")
+	for i, arg := range args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if arg == nil {
+			b.WriteString("NULL")
+		} else {
+			b.WriteString(Value(fmt.Sprintf("%v", arg)))
+		}
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
+// ParseRedactMode converts a string to a redact mode string compatible with errors.RedactLogEnabled.
+// It accepts various formats for flexibility in configuration:
+//   - "ON", "TRUE", "1", "ENABLE", "ENABLED" -> errors.RedactLogEnable
+//   - "MARKER", "MARK" -> errors.RedactLogMarker
+//   - "OFF", "FALSE", "0", "DISABLE", "DISABLED", "" -> errors.RedactLogDisable
+//
+// The parsing is case-insensitive. Unknown values default to OFF for safety.
+func ParseRedactMode(mode string) string {
+	switch strings.ToUpper(strings.TrimSpace(mode)) {
+	case "ON", "TRUE", "1", "ENABLE", "ENABLED":
+		return errors.RedactLogEnable
+	case "MARKER", "MARK":
+		return errors.RedactLogMarker
+	case "OFF", "FALSE", "0", "DISABLE", "DISABLED", "":
+		return errors.RedactLogDisable
+	default:
+		// For unknown values, default to OFF for safety
+		return errors.RedactLogDisable
+	}
+}
+
+// IsValidRedactMode checks if the given string is a valid redaction mode.
+// It returns true if the input can be successfully parsed to one of the
+// standard redaction modes (OFF, ON, MARKER) or their accepted aliases.
+func IsValidRedactMode(input string, parsed string) bool {
+	upperMode := strings.ToUpper(strings.TrimSpace(input))
+	return upperMode == "OFF" || upperMode == "ON" || upperMode == "MARKER" ||
+		(parsed == errors.RedactLogEnable && (upperMode == "TRUE" || upperMode == "1" || upperMode == "ENABLE" || upperMode == "ENABLED")) ||
+		(parsed == errors.RedactLogDisable && (upperMode == "FALSE" || upperMode == "0" || upperMode == "DISABLE" || upperMode == "DISABLED" || upperMode == "")) ||
+		(parsed == errors.RedactLogMarker && upperMode == "MARK")
+}

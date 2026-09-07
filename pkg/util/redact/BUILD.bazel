@@ -19,5 +19,8 @@ go_test(
     srcs = ["redact_test.go"],
     embed = [":redact"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
 )
