@@ -10660,3 +10660,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (full pipeline composition pin): JOIN + WHERE + GROUP BY +
   HAVING + ORDER BY + LIMIT composing over a schema join with a folded SUM.
   Pinned in `crates/tidb-session/tests/full_pipeline_composition_source.rs`.
+- 2026-09-06 (IGNORE+ODKU+CHECK pin): `insert ignore ... on duplicate key
+  update b = -1` — the ODKU update's CHECK violation is downgraded by
+  IGNORE; affected 0 and the stored row is untouched. Pinned in
+  `crates/tidb-session/tests/ignore_odku_check_source.rs`.
