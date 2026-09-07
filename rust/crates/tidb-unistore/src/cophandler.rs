@@ -7450,4 +7450,30 @@ mod tests {
         let bare = SimpleExpr::Func(SimpleSig::JsonMergePatchSig, vec![json_leaf(r#"{"a": 1}"#)]);
         assert_eq!(eval_expr(&bare, &[], 4, &zone()).expect("evals"), Some(1));
     }
+    #[test]
+    fn encode_default_rows_carries_warnings_into_the_response() {
+        let rows = vec![vec![tidb_datatype::Datum::Int(42)]];
+        let warnings = vec![
+            tipb::Error {
+                code: Some(1265),
+                msg: Some("Data truncated".to_owned()),
+            },
+            tipb::Error {
+                code: Some(1690),
+                msg: Some("BIGINT value is out of range".to_owned()),
+            },
+        ];
+        let resp = encode_default_rows(rows, &zone(), warnings);
+        assert!(resp.other_error.is_empty());
+        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        assert_eq!(select.warning_count, Some(2));
+        assert_eq!(select.warnings.len(), 2);
+        assert_eq!(select.warnings[0].code, Some(1265));
+        assert_eq!(
+            select.warnings[1].msg,
+            Some("BIGINT value is out of range".to_owned())
+        );
+        // The data row still encodes correctly alongside the warnings.
+        assert!(!select.chunks.is_empty(), "the data row should be present");
+    }
 }
