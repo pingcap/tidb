@@ -10265,3 +10265,6 @@ risks without claiming repository-wide parity.
   over an expression index cannot emit non-indexed output columns
   (planner/executor index seam; fix needs the point-get table-lookup
  path back to the table for expression indexes).
+- 2026-09-06 (SEQUENCE pin): CREATE SEQUENCE with START/INCREMENT allocates
+  10/15/20 through NEXTVAL and DROP SEQUENCE removes it. Pinned in
+  `crates/tidb-session/tests/sequence_lifecycle_source.rs`.
