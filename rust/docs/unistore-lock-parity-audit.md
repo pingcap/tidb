@@ -697,3 +697,23 @@ column through. Both families answer their non-NULL truth as bare
 conditions and keep the refusal posture for the now-anchored
 `CastDurationAsTime` 54 and the JSON sources 64/65, which wait on the
 JSON channel round.
+
+## The JSON channel casts (11 ids)
+
+The JSON channel widens on both sides. The `AS JSON` wrappers
+(`CastIntAsJson` 7, `CastRealAsJson` 17, `CastDecimalAsJson` 27,
+`CastStringAsJson` 37, `CastTimeAsJson` 47, `CastDurationAsJson` 57,
+`CastJsonAsJson` 67) follow Go's type wrapping: integers wrap as
+int64, doubles for reals and -- per Go's own FIXME -- decimals, text
+parses as a JSON document, and the opaque time/duration scalars carry
+the value with datetime and duration re-fitted to MaxFsp. The JSON
+source casts read them back: `CastJsonAsInt` 60 and `CastJsonAsReal`
+61 follow `ConvertJSONToInt64`/`ConvertJSONToReal` (numbers pass,
+strings keep the numeric prefix, other codes answer 0 under the folded
+error), `CastJsonAsTime` 64 reads the opaque date code or parses the
+string contents (the natural-kind choice of the string casts), and
+`CastJsonAsDuration` 65 reads the duration code or parses clock text.
+The bare conditions answer their non-NULL truth. With this round every
+carried cast id but the now-anchored `CastDurationAsTime` 54 evaluates,
+and the cast matrix is closed except for refinements that need the
+wire to carry field types (target kinds, precision, union clamps).

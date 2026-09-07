@@ -1887,6 +1887,33 @@ pub enum SimpleSig {
     CastStringAsDuration,
     /// See [`SimpleSig::CastIntAsDuration`].
     CastDurationAsDuration,
+    /// The `AS JSON` casts: Go wraps each source in its JSON type --
+    /// integers, doubles, the parsed text, and the opaque time/duration
+    /// scalars (doubles for decimals, matching Go's own FIXME).
+    CastIntAsJson,
+    /// See [`SimpleSig::CastIntAsJson`].
+    CastRealAsJson,
+    /// See [`SimpleSig::CastIntAsJson`].
+    CastDecimalAsJson,
+    /// See [`SimpleSig::CastIntAsJson`].
+    CastStringAsJson,
+    /// See [`SimpleSig::CastIntAsJson`].
+    CastTimeAsJson,
+    /// See [`SimpleSig::CastIntAsJson`].
+    CastDurationAsJson,
+    /// See [`SimpleSig::CastIntAsJson`].
+    CastJsonAsJson,
+    /// The JSON-source casts: Go's `ConvertJSONToInt64`/`ConvertJSON-
+    /// ToReal` truncate numbers, run the numeric prefix for strings, and
+    /// answer 0 for other codes under the folded error; the time and
+    /// duration forms read the opaque codes or parse the text.
+    CastJsonAsInt,
+    /// See [`SimpleSig::CastJsonAsInt`].
+    CastJsonAsReal,
+    /// See [`SimpleSig::CastJsonAsInt`].
+    CastJsonAsTime,
+    /// See [`SimpleSig::CastJsonAsInt`].
+    CastJsonAsDuration,
     /// `CastIntAsReal`/`CastRealAsReal`/`CastDecimalAsReal`: widening to
     /// binary64 (`AS REAL`); a bare cast answers its own truth.
     CastIntAsReal,
@@ -2456,6 +2483,17 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::CastDecimalAsDuration => SimpleSig::CastDecimalAsDuration,
             tipb::ScalarFuncSig::CastStringAsDuration => SimpleSig::CastStringAsDuration,
             tipb::ScalarFuncSig::CastDurationAsDuration => SimpleSig::CastDurationAsDuration,
+            tipb::ScalarFuncSig::CastIntAsJson => SimpleSig::CastIntAsJson,
+            tipb::ScalarFuncSig::CastRealAsJson => SimpleSig::CastRealAsJson,
+            tipb::ScalarFuncSig::CastDecimalAsJson => SimpleSig::CastDecimalAsJson,
+            tipb::ScalarFuncSig::CastStringAsJson => SimpleSig::CastStringAsJson,
+            tipb::ScalarFuncSig::CastTimeAsJson => SimpleSig::CastTimeAsJson,
+            tipb::ScalarFuncSig::CastDurationAsJson => SimpleSig::CastDurationAsJson,
+            tipb::ScalarFuncSig::CastJsonAsJson => SimpleSig::CastJsonAsJson,
+            tipb::ScalarFuncSig::CastJsonAsInt => SimpleSig::CastJsonAsInt,
+            tipb::ScalarFuncSig::CastJsonAsReal => SimpleSig::CastJsonAsReal,
+            tipb::ScalarFuncSig::CastJsonAsTime => SimpleSig::CastJsonAsTime,
+            tipb::ScalarFuncSig::CastJsonAsDuration => SimpleSig::CastJsonAsDuration,
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             // Go reads the comparison's collation off the `ScalarFunc`'s own
             // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
@@ -2635,14 +2673,77 @@ fn datum_to_json_value(datum: &tidb_datatype::Datum) -> Option<tidb_datatype::Bi
 fn eval_json(
     expr: Option<&SimpleExpr>,
     row: &[tidb_datatype::Datum],
+    div_precision_increment: i64,
 ) -> Option<tidb_datatype::BinaryJSON> {
     use tidb_datatype::Datum;
+    let to_json = |value: tidb_datatype::BinaryJSONValue| {
+        tidb_datatype::BinaryJSON::from_typed_value(&value).ok()
+    };
     match expr? {
         SimpleExpr::Json(value) => Some(value.clone()),
         SimpleExpr::Column(offset) => match row.get(*offset) {
             Some(Datum::Json(value)) => Some(value.clone()),
             _ => None,
         },
+        // The `AS JSON` casts wrap each source in its JSON type. Go's
+        // boolean/unsigned wraps fold -- the i128 carries the sign, and
+        // no wire kind is boolean here.
+        SimpleExpr::Func(
+            sig @ (SimpleSig::CastIntAsJson
+            | SimpleSig::CastRealAsJson
+            | SimpleSig::CastDecimalAsJson
+            | SimpleSig::CastStringAsJson
+            | SimpleSig::CastTimeAsJson
+            | SimpleSig::CastDurationAsJson
+            | SimpleSig::CastJsonAsJson),
+            children,
+        ) => {
+            match sig {
+                SimpleSig::CastIntAsJson => children
+                    .first()
+                    .and_then(|c| eval_expr(c, row, div_precision_increment).ok())
+                    .flatten()
+                    .and_then(|value| i64::try_from(value).ok())
+                    .and_then(|value| to_json(tidb_datatype::BinaryJSONValue::Int64(value))),
+                SimpleSig::CastRealAsJson => {
+                    eval_real(children.first(), row, div_precision_increment)
+                        .and_then(|value| to_json(tidb_datatype::BinaryJSONValue::Float64(value)))
+                }
+                SimpleSig::CastDecimalAsJson => {
+                    // Go converts through f64 and notes the FIXME: the
+                    // JSON type reads DOUBLE.
+                    let value = eval_decimal(children.first(), row, div_precision_increment)?;
+                    to_json(tidb_datatype::BinaryJSONValue::Float64(value.to_f64()))
+                }
+                SimpleSig::CastStringAsJson => {
+                    let raw = eval_bytes(children.first(), row, div_precision_increment)?;
+                    let text = String::from_utf8_lossy(&raw).into_owned();
+                    let parsed = tidb_datatype::BinaryJSON::parse(&text).ok()?;
+                    Some(parsed)
+                }
+                // Go re-fits datetime and timestamp to MaxFsp before
+                // wrapping; dates keep their kind.
+                SimpleSig::CastTimeAsJson => {
+                    let time = eval_time(children.first(), row, div_precision_increment)?;
+                    let time = if time.kind() == tidb_datatype::TimeType::DateTime {
+                        let mut widened = time;
+                        widened.set_fsp(6).ok()?;
+                        widened
+                    } else {
+                        time
+                    };
+                    to_json(tidb_datatype::BinaryJSONValue::Time(time))
+                }
+                SimpleSig::CastDurationAsJson => {
+                    let duration = eval_duration(children.first(), row, div_precision_increment)?;
+                    let widened =
+                        tidb_datatype::MySqlDuration::from_nanoseconds(duration.nanoseconds(), 6)
+                            .ok()?;
+                    to_json(tidb_datatype::BinaryJSONValue::Duration(widened))
+                }
+                _ => eval_json(children.first(), row, div_precision_increment),
+            }
+        }
         _ => None,
     }
 }
@@ -2662,6 +2763,20 @@ fn eval_real(
             Some(Datum::Real(value)) => Some(*value),
             _ => None,
         },
+        // Go `ConvertJSONToReal`: numbers pass, strings take the numeric
+        // prefix, other codes answer 0 under the folded error.
+        SimpleExpr::Func(SimpleSig::CastJsonAsReal, children) => {
+            let value = eval_json(children.first(), row, div_precision_increment)?;
+            if let Some(real) = value.as_f64() {
+                Some(real)
+            } else if let Some(text) = value.as_string() {
+                let text = String::from_utf8_lossy(text);
+                let prefix = numeric_prefix(text.trim_start(), true).unwrap_or_default();
+                Some(prefix.parse::<f64>().unwrap_or(0.0))
+            } else {
+                Some(0.0)
+            }
+        }
         // Go's arithmetic evaluators recurse; the real family composes.
         SimpleExpr::Func(
             sig @ (SimpleSig::PlusReal
@@ -3082,6 +3197,17 @@ fn eval_duration(
                 _ => eval_duration(children.first(), row, div_precision_increment),
             }
         }
+        // Go reads the opaque duration code and parses string contents;
+        // other codes answer NULL under the folded error.
+        SimpleExpr::Func(SimpleSig::CastJsonAsDuration, children) => {
+            let value = eval_json(children.first(), row, div_precision_increment)?;
+            if let Ok(duration) = value.as_duration() {
+                return Some(duration);
+            }
+            let text = value.as_string()?;
+            let parsed = tidb_datatype::parse_duration(text, 6).ok()?;
+            tidb_datatype::MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).ok()
+        }
         _ => None,
     }
 }
@@ -3182,6 +3308,24 @@ fn eval_time(
                 }
                 _ => eval_time(children.first(), row, div_precision_increment),
             }
+        }
+        // Go reads the opaque date codes and parses string contents;
+        // other codes answer NULL under the folded error.
+        SimpleExpr::Func(SimpleSig::CastJsonAsTime, children) => {
+            let value = eval_json(children.first(), row, div_precision_increment)?;
+            if let Ok(time) = value.as_time(6) {
+                return Some(time);
+            }
+            let text = value.as_string()?;
+            let text = String::from_utf8_lossy(text).into_owned();
+            let kind = if tidb_datatype::is_date_format(&text) {
+                tidb_datatype::TimeType::Date
+            } else {
+                tidb_datatype::TimeType::DateTime
+            };
+            tidb_datatype::parse_time(&text, kind, 6, false, false, false, &utc_anchor())
+                .ok()
+                .map(|parsed| parsed.time)
         }
         _ => None,
     }
@@ -3937,7 +4081,8 @@ pub fn eval_expr(
                 | SimpleSig::MinusReal
                 | SimpleSig::MultiplyReal
                 | SimpleSig::DivideReal
-                | SimpleSig::ModReal => {
+                | SimpleSig::ModReal
+                | SimpleSig::CastJsonAsReal => {
                     // A bare real arithmetic as a condition answers its own
                     // truth (`ToBool`): non-zero and not-NaN is true, NULL
                     // is filtered. MySQL's `ToBool` treats NaN as 0.
@@ -4308,7 +4453,7 @@ pub fn eval_expr(
                         Some(Err(message)) => return Err(message),
                         None => return Ok(None),
                     };
-                    let Some(obj) = eval_json(children.get(1), row) else {
+                    let Some(obj) = eval_json(children.get(1), row, div_precision_increment) else {
                         return Ok(None);
                     };
                     let member = if obj.type_code() == tidb_datatype::JSON_TYPE_CODE_ARRAY {
@@ -4373,6 +4518,42 @@ pub fn eval_expr(
                         Some(0)
                     }
                 }
+                SimpleSig::CastJsonAsInt => {
+                    // Go `ConvertJSONToInt64`: numbers truncate, strings
+                    // take the integer prefix, other codes answer 0
+                    // under the folded error. The `json.Number` literal
+                    // code folds to 0 here (no text accessor on the
+                    // trimmed build).
+                    let Some(value) = eval_json(children.first(), row, div_precision_increment)
+                    else {
+                        return Ok(None);
+                    };
+                    if let Some(signed) = value.as_i64() {
+                        Some(i128::from(signed))
+                    } else if let Some(unsigned) = value.as_u64() {
+                        Some(i128::from(unsigned))
+                    } else if let Some(real) = value.as_f64() {
+                        Some(real as i128)
+                    } else if let Some(text) = value.as_string() {
+                        let text = String::from_utf8_lossy(text);
+                        let prefix = numeric_prefix(text.trim_start(), false).unwrap_or_default();
+                        Some(prefix.parse::<i64>().unwrap_or(0) as i128)
+                    } else {
+                        Some(0)
+                    }
+                }
+                SimpleSig::CastIntAsJson
+                | SimpleSig::CastRealAsJson
+                | SimpleSig::CastDecimalAsJson
+                | SimpleSig::CastStringAsJson
+                | SimpleSig::CastTimeAsJson
+                | SimpleSig::CastDurationAsJson
+                | SimpleSig::CastJsonAsJson => {
+                    // A bare JSON cast as a condition answers its own
+                    // non-NULL truth (Go `ToBool` over the rendering).
+                    let answered = eval_json(Some(expr), row, div_precision_increment).is_some();
+                    Some(i128::from(answered))
+                }
                 SimpleSig::CastIntAsTime
                 | SimpleSig::CastRealAsTime
                 | SimpleSig::CastDecimalAsTime
@@ -4382,7 +4563,9 @@ pub fn eval_expr(
                 | SimpleSig::CastRealAsDuration
                 | SimpleSig::CastDecimalAsDuration
                 | SimpleSig::CastStringAsDuration
-                | SimpleSig::CastDurationAsDuration => {
+                | SimpleSig::CastDurationAsDuration
+                | SimpleSig::CastJsonAsTime
+                | SimpleSig::CastJsonAsDuration => {
                     // A bare temporal cast as a condition answers its own
                     // non-NULL truth (Go `ToBool` over the rendering).
                     let answered = match sig {
@@ -4390,7 +4573,8 @@ pub fn eval_expr(
                         | SimpleSig::CastRealAsTime
                         | SimpleSig::CastDecimalAsTime
                         | SimpleSig::CastStringAsTime
-                        | SimpleSig::CastTimeAsTime => {
+                        | SimpleSig::CastTimeAsTime
+                        | SimpleSig::CastJsonAsTime => {
                             eval_time(Some(expr), row, div_precision_increment).is_some()
                         }
                         _ => eval_duration(Some(expr), row, div_precision_increment).is_some(),
@@ -6599,5 +6783,66 @@ mod tests {
         );
         let row = [Datum::Duration(expected)];
         assert_eq!(eval_duration(Some(&identity), &row, 4), Some(expected));
+    }
+
+    #[test]
+    fn json_casts_wrap_sources_and_read_them_back() {
+        use tidb_datatype::{Datum, Time, TimeType};
+        // A text source parses as JSON; a number source wraps.
+        let parsed = eval_json(
+            Some(&SimpleExpr::Func(
+                SimpleSig::CastStringAsJson,
+                vec![SimpleExpr::Bytes(br#"{"a": 1}"#.to_vec())],
+            )),
+            &[],
+            4,
+        )
+        .expect("evals");
+        assert_eq!(parsed.element_count(), Ok(1));
+        let wrapped = eval_json(
+            Some(&SimpleExpr::Func(
+                SimpleSig::CastIntAsJson,
+                vec![SimpleExpr::Int(7)],
+            )),
+            &[],
+            4,
+        )
+        .expect("evals");
+        assert_eq!(wrapped.as_i64(), Some(7));
+        // A datetime wraps as the opaque time scalar at MaxFsp.
+        let noon = Time::from_date_checked(2024, 3, 5, 14, 30, 45, 0, TimeType::DateTime, 0)
+            .expect("constructs");
+        let time_json = eval_json(
+            Some(&SimpleExpr::Func(
+                SimpleSig::CastTimeAsJson,
+                vec![SimpleExpr::Time(noon)],
+            )),
+            &[],
+            4,
+        )
+        .expect("evals");
+        assert_eq!(time_json.as_time(6).as_ref(), time_json.as_time(6).as_ref());
+        assert!(time_json.as_time(6).is_ok());
+        // CAST(json AS INT): numbers truncate, strings keep the integer
+        // prefix.
+        let int_col = SimpleExpr::Column(0);
+        let as_int = SimpleExpr::Func(SimpleSig::CastJsonAsInt, vec![int_col]);
+        let number_row = [Datum::Json(wrapped)];
+        assert_eq!(eval_expr(&as_int, &number_row, 4).expect("evals"), Some(7));
+        // CAST(json AS REAL) over a string document reads the prefix.
+        let text_json = tidb_datatype::BinaryJSON::parse(r#""12.5abc""#).expect("parses");
+        let as_real = SimpleExpr::Func(SimpleSig::CastJsonAsReal, vec![SimpleExpr::Column(0)]);
+        let text_row = [Datum::Json(text_json)];
+        assert_eq!(eval_real(Some(&as_real), &text_row, 4), Some(12.5));
+        // CAST(json AS TIME) parses a string document into a date.
+        let date_json = tidb_datatype::BinaryJSON::parse(r#""2024-03-05""#).expect("parses");
+        let as_time = SimpleExpr::Func(SimpleSig::CastJsonAsTime, vec![SimpleExpr::Column(0)]);
+        let date_row = [Datum::Json(date_json)];
+        let expected =
+            Time::from_date_checked(2024, 3, 5, 0, 0, 0, 0, TimeType::Date, 6).expect("constructs");
+        assert_eq!(eval_time(Some(&as_time), &date_row, 4), Some(expected));
+        // A bare JSON cast as a condition answers its non-NULL truth.
+        let bare = SimpleExpr::Func(SimpleSig::CastIntAsJson, vec![SimpleExpr::Int(7)]);
+        assert_eq!(eval_expr(&bare, &[], 4).expect("evals"), Some(1));
     }
 }
