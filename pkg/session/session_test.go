@@ -103,27 +103,6 @@ func TestPendingKillSignalBeforeCommitScope(t *testing.T) {
 	require.True(t, shouldHandlePendingSQLKillerSignalBeforeCommit(vars, true))
 }
 
-func TestSetProcessInfoPreservesTimeoutDuringTxnRetry(t *testing.T) {
-	se := &session{sessionVars: variable.NewSessionVars(nil)}
-	start := time.Now().Add(-time.Second)
-	se.SetProcessInfo("commit", start, mysql.ComQuery, 200)
-
-	se.sessionVars.RetryInfo.Retrying = true
-	se.SetProcessInfo("insert into t values (1)", time.Now(), mysql.ComQuery, 0)
-	pi := se.ShowProcess()
-	require.Equal(t, start, pi.Time)
-	require.Equal(t, uint64(200), pi.MaxExecutionTime)
-
-	// A disabled outer COMMIT timeout must not be enabled by a replayed history statement.
-	se = &session{sessionVars: variable.NewSessionVars(nil)}
-	se.SetProcessInfo("commit", start, mysql.ComQuery, 0)
-	se.sessionVars.RetryInfo.Retrying = true
-	se.SetProcessInfo("insert /*+ set_var(tidb_dml_max_execution_time=200) */ into t values (1)", time.Now(), mysql.ComQuery, 200)
-	pi = se.ShowProcess()
-	require.Equal(t, start, pi.Time)
-	require.Equal(t, uint64(0), pi.MaxExecutionTime)
-}
-
 func TestSetProcessInfoDistinguishesSameSQLStatements(t *testing.T) {
 	se := &session{sessionVars: variable.NewSessionVars(nil)}
 	const sql = "insert into t values (1)"

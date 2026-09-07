@@ -1821,14 +1821,10 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 			pi.BriefBinaryPlan = oldPi.BriefBinaryPlan
 		}
 	}
-	// We set process info before building plan, so we extended execution time. Transaction
-	// retries also keep the outer statement's deadline while replaying its statement history.
+	// We set process info before building plan, so we extended execution time.
 	if oldPi != nil && (oldPi.StmtCtx == pi.StmtCtx && oldPi.Info == pi.Info && oldPi.Command == pi.Command ||
 		s.sessionVars.RetryInfo.Retrying) {
 		pi.Time = oldPi.Time
-		if s.sessionVars.RetryInfo.Retrying {
-			pi.MaxExecutionTime = oldPi.MaxExecutionTime
-		}
 	}
 	if oldPi != nil && oldPi.CurTxnStartTS != 0 && oldPi.CurTxnStartTS == pi.CurTxnStartTS {
 		// Keep the last expensive txn log time, avoid print too many expensive txn logs.
