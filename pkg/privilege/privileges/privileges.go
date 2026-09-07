@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -917,8 +918,15 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 		}
 		var givenMatchOne bool
 		for _, req := range requireOr {
-			if slices.Contains(given, req) {
+			if typ == util.URI && slices.ContainsFunc(given, func(san string) bool {
+				return matchURIWithWildcard(req, san)
+			}) {
 				givenMatchOne = true
+				break
+			}
+			if typ != util.URI && slices.Contains(given, req) {
+				givenMatchOne = true
+				break
 			}
 		}
 		if !givenMatchOne {
@@ -929,6 +937,50 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 		}
 	}
 	return
+}
+
+// matchURIWithWildcard matches URI SANs while allowing a required path segment
+// that is exactly "*" to match one non-empty path segment.
+func matchURIWithWildcard(required, given string) bool {
+	if !strings.Contains(required, "*") {
+		return required == given
+	}
+	requiredURI, err := url.Parse(required)
+	if err != nil {
+		return false
+	}
+	givenURI, err := url.Parse(given)
+	if err != nil {
+		return false
+	}
+	if requiredURI.Scheme != givenURI.Scheme ||
+		requiredURI.Opaque != givenURI.Opaque ||
+		(requiredURI.User == nil) != (givenURI.User == nil) ||
+		requiredURI.User.String() != givenURI.User.String() ||
+		requiredURI.Host != givenURI.Host ||
+		requiredURI.OmitHost != givenURI.OmitHost ||
+		requiredURI.ForceQuery != givenURI.ForceQuery ||
+		requiredURI.RawQuery != givenURI.RawQuery ||
+		requiredURI.EscapedFragment() != givenURI.EscapedFragment() {
+		return false
+	}
+	requiredSegments := strings.Split(requiredURI.EscapedPath(), "/")
+	givenSegments := strings.Split(givenURI.EscapedPath(), "/")
+	if len(requiredSegments) != len(givenSegments) {
+		return false
+	}
+	for i, requiredSegment := range requiredSegments {
+		if requiredSegment == "*" {
+			if givenSegments[i] == "" {
+				return false
+			}
+			continue
+		}
+		if requiredSegment != givenSegments[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // DBIsVisible implements the Manager interface.
