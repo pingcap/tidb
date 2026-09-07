@@ -145,10 +145,14 @@ Then, independently of each other:
 - **#187 long data.** `COM_STMT_SEND_LONG_DATA` gets an ERR where Go sends
   nothing, desynchronising every later response. Needs the per‑statement buffer;
   answering with silence alone would drop the data instead.
-- **Coprocessor flags and warnings, together.** `DAGRequest.flags` is `0` where
-  Go sends `482`, and TiKV's warnings reach a collector nobody reads. **Fixing
-  the flags alone turns "query fails" into "silently truncated with no
-  warning"** — strictly worse. One change, both halves.
+- **Coprocessor flags — FIXED (2026-09-08, stale finding).**
+  `real_tikv_read.rs` computes `push_down_flags` via
+  `select_push_down_flags()` (tidb-executor/src/statement_pushdown.rs),
+  which builds the Go `StatementContext.PushDownFlags` bitfield including
+  `truncate_as_warning` and `ignore_zero_in_date_err`, and the DAGRequest
+  constructor (dag_request.rs:439) sets `flags: Some(push_down_flags)` on
+  the wire. The warnings-collector half is a unistore test-infra item, not
+  a production divergence.
 
 ## Phase 4 — The structural causes
 
