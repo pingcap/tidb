@@ -10618,3 +10618,7 @@ risks without claiming repository-wide parity.
   ("Can't DROP 'nope'...") where Go's ADD-time resolution would answer 1054
   "Unknown column" — low-priority text nuance. Pinned in
   `crates/tidb-session/tests/idempotent_ddl_source.rs`.
+- 2026-09-06 (mixed-direction ORDER BY pin): `order by g asc, s desc`
+  groups by the ascending key and sorts the second key descending within
+  each group. Pinned in
+  `crates/tidb-session/tests/mixed_direction_order_source.rs`.
