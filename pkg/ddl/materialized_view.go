@@ -731,11 +731,13 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	}
 	baseTableID := baseTable.Meta().ID
 
+	// IF EXISTS only suppresses a missing derived MLog. A missing schema or base
+	// table remains an error because it is required to resolve the logical target.
 	mlogName := model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
 	if err != nil {
 		if s.IfExists && infoschema.ErrTableNotExists.Equal(err) {
-			appendDropMaterializedViewNotExistsNote(ctx, schemaName, mlogName)
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, s.Table.Name)
 			return nil
 		}
 		return err

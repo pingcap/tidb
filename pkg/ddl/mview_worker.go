@@ -998,6 +998,15 @@ func hasMaterializedViewDependsOnMaterializedViewLog(mlogTableInfo *model.TableI
 	return mlogTableInfo.MaterializedViewLog != nil && len(mlogTableInfo.MaterializedViewLog.DependentMViewIDs) > 0
 }
 
+func hasMaterializedViewID(ids []int64, mviewID int64) bool {
+	for _, id := range ids {
+		if id == mviewID {
+			return true
+		}
+	}
+	return false
+}
+
 func removeMaterializedViewID(ids []int64, mviewID int64) ([]int64, bool) {
 	removed := false
 	filtered := ids[:0]
@@ -1107,6 +1116,12 @@ func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, dr
 		}
 		if mlog == nil || mlog.MaterializedViewLog == nil {
 			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("drop materialized view: invalid materialized view log")
+		}
+		if mlog.MaterializedViewLog.BaseTableID != baseID {
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("drop materialized view: invalid materialized view log metadata")
+		}
+		if !hasMaterializedViewID(mlog.MaterializedViewLog.DependentMViewIDs, job.TableID) {
+			continue
 		}
 		var removed bool
 		mlog.MaterializedViewLog.DependentMViewIDs, removed = removeMaterializedViewID(mlog.MaterializedViewLog.DependentMViewIDs, job.TableID)

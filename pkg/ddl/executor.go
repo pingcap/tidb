@@ -4499,7 +4499,10 @@ func (e *executor) dropTableObject(
 			}
 		}
 
-		involvingSchemas := buildDropTableInvolvingSchemaInfo(e.ctx, is, schema.Name.L, tableInfo.Meta())
+		involvingSchemas, err := buildDropTableInvolvingSchemaInfo(e.ctx, is, schema.Name.L, tableInfo.Meta())
+		if err != nil {
+			return errors.Trace(err)
+		}
 		job := &model.Job{
 			Version:             model.GetJobVerInUse(),
 			SchemaID:            schema.ID,
@@ -4554,7 +4557,7 @@ func buildDropTableInvolvingSchemaInfo(
 	is infoschema.InfoSchema,
 	schemaName string,
 	tableInfo *model.TableInfo,
-) []model.InvolvingSchemaInfo {
+) ([]model.InvolvingSchemaInfo, error) {
 	involvingSchemas := []model.InvolvingSchemaInfo{{
 		Database: schemaName,
 		Table:    tableInfo.Name.L,
@@ -4577,9 +4580,32 @@ func buildDropTableInvolvingSchemaInfo(
 				Database: schemaName,
 				Table:    baseTbl.Meta().Name.L,
 			})
+
+			baseMViewInfo := baseTbl.Meta().MaterializedViewBase
+			if baseMViewInfo == nil || baseMViewInfo.MLogID == 0 {
+				continue
+			}
+			mlogTbl, ok := is.TableByID(ctx, baseMViewInfo.MLogID)
+			if !ok {
+				return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(
+					schemaName, fmt.Sprintf("(Table ID %d)", baseMViewInfo.MLogID),
+				)
+			}
+			mlogInfo := mlogTbl.Meta().MaterializedViewLog
+			if mlogInfo == nil || mlogInfo.BaseTableID != baseTableID {
+				return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+					"drop materialized view: invalid materialized view log metadata",
+				)
+			}
+			if hasMaterializedViewID(mlogInfo.DependentMViewIDs, tableInfo.ID) {
+				involvingSchemas = append(involvingSchemas, model.InvolvingSchemaInfo{
+					Database: schemaName,
+					Table:    mlogTbl.Meta().Name.L,
+				})
+			}
 		}
 	}
-	return involvingSchemas
+	return involvingSchemas, nil
 }
 
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
@@ -4659,6 +4685,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	tblInfo := tb.Meta()
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tblInfo.Name.O)
+	}
+	if err := checkTableMaterializedViewConstraints(tblInfo, "TRUNCATE TABLE"); err != nil {
+		return errors.Trace(err)
 	}
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")

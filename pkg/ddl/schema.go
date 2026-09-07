@@ -251,6 +251,9 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 				mlogIDs = append(mlogIDs, tblInfo.ID)
 			}
 		}
+		// Refresh and purge records drive MView and MLog maintenance, so their
+		// cleanup must roll back DROP DATABASE on failure. Refresh alerts are
+		// advisory state, so retaining stale alerts is preferable to blocking DDL.
 		if err = w.deleteCreateMaterializedViewRefreshInfos(jobCtx, mviewIDs); err != nil {
 			return ver, newRollbackTxnError(errors.Trace(err))
 		}

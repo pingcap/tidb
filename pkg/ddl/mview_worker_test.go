@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -124,15 +125,116 @@ func TestBuildDropTableInvolvingSchemaInfo(t *testing.T) {
 			BaseTableID: base1.ID,
 		},
 	}
+	base1.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: mlog.ID}
+	mlog.MaterializedViewLog.DependentMViewIDs = []int64{mv.ID}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{base1, base2, mv, mlog})
 
+	involving, err := buildDropTableInvolvingSchemaInfo(context.Background(), is, "test", mv)
+	require.NoError(t, err)
+	require.Equal(t, []model.InvolvingSchemaInfo{
+		{Database: "test", Table: "mv"},
+		{Database: "test", Table: "base1"},
+		{Database: "test", Table: "$mlog$base1"},
+		{Database: "test", Table: "base2"},
+	}, involving)
+
+	mlog.MaterializedViewLog.DependentMViewIDs = nil
+	involving, err = buildDropTableInvolvingSchemaInfo(context.Background(), is, "test", mv)
+	require.NoError(t, err)
 	require.Equal(t, []model.InvolvingSchemaInfo{
 		{Database: "test", Table: "mv"},
 		{Database: "test", Table: "base1"},
 		{Database: "test", Table: "base2"},
-	}, buildDropTableInvolvingSchemaInfo(context.Background(), is, "test", mv))
+	}, involving)
+
+	base1.MaterializedViewBase.MLogID = 99
+	_, err = buildDropTableInvolvingSchemaInfo(context.Background(), is, "test", mv)
+	require.Error(t, err)
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
+
+	involving, err = buildDropTableInvolvingSchemaInfo(context.Background(), is, "test", mlog)
+	require.NoError(t, err)
 	require.Equal(t, []model.InvolvingSchemaInfo{
 		{Database: "test", Table: "$mlog$base1"},
 		{Database: "test", Table: "base1"},
-	}, buildDropTableInvolvingSchemaInfo(context.Background(), is, "test", mlog))
+	}, involving)
+}
+
+func TestUpdateMaterializedViewBaseInfoOnDropMLogDependency(t *testing.T) {
+	runCase := func(t *testing.T, dependent bool, mlogExists bool, wrongBaseTableID bool) {
+		store, err := mockstore.NewMockStore()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+		err = kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
+			metaMut := meta.NewMutator(txn)
+			require.NoError(t, metaMut.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+
+			base := &model.TableInfo{
+				ID:   1,
+				Name: ast.NewCIStr("base"),
+				MaterializedViewBase: &model.MaterializedViewBaseInfo{
+					MLogID:   2,
+					MViewIDs: []int64{3},
+				},
+			}
+			mlog := &model.TableInfo{
+				ID:   2,
+				Name: ast.NewCIStr("$mlog$base"),
+				MaterializedViewLog: &model.MaterializedViewLogInfo{
+					BaseTableID: 1,
+				},
+			}
+			if dependent {
+				mlog.MaterializedViewLog.DependentMViewIDs = []int64{3}
+			}
+			if wrongBaseTableID {
+				mlog.MaterializedViewLog.BaseTableID = 4
+			}
+			require.NoError(t, metaMut.CreateTableOrView(1, base))
+			if mlogExists {
+				require.NoError(t, metaMut.CreateTableOrView(1, mlog))
+			}
+
+			droppingTable := &model.TableInfo{
+				ID: 3,
+				MaterializedView: &model.MaterializedViewInfo{
+					BaseTableIDs: []int64{1},
+				},
+			}
+			extraInfos, err := updateMaterializedViewBaseInfoOnDrop(
+				&jobContext{metaMut: metaMut},
+				&model.Job{SchemaID: 1, TableID: droppingTable.ID},
+				droppingTable,
+			)
+			if !dependent {
+				require.NoError(t, err)
+				require.Len(t, extraInfos, 1)
+				return nil
+			}
+			if !mlogExists || wrongBaseTableID {
+				require.Error(t, err)
+				require.True(t, dbterror.ErrInvalidDDLJob.Equal(err))
+				return nil
+			}
+			require.NoError(t, err)
+			require.Len(t, extraInfos, 2)
+			require.Empty(t, extraInfos[1].tblInfo.MaterializedViewLog.DependentMViewIDs)
+			return nil
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("dependent mlog is updated", func(t *testing.T) {
+		runCase(t, true, true, false)
+	})
+	t.Run("unrelated mlog is not updated", func(t *testing.T) {
+		runCase(t, false, true, false)
+	})
+	t.Run("missing mlog is rejected", func(t *testing.T) {
+		runCase(t, true, false, false)
+	})
+	t.Run("mlog with wrong base table is rejected", func(t *testing.T) {
+		runCase(t, true, true, true)
+	})
 }

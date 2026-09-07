@@ -340,11 +340,34 @@ func TestDropTableMaterializedViewConstraints(t *testing.T) {
 	require.ErrorContains(t, err, "DROP TABLE on materialized view log table")
 	err = tk.ExecToErr("drop table t_drop_constraints")
 	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view dependencies")
+
+	err = tk.ExecToErr("truncate table mv_drop_constraints")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view table")
+	err = tk.ExecToErr("truncate table `$mlog$t_drop_constraints`")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view log table")
+	err = tk.ExecToErr("truncate table t_drop_constraints")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view dependencies")
 	tk.MustExec("drop materialized view mv_drop_constraints")
 	err = tk.ExecToErr("drop table t_drop_constraints")
 	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view log")
+	err = tk.ExecToErr("truncate table t_drop_constraints")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view log")
 	tk.MustExec("drop materialized view log on t_drop_constraints")
+	tk.MustExec("truncate table t_drop_constraints")
 	tk.MustExec("drop table t_drop_constraints")
+}
+
+func TestDropMaterializedViewWhenDisabled(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_drop_when_disabled (a int not null)")
+	tk.MustExec("create materialized view log on t_drop_when_disabled (a)")
+	tk.MustExec("create materialized view mv_drop_when_disabled (a, cnt) as select a, count(1) from t_drop_when_disabled group by a")
+
+	tk.MustExec("set tidb_mview_enable = off")
+	tk.MustExec("drop materialized view mv_drop_when_disabled")
+	tk.MustExec("drop materialized view log on t_drop_when_disabled")
 }
 
 func TestDropMaterializedViewLogRemovesPurgeState(t *testing.T) {
@@ -403,6 +426,7 @@ func TestDropMaterializedViewIfExists(t *testing.T) {
 	require.ErrorContains(t, err, "is not BASE TABLE")
 
 	tk.MustExec("drop materialized view log if exists on t_no_mlog_drop_if_exists")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.t_no_mlog_drop_if_exists'"))
 	tk.MustExec("drop materialized view log if exists on t_drop_if_exists")
 	tk.MustExec("drop materialized view log if exists on t_drop_if_exists")
 }
