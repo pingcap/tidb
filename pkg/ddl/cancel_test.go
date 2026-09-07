@@ -306,10 +306,17 @@ func TestCancelVariousJobs(t *testing.T) {
 	canceled := atomicutil.NewBool(false)
 	cancelResult := atomicutil.NewBool(false)
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
+	reorgStartedJobID := atomicutil.NewInt64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterHandleBackfillTask", func(jobID int64) {
+		reorgStartedJobID.Store(jobID)
+	})
 
 	hookFunc := func(job *model.Job) {
 		if testutil.MatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !canceled.Load() {
-			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
+			// RowCount can still be zero before progress is persisted; use the backfill hook to
+			// distinguish getReorgInfo initialization from actual reorg execution.
+			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() &&
+				job.RowCount == 0 && reorgStartedJobID.Load() != job.ID {
 				return
 			}
 			rs := tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
@@ -343,6 +350,7 @@ func TestCancelVariousJobs(t *testing.T) {
 				}
 				waitDDLWorkerExited()
 				canceled.Store(false)
+				reorgStartedJobID.Store(0)
 				cancelWhenReorgNotStart.Store(true)
 				registerHook(true)
 				if tc.expectCancelled {
@@ -362,6 +370,7 @@ func TestCancelVariousJobs(t *testing.T) {
 				}
 				waitDDLWorkerExited()
 				canceled.Store(false)
+				reorgStartedJobID.Store(0)
 				cancelWhenReorgNotStart.Store(false)
 				registerHook(false)
 				if tc.expectCancelled {
