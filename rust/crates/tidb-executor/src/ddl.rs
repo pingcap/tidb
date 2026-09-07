@@ -1670,6 +1670,15 @@ pub fn run_create_table_in(
             return Err(DriverError::UnsupportedPrimaryKeyTypeWithTtl);
         }
     }
+    // Go `checkTTLInfoValid` with `foreignKeyCheckIs` (`pkg/ddl/ttl.go
+    // :104-107`): a table another table's foreign key refers to cannot take
+    // a TTL config (8152). At CREATE the table is brand new, so only an
+    // FK-containing sibling can refer to it by name already.
+    if ttl_info.is_some()
+        && crate::foreign_key::is_table_referred(catalog, &database, &name)
+    {
+        return Err(DriverError::TtlReferencedByForeignKey);
+    }
     table.set_ttl_info(ttl_info);
     // Go `handleTableOptions`: `SHARD_ROW_ID_BITS = n` is recorded on the
     // TableInfo and read by `AllocHandleIDs`, which composes those HIGH bits

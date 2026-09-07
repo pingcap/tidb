@@ -122,6 +122,9 @@ pub enum DriverError {
     /// Go `dbterror.ErrUnsupportedPrimaryKeyTypeWithTTL` (8153): a TTL table
     /// whose clustered primary key contains a FLOAT or DOUBLE column.
     UnsupportedPrimaryKeyTypeWithTtl,
+    /// Go `dbterror.ErrUnsupportedTTLReferencedByFK` (8152): the TTL config
+    /// is added to a table another table's foreign key refers to.
+    TtlReferencedByForeignKey,
     /// Go `dbterror.ErrUnsupportedLocalTempTableDDL` (8200), carrying the
     /// statement name: a local temporary table exists only in the session,
     /// so the DDL job every one of these would need cannot be submitted.

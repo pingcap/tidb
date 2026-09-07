@@ -10881,3 +10881,15 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/ttl_clustered_pk_source.rs` (FLOAT/DOUBLE
   refused, int fine, float without TTL fine). Suite diff vs baseline:
   zero net-new failures.
+- 2026-09-06 (TTL FK-referred fix, REAL DIVERGENCE): Go's
+  `checkTTLInfoValid` (`pkg/ddl/ttl.go:104-107`) refuses a TTL config on a
+  table referred by another table's foreign key (8152); the port accepted
+  it. Wired the boolean `is_table_referred` scan into CREATE and the
+  ALTER-TTL full-definition arm (enable/interval-only forms are exempt,
+  matching Go). Pin:
+  `crates/tidb-session/tests/ttl_fk_referred_source.rs`. Recorded NOT
+  FIXED: a non-numeric TTL interval magnitude (`interval 'abc' month`)
+  is refused by Go through the expression evaluator with a wrapped
+  internal error (no clean errno) — the port accepts; surfaced-text
+  parity is unverifiable without a live TiDB, so no invented error was
+  added. Suite diff vs baseline: zero net-new failures.

@@ -1025,6 +1025,13 @@ pub(crate) fn table_referenced(
 /// Finds the first child outside `ignored` that still references a parent.
 /// The caller supplies the ignored set because TRUNCATE treats a self-
 /// reference as safe, while DROP TABLE uses the complete statement list.
+/// Go `checkTableHasForeignKeyReferred` (`pkg/ddl/ttl.go:100-102`) boolean
+/// form: whether ANY table declares a foreign key referencing this one. The
+/// TTL config refuses to be added to such a parent.
+pub(crate) fn is_table_referred(catalog: &Catalog, database: &str, table: &str) -> bool {
+    !referring(catalog, database, table).is_empty()
+}
+
 pub(crate) fn find_table_referred(
     catalog: &Catalog,
     database: &str,

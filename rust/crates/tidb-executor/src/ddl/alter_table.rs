@@ -1955,7 +1955,7 @@ fn set_table_options_action(
         table.set_charset(charset);
     }
     if pending_ttl {
-        alter_ttl_info_or_enable(table, options)?;
+        alter_ttl_info_or_enable(catalog, database, name, options)?;
     }
     if let Some(policy_name) = pending_placement {
         let reference = match policy_name {
@@ -3983,9 +3983,24 @@ fn drop_column_action(
 /// this ALTER also carries them; the enable/interval-only forms need an
 /// existing config (`ErrSetTTLOptionForNonTTLTable`, 8150).
 fn alter_ttl_info_or_enable(
-    table: &mut crate::KvTable,
+    catalog: &mut Catalog,
+    database: &str,
+    name: &str,
     options: &[tidb_ast::TableOption],
 ) -> Result<(), DriverError> {
+    // The FK referral scan needs the catalog immutably, so it runs BEFORE the
+    // table is resolved mutably.
+    let wants_full_definition = options
+        .iter()
+        .any(|option| matches!(option, tidb_ast::TableOption::Ttl { .. }));
+    if wants_full_definition && crate::foreign_key::is_table_referred(catalog, database, name) {
+        return Err(DriverError::TtlReferencedByForeignKey);
+    }
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+        return Err(DriverError::unsupported(
+            "ALTER TABLE needs a storage-backed table",
+        ));
+    };
     let mut info = super::ttl_info_from_options(options)?;
     let mut explicit_enable: Option<bool> = None;
     let mut explicit_interval: Option<String> = None;
@@ -3999,7 +4014,7 @@ fn alter_ttl_info_or_enable(
         }
     }
 
-    if let Some(built) = info.as_mut() {
+    if let Some(mut built) = info {
         // Go runs `checkTTLInfoValid` on the NEW config before the job.
         validate_ttl_column(table, built.column_name.original())?;
         // The merge rules: an explicit enable/interval wins; otherwise the
@@ -4012,7 +4027,7 @@ fn alter_ttl_info_or_enable(
                 built.job_interval = current.job_interval.clone();
             }
         }
-        table.set_ttl_info(info);
+        table.set_ttl_info(Some(built));
         return Ok(());
     }
 

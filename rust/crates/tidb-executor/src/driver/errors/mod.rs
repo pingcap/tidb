@@ -231,6 +231,11 @@ impl DriverError {
             tidb_error::tidb::errcode::ErrUnsupportedPrimaryKeyTypeWithTTL,
             tidb_error::tidb::errname::ErrUnsupportedPrimaryKeyTypeWithTTL.raw,
         ),
+        // Go: "Set TTL for a table referenced by foreign key is not allowed".
+        DriverError::TtlReferencedByForeignKey => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrUnsupportedTTLReferencedByFK,
+            tidb_error::tidb::errname::ErrUnsupportedTTLReferencedByFK.raw,
+        ),
         DriverError::UnsupportedLocalTempTableDDL(statement) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
             format!("TiDB doesn't support {statement} for local temporary table"),
