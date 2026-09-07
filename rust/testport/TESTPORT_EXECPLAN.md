@@ -11310,3 +11310,7 @@ risks without claiming repository-wide parity.
   parallel path. All belong to the recorded expression-group family
   (root cause: group keys never decoded into the final output); the
   datapoints are logged in PROGRESS.md for whoever takes the fix.
+- 2026-09-08 (correlated IN pin): duplicate inner matches do not fan the
+  outer row out — IN keeps semi semantics where EXISTS does not (see the
+  fan-out divergence doc). Pinned in
+  `crates/tidb-session/tests/correlated_in_source.rs`.
