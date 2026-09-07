@@ -1097,6 +1097,7 @@ impl crate::Session {
             return None;
         }
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let lookup_start = std::time::Instant::now();
         let plan = match self.non_prepared_dml_cache.get(&parameterized.key) {
             Some(plan) => plan,
             None => {
@@ -1125,8 +1126,11 @@ impl crate::Session {
                 &environment,
                 effective_statement,
             ) {
-                // Go `GetPlanFromPlanCache`'s hit arm.
+                // Go `GetPlanFromPlanCache`'s hit arm; `lookupPlanCache`'s
+                // defer observes the lookup duration on hits only.
                 tidb_planner::metrics::plan_cache_hit_counter(true).inc();
+                tidb_planner::metrics::plan_cache_lookup_duration(false)
+                    .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(execution);
             }
         }
@@ -1192,7 +1196,9 @@ impl crate::Session {
                 &environment,
                 effective_statement,
             ) {
-                // Go `GetPlanFromPlanCache`'s hit arm.
+                // Go `GetPlanFromPlanCache`'s hit arm. Go's `lookupPlanCache`
+                // defer observes the lookup duration ONLY when it hit; a
+                // miss/re-plan records the miss counter and nothing else.
                 tidb_planner::metrics::plan_cache_hit_counter(true).inc();
                 observe(lookup_start);
                 return Some(execution);
@@ -1210,7 +1216,6 @@ impl crate::Session {
             &environment,
             effective_statement,
         );
-        observe(lookup_start);
         execution
     }
 

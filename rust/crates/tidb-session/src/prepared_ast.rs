@@ -369,6 +369,7 @@ impl Session {
             return None;
         }
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let lookup_start = std::time::Instant::now();
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(cached) = plan.bind_cached_for_statement(
@@ -379,7 +380,11 @@ impl Session {
                 statement,
             ) {
                 // Go `GetPlanFromPlanCache`'s hit arm (prepared label).
+                // `lookupPlanCache`'s defer observes the lookup duration on
+                // hits only, for the prepared and non-prepared paths alike.
                 tidb_planner::metrics::plan_cache_hit_counter(false).inc();
+                tidb_planner::metrics::plan_cache_lookup_duration(false)
+                    .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(cached);
             }
         }
@@ -443,6 +448,7 @@ impl Session {
             return None;
         }
         let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
+        let lookup_start = std::time::Instant::now();
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
@@ -453,8 +459,11 @@ impl Session {
                 statement,
             ) {
                 // Go `GetPlanFromPlanCache`'s hit arm
-                // (plan_cache.go:351, prepared label).
+                // (plan_cache.go:351, prepared label); the lookup-duration
+                // observation is hits-only per `lookupPlanCache`'s defer.
                 tidb_planner::metrics::plan_cache_hit_counter(false).inc();
+                tidb_planner::metrics::plan_cache_lookup_duration(false)
+                    .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(execution);
             }
         }

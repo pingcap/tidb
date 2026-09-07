@@ -731,19 +731,54 @@ fn a_duplicated_in_list_hits_and_still_returns_its_own_rows() {
     assert_eq!(hit(&mut session), "1");
 }
 
-/// Go observes `plan_cache_lookup_duration` for every non-prepared cache
-/// lookup that reaches the bind (hit or fresh), on the session-plan-cache
-/// histogram.
+/// Go `lookupPlanCache`'s defer observes `plan_cache_lookup_duration` ONLY
+/// when the lookup hit: the first execution of a statement (a miss that
+/// re-plans) records the miss counter and nothing on the histogram; the
+/// second execution (a hit) observes exactly once.
+///
+/// This variant is safe under the default parallel test run: the hit window
+/// only needs a lower bound, since process-global samples from OTHER tests
+/// can only add, never subtract.
 #[test]
-fn the_plan_cache_lookup_duration_histogram_observes_every_bind() {
+fn the_plan_cache_lookup_duration_histogram_observes_on_hits() {
     let mut session = cache_session();
-    let before = tidb_planner::metrics::plan_cache_lookup_duration(false).get_sample_count();
+    let histogram = tidb_planner::metrics::plan_cache_lookup_duration(false);
+    // First execution: miss → replan → the cache is now warm for the key.
     let _ = rows(&mut session, "select a from t where a = 1");
-    let _ = rows(&mut session, "select a from t where a = 2");
-    let after = tidb_planner::metrics::plan_cache_lookup_duration(false).get_sample_count();
-    assert!(
-        after - before >= 2,
-        "each of the two binds observes the lookup duration"
+    let before = histogram.get_sample_count();
+    // Second execution: hit → observes at least once.
+    let _ = rows(&mut session, "select a from t where a = 1");
+    let after = histogram.get_sample_count();
+    assert!(after - before >= 1, "a hit observes the lookup duration");
+}
+
+/// The strict half of the hit-only contract: a MISS records nothing. The
+/// process-global prometheus counters cannot be isolated from parallel
+/// sibling tests, so the exact-equality assertions require a serialized
+/// run:
+///
+/// ```text
+/// cargo test --offline --locked -p tidb-session --lib \
+///   the_plan_cache_lookup_duration_histogram_miss_records_nothing_serial \
+///   -- --ignored --test-threads=1
+/// ```
+#[test]
+#[ignore = "needs --test-threads=1: process-global prometheus counters"]
+fn the_plan_cache_lookup_duration_histogram_miss_records_nothing_serial() {
+    let mut session = cache_session();
+    let histogram = tidb_planner::metrics::plan_cache_lookup_duration(false);
+    let before = histogram.get_sample_count();
+    let _ = rows(&mut session, "select a from t where a = 1");
+    assert_eq!(
+        histogram.get_sample_count(),
+        before,
+        "a miss must not observe the lookup duration"
+    );
+    let _ = rows(&mut session, "select a from t where a = 1");
+    assert_eq!(
+        histogram.get_sample_count(),
+        before + 1,
+        "a hit observes the lookup duration exactly once"
     );
 }
 

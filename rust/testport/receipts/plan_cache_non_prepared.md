@@ -135,3 +135,36 @@ the DML/container follow-up under `rust/docs/go-physical-plan-parity-execplan.md
     # stash-diff against the tip: 15 tip-only failures fixed, 0 new).
 
 No Go file changed; the Bazel gate is not required.
+
+## Lookup-duration observation — aligned to Go's hit-only funnel (2026-09-06)
+
+Go `lookupPlanCache` (`plan_cache.go:309-312`, pinned bytes) observes
+`core_metrics.GetPlanCacheLookupDuration(useInstanceCache)` from a defer
+guarded by `if hit` — a miss/re-plan records the MISS COUNTER and nothing on
+the duration histogram, for the prepared and non-prepared paths alike (they
+share the one funnel).
+
+The Rust wiring had diverged in two directions, both fixed:
+
+1. `bind_non_prepared_select` observed on the MISS arm too (Rust-only
+   behavior — removed).
+2. The prepared SELECT/DML funnels and the non-prepared DML funnel never
+   observed (missing Go behavior — the hit-arm observation added to all
+   three, with the session-label `false` histogram Go uses for the
+   session plan cache).
+
+Regression split by determinism: `the_plan_cache_lookup_duration_histogram_observes_on_hits`
+(runs by default; lower-bound assertion — parallel-safe) and
+`the_plan_cache_lookup_duration_histogram_miss_records_nothing_serial`
+(`#[ignore]`, exact-equality miss/hit pinning; deterministic under
+`cargo test --offline --locked -p tidb-session --lib
+the_plan_cache_lookup_duration_histogram_miss_records_nothing_serial --
+--ignored --test-threads=1`, verified passing). Fail-before: the removed
+miss-arm observation makes the strict miss assertion fail by construction,
+and the DML/prepared hit arms could not observe at all.
+
+Pre-existing failures noted (verified identical on stashed tip, sibling
+in-flight cluster, not this batch): `tests_binding` (7),
+`tests_prepared_plan_cache::expression_and_aggregate_parameters_rebuild_on_cache_hits`
+(chunk panic from the expr-lowering batch),
+`vars::tests::prepared_plan_cache_switch_uses_go_typed_state`.
