@@ -1608,23 +1608,7 @@ fn check_partition_name_unique(definitions: &[PartitionDef]) -> Result<(), Drive
 /// `ß` stays `ß` under the simple map -- it does NOT expand to `ss` -- so `ß`
 /// and `SS` remain distinct partition names.
 pub(super) fn go_to_lower(name: &str) -> String {
-    name.chars()
-        .map(|source| {
-            // The one rune where Rust's full mapping differs from Go's simple
-            // one: U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE lowercases to
-            // `i` + U+0307 in full mapping, and to a bare `i` in Go.
-            if source == '\u{130}' {
-                return 'i';
-            }
-            let mut mapped = source.to_lowercase();
-            match (mapped.next(), mapped.next()) {
-                (Some(single), None) => single,
-                // A multi-rune expansion has no simple-mapping equivalent, so
-                // Go would have left the rune alone.
-                _ => source,
-            }
-        })
-        .collect()
+    tidb_mysql::to_lowercase(name)
 }
 
 /// Go `checkTooLongTable` (`ddl/executor.go:864`), applied to a partition
