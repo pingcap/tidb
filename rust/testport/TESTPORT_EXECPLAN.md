@@ -11199,3 +11199,9 @@ risks without claiming repository-wide parity.
   `rust/docs/correlated-exists-fanout-divergence.md`; queued behind the
   sibling planner stream (shared semi-apply region). The correlated scalar
   in the SELECT list and correlated EXISTS with unique inner keys work.
+- 2026-09-06 (WITH ROLLUP gap recorded): parses and reaches the logical
+  Expand layer (build_expand at plan_builder.rs:3304), but physical
+  lowering and the grouping executor are missing — the bridge refuses
+  with an internal error. The half-built state, the missing pieces, and a
+  5-step implementation plan are in `rust/docs/rollup-expander-gap.md`.
+  Feature-sized; queued.
