@@ -703,7 +703,7 @@ func TestStorageClassString(t *testing.T) {
 			name:        "with transitions",
 			tier:        "STANDARD",
 			transitions: []model.StorageClassTransitRule{{Tier: "IA", AfterDays: 30}},
-			expected:    `{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30}]}`,
+			expected:    `{"tier":"STANDARD","transitions":[{"tier":"IA","after_days":30,"after_seconds":0}]}`,
 		},
 	}
 
