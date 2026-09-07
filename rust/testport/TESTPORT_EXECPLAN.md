@@ -10645,3 +10645,6 @@ risks without claiming repository-wide parity.
   UNIQUE INDEX / DROP INDEX ... ON all work and the unique index enforces
   on later writes. Pinned in
   `crates/tidb-session/tests/standalone_index_statements_source.rs`.
+- 2026-09-06 (CREATE INDEX IF NOT EXISTS pin): the standalone form creates
+  once and no-ops after. Pinned in
+  `crates/tidb-session/tests/create_index_if_not_exists_source.rs`.
