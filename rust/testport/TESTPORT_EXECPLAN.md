@@ -11208,3 +11208,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (ODKU affected pin): changed duplicates report 2 (MySQL's
   delete+insert convention), no-op duplicates report 0. Pinned in
   `crates/tidb-session/tests/odku_noop_affected_source.rs`.
+- 2026-09-06 (EXPLAIN pin): the plan tree renders (TableReader over
+  TableFullScan with keep-order/stats, and Point_Get with handle for PK
+  equality under FORMAT='brief'). Pinned in
+  `crates/tidb-session/tests/explain_plan_source.rs`.
