@@ -10169,3 +10169,6 @@ risks without claiming repository-wide parity.
   violating row in place with a warning. ADMIN CHECKSUM is an explicit
   NotSupportedYet statement-kind (recorded class). Pinned in
   `crates/tidb-session/tests/update_ignore_partial_skip_source.rs`.
+- 2026-09-06 (unique NULL semantics pin): two NULLs coexist under a UNIQUE
+  index while a concrete duplicate fails with Go's entry/key text. Pinned
+  in `crates/tidb-session/tests/unique_null_semantics_source.rs`.
