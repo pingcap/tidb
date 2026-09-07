@@ -11333,3 +11333,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (LAST_INSERT_ID(expr) pin): the argument form stores and
   returns the session value; LAST_INSERT_ID() reads it back. Pinned in
   `crates/tidb-session/tests/last_insert_id_expr_source.rs`.
+- 2026-09-08 (JSON_MERGE_PRESERVE pin): array concatenation, object deep
+  merge, and scalar wrapping. Pinned in
+  `crates/tidb-session/tests/json_merge_preserve_source.rs`.
