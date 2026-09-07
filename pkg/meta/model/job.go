@@ -129,6 +129,9 @@ const (
 	ActionCreateMaterializedView                ActionType = 86
 	ActionDropMaterializedViewLog               ActionType = 87
 	ActionDropMaterializedView                  ActionType = 88
+	ActionAlterMaterializedViewRefresh          ActionType = 89
+	ActionAlterMaterializedViewLogPurge         ActionType = 90
+	ActionAlterMaterializedViewAttributes       ActionType = 91
 
 	// range [200, 256) is reserved for a downstream fork
 )
@@ -218,6 +221,9 @@ var ActionMap = map[ActionType]string{
 	ActionCreateMaterializedView:                "create materialized view",
 	ActionDropMaterializedViewLog:               "drop materialized view log",
 	ActionDropMaterializedView:                  "drop materialized view",
+	ActionAlterMaterializedViewRefresh:          "alter materialized view refresh",
+	ActionAlterMaterializedViewLogPurge:         "alter materialized view log purge",
+	ActionAlterMaterializedViewAttributes:       "alter materialized view attributes",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.

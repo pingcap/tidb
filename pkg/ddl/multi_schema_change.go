@@ -15,8 +15,11 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -184,13 +187,15 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			// job except AddForeignKey which is handled separately in the first loop.
 			// so this diff is enough, but it wound be better to accumulate all the diffs,
 			// and then merge them into a single diff.
-			if err = metaMut.SetSchemaDiff(&model.SchemaDiff{
+			diff := &model.SchemaDiff{
 				Version:        ver,
 				Type:           job.Type,
 				TableID:        job.TableID,
 				SchemaID:       job.SchemaID,
 				SubActionTypes: actionTypes,
-			}); err != nil {
+			}
+			SetSchemaDiffForMultiInfos(diff, collectAffectedTableInfosFromInvolving(jobCtx, job)...)
+			if err = metaMut.SetSchemaDiff(diff); err != nil {
 				return ver, err
 			}
 		}
@@ -222,6 +227,35 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		return ver, err
 	}
 	return finishMultiSchemaJob(job, metaMut)
+}
+
+func collectAffectedTableInfosFromInvolving(jobCtx *jobContext, job *model.Job) []schemaIDAndTableInfo {
+	is := jobCtx.infoCache.GetLatest()
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
+	seen := map[int64]struct{}{job.TableID: {}}
+	infos := make([]schemaIDAndTableInfo, 0)
+	for _, involving := range job.GetInvolvingSchemaInfo() {
+		if involving.Database == "" || involving.Table == "" || involving.Table == model.InvolvingAll {
+			continue
+		}
+		schema, ok := is.SchemaByName(ast.NewCIStr(involving.Database))
+		if !ok {
+			continue
+		}
+		tbl, err := is.TableByName(ctx, ast.NewCIStr(involving.Database), ast.NewCIStr(involving.Table))
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[tbl.Meta().ID]; ok {
+			continue
+		}
+		seen[tbl.Meta().ID] = struct{}{}
+		infos = append(infos, schemaIDAndTableInfo{schemaID: schema.ID, tblInfo: tbl.Meta()})
+	}
+	return infos
 }
 
 func promoteProxyKVDiskFullPause(parentJob *model.Job, subJob *model.SubJob, prevSubState model.JobState, proxyJob *model.Job) bool {
@@ -291,21 +325,46 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 	if err != nil {
 		return err
 	}
+	m.InvolvingSchemaInfo = appendInvolvingSchemaInfo(m.InvolvingSchemaInfo, jobW.Job.InvolvingSchemaInfo...)
 	var reorgTp model.ReorgType
 	if jobW.ReorgMeta != nil {
 		reorgTp = jobW.ReorgMeta.ReorgTp
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
-		Type:        jobW.Type,
-		JobArgs:     jobW.JobArgs,
-		RawArgs:     jobW.RawArgs,
-		SchemaState: jobW.SchemaState,
-		SnapshotVer: jobW.SnapshotVer,
-		Revertible:  true,
-		NeedReorg:   jobW.NeedReorg,
-		ReorgTp:     reorgTp,
+		Type:                jobW.Type,
+		JobArgs:             jobW.JobArgs,
+		RawArgs:             jobW.RawArgs,
+		SchemaState:         jobW.SchemaState,
+		SnapshotVer:         jobW.SnapshotVer,
+		Revertible:          true,
+		NeedReorg:           jobW.NeedReorg,
+		ReorgTp:             reorgTp,
+		InvolvingSchemaInfo: jobW.Job.InvolvingSchemaInfo,
 	})
 	return nil
+}
+
+func appendInvolvingSchemaInfo(dst []model.InvolvingSchemaInfo, src ...model.InvolvingSchemaInfo) []model.InvolvingSchemaInfo {
+	for _, info := range src {
+		found := false
+		for i := range dst {
+			if dst[i].Database != info.Database ||
+				dst[i].Table != info.Table ||
+				dst[i].Policy != info.Policy ||
+				dst[i].ResourceGroup != info.ResourceGroup {
+				continue
+			}
+			if dst[i].Mode == model.SharedInvolving && info.Mode == model.ExclusiveInvolving {
+				dst[i].Mode = model.ExclusiveInvolving
+			}
+			found = true
+			break
+		}
+		if !found {
+			dst = append(dst, info)
+		}
+	}
+	return dst
 }
 
 func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
@@ -530,7 +589,129 @@ func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.T
 	return nil
 }
 
-func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
+func buildEffectiveBaseTableInfoForMViewMinMaxIndexConstraints(baseTableInfo *model.TableInfo, info *model.MultiSchemaInfo) *model.TableInfo {
+	effectiveBaseTableInfo := baseTableInfo.Clone()
+	for _, subJob := range info.SubJobs {
+		switch subJob.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			for _, idxArg := range args.IndexArgs {
+				idxInfo := &model.IndexInfo{Name: idxArg.IndexName, State: model.StatePublic}
+				if idxArg.IndexOption != nil && idxArg.IndexOption.Visibility == ast.IndexVisibilityInvisible {
+					idxInfo.Invisible = true
+				}
+				for _, spec := range idxArg.IndexPartSpecifications {
+					if spec == nil || spec.Column == nil || spec.Expr != nil {
+						idxInfo = nil
+						break
+					}
+					colInfo := model.FindColumnInfo(effectiveBaseTableInfo.Columns, spec.Column.Name.L)
+					if colInfo == nil {
+						idxInfo = nil
+						break
+					}
+					idxInfo.Columns = append(idxInfo.Columns, &model.IndexColumn{Name: spec.Column.Name, Offset: colInfo.Offset, Length: spec.Length})
+				}
+				if idxInfo != nil {
+					effectiveBaseTableInfo.Indices = append(effectiveBaseTableInfo.Indices, idxInfo)
+				}
+			}
+		case model.ActionDropIndex, model.ActionDropPrimaryKey:
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			for _, idxArg := range args.IndexArgs {
+				filtered := effectiveBaseTableInfo.Indices[:0]
+				for _, idx := range effectiveBaseTableInfo.Indices {
+					if idx.Name.L != idxArg.IndexName.L {
+						filtered = append(filtered, idx)
+					}
+				}
+				effectiveBaseTableInfo.Indices = filtered
+			}
+			if subJob.Type == model.ActionDropPrimaryKey {
+				effectiveBaseTableInfo.PKIsHandle = false
+			}
+		case model.ActionRenameIndex:
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			from, to := args.GetRenameIndexes()
+			if idxInfo := effectiveBaseTableInfo.FindIndexByName(from.L); idxInfo != nil {
+				idxInfo.Name = to
+			}
+		case model.ActionAlterIndexVisibility:
+			args := subJob.JobArgs.(*model.AlterIndexVisibilityArgs)
+			if idxInfo := effectiveBaseTableInfo.FindIndexByName(args.IndexName.L); idxInfo != nil {
+				idxInfo.Invisible = args.Invisible
+			}
+		}
+	}
+	return effectiveBaseTableInfo
+}
+
+func checkOperateBaseTableDependentMViewMinMaxIndexConstraints(
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	schemaName ast.CIStr,
+	t table.Table,
+	info *model.MultiSchemaInfo,
+) error {
+	baseTableInfo := t.Meta()
+	if baseTableInfo.MaterializedViewBase == nil || len(baseTableInfo.MaterializedViewBase.MViewIDs) == 0 {
+		return nil
+	}
+
+	hasDestructiveIndexChange := false
+	for _, subJob := range info.SubJobs {
+		switch subJob.Type {
+		case model.ActionDropIndex, model.ActionDropPrimaryKey:
+			hasDestructiveIndexChange = true
+		case model.ActionAlterIndexVisibility:
+			if subJob.JobArgs.(*model.AlterIndexVisibilityArgs).Invisible {
+				hasDestructiveIndexChange = true
+			}
+		}
+		if hasDestructiveIndexChange {
+			break
+		}
+	}
+	if !hasDestructiveIndexChange {
+		return nil
+	}
+
+	effectiveBaseTableInfo := buildEffectiveBaseTableInfoForMViewMinMaxIndexConstraints(baseTableInfo, info)
+	for _, subJob := range info.SubJobs {
+		switch subJob.Type {
+		case model.ActionDropIndex, model.ActionDropPrimaryKey:
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			for _, idxArg := range args.IndexArgs {
+				if err := checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
+					context.Background(), is, sctx, schemaName, baseTableInfo, effectiveBaseTableInfo,
+					ast.CIStr{}, idxArg.IndexName, "DROP INDEX",
+				); err != nil {
+					return err
+				}
+			}
+		case model.ActionAlterIndexVisibility:
+			args := subJob.JobArgs.(*model.AlterIndexVisibilityArgs)
+			if !args.Invisible {
+				continue
+			}
+			if err := checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
+				context.Background(), is, sctx, schemaName, baseTableInfo, effectiveBaseTableInfo,
+				ast.CIStr{}, args.IndexName, "ALTER INDEX INVISIBLE",
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func checkMultiSchemaInfo(
+	info *model.MultiSchemaInfo,
+	t table.Table,
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	schemaName ast.CIStr,
+) error {
 	err := checkOperateSameColAndIdx(info)
 	if err != nil {
 		return err
@@ -543,6 +724,10 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 
 	err = checkOperateDropIndexUseByForeignKey(info, t)
 	if err != nil {
+		return err
+	}
+
+	if err := checkOperateBaseTableDependentMViewMinMaxIndexConstraints(is, sctx, schemaName, t, info); err != nil {
 		return err
 	}
 

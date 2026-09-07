@@ -715,6 +715,74 @@ func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 	return getOrDecodeArgs[*ModifyTableCommentArgs](&ModifyTableCommentArgs{}, job)
 }
 
+// AlterMaterializedViewRefreshArgs contains ALTER MATERIALIZED VIEW refresh arguments.
+type AlterMaterializedViewRefreshArgs struct {
+	RefreshMethod                 string           `json:"refresh_method,omitempty"`
+	RefreshStartWith              string           `json:"refresh_start_with,omitempty"`
+	RefreshNext                   string           `json:"refresh_next,omitempty"`
+	RefreshScheduleTimeZone       TimeZoneLocation `json:"refresh_schedule_time_zone,omitempty"`
+	UpdateRefreshScheduleTimeZone bool             `json:"update_refresh_schedule_time_zone,omitempty"`
+}
+
+func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
+	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext, a.RefreshScheduleTimeZone, a.UpdateRefreshScheduleTimeZone}
+}
+
+func (a *AlterMaterializedViewRefreshArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.RefreshMethod, &a.RefreshStartWith, &a.RefreshNext, &a.RefreshScheduleTimeZone, &a.UpdateRefreshScheduleTimeZone))
+}
+
+// GetAlterMaterializedViewRefreshArgs decodes ALTER MATERIALIZED VIEW refresh arguments.
+func GetAlterMaterializedViewRefreshArgs(job *Job) (*AlterMaterializedViewRefreshArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewRefreshArgs](&AlterMaterializedViewRefreshArgs{}, job)
+}
+
+// AlterMaterializedViewAttributesArgs contains ALTER MATERIALIZED VIEW attribute arguments.
+type AlterMaterializedViewAttributesArgs struct {
+	AlertWarningSec    int64 `json:"alert_warning_sec,omitempty"`
+	AlertOverdueSec    int64 `json:"alert_overdue_sec,omitempty"`
+	AlertRefreshFailed bool  `json:"alert_refresh_failed,omitempty"`
+}
+
+func (a *AlterMaterializedViewAttributesArgs) getArgsV1(*Job) []any {
+	return []any{a.AlertWarningSec, a.AlertOverdueSec, a.AlertRefreshFailed}
+}
+
+func (a *AlterMaterializedViewAttributesArgs) decodeV1(job *Job) error {
+	if err := job.decodeArgs(&a.AlertWarningSec, &a.AlertOverdueSec, &a.AlertRefreshFailed); err == nil {
+		return nil
+	}
+	a.AlertRefreshFailed = false
+	return errors.Trace(job.decodeArgs(&a.AlertWarningSec, &a.AlertOverdueSec))
+}
+
+// GetAlterMaterializedViewAttributesArgs decodes ALTER MATERIALIZED VIEW attribute arguments.
+func GetAlterMaterializedViewAttributesArgs(job *Job) (*AlterMaterializedViewAttributesArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewAttributesArgs](&AlterMaterializedViewAttributesArgs{}, job)
+}
+
+// AlterMaterializedViewLogPurgeArgs contains ALTER MATERIALIZED VIEW LOG purge arguments.
+type AlterMaterializedViewLogPurgeArgs struct {
+	PurgeMethod                 string           `json:"purge_method,omitempty"`
+	PurgeStartWith              string           `json:"purge_start_with,omitempty"`
+	PurgeNext                   string           `json:"purge_next,omitempty"`
+	PurgeScheduleTimeZone       TimeZoneLocation `json:"purge_schedule_time_zone,omitempty"`
+	UpdatePurgeScheduleTimeZone bool             `json:"update_purge_schedule_time_zone,omitempty"`
+}
+
+func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
+	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext, a.PurgeScheduleTimeZone, a.UpdatePurgeScheduleTimeZone}
+}
+
+func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.PurgeMethod, &a.PurgeStartWith, &a.PurgeNext, &a.PurgeScheduleTimeZone, &a.UpdatePurgeScheduleTimeZone))
+}
+
+// GetAlterMaterializedViewLogPurgeArgs decodes ALTER MATERIALIZED VIEW LOG purge arguments.
+func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPurgeArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewLogPurgeArgs](&AlterMaterializedViewLogPurgeArgs{}, job)
+}
+
 // ModifyTableCharsetAndCollateArgs is the arguments for ActionModifyTableCharsetAndCollate ddl.
 type ModifyTableCharsetAndCollateArgs struct {
 	ToCharset          string `json:"to_charset,omitempty"`
