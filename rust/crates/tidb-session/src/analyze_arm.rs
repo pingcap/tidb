@@ -59,6 +59,7 @@ use tidb_executor::analyze::{
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
 
 use crate::{Session, StmtOutput};
+use tidb_util::stringutil::go_to_lower;
 
 /// The source goroutine boundary at which a test injects its one-shot panic.
 #[cfg(test)]
@@ -305,8 +306,8 @@ fn selected_column_ids(
             1105,
             &format!(
                 "No predicate column has been collected yet for table {}.{}, so only indexes and the columns composing the indexes will be analyzed",
-                schema.to_lowercase(),
-                table_name.to_lowercase()
+                go_to_lower(schema),
+                go_to_lower(table_name)
             ),
         );
         *predicate_warning_emitted = true;

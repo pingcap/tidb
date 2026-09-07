@@ -27,6 +27,7 @@
 use crate::show_index::{show_index_rows, SHOW_INDEX_COLUMNS};
 use crate::*;
 use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
+use tidb_util::stringutil::go_to_lower;
 
 /// The `Type` cell of a `SHOW COLUMNS`/`DESCRIBE` row: Go `NewColDesc`'s
 /// `col.GetTypeDesc()`.
@@ -1169,7 +1170,7 @@ impl ShowLikePattern {
         };
         Self {
             value: if extracted_literal {
-                value.map(|pattern| pattern.to_lowercase())
+                value.map(go_to_lower)
             } else {
                 value
             },
@@ -1190,7 +1191,7 @@ impl ShowLikePattern {
         };
         if self.fold_lowercase {
             tidb_executor::like_match_with_collation(
-                text.to_lowercase(),
+                go_to_lower(text),
                 pattern,
                 None,
                 tidb_datatype::Collation::Utf8Mb4Bin,

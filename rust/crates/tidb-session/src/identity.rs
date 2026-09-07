@@ -28,6 +28,7 @@ use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
 
 use crate::{privilege, process, vars, DriverError, Session};
+use tidb_util::stringutil::go_to_lower;
 
 impl Session {
     /// Checks one already-resolved table name without rebuilding an AST path.
@@ -51,7 +52,7 @@ impl Session {
             privilege: privilege.print_name(),
             user: user.to_owned(),
             host: host.to_owned(),
-            table: table.to_lowercase(),
+            table: go_to_lower(table),
         })
     }
 
@@ -350,7 +351,7 @@ impl Session {
                     privilege: request.privilege.print_name(),
                     user,
                     host,
-                    table: request.table.to_lowercase(),
+                    table: go_to_lower(request.table),
                 }
             } else {
                 DriverError::PrivilegeCheckFail(request.privilege.check_fail_name().to_owned())

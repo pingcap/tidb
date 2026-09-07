@@ -36,6 +36,7 @@ use tidb_vardef::tidb_vars::{
 };
 
 use crate::vars::VarError;
+use tidb_util::stringutil::go_to_lower;
 
 /// Go `OffInt`.
 pub const OFF_INT: i64 = 0;
@@ -301,7 +302,7 @@ pub fn valid_analyze_skip_column_types(val: &str) -> Result<String, VarError> {
         return Ok(String::new());
     }
     let mut column_types = Vec::new();
-    for item in val.to_lowercase().split(',') {
+    for item in go_to_lower(val).split(',') {
         let column_type = item.trim();
         if !ANALYZE_SKIP_ALLOWED_TYPES.contains(&column_type) {
             return Err(VarError::WrongValueForVar(
@@ -318,7 +319,7 @@ pub fn valid_analyze_skip_column_types(val: &str) -> Result<String, VarError> {
 /// dropping anything outside the allowed types.
 #[must_use]
 pub fn parse_analyze_skip_column_types(val: &str) -> BTreeSet<String> {
-    val.to_lowercase()
+    go_to_lower(val)
         .split(',')
         .filter(|column_type| ANALYZE_SKIP_ALLOWED_TYPES.contains(column_type))
         .map(ToOwned::to_owned)

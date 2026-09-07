@@ -47,6 +47,7 @@
 //!    approximation.
 
 use crate::*;
+use tidb_util::stringutil::go_to_lower;
 
 /// Renders one SQL string literal under the default (backslash-escaping)
 /// SQL mode, for values interpolated into the internal DML below -- the role
@@ -171,7 +172,7 @@ impl Session {
              {locked}, '', {expired}, {lifetime}, 0, null, null)",
             // Go lowercases the stored Host (`hostName :=
             // strings.ToLower(spec.User.Hostname)`).
-            host = sql_str(&host.to_lowercase()),
+            host = sql_str(&go_to_lower(host)),
             user = sql_str(user),
             auth = sql_str(auth_string),
             plugin = sql_str(plugin),
@@ -194,7 +195,7 @@ impl Session {
         }
         let sql = format!(
             "DELETE FROM mysql.user WHERE Host = {} and User = {}",
-            sql_str(&host.to_lowercase()),
+            sql_str(&go_to_lower(host)),
             sql_str(user),
         );
         self.run_user_table_write(&sql)
@@ -217,9 +218,9 @@ impl Session {
         let sql = format!(
             "UPDATE mysql.user SET User={}, Host={} WHERE User={} AND Host={}",
             sql_str(new_user),
-            sql_str(&new_host.to_lowercase()),
+            sql_str(&go_to_lower(new_host)),
             sql_str(old_user),
-            sql_str(&old_host.to_lowercase()),
+            sql_str(&go_to_lower(old_host)),
         );
         self.run_user_table_write(&sql)
     }

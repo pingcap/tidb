@@ -29,6 +29,7 @@ use tidb_executor::{Catalog, DriverError};
 
 use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
 use crate::{Session, SessionTxnMode, TxnErrorKind};
+use tidb_util::stringutil::go_to_lower;
 
 /// An open transaction's state.
 ///
@@ -622,7 +623,7 @@ impl Session {
         let Some(txn) = &mut self.txn else {
             return Ok(());
         };
-        let name = name.to_lowercase();
+        let name = go_to_lower(name);
         let image = txn.working.clone();
         txn.savepoints.retain(|savepoint| savepoint.name != name);
         txn.savepoints.push(Savepoint {
@@ -646,7 +647,7 @@ impl Session {
     /// With no transaction open Go's `txn.Valid()` is false and the error is
     /// the same 1305 an unknown name gets.
     fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
-        let lowered = name.to_lowercase();
+        let lowered = go_to_lower(name);
         let txn = self
             .txn
             .as_mut()
@@ -669,7 +670,7 @@ impl Session {
     /// plus `TxnCtx.ReleaseSavepoint`: drops the named savepoint AND every
     /// savepoint taken after it (`Savepoints[:i]`), touching no data.
     fn release_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
-        let lowered = name.to_lowercase();
+        let lowered = go_to_lower(name);
         let index = self
             .txn
             .as_ref()

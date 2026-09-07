@@ -26,6 +26,7 @@ use tidb_executor::DriverError;
 
 use crate::binding::{self, Binding, SOURCE_MANUAL, STATUS_ENABLED};
 use crate::{Session, StmtOutput};
+use tidb_util::stringutil::go_to_lower;
 
 /// Go `bindinfo.mayHaveSQLBinding`: INSERT/REPLACE value forms have no
 /// binding-capable SELECT source. Keep the filter at the matcher boundary so
@@ -267,7 +268,7 @@ impl Session {
                 Datum::new_string(binding.bind_sql.clone()),
                 // Go lowercases the schema on the way in
                 // (`strings.ToLower(binding.Db)`).
-                Datum::new_string(binding.db.to_lowercase()),
+                Datum::new_string(go_to_lower(&binding.db)),
                 Datum::new_string(binding.status.to_owned()),
                 Datum::new_string(now.clone()),
                 Datum::new_string(now),

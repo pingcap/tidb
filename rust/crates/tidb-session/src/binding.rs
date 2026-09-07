@@ -62,6 +62,7 @@ use std::collections::BTreeMap;
 
 use tidb_ast::{Stmt, Visitable as _, Visitor};
 use tidb_executor::DriverError;
+use tidb_util::stringutil::go_to_lower;
 
 pub(crate) use tidb_hint::HintsSet;
 
@@ -123,8 +124,7 @@ impl Visitor for TableNameCollector {
                 [schema, table] => (schema.clone(), table.clone()),
                 _ => return false,
             };
-            self.names
-                .push((schema.to_lowercase(), table.to_lowercase()));
+            self.names.push((go_to_lower(schema), go_to_lower(table)));
         }
         false
     }
@@ -172,8 +172,7 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
                     [schema, table] => (schema.clone(), table.clone()),
                     _ => return false,
                 };
-                self.names
-                    .push((schema.to_lowercase(), table.to_lowercase()));
+                self.names.push((go_to_lower(schema), go_to_lower(table)));
             }
             false
         }
@@ -405,7 +404,7 @@ fn cross_db_match_table_names(
     if stmt_tables.len() != binding_tables.len() {
         return None;
     }
-    let current_db = current_db.to_lowercase();
+    let current_db = go_to_lower(current_db);
     let mut wildcards = 0;
     for ((stmt_schema, stmt_table), (binding_schema, binding_table)) in
         stmt_tables.iter().zip(binding_tables)
@@ -445,7 +444,7 @@ pub(crate) fn default_db_of(stmt: &Stmt, current_db: &str) -> String {
     collect_table_names(stmt)
         .into_iter()
         .find_map(|(schema, _)| (!schema.is_empty()).then_some(schema))
-        .unwrap_or_else(|| current_db.to_lowercase())
+        .unwrap_or_else(|| go_to_lower(current_db))
 }
 
 /// Go's `preprocessor`'s binding check: the origin and the hinted statement
