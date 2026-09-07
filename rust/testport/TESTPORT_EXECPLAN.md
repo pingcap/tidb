@@ -41,6 +41,15 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`pkg/parser/util` corrective return contract): the complete split
+  Rust owner, four dedicated tests, duplicate inline source-table test, planner
+  consumer proof, manifests, workspace/lock entries, aggregate-test build
+  script/output, and all callers were re-inventoried without reopening Go.
+  The sole direct `UnescapeChar` result no longer imposes a Rust-only
+  diagnostic; the focused regression failed exactly once before the edit and
+  passes afterward. All 99 split-owner tests, owner all-target compilation,
+  production consumer compilation, scoped formatting, and Ready lint pass.
+  Evidence is in `receipts/parser_util.md` and its ExecPlan.
 - 2026-09-07 (`br/pkg/restore/utils` return contracts): the complete six-module
   Rust owner (2,285 pre-edit lines), shared manifest/root, workspace/lock
   entries, every function, seventeen active tests, one ignored benchmark,
