@@ -9961,3 +9961,7 @@ risks without claiming repository-wide parity.
   apparent IN-subquery failure during probing was a harness artifact (the
   probe's second catalog never populated the subquery's table); no port
   change needed. Pinned in `tests/delete_subquery_source.rs`.
+- 2026-09-06 (UPDATE ORDER BY/LIMIT + multi-table pins): `order by a desc
+  limit 2` updates rows 3 and 2 only; a multi-table UPDATE via join applies
+  to the filtered join rows. Pinned in
+  `tests/update_order_limit_multi_source.rs`.
