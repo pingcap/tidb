@@ -87,7 +87,6 @@
 //!   [`StmtSummary::evicted_dropped`] instead of a logger.
 
 use std::collections::HashSet;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
@@ -145,7 +144,6 @@ type TimeNowFn = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
 static TIME_NOW: RwLock<Option<TimeNowFn>> = RwLock::new(None);
 
 /// Go `timeNow()`.
-#[must_use]
 pub fn time_now() -> DateTime<Utc> {
     let hook = TIME_NOW.read().expect("time_now lock poisoned").clone();
     hook.map_or_else(Utc::now, |hook| hook())
@@ -412,7 +410,6 @@ impl StmtSummary {
 
     /// Go `NewStmtSummary4Test`: creates a new `StmtSummary` for testing
     /// purposes.
-    #[must_use]
     pub fn new_for_test(max_stmt_count: usize) -> Arc<Self> {
         let (summary, rx) = Self::with_options(
             DEFAULT_MAX_STMT_COUNT,
@@ -428,7 +425,6 @@ impl StmtSummary {
 
     /// Builds a test summary over caller-supplied sinks, so the upstream tests
     /// that read Go's process-global Prometheus metrics can read them here.
-    #[must_use]
     pub fn new_for_test_with_sinks(
         max_stmt_count: usize,
         storage: Arc<dyn StmtStorage>,
@@ -453,25 +449,21 @@ impl StmtSummary {
     }
 
     /// The storage this summary persists through.
-    #[must_use]
     pub fn storage(&self) -> Arc<dyn StmtStorage> {
         Arc::clone(&self.storage.read().expect("storage lock poisoned"))
     }
 
     /// Go's `s.window`, which the upstream tests read directly.
-    #[must_use]
     pub fn window(&self) -> Arc<Mutex<StmtWindow>> {
         Arc::clone(&self.window.lock().expect("window lock poisoned"))
     }
 
     /// Go `evictedDropped`.
-    #[must_use]
     pub fn evicted_dropped(&self) -> u64 {
         self.evict.evicted_dropped.load(Ordering::SeqCst)
     }
 
     /// Go `(*StmtSummary).Enabled`.
-    #[must_use]
     pub fn enabled(&self) -> bool {
         self.opt_enabled.load(Ordering::SeqCst)
     }
@@ -487,7 +479,6 @@ impl StmtSummary {
     }
 
     /// Go `(*StmtSummary).EnableInternalQuery`.
-    #[must_use]
     pub fn enable_internal_query(&self) -> bool {
         self.opt_enable_internal_query.load(Ordering::SeqCst)
     }
@@ -503,7 +494,6 @@ impl StmtSummary {
     }
 
     /// Go `(*StmtSummary).MaxStmtCount`.
-    #[must_use]
     pub fn max_stmt_count(&self) -> u32 {
         self.opt_max_stmt_count.load(Ordering::SeqCst)
     }
@@ -521,7 +511,6 @@ impl StmtSummary {
     }
 
     /// Go `(*StmtSummary).MaxSQLLength`.
-    #[must_use]
     pub fn max_sql_length(&self) -> u32 {
         self.opt_max_sql_length.load(Ordering::SeqCst)
     }
@@ -533,7 +522,6 @@ impl StmtSummary {
 
     /// Go `(*StmtSummary).RefreshInterval`: the period (in seconds) at which
     /// the statistics window is refreshed (persisted).
-    #[must_use]
     pub fn refresh_interval(&self) -> u32 {
         self.opt_refresh_interval.load(Ordering::SeqCst)
     }
@@ -546,7 +534,6 @@ impl StmtSummary {
 
     /// Go `(*StmtSummary).PersistEvicted`: reports whether per-record evictions
     /// are persisted.
-    #[must_use]
     pub fn persist_evicted(&self) -> bool {
         self.evict.opt_persist_evicted.load(Ordering::SeqCst)
     }
@@ -559,7 +546,6 @@ impl StmtSummary {
     /// Go `(*StmtSummary).GroupByUser`: reports whether statement summaries are
     /// grouped by the executing user in addition to the usual
     /// digest/schema/plan tuple.
-    #[must_use]
     pub fn group_by_user(&self) -> bool {
         self.opt_group_by_user.load(Ordering::SeqCst)
     }
@@ -635,7 +621,6 @@ impl StmtSummary {
     ///
     /// Go reads `s.window.begin` after releasing `windowLock`; the port reads it
     /// under the same lock as the count.
-    #[must_use]
     pub fn evicted(&self) -> Vec<Datum> {
         let (count, begin) = {
             let guard = self.window.lock().expect("window lock poisoned");
@@ -976,19 +961,16 @@ impl std::fmt::Debug for StmtWindow {
 
 impl StmtWindow {
     /// Go `w.evictedCount.Load()`.
-    #[must_use]
     pub fn evicted_count(&self) -> i64 {
         self.evicted_count.load(Ordering::SeqCst)
     }
 
     /// Go `w.evicted.count()`: the number of distinct evicted digests.
-    #[must_use]
     pub fn evicted_count_distinct(&self) -> usize {
         self.evicted.lock().expect("evicted lock poisoned").count()
     }
 
     /// Go `w.evicted.other`, cloned out from under its lock.
-    #[must_use]
     pub fn evicted_other(&self) -> StmtRecord {
         self.evicted
             .lock()
@@ -1010,7 +992,6 @@ impl StmtWindow {
 /// # Panics
 ///
 /// Panics when `capacity` is zero, matching Go's `NewSimpleLRUCache`.
-#[must_use]
 pub fn new_stmt_window(
     begin: DateTime<Utc>,
     capacity: usize,
@@ -1080,7 +1061,6 @@ impl Default for StmtEvicted {
 
 impl StmtEvicted {
     /// Go `newStmtEvicted`.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             keys: HashSet::new(),
@@ -1100,14 +1080,12 @@ impl StmtEvicted {
     }
 
     /// Go `(*stmtEvicted).count`.
-    #[must_use]
     pub fn count(&self) -> usize {
         self.keys.len()
     }
 }
 
 /// Go `newEvictedAggregateRecord`.
-#[must_use]
 pub fn new_evicted_aggregate_record() -> StmtRecord {
     let now = Utc::now();
     StmtRecord {
@@ -1123,7 +1101,6 @@ pub fn new_evicted_aggregate_record() -> StmtRecord {
 /// marshal the snapshot without racing with further updates on the retained
 /// `StmtRecord`. Rust's `Clone` is already deep, so Go's explicit map copies
 /// are implicit here.
-#[must_use]
 pub fn clone_record_for_log(r: &StmtRecord) -> StmtRecord {
     r.clone()
 }
@@ -1143,7 +1120,6 @@ struct MockStmtStorageInner {
 
 impl MockStmtStorage {
     /// Go `s.windows`.
-    #[must_use]
     pub fn windows(&self) -> Vec<Arc<Mutex<StmtWindow>>> {
         self.inner
             .lock()
@@ -1153,7 +1129,6 @@ impl MockStmtStorage {
     }
 
     /// Go `s.evicted`.
-    #[must_use]
     pub fn evicted(&self) -> Vec<StmtRecord> {
         self.inner
             .lock()
@@ -1222,7 +1197,6 @@ struct WriterState {
 impl RotatingFileLogWriter {
     /// Go `newStmtLogStorage(cfg)`: sizes the sink from the static config.
     /// `file_max_size` is in megabytes, exactly like Go's `MaxSize`.
-    #[must_use]
     pub fn from_config(cfg: &Config) -> Self {
         let max_size_bytes = if cfg.file_max_size <= 0 {
             0
@@ -1283,11 +1257,7 @@ impl RotatingFileLogWriter {
         };
         let timestamp = chrono::Local::now().format(LOG_FILE_TIME_FORMAT);
         let backup = self.path.with_file_name(format!("{stem}-{timestamp}{ext}"));
-        let rename_result = std::fs::rename(&self.path, &backup);
-        eprintln!(
-            "DEBUG rename {:?} -> {:?}: {:?}",
-            self.path, backup, rename_result
-        );
+        let _ = std::fs::rename(&self.path, &backup);
         self.prune_backups(stem, &ext);
         state.size = 0;
     }
@@ -1344,7 +1314,6 @@ impl RotatingFileLogWriter {
             let by_count =
                 self.max_backups > 0 && (backups.len() as i64 - index as i64) > self.max_backups;
             let by_age = cutoff.is_some_and(|cutoff| *stamp < cutoff);
-            eprintln!("DEBUG prune name={name} stamp={stamp:?} cutoff={cutoff:?} by_count={by_count} by_age={by_age}");
             if by_count || by_age {
                 let _ = std::fs::remove_file(dir.join(name));
             }
@@ -1377,7 +1346,7 @@ impl StmtLogWriter for RotatingFileLogWriter {
     }
 
     fn sync(&self) -> std::io::Result<()> {
-        let mut state = self.state.lock().expect("rotating writer poisoned");
+        let state = self.state.lock().expect("rotating writer poisoned");
         match state.file.as_ref() {
             Some(file) => file.sync_all(),
             None => Ok(()),
@@ -1400,7 +1369,6 @@ impl std::fmt::Debug for StmtLogStorage {
 
 impl StmtLogStorage {
     /// Builds a storage over `writer` with no metrics sink.
-    #[must_use]
     pub fn new(writer: Arc<dyn StmtLogWriter>) -> Self {
         Self {
             writer,
@@ -1409,7 +1377,6 @@ impl StmtLogStorage {
     }
 
     /// Builds a storage over `writer` publishing to `metrics`.
-    #[must_use]
     pub fn with_metrics(
         writer: Arc<dyn StmtLogWriter>,
         metrics: Arc<dyn EvictedLogMetricsSink>,
@@ -1492,7 +1459,6 @@ pub fn add(stmt_exec_info: &StmtExecInfo) {
 }
 
 /// Go `Enabled`.
-#[must_use]
 pub fn enabled() -> bool {
     if enable_persistent() {
         return require_global().enabled();
@@ -1501,7 +1467,6 @@ pub fn enabled() -> bool {
 }
 
 /// Go `EnabledInternal`.
-#[must_use]
 pub fn enabled_internal() -> bool {
     if enable_persistent() {
         return require_global().enable_internal_query();
@@ -2054,8 +2019,6 @@ mod tests {
     /// the next rotation even when the backup count is unlimited.
     #[test]
     fn test_rotating_writer_prunes_by_age() {
-        use std::io::Write as _;
-
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tidb-statements.log");
         let writer = RotatingFileLogWriter::for_test(&path, 64, 30, 0);
@@ -2079,14 +2042,6 @@ mod tests {
         writer.write_line(&"x".repeat(80));
 
         assert!(!old_backup.exists(), "the aged backup must be pruned");
-        eprintln!(
-            "DEBUG dir={:?}",
-            std::fs::read_dir(dir.path())
-                .unwrap()
-                .flatten()
-                .map(|e| e.file_name())
-                .collect::<Vec<_>>()
-        );
         assert_eq!(1, backup_paths(&path).len());
     }
 
@@ -2118,5 +2073,94 @@ mod tests {
     #[test]
     fn test_new_stmt_summary_rejects_empty_filename() {
         assert!(new_stmt_summary(&Config::default()).is_err());
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v2_alignment_summary_returns_can_be_ignored() {
+        time_now();
+        let _ = global_stmt_summary();
+
+        if std::hint::black_box(false) {
+            StmtSummary::new_for_test(1);
+            StmtSummary::new_for_test_with_sinks(
+                1,
+                Arc::new(MockStmtStorage::default()),
+                Arc::new(crate::statement_summary::NoopWindowMetricsSink),
+                Arc::new(NoopEvictedLogMetricsSink),
+            );
+            enabled();
+            enabled_internal();
+        }
+
+        let summary = StmtSummary::new_for_test(1);
+        summary.storage();
+        summary.window();
+        summary.evicted_dropped();
+        summary.enabled();
+        summary.enable_internal_query();
+        summary.max_stmt_count();
+        summary.max_sql_length();
+        summary.refresh_interval();
+        summary.persist_evicted();
+        summary.group_by_user();
+        summary.evicted();
+
+        let window = summary.window();
+        let window = window.lock().unwrap();
+        window.evicted_count();
+        window.evicted_count_distinct();
+        window.evicted_other();
+        drop(window);
+
+        new_stmt_window(time_now(), 1, None);
+        StmtEvicted::new();
+        let evicted = StmtEvicted::new();
+        evicted.count();
+        new_evicted_aggregate_record();
+        let record = new_evicted_aggregate_record();
+        clone_record_for_log(&record);
+
+        let storage = MockStmtStorage::default();
+        storage.windows();
+        storage.evicted();
+
+        RotatingFileLogWriter::from_config(&Config {
+            filename: "unused.log".to_owned(),
+            ..Config::default()
+        });
+        let writer: Arc<dyn StmtLogWriter> = Arc::new(BufferWriter::default());
+        StmtLogStorage::new(Arc::clone(&writer));
+        StmtLogStorage::with_metrics(writer, Arc::new(NoopEvictedLogMetricsSink));
+
+        summary.close();
+    }
+
+    #[test]
+    fn go_v2_alignment_rotating_writer_is_silent() {
+        const CHILD_ENV: &str = "TIDB_STMTSUMMARY_SILENT_WRITER_CHILD";
+
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("v2::stmtsummary::tests::go_v2_alignment_rotating_writer_is_silent")
+                .arg("--exact")
+                .arg("--nocapture")
+                .env(CHILD_ENV, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert!(
+                output.stderr.is_empty(),
+                "rotating writer leaked stderr:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tidb-statements.log");
+        let writer = RotatingFileLogWriter::for_test(path, 8, 0, 1);
+        writer.write_line("seed");
+        writer.write_line("cross-the-limit");
     }
 }

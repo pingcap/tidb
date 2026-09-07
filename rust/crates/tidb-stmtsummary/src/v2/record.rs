@@ -492,7 +492,6 @@ impl Default for StmtRecord {
 /// Go's `GetEncodedPlan` returns a third `any` result that `NewStmtRecord`
 /// discards with `_`; the ported call discards the [`EncodedPlanError`] the
 /// same way, so unlike v1's `newStmtSummaryStats` this never yields `nil`.
-#[must_use]
 pub fn new_stmt_record(info: &StmtExecInfo) -> StmtRecord {
     // Use "," to separate table names to support FIND_IN_SET.
     let mut buffer = String::new();
@@ -983,7 +982,6 @@ pub(crate) fn nanos_to_duration(nanos: i64) -> Duration {
 ///
 /// Go slices raw bytes; this truncates at the nearest UTF-8 boundary at or
 /// below the limit, and reports Go's byte length.
-#[must_use]
 pub fn format_sql(sql: &str) -> String {
     let max_sql_length = max_sql_length() as usize;
     let length = sql.len();
@@ -1000,7 +998,6 @@ pub fn format_sql(sql: &str) -> String {
 
 /// Go `maxSQLLength`: `GlobalStmtSummary.MaxSQLLength()`, or
 /// [`DEFAULT_MAX_SQL_LENGTH`] while the global is unset.
-#[must_use]
 pub fn max_sql_length() -> u32 {
     crate::v2::stmtsummary::global_max_sql_length()
 }
@@ -1415,7 +1412,6 @@ impl StmtExecLazyInfo for MockLazyInfo {
 /// Go's `util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond)` and
 /// `&util.ExecDetails{}` arrive here as the already-loaded snapshots v1's
 /// `StmtExecInfo` carries.
-#[must_use]
 pub fn generate_stmt_exec_info_4_test(digest: &str) -> StmtExecInfo {
     let tables = vec![
         TableEntry {
@@ -1705,5 +1701,15 @@ mod tests {
         record.add(&info);
         assert_eq!(record.table_names, "db2.tb2");
         assert_eq!(record.normalized_sql, format_sql(&info.normalized_sql));
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v2_alignment_record_returns_can_be_ignored() {
+        generate_stmt_exec_info_4_test("");
+        let info = generate_stmt_exec_info_4_test("");
+        new_stmt_record(&info);
+        format_sql("");
+        max_sql_length();
     }
 }

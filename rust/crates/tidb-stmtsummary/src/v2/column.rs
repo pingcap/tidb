@@ -508,7 +508,6 @@ pub fn column_factory(name: &str) -> Option<ColumnFactory> {
 /// # Panics
 ///
 /// Go panics when a column has no registered factory; so does this.
-#[must_use]
 pub fn make_column_factories(columns: &[ColumnInfo]) -> Vec<ColumnFactory> {
     columns
         .iter()
@@ -817,5 +816,12 @@ mod tests {
         assert_eq!(row.get_uint64(4), 4096);
         assert_eq!(row.get_int64(5), nanos(Duration::from_micros(2500)));
         assert_eq!(row.get_int64(6), nanos(Duration::from_millis(5)));
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v2_alignment_column_returns_can_be_ignored() {
+        make_column_factories(&[]);
+        let _ = column_factory("");
     }
 }

@@ -63,26 +63,30 @@ const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// `[Begin, End)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StmtTimeRange {
+    /// Inclusive start timestamp. Zero does not give the start a special
+    /// meaning.
     pub begin: i64,
+    /// End timestamp. Zero, or a value before `begin`, leaves the range open.
     pub end: i64,
 }
 
 /// A minimal stand-in for Go's `context.WithCancel`: a flag workers poll.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct CancelToken(Arc<AtomicBool>);
+pub struct CancelToken(Arc<AtomicBool>);
 
 impl CancelToken {
-    pub(crate) fn new() -> Self {
+    /// Creates an active cancellation token.
+    pub fn new() -> Self {
         Self(Arc::new(AtomicBool::new(false)))
     }
 
     /// Go `ctx.Done()` being closed.
-    pub(crate) fn is_done(&self) -> bool {
+    pub fn is_done(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
 
     /// Go `cancel()`.
-    pub(crate) fn cancel(&self) {
+    pub fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
 }
@@ -159,12 +163,8 @@ pub(crate) fn time_range_overlap(
 
 /// Go's `select { case ch <- v: case <-ctx.Done(): }` for a bounded channel:
 /// poll `try_send` until it fits or the token cancels.
-fn send_with_cancel<T>(
-    sender: &SyncSender<T>,
-    value: T,
-    token: &CancelToken,
-    block_on_disconnect: bool,
-) {
+fn send_with_cancel<T>(sender: &SyncSender<T>, value: T, token: &CancelToken) {
+    let mut value = value;
     loop {
         if token.is_done() {
             return;
@@ -173,16 +173,9 @@ fn send_with_cancel<T>(
             Ok(()) => return,
             Err(mpsc::TrySendError::Full(v)) => {
                 std::thread::sleep(CANCEL_POLL_INTERVAL);
-                // Re-arm the loop with the taken-back value.
-                // (Assigned through the shadow below.)
-                return send_with_cancel(sender, v, token, block_on_disconnect);
+                value = v;
             }
-            Err(mpsc::TrySendError::Disconnected(_)) => {
-                if block_on_disconnect {
-                    return;
-                }
-                return;
-            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return,
         }
     }
 }
@@ -612,8 +605,7 @@ fn open_stmt_file(path: &Path) -> Result<StmtFile, String> {
 fn parse_begin_ts_and_reseek(file: &mut std::fs::File) -> Result<i64, String> {
     file.seek_read_start()?;
     let mut reader = BufReader::new(&mut *file);
-    let mut record = StmtTinyRecord::default();
-    loop {
+    let record = loop {
         // ignore invalid lines
         let line = match read_line(&mut reader) {
             Ok(line) => line,
@@ -621,13 +613,10 @@ fn parse_begin_ts_and_reseek(file: &mut std::fs::File) -> Result<i64, String> {
             Err(error) => return Err(error),
         };
         match unmarshal_tiny_record(&line) {
-            Ok(parsed) => {
-                record = parsed;
-                break;
-            }
+            Ok(parsed) => break parsed,
             Err(_) => continue,
         }
-    }
+    };
     drop(reader);
     file.seek_read_start()?;
     Ok(record.begin)
@@ -967,7 +956,7 @@ impl StmtScanWorker {
 
     fn put_lines(&self, lines: Vec<Vec<u8>>, lines_tx: &SyncSender<Vec<Vec<u8>>>) {
         // Go: `select { case linesCh <- lines: case <-ctx.Done(): }`.
-        send_with_cancel(lines_tx, lines, &self.token, false);
+        send_with_cancel(lines_tx, lines, &self.token);
     }
 
     /// Returns `Ok(None)` for Go's `io.EOF` (file finished or the time range
@@ -977,7 +966,7 @@ impl StmtScanWorker {
         reader: &mut BufReader<std::fs::File>,
     ) -> Result<Option<Vec<Vec<u8>>>, String> {
         let mut first_line;
-        let mut record;
+        let record;
         loop {
             // ingore invalid lines
             first_line = read_line(reader)?;
@@ -1098,7 +1087,7 @@ impl StmtParseWorker {
     }
 
     fn put_rows(&self, rows: Vec<Vec<Datum>>, rows_tx: &SyncSender<Vec<Vec<Datum>>>) {
-        send_with_cancel(rows_tx, rows, &self.token, false);
+        send_with_cancel(rows_tx, rows, &self.token);
     }
 
     fn need_stop(&self, record: &StmtRecord) -> bool {
@@ -1136,7 +1125,6 @@ pub struct MemReader {
 }
 
 /// Go `NewMemReader`.
-#[must_use]
 pub fn new_mem_reader(
     s: Option<Arc<StmtSummary>>,
     columns: &[ColumnInfo],
@@ -1174,7 +1162,6 @@ impl ColumnInfoSource for MemReader {
 impl MemReader {
     /// Go `(*MemReader).Rows`: rows from the current window, with all evicted
     /// data aggregated into one row appended at the end.
-    #[must_use]
     pub fn rows(&self) -> Vec<Vec<Datum>> {
         let Some(s) = &self.s else {
             return Vec::new();
@@ -1837,7 +1824,6 @@ pub(crate) mod tests {
                 std::fs::write(&current_path, format!("{new_record}\n"))
             };
 
-            let dir_path = dir.path().to_path_buf();
             let files = new_stmt_files_with_read_dir(&CancelToken::new(), move |read_dir| {
                 if !rotate_after_enumeration {
                     rotate()?;
@@ -1858,11 +1844,10 @@ pub(crate) mod tests {
             .unwrap();
             let expected_files = if fail_rotated_entry_metadata { 2 } else { 1 };
             assert_eq!(expected_files, files.files.len());
-            let snapshot = files
-                .files
-                .iter()
-                .find(|file| file.file.is_some())
-                .expect("the pinned current file must be open");
+            assert!(
+                files.files.iter().any(|file| file.file.is_some()),
+                "the pinned current file must be open"
+            );
 
             let mut reader = HistoryReader::from_parts(
                 None,
@@ -2170,5 +2155,73 @@ pub(crate) mod tests {
         for row in &all {
             assert_eq!(columns.len(), row.len());
         }
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v2_alignment_reader_returns_can_be_ignored() {
+        new_mem_reader(
+            None,
+            &[],
+            String::new(),
+            chrono_tz::Tz::UTC,
+            None,
+            false,
+            None,
+            Vec::new(),
+        );
+        let reader = new_mem_reader(
+            None,
+            &[],
+            String::new(),
+            chrono_tz::Tz::UTC,
+            None,
+            false,
+            None,
+            Vec::new(),
+        );
+        reader.rows();
+    }
+
+    #[test]
+    fn go_v2_alignment_reader_send_retry_has_bounded_stack() {
+        const CHILD_ENV: &str = "TIDB_STMTSUMMARY_BOUNDED_SEND_CHILD";
+        const PAYLOAD_SIZE: usize = 12 * 1024;
+
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("v2::reader::tests::go_v2_alignment_reader_send_retry_has_bounded_stack")
+                .arg("--exact")
+                .arg("--nocapture")
+                .env(CHILD_ENV, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "bounded-stack child failed:\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender.send([0_u8; PAYLOAD_SIZE]).unwrap();
+        let token = CancelToken::new();
+        let handle = std::thread::Builder::new()
+            .name("stmt-send-bounded-stack".to_owned())
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                send_with_cancel(&sender, [1_u8; PAYLOAD_SIZE], &token);
+            })
+            .unwrap();
+
+        std::thread::sleep(Duration::from_millis(1_500));
+        assert_eq!(receiver.recv().unwrap(), [0_u8; PAYLOAD_SIZE]);
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+            [1_u8; PAYLOAD_SIZE]
+        );
+        handle.join().unwrap();
     }
 }

@@ -27,13 +27,14 @@
 //!
 //! **v2 — `pkg/util/stmtsummary/v2` — is IN PROGRESS and NOT complete.** The v1
 //! "lands complete" claim above covers v1 only, and must not be read as
-//! covering v2. Three of v2's five production files land complete —
-//! [`v2::record`] (`record.go`), [`v2::column`] (`column.go`) and
-//! [`v2::stmtsummary`] (`stmtsummary.go`), together with all twelve of their
-//! upstream tests — while `v2/reader.go`, `v2/logger.go` and `v2/tests/` are not
-//! ported. Two small `logger.go` carve-outs exist as SEED evidence because the
-//! three ported files call into them; see [`v2`]'s module header, and each v2
-//! module's own header for its narrowings.
+//! covering v2. Four of v2's five production files land complete —
+//! [`v2::record`] (`record.go`), [`v2::column`] (`column.go`),
+//! [`v2::reader`] (`reader.go`), and [`v2::stmtsummary`] (`stmtsummary.go`).
+//! `v2/logger.go` remains incomplete: only the explicit marshalling, storage,
+//! and rotating-writer boundaries used by the completed files are present.
+//! The separate Go package under `v2/tests/` is outside this package claim.
+//! See [`v2`]'s module header and each v2 module header for the exact inventory
+//! and narrowings.
 //!
 //! `AddStatement`'s eviction path reaches the rollup through the named
 //! [`statement_summary::EvictedSink`] boundary, which

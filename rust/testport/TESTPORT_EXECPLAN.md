@@ -41,6 +41,21 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`pkg/util/stmtsummary/v2` corrective Rust alignment): reused the
+  complete direct Go-package inventory under the user's Rust-only scope, then
+  read the 6,875-line/five-module Rust owner, all 255 functions, 27 tests, 38
+  annotations, manifests, workspace/lock entries, build surfaces, dependency
+  edges, and every caller before editing. Thirty-six ordinary Go-shaped
+  results no longer impose Rust-only discard diagnostics; the two native
+  `Option` seams remain annotated. The full-channel retry is iterative instead
+  of stack-growing recursion, rotation is silent, and the public history-reader
+  cancellation type is externally usable. Four pre-fix probes reproduced
+  exactly 36 diagnostics, a stack-overflow abort, leaked debug output, and
+  `E0603`; seven focused regressions, 74/74 owner tests, owner and caller
+  all-target checks, scoped formatting, and Ready lint pass. The single
+  package commit rebased cleanly over nine incoming remote commits and the
+  complete gate passed again. Evidence is in
+  `receipts/util_stmtsummary_audit.md` and the dedicated v2 ExecPlan.
 - 2026-09-07 (`pkg/util/stmtsummary` v1 return contracts): the complete
   22-artifact/11,214-line package inventory was reused and the direct v1
   boundary—three production files, three test/harness files, BUILD target,

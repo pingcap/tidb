@@ -185,6 +185,79 @@ Return-contract follow-up evidence:
   edited v1 source files, `make lint` with the pinned Go environment, and
   `git diff --check` — passed.
 
+## Rust v2 corrective alignment follow-up (2026-09-07)
+
+This Rust-only follow-up reuses the complete 22-artifact, 11,214-line Go
+inventory above without reopening Go source, per the user's explicit scope.
+The direct `pkg/util/stmtsummary/v2` implementation unit is five production
+files, six test/benchmark files, and `v2/BUILD.bazel`; it has no `doc.go`,
+fixture, generated source, or platform variant. The nested `v2/tests` directory
+is a separate Go package and remains outside this batch.
+
+Before editing, all five Rust v2 modules were read line by line: `column.rs`
+(821 lines), `mod.rs` (49), `reader.rs` (2,174), `record.rs` (1,709), and
+`stmtsummary.rs` (2,122), for 6,875 lines, 255 functions or methods, 27 inline
+tests, and 38 explicit `#[must_use]` annotations. The crate root and manifest,
+workspace and lock registration, `tidb-session` proxy callers and tests,
+`tidb-workloadrepo` dependency edge, every repository caller, and all build
+surfaces were also read. There is no owner `build.rs`, fixture, generated
+source, platform variant, or custom build output.
+
+The audit found four independently testable Rust-only gaps:
+
+- thirty-six ordinary Go-shaped constructors, accessors, formatters,
+  collections, and scalar/struct returns imposed Rust-only discard
+  diagnostics; those annotations are removed, while the native
+  `column_factory` and `global_stmt_summary` `Option` boundaries retain theirs;
+- `reader::send_with_cancel` recursively retried every full channel slot and
+  could exhaust a worker stack; it now carries the returned value in one loop
+  frame while preserving the 20 ms cancellation poll;
+- normal rotating-file rename and pruning printed unconditional `DEBUG` lines
+  to process stderr; those writes are removed without changing best-effort
+  file error handling;
+- public `HistoryReader::new` accepted a private `CancelToken`; the token and
+  its construction/state/cancel operations are now public and covered from an
+  external integration test.
+
+Six focused inline regressions cover the four return-owner modules, bounded
+stack behavior, and silent rotation. One integration regression covers the
+public cancellation API. Before the fixes, the return suite failed with
+exactly 36 diagnostics, the retry child aborted with a stack overflow, the
+writer child captured both debug lines, and the integration test failed with
+`E0603`. After the fixes, all seven regressions pass, the complete owner gate
+passes 74 tests, and both `tidb-stmtsummary` and its production caller
+`tidb-session` compile across all targets. Owner warning cleanup and the stale
+crate-level claim that `v2/reader.go` was absent were corrected in the same
+package batch.
+
+No Go, Bazel, Cargo manifest, lockfile, generated, fixture, or platform
+artifact changed, so Go execution and `make bazel_prepare` do not apply. This
+does not make v2 package-complete: most of `logger.go` and the separate
+`v2/tests` Go package remain explicit unported boundaries. The living plan is
+`rust/docs/operations/util-stmtsummary-v2-alignment-execplan.md`.
+
+Corrective follow-up evidence:
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline
+  --locked -p tidb-stmtsummary --lib go_v2_alignment_ -- --nocapture
+  --test-threads=1` with the standard OpenSSL environment — six tests passed.
+- The same Cargo command selecting `--test v2_public_api` — one test passed.
+- `cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml
+  --offline --locked -p tidb-stmtsummary --no-fail-fast --test-threads=1` — 74
+  tests passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline
+  --locked -p tidb-stmtsummary --all-targets` — passed with no owner-path
+  diagnostic.
+- The same all-target check for `-p tidb-session` — passed; its existing
+  warnings are outside this package batch.
+- Scoped `rustfmt +nightly-2026-08-22 --edition 2021 --check` over all six
+  edited/added Rust files, `git diff --check`, and Ready-profile `make lint`
+  with the pinned Go environment — passed.
+- After the single package commit rebased cleanly over nine incoming
+  `origin/hparser-integration` commits, all seven focused regressions, the
+  74-test owner suite, both all-target checks, scoped formatting, diff hygiene,
+  and Ready-profile `make lint` passed again.
+
 ## Validation (Ready profile)
 
 - Failpoint-enabled Go root targeted run:
