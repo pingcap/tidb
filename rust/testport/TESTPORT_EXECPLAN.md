@@ -10038,3 +10038,7 @@ risks without claiming repository-wide parity.
   named in 3814 (rand/now), subqueries hit generic 3815, auto-increment
   column refs hit 3818, and plain comparisons pass. Pinned in
   `crates/tidb-session/tests/check_clause_restrictions_source.rs`.
+- 2026-09-06 (FK referential-action pins): ON DELETE CASCADE removes only
+  the deleted parent's dependents; ON DELETE SET NULL nulls their
+  referencing column. Pinned in
+  `crates/tidb-session/tests/fk_referential_actions_source.rs`.
