@@ -82,10 +82,10 @@ explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a, count(b
 id	task	access object	operator info
 Projection	root		planner__core__indexjoin.t.a, Column, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
 └─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.t1.b, Column)]
-  ├─HashAgg(Build)	root		group by:planner__core__indexjoin.t.a, funcs:count(Column)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
-  │ └─IndexReader	root		index:HashAgg
-  │   └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column
-  │     └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+  ├─StreamAgg(Build)	root		group by:planner__core__indexjoin.t.a, funcs:count(Column)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+  │ └─IndexReader	root		index:StreamAgg
+  │   └─StreamAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column
+  │     └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
       └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
@@ -145,11 +145,11 @@ id	task	access object	operator info
 Projection	root		Column, planner__core__indexjoin.t.b, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
 └─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.t1.a, Column)]
   ├─Projection(Build)	root		plus(planner__core__indexjoin.t.a, 1)->Column, planner__core__indexjoin.t.b
-  │ └─HashAgg	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
-  │   └─IndexReader	root		index:HashAgg
-  │     └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
+  │ └─StreamAgg	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
+  │   └─IndexReader	root		index:StreamAgg
+  │     └─StreamAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
   │       └─Selection	cop[tikv]		not(isnull(plus(planner__core__indexjoin.t.a, 1)))
-  │         └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
+  │         └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
 create table t3 (a int, b float, index idx (b));
