@@ -2306,6 +2306,13 @@ impl Catalog {
         self.get_in(database, name).is_some_and(TableEntry::is_view)
     }
 
+    /// Whether `name` in `database` is a sequence.
+    #[must_use]
+    pub fn is_sequence_in(&self, database: &str, name: &str) -> bool {
+        self.get_in(database, name)
+            .is_some_and(TableEntry::is_sequence)
+    }
+
     /// Every catalog object name, keyed by lowercase `db.name`. Sequence
     /// expression resolution uses this alongside [`Self::sequence_allocators`]
     /// so Go's 1347 wrong-object error is distinct from 1146 missing-table.

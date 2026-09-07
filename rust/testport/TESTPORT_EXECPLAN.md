@@ -10991,3 +10991,10 @@ risks without claiming repository-wide parity.
   Auto_increment = the allocator's next value (col 11), Collation and
   COMMENT; Rows is a stats estimate (left unasserted). Pinned in
   `crates/tidb-session/tests/show_table_status_source.rs`.
+- 2026-09-06 (SHOW FULL TABLES type fix, REAL DIVERGENCE): Go's
+  `getTableType` (show.go:519-528) types a sequence SEQUENCE; the port
+  reported BASE TABLE. `table_type_of` now carries the three-way
+  discrimination (VIEW / SEQUENCE / BASE TABLE) via a new
+  `Catalog::is_sequence_in`. Pin:
+  `crates/tidb-session/tests/show_full_tables_types_source.rs` (all three
+  kinds in one listing). Suite diff vs baseline: zero net-new failures.

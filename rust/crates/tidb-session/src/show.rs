@@ -119,10 +119,14 @@ fn escape_name(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
-/// Go's `TABLE_TYPE` / `Table_type` value for an object.
-fn table_type_of(is_view: bool) -> &'static str {
+/// Go's `TABLE_TYPE` / `Table_type` value for an object — `getTableType`
+/// (`executor/show.go:519-528`): a view is VIEW, a sequence is SEQUENCE,
+/// everything this tier lists is BASE TABLE.
+fn table_type_of(is_view: bool, is_sequence: bool) -> &'static str {
     if is_view {
         "VIEW"
+    } else if is_sequence {
+        "SEQUENCE"
     } else {
         "BASE TABLE"
     }
@@ -3277,7 +3281,8 @@ impl Session {
                             .into_iter()
                             .map(|name| {
                                 let is_view = catalog.is_view_in(&database, &name);
-                                (name, is_view)
+                                let is_sequence = catalog.is_sequence_in(&database, &name);
+                                (name, is_view, is_sequence)
                             })
                             .collect::<Vec<_>>()
                     }))
@@ -3293,14 +3298,14 @@ impl Session {
                 // SCHEMA visible but lists no table.
                 let listed: Vec<_> = listed
                     .into_iter()
-                    .filter(|(name, _)| {
+                    .filter(|(name, ..)| {
                         self.has_any_scoped_privilege(
                             &database,
                             name,
                             privilege::show_tables_priv_mask(),
                         )
                     })
-                    .filter(|(name, _)| {
+                    .filter(|(name, ..)| {
                         like_pattern
                             .as_ref()
                             .is_none_or(|pattern| pattern.matches(name))
@@ -3320,10 +3325,12 @@ impl Session {
                     vec![name_column.as_str()]
                 };
                 let mut rows = Vec::with_capacity(listed.len());
-                for (name, is_view) in listed {
+                for (name, is_view, is_sequence) in listed {
                     let mut row = vec![Datum::Bytes(name.into_bytes())];
                     if full {
-                        row.push(Datum::Bytes(table_type_of(is_view).as_bytes().to_vec()));
+                        row.push(Datum::Bytes(
+                            table_type_of(is_view, is_sequence).as_bytes().to_vec(),
+                        ));
                     }
                     if let Some(predicate) = where_clause {
                         if !show_row_matches(predicate, &column_names, &row)? {
