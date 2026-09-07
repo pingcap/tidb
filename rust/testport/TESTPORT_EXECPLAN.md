@@ -10416,3 +10416,11 @@ risks without claiming repository-wide parity.
   NEXT auto-increment value (4 after 3 rows), the table comment, and the
   utf8mb4_bin collation. Pinned in
   `crates/tidb-session/tests/show_table_status_source.rs`.
+- 2026-09-06 (multi-table UPDATE x CHECK pin): with the constraint attached
+  (via set global + CREATE in order), a violation on a LATER joined row
+  fails the whole multi-table UPDATE with 3819 and leaves every row
+  unchanged. Pinned in
+  `crates/tidb-session/tests/multi_update_check_enforcement_source.rs`.
+  (An earlier session-probe used a fixture whose CREATE predates the
+  set-global, so its constraint was never attached — the "OK" there was a
+  fixture artifact, not an enforcement gap.)
