@@ -10336,3 +10336,7 @@ risks without claiming repository-wide parity.
   recorded: Go rewrites projection EXISTS through the same Apply machinery
   as WHERE EXISTS; the port only wires that path for WHERE/predicate
   positions. Queued behind the sibling planner stream.
+- 2026-09-06 (ANY/ALL + DISTINCT NULL pins): quantified comparisons — `>
+  ANY` passes beyond the subquery min (20,30), `> ALL` beyond the max
+  (30); SELECT DISTINCT folds duplicate NULLs into one row. Pinned in
+  `crates/tidb-session/tests/any_all_distinct_nulls_source.rs`.
