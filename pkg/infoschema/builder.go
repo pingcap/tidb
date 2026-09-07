@@ -306,8 +306,12 @@ func applyDropTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff
 			b.deleteBundle(b.infoSchema, opt.OldTableID)
 			continue
 		}
+		// Use a non-drop action type so that applyTableUpdate reloads the related
+		// table metadata from the same transaction instead of removing the table.
+		// ActionModifyTableComment is intentionally used here because this is a
+		// metadata reload.
 		reloadDiff := &model.SchemaDiff{
-			Type:        model.ActionCreateTable,
+			Type:        model.ActionModifyTableComment,
 			Version:     diff.Version,
 			SchemaID:    opt.SchemaID,
 			TableID:     opt.TableID,
