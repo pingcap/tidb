@@ -10216,3 +10216,7 @@ risks without claiming repository-wide parity.
   against the REGENERATED value — INSERT a=60 (b=120) and UPDATE a across
   the boundary both fail 3819 with nothing stored; a=40 (b=80) passes.
   Pinned in `crates/tidb-session/tests/check_over_generated_source.rs`.
+- 2026-09-06 (LIMIT OFFSET + aggregate ordering pin): the two-arg
+  `limit 2, 3` and `limit 3 offset 1` spellings skip+truncate identically;
+  ORDER BY sorts by a folded SUM (DECIMAL) with a group tiebreaker. Pinned
+  in `crates/tidb-session/tests/limit_offset_agg_order_source.rs`.
