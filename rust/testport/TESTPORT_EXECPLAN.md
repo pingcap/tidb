@@ -10682,3 +10682,6 @@ risks without claiming repository-wide parity.
   (next 51); zero-arg LASTVAL fails Go's 1582 (Go arity 1,1 —
   builtin.go:1001); DROP SEQUENCE removes it. Pinned in
   `crates/tidb-session/tests/sequence_function_family_source.rs`.
+- 2026-09-06 (SHOW CREATE quoting pin): mixed-case and reserved-word column
+  names round-trip backquoted through SHOW CREATE TABLE. Pinned in
+  `crates/tidb-session/tests/show_create_quoting_source.rs`.
