@@ -10050,3 +10050,7 @@ risks without claiming repository-wide parity.
   the deleted parent's dependents; ON DELETE SET NULL nulls their
   referencing column. Pinned in
   `crates/tidb-session/tests/fk_referential_actions_source.rs`.
+- 2026-09-06 (FK child-insert + ON UPDATE CASCADE pins): an orphan child
+  insert fails with Go's 1452 carrying the constraint detail; ON UPDATE
+  CASCADE re-points dependents when the parent key moves. Pinned in
+  `crates/tidb-session/tests/fk_child_insert_update_cascade_source.rs`.
