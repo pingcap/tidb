@@ -645,6 +645,57 @@ func TestComputeTiFlashStatus(t *testing.T) {
 	}
 }
 
+func TestCollectColumnarStatusFTSIndexReady(t *testing.T) {
+	testCases := []struct {
+		name             string
+		response         string
+		ftsIndexReady    uint
+		hasFtsIndexReady bool
+	}{
+		{
+			name:             "present",
+			response:         `{"ready":3,"vector-index-ready":2,"fts-index-ready":1,"total":4}`,
+			ftsIndexReady:    1,
+			hasFtsIndexReady: true,
+		},
+		{
+			name:             "present zero",
+			response:         `{"ready":3,"vector-index-ready":2,"fts-index-ready":0,"total":4}`,
+			ftsIndexReady:    0,
+			hasFtsIndexReady: true,
+		},
+		{
+			name:             "missing on older TiKV",
+			response:         `{"ready":3,"vector-index-ready":2,"total":4}`,
+			ftsIndexReady:    0,
+			hasFtsIndexReady: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/kvengine/columnar_status", r.URL.Path)
+				require.Equal(t, "7", r.URL.Query().Get("keyspace_id"))
+				require.Equal(t, "9", r.URL.Query().Get("table_id"))
+				require.Equal(t, "11", r.URL.Query().Get("index_id"))
+				_, err := w.Write([]byte(testCase.response))
+				require.NoError(t, err)
+			}))
+			defer server.Close()
+
+			indexID := int64(11)
+			status, err := helper.CollectColumnarStatusWithCtx(context.Background(), strings.TrimPrefix(server.URL, "http://"), 7, 9, &indexID)
+			require.NoError(t, err)
+			require.Equal(t, uint(3), status.Ready)
+			require.Equal(t, uint(2), status.VectorIndexReady)
+			require.Equal(t, testCase.ftsIndexReady, status.FtsIndexReady)
+			require.Equal(t, testCase.hasFtsIndexReady, status.HasFtsIndexReady)
+			require.Equal(t, uint(4), status.Total)
+		})
+	}
+}
+
 // TestTableRange tests the first part of GetPDRegionStats.
 func TestTableRange(t *testing.T) {
 	startKey := tablecodec.GenTableRecordPrefix(1)

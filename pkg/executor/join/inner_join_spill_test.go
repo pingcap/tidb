@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -183,6 +184,10 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 		require.False(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
 		checkResults(t, retTypes, result, expectedResult)
 	}
+	snapshot, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashJoinExec.ID())
+	require.True(t, found)
+	require.True(t, snapshot.Complete())
+	require.Positive(t, snapshot.Rows)
 }
 
 func getReturnTypes(joinType base.JoinType, param spillTestParam) []*types.FieldType {
@@ -239,7 +244,6 @@ func testSpill(t *testing.T, ctx *mock.Context, joinType base.JoinType, leftData
 		rUsedInOtherCondition: param.rightUsedByOtherCondition,
 		fileNamePrefixForTest: param.fileNamePrefixForTest,
 	}
-
 	expectedResult := getExpectedResults(t, ctx, info, returnTypes, leftDataSource, rightDataSource)
 	testInnerJoinSpillCase1(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[0])
 	testInnerJoinSpillCase2(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[1])
@@ -363,11 +367,13 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
 
 	info := &hashJoinInfo{
 		ctx:              ctx,
 		schema:           buildSchema(retTypes),
+		planID:           1,
 		leftExec:         leftDataSource,
 		rightExec:        rightDataSource,
 		joinType:         base.InnerJoin,
@@ -393,4 +399,70 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 	expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
 	util.CheckNoLeakFiles(t, testFuncName)
+}
+
+func TestHashJoinV2HashStateAcrossRepeatedOpen(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 7
+	ctx.GetSessionVars().MaxChunkSize = 7
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+
+	intType := types.NewFieldType(mysql.TypeLonglong)
+	intType.AddFlag(mysql.NotNullFlag)
+	newSource := func() *testutil.MockDataSource {
+		return testutil.BuildMockDataSource(testutil.MockDataSourceParameters{
+			Ctx:        ctx,
+			DataSchema: expression.NewSchema(&expression.Column{Index: 0, RetType: intType}),
+			Rows:       11,
+			GenDataFunc: func(row int, _ *types.FieldType) any {
+				return int64(row)
+			},
+		})
+	}
+	leftDataSource := newSource()
+	rightDataSource := newSource()
+	allBuildChunks := rightDataSource.GenData
+	require.Len(t, allBuildChunks, 2)
+
+	joinKey := &expression.Column{Index: 0, RetType: intType}
+	hashJoinExec := buildHashJoinV2Exec(&hashJoinInfo{
+		ctx:              ctx,
+		schema:           expression.NewSchema(&expression.Column{Index: 0, RetType: intType}),
+		planID:           1,
+		leftExec:         leftDataSource,
+		rightExec:        rightDataSource,
+		joinType:         base.InnerJoin,
+		rightAsBuildSide: true,
+		buildKeys:        []*expression.Column{joinKey},
+		probeKeys:        []*expression.Column{joinKey},
+		rUsed:            []int{0},
+	})
+
+	// The first execution builds seven rows. The second uses the same executor
+	// with eleven build rows, exercising RuntimeStatsColl's repeated-open merge.
+	rightDataSource.GenData = allBuildChunks[:1]
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	executeHashJoinExec(t, hashJoinExec)
+	rightDataSource.GenData = allBuildChunks
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	executeHashJoinExec(t, hashJoinExec)
+
+	snapshot, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashJoinExec.ID())
+	require.True(t, found)
+	require.Equal(t, int64(18), snapshot.Rows)
+	require.True(t, snapshot.Complete())
+
+	// A failed repeated execution must poison the merged evidence instead of
+	// preserving the previously complete state.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue51998", "return(true)")
+	leftDataSource.PrepareChunks()
+	rightDataSource.PrepareChunks()
+	err := executeHashJoinExecAndGetError(t, hashJoinExec)
+	require.EqualError(t, err, "issue51998 build return error")
+	snapshot, found = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashJoinExec.ID())
+	require.True(t, found)
+	require.False(t, snapshot.Complete())
+	require.True(t, snapshot.Invalid())
 }

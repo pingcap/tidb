@@ -32,6 +32,8 @@ const (
 	statementRUScanByteWeight            = 1.0
 	statementRUNetByteWeight             = 1.0
 	statementRUFrontendCompileByteWeight = 1.0
+	statementRUHashStateRowWeight        = 1.0
+	statementRUJoinOutputRowWeight       = 1.0
 )
 
 type statementRURawUnits struct {
@@ -49,6 +51,12 @@ type statementRURawUnits struct {
 	// FrontendCompileBytes is the UTF-8 byte length of the source SQL text seen
 	// by the compiler.
 	FrontendCompileBytes float64
+	// HashStateRows counts entries admitted to completed, operator-owned hash
+	// lookup or group-state structures.
+	HashStateRows float64
+	// JoinOutputRows counts rows produced by supported Join occurrences after
+	// their join conditions and join-type semantics are applied.
+	JoinOutputRows float64
 }
 
 type statementRUResultOnly struct {
@@ -58,9 +66,10 @@ type statementRUResultOnly struct {
 // The current producers cannot prove that all successful or canceled remote
 // work contributed execution details. ResultOnly therefore publishes a
 // best-effort value from visible evidence, while every supported snapshot is
-// marked incomplete for the dormant calibration consumer. "Best-effort lower
-// bound" means missing units are not imputed; the aggregate scan-byte proxy is
-// non-monotone, so it is not a strict mathematical bound.
+// marked incomplete for the dormant calibration consumer. Missing execution
+// opportunities can underestimate work, while merged scan ratios and nonlinear
+// lifecycle formulas can estimate in either direction or overestimate. The
+// result is therefore neither exact nor a mathematical upper or lower bound.
 type statementRUCalibrationState uint8
 
 const (
@@ -176,7 +185,7 @@ type statementRUScanEvidence struct {
 
 // classifyStatementRUScanEvidence converts a value copy of one Reader's scan
 // evidence into one raw-unit contribution. Zero-valued fields have no presence
-// bit, so a tuple that cannot run the demo formula is unavailable unless it is
+// bit, so a tuple that cannot satisfy the scan-byte formula is unavailable unless it is
 // provably contradictory. No RuntimeStatsColl or ScanDetail pointer survives.
 func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes int64) statementRUScanEvidence {
 	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
@@ -223,6 +232,8 @@ func validStatementRURawUnits(units statementRURawUnits) bool {
 		units.ScanBytes,
 		units.NetBytes,
 		units.FrontendCompileBytes,
+		units.HashStateRows,
+		units.JoinOutputRows,
 	} {
 		if unit < 0 || math.IsNaN(unit) || math.IsInf(unit, 0) {
 			return false
@@ -235,7 +246,9 @@ func calculateStatementRUResultOnly(units statementRURawUnits) statementRUResult
 	return statementRUResultOnly{TotalRU: statementRUCPUWorkWeight*units.CPUWork +
 		statementRUScanByteWeight*units.ScanBytes +
 		statementRUNetByteWeight*units.NetBytes +
-		statementRUFrontendCompileByteWeight*units.FrontendCompileBytes}
+		statementRUFrontendCompileByteWeight*units.FrontendCompileBytes +
+		statementRUHashStateRowWeight*units.HashStateRows +
+		statementRUJoinOutputRowWeight*units.JoinOutputRows}
 }
 
 func publishStatementRUFinalizedSnapshot(
@@ -251,7 +264,7 @@ func publishStatementRUFinalizedSnapshot(
 
 // publishStatementRUMetricsSafely projects one immutable finalized snapshot to
 // the existing RU v3 counters. ResultOnly retains aggregate CPUWork rather than
-// a site split, so this layer preserves the lower-layer engine boundary:
+// a site split, so publication preserves the producer-owned engine boundary:
 // TiKV receives only scan and network work, while Total and SQLType receive the
 // complete best-effort result.
 func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
@@ -289,5 +302,7 @@ func publishStatementRUCalibrationSafely(
 		snapshot.Units.ScanBytes,
 		snapshot.Units.NetBytes,
 		snapshot.Units.FrontendCompileBytes,
+		snapshot.Units.HashStateRows,
+		snapshot.Units.JoinOutputRows,
 	)
 }

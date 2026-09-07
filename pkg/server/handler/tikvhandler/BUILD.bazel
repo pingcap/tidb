@@ -4,6 +4,7 @@ go_library(
     name = "tikvhandler",
     srcs = [
         "dxf.go",
+        "flash_replica.go",
         "tikv_handler.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server/handler/tikvhandler",

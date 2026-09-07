@@ -1357,6 +1357,52 @@ func testSecurityEnhancedModeSysVars(t *testing.T, semVer string) {
 	}
 }
 
+func TestColumnarStorageEnabledSEMV2(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER tenant, cloudadmin")
+	tk.MustExec("GRANT SUPER ON *.* TO tenant")
+	tk.MustExec("GRANT SUPER, RESTRICTED_VARIABLES_ADMIN ON *.* TO cloudadmin")
+
+	origVer := mysql.TiDBReleaseVersion
+	mysql.TiDBReleaseVersion = "v9.0.0"
+	t.Cleanup(func() {
+		mysql.TiDBReleaseVersion = origVer
+		semv2.Disable()
+	})
+
+	require.NoError(t, semv2.EnableBy(&semv2.Config{
+		Version:     "1.0",
+		TiDBVersion: "v8.4.0",
+		RestrictedVariables: []semv2.VariableRestriction{
+			{Name: vardef.TiDBColumnarStorageEnabled, Readonly: true, Hidden: true},
+		},
+	}))
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username:     "tenant",
+		Hostname:     "localhost",
+		AuthUsername: "tenant",
+		AuthHostname: "%",
+	}, nil, nil, nil))
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_columnar_storage_enabled'`).Check(testkit.Rows())
+	_, err := tk.Exec("SET GLOBAL tidb_columnar_storage_enabled = 'OFF'")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+	_, err = tk.Exec("SELECT @@GLOBAL.tidb_columnar_storage_enabled")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
+
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username:     "cloudadmin",
+		Hostname:     "localhost",
+		AuthUsername: "cloudadmin",
+		AuthHostname: "%",
+	}, nil, nil, nil))
+	tk.MustExec("SET GLOBAL tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_columnar_storage_enabled").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_columnar_storage_enabled = 'ON'")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_columnar_storage_enabled").Check(testkit.Rows("1"))
+}
+
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
 // See: https://github.com/pingcap/tidb/issues/24414
 func TestViewDefiner(t *testing.T) {

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -125,7 +126,8 @@ type HashAggExec struct {
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker
 
-	stats *HashAggRuntimeStats
+	stats          *HashAggRuntimeStats
+	hashStateStats *execdetails.HashStateRuntimeStats
 
 	// dataInDisk is the chunks to store row values for spilled data.
 	// The HashAggExec may be set to `spill mode` multiple times, and all spilled data will be appended to DataInDiskByRows.
@@ -166,6 +168,9 @@ type HashAggExec struct {
 func (e *HashAggExec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+	}
+	if e.hashStateStats != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.hashStateStats)
 	}
 
 	if e.IsUnparallelExec {
@@ -237,6 +242,7 @@ func (e *HashAggExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
+	e.hashStateStats = nil
 	failpoint.Inject("mockHashAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("mock HashAggExec.baseExecutor.Open returned error"))
@@ -252,6 +258,9 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 // OpenSelf just opens the hash aggregation executor.
 func (e *HashAggExec) OpenSelf() error {
 	e.prepared.Store(false)
+	if e.RuntimeStats() != nil {
+		e.hashStateStats = execdetails.NewHashStateRuntimeStats()
+	}
 
 	if e.memTracker != nil {
 		e.memTracker.Reset()
@@ -360,6 +369,9 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			finalResultHolderCh:        make(chan *chunk.Chunk, 1),
 			spillHelper:                e.spillHelper,
 			restoredAggResultMapperMem: 0,
+		}
+		if e.hashStateStats != nil {
+			e.finalWorkers[i].hashStateStats = e.hashStateStats
 		}
 		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(int64(e.finalWorkers[i].partialResultMap.Bytes))
@@ -656,9 +668,15 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 			if e.IsChildReturnEmpty && e.DefaultVal != nil {
 				chk.Append(e.DefaultVal, 0, 1)
 			}
+			if e.hashStateStats != nil {
+				e.hashStateStats.Complete()
+			}
 			return nil
 		}
 		if result.err != nil {
+			if e.hashStateStats != nil {
+				e.hashStateStats.Invalidate()
+			}
 			return result.err
 		}
 		chk.SwapColumns(result.chk)
@@ -712,6 +730,9 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			e.memTracker.Consume(e.groupSet.Insert(""))
 			e.groupKeys = append(e.groupKeys, "")
 		}
+		if e.hashStateStats != nil {
+			e.hashStateStats.AddRows(uint64(len(e.groupSet.M)))
+		}
 		e.prepared.Store(true)
 	}
 }
@@ -723,6 +744,9 @@ func (e *HashAggExec) resetSpillMode() {
 	e.partialResultMap = aggfuncs.NewAggPartialResultMapper()
 	e.prepared.Store(false)
 	e.executed.Store(e.numOfSpilledChks == e.dataInDisk.NumChunks()) // No data is spilling again, all data have been processed.
+	if e.executed.Load() && e.hashStateStats != nil {
+		e.hashStateStats.Complete()
+	}
 	e.numOfSpilledChks = e.dataInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)
 	atomic.StoreUint32(&e.inSpillMode, 0)

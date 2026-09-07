@@ -200,6 +200,11 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	err = a.stmt.next(ctx, e, req)
 	if err != nil {
+		if errors.Cause(err) == context.DeadlineExceeded {
+			if maxExecErr := checkMaxExecutionTimeExceeded(a.stmt.Ctx); maxExecErr != nil {
+				err = maxExecErr
+			}
+		}
 		a.lastErrs = append(a.lastErrs, err)
 		return err
 	}

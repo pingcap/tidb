@@ -20,6 +20,10 @@ const (
 	AlterDatabaseCommand = "ALTER DATABASE"
 	// AlterInstanceCommand represents ALTER INSTANCE statement
 	AlterInstanceCommand = "ALTER INSTANCE"
+	// AlterMaterializedViewCommand represents ALTER MATERIALIZED VIEW statement
+	AlterMaterializedViewCommand = "ALTER MATERIALIZED VIEW"
+	// AlterMaterializedViewLogCommand represents ALTER MATERIALIZED VIEW LOG statement
+	AlterMaterializedViewLogCommand = "ALTER MATERIALIZED VIEW LOG"
 	// AlterPlacementPolicyCommand represents ALTER PLACEMENT POLICY statement
 	AlterPlacementPolicyCommand = "ALTER PLACEMENT POLICY"
 	// AlterRangeCommand represents ALTER RANGE statement
@@ -38,6 +42,10 @@ const (
 	CreateDatabaseCommand = "CREATE DATABASE"
 	// CreateIndexCommand represents CREATE INDEX statement
 	CreateIndexCommand = "CREATE INDEX"
+	// CreateMaterializedViewCommand represents CREATE MATERIALIZED VIEW statement
+	CreateMaterializedViewCommand = "CREATE MATERIALIZED VIEW"
+	// CreateMaterializedViewLogCommand represents CREATE MATERIALIZED VIEW LOG statement
+	CreateMaterializedViewLogCommand = "CREATE MATERIALIZED VIEW LOG"
 	// CreatePlacementPolicyCommand represents CREATE PLACEMENT POLICY statement
 	CreatePlacementPolicyCommand = "CREATE PLACEMENT POLICY"
 	// CreateMaskingPolicyCommand represents CREATE MASKING POLICY statement
@@ -56,6 +64,10 @@ const (
 	DropDatabaseCommand = "DROP DATABASE"
 	// DropIndexCommand represents DROP INDEX statement
 	DropIndexCommand = "DROP INDEX"
+	// DropMaterializedViewCommand represents DROP MATERIALIZED VIEW statement
+	DropMaterializedViewCommand = "DROP MATERIALIZED VIEW"
+	// DropMaterializedViewLogCommand represents DROP MATERIALIZED VIEW LOG statement
+	DropMaterializedViewLogCommand = "DROP MATERIALIZED VIEW LOG"
 	// DropPlacementPolicyCommand represents DROP PLACEMENT POLICY statement
 	DropPlacementPolicyCommand = "DROP PLACEMENT POLICY"
 	// DropResourceGroupCommand represents DROP RESOURCE GROUP statement
@@ -563,6 +575,26 @@ func (n *CreateViewStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *CreateMaterializedViewStmt) SEMCommand() string {
+	return CreateMaterializedViewCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CreateMaterializedViewLogStmt) SEMCommand() string {
+	return CreateMaterializedViewLogCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *AlterMaterializedViewStmt) SEMCommand() string {
+	return AlterMaterializedViewCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *AlterMaterializedViewLogStmt) SEMCommand() string {
+	return AlterMaterializedViewLogCommand
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *DropDatabaseStmt) SEMCommand() string {
 	return DropDatabaseCommand
 }
@@ -593,6 +625,16 @@ func (n *DropTableStmt) SEMCommand() string {
 		return DropViewCommand
 	}
 	return DropTableCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropMaterializedViewStmt) SEMCommand() string {
+	return DropMaterializedViewCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropMaterializedViewLogStmt) SEMCommand() string {
+	return DropMaterializedViewLogCommand
 }
 
 // SEMCommand returns the command string for the statement.
