@@ -211,3 +211,19 @@ Floats are carried as bit patterns, and 800 of the rows are pseudo-random
 f64/f32 patterns. Pointing `tidb-protocol` at it found 12 disagreements, all
 of them a type branch Go renders and that crate refused; the nine temporal
 ones are closed and ENUM/SET/JSON remain, pinned by the test.
+
+## json_vectors.hex / collation_key_vectors.tsv (2026-09-07)
+
+- `generate_json_vectors.go` -> `json_vectors.hex`: the binary form
+  (`TypeCode` + `Value`) that `types.ParseBinaryJSONFromString` builds for
+  a fixed document list. Consumed byte-for-byte by
+  `rust/crates/tidb-datatype/tests/json_binary_go_vectors.rs`.
+  Regenerate with
+  `go run ./rust/difftests/transaction-tests/fixtures/generate_json_vectors.go > rust/difftests/transaction-tests/fixtures/json_vectors.hex`.
+- `generate_collation_key_vectors.go` -> `collation_key_vectors.tsv`:
+  `collate.GetCollator(name).Key(sample)` under the default new-collation
+  configuration for seven collations x twelve samples. Consumed
+  byte-for-byte by
+  `rust/crates/tidb-datatype/tests/collation_key_go_vectors.rs`. Regenerate
+  with
+  `go run ./rust/difftests/transaction-tests/fixtures/generate_collation_key_vectors.go > rust/difftests/transaction-tests/fixtures/collation_key_vectors.tsv`.
