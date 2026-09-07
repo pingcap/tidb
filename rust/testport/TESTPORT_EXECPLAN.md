@@ -10904,3 +10904,7 @@ risks without claiming repository-wide parity.
   default with DEFAULT_GENERATED in Extra and reports the bare expression
   text in Default (column.go:456, NewColDesc). Pinned in
   `crates/tidb-session/tests/show_columns_default_generated_source.rs`.
+- 2026-09-06 (MODIFY default pin): MODIFY COLUMN replaces the default —
+  pre-existing rows keep their values, new omissions take the new default,
+  SHOW CREATE reflects it. Pinned in
+  `crates/tidb-session/tests/modify_column_default_source.rs`.
