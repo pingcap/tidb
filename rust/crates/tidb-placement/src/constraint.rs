@@ -72,7 +72,6 @@ pub fn new_constraint(label: &str) -> Result<LabelConstraint, PlacementError> {
 }
 
 /// Go `NewConstraintDirect`: creates a constraint from its parts directly.
-#[must_use]
 pub fn new_constraint_direct(key: &str, op: LabelConstraintOp, values: &[&str]) -> LabelConstraint {
     LabelConstraint {
         key: key.to_owned(),
@@ -132,7 +131,6 @@ pub enum ConstraintCompatibility {
 
 /// Go `ConstraintCompatibleWith`: checks whether two constraints are
 /// compatible.
-#[must_use]
 pub fn constraint_compatible_with(
     constraint: &LabelConstraint,
     other: &LabelConstraint,

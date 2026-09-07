@@ -65,7 +65,6 @@ pub struct Bundle {
 /// Go `NewBundle`: creates a bundle with the provided ID.
 ///
 /// Note that you should never pass a negative id.
-#[must_use]
 pub fn new_bundle(id: i64) -> Bundle {
     Bundle {
         id: group_id(id),
@@ -612,7 +611,6 @@ fn encode_bytes_owned(input: &[u8]) -> Vec<u8> {
 
 /// Go `GetRangeStartAndEndKeyHex`: gets the startKeyHex and endKeyHex of the
 /// range identified by `range_bundle_id`.
-#[must_use]
 pub fn get_range_start_and_end_key_hex(range_bundle_id: &str) -> (String, String) {
     let (mut start_key, mut end_key) = (String::new(), String::new());
     if range_bundle_id == TIDB_BUNDLE_RANGE_PREFIX_FOR_META {
@@ -765,13 +763,11 @@ impl Bundle {
     }
 
     /// Go `(*Bundle).Clone`: duplicates a bundle.
-    #[must_use]
     pub fn clone_bundle(&self) -> Self {
         self.clone()
     }
 
     /// Go `(*Bundle).IsEmpty`: checks if a bundle is empty.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty() && self.index == 0 && !self.r#override
     }

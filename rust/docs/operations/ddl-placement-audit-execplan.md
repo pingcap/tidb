@@ -43,6 +43,15 @@ current Go master behavior.
   standalone rustfmt, Ready lint, and diff hygiene afterward.
 - [x] (2026-09-06) Prepare one corrective `pkg/ddl/placement` commit for
   normal rebase and publication to `origin/hparser-integration`.
+- [x] (2026-09-07) Reconfirm that the 11-artifact, 5,066-line owner is
+  byte-identical to the tree already read in full; re-inventory its manifest,
+  lock entry, 30 tests, sole direct dependent and all callers before editing.
+- [x] (2026-09-07) Remove the seven remaining direct Go-shaped scalar/struct
+  return diagnostics, retain eleven inherent/native contracts, and prove the
+  correction with an exact seven-diagnostic fail-before regression.
+- [x] (2026-09-07) Pass all 31 owner tests, owner and `tidb-exec` all-target
+  checks, scoped formatting, Ready lint, and diff hygiene; update both
+  ExecPlans and the package receipt for one package-scoped publication.
 - [ ] Continue the rolling Rust-only audit with the next package boundary.
 
 ## Scope and decision
@@ -86,6 +95,9 @@ The short-lived chain remains valid through the returned mutable reference.
 - 2026-09-06: Treat `8d42bcc7035` as a restore regression: reapply only the
   discarded `GroupID` return contract and its focused test; do not change the
   already aligned bundle and builder behavior.
+- 2026-09-07: Remove only the seven direct scalar/struct return attributes.
+  Keep the eleven collection/`Option`, PD DTO conversion, and Rust error
+  carrier annotations because those are native type/ownership boundaries.
 
 ## Outcomes & Retrospective
 
@@ -93,3 +105,5 @@ Published as one package-scoped commit; after the latest upstream rebase the
 remote `hparser-integration` SHA is `a11714f1504`. The rolling audit continues
 with the next complete package boundary. The corrective batch restores the
 later `GroupID` contract without changing the prior package implementation.
+The 2026-09-07 follow-up closes the remaining discardable scalar/struct return
+contracts without changing any placement-policy runtime behavior.

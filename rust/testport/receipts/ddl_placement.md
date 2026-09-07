@@ -25,10 +25,11 @@ The package contains 13 tracked Go artifacts and 3,844 Go lines. No package
 doc, platform-specific source, generated output, fixture, benchmark, fuzz,
 example, or extra build-input artifact exists in the current Go tree. The Go
 package is byte-identical to the historical pin. The complete Rust owner is
-`rust/crates/tidb-placement`: `Cargo.toml` (24 lines), `src/lib.rs` (89),
-`bundle.rs` (2,285), `common.rs` (92), `constraint.rs` (407),
-`constraints.rs` (356), `errors.rs` (151), `pd.rs` (173), `rule.rs` (504),
-`yaml_lite.rs` (582), and `tests/meta_bundle_test.rs` (371). Every production
+`rust/crates/tidb-placement`: `Cargo.toml` (24 lines), `src/lib.rs` (113),
+`bundle.rs` (2,283), `common.rs` (97), `constraint.rs` (405),
+`constraints.rs` (356), `errors.rs` (151), `pd.rs` (172), `rule.rs` (504),
+`yaml_lite.rs` (582), and `tests/meta_bundle_test.rs` (396), for 5,083 lines
+after the 2026-09-07 focused return-contract regression. Every production
 and private helper, inline test, aggregate-test registration, workspace/lock
 entry, and direct builder caller was read before editing.
 
@@ -40,7 +41,7 @@ and tidy ordering, leader/DC selection, key-range encoding, JSON omission and
 error behavior, and the table/partition/full-table bundle constructors. The
 `pd` module is the local JSON DTO boundary for the external PD value types;
 `yaml_lite` carries the narrow strict YAML behavior needed by this package.
-The 25 inline owner tests plus four metadata integration tests cover the 26 Go
+The 27 inline owner tests plus four metadata integration tests cover the 26 Go
 tests listed in the historical `b050` receipt, including the Go shared-policy
 mutation quirk and the in-memory replacement for the `meta.Mutator` test
 scaffold.
@@ -124,3 +125,60 @@ contract correction.
 
 No Go, Bazel, Cargo manifest/dependency, module, or import graph changed, so
 the Bazel prepare gate does not require `make bazel_prepare`.
+
+## Remaining direct scalar/struct return contracts (2026-09-07)
+
+The complete current Rust owner is byte-identical to the 5,066-line tree read
+for the preceding `GroupID` correction; `git diff
+9e2ee9098df..f3f0720640d -- rust/crates/tidb-placement` is empty at the
+pre-edit base. The manifest, lock entry, 30 pre-edit tests, sole direct
+dependent (`tidb-exec`), all repository
+callers, and the generated/platform/fixture/example/benchmark/fuzz/custom-build
+surface were re-inventoried before editing.
+
+Seven further direct Go-shaped returns no longer impose Rust-only
+`#[must_use]` diagnostics:
+
+* `pd::Rule::clone_rule` (`(*pd.Rule).Clone`);
+* `new_constraint_direct` and `constraint_compatible_with`;
+* `new_bundle` and `get_range_start_and_end_key_hex`;
+* `Bundle::clone_bundle` and `Bundle::is_empty`.
+
+The focused library regression discards all seven values under
+`#[deny(unused_must_use)]`. It failed before the edit with exactly seven
+compiler diagnostics and passes afterward. The change does not alter a
+return type, value, constraint decision, clone operation, encoded range, or
+bundle state.
+
+Eleven annotations remain deliberately: the two PD DTO `as_str` adapters;
+the `Vec`-returning `new_constraints_direct`, `String`-returning
+`constraints_finger_print`, and `Option`-returning `get_leader_dc`, whose
+types are inherently must-use in Rust; and six local `PlacementError`
+construction, wrapping, text, and identity helpers. None is a discardable
+scalar/struct Go API contract.
+
+Ready validation for this Rust-only follow-up:
+
+```text
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --offline --locked --manifest-path rust/Cargo.toml -p tidb-placement --lib return_contract_tests::direct_source_returns_may_be_ignored_like_go -- --exact --test-threads=1
+1 passed, 0 failed
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 nextest run --offline --locked --manifest-path rust/Cargo.toml -p tidb-placement --no-fail-fast
+31 passed, 0 failed, 0 skipped
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-placement --all-targets
+
+OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 check --offline --locked --manifest-path rust/Cargo.toml -p tidb-exec --all-targets
+
+rustfmt +nightly-2026-08-22 --edition 2021 --check rust/crates/tidb-placement/src/lib.rs rust/crates/tidb-placement/src/pd.rs rust/crates/tidb-placement/src/constraint.rs rust/crates/tidb-placement/src/bundle.rs
+
+PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH GOPATH=/Users/chenhuansheng/.cache/codex-gopath-1.25.10 TMPDIR=/tmp/tidb-codex make lint
+
+git diff --check
+```
+
+All commands pass. Cargo reports only warning debt in untouched dependencies
+and unrelated `tidb-exec` test targets. No Go, Bazel, Cargo manifest/module,
+or import changed, so `make bazel_prepare` is not required. Correctness and
+performance risk are limited to compile-time diagnostics; runtime placement
+semantics are unchanged.

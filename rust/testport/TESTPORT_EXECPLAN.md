@@ -41,6 +41,16 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`pkg/ddl/placement` remaining scalar/struct return contracts):
+  the byte-unchanged 11-artifact/5,066-line Rust owner, manifest/lock graph, 30
+  pre-edit tests, sole direct dependent, all callers, and non-source build
+  surfaces were re-inventoried before editing. Seven direct Go-shaped returns
+  no longer impose Rust-only discard diagnostics; the focused regression
+  failed with exactly seven diagnostics before the correction and passes
+  afterward. Eleven inherent/native annotations remain. All 31 owner tests,
+  owner and `tidb-exec` all-target compilation, scoped formatting, Ready lint,
+  and diff hygiene pass. Evidence is in `receipts/ddl_placement.md` and the
+  dedicated placement ExecPlan.
 - 2026-09-07 (`pkg/sessionctx/vardef` scalar return contracts): all 11 tracked
   Rust owner artifacts (5,851 pre-edit lines), every function and test,
   workspace/lock registration, 14 direct dependency edges, production callers,
