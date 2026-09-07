@@ -10220,3 +10220,12 @@ risks without claiming repository-wide parity.
   `limit 2, 3` and `limit 3 offset 1` spellings skip+truncate identically;
   ORDER BY sorts by a folded SUM (DECIMAL) with a group tiebreaker. Pinned
   in `crates/tidb-session/tests/limit_offset_agg_order_source.rs`.
+- 2026-09-06 (DROP DEFAULT quirk verified faithful): probing
+  `alter column drop default` on a NULLABLE column suggested a divergence
+  (NULL expected vs the port's 1364) — but the captured
+  `issue51324_insert_default_and_null_contract` pin shows TiDB ITSELF
+  raises 1364 after DROP DEFAULT even for nullable columns (MySQL differs;
+  the port pins TiDB). An experimental nullability-first fix was reverted
+  to preserve the captured contract; the general nullable-no-default case
+  (no NO_DEFAULT_VALUE flag) stores NULL, and a NOT NULL no-default insert
+  still fails 1364 under strict — both verified in the same probe.
