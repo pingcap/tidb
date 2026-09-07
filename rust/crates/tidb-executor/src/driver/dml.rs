@@ -1738,7 +1738,10 @@ fn apply_on_duplicate(
     };
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let resolver = TableResolver {
-        table_name: "",
+        // Go resolves ODKU value columns against the TARGET table: a
+        // qualifier naming it (`t.v`) reads the stored row, and an
+        // unqualified name prefers the target over the source output.
+        table_name: target_table_name,
         columns: column_list,
         constant_context: ctx.clone(),
         zone: ctx.session_zone(),

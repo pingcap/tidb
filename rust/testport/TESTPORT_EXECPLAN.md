@@ -10138,3 +10138,12 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (commit pin): START TRANSACTION/BEGIN with COMMIT keep the
   transaction's writes across the boundary. Pinned in
   `crates/tidb-session/tests/commit_flow_source.rs`.
+- 2026-09-06 (ODKU qualified-target fix, REAL DIVERGENCE): apply-time ODKU
+  resolution used an EMPTY table qualifier, so a qualified target ref
+  (`t.v = t.v + src.d`) failed with UnknownColumn even though Go resolves it
+  against the stored row. Fix: the apply-time resolver carries the real
+  target name, making qualified target refs resolvable (unqualified names
+  already preferred the target). Also pinned: DELETE ORDER BY DESC LIMIT
+  removes the highest rows first. Session pins in
+  `crates/tidb-session/tests/odku_mixed_refs_source.rs` fail on the old
+  code and pass with the fix.
