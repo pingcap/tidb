@@ -10030,3 +10030,7 @@ risks without claiming repository-wide parity.
   VALUES()) with the candidate row's literals at apply time; qualified
   target refs and unqualified target names still read the stored row.
   Session-level pin in `crates/tidb-session/tests/insert_select_odku_source.rs`.
+- 2026-09-06 (multi-table UPDATE x CHECK pin): with
+  tidb_enable_check_constraint on, a violation on a later joined row fails
+  the whole multi-table UPDATE with 3819 and rolls back earlier rows'
+  changes. Pinned in `crates/tidb-session/tests/multi_update_check_source.rs`.
