@@ -11238,3 +11238,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (multibyte positions pin): LOCATE/INSTR report character
   positions, BIT_LENGTH counts bits, LPAD's target is characters. Pinned
   in `crates/tidb-session/tests/multibyte_position_source.rs`.
+- 2026-09-06 (JSON introspection pin): JSON_KEYS, JSON_LENGTH on objects
+  and arrays, and JSON_UNQUOTE's escape resolution (including through an
+  EXTRACT round trip). Pinned in
+  `crates/tidb-session/tests/json_introspection_source.rs`.
