@@ -344,6 +344,7 @@ pub use ddl::{ClusterDdl, RealClusterDdl};
 pub use tidb_exec::real_tikv_ddl::ClusterDdlReport;
 #[cfg(test)]
 use transactions::sql_error;
+use tidb_hack::GoToLower;
 pub use transactions::{ClusterTransactions, OpenClusterTransaction, RealClusterTransactions};
 
 /// Which of this node's three paths one statement takes.
@@ -5080,14 +5081,14 @@ impl ClusterServerSession {
                 if self.explicit.is_none() {
                     return Ok(());
                 }
-                let name = name.to_lowercase();
+                let name = name.go_to_lower();
                 let image = self.buffer.checkpoint();
                 let delta = self.session.table_delta_savepoint();
                 self.savepoints.retain(|(existing, _, _)| *existing != name);
                 self.savepoints.push((name, image, delta));
             }
             TransactionControl::RollbackToSavepoint(name) => {
-                let name = name.to_lowercase();
+                let name = name.go_to_lower();
                 if let Some(index) = self.savepoints.iter().position(|(sp, _, _)| *sp == name) {
                     self.buffer.restore(self.savepoints[index].1.clone());
                     self.session
@@ -5096,7 +5097,7 @@ impl ClusterServerSession {
                 }
             }
             TransactionControl::ReleaseSavepoint(name) => {
-                let name = name.to_lowercase();
+                let name = name.go_to_lower();
                 if let Some(index) = self.savepoints.iter().position(|(sp, _, _)| *sp == name) {
                     self.savepoints.truncate(index);
                 }

@@ -113,6 +113,7 @@ use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 
 use crate::binding::{Binding, HintsSet, STATUS_DISABLED, STATUS_ENABLED, STATUS_USING};
+use tidb_util::stringutil::go_to_lower;
 
 /// Go `bindinfo.BuiltinPseudoSQL4BindLock` (`binding_handle.go:34`). Declared
 /// in another file of the package; inlined here because
@@ -375,7 +376,7 @@ pub fn new_binding_from_storage(row: &[Datum]) -> Option<Binding> {
     Some(Binding {
         original_sql,
         // Go lowercases the schema on the way out of storage as well as in.
-        db: text(2)?.to_lowercase(),
+        db: go_to_lower(text(2)?),
         status,
         create_time: text(4).unwrap_or_default(),
         update_time: text(5).unwrap_or_default(),
