@@ -11301,3 +11301,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (string extremum/binary length pin): lexicographic GREATEST
   and BINARY's byte-as-character lengths. Pinned in
   `crates/tidb-session/tests/greatest_str_binary_len_source.rs`.
+- 2026-09-06 (only_full_group_by pin): a non-grouped, non-aggregated SELECT
+  column refuses under the default mode; the grouped aggregate answers.
+  Pinned in `crates/tidb-session/tests/only_full_group_by_source.rs`.
