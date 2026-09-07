@@ -11263,3 +11263,6 @@ risks without claiming repository-wide parity.
   extended scale (2.3333), SUM of INT returns DECIMAL, COUNT stays
   integer. Pinned in
   `crates/tidb-session/tests/aggregate_arith_source.rs`.
+- 2026-09-06 (INTERVAL() pin): the first-strictly-greater-pivot index and
+  the -1 NULL answer. Pinned in
+  `crates/tidb-session/tests/interval_fn_source.rs`.
