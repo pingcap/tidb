@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -94,6 +95,10 @@ const (
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
+
+	// envMySQLPwd is the environment variable the MySQL client reads the password
+	// from. Dumpling only consults it when the password flag is absent.
+	envMySQLPwd = "MYSQL_PWD"
 )
 
 // CSVDialect is the dialect of the CSV output for compatible with different import target
@@ -355,7 +360,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagHost, "h", "127.0.0.1", "The host to connect to")
 	flags.StringP(flagUser, "u", "root", "Username with privileges to run the dump")
 	flags.IntP(flagPort, "P", 4000, "TCP/IP port to connect to")
-	flags.StringP(flagPassword, "p", "", "User password")
+	flags.StringP(flagPassword, "p", "", "User password, read from the MYSQL_PWD environment variable if this flag is not set")
 	flags.Bool(flagAllowCleartextPasswords, false, "Allow passwords to be sent in cleartext (warning: don't use without TLS)")
 	flags.IntP(flagThreads, "t", 4, "Number of goroutines to use, default 4")
 	flags.StringP(flagFilesize, "F", "", "The approximate size of output file")
@@ -445,6 +450,11 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	conf.Password, err = flags.GetString(flagPassword)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Follow the MySQL client precedence: the flag always wins, and MYSQL_PWD is
+	// only used when no password flag is given.
+	if !flags.Changed(flagPassword) {
+		conf.Password = os.Getenv(envMySQLPwd)
 	}
 	conf.AllowCleartextPasswords, err = flags.GetBool(flagAllowCleartextPasswords)
 	if err != nil {
