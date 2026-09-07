@@ -10198,3 +10198,10 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (derived-table pin): an outer query filters a grouped
   subquery (`c > 1`) and the derived result joins back to the base table.
   Pinned in `crates/tidb-session/tests/derived_table_agg_source.rs`.
+- 2026-09-06 (window ranking recorded, NOT FIXED): fresh-plan window
+  ranking (`row_number/rank/dense_rank over ...`) fails with the planner
+  internal "exhaustPhysicalPlans over Window is not ported to the
+  dispatcher" — the Window physical exhaust is a planner-boundary port gap
+  in the same recorded class as uncorrelated scalar subqueries and static
+  partition pruning details. Queued behind the sibling planner stream that
+  owns the dispatcher.
