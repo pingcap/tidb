@@ -263,7 +263,6 @@ var inspectionSummaryRules = map[string][]string{
 		"tidb_ddl_batch_add_index_duration",
 		"tidb_ddl_deploy_syncer_duration",
 		"tidb_ddl_duration",
-		"tidb_ddl_meta_opm",
 		"tidb_ddl_opm",
 		"tidb_ddl_update_self_version_duration",
 		"tidb_ddl_waiting_jobs_num",
