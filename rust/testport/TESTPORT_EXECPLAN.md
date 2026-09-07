@@ -11022,3 +11022,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (LIKE escape pin): default backslash escape, custom ESCAPE
   character, and `\_` literal-underscore forms all behave per MySQL. Pinned
   in `crates/tidb-session/tests/like_escape_source.rs`.
+- 2026-09-06 (BINARY zero-pad pin): BINARY(4) zero-pads on store
+  (hex = 61000000), 1-byte literals don't compare equal, and the explicit
+  NUL-padded form does. Pinned in
+  `crates/tidb-session/tests/binary_zero_pad_source.rs`.
