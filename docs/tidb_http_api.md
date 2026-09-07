@@ -443,6 +443,7 @@ timezone.*
             }
         }
     }
+    ```
 
 15. Scatter regions of the specified table, add a `scatter-range` scheduler for the PD and the range is same as the table range.
 
