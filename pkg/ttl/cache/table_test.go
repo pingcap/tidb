@@ -22,11 +22,14 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -574,7 +577,7 @@ func TestSplitIndexScanRanges(t *testing.T) {
 			require.Len(t, ranges[1].Start, 1)
 			require.Equal(t, tc.expected, ranges[1].Start[0].GetMysqlTime().String())
 
-			assertBoundaryFloor := func(encoded []byte) {
+			assertBoundaryFloorOrMerged := func(encoded []byte) {
 				boundary := tablecodec.EncodeIndexSeekKey(tbl.ID, idx.ID, encoded)
 				require.Positive(t, bytes.Compare(boundary, startKey))
 				require.Negative(t, bytes.Compare(boundary, endKey))
@@ -585,19 +588,25 @@ func TestSplitIndexScanRanges(t *testing.T) {
 				tikvStore.addRegion(boundary, endKey)
 				ranges, err := tbl.SplitIndexScanRanges(context.TODO(), tikvStore, idx, expireTime, tc.loc, 2)
 				require.NoError(t, err)
+				if len(ranges) == 1 {
+					require.Empty(t, ranges[0].Start)
+					require.Empty(t, ranges[0].End)
+					return
+				}
 				require.Len(t, ranges, 2)
 				require.Len(t, ranges[0].End, 1)
+				require.False(t, ranges[0].End[0].GetMysqlTime().IsZero())
 
 				floor, err := codec.EncodeKey(tc.loc, nil, ranges[0].End[0])
 				require.NoError(t, err)
 				floorKey := tablecodec.EncodeIndexSeekKey(tbl.ID, idx.ID, floor)
 				require.LessOrEqual(t, bytes.Compare(floorKey, boundary), 0)
 			}
-
 			// Check every non-empty truncation inside the fixed-width temporal
-			// payload, not only a boundary missing its final byte.
+			// payload, not only a boundary missing its final byte. A truncated
+			// TIMESTAMP may sort before its first valid value and is merged.
 			for cut := 2; cut < len(encodedBoundary); cut++ {
-				assertBoundaryFloor(encodedBoundary[:cut])
+				assertBoundaryFloorOrMerged(encodedBoundary[:cut])
 			}
 
 			// Region boundaries may also contain a complete 8-byte payload that
@@ -616,8 +625,159 @@ func TestSplitIndexScanRanges(t *testing.T) {
 				packTime(2020, 3, 1, 12, 30, 30, 1_500_000),
 			} {
 				encoded := append([]byte{encodedBoundary[0]}, codec.EncodeUint(nil, packed)...)
-				assertBoundaryFloor(encoded)
+				assertBoundaryFloorOrMerged(encoded)
 			}
+		})
+	}
+}
+
+// TestIndexScanRangeSQL checks the whole Region-boundary-to-SQL path. It
+// verifies that every generated query parses, no zero temporal bound is
+// persisted, and adjacent ranges cover representative rows exactly once.
+func TestIndexScanRangeSQL(t *testing.T) {
+	idType := types.NewFieldType(mysql.TypeLonglong)
+	idType.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
+	timeType := types.NewFieldType(mysql.TypeDatetime)
+	timeType.SetFlag(mysql.NotNullFlag)
+	timeType.SetDecimal(0)
+	idCol := &model.ColumnInfo{
+		ID: 1, Name: ast.NewCIStr("id"), Offset: 0, State: model.StatePublic, FieldType: *idType,
+	}
+	timeCol := &model.ColumnInfo{
+		ID: 2, Name: ast.NewCIStr("expired_at"), Offset: 1, State: model.StatePublic, FieldType: *timeType,
+	}
+	idx := &model.IndexInfo{
+		ID: 3, Name: ast.NewCIStr("idx_expired_at"), State: model.StatePublic,
+		Columns: []*model.IndexColumn{{Name: timeCol.Name, Offset: timeCol.Offset, Length: types.UnspecifiedLength}},
+	}
+	tblInfo := &model.TableInfo{
+		ID: 42, Name: ast.NewCIStr("ttl_index_range_sql"), State: model.StatePublic,
+		Columns: []*model.ColumnInfo{idCol, timeCol}, Indices: []*model.IndexInfo{idx}, PKIsHandle: true,
+	}
+	ttlTbl := &cache.PhysicalTable{
+		ID: tblInfo.ID, Schema: ast.NewCIStr("test"), TableInfo: tblInfo,
+		KeyColumns: []*model.ColumnInfo{idCol}, KeyColumnTypes: []*types.FieldType{&idCol.FieldType}, TimeColumn: timeCol,
+	}
+	sqlParser := parser.New()
+
+	loc := time.UTC
+	expireTime := time.Date(2025, 1, 1, 0, 0, 0, 0, loc)
+	expireDatum := types.NewTimeDatum(types.NewTime(
+		types.FromGoTime(expireTime), mysql.TypeDatetime, ttlTbl.TimeColumn.GetDecimal()))
+	encodedExpire, err := codec.EncodeKey(loc, nil, expireDatum)
+	require.NoError(t, err)
+	require.Len(t, encodedExpire, 9)
+	expirePacked, err := expireDatum.GetMysqlTime().ToPackedUint()
+	require.NoError(t, err)
+	require.Positive(t, expirePacked)
+
+	validDatum := types.NewTimeDatum(types.NewTime(
+		types.FromGoTime(time.Date(2021, 6, 1, 12, 34, 56, 0, loc)), mysql.TypeDatetime, 0))
+	validPacked, err := validDatum.GetMysqlTime().ToPackedUint()
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name   string
+		packed uint64
+		cut    int
+	}{
+		// These first two cases cover both paths that formerly persisted a
+		// 0000-00-00 boundary.
+		{name: "temporal type flag only", packed: 0, cut: 1},
+		{name: "complete zero time", packed: 0, cut: 9},
+		{name: "complete valid time", packed: validPacked, cut: 9},
+		{name: "truncated valid time", packed: validPacked, cut: 5},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Less(t, tc.packed, expirePacked)
+			encodedBoundary := append([]byte{encodedExpire[0]}, codec.EncodeUint(nil, tc.packed)...)
+			require.LessOrEqual(t, tc.cut, len(encodedBoundary))
+			encodedBoundary = encodedBoundary[:tc.cut]
+
+			indexPrefix := tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, nil)
+			encodedMinNotNull, err := codec.EncodeKey(loc, nil, types.MinNotNullDatum())
+			require.NoError(t, err)
+			startKey := tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, encodedMinNotNull)
+			boundary := tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, encodedBoundary)
+			endKey := tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, encodedExpire)
+			require.Positive(t, bytes.Compare(boundary, startKey))
+			require.Negative(t, bytes.Compare(boundary, endKey))
+
+			tikvStore := newMockTiKVStore(t)
+			tikvStore.addRegion(indexPrefix, startKey)
+			tikvStore.addRegion(startKey, boundary)
+			tikvStore.addRegion(boundary, endKey)
+			ranges, err := ttlTbl.SplitIndexScanRanges(
+				context.Background(), tikvStore, idx, expireTime, loc, 2)
+			require.NoError(t, err)
+			require.NotEmpty(t, ranges)
+			require.Empty(t, ranges[0].Start)
+			require.Empty(t, ranges[len(ranges)-1].End)
+
+			for i, scanRange := range ranges {
+				if i > 0 {
+					require.Equal(t, ranges[i-1].End, scanRange.Start)
+				}
+				for _, bound := range [][]types.Datum{scanRange.Start, scanRange.End} {
+					if len(bound) > 0 {
+						require.False(t, bound[0].GetMysqlTime().IsZero())
+					}
+				}
+			}
+
+			// Simulate mysql.tidb_ttl_task persistence. Temporal datums are decoded
+			// as packed uint64 values and must be unflattened before building SQL.
+			roundTripRange := func(bound []types.Datum) []types.Datum {
+				if len(bound) == 0 {
+					return nil
+				}
+				encoded, err := codec.EncodeKey(loc, nil, bound...)
+				require.NoError(t, err)
+				decoded, err := codec.Decode(encoded, len(encoded))
+				require.NoError(t, err)
+				require.Len(t, decoded, 1)
+				unflattened, err := tablecodec.Unflatten(decoded[0], &ttlTbl.TimeColumn.FieldType, loc)
+				require.NoError(t, err)
+				return []types.Datum{unflattened}
+			}
+
+			rowTimes := []types.Datum{
+				types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Date(2020, 1, 1, 0, 0, 0, 0, loc)), mysql.TypeDatetime, 0)),
+				types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Date(2021, 1, 1, 0, 0, 0, 0, loc)), mysql.TypeDatetime, 0)),
+				types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Date(2022, 1, 1, 0, 0, 0, 0, loc)), mysql.TypeDatetime, 0)),
+			}
+			covered := make([]int, len(rowTimes))
+			for _, scanRange := range ranges {
+				generator, err := sqlbuilder.NewIndexScanQueryGenerator(
+					ttlTbl, expireTime, roundTripRange(scanRange.Start), roundTripRange(scanRange.End), idx)
+				require.NoError(t, err)
+				sql, err := generator.NextSQL(nil, 16)
+				require.NoError(t, err)
+				require.NotContains(t, sql, "0000-00-00")
+				_, _, err = sqlParser.ParseSQL(sql)
+				require.NoError(t, err)
+
+				for i, rowTime := range rowTimes {
+					if len(scanRange.Start) > 0 {
+						cmp, err := rowTime.Compare(types.StrictContext, &scanRange.Start[0], nil)
+						require.NoError(t, err)
+						if cmp < 0 {
+							continue
+						}
+					}
+					if len(scanRange.End) > 0 {
+						cmp, err := rowTime.Compare(types.StrictContext, &scanRange.End[0], nil)
+						require.NoError(t, err)
+						if cmp >= 0 {
+							continue
+						}
+					}
+					covered[i]++
+				}
+			}
+			require.Equal(t, []int{1, 1, 1}, covered)
 		})
 	}
 }

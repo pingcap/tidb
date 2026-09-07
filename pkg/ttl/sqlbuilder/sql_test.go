@@ -976,6 +976,11 @@ func TestIndexScanQueryGenerator(t *testing.T) {
 	}
 
 	expire := time.UnixMilli(0).In(time.UTC)
+	invalidRange := []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)}
+	_, err := sqlbuilder.NewIndexScanQueryGenerator(t1, expire, invalidRange, nil, index)
+	require.EqualError(t, err, "invalid index scan range start length: 2, expected at most 1")
+	_, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, invalidRange, index)
+	require.EqualError(t, err, "invalid index scan range end length: 2, expected at most 1")
 
 	g, err := sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, index)
 	require.NoError(t, err)

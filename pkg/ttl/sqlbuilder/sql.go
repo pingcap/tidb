@@ -350,6 +350,12 @@ type ScanQueryGenerator struct {
 // NewScanQueryGenerator creates a primary-key scan query generator.
 func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 	rangeStart, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
+	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
+		return nil, err
+	}
+	if err := tbl.ValidateKeyPrefix(rangeEnd); err != nil {
+		return nil, err
+	}
 	return newScanQueryGenerator(tbl, expire, rangeStart, rangeEnd, nil)
 }
 
@@ -359,27 +365,19 @@ func NewIndexScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 	if index == nil {
 		return nil, errors.New("TTL index is required")
 	}
+	if len(rangeStart) > 1 {
+		return nil, errors.Errorf("invalid index scan range start length: %d, expected at most 1", len(rangeStart))
+	}
+	if len(rangeEnd) > 1 {
+		return nil, errors.Errorf("invalid index scan range end length: %d, expected at most 1", len(rangeEnd))
+	}
 	return newScanQueryGenerator(tbl, expire, rangeStart, rangeEnd, index)
 }
 
 func newScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 	rangeStart, rangeEnd []types.Datum, index *model.IndexInfo) (*ScanQueryGenerator, error) {
-	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
-		return nil, err
-	}
-
-	if err := tbl.ValidateKeyPrefix(rangeEnd); err != nil {
-		return nil, err
-	}
-
 	var indexPlan *cache.TTLIndexScanPlan
 	if index != nil {
-		if len(rangeStart) > 1 {
-			return nil, errors.Errorf("invalid index scan range start length: %d, expected 1", len(rangeStart))
-		}
-		if len(rangeEnd) > 1 {
-			return nil, errors.Errorf("invalid index scan range end length: %d, expected 1", len(rangeEnd))
-		}
 		var err error
 		indexPlan, err = tbl.BuildTTLIndexScanPlan(index)
 		if err != nil {

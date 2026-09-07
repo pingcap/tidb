@@ -961,8 +961,7 @@ func (t *PhysicalTable) SplitIndexScanRanges(ctx context.Context, store kv.Stora
 	}
 
 	scanRanges, err := scanRangesFromRawKeyRanges(keyRanges, func(endKey kv.Key) (types.Datum, bool, error) {
-		d, err := timeDatumAtOrBeforeIndexBoundary(endKey, indexPrefix, &t.TimeColumn.FieldType, loc)
-		return d, false, err
+		return timeDatumAtOrBeforeIndexBoundary(endKey, indexPrefix, &t.TimeColumn.FieldType, loc)
 	})
 	if err != nil {
 		return nil, err
@@ -983,27 +982,31 @@ func (t *PhysicalTable) SplitIndexScanRanges(ctx context.Context, store kv.Stora
 // greatest temporal value whose complete encoding is no greater than the Region
 // boundary. For example, if a DATETIME(0) boundary is a truncated prefix of the
 // encoding of 2025-01-01 00:00:00, the result is the last valid second whose
-// complete encoding sorts before that prefix. If the boundary precedes every
-// temporal encoding, zero is used as the smallest SQL boundary instead.
+// complete encoding sorts before that prefix.
 //
 // Using an approximate datum is safe because it is only used to divide the
 // complete SQL scan into adjacent [start, end) ranges. It does not need to be an
-// existing row value or exactly match the physical Region boundary.
+// existing row value or exactly match the physical Region boundary. When no
+// non-zero valid temporal value exists at or before the boundary (for example,
+// the boundary contains only MinNotNull or the temporal type flag), skip is true
+// so scanRangesFromRawKeyRanges merges it into the following range. Persisting a
+// zero DATE/DATETIME/TIMESTAMP as a real SQL bound is unsafe because the default
+// SQL mode treats zero temporal values as invalid.
 func timeDatumAtOrBeforeIndexBoundary(
 	boundary, indexPrefix kv.Key,
 	ft *types.FieldType,
 	loc *time.Location,
-) (types.Datum, error) {
+) (types.Datum, bool, error) {
 	tp := ft.GetType()
 	fsp := ft.GetDecimal()
 	if fsp == types.UnspecifiedFsp {
 		fsp = types.DefaultFsp
 	}
 	if fsp < types.MinFsp || fsp > types.MaxFsp {
-		return nullDatum(), errors.Errorf("invalid temporal FSP: %d", fsp)
+		return nullDatum(), false, errors.Errorf("invalid temporal FSP: %d", fsp)
 	}
 	if tp != mysql.TypeDate && tp != mysql.TypeDatetime && tp != mysql.TypeTimestamp {
-		return nullDatum(), errors.Errorf("unsupported temporal type: %d", tp)
+		return nullDatum(), false, errors.Errorf("unsupported temporal type: %d", tp)
 	}
 
 	stepMicros := int64(1)
@@ -1045,12 +1048,10 @@ func timeDatumAtOrBeforeIndexBoundary(
 	zeroDatum := types.NewTimeDatum(types.NewTime(types.ZeroCoreTime, tp, fsp))
 	zeroKey, err := encodeDatum(zeroDatum)
 	if err != nil {
-		return nullDatum(), err
+		return nullDatum(), false, err
 	}
-	if boundary.Cmp(zeroKey) < 0 {
-		// There is no temporal value at or before this key. Zero is still a safe
-		// SQL split point because it is the smallest representable value.
-		return zeroDatum, nil
+	if boundary.Cmp(zeroKey) <= 0 {
+		return nullDatum(), true, nil
 	}
 
 	// Binary-search all valid values at the column's FSP. Even DATETIME(6)
@@ -1063,7 +1064,7 @@ func timeDatumAtOrBeforeIndexBoundary(
 		candidate := makeDatum(minMicros + mid*stepMicros)
 		key, err := encodeDatum(candidate)
 		if err != nil {
-			return nullDatum(), err
+			return nullDatum(), false, err
 		}
 		if key.Cmp(boundary) <= 0 {
 			best = mid
@@ -1073,18 +1074,18 @@ func timeDatumAtOrBeforeIndexBoundary(
 		}
 	}
 	if best < 0 {
-		return zeroDatum, nil
+		return nullDatum(), true, nil
 	}
 
 	result := makeDatum(minMicros + best*stepMicros)
 	if tp == mysql.TypeTimestamp && loc != nil && loc != time.UTC {
 		tm := result.GetMysqlTime()
 		if err := tm.ConvertTimeZone(time.UTC, loc); err != nil {
-			return nullDatum(), err
+			return nullDatum(), false, err
 		}
 		result.SetMysqlTime(tm)
 	}
-	return result, nil
+	return result, false, nil
 }
 
 func scanRangesFromRawKeyRanges(
