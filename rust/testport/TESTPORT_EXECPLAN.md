@@ -10076,3 +10076,7 @@ risks without claiming repository-wide parity.
   multiset, EXCEPT subtracts+dedups, INTERSECT keeps shared values, and a
   trailing ORDER BY/LIMIT composes globally. Pinned in
   `crates/tidb-session/tests/set_operations_source.rs`.
+- 2026-09-06 (VIEW lifecycle pin): create with WHERE filters the base,
+  CREATE OR REPLACE redefines, writes through the view fail with TiDB's
+  "insert into view ... is not supported now", and DROP VIEW removes it.
+  Pinned in `crates/tidb-session/tests/view_lifecycle_source.rs`.
