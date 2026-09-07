@@ -47,6 +47,7 @@ go_test(
         "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "//pkg/util/intest",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
