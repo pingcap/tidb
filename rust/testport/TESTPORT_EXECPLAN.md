@@ -9842,3 +9842,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (NULL/NOT NULL pins): strict mode rejects NULL into NOT NULL
   with Go's 1048 message; IGNORE downgrades it and stores the implicit
   default ''. Pinned in `tests/null_not_null_insert_source.rs`.
+- 2026-09-06 (DEFAULT keyword + UPDATE IGNORE NULL pins): `default` takes the
+  declared column default; UPDATE IGNORE NULL stores the type's implicit
+  zero value rather than the declared default. Pinned in
+  `tests/update_ignore_null_source.rs`.
