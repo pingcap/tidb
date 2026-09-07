@@ -75,6 +75,20 @@ func isColumnCommentOnlyChange(oldCol, newCol *model.ColumnInfo) bool {
 	return reflect.DeepEqual(oldClone, newClone)
 }
 
+// clearModifyColumnTempFlags removes in-progress modify-column markers from col.
+// NotNullFlag is only cleared when this job was converting NULL to NOT NULL;
+// otherwise rollback would drop an original NOT NULL constraint.
+func clearModifyColumnTempFlags(col, newCol *model.ColumnInfo) {
+	if !hasModifyFlag(col) {
+		return
+	}
+	col.DelFlag(mysql.PreventNullInsertFlag)
+	if isNullToNotNullChange(col, newCol) {
+		col.DelFlag(mysql.NotNullFlag)
+	}
+	col.ChangingFieldType = nil
+}
+
 func isIntegerChange(from, to *model.ColumnInfo) bool {
 	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
 }
@@ -402,12 +416,7 @@ func rollbackModifyColumnJob(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	newCol, oldCol *model.ColumnInfo) (ver int64, err error) {
 	if oldCol.ID == newCol.ID {
-		// Clean the flag info in oldCol.
-		if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
-			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
-			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
-			tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-		}
+		clearModifyColumnTempFlags(tblInfo.Columns[oldCol.Offset], newCol)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -424,12 +433,7 @@ func rollbackModifyColumnJob(
 func rollbackModifyColumnJobWithReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
-	// Clean the flag info in oldCol.
-	if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
-		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-	}
+	clearModifyColumnTempFlags(tblInfo.Columns[oldCol.Offset], args.Column)
 
 	var changingIdxIDs []int64
 	if args.ChangingColumn != nil {
@@ -454,12 +458,7 @@ func rollbackModifyColumnJobWithReorg(
 func rollbackModifyColumnJobWithIndexReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
-	// Clean the flag info in oldCol.
-	if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
-		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-	}
+	clearModifyColumnTempFlags(tblInfo.Columns[oldCol.Offset], args.Column)
 
 	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 	changingIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)

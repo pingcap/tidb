@@ -683,6 +683,65 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotTp)
 }
 
+// TestModifyColumnRollbackKeepsOriginalNotNull covers issue #70787:
+// a failed MODIFY COLUMN must not drop an original NOT NULL constraint on rollback.
+func TestModifyColumnRollbackKeepsOriginalNotNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session sql_mode = 'STRICT_TRANS_TABLES'")
+
+	assertNotNullPreserved := func(t *testing.T, colName string) {
+		t.Helper()
+		col := external.GetModifyColumn(t, tk, "test", "t", colName, false)
+		require.True(t, mysql.HasNotNullFlag(col.GetFlag()))
+		require.False(t, mysql.HasPreventNullInsertFlag(col.GetFlag()))
+		require.Nil(t, col.ChangingFieldType)
+		require.EqualError(t, tk.ExecToErr(fmt.Sprintf("insert into t (id, %s) values (100, null)", colName)),
+			fmt.Sprintf("[table:1048]Column '%s' cannot be null", colName))
+	}
+
+	t.Run("NoReorgWithCheck", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key, c int not null)")
+		tk.MustExec("insert into t values (1, 1000), (2, 2000)")
+		err := tk.ExecToErr("alter table t modify column c tinyint not null")
+		require.ErrorContains(t, err, "Data truncated for column 'c'")
+		col := external.GetModifyColumn(t, tk, "test", "t", "c", false)
+		require.Equal(t, mysql.TypeLong, col.GetType())
+		assertNotNullPreserved(t, "c")
+	})
+
+	t.Run("NullToNotNull", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key, c int)")
+		tk.MustExec("insert into t values (1, 1)")
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDoModifyColumnSkipReorgCheck", func() {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("insert into test.t values (2, null)")
+		})
+		err := tk.ExecToErr("alter table t modify column c tinyint not null")
+		require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
+		col := external.GetModifyColumn(t, tk, "test", "t", "c", false)
+		require.Equal(t, mysql.TypeLong, col.GetType())
+		require.False(t, mysql.HasNotNullFlag(col.GetFlag()))
+		require.False(t, mysql.HasPreventNullInsertFlag(col.GetFlag()))
+		require.Nil(t, col.ChangingFieldType)
+		tk.MustExec("insert into t values (3, null)")
+	})
+
+	t.Run("IndexReorg", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key, c char(20) collate utf8mb4_bin not null, index idx(c))")
+		tk.MustExec("insert into t values (1, 'abcdefghijklmnop')")
+		err := tk.ExecToErr("alter table t modify column c varchar(10) collate utf8mb4_bin not null")
+		require.ErrorContains(t, err, "Data truncated for column 'c'")
+		col := external.GetModifyColumn(t, tk, "test", "t", "c", false)
+		require.Equal(t, mysql.TypeString, col.GetType())
+		assertNotNullPreserved(t, "c")
+	})
+}
+
 func TestGetModifyColumnType(t *testing.T) {
 	type testCase struct {
 		beforeType string
