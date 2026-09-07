@@ -11269,3 +11269,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (wide IN list pin): a 1000-element IN list matches exactly the
   500 odd ids. Pinned in
   `crates/tidb-session/tests/wide_in_list_source.rs`.
+- 2026-09-06 (tuple IN pin): multi-column tuple IN, the ROW(a,b) spelling,
+  and the negated complement. Pinned in
+  `crates/tidb-session/tests/tuple_in_row_eq_source.rs`.
