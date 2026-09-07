@@ -136,6 +136,55 @@ No Go source was edited. The v2 logger/history-reader/table harness and the
 executor/infoschema/planner integration remain explicit boundaries as stated
 above; this batch only aligns behavior represented by the native Rust owner.
 
+## Rust v1 return-contract follow-up (2026-09-07)
+
+This Rust-only follow-up reuses the complete 22-artifact, 11,214-line Go
+package inventory above. The atomic implementation unit is the direct v1 Go
+package: three production files (`evicted.go`, `reader.go`, and
+`statement_summary.go`), three test/harness files, and `BUILD.bazel`. Every v1
+production function, test, build target, corresponding Rust module and test,
+caller, manifest, and workspace/lock entry was read before editing. The direct
+package has no fixture, generated source, or platform variant. The nested
+`pkg/util/stmtsummary/v2` directory remains a separate Go package and was not
+edited in this batch.
+
+The v1 Rust owner imposed `#[must_use]` on 39 constructors, accessors,
+formatters, averages, collections, and scalar/struct returns whose direct Go
+counterparts may be discarded. Those annotations were removed without
+changing runtime logic. Eight annotations remain on native Rust `Option`
+boundaries: the reader column factory; statement-stat creation; optional
+summary construction, lookup, eviction, and normalized-SQL access; backoff
+formatting; and empty-byte conversion.
+
+One `#[deny(unused_must_use)]` regression was added to each v1 owner module.
+Temporarily restoring the 39 annotations made the focused suite fail to compile
+with exactly 39 `unused return value` diagnostics. With the correction in
+place, all three focused tests pass, the complete crate owner suite passes 67
+tests, and all-target compilation succeeds. No statement aggregation,
+eviction, locking, SQL formatting, averaging, row materialization, storage, or
+concurrency behavior changed. No Go, v2, Bazel, Cargo, generated, fixture, or
+platform-specific artifact changed, so neither Go execution nor
+`make bazel_prepare` applies.
+
+The living implementation plan is
+`rust/docs/operations/util-stmtsummary-v1-return-contract-audit-execplan.md`.
+
+Return-contract follow-up evidence:
+
+- Pre-fix focused command, after temporarily restoring the 39 annotations:
+  `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-stmtsummary --lib go_v1_ -- --nocapture --test-threads=1`
+  — failed as expected with exactly 39 `unused return value` diagnostics.
+- The same focused command with the correction in place — three tests passed.
+- Complete owner command:
+  `OPENSSL_DIR=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler OPENSSL_STATIC=0 DYLD_LIBRARY_PATH=/Users/chenhuansheng/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/lib cargo +nightly-2026-08-22 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-stmtsummary --lib --no-fail-fast --test-threads=1`
+  — 67 tests passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-stmtsummary --all-targets`
+  with the same OpenSSL environment — passed; existing warnings belong to the
+  separately owned v2 surface.
+- Scoped `rustfmt +nightly-2026-08-22 --edition 2021 --check` over the three
+  edited v1 source files, `make lint` with the pinned Go environment, and
+  `git diff --check` — passed.
+
 ## Validation (Ready profile)
 
 - Failpoint-enabled Go root targeted run:

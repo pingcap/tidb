@@ -57,7 +57,6 @@ pub struct StmtDigestKey {
 
 impl StmtDigestKey {
     /// Returns an empty key, matching Go's `&StmtDigestKey{}`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -109,7 +108,6 @@ impl StmtDigestKey {
     /// Only when the current SQL is `commit` is `prevSQL` recorded; otherwise
     /// `prevSQL` is empty. `prevSQL` is included in the key to distinguish
     /// different transactions.
-    #[must_use]
     pub fn hash(&self) -> &[u8] {
         &self.hash
     }
@@ -153,7 +151,6 @@ pub struct StmtSummaryStmtCtx {
 
 impl StmtSummaryStmtCtx {
     /// Go `stmtctx.NewStmtCtx`, restricted to this narrowing.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -164,7 +161,6 @@ impl StmtSummaryStmtCtx {
     }
 
     /// Go `(*StatementContext).AffectedRows`.
-    #[must_use]
     pub fn affected_rows(&self) -> u64 {
         self.affected_rows.load(Ordering::SeqCst)
     }
@@ -176,7 +172,6 @@ impl StmtSummaryStmtCtx {
     }
 
     /// Go `(*StatementContext).WarningCount`.
-    #[must_use]
     pub fn warning_count(&self) -> u32 {
         self.warning_count.load(Ordering::SeqCst)
     }
@@ -1249,7 +1244,6 @@ impl StmtSummaryByDigest {
     /// Go `(*stmtSummaryByDigest).collectHistorySummaries`: puts at most
     /// `historySize` summaries into an array.
     ///
-    #[must_use]
     pub fn collect_history_summaries(
         &self,
         checker: Option<&StmtSummaryChecker>,
@@ -1390,7 +1384,6 @@ impl StmtSummaryByDigestMap {
 
     /// Go `newStmtSummaryByDigestMap`: creates an empty
     /// `stmtSummaryByDigestMap`.
-    #[must_use]
     pub fn new() -> Self {
         // Go's `other: newStmtSummaryByDigestEvicted()`.
         let evicted = Arc::new(Mutex::new(StmtSummaryByDigestEvicted::new()));
@@ -1410,7 +1403,6 @@ impl StmtSummaryByDigestMap {
 
     /// Go `newStmtSummaryByDigestMap` with the two narrowed collaborators
     /// injected.
-    #[must_use]
     pub fn with_sinks(evicted: Box<dyn EvictedSink>, metrics: Box<dyn WindowMetricsSink>) -> Self {
         // This initializes the map with "compiled defaults" (which are
         // regrettably duplicated from sessionctx/variable/tidb_vars.go).
@@ -1610,7 +1602,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).Enabled`.
-    #[must_use]
     pub fn enabled(&self) -> bool {
         self.opt_enabled.load(Ordering::SeqCst)
     }
@@ -1625,7 +1616,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).EnabledInternal`.
-    #[must_use]
     pub fn enabled_internal(&self) -> bool {
         self.opt_enable_internal_query.load(Ordering::SeqCst)
     }
@@ -1640,7 +1630,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).historyEnabled`.
-    #[must_use]
     pub fn history_enabled(&self) -> bool {
         self.opt_history_enabled.load(Ordering::SeqCst)
     }
@@ -1651,7 +1640,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).refreshInterval`.
-    #[must_use]
     pub fn refresh_interval(&self) -> i64 {
         self.opt_refresh_interval.load(Ordering::SeqCst)
     }
@@ -1662,7 +1650,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).historySize`.
-    #[must_use]
     pub fn history_size(&self) -> usize {
         self.opt_history_size.load(Ordering::SeqCst).max(0) as usize
     }
@@ -1683,7 +1670,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).GroupByUser`.
-    #[must_use]
     pub fn group_by_user(&self) -> bool {
         self.opt_group_by_user.load(Ordering::SeqCst)
     }
@@ -1699,7 +1685,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).maxStmtCount`.
-    #[must_use]
     pub fn max_stmt_count(&self) -> usize {
         self.opt_max_stmt_count.load(Ordering::SeqCst) as usize
     }
@@ -1718,7 +1703,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go `(*stmtSummaryByDigestMap).maxSQLLength`.
-    #[must_use]
     pub fn max_sql_length(&self) -> usize {
         self.opt_max_sql_length.load(Ordering::SeqCst).max(0) as usize
     }
@@ -1729,13 +1713,11 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go's direct test reads of `ssMap.beginTimeForCurInterval`.
-    #[must_use]
     pub fn begin_time_for_cur_interval(&self) -> i64 {
         self.inner.lock().unwrap().begin_time_for_cur_interval
     }
 
     /// Go's `ssMap.summaryMap.Size()`.
-    #[must_use]
     pub fn summary_map_size(&self) -> usize {
         self.inner.lock().unwrap().summary_map.size()
     }
@@ -1747,7 +1729,6 @@ impl StmtSummaryByDigestMap {
     }
 
     /// Go's `ssMap.summaryMap.Values()`, in most-recently-used order.
-    #[must_use]
     pub fn summary_map_values(&self) -> Vec<Arc<Mutex<StmtSummaryByDigest>>> {
         self.inner
             .lock()
@@ -1771,7 +1752,6 @@ fn unix_now() -> i64 {
 ///
 /// Go slices raw bytes; this truncates at the nearest UTF-8 boundary at or
 /// below the limit, and reports Go's byte length.
-#[must_use]
 pub fn format_sql(sql: &str) -> String {
     let max_sql_length = STMT_SUMMARY_BY_DIGEST_MAP.max_sql_length();
     let length = sql.len();
@@ -1810,7 +1790,6 @@ pub fn format_backoff_types(backoff_map: &HashMap<String, i64>) -> Option<String
 }
 
 /// Go `avgInt`.
-#[must_use]
 pub fn avg_int(sum: i64, count: i64) -> i64 {
     if count > 0 {
         sum / count
@@ -1820,7 +1799,6 @@ pub fn avg_int(sum: i64, count: i64) -> i64 {
 }
 
 /// Go `avgFloat`.
-#[must_use]
 pub fn avg_float(sum: i64, count: i64) -> f64 {
     if count > 0 {
         sum as f64 / count as f64
@@ -1830,7 +1808,6 @@ pub fn avg_float(sum: i64, count: i64) -> f64 {
 }
 
 /// Go `avgFloat4Uint`.
-#[must_use]
 pub fn avg_float4_uint(sum: u64, count: i64) -> f64 {
     if count > 0 {
         sum as f64 / count as f64
@@ -1840,7 +1817,6 @@ pub fn avg_float4_uint(sum: u64, count: i64) -> f64 {
 }
 
 /// Go `avgSumFloat`.
-#[must_use]
 pub fn avg_sum_float(sum: f64, count: i64) -> f64 {
     if count > 0 {
         sum / count as f64
@@ -3614,5 +3590,52 @@ pub(crate) mod tests {
         legacy.extend_from_slice(b"plan");
         legacy.extend_from_slice(b"rg");
         assert_eq!(off.hash(), legacy.as_slice());
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v1_statement_summary_returns_can_be_ignored() {
+        StmtDigestKey::new();
+        let key = StmtDigestKey::new();
+        key.hash();
+
+        StmtSummaryStmtCtx::new();
+        let ctx = StmtSummaryStmtCtx::new();
+        ctx.affected_rows();
+        ctx.warning_count();
+
+        let info = generate_any_exec_info();
+        let _ = new_stmt_summary_stats(&info);
+        let _ = StmtSummaryByDigestElement::new(&info, 0, 60, 0, 0);
+
+        let summary = StmtSummaryByDigest::default();
+        summary.collect_history_summaries(None, 1);
+
+        StmtSummaryByDigestMap::new();
+        StmtSummaryByDigestMap::with_sinks(
+            Box::new(NoopEvictedSink),
+            Box::new(NoopWindowMetricsSink),
+        );
+        let map = StmtSummaryByDigestMap::new();
+        map.enabled();
+        map.enabled_internal();
+        map.history_enabled();
+        map.refresh_interval();
+        map.history_size();
+        map.group_by_user();
+        map.max_stmt_count();
+        map.max_sql_length();
+        map.begin_time_for_cur_interval();
+        map.summary_map_size();
+        map.summary_map_values();
+        let _ = map.normalized_sql_for_digest("");
+        let _ = map.evicted();
+        let _ = map.summary_map_get(&key);
+
+        format_sql("select 1");
+        avg_int(1, 1);
+        avg_float(1, 1);
+        avg_float4_uint(1, 1);
+        avg_sum_float(1.0, 1);
     }
 }

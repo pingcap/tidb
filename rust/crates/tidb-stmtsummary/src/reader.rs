@@ -75,7 +75,6 @@ impl StmtSummaryReader<'static> {
     /// # Panics
     ///
     /// Go panics when a column has no registered factory; so does this.
-    #[must_use]
     pub fn new(
         user: Option<UserIdentity>,
         has_process_priv: bool,
@@ -110,7 +109,6 @@ impl StmtSummaryReader<'static> {
 
 impl StmtSummaryReader<'_> {
     /// The `Name.O` of every column this reader was built for.
-    #[must_use]
     pub fn column_names(&self) -> Vec<&str> {
         self.columns.iter().map(|col| col.name.original()).collect()
     }
@@ -126,7 +124,6 @@ impl StmtSummaryReader<'_> {
     /// Go takes `ssMap`'s lock once around reading `summaryMap.Values()`; the
     /// ported map exposes that read as its own locked accessor, so the lock is
     /// taken and released inside the call.
-    #[must_use]
     pub fn get_stmt_summary_cumulative_rows(&self) -> Vec<Vec<Datum>> {
         let values = self.ss_map.summary_map_values();
 
@@ -151,7 +148,6 @@ impl StmtSummaryReader<'_> {
     /// Go reads `summaryMap.Values()`, `beginTimeForCurInterval` and `other`
     /// under one `ssMap` lock; here each is its own locked accessor, so a
     /// concurrent `AddStatement` can interleave between them.
-    #[must_use]
     pub fn get_stmt_summary_current_rows(&self) -> Vec<Vec<Datum>> {
         let values = self.ss_map.summary_map_values();
         let begin_time = self.ss_map.begin_time_for_cur_interval();
@@ -180,7 +176,6 @@ impl StmtSummaryReader<'_> {
 
     /// Go `(*stmtSummaryReader).GetStmtSummaryHistoryRows`: gets all history
     /// statement summaries rows.
-    #[must_use]
     pub fn get_stmt_summary_history_rows(&self) -> Vec<Vec<Datum>> {
         let values = self.ss_map.summary_map_values();
 
@@ -341,13 +336,11 @@ pub struct StmtSummaryChecker {
 
 impl StmtSummaryChecker {
     /// Go `NewStmtSummaryChecker`: returns a new statement summaries checker.
-    #[must_use]
     pub fn new(digests: HashSet<String>) -> Self {
         Self { digests }
     }
 
     /// Go `(*stmtSummaryChecker).isDigestValid`.
-    #[must_use]
     pub fn is_digest_valid(&self, digest: &str) -> bool {
         self.digests.contains(digest)
     }
@@ -1370,6 +1363,29 @@ pub(crate) mod tests {
             STORAGE_MPP_STR,
         ];
         new_stmt_summary_reader_with_column_names_for_test(ss_map, &column_names)
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v1_reader_returns_can_be_ignored() {
+        StmtSummaryReader::new(
+            None,
+            true,
+            Vec::new(),
+            String::new(),
+            SessionTimeZone::utc(),
+        );
+        let map = StmtSummaryByDigestMap::new();
+        let reader = new_stmt_summary_reader_for_test(&map);
+        reader.column_names();
+        reader.get_stmt_summary_cumulative_rows();
+        reader.get_stmt_summary_current_rows();
+        reader.get_stmt_summary_history_rows();
+
+        StmtSummaryChecker::new(std::collections::HashSet::new());
+        let checker = StmtSummaryChecker::new(std::collections::HashSet::new());
+        checker.is_digest_valid("");
+        let _ = column_value_factory(CLUSTER_TABLE_INSTANCE_COLUMN_NAME_STR);
     }
 
     /// Go `TestColumnValueFactoryDoubleUintMetrics`.

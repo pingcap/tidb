@@ -41,6 +41,17 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`pkg/util/stmtsummary` v1 return contracts): the complete
+  22-artifact/11,214-line package inventory was reused and the direct v1
+  boundary—three production files, three test/harness files, BUILD target,
+  every function/test/caller, manifest, workspace/lock entry, and absent
+  fixture/generated/platform surfaces—was verified before editing. Thirty-nine
+  ordinary Go-shaped results no longer impose Rust-only discard diagnostics;
+  the eight native `Option` contracts remain. Three focused regressions failed
+  with exactly 39 diagnostics before the correction and pass afterward. All 67
+  owner tests, all-target compilation, scoped formatting, Ready lint, and diff
+  hygiene pass; publication as one package commit remains. Evidence is in
+  `receipts/util_stmtsummary_audit.md` and its dedicated ExecPlan.
 - 2026-09-07 (`pkg/parser/util` corrective return contract): the complete split
   Rust owner, four dedicated tests, duplicate inline source-table test, planner
   consumer proof, manifests, workspace/lock entries, aggregate-test build

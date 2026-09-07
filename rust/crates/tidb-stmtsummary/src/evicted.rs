@@ -86,19 +86,16 @@ pub enum MatchResult {
 
 impl StmtSummaryByDigestEvicted {
     /// Go `newStmtSummaryByDigestEvicted`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Go's `ssbde.history.Len()`.
-    #[must_use]
     pub fn history_len(&self) -> usize {
         self.history.len()
     }
 
     /// Go's read access to `ssbde.history`, oldest interval first.
-    #[must_use]
     pub fn history(&self) -> &VecDeque<StmtSummaryByDigestEvictedElement> {
         &self.history
     }
@@ -199,7 +196,6 @@ impl StmtSummaryByDigestEvicted {
     ///
     /// Go skips rows whose `toEvictedCountDatum` returned `nil`; that helper
     /// always returns a row, so no row is skipped here.
-    #[must_use]
     pub fn to_evicted_count_datum(&self) -> Vec<Vec<Datum>> {
         self.history
             .iter()
@@ -211,7 +207,6 @@ impl StmtSummaryByDigestEvicted {
     /// Go `(*stmtSummaryByDigestEvicted).collectHistorySummaries`, called by
     /// the reader's `getStmtEvictedOtherHistoryRow`. Go takes no checker here
     /// (only `stmtSummaryByDigest`'s namesake does), and neither does this.
-    #[must_use]
     pub fn collect_history_summaries(
         &self,
         history_size: usize,
@@ -250,7 +245,6 @@ impl StmtSummaryByDigestMap {
     /// Returns no rows when the map was built by
     /// [`StmtSummaryByDigestMap::with_sinks`] with a sink other than the
     /// `evicted.go` rollup.
-    #[must_use]
     pub fn to_evicted_count_datum(&self) -> Vec<Vec<Datum>> {
         self.evicted().map_or_else(Vec::new, |evicted| {
             evicted.lock().unwrap().to_evicted_count_datum()
@@ -260,7 +254,6 @@ impl StmtSummaryByDigestMap {
 
 impl StmtSummaryByDigestEvictedElement {
     /// Go `newStmtSummaryByDigestEvictedElement`.
-    #[must_use]
     pub fn new(begin_time: i64, end_time: i64) -> Self {
         Self {
             begin_time,
@@ -314,7 +307,6 @@ impl StmtSummaryByDigestEvictedElement {
     }
 
     /// Go `(*stmtSummaryByDigestEvictedElement).toEvictedCountDatum`.
-    #[must_use]
     pub fn to_evicted_count_datum(&self) -> Vec<Datum> {
         vec![
             timestamp_datum(self.begin_time),
@@ -574,6 +566,24 @@ mod tests {
             write!(buf, "{}", get_evicted(element)).unwrap();
         }
         buf
+    }
+
+    #[deny(unused_must_use)]
+    #[test]
+    fn go_v1_evicted_returns_can_be_ignored() {
+        StmtSummaryByDigestEvicted::new();
+        let evicted = StmtSummaryByDigestEvicted::new();
+        evicted.history_len();
+        evicted.history();
+        evicted.to_evicted_count_datum();
+        evicted.collect_history_summaries(1);
+
+        StmtSummaryByDigestEvictedElement::new(0, 1);
+        let element = StmtSummaryByDigestEvictedElement::new(0, 1);
+        element.to_evicted_count_datum();
+
+        let map = StmtSummaryByDigestMap::new();
+        map.to_evicted_count_datum();
     }
 
     /// Go `getEvicted`.
