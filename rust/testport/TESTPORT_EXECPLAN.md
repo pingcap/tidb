@@ -9948,3 +9948,11 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (UPDATE subquery pin): a correlated scalar subquery in SET
   evaluates per row (max(v) per matching k). Pinned in
   `tests/update_subquery_source.rs`.
+- 2026-09-06 (uncorrelated scalar subqueries recorded, NOT FIXED): all four
+  statement shapes (SELECT list, WHERE, DELETE WHERE, UPDATE SET) fail with
+  the planner's internal "uncorrelated scalar-subquery evaluation" text
+  where Go folds the subquery's first row. Correlated subqueries (Apply
+  path) work and are pinned. Full divergence record + implementation plan
+  (deferred scalar sites, executor-side QueryStmt evaluation, 1242/NULL
+  semantics) in `docs/uncorrelated-scalar-subquery-divergence.md`; queued
+  behind the sibling in-flight planner stream that owns the rewriter region.
