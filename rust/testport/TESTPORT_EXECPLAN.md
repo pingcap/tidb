@@ -11135,3 +11135,8 @@ risks without claiming repository-wide parity.
   `self.truncated` empty at finish time — the field is sized from the
   constructor's agg_funcs but the parallel finish indexes the PIPELINE
   plan's function list). Still queued behind the shared parallel region.
+- 2026-09-06 (bitwise aggregates pin): BIT_AND/BIT_OR/BIT_XOR combine and
+  return MySQL's identity values on empty input. Pinned in
+  `crates/tidb-session/tests/bitwise_aggregates_source.rs`.
+  Datapoint for the sibling column.rs:262 panic stream: ANY_VALUE over a
+  GROUP BY also triggers it.
