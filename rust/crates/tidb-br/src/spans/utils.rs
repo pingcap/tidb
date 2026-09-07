@@ -23,7 +23,6 @@ use super::compare_bytes_ext;
 use super::sorted::{Span, Valued};
 
 /// Go `Overlaps`: whether two spans share any part.
-#[must_use]
 pub fn overlaps(a: &Span, b: &Span) -> bool {
     if b.end_key.is_empty() {
         return a.end_key.is_empty() || a.end_key.as_slice() > b.start_key.as_slice();
@@ -100,7 +99,6 @@ pub fn full() -> Vec<Span> {
 ///
 /// Go sorts both argument slices in place; Rust sorts private copies, which no
 /// caller can distinguish.
-#[must_use]
 pub fn valued_set_equals(xs: &[Valued], ys: &[Valued]) -> bool {
     if xs.is_empty() || ys.is_empty() {
         return xs.len() == ys.len();

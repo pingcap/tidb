@@ -41,6 +41,16 @@ For each bounded behavior cluster:
    package-complete parity claim is made while gaps remain.
 
 ## Progress
+- 2026-09-07 (`br/pkg/streamhelper/spans` return contracts): the complete
+  four-module Rust owner (1,021 pre-edit lines), shared manifest/crate root,
+  workspace/lock registration, all functions, four source-derived tests,
+  callers, and fixture/generated/platform/custom-build surfaces were
+  inventoried without reopening Go source. Nine direct Go-shaped scalar or
+  struct returns no longer impose Rust-only discarded-result diagnostics; the
+  regression failed with exactly nine diagnostics before the correction and
+  passes afterward. The complete `tidb-br` gate passes 32 active tests with two
+  unrelated skips, all-target compilation passes, and Ready evidence is in
+  `receipts/br_streamhelper_spans.md` and the dedicated ExecPlan.
 - 2026-09-07 (`pkg/ddl/placement` remaining scalar/struct return contracts):
   the byte-unchanged 11-artifact/5,066-line Rust owner, manifest/lock graph, 30
   pre-edit tests, sole direct dependent, all callers, and non-source build

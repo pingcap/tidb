@@ -38,7 +38,6 @@ pub struct ValueSortedFull {
 }
 
 /// Go `Sorted`: takes ownership of a raw [`ValuedFull`] and wraps it.
-#[must_use]
 pub fn sorted(full: ValuedFull) -> ValueSortedFull {
     let mut value_idx = BTreeMap::new();
     full.traverse(|item| {
@@ -99,7 +98,6 @@ impl ValueSortedFull {
     ///
     /// Panics when the index is empty, exactly as Go's `valueIdx.Min()` type
     /// assertion panics on the `nil` item it returns for an empty tree.
-    #[must_use]
     pub fn min(&self) -> Valued {
         self.value_idx
             .values()
@@ -113,7 +111,6 @@ impl ValueSortedFull {
     /// # Panics
     ///
     /// See [`ValueSortedFull::min`].
-    #[must_use]
     pub fn min_value(&self) -> Value {
         self.min().value
     }

@@ -34,7 +34,6 @@ pub struct Span {
 }
 
 /// Go `join`: the upper bound of two values.
-#[must_use]
 pub const fn join(a: Value, b: Value) -> Value {
     if a > b {
         a
@@ -60,13 +59,11 @@ impl Valued {
     }
 
     /// Go `Valued.Less`: ordering is by start key alone.
-    #[must_use]
     pub fn less(&self, other: &Self) -> bool {
         self.key.start_key < other.key.start_key
     }
 
     /// Go `(Valued).Equals` (declared in `utils.go`).
-    #[must_use]
     pub fn equals(&self, other: &Self) -> bool {
         self.value == other.value
             && self.key.start_key == other.key.start_key
@@ -96,7 +93,6 @@ pub struct ValuedFull {
 
 impl ValuedFull {
     /// Go `NewFullWith`: creates a set over a subset of spans.
-    #[must_use]
     pub fn new_full_with(init_spans: &[Span], init: Value) -> Self {
         let mut inner = BTreeMap::new();
         for r in collapse(init_spans) {

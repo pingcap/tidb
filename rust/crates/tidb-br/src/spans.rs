@@ -77,3 +77,27 @@ pub(crate) fn compare_bytes_ext(
         (false, false) => a.cmp(b),
     }
 }
+
+#[cfg(test)]
+mod return_contract_tests {
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn direct_source_returns_may_be_ignored_like_go() {
+        let left = Valued::new(Span::default(), 1);
+        let right = Valued::new(Span::default(), 2);
+
+        sorted::join(1, 2);
+        left.less(&right);
+        left.equals(&right);
+        ValuedFull::new_full_with(&[Span::default()], 0);
+        overlaps(&left.key, &right.key);
+        valued_set_equals(std::slice::from_ref(&left), std::slice::from_ref(&right));
+        value_sorted_wrap(ValuedFull::default());
+
+        let sorted = value_sorted_wrap(ValuedFull::new_full_with(&[Span::default()], 0));
+        sorted.min();
+        sorted.min_value();
+    }
+}
