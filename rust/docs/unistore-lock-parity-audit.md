@@ -517,3 +517,24 @@ EQString operand (`DATE_FORMAT(t, '%Y-%m-%d') = '2024-03-05'`) and a
 bare function answers its numeric-prefix truth. Regression:
 `date_format_composes_over_a_datetime_column` (the EQString equality
 answers TRUE for the matching layout).
+
+## CONV across bases (Conv 2138)
+
+`Conv` 2138 lands in the bytes channel as `conv_convert` over the Go
+`builtinConvSig.conv` body: a negative `from_base` marks the input as
+signed and clamps the parsed magnitude into [-2^63, MaxInt64]; a
+negative `to_base` marks an ignore-sign output that re-wraps and keeps
+the minus. Bases outside [2, 36] answer NULL. `valid_prefix` ports
+`getValidPrefix` byte-for-byte: a sign counts only at offset 0 and never
+extends the prefix by itself, the first digit beyond the base's range
+stops the scan, an empty prefix answers "0", and a leading '+' followed
+by a digit is stripped. Parse overflow answers NULL here where Go raises
+the BIGINT UNSIGNED 1690 error -- the bytes channel carries no error
+(same folding as `IntDivideDecimal`). A bare CONV answers its
+numeric-prefix `ToBool` truth like the string-function family.
+Regressions: `conv_rebinds_digits_across_bases_like_go` (the MySQL doc
+examples CONV('a',16,2)='1010' / CONV('6E',18,8)='172' /
+CONV(-17,10,-18)='-H', the signed-base plain vs wrapped two's-complement
+rendering, the signed clamp at -2^63, invalid base NULL, junk "0") and
+`conv_as_a_condition_answers_numeric_prefix_truth` (bare-truth plus the
+overflow NULL).

@@ -1584,6 +1584,10 @@ pub enum SimpleSig {
     /// `DateFormatSig` over (datetime, format): Go `builtinDateFormatSig`
     /// answering through `Time.DateFormat`.
     DateFormatSig,
+    /// `Conv` over (text, from-base, to-base): Go `builtinConvSig.conv`
+    /// re-reading the text in one base and re-formatting it in the
+    /// other (bases 2..=36; a negative base marks signed in/output).
+    Conv,
     /// See [`SimpleSig::CharLengthUtf8`].
     UpperUtf8,
     /// See [`SimpleSig::CharLengthUtf8`].
@@ -1932,6 +1936,7 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::LowerUtf8 => SimpleSig::LowerUtf8,
             tipb::ScalarFuncSig::Lower => SimpleSig::Lower,
             tipb::ScalarFuncSig::DateFormatSig => SimpleSig::DateFormatSig,
+            tipb::ScalarFuncSig::Conv => SimpleSig::Conv,
             tipb::ScalarFuncSig::UpperUtf8 => SimpleSig::UpperUtf8,
             tipb::ScalarFuncSig::Upper => SimpleSig::Upper,
             tipb::ScalarFuncSig::Substring2ArgsUtf8 => SimpleSig::Substring2ArgsUtf8,
@@ -2270,6 +2275,108 @@ fn eval_time(
     }
 }
 
+/// Go `conv` (pkg/expression/builtin_math.go): re-read `text` in base
+/// `from_base` and re-format the value in base `to_base`. A negative
+/// base marks the input (`from_base`) or the output (`to_base`) as
+/// signed; bases outside [2, 36] answer NULL. Parse overflow answers
+/// NULL here where Go raises the BIGINT UNSIGNED 1690 error -- the
+/// bytes channel carries no error (same folding as `IntDivideDecimal`).
+fn conv_convert(text: &[u8], from_base: i64, to_base: i64) -> Option<Vec<u8>> {
+    let mut from_base = from_base;
+    let mut to_base = to_base;
+    let mut signed = false;
+    let mut ignore_sign = false;
+    if from_base < 0 {
+        from_base = -from_base;
+        signed = true;
+    }
+    if to_base < 0 {
+        to_base = -to_base;
+        ignore_sign = true;
+    }
+    if !(2..=36).contains(&from_base) || !(2..=36).contains(&to_base) {
+        return None;
+    }
+    // Go trims whitespace, then keeps the longest prefix valid in the
+    // input base; an empty prefix answers "0".
+    let raw = String::from_utf8_lossy(text);
+    let prefix = valid_prefix(raw.trim(), from_base);
+    if prefix.is_empty() {
+        return Some(b"0".to_vec());
+    }
+    let negative = prefix.starts_with('-');
+    let digits = if negative { &prefix[1..] } else { &prefix };
+    let mut val = u64::from_str_radix(digits, from_base as u32).ok()?;
+    const TWO_POW_63: u64 = 1u64 << 63;
+    if signed {
+        if negative && val > TWO_POW_63 {
+            val = TWO_POW_63;
+        }
+        if !negative && val > i64::MAX as u64 {
+            val = i64::MAX as u64;
+        }
+    }
+    if negative {
+        val = val.wrapping_neg();
+    }
+    let negative = (val as i64) < 0;
+    if ignore_sign && negative {
+        val = val.wrapping_neg();
+    }
+    let mut out = format_u64_base(val, to_base as u32);
+    if negative && ignore_sign {
+        out.insert(0, '-');
+    }
+    Some(out.to_ascii_uppercase().into_bytes())
+}
+
+/// Go `getValidPrefix` (pkg/expression/util.go): the longest prefix of
+/// `s` that parses in `base` (2..=36). A sign counts only at offset 0
+/// and never extends the prefix by itself; the first character beyond
+/// the base's digit range stops the scan. A leading '+' followed by at
+/// least one digit is stripped.
+fn valid_prefix(s: &str, base: i64) -> String {
+    let upper = if base <= 9 {
+        b'0' + base as u8
+    } else {
+        b'A' + (base - 10) as u8
+    };
+    let bytes = s.as_bytes();
+    let mut valid_len = 0usize;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b.is_ascii_alphanumeric() {
+            let c = b.to_ascii_uppercase();
+            if c >= upper {
+                break;
+            }
+            valid_len = i + 1;
+        } else if (b == b'+' || b == b'-') && i == 0 {
+            // A sign is only valid at offset 0.
+        } else {
+            break;
+        }
+    }
+    if valid_len > 1 && bytes[0] == b'+' {
+        return s[1..valid_len].to_string();
+    }
+    s[..valid_len].to_string()
+}
+
+/// Go `strconv.FormatUint` over bases 2..=36: lowercase digits, no sign.
+fn format_u64_base(mut val: u64, base: u32) -> String {
+    if val == 0 {
+        return "0".to_string();
+    }
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = Vec::new();
+    while val > 0 {
+        out.push(DIGITS[(val % u64::from(base)) as usize]);
+        val /= u64::from(base);
+    }
+    out.reverse();
+    String::from_utf8(out).expect("ascii digits")
+}
+
 fn eval_bytes(
     expr: Option<&SimpleExpr>,
     row: &[tidb_datatype::Datum],
@@ -2292,6 +2399,23 @@ fn eval_bytes(
             let layout = String::from_utf8_lossy(&layout).into_owned();
             let formatted = time.date_format(&layout).ok()?;
             Some(formatted.into_bytes())
+        }
+        // CONV: Go `builtinConvSig` re-reads the text in one base and
+        // re-formats it in another; the base operands go through the
+        // int channel.
+        SimpleExpr::Func(SimpleSig::Conv, children) => {
+            let text = eval_bytes(children.first(), row, div_precision_increment)?;
+            let from_base = children
+                .get(1)
+                .and_then(|c| eval_expr(c, row, div_precision_increment).ok())
+                .flatten()
+                .and_then(|value| i64::try_from(value).ok())?;
+            let to_base = children
+                .get(2)
+                .and_then(|c| eval_expr(c, row, div_precision_increment).ok())
+                .flatten()
+                .and_then(|value| i64::try_from(value).ok())?;
+            conv_convert(&text, from_base, to_base)
         }
         // Go's string-function family: case folding and substring over the
         // byte domain for the binary forms and the rune domain for the
@@ -2735,10 +2859,11 @@ pub fn eval_expr(
                 | SimpleSig::Substring2Args
                 | SimpleSig::Substring2ArgsUtf8
                 | SimpleSig::Substring3Args
-                | SimpleSig::Substring3ArgsUtf8 => {
-                    // A bare string function as a condition answers its
-                    // `ToBool` truth: the numeric prefix of the result,
-                    // non-zero (Go `StrToFloat` -> `ToBool`).
+                | SimpleSig::Substring3ArgsUtf8
+                | SimpleSig::Conv => {
+                    // A bare string function (or CONV) as a condition
+                    // answers its `ToBool` truth: the numeric prefix of
+                    // the result, non-zero (Go `StrToFloat` -> `ToBool`).
                     let Some(raw) = eval_bytes(Some(expr), row, div_precision_increment) else {
                         return Ok(None);
                     };
@@ -4869,5 +4994,114 @@ mod tests {
             ],
         );
         assert_eq!(eval_expr(&condition, &row, 4).expect("evals"), Some(1));
+    }
+
+    #[test]
+    fn conv_rebinds_digits_across_bases_like_go() {
+        // EQString(CONV(x, from, to), expected) pins the exact answer
+        // through the bytes channel.
+        let conv_eq = |text: &[u8], from: i64, to: i64, expected: &str| {
+            SimpleExpr::Func(
+                SimpleSig::EqString(46), // utf8mb4_bin
+                vec![
+                    SimpleExpr::Func(
+                        SimpleSig::Conv,
+                        vec![
+                            SimpleExpr::Bytes(text.to_vec()),
+                            SimpleExpr::Int(from),
+                            SimpleExpr::Int(to),
+                        ],
+                    ),
+                    SimpleExpr::Bytes(expected.as_bytes().to_vec()),
+                ],
+            )
+        };
+        // MySQL doc examples: CONV('a',16,2)='1010', CONV('6E',18,8)='172',
+        // CONV(-17,10,-18)='-H' (ignore-sign output keeps the minus).
+        assert_eq!(
+            eval_expr(&conv_eq(b"a", 16, 2, "1010"), &[], 4).expect("evals"),
+            Some(1)
+        );
+        assert_eq!(
+            eval_expr(&conv_eq(b"6E", 18, 8, "172"), &[], 4).expect("evals"),
+            Some(1)
+        );
+        assert_eq!(
+            eval_expr(&conv_eq(b"-17", 10, -18, "-H"), &[], 4).expect("evals"),
+            Some(1)
+        );
+        // Negative input base = signed input: a positive value renders
+        // plainly, while a negative literal wraps and prints as the full
+        // two's-complement bit pattern (Go `int64(val) < 0` marks it
+        // negative but only an ignore-sign output adds '-').
+        assert_eq!(
+            eval_expr(&conv_eq(b"a", -16, 2, "1010"), &[], 4).expect("evals"),
+            Some(1)
+        );
+        assert_eq!(
+            eval_expr(
+                &conv_eq(
+                    b"-a",
+                    -16,
+                    2,
+                    "1111111111111111111111111111111111111111111111111111111111110110",
+                ),
+                &[],
+                4,
+            )
+            .expect("evals"),
+            Some(1)
+        );
+        // A signed input clamps to [-2^63, MaxInt64] before wrapping.
+        assert_eq!(
+            eval_expr(
+                &conv_eq(b"-9223372036854775809", -10, 16, "8000000000000000"),
+                &[],
+                4,
+            )
+            .expect("evals"),
+            Some(1)
+        );
+        // Bases outside [2, 36] answer NULL; junk answers "0".
+        assert_eq!(eval_expr(&conv_eq(b"a", 1, 10, "0"), &[], 4), Ok(None));
+        assert_eq!(
+            eval_expr(&conv_eq(b"g", 16, 10, "0"), &[], 4).expect("evals"),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn conv_as_a_condition_answers_numeric_prefix_truth() {
+        // A bare CONV as a condition answers its numeric-prefix truth:
+        // "1010" is truthy, "0" is not.
+        let conv = |text: &[u8], from: i64, to: i64| {
+            SimpleExpr::Func(
+                SimpleSig::Conv,
+                vec![
+                    SimpleExpr::Bytes(text.to_vec()),
+                    SimpleExpr::Int(from),
+                    SimpleExpr::Int(to),
+                ],
+            )
+        };
+        assert_eq!(
+            eval_expr(&conv(b"a", 16, 2), &[], 4).expect("evals"),
+            Some(1)
+        );
+        assert_eq!(
+            eval_expr(&conv(b"g", 16, 2), &[], 4).expect("evals"),
+            Some(0)
+        );
+        // Parse overflow answers NULL here where Go raises the BIGINT
+        // UNSIGNED 1690 error (the bytes channel carries no error).
+        let overflow = SimpleExpr::Func(
+            SimpleSig::Conv,
+            vec![
+                SimpleExpr::Bytes(b"18446744073709551616".to_vec()),
+                SimpleExpr::Int(10),
+                SimpleExpr::Int(16),
+            ],
+        );
+        assert_eq!(eval_expr(&overflow, &[], 4).expect("evals"), None);
     }
 }
