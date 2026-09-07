@@ -11065,3 +11065,6 @@ risks without claiming repository-wide parity.
   COLUMNS (char) route rows by string semantics with agreeing
   partition-qualified reads. Pinned in
   `crates/tidb-session/tests/columns_partition_routing_source.rs`.
+- 2026-09-06 (IS TRUE family pin): IS TRUE/IS FALSE/IS UNKNOWN with NULL
+  semantics and their IS NOT forms. Pinned in
+  `crates/tidb-session/tests/is_truth_value_source.rs`.
