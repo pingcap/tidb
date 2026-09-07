@@ -125,7 +125,17 @@ pub static PLAN_REPLAYER_PATH: RwLock<String> = RwLock::new(String::new());
 pub static PLAN_REPLAYER_PATH_ONCE: Once = Once::new();
 
 /// Go `GetPlanReplayerDirName`.
-#[must_use]
 pub const fn get_plan_replayer_dir_name() -> &'static str {
     PLAN_REPLAYER_DIR_NAME
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn directory_name_return_may_be_ignored_like_go() {
+        get_plan_replayer_dir_name();
+    }
 }

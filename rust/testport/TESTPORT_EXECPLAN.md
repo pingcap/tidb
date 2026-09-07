@@ -9422,6 +9422,16 @@ risks without claiming repository-wide parity.
   unchanged. The focused regression failed before the fix with exactly five
   diagnostics and passes after; all 161 owner tests and the owner all-target
   check pass. Evidence is recorded in `receipts/util_disttask.md`.
+- 2026-09-07 (`pkg/util/replayer` directory return contract): current Go
+  master `c767f6fd8c01` was re-read as the complete two-artifact, 129-line
+  package, including every production declaration and the absence of all
+  test/fixture/generated/platform/nested surfaces. The complete 17-artifact,
+  11,735-line pre-edit `tidb-domain` crate, sole owner, and plan-replayer/
+  session consumers were inventoried. `get_plan_replayer_dir_name` no longer
+  imposes a Rust-only `#[must_use]` diagnostic; directory/file/writer/global
+  behavior is unchanged. The focused regression failed before the fix with
+  exactly one diagnostic and passes after; all 162 owner tests and affected
+  all-target checks pass. Evidence is recorded in `receipts/util_replayer.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
