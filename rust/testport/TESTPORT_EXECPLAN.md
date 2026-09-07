@@ -10947,3 +10947,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (OR REPLACE view pin): CREATE OR REPLACE VIEW redefines an
   existing view in place (view_parser.go:40-42). Pinned in
   `crates/tidb-session/tests/or_replace_view_source.rs`.
+- 2026-09-06 (DML-on-view pin): INSERT/UPDATE/DELETE through a view refuse
+  with Go's exact texts (planbuilder.go:4123, ErrNonUpdatableTable 1288,
+  logical_plan_builder.go:6626). Pinned in
+  `crates/tidb-session/tests/dml_on_view_refusal_source.rs`.
