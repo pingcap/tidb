@@ -11242,3 +11242,6 @@ risks without claiming repository-wide parity.
   and arrays, and JSON_UNQUOTE's escape resolution (including through an
   EXTRACT round trip). Pinned in
   `crates/tidb-session/tests/json_introspection_source.rs`.
+- 2026-09-06 (JSON mutation pin): SET/REPLACE/INSERT path discipline,
+  REMOVE, RFC 7396 merge-patch null deletion, and JSON_CONTAINS. Pinned
+  in `crates/tidb-session/tests/json_mutation_source.rs`.
