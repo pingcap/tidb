@@ -10304,3 +10304,8 @@ risks without claiming repository-wide parity.
   case-insensitively across every spelling; backquotes admit RESERVED WORDS
   as identifiers. Pinned in
   `crates/tidb-session/tests/identifier_resolution_source.rs`.
+- 2026-09-06 (AUTO_INCREMENT rebase + AUTO_RANDOM pins): `alter table t
+  auto_increment = 100` rebases the allocator (next id 100); AUTO_RANDOM
+  allocates implicitly and refuses explicit insertion with TiDB's message
+  naming @@allow_auto_random_explicit_insert. Pinned in
+  `crates/tidb-session/tests/auto_random_alter_rebase_source.rs`.
