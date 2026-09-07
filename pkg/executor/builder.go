@@ -5867,6 +5867,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		handles:            handles,
 		idxVals:            plan.IndexValues,
 		partitionNames:     plan.PartitionNames,
+		MaskingExprs:       plan.MaskingExprs,
 	}
 
 	e.snapshot, err = b.getSnapshot()
