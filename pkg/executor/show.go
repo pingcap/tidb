@@ -64,6 +64,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -802,19 +804,23 @@ func (e *ShowExec) fetchShowIndex() error {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
+	// determine pk column if clustered
+	var pkCol *table.Column
 	if tb.Meta().PKIsHandle {
-		var pkCol *table.Column
 		for _, col := range tb.Cols() {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				pkCol = col
 				break
 			}
 		}
-		colStats := statsTbl.GetCol(pkCol.ID)
-		var ndv int64
-		if colStats != nil {
-			ndv = colStats.NDV
-		}
+	}
+
+	// check cache first; if all exist use cache, otherwise fetch all from storage for consistency
+	ndvByColID := e.prefetchColumnNDVs(tb, statsTbl, pkCol)
+
+	if pkCol != nil {
+		pkColInfo := tb.Meta().GetColumnByID(pkCol.ID)
+		ndv := ndvByColID[pkColInfo.ID]
 		e.appendRow([]any{
 			tb.Meta().Name.O, // Table
 			0,                // Non_unique
@@ -879,11 +885,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				expression = tblCol.GeneratedExprString
 			}
 
-			colStats := statsTbl.GetCol(tblCol.ID)
-			var ndv int64
-			if colStats != nil {
-				ndv = colStats.NDV
-			}
+			ndv := ndvByColID[tblCol.ID]
 
 			e.appendRow([]any{
 				tb.Meta().Name.O,       // Table
@@ -907,6 +909,80 @@ func (e *ShowExec) fetchShowIndex() error {
 		}
 	}
 	return nil
+}
+
+// prefetchColumnNDVs checks cache first; if all exist uses cache, otherwise fetches all from storage for consistency
+func (e *ShowExec) prefetchColumnNDVs(tb table.Table, statsTbl *statistics.Table, pkCol *table.Column) map[int64]int64 {
+	var colIDs []int64
+
+	// collect pk column
+	if pkCol != nil {
+		colIDs = append(colIDs, pkCol.ID)
+	}
+
+	// collect index columns
+	for _, idx := range tb.Indices() {
+		idxInfo := idx.Meta()
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		for _, ic := range idxInfo.Columns {
+			tblCol := tb.Meta().Columns[ic.Offset]
+			if tblCol.Hidden {
+				continue
+			}
+			colIDs = append(colIDs, tblCol.ID)
+		}
+	}
+
+	// check if all columns exist in cache
+	allInCache := !statsTbl.Pseudo
+	if allInCache {
+		for _, colID := range colIDs {
+			if statsTbl.GetCol(colID) == nil {
+				allInCache = false
+				break
+			}
+		}
+	}
+
+	ndvByColID := make(map[int64]int64)
+	if allInCache {
+		// fast path: all in cache, use cache
+		for _, colID := range colIDs {
+			ndvByColID[colID] = statsTbl.GetCol(colID).NDV
+		}
+	} else {
+		// fetch all from storage for consistency
+		colIDStrs := make([]string, len(colIDs))
+		for i, colID := range colIDs {
+			colIDStrs[i] = strconv.FormatInt(colID, 10)
+		}
+		ndvByColID, _ = fetchColumnNDVs(e.Ctx(), tb.Meta().ID, colIDStrs)
+	}
+
+	return ndvByColID
+}
+
+const selectNDVForColumnsQuery = "SELECT hist_id, distinct_count FROM mysql.stats_histograms WHERE table_id = %? AND is_index = 0 AND hist_id IN (%?)"
+
+// fetchColumnNDVs loads NDVs for the given column IDs from storage in one round-trip without mutating stats cache
+func fetchColumnNDVs(ctx sessionctx.Context, tableID int64, columnIDs []string) (map[int64]int64, error) {
+	ndvByColID := make(map[int64]int64, len(columnIDs))
+	if len(columnIDs) == 0 {
+		return ndvByColID, nil
+	}
+	// use session pool instead of current session to avoid transaction conflicts
+	rows, _, err := statsutil.ExecWithOpts(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, selectNDVForColumnsQuery, tableID, columnIDs)
+	if err != nil {
+		return ndvByColID, err
+	}
+	for _, r := range rows {
+		histID := r.GetInt64(0)
+		distinctCnt := r.GetInt64(1)
+		ndvByColID[histID] = distinctCnt
+	}
+	return ndvByColID, nil
 }
 
 // fetchShowCharset gets all charset information and fill them into e.rows.
