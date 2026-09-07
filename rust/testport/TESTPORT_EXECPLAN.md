@@ -10810,3 +10810,6 @@ risks without claiming repository-wide parity.
   the allocator — the next implicit insert continues from max(id) + 1.
   Pinned in
   `crates/tidb-session/tests/auto_inc_explicit_continuation_source.rs`.
+- 2026-09-06 (REPLACE new auto-inc pin): REPLACE that collides allocates a
+  NEW auto-increment id for the replacement row (delete + insert). Pinned
+  in `crates/tidb-session/tests/replace_new_auto_inc_source.rs`.
