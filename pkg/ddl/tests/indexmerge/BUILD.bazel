@@ -25,6 +25,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
+        "//pkg/util/intest",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
