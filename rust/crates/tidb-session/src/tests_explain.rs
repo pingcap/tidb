@@ -1321,10 +1321,24 @@ fn a_filtering_scan_still_reports_the_rows_it_read() {
         .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,10)")
         .unwrap();
     let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t WHERE v > 2"));
-    assert_eq!(rows[0][0], "TableReader_3");
-    assert_eq!(rows[1][0], "\u{2514}\u{2500}Selection_2");
+    // The allocator-suffixed IDs depend on the session's statement history,
+    // so the operator names are matched by prefix, not by exact ID.
+    assert!(
+        rows[0][0].starts_with("TableReader"),
+        "root reader: {:?}",
+        rows[0][0]
+    );
+    assert!(
+        rows[1][0].contains("Selection"),
+        "the pushed predicate stays a cop Selection: {:?}",
+        rows[1][0]
+    );
     assert_eq!(rows[1][2], "2", "rows that passed the predicate");
-    assert_eq!(rows[2][0], "  \u{2514}\u{2500}TableFullScan_1");
+    assert!(
+        rows[2][0].contains("TableFullScan"),
+        "the leaf is the full scan: {:?}",
+        rows[2][0]
+    );
     assert_eq!(rows[2][2], "4", "rows the scan read, before filtering");
 }
 
