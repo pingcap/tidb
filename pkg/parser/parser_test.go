@@ -5771,18 +5771,18 @@ type subqueryChecker struct {
 	t    *testing.T
 }
 
-// Enter implements ast.Visitor interface.
-func (sc *subqueryChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (sc *subqueryChecker) Enter(inNode ast.Node) bool {
 	if expr, ok := inNode.(*ast.SubqueryExpr); ok {
 		require.Equal(sc.t, sc.text, expr.Query.Text())
-		return inNode, true
+		return true
 	}
-	return inNode, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (sc *subqueryChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	return inNode, true
+// Leave implements ast.InPlaceVisitor interface.
+func (*subqueryChecker) Leave(ast.Node) bool {
+	return true
 }
 
 func TestSubquery(t *testing.T) {
@@ -5830,7 +5830,7 @@ func TestSubquery(t *testing.T) {
 	for _, tbl := range tests {
 		stmt, err := p.ParseOneStmt(tbl.input, "", "")
 		require.NoError(t, err)
-		stmt.Accept(&subqueryChecker{
+		ast.Walk(stmt, &subqueryChecker{
 			text: tbl.text,
 			t:    t,
 		})
@@ -7184,8 +7184,8 @@ type windowFrameBoundChecker struct {
 	t      *testing.T
 }
 
-// Enter implements ast.Visitor interface.
-func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) bool {
 	if _, ok := inNode.(*ast.FrameBound); ok {
 		wfc.fb = inNode.(*ast.FrameBound)
 		if wfc.fb.Unit != ast.TimeUnitInvalid {
@@ -7193,11 +7193,11 @@ func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, sk
 			require.False(wfc.t, ok)
 		}
 	}
-	return inNode, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+// Leave implements ast.InPlaceVisitor interface.
+func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) bool {
 	if _, ok := inNode.(*ast.FrameBound); ok {
 		wfc.fb = nil
 	}
@@ -7207,7 +7207,7 @@ func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bo
 		}
 		wfc.unit = wfc.fb.Unit
 	}
-	return inNode, true
+	return true
 }
 
 // For issue #51
@@ -7228,7 +7228,7 @@ func TestVisitFrameBound(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tbl.s, "", "")
 		require.NoError(t, err)
 		checker := windowFrameBoundChecker{t: t}
-		stmt.Accept(&checker)
+		ast.Walk(stmt, &checker)
 		require.Equal(t, tbl.exprRc, checker.exprRc)
 		require.Equal(t, tbl.unit, checker.unit)
 	}
@@ -8089,14 +8089,14 @@ func TestGBKEncoding(t *testing.T) {
 	stmt, _, err := p.ParseSQL(sql)
 	require.NoError(t, err)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.NotEqual(t, "测试表", checker.tblName)
 	require.NotEqual(t, "测试列", checker.colName)
 
 	gbkOpt := parser.CharsetClient("gbk")
 	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	require.NoError(t, err)
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.Equal(t, "测试表", checker.tblName)
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GBK测试用例", checker.expr)
@@ -8137,14 +8137,14 @@ func TestGB18030Encoding(t *testing.T) {
 	stmt, _, err := p.ParseSQL(sql)
 	require.NoError(t, err)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.NotEqual(t, "测试表", checker.tblName)
 	require.NotEqual(t, "测试列", checker.colName)
 
 	gb18030Opt := parser.CharsetClient("gb18030")
 	stmt, _, err = p.ParseSQL(sql, gb18030Opt)
 	require.NoError(t, err)
-	_, _ = stmt[0].Accept(checker)
+	ast.Walk(stmt[0], checker)
 	require.Equal(t, "测试表", checker.tblName)
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GB18030测试用例", checker.expr)
@@ -8181,26 +8181,26 @@ type gbkEncodingChecker struct {
 	expr    string
 }
 
-func (g *gbkEncodingChecker) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+func (g *gbkEncodingChecker) Enter(n ast.Node) bool {
 	if tn, ok := n.(*ast.TableName); ok {
 		g.tblName = tn.Name.O
-		return n, false
+		return false
 	}
 	if cn, ok := n.(*ast.ColumnName); ok {
 		g.colName = cn.Name.O
-		return n, false
+		return false
 	}
 	if c, ok := n.(*ast.ColumnOption); ok {
 		if ve, ok := c.Expr.(ast.ValueExpr); ok {
 			g.expr = ve.GetString()
-			return n, false
+			return false
 		}
 	}
-	return n, false
+	return false
 }
 
-func (g *gbkEncodingChecker) Leave(n ast.Node) (node ast.Node, ok bool) {
-	return n, true
+func (*gbkEncodingChecker) Leave(ast.Node) bool {
+	return true
 }
 
 func TestInsertStatementMemoryAllocation(t *testing.T) {

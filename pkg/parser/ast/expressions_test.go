@@ -101,7 +101,7 @@ func TestExpresionsVisitorCover(t *testing.T) {
 		v.node.Accept(checkVisitor{})
 		require.Equal(t, v.expectedEnterCnt, ce.enterCnt)
 		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
-		v.node.Accept(visitor1{})
+		Walk(v.node, visitor1{})
 	}
 }
 
