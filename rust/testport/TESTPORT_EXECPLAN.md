@@ -10300,3 +10300,7 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/json_arrow_bitwise_source.rs`. The arrow
   operators are restricted to a BARE COLUMN on the left (Go's SimpleIdent
   rule) — a string literal on the left is a genuine ParseError.
+- 2026-09-06 (identifier resolution pins): table/column names resolve
+  case-insensitively across every spelling; backquotes admit RESERVED WORDS
+  as identifiers. Pinned in
+  `crates/tidb-session/tests/identifier_resolution_source.rs`.
