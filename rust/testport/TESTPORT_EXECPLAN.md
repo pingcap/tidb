@@ -9846,3 +9846,7 @@ risks without claiming repository-wide parity.
   declared column default; UPDATE IGNORE NULL stores the type's implicit
   zero value rather than the declared default. Pinned in
   `tests/update_ignore_null_source.rs`.
+- 2026-09-06 (CHECK write-path pins): attachment gated on
+  tidb_enable_check_constraint at CREATE (OFF drops with one warning);
+  attached constraints reject violating INSERTs with Go's 3819 text and let
+  conforming rows pass. Pinned in `tests/check_constraint_write_source.rs`.
