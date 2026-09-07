@@ -11323,3 +11323,7 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (set-op precedence pin): INTERSECT binds tighter than UNION,
   matching TiDB's grammar. Pinned in
   `crates/tidb-session/tests/setop_precedence_source.rs`.
+- 2026-09-08 (metadata SHOW pin): SHOW COLLATION / CHARACTER SET / ENGINES
+  output shapes (id, default flag, PAD SPACE, description, maxlen,
+  InnoDB DEFAULT row). Pinned in
+  `crates/tidb-session/tests/metadata_show_shapes_source.rs`.
