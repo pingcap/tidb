@@ -10718,3 +10718,7 @@ risks without claiming repository-wide parity.
   is refused with Go's 3959 "uses column ..., hence column cannot be
   dropped or renamed" (companion to the DROP COLUMN pin). Pinned in
   `crates/tidb-session/tests/rename_check_dependent_column_source.rs`.
+- 2026-09-06 (prefix Sub_part + no-op ODKU pins): SHOW CREATE round-trips
+  the prefix length `(4)`; the `a = a` no-op ODKU over an existing row
+  counts 0. Pinned in
+  `crates/tidb-session/tests/prefix_show_nop_odku_source.rs`.
