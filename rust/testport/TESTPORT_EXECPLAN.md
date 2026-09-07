@@ -10103,3 +10103,6 @@ risks without claiming repository-wide parity.
   composite key with the dash-separated "Duplicate entry '5-7' for key
   't.uq'" format; DROP INDEX removes the enforcement. Pinned in
   `crates/tidb-session/tests/index_enforcement_lifecycle_source.rs`.
+- 2026-09-06 (ADD/DROP COLUMN pin): ADD COLUMN backfills existing rows with
+  the default, AFTER positions the column, DROP COLUMN removes it. Pinned
+  in `crates/tidb-session/tests/add_drop_column_source.rs`.
