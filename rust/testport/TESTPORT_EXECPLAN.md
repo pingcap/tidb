@@ -11071,3 +11071,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (DIV/modulo pin): truncate-toward-zero DIV, dividend-sign
   modulo, NULL-on-zero, and decimal truncation. Pinned in
   `crates/tidb-session/tests/div_mod_semantics_source.rs`.
+- 2026-09-06 (string/number coercion pin): comparisons coerce strings by
+  their leading numeric prefix ('abc' = 0, '1e2' = 100). Pinned in
+  `crates/tidb-session/tests/string_number_coercion_source.rs`.
