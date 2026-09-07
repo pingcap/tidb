@@ -14,10 +14,22 @@
 
 //! Public semantic boundary for accepted `pkg/util/chunk/chunk_test.go`.
 
+use std::sync::Arc;
+
+use tidb_chunk::alloc::{
+    new_allocator, new_empty_allocator, new_reuse_hook_allocator, new_sync_allocator,
+    ChunkAllocator, EmptyAllocator, ReuseHookAllocator, SyncAllocator,
+};
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::column::Column;
+use tidb_chunk::iterator::{
+    Iterator4Chunk, Iterator4List, Iterator4RowPtr, Iterator4Slice, MultiIterator,
+};
+use tidb_chunk::list::List;
 use tidb_chunk::mutrow::MutRow;
+use tidb_chunk::row_container::{Iterator4RowContainer, RowContainer};
 use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode, MyDecimal};
+use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 fn source_fields() -> Vec<FieldType> {
     vec![
@@ -347,4 +359,43 @@ fn source_return_values_may_be_ignored_like_go() {
     let mutable = MutRow::from_datums(&[Datum::Int(1)]);
     mutable.to_row();
     mutable.len();
+}
+
+#[test]
+#[deny(unused_must_use)]
+fn allocator_and_iterator_returns_may_be_ignored_like_go() {
+    let fields = [FieldType::new(FieldTypeCode::LongLong)];
+    let chunk = Chunk::new_empty(&fields);
+    let list = List::new(&fields, 1, 1);
+
+    ChunkAllocator::new();
+    new_allocator();
+    SyncAllocator::new(EmptyAllocator);
+    new_sync_allocator(EmptyAllocator);
+    ReuseHookAllocator::new(EmptyAllocator, || {});
+    new_reuse_hook_allocator(EmptyAllocator, || {});
+    new_empty_allocator();
+
+    Iterator4Slice::new(Vec::new());
+    Iterator4Chunk::new(&chunk);
+    let chunk_iterator = Iterator4Chunk::new(&chunk);
+    chunk_iterator.get_chunk();
+    Iterator4List::new(&list);
+    Iterator4RowPtr::new(&list, Vec::new());
+    MultiIterator::new(Vec::new());
+
+    let spill_dir =
+        std::env::temp_dir().join(format!("tidb_chunk_return_contract_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&spill_dir);
+    let storage = Arc::new(
+        SpillStorage::open(SpillStorageSpec {
+            path: spill_dir.clone(),
+            quota_bytes: -1,
+            encryption: SpillEncryptionMethod::Plaintext,
+        })
+        .expect("spill storage"),
+    );
+    let container = RowContainer::new(&fields, 1, storage);
+    Iterator4RowContainer::new(&container);
+    let _ = std::fs::remove_dir_all(spill_dir);
 }

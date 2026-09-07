@@ -133,3 +133,42 @@ Follow-up validation:
 - Full `tidb-chunk` and spill sweeps are still the broader package gate; their
   pre-existing temporary-spill/timing failures remain outside this contract
   slice and are not reclassified as regressions here.
+
+## Follow-up: allocator and iterator discardable returns (2026-09-07)
+
+The complete Go package inventory above remains the atomic authority. Before
+this Rust-only correction, the full `tidb-chunk` owner was re-enumerated: 46
+tracked Rust artifacts (45 Rust sources plus the manifest) and 25,231 lines,
+including every production module, inline/source-derived test, aggregate test
+build input, and package manifest. No checked-in generated output, platform
+variant, fixture, or crate-local build script was found beyond the shared
+aggregate-test build input. The allocator, iterator, row-container iterator,
+public source tests, all callers, and the existing chunk return-contract
+regression were read before editing.
+
+Go permits discarding the seven allocator constructors and six standalone
+iterator constructor/accessor returns covered by this batch, plus
+`Iterator4RowContainer::new`. Rust had added explicit `#[must_use]`
+diagnostics to all fourteen. Those annotations are now removed; the Rust-only
+`AllocatedChunk::into_chunk`, `LendingIterator` wrappers, and
+`LendingMultiIterator` helpers retain their diagnostics because they are
+ownership/lifetime adapters rather than direct Go return APIs.
+
+`chunk_source_test_contract::allocator_and_iterator_returns_may_be_ignored_like_go`
+discards all fourteen corrected values under `#[deny(unused_must_use)]`. On the
+pre-fix owner, the focused command failed with exactly fourteen diagnostics;
+the complete log is `/tmp/tidb-chunk-allocator-iterator-prefix.log`. The same
+focused test passes after removing the annotations.
+
+Validation for this bounded Rust-only batch:
+
+- focused post-fix regression — 1 passed;
+- nextest owner suite — 329 passed, 4 skipped;
+- owner all-target check — passed with existing warnings;
+- pinned nightly rustfmt on changed files and `git diff --check` — passed;
+- pinned repository Ready `make lint` — passed (exit 0).
+
+No Go, Bazel, Cargo metadata, generated/platform artifact, or fixture changed,
+so `make bazel_prepare` is not required. Remaining allocator lease, list/pool,
+codec, spill, and Rust lending adapters retain explicit boundaries and are not
+claimed by this focused return-contract batch.

@@ -1,8 +1,8 @@
 # `pkg/util/chunk` parity audit ExecPlan
 
-This living ExecPlan records the complete Go-package audit and the
-`UsedMemoryUsage` restoration. The repository-wide rolling audit continues
-after this package.
+This living ExecPlan records the complete Go-package audit, the
+`UsedMemoryUsage` restoration, and the bounded Rust-only return-contract
+correction. The repository-wide rolling audit continues after this package.
 
 ## Purpose / Big Picture
 
@@ -28,8 +28,14 @@ distinct after reset/reuse.
 - [x] (2026-09-02) Demonstrated the regression failed before the production
       method existed (undefined method in a detached pre-fix worktree), then
       passed with the fix under the canonical failpoint wrapper.
-- [ ] Push this batch to `origin/hparser-integration`, verify local/remote
-      SHAs, and fetch the newest target branch before the next package.
+- [x] (2026-09-07) Re-read the complete Rust owner inventory (46 tracked
+      artifacts, 25,231 lines) and removed fourteen Rust-only `#[must_use]`
+      diagnostics from Go-shaped allocator and iterator constructors/accessors.
+      The source regression failed before the edit with exactly fourteen
+      diagnostics and passes after; ownership adapters remain unchanged.
+- [ ] Commit this Rust-only correction once, rebase onto the latest fetched
+      `origin/hparser-integration`, push without force, verify the remote SHA,
+      and fetch again before the next package.
 
 ## Surprises & Discoveries
 
@@ -49,6 +55,9 @@ distinct after reset/reuse.
   Rationale: this is the only package delta, and adding a second Rust path or
   changing memory consumers would exceed the dependency-closed fix. Date:
   2026-09-02, Codex.
+- Decision: remove `#[must_use]` only from direct Go allocator and iterator
+  returns; retain diagnostics on Rust lifetime/ownership wrappers and private
+  storage helpers. Date: 2026-09-07, Codex.
 
 ## Validation
 
@@ -79,3 +88,17 @@ The Go chunk package now exposes the same used-versus-retained memory split as
 current `master`, and the source regression proves growth and reset semantics.
 Rust owner parity and earlier complete test-port receipts remain unchanged;
 broader chunk spill failures are outside this focused delta.
+
+## 2026-09-07 Rust-only validation
+
+The allocator/iterator source regression was first run against the pre-fix
+owner and failed with exactly fourteen `unused_must_use` diagnostics. The
+post-fix focused command passes, and the complete owner suite reports 329
+passed and 4 skipped. The all-target owner check passes with only existing
+warnings. Pinned nightly rustfmt, `git diff --check`, and the pinned
+repository Ready `make lint` command all pass (lint exit 0).
+
+No Go, Bazel, Cargo metadata, generated/platform artifact, or fixture changed,
+so `make bazel_prepare` is not required for this Rust-only batch. The next
+required state transition is one package-level commit, a non-forced rebase and
+push to `hparser-integration`, remote SHA verification, and a fresh fetch.

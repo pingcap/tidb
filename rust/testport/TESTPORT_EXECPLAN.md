@@ -378,6 +378,14 @@ For each bounded behavior cluster:
   ownership and private storage helpers remain annotated. The focused source
   regression failed with exactly 56 diagnostics on detached pre-fix owner
   `3c4cf8ddd49ad001532d318db9c6f224f7872312` and passes after the fix.
+- 2026-09-07 (`pkg/util/chunk` allocator and iterator return contracts): the
+  complete 46-artifact Rust owner inventory (45 sources plus manifest, 25,231
+  lines) was re-read before editing. Fourteen Rust-only `#[must_use]`
+  diagnostics were removed from Go-shaped allocator and iterator
+  constructors/accessors; ownership and lifetime adapters remain annotated.
+  The focused deny-on-discard regression failed with exactly 14 diagnostics
+  before the edit and passes after; the owner nextest suite is 329 passed and
+  4 skipped, with all-target checks clean apart from existing warnings.
 - 2026-09-06 (`pkg/meta` `Mutator` and auto-ID accessor return contracts):
   the complete seven-artifact direct package inventory recorded in
   `receipts/meta_starter_bootstrap.md` remains unchanged and was rechecked

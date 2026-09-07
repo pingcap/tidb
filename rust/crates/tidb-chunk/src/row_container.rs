@@ -1502,7 +1502,6 @@ pub struct Iterator4RowContainer<'a> {
 
 impl<'a> Iterator4RowContainer<'a> {
     /// Go `NewIterator4RowContainer`.
-    #[must_use]
     pub fn new(c: &'a RowContainer) -> Self {
         Iterator4RowContainer {
             c,

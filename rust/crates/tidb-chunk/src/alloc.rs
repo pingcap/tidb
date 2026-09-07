@@ -391,7 +391,6 @@ pub struct ChunkAllocator {
 
 impl ChunkAllocator {
     /// Go `NewAllocator`.
-    #[must_use]
     pub fn new() -> Self {
         let free_chunk_limit = MAX_FREE_CHUNKS.load(Ordering::Relaxed);
         let free_columns_per_type = MAX_FREE_COLUMNS_PER_TYPE.load(Ordering::Relaxed);
@@ -461,7 +460,6 @@ impl Allocator for ChunkAllocator {
 }
 
 /// Go `NewAllocator`.
-#[must_use]
 pub fn new_allocator() -> ChunkAllocator {
     ChunkAllocator::new()
 }
@@ -473,7 +471,6 @@ pub struct SyncAllocator {
 
 impl SyncAllocator {
     /// Go `NewSyncAllocator`.
-    #[must_use]
     pub fn new(allocator: impl Allocator + 'static) -> Self {
         Self {
             allocator: Mutex::new(Box::new(allocator)),
@@ -510,7 +507,6 @@ impl Allocator for SyncAllocator {
 }
 
 /// Go `NewSyncAllocator`.
-#[must_use]
 pub fn new_sync_allocator(allocator: impl Allocator + 'static) -> SyncAllocator {
     SyncAllocator::new(allocator)
 }
@@ -524,7 +520,6 @@ pub struct ReuseHookAllocator {
 
 impl ReuseHookAllocator {
     /// Go `NewReuseHookAllocator`.
-    #[must_use]
     pub fn new(
         allocator: impl Allocator + 'static,
         hook: impl Fn() + Send + Sync + 'static,
@@ -573,7 +568,6 @@ impl Allocator for ReuseHookAllocator {
 }
 
 /// Go `NewReuseHookAllocator`.
-#[must_use]
 pub fn new_reuse_hook_allocator(
     allocator: impl Allocator + 'static,
     hook: impl Fn() + Send + Sync + 'static,
@@ -603,7 +597,6 @@ impl Allocator for EmptyAllocator {
 }
 
 /// Go `NewEmptyAllocator`.
-#[must_use]
 pub const fn new_empty_allocator() -> EmptyAllocator {
     EmptyAllocator
 }
