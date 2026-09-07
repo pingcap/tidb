@@ -10998,3 +10998,6 @@ risks without claiming repository-wide parity.
   `Catalog::is_sequence_in`. Pin:
   `crates/tidb-session/tests/show_full_tables_types_source.rs` (all three
   kinds in one listing). Suite diff vs baseline: zero net-new failures.
+- 2026-09-06 (SHOW CREATE DATABASE pin): the version-gated charset comment
+  and the non-default collation form round-trip (show.go:1704-1743).
+  Pinned in `crates/tidb-session/tests/show_create_database_source.rs`.
