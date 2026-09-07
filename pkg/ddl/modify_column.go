@@ -817,6 +817,7 @@ func checkModifyColumnData(
 	oldCol, changingCol *model.ColumnInfo,
 	checkValueRange bool,
 ) (checked bool, err error) {
+	failpoint.InjectCall("checkModifyColumnDataEntry", oldCol.Name.L)
 	// Get sessionctx from context resource pool.
 	var sctx sessionctx.Context
 	sctx, err = w.sessPool.Get()
@@ -1208,15 +1209,23 @@ func (w *worker) doModifyColumnIndexReorg(
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
 		job.FillArgs(args)
 	case model.StateDeleteOnly:
-		checked, err := checkModifyColumnData(
-			jobCtx.stepCtx, w,
-			dbInfo.Name, tblInfo.Name,
-			oldCol, args.Column, true)
-		if err != nil {
-			if checked {
-				job.State = model.JobStateRollingback
+		// Skip the pre-check SELECT for char/varchar flen widening: the
+		// ModifyTypeIndexReorg path is only reachable via isCharChange in
+		// getModifyColumnType, so this is the one case where no existing
+		// row can violate. NULL -> NOT NULL is caught by the NotNullFlag
+		// guard in castIndexValuesToChangingTypes during reorg.
+		widensFlen := isCharChange(oldCol, args.Column) && args.Column.GetFlen() >= oldCol.GetFlen()
+		if !widensFlen {
+			checked, err := checkModifyColumnData(
+				jobCtx.stepCtx, w,
+				dbInfo.Name, tblInfo.Name,
+				oldCol, args.Column, true)
+			if err != nil {
+				if checked {
+					job.State = model.JobStateRollingback
+				}
+				return ver, errors.Trace(err)
 			}
-			return ver, errors.Trace(err)
 		}
 
 		// delete only -> write only
