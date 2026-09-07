@@ -10123,3 +10123,7 @@ risks without claiming repository-wide parity.
   clause label through the ColumnResolver contract and per-clause rewrites in
   the SELECT builder; recorded rather than half-landed (an in-flight attempt
   was reverted in the same session). Kept behavior-neutral.
+- 2026-09-06 (composite-key pins): a two-column PK duplicate reports the
+  dash-separated "Duplicate entry '1-x' for key 't.PRIMARY'"; a conflict-free
+  REPLACE counts 1 (plain insert accounting). Pinned in
+  `crates/tidb-session/tests/composite_key_shapes_source.rs`.
