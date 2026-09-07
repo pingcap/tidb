@@ -35,6 +35,66 @@ fn terror(_class: isize, code: isize, message: &str) -> TerrorError {
     TerrorError::compatible(TerrorCode::new(code), message)
 }
 
+#[test]
+#[deny(unused_must_use)]
+fn job_returns_may_be_ignored_like_go() {
+    PersistedRawJson::from_bytes(Vec::new());
+    PersistedRawJson::from_bytes_with_capacity(Vec::new(), 4);
+    let raw = PersistedRawJson::from_string("{}".to_owned()).unwrap();
+    raw.get();
+    raw.bytes();
+    raw.capacity();
+
+    let zone = ResolvedTimeZone::Local;
+    zone.name();
+    zone.name_bytes();
+
+    let sub = SubJob::default();
+    let parent = Job::default();
+    sub.job_args_value();
+    sub.is_normal();
+    sub.is_finished();
+    sub.to_proxy_job(&parent, 0);
+    sub.clone_without_args();
+    sub.decoded_args();
+    JobW::new(None, GoSharedSlice::default());
+
+    let mut job = Job {
+        reorg_meta: Some(GoShared::new(DDLReorgMeta::default())),
+        ..Default::default()
+    };
+    job.get_row_count();
+    job.get_warnings();
+    job.decoded_args();
+    job.deep_clone();
+    job.is_finished();
+    job.is_cancelled();
+    job.is_rollback_done();
+    job.is_rollingback();
+    job.is_cancelling();
+    job.is_paused();
+    job.is_pausing();
+    job.is_synced();
+    job.is_done();
+    job.is_running();
+    job.is_queueing();
+    job.not_started();
+    job.started();
+    job.in_final_state();
+    job.is_paused_by_system();
+    job.has_pause_reason("none");
+    job.has_resume_reason("none");
+    job.is_paused_by_system_for_kv_disk_full();
+    job.is_pausing_or_paused_by_system_for_kv_disk_full();
+    job.is_pausable();
+    job.is_alterable();
+    job.is_resumable();
+    job.get_system_var("none");
+    job.may_need_reorg();
+    job.is_rollbackable();
+    job.get_involving_schema_info();
+}
+
 /// Go `TestJobStartTime` (`job_test.go:38`): a fresh job's StartTS decodes to
 /// the Unix epoch and the rendered summary carries it.
 #[test]

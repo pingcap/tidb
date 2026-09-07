@@ -250,3 +250,51 @@ Ready evidence for this bounded Rust-only follow-up:
 
 No Go, Bazel, Cargo metadata, generated/platform artifact, or fixture changed,
 so `make bazel_prepare` is not required.
+
+## Corrective Rust return-contract alignment — `job.go` (2026-09-07)
+
+The Go authority was refreshed to `origin/master`
+`c767f6fd8c01e9dcb459767611c0c1d4110d210d` before this Rust-only edit. The
+complete direct package remains 23 artifacts and now totals 9,862 lines:
+`BUILD.bazel` (74); production `bdr.go` (146), `column.go` (392), `db.go`
+(58), `engine_attribute.go` (93), `flags.go` (50), `index.go` (579),
+`job.go` (1,493), `job_args.go` (1,962), `masking_policy.go` (93),
+`placement.go` (143), `reorg.go` (266), `resource_group.go` (191), `table.go`
+(1,698), and `table_mode.go` (89); tests `bdr_test.go` (35),
+`column_test.go` (106), `index_test.go` (105), `job_args_test.go` (1,321),
+`job_test.go` (528), `placement_test.go` (87), `table_mode_test.go` (46), and
+`table_test.go` (307). All 714 declarations and 79 test/benchmark/fuzz entry
+points were enumerated. There is no `doc.go`, fixture/testdata, generated
+input/output, benchmark file, fuzz corpus, platform-specific source, or build
+tag variant.
+
+The Rust owner was re-read as 42 artifacts and 32,479 pre-edit lines. The
+direct job boundary comprises `job.rs`, `job_tests.rs`, and `job_json.rs`
+(2,626 pre-edit lines), with 132 declarations/tests and all repository callers
+enumerated. Manifest, crate registration/re-exports, downstream `tidb-meta`
+and `tidb-exec` consumers, and absent generated/platform/build-script/fixture
+surfaces were checked before editing.
+
+Forty-four source-shaped returns no longer impose Rust-only `#[must_use]`
+diagnostics. They cover the raw JSON constructors/accessors, resolved-timezone
+name accessors, SubJob typed-argument/state/proxy/clone methods, `JobW::new`,
+Job row/warning/argument/clone accessors, every Job lifecycle/pause/resume
+predicate, system-variable lookup, reorganization/rollback policies, and
+scheduling-involvement lookup. The single retained annotation is
+`PersistedRawJson::backing_ptr_eq`, an explicit Rust backing-identity
+assertion. JSON, pointer/slice ownership, locking, state policy, and DDL job
+behavior are unchanged.
+
+`job::tests::job_returns_may_be_ignored_like_go` discards all 44 corrected
+values under `#[deny(unused_must_use)]`. With the test added before the source
+edit, compilation failed with exactly 44 diagnostics; the corrected focused
+test passes. Ready evidence for this package batch:
+
+- complete `tidb-model` library suite — 257 passed;
+- `tidb-model`, `tidb-meta`, and `tidb-exec` all-target checks — passed with
+  existing warnings only;
+- pinned nightly rustfmt and `git diff --check` — passed;
+- repository `make lint` — passed.
+
+No Go, Bazel, Cargo metadata, generated/platform artifact, or fixture changed,
+so `make bazel_prepare` is not required.

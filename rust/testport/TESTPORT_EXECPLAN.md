@@ -9360,6 +9360,17 @@ risks without claiming repository-wide parity.
   deny-on-discard regression failed with exactly 29 diagnostics before the
   edit and passes after; all 255 `tidb-model` tests and its all-target check
   pass. Evidence is recorded in `receipts/meta_model_materialized_view.md`.
+- 2026-09-07 (`pkg/meta/model` job return contracts): current Go master
+  `c767f6fd8c01` was inventoried as 23 artifacts, 9,862 lines, 714
+  declarations, and 79 test/benchmark/fuzz entries before the Rust edit. The
+  42-artifact Rust owner, job codec/tests, and `tidb-meta`/`tidb-exec`
+  consumers were re-read. Forty-four source-shaped job constructors,
+  accessors, lifecycle/policy predicates, and scheduling returns no longer
+  impose Rust-only `#[must_use]` diagnostics; the explicit backing-identity
+  assertion remains annotated. The regression failed with exactly 44
+  diagnostics before the edit and passes after; all 257 model tests and all
+  affected all-target checks pass. Evidence is recorded in
+  `receipts/meta_model_materialized_view.md`.
 - 2026-09-07 (`pkg/ddl/bdr` policy return contracts): the complete
   three-artifact Go inventory and shared Rust BDR policy owner were re-read.
   Three Rust-only `#[must_use]` diagnostics were removed from the direct
