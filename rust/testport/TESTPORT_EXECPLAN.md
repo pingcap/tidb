@@ -10156,3 +10156,7 @@ risks without claiming repository-wide parity.
   `crates/tidb-session/tests/temp_table_isolation_source.rs`. NOTE: sessions
   in this harness keep independent catalogs (no shared globals), so base
   tables are per-session too.
+- 2026-09-06 (SHOW family pin): SHOW TABLES lists names; SHOW COLUMNS
+  reports column/type/NULL/key shapes; SHOW CREATE TABLE prints the
+  canonical clustered-PK + ENGINE/CHARSET/COLLATE DDL. Pinned in
+  `crates/tidb-session/tests/show_family_source.rs`.
