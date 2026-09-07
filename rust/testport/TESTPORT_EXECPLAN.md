@@ -11097,3 +11097,6 @@ risks without claiming repository-wide parity.
   NULL-separator poison, plus TRIM/LTRIM/RTRIM and BOTH/LEADING remstr
   forms. Pinned in
   `crates/tidb-session/tests/concat_ws_trim_source.rs`.
+- 2026-09-06 (SUBSTRING_INDEX pin): positive/negative/zero counts and the
+  missing-delimiter whole-string rule. Pinned in
+  `crates/tidb-session/tests/substring_index_source.rs`.
