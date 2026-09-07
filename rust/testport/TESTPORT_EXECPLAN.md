@@ -10893,3 +10893,10 @@ risks without claiming repository-wide parity.
   internal error (no clean errno) — the port accepts; surfaced-text
   parity is unverifiable without a live TiDB, so no invented error was
   added. Suite diff vs baseline: zero net-new failures.
+- 2026-09-06 (expression-default display pin): a non-function expression
+  default (`DEFAULT (1 + 2)`) FOLDS at DDL — Go `getDefaultValue`
+  (add_column.go:814-850) runs `EvalSimpleAst` with DefaultIsExpr=false —
+  so SHOW CREATE prints `DEFAULT '3'`; whitelisted function forms stay
+  parenthesized (`DEFAULT (rand())`, `DEFAULT (CURRENT_DATE)`). Verified
+  faithful, no fix. Pinned in
+  `crates/tidb-session/tests/expression_default_fold_source.rs`.
