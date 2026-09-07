@@ -9888,3 +9888,14 @@ risks without claiming repository-wide parity.
   end). Pin `tests/replace_check_constraint_source.rs` fails on the old code
   (empty table) and passes with the fix. Multi-row UPDATE IGNORE skipping
   verified faithful in the same probe.
+- 2026-09-06 (INSERT statement atomicity port, REAL DIVERGENCE): a duplicate
+  key on a LATER row of a multi-row INSERT failed the statement but LEFT the
+  earlier rows stored (probe: count 2 where Go answers 1). Go's write phase
+  runs in one transaction: row data rolls back, the AUTO_INCREMENT allocator
+  does NOT rewind. Fix: the INSERT write loop records an undo log
+  (Inserted/Deleted/Updated with pre-images) and replays it in reverse on
+  any propagating failure -- REPLACE deletes, ODKU rewrites, and plain adds
+  included. Cast failures were already atomic (pre-write). Pins in
+  `tests/insert_statement_atomicity_source.rs` fail on the old code and
+  pass with the fix. The two sweep failures (dml source-text parity
+  assertion, spill flake) verified pre-existing on clean HEAD.

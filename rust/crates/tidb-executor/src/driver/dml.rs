@@ -1063,6 +1063,14 @@ fn run_insert_with_physical(
             false
         };
     inserted = 0;
+    // Go executes an INSERT inside a transaction, so a failure part-way
+    // through the write phase (a duplicate key on a later row, a violated
+    // CHECK) rolls the statement back: earlier rows of the same statement
+    // vanish, while the AUTO_INCREMENT allocator does NOT rewind -- id gaps
+    // persist. This harness commits row state as it goes, so the writes
+    // record an undo log here that replays in reverse on failure. Row DATA
+    // reverts; allocator counters are deliberately left advanced.
+    let mut undo: Vec<InsertUndo> = Vec::new();
     for (position, row) in new_rows.iter().enumerate() {
         // Go's `FKCheckExec` runs per row, before the row is added, and
         // under `INSERT IGNORE` its violation is a warning and a skip rather
@@ -1134,13 +1142,16 @@ fn run_insert_with_physical(
                     // parent where it was rather than half-applied.
                     if let (true, Some(existing)) = (ctx.foreign_key_checks(), &existing) {
                         let changes = [crate::foreign_key::ParentChange::Delete(existing)];
-                        crate::foreign_key::cascade_parent_changes(
+                        if let Err(error) = crate::foreign_key::cascade_parent_changes(
                             catalog,
                             &database,
                             &table_name,
                             &changes,
                             ctx,
-                        )?;
+                        ) {
+                            apply_insert_undo(catalog, &database, &table_name, &mut undo, ctx)?;
+                            return Err(error);
+                        }
                     }
                     // Otherwise the conflicting row goes, and the affected
                     // count is one per deleted row plus one for the inserted
@@ -1152,12 +1163,21 @@ fn run_insert_with_physical(
                             ctx,
                         )
                         .map_err(|e| kv_read_error("row delete failed", e))?;
+                    undo.push(InsertUndo::Deleted {
+                        handle: handle.clone(),
+                        row: existing.expect("unchanged rows continued above").to_vec(),
+                    });
                     inserted += 1;
                 }
                 if unchanged {
                     continue;
                 }
             } else if !insert.on_duplicate.is_empty() {
+                // The undo entry needs the row the update is about to
+                // overwrite, read before `apply_on_duplicate` replaces it.
+                let dup_old_row = target(catalog, &database, &table_name)
+                    .get_row_by_handle(&conflicts[0], &ctx.session_zone())
+                    .map_err(|e| kv_read_error("row read failed", e))?;
                 let result = apply_on_duplicate(
                     target(catalog, &database, &table_name),
                     &conflicts[0],
@@ -1168,8 +1188,15 @@ fn run_insert_with_physical(
                     ctx,
                 );
                 match result {
-                    Ok(affected) => inserted += affected,
+                    Ok(affected) => {
+                        undo.push(InsertUndo::Updated {
+                            handle: conflicts[0].clone(),
+                            row: dup_old_row.unwrap_or_default(),
+                        });
+                        inserted += affected;
+                    }
                     Err(error) => {
+                        apply_insert_undo(catalog, &database, &table_name, &mut undo, ctx)?;
                         handle_partition_write_error(error, insert.ignore, ctx)?;
                     }
                 }
@@ -1232,9 +1259,17 @@ fn run_insert_with_physical(
                 lazy_dup_check,
             )
         };
-        if let Err(error) = insert_result {
-            handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
-            continue;
+        match insert_result {
+            Ok(handle) => {
+                undo.push(InsertUndo::Inserted {
+                    handle,
+                    row: row.to_vec(),
+                });
+            }
+            Err(error) => {
+                apply_insert_undo(catalog, &database, &table_name, &mut undo, ctx)?;
+                handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
+            }
         }
         inserted += 1;
     }
@@ -1314,6 +1349,54 @@ pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverErro
 /// Applies Go's `ErrCtx.HandleError` rule for partition-routing failures on
 /// `INSERT/UPDATE IGNORE`: report one warning and skip the row. Other write
 /// failures retain their normal error identity.
+/// One row write an INSERT statement performed, recorded so a mid-statement
+/// failure can replay the writes in reverse -- Go's statement rollback.
+enum InsertUndo {
+    /// A row this statement added; removed again on rollback.
+    Inserted {
+        handle: crate::kv_table::TableHandle,
+        row: Vec<Datum>,
+    },
+    /// A row REPLACE withdrew; written back on rollback.
+    Deleted {
+        handle: crate::kv_table::TableHandle,
+        row: Vec<Datum>,
+    },
+    /// A row ON DUPLICATE KEY UPDATE rewrote; restored on rollback.
+    Updated {
+        handle: crate::kv_table::TableHandle,
+        row: Vec<Datum>,
+    },
+}
+
+/// Replays an INSERT statement's row writes in reverse, leaving the tables as
+/// they were before the statement while allocator counters stay advanced --
+/// exactly what Go's transaction rollback preserves and discards.
+fn apply_insert_undo(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    undo: &mut Vec<InsertUndo>,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    for entry in undo.drain(..).rev() {
+        let Some(TableEntry::Kv(table)) = catalog.get_mut_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "the INSERT target changed storage during rollback",
+            ));
+        };
+        match entry {
+            InsertUndo::Inserted { handle, row } => table
+                .delete_row_with_old_context(&handle, &row, ctx)
+                .map_err(|e| kv_read_error("rollback delete failed", e))?,
+            InsertUndo::Deleted { handle, row } | InsertUndo::Updated { handle, row } => table
+                .update_row_with_context(&handle, &row, ctx)
+                .map_err(|e| kv_read_error("rollback restore failed", e))?,
+        }
+    }
+    Ok(())
+}
+
 fn handle_partition_write_error(
     error: DriverError,
     ignore: bool,
