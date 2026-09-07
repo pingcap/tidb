@@ -174,10 +174,29 @@ func TestTiFlashManager(t *testing.T) {
 		}
 	})
 
+	t.Run("storageClassStatusCollectsCounters", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":2,"total":3}`))
+		}))
+		defer server.Close()
+
+		tikvStores := map[int64]pdhttp.StoreInfo{
+			3: {Store: pdhttp.MetaStore{ID: 3, StatusAddress: strings.TrimPrefix(server.URL, "http://"), StateName: "Up"}},
+			1: {Store: pdhttp.MetaStore{ID: 1, StatusAddress: strings.TrimPrefix(server.URL, "http://"), StateName: "Offline"}},
+			2: {Store: pdhttp.MetaStore{ID: 2, StatusAddress: "127.0.0.1:1", StateName: "Tombstone"}},
+		}
+		statuses, err := CollectStorageClassStatus(context.Background(), 1024, model.StorageClassTierIA, tikvStores)
+		require.NoError(t, err)
+		require.Equal(t, []StorageClassStoreStatus{
+			{StoreID: 1, Ready: 2, Total: 3},
+			{StoreID: 3, Ready: 2, Total: 3},
+		}, statuses)
+	})
+
 	t.Run("storageClassStatusCancelsPendingRequests", func(t *testing.T) {
 		requestStarted := make(chan struct{})
 		requestCanceled := make(chan struct{})
-		schemaVersionSeen := make(chan string, 1)
+		schemaVersionSeen := make(chan bool, 1)
 		blockingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			close(requestStarted)
 			<-r.Context().Done()
@@ -187,7 +206,7 @@ func TestTiFlashManager(t *testing.T) {
 
 		failedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			<-requestStarted
-			schemaVersionSeen <- r.URL.Query().Get("schema_version")
+			schemaVersionSeen <- r.URL.Query().Has("schema_version")
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		}))
 		defer failedServer.Close()
@@ -211,9 +230,10 @@ func TestTiFlashManager(t *testing.T) {
 			},
 		}
 
-		_, err := CollectStorageClassStatus(requestCtx, 1024, model.StorageClassTierIA, 37, tikvStores)
+		statuses, err := CollectStorageClassStatus(requestCtx, 1024, model.StorageClassTierIA, tikvStores)
 		require.ErrorContains(t, err, "status 503")
-		require.Equal(t, "37", <-schemaVersionSeen)
+		require.Nil(t, statuses)
+		require.False(t, <-schemaVersionSeen)
 		select {
 		case <-requestCanceled:
 		case <-time.After(time.Second):
