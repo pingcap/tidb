@@ -45,6 +45,7 @@ use crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len;
 use crate::cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
 };
+use crate::expression_rewriter::ColumnIdAllocator;
 use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanError;
 use crate::stats_info::StatsInfo;
@@ -948,7 +949,8 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                         // Go calls `BuildKeyInfoPortal(p)` immediately after
                         // `updateEQCond`; the inserted projections changed the
                         // schemas and key identities this join consumes.
-                        node = build_key_info_portal(node);
+                        node =
+                            build_key_info_portal_with_allocator(node, self.ctx.column_allocator);
                     }
                     Ok(false) => {}
                     Err(error) => self.failure.record(error),
@@ -1766,9 +1768,15 @@ pub fn push_down_topn_with_builder(
 // Key info — Go rule #3, `rule.BuildKeySolver`
 // ***************************************************************************
 
-struct BuildKeyInfo;
+struct BuildKeyInfo<'a> {
+    /// Go `LogicalProjection.buildSchemaByExprs` allocates a fresh plan
+    /// column for every computed expression while deriving key metadata.
+    /// The identity is only a temporary matching placeholder, but the
+    /// allocation is statement-visible and must advance Go's column stream.
+    column_allocator: Option<&'a ColumnIdAllocator>,
+}
 
-impl OwnedRewrite for BuildKeyInfo {
+impl OwnedRewrite for BuildKeyInfo<'_> {
     type Down = ();
     type Up = ();
 
@@ -1780,6 +1788,15 @@ impl OwnedRewrite for BuildKeyInfo {
         let child_schemas = child_schemas(&node);
         let mut self_schema = effective_schema(&node);
         node.build_key_info(&mut self_schema, &child_schemas);
+        if let (Some(allocator), LogicalPlan::Projection(projection)) =
+            (self.column_allocator, &node)
+        {
+            for expression in &projection.exprs {
+                if !matches!(expression, Expression::Column(_)) {
+                    allocator.alloc();
+                }
+            }
+        }
         set_own_schema(&mut node, self_schema);
         (node, ())
     }
@@ -1793,7 +1810,32 @@ impl OwnedRewrite for BuildKeyInfo {
 /// is not modelled.
 #[must_use]
 pub fn build_key_info_portal(plan: LogicalPlan) -> LogicalPlan {
-    let (plan, ()) = fold_owned(&mut BuildKeyInfo, plan, ());
+    let (plan, ()) = fold_owned(
+        &mut BuildKeyInfo {
+            column_allocator: None,
+        },
+        plan,
+        (),
+    );
+    plan
+}
+
+/// Go `BuildKeyInfoPortal` with the statement's `AllocPlanColumnID` stream.
+///
+/// Production optimizer calls use this form so `buildSchemaByExprs`'s
+/// temporary computed-column allocations remain visible to later rules.
+#[must_use]
+pub fn build_key_info_portal_with_allocator(
+    plan: LogicalPlan,
+    column_allocator: &ColumnIdAllocator,
+) -> LogicalPlan {
+    let (plan, ()) = fold_owned(
+        &mut BuildKeyInfo {
+            column_allocator: Some(column_allocator),
+        },
+        plan,
+        (),
+    );
     plan
 }
 

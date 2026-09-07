@@ -310,12 +310,46 @@ fn point_access(catalog: &Catalog, table_id: i64, index_id: Option<i64>) -> Scan
     }
 }
 
-fn physical_operator_name(plan: &PhysicalPlan) -> String {
+#[derive(Clone, Copy)]
+struct IndexJoinExplainContext<'a> {
+    table_id: i64,
+    outer_keys: &'a [tidb_expr::column::Column],
+}
+
+fn is_index_join_table_range(
+    plan: &PhysicalPlan,
+    context: Option<IndexJoinExplainContext<'_>>,
+) -> bool {
+    let PhysicalPlan::TableScan(scan) = plan else {
+        return false;
+    };
+    context
+        .is_some_and(|context| context.table_id == scan.table_id && !context.outer_keys.is_empty())
+}
+
+fn columns_text(columns: &[tidb_expr::column::Column]) -> String {
+    columns
+        .iter()
+        .map(|column| expression_text(&tidb_expr::expression::Expression::Column(column.clone())))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn physical_operator_name(
+    plan: &PhysicalPlan,
+    index_join_context: Option<IndexJoinExplainContext<'_>>,
+) -> String {
     match plan {
-        PhysicalPlan::TableScan(scan) => scan.scan_kind().map_or_else(
-            || "TableScan".to_owned(),
-            |kind| kind.plan_type().to_owned(),
-        ),
+        PhysicalPlan::TableScan(scan) => {
+            if is_index_join_table_range(plan, index_join_context) {
+                "TableRangeScan".to_owned()
+            } else {
+                scan.scan_kind().map_or_else(
+                    || "TableScan".to_owned(),
+                    |kind| kind.plan_type().to_owned(),
+                )
+            }
+        }
         PhysicalPlan::IndexScan(scan) => {
             if scan.ranges.is_empty()
                 || tidb_planner::ranger::types::has_full_range(&scan.ranges, false)
@@ -327,6 +361,16 @@ fn physical_operator_name(plan: &PhysicalPlan) -> String {
         }
         PhysicalPlan::PointGet(_) => "Point_Get".to_owned(),
         PhysicalPlan::BatchPointGet(_) => "Batch_Point_Get".to_owned(),
+        // Join physical operators share the logical `Join` base type, but
+        // Go's plancodec names each executor family distinctly.
+        PhysicalPlan::HashJoin(_) => "HashJoin".to_owned(),
+        PhysicalPlan::MergeJoin(_) => "MergeJoin".to_owned(),
+        PhysicalPlan::IndexJoin(join) => match join.kind {
+            tidb_planner::plan_cost_ver2::IndexJoinKind::IndexJoin => "IndexJoin",
+            tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin => "IndexHashJoin",
+            tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin => "IndexMergeJoin",
+        }
+        .to_owned(),
         _ => plan.tp().to_owned(),
     }
 }
@@ -426,6 +470,7 @@ fn physical_operator_info(
     plan: &PhysicalPlan,
     catalog: &Catalog,
     ignore_explain_id_suffix: bool,
+    index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
     match plan {
         PhysicalPlan::Selection(selection) => expressions_text(&selection.conditions),
@@ -446,14 +491,59 @@ fn physical_operator_info(
             &join.right_conditions,
             &join.other_conditions,
         ),
-        PhysicalPlan::IndexJoin(join) => join_info(
-            join.join_type,
-            &join.left_join_keys,
-            &join.right_join_keys,
-            &join.left_conditions,
-            &join.right_conditions,
-            &join.other_conditions,
-        ),
+        PhysicalPlan::IndexJoin(join) => {
+            let mut parts = vec![join_type_text(join.join_type).to_owned()];
+            if let Some(inner) = join.base.children().get(join.inner_child_idx) {
+                parts.push(format!(
+                    "inner:{}",
+                    inner.explain_id(ignore_explain_id_suffix)
+                ));
+            }
+            if !join.outer_join_keys.is_empty() {
+                parts.push(format!("outer key:{}", columns_text(&join.outer_join_keys)));
+            }
+            if !join.inner_join_keys.is_empty() {
+                parts.push(format!("inner key:{}", columns_text(&join.inner_join_keys)));
+            }
+            if !join.outer_hash_keys.is_empty()
+                && join.kind != tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin
+            {
+                let equal = join
+                    .outer_hash_keys
+                    .iter()
+                    .zip(&join.inner_hash_keys)
+                    .enumerate()
+                    .map(|(index, (outer, inner))| {
+                        let operator = if join.is_null_eq.get(index).copied().unwrap_or(false) {
+                            "nulleq"
+                        } else {
+                            "eq"
+                        };
+                        format!(
+                            "{operator}({}, {})",
+                            expression_text(&tidb_expr::expression::Expression::Column(
+                                outer.clone()
+                            )),
+                            expression_text(&tidb_expr::expression::Expression::Column(
+                                inner.clone()
+                            )),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                parts.push(format!("equal cond:{equal}"));
+            }
+            for (name, conditions) in [
+                ("left cond", &join.left_conditions),
+                ("right cond", &join.right_conditions),
+                ("other cond", &join.other_conditions),
+            ] {
+                if !conditions.is_empty() {
+                    parts.push(format!("{name}:[{}]", expressions_text(conditions)));
+                }
+            }
+            parts.join(", ")
+        }
         PhysicalPlan::Apply(apply) => join_info(
             apply.hash_join.join_type,
             &apply.hash_join.left_join_keys,
@@ -466,7 +556,12 @@ fn physical_operator_info(
         PhysicalPlan::Limit(limit) => limit.explain_info(RedactMode::Disable),
         PhysicalPlan::TableScan(scan) => {
             let mut parts = Vec::new();
-            if scan
+            if is_index_join_table_range(plan, index_join_context) {
+                parts.push(format!(
+                    "range: decided by [{}]",
+                    columns_text(index_join_context.expect("index join context").outer_keys)
+                ));
+            } else if scan
                 .scan_kind()
                 .is_some_and(|kind| kind.plan_type() == "TableRangeScan")
                 && !scan.ranges.is_empty()
@@ -613,6 +708,7 @@ fn physical_explain_operator(
     label: &str,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
     ignore_explain_id_suffix: bool,
+    index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> ExplainOperator {
     let mut children = match plan {
         PhysicalPlan::TableReader(reader) => reader
@@ -629,6 +725,7 @@ fn physical_explain_operator(
                     "",
                     runtime,
                     ignore_explain_id_suffix,
+                    index_join_context,
                 )]
             })
             .unwrap_or_default(),
@@ -646,6 +743,7 @@ fn physical_explain_operator(
                     "",
                     runtime,
                     ignore_explain_id_suffix,
+                    index_join_context,
                 )]
             })
             .unwrap_or_default(),
@@ -666,6 +764,7 @@ fn physical_explain_operator(
                 label,
                 runtime,
                 ignore_explain_id_suffix,
+                index_join_context,
             )
         })
         .collect(),
@@ -685,6 +784,7 @@ fn physical_explain_operator(
                     label,
                     runtime,
                     ignore_explain_id_suffix,
+                    index_join_context,
                 )
             })
             .collect(),
@@ -699,13 +799,30 @@ fn physical_explain_operator(
                     "",
                     runtime,
                     ignore_explain_id_suffix,
+                    index_join_context,
                 )]
             })
             .unwrap_or_default(),
         _ => plan
             .children()
             .iter()
-            .map(|child| {
+            .enumerate()
+            .map(|(index, child)| {
+                let child_context = match plan {
+                    PhysicalPlan::IndexJoin(join) if index == join.inner_child_idx => join
+                        .inner_access_index_id
+                        .is_none()
+                        .then_some(())
+                        .and_then(|()| {
+                            join.inner_access_table_id
+                                .map(|table_id| IndexJoinExplainContext {
+                                    table_id,
+                                    outer_keys: &join.outer_join_keys,
+                                })
+                        }),
+                    PhysicalPlan::IndexJoin(_) => None,
+                    _ => index_join_context,
+                };
                 physical_explain_operator(
                     child,
                     catalog,
@@ -713,6 +830,7 @@ fn physical_explain_operator(
                     "",
                     runtime,
                     ignore_explain_id_suffix,
+                    child_context,
                 )
             })
             .collect(),
@@ -746,14 +864,16 @@ fn physical_explain_operator(
         }
     }
 
-    let mut operator = ExplainOperator::new(physical_operator_name(plan), plan.id())
-        .with_task(task)
-        .with_operator_info(physical_operator_info(
-            plan,
-            catalog,
-            ignore_explain_id_suffix,
-        ))
-        .with_children(children);
+    let mut operator =
+        ExplainOperator::new(physical_operator_name(plan, index_join_context), plan.id())
+            .with_task(task)
+            .with_operator_info(physical_operator_info(
+                plan,
+                catalog,
+                ignore_explain_id_suffix,
+                index_join_context,
+            ))
+            .with_children(children);
     if let Some(access_object) = physical_access(plan, catalog) {
         operator = operator.with_access_object(access_object);
     }
@@ -787,6 +907,7 @@ fn cte_definitions(
                 "(Seed Part)",
                 runtime,
                 ignore_explain_id_suffix,
+                None,
             )];
             if let Some(recursive) = cte.recursive_plan.as_deref() {
                 children.push(physical_explain_operator(
@@ -796,6 +917,7 @@ fn cte_definitions(
                     "(Recursive Part)",
                     runtime,
                     ignore_explain_id_suffix,
+                    None,
                 ));
             }
             let mut definition = ExplainOperator::new("CTE", cte.id_for_storage)
@@ -873,6 +995,7 @@ fn physical_explain_roots(
         "",
         runtime,
         ignore_explain_id_suffix,
+        None,
     )];
     cte_definitions(
         physical,
@@ -1486,4 +1609,60 @@ pub fn explain_analyze_delete_stmt(
 
 fn text(value: &str) -> Datum {
     Datum::Bytes(value.as_bytes().to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_join_names_match_go_plancodec_types() {
+        assert_eq!(
+            physical_operator_name(&PhysicalPlan::HashJoin(Default::default()), None),
+            "HashJoin"
+        );
+        assert_eq!(
+            physical_operator_name(&PhysicalPlan::MergeJoin(Default::default()), None),
+            "MergeJoin"
+        );
+
+        let mut index = tidb_planner::physical::PhysicalIndexJoin::default();
+        for (kind, expected) in [
+            (
+                tidb_planner::plan_cost_ver2::IndexJoinKind::IndexJoin,
+                "IndexJoin",
+            ),
+            (
+                tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin,
+                "IndexHashJoin",
+            ),
+            (
+                tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin,
+                "IndexMergeJoin",
+            ),
+        ] {
+            index.kind = kind;
+            assert_eq!(
+                physical_operator_name(&PhysicalPlan::IndexJoin(index.clone()), None),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn physical_index_join_explain_uses_null_safe_equal_condition() {
+        let column =
+            |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+        let mut index = tidb_planner::physical::PhysicalIndexJoin::default();
+        index.outer_hash_keys = vec![column(1), column(2)];
+        index.inner_hash_keys = vec![column(3), column(4)];
+        index.is_null_eq = vec![true, false];
+        let info = physical_operator_info(
+            &PhysicalPlan::IndexJoin(index),
+            &Catalog::default(),
+            false,
+            None,
+        );
+        assert!(info.contains("equal cond:nulleq(Column#1, Column#3) eq(Column#2, Column#4)"));
+    }
 }

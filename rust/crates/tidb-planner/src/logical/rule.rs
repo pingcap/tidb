@@ -1006,7 +1006,10 @@ impl LogicalOptRule for BuildKeySolver {
         _ctx: &RuleContext<'_>,
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
-        Ok((super::rewrite::build_key_info_portal(plan), false))
+        Ok((
+            super::rewrite::build_key_info_portal_with_allocator(plan, _ctx.column_allocator),
+            false,
+        ))
     }
 
     fn name(&self) -> &'static str {

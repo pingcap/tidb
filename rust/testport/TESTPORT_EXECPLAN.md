@@ -9680,3 +9680,13 @@ risks without claiming repository-wide parity.
   afterward. All 30 owner tests, all-target compilation, standalone rustfmt,
   Ready lint, and diff hygiene pass. Evidence is in
   `receipts/ddl_placement.md` and the dedicated placement ExecPlan.
+- 2026-09-07 (planner/executor physical index-join explain parity): Go's
+  `PhysicalIndexJoin` explain contract names the executor family, reports the
+  inner child and outer/inner keys, and labels a clustered runtime probe as
+  `TableRangeScan` with `range: decided by [Column#N]`. Rust now carries that
+  context through the inner reader, preserves `BuildKeyInfoPortal`'s temporary
+  column-allocation side effects (`Column#12` in the cast fixture), and filters
+  opposite-side force-hint candidates so an unusable `INL_JOIN` falls back to
+  HashJoin. The complete `pkg/planner/core` inventory, focused join/explain
+  tests, and Ready evidence are recorded in
+  `receipts/planner_physical_index_join_explain.md`.

@@ -84,9 +84,16 @@ fn the_hinted_index_join_ranges_over_the_injected_cast_column() {
         "explain select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int \
          join t_idx_str on t_idx_int.id = t_idx_str.id",
     );
+    let join = rows
+        .iter()
+        .find(|row| row.contains("IndexJoin"))
+        .unwrap_or_else(|| panic!("the hint must reach the index strategy: {rows:#?}"));
     assert!(
-        rows.iter().any(|row| row.contains("IndexJoin")),
-        "the hint must reach the index strategy: {rows:#?}",
+        join.contains("inner:Projection")
+            && join.contains("outer key:Column#12")
+            && join.contains("inner key:Column#1")
+            && join.contains("equal cond:eq(Column#12, Column#1)"),
+        "the IndexJoin info must use Go's physical fields: {join}",
     );
     let scan = rows
         .iter()
