@@ -10558,3 +10558,7 @@ risks without claiming repository-wide parity.
   the session's variables and a DELETE's WHERE predicate compares against
   them. Pinned in
   `crates/tidb-session/tests/uservar_insert_delete_source.rs`.
+- 2026-09-06 (mixed enforcement pin): an ENFORCED CHECK refuses violating
+  writes while a NOT ENFORCED sibling on the same table does not — each
+  constraint's state is independent. Pinned in
+  `crates/tidb-session/tests/mixed_enforced_checks_source.rs`.
