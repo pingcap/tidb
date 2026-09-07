@@ -10955,3 +10955,7 @@ risks without claiming repository-wide parity.
   new step to subsequent NEXTVAL draws (asserted as consecutive spacing;
   the absolute first value is cache-block dependent). Pinned in
   `crates/tidb-session/tests/alter_sequence_increment_source.rs`.
+- 2026-09-06 (SHOW CREATE SEQUENCE pin): the full Go
+  ConstructResultOfShowCreateSequence shape round-trips with defaults
+  filled (minvalue 1, maxvalue MaxInt64-1). Pinned in
+  `crates/tidb-session/tests/show_create_sequence_source.rs`.
