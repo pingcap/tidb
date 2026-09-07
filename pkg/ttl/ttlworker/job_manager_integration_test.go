@@ -47,7 +47,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/skip"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -1971,4 +1973,185 @@ func TestTTLSummaryForTimeoutJob(t *testing.T) {
 	require.Equal(t, uint64(100), summary.SuccessRows)
 	require.Equal(t, uint64(0), summary.ErrorRows)
 	require.Equal(t, "job is timeout", summary.ScanTaskErr)
+}
+
+func TestTimestampPaginationAcrossTimeZones(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@time_zone='UTC'")
+	t.Cleanup(func() { tk.MustExec("set @@global.time_zone='UTC'") })
+
+	testCases := []struct {
+		name     string
+		zone     string
+		location *time.Location
+		instants []string
+	}{
+		{
+			name:     "dst_fold",
+			zone:     "America/New_York",
+			location: mustLoadLocation(t, "America/New_York"),
+			// 05:30 and 06:30 UTC both display as 01:30 locally, but they
+			// are different TIMESTAMP values and must produce different cursors.
+			instants: []string{"2024-11-03 05:30:00.123456", "2024-11-03 06:30:00.123456", "2024-11-03 07:30:00.123456"},
+		},
+		{
+			name:     "dst_gap",
+			zone:     "America/New_York",
+			location: mustLoadLocation(t, "America/New_York"),
+			instants: []string{"2024-03-10 06:30:00.123456", "2024-03-10 07:30:00.123456", "2024-03-10 08:30:00.123456"},
+		},
+		{
+			name:     "fixed_offset",
+			zone:     "+05:30",
+			location: time.FixedZone("+05:30", 5*60*60+30*60),
+			instants: []string{"2024-01-01 00:00:00.123456", "2024-01-01 01:00:00.123456", "2024-01-01 02:00:00.123456"},
+		},
+		{
+			name:     "shanghai",
+			zone:     "Asia/Shanghai",
+			location: mustLoadLocation(t, "Asia/Shanghai"),
+			instants: []string{"2024-01-01 00:00:00.123456", "2024-01-01 01:00:00.123456", "2024-01-01 02:00:00.123456"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("set @@global.time_zone=?", tc.zone)
+			tableName := "ttl_timestamp_" + tc.name
+			tk.MustExec(fmt.Sprintf(`create table %s(
+				expired_at timestamp(6) not null,
+				id bigint not null,
+				primary key(expired_at, id) clustered
+			) TTL=expired_at + interval 1 hour`, tableName))
+			for i, instant := range tc.instants {
+				tk.MustExec(fmt.Sprintf("insert into %s values (?, ?)", tableName), instant, i+1)
+			}
+
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+			require.NoError(t, err)
+			ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+			require.NoError(t, err)
+			expire := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).In(tc.location)
+			generator, err := sqlbuilder.NewScanQueryGenerator(ttlTbl, expire, nil, nil)
+			require.NoError(t, err)
+			se := session.NewSession(tk.Session(), func() {})
+			var previous [][]types.Datum
+			var ids []int64
+			for range 16 {
+				sql, err := generator.NextSQL(previous, 1)
+				require.NoError(t, err)
+				if sql == "" {
+					break
+				}
+				plan := tk.MustQuery("explain format='brief' " + sql)
+				plan.CheckContain("TableRangeScan")
+				plan.CheckNotContain("TopN")
+				plan.CheckNotContain("Sort")
+				rows, err := se.ExecuteSQL(context.Background(), sql)
+				require.NoError(t, err)
+				previous = make([][]types.Datum, len(rows))
+				for i, row := range rows {
+					previous[i] = row.GetDatumRow(ttlTbl.KeyColumnTypes)
+					ids = append(ids, previous[i][1].GetInt64())
+				}
+			}
+			require.True(t, generator.IsExhausted())
+			require.Equal(t, []int64{1, 2, 3}, ids)
+		})
+	}
+}
+
+func mustLoadLocation(t *testing.T, name string) *time.Location {
+	loc, err := time.LoadLocation(name)
+	require.NoError(t, err)
+	return loc
+}
+
+func TestTTLExpirationPredicatesInUTCSession(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.time_zone='America/New_York'")
+	t.Cleanup(func() { tk.MustExec("set @@global.time_zone='UTC'") })
+	// This is the protocol used by TTL's shared session pool. The expiration
+	// time below is still expressed in the captured global location.
+	tk.MustExec("set @@time_zone='UTC'")
+
+	newTTLTable := func(name string) *cache.PhysicalTable {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		require.NoError(t, err)
+		ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+		require.NoError(t, err)
+		return ttlTbl
+	}
+	deleteKeys := [][]types.Datum{
+		{types.NewIntDatum(1)},
+		{types.NewIntDatum(2)},
+		{types.NewIntDatum(3)},
+		{types.NewIntDatum(4)},
+	}
+	ny := mustLoadLocation(t, "America/New_York")
+	// 06:30 UTC is the second occurrence of 01:30 in the New York DST fold.
+	foldCutoff := time.Date(2024, 11, 3, 6, 30, 0, 0, time.UTC).In(ny)
+
+	tk.MustExec(`create table ttl_timestamp_delete(
+		id bigint primary key clustered,
+		expired_at timestamp(6) not null
+	) TTL=expired_at + interval 1 hour`)
+	tk.MustExec(`insert into ttl_timestamp_delete values
+		(1, '2024-11-03 05:30:00'),
+		(2, '2024-11-03 06:30:00'),
+		(3, '2024-11-03 07:30:00'),
+		(4, '2024-11-03 05:45:00')`)
+	// Simulate a TTL value updated after scan but before delete. The DELETE
+	// must recheck expiration and preserve this row.
+	tk.MustExec("update ttl_timestamp_delete set expired_at='2024-11-03 07:45:00' where id=4")
+	deleteSQL, err := sqlbuilder.BuildDeleteSQL(newTTLTable("ttl_timestamp_delete"), deleteKeys, foldCutoff)
+	require.NoError(t, err)
+	tk.MustExec(deleteSQL)
+	tk.MustQuery("select id from ttl_timestamp_delete order by id").Check(testkit.Rows("2", "3", "4"))
+
+	// DATETIME retains the global-zone wall clock even though the statement is
+	// executed in UTC. Equality is not expired because TTL uses a strict bound.
+	tk.MustExec(`create table ttl_datetime_delete(
+		id bigint primary key clustered,
+		expired_at datetime(6) not null
+	) TTL=expired_at + interval 1 hour`)
+	tk.MustExec(`insert into ttl_datetime_delete values
+		(1, '2024-11-03 01:29:59'),
+		(2, '2024-11-03 01:30:00'),
+		(3, '2024-11-03 01:30:01'),
+		(4, '2024-11-03 01:00:00')`)
+	tk.MustExec("update ttl_datetime_delete set expired_at='2024-11-03 02:00:00' where id=4")
+	deleteSQL, err = sqlbuilder.BuildDeleteSQL(newTTLTable("ttl_datetime_delete"), deleteKeys, foldCutoff)
+	require.NoError(t, err)
+	// Reproduce #70032: the global time zone changes after scan has captured
+	// its cutoff but before delete. The pooled TTL session remains in UTC, and
+	// the DATETIME predicate carries the captured New York wall-clock value.
+	tk.MustExec("set @@global.time_zone='+08:00'")
+	tk.MustExec(deleteSQL)
+	tk.MustQuery("select id from ttl_datetime_delete order by id").Check(testkit.Rows("2", "3", "4"))
+	tk.MustExec("set @@global.time_zone='America/New_York'")
+
+	// DATE uses the same wall-clock rule. A midnight cutoff gives an exact DATE
+	// equality case without involving a time-of-day conversion.
+	tk.MustExec(`create table ttl_date_delete(
+		id bigint primary key clustered,
+		expired_at date not null
+	) TTL=expired_at + interval 1 day`)
+	tk.MustExec(`insert into ttl_date_delete values
+		(1, '2024-11-02'),
+		(2, '2024-11-03'),
+		(3, '2024-11-04'),
+		(4, '2024-11-01')`)
+	tk.MustExec("update ttl_date_delete set expired_at='2024-11-05' where id=4")
+	dateCutoff := time.Date(2024, 11, 3, 0, 0, 0, 0, ny)
+	deleteSQL, err = sqlbuilder.BuildDeleteSQL(newTTLTable("ttl_date_delete"), deleteKeys, dateCutoff)
+	require.NoError(t, err)
+	tk.MustExec(deleteSQL)
+	tk.MustQuery("select id from ttl_date_delete order by id").Check(testkit.Rows("2", "3", "4"))
 }
