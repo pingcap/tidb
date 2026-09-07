@@ -939,11 +939,12 @@ impl FdSet {
             }
         }
 
-        self.not_null_cols.union_with(&filter.not_null_cols);
-        self.not_null_cols.difference_with(inner_cols);
+        // Go merges `HashCodeToUniqueID` keeping the FIRST registration
+        // for a duplicate hash (logging a warning Rust folds).
         for (hash_code, unique_id) in &inner.hash_code_to_unique_id {
             self.hash_code_to_unique_id
-                .insert(hash_code.clone(), *unique_id);
+                .entry(hash_code.clone())
+                .or_insert(*unique_id);
         }
         self.group_by_cols.union_with(&inner.group_by_cols);
         self.has_agg_built |= inner.has_agg_built;
@@ -1331,6 +1332,26 @@ mod tests {
         assert!(outer.in_closure(&ColSet::new([10]), &ColSet::new([11])));
         assert!(outer.in_closure(&ColSet::new([1, 10]), &ColSet::new([2, 11])));
         assert!(!outer.not_null_cols().has(10));
+    }
+
+    /// Go's `MakeOuterJoin` merges `HashCodeToUniqueID` keeping the FIRST
+    /// registration for a duplicate hash (the warn-and-continue arm).
+    #[test]
+    fn outer_join_keeps_the_first_unique_id_for_a_duplicate_hash() {
+        let mut outer = FdSet::new();
+        outer.register_unique_id(b"hash-a".to_vec(), 1);
+        let mut inner = FdSet::new();
+        inner.register_unique_id(b"hash-a".to_vec(), 2);
+        inner.register_unique_id(b"hash-b".to_vec(), 3);
+        outer.make_outer_join(
+            &inner,
+            &FdSet::new(),
+            &ColSet::new([1]),
+            &ColSet::new([10]),
+            OuterJoinOptions::default(),
+        );
+        assert_eq!(outer.registered_unique_id(b"hash-a"), Some(1));
+        assert_eq!(outer.registered_unique_id(b"hash-b"), Some(3));
     }
 
     /// Go `TestFindCommonEquivClasses`.
