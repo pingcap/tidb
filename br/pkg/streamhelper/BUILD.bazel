@@ -69,7 +69,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 34,
+=======
+    shard_count = 36,
+>>>>>>> 8e233a32215 (streamhelper: don't cut down connection when subscription stream closed (#59559))
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
