@@ -10737,3 +10737,8 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (RENAME TABLE x CHECK pin): the attached CHECK constraint
   follows the renamed table and still enforces under its original name.
   Pinned in `crates/tidb-session/tests/rename_table_check_source.rs`.
+- 2026-09-06 (generated dependency DROP pin): DROP COLUMN of a base column
+  referenced by a generated column fails with Go's exact
+  ErrDependentByGeneratedColumn text ("Column 'a' has a generated column
+  dependency."). Pinned in
+  `crates/tidb-session/tests/generated_dependency_drop_source.rs`.
