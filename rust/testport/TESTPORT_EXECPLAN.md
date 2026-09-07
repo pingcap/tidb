@@ -11256,3 +11256,6 @@ risks without claiming repository-wide parity.
   ROUND's negative digit positions, with TiDB's dual rounding conventions
   (float half-away vs decimal half-even) pinned side by side. Pinned in
   `crates/tidb-session/tests/format_round_digits_source.rs`.
+- 2026-09-06 (STRCMP/<=> pin): STRCMP's -1/0/1 and <=> NULL-safe equality
+  vs the NULL-yielding plain = operator. Pinned in
+  `crates/tidb-session/tests/strcmp_null_safe_source.rs`.
