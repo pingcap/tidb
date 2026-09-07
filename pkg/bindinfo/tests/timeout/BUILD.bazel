@@ -4,8 +4,12 @@ go_test(
     name = "timeout_test",
     timeout = "short",
     srcs = [
+        "ddl_test.go",
         "main_test.go",
+<<<<<<< HEAD:pkg/bindinfo/tests/timeout/BUILD.bazel
         "timeout_test.go",
+=======
+>>>>>>> c65420d934e (ddl: add retry for updateSelfVersion (#62190)):tests/realtikvtest/ddltest/BUILD.bazel
     ],
     flaky = True,
     deps = [
