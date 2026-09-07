@@ -9919,3 +9919,8 @@ risks without claiming repository-wide parity.
   initialized. The executor-only harness deliberately has no bare-@x
   lowering -- the session's VariableBinder owns it. Pinned in
   `crates/tidb-session/tests/user_variable_source.rs`.
+- 2026-09-06 (ODKU-IGNORE x CHECK + DELETE LIMIT pins): an `insert ignore`
+  whose ODKU UPDATE branch violates a CHECK downgrades to a warning and
+  leaves the stored row untouched (insert.go:218); `delete ... limit n`
+  removes exactly n matching rows. Pinned in
+  `tests/odku_ignore_check_delete_limit_source.rs`.
