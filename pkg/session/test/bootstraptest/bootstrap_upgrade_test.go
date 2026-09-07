@@ -325,6 +325,29 @@ func TestUpgradeVersion75(t *testing.T) {
 }
 
 func TestUpgradeVersionMockLatest(t *testing.T) {
+	t.Run("bootstrap initializes MDL before scheduler starts", func(t *testing.T) {
+		vardef.SetEnableMDL(false)
+		t.Cleanup(func() { vardef.SetEnableMDL(true) })
+		mdlAtFirstSchedulerDispatch := make(chan bool, 1)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+			select {
+			case mdlAtFirstSchedulerDispatch <- vardef.IsMDLEnabled():
+			default:
+			}
+		})
+
+		store, dom := session.CreateStoreAndBootstrap(t)
+		dom.Close()
+		require.NoError(t, store.Close())
+		select {
+		case mdlEnabled := <-mdlAtFirstSchedulerDispatch:
+			require.True(t, mdlEnabled,
+				"MDL must be initialized before the bootstrap DDL scheduler starts")
+		default:
+			require.FailNow(t, "the bootstrap DDL scheduler did not dispatch")
+		}
+	})
+
 	mock := true
 	session.WithMockUpgrade = &mock
 
@@ -346,9 +369,27 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
 	startUpgrade(store)
 	dom.Close()
+	// Simulate the process-wide default on a newly started TiDB instance. The
+	// persisted MDL setting is still enabled in the store.
+	vardef.SetEnableMDL(false)
+	t.Cleanup(func() { vardef.SetEnableMDL(true) })
+	mdlAtFirstSchedulerDispatch := make(chan bool, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		select {
+		case mdlAtFirstSchedulerDispatch <- vardef.IsMDLEnabled():
+		default:
+		}
+	})
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
+	select {
+	case mdlEnabled := <-mdlAtFirstSchedulerDispatch:
+		require.True(t, mdlEnabled,
+			"the persisted MDL setting must be loaded before the upgrade DDL scheduler starts")
+	default:
+		require.FailNow(t, "the upgrade DDL scheduler did not dispatch")
+	}
 
 	finishUpgrade(store)
 
