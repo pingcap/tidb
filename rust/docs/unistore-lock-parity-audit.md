@@ -739,3 +739,25 @@ Bare value functions answer their non-NULL truth. With these, the
 carried-sig refusal surface is down to `CastDurationAsTime` (a
 now-anchored convert) and the session-timezone-anchored
 `UnixTimestamp*`/`FromUnixTime*` family.
+
+## The session-zone thread and the unix-time functions (4 ids)
+
+The DAG request's session time zone now threads through the whole
+expression seam -- every evaluator (`eval_expr`, `eval_bytes`,
+`eval_decimal`, `eval_real`, `eval_time`, `eval_duration`, `eval_json`)
+and the interval/date-operand helpers carry the resolved
+`SessionTimeZone` next to `div_precision_increment` -- which also
+upgrades the earlier UTC parse anchor of the date arithmetic and cast
+families to the request's own zone, matching Go's `typeCtx`. On top of
+the thread, `UnixTimestampInt` 6066 and `UnixTimestampDec` 6067 read
+the wall clock in the session zone (`AdjustedGoTime` semantics; an
+invalid or out-of-range source answers the zero decimal per Go's
+`goTimeToMysqlUnixTimestamp`, not NULL, with the exact micros/1e6
+shift rendered as text because the in-crate decimal shift rounds
+where Go's keeps digits), and `FromUnixTime1Arg` 6088 /
+`FromUnixTime2Arg` 6089 render the epoch through the session zone
+(negative or beyond the 32536771199.999999 bound answers NULL, the
+two-arg form reusing `DateFormat`'s layout table). The remaining
+coprocessor refusals are now exactly two: `UnixTimestampCurrent` and
+`CastDurationAsTime`, both anchored on the current time and therefore
+answering no stable predicate.
