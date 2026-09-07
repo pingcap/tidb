@@ -1560,8 +1560,12 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Nil(t, err)
 	require.Greater(t, val, uint64(536870912))
 
-	require.Greater(t, row[4], "0")              // PROCESSID
-	require.Greater(t, row[5], "0")              // MEM
+	require.Greater(t, row[4], "0") // PROCESSID
+	// MEM is a best-effort ProcessInfo snapshot and may be zero while StmtCtx is resetting.
+	tmp, ok = row[5].(string)
+	require.Equal(t, ok, true)
+	_, err = strconv.ParseUint(tmp, 10, 64)
+	require.Nil(t, err)
 	require.Equal(t, row[6], "0")                // DISK
 	require.Equal(t, row[7], "")                 // CLIENT
 	require.Equal(t, row[8], "test")             // DB
