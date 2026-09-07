@@ -335,6 +335,7 @@ func TestStatusPort(t *testing.T) {
 
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
 	err = server.Run(ts.Domain)
 	require.Error(t, err)
 }
@@ -1109,6 +1110,7 @@ func TestGracefulShutdown(t *testing.T) {
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	require.NotNil(t, server)
+	server.SetDomain(ts.Domain)
 
 	go func() {
 		err := server.Run(nil)
