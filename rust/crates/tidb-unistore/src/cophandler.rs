@@ -1637,6 +1637,14 @@ pub enum SimpleSig {
         /// duration ids answer a duration.
         datetime_result: bool,
     },
+    /// `ModReal`: binary64 remainder with the dividend's sign (Go
+    /// `builtinArithmeticModRealSig` over `math.Mod`); a zero divisor
+    /// answers NULL.
+    ModReal,
+    /// `TimestampDiff` over (unit, first, second): Go
+    /// `builtinTimestampDiffSig` answering `types.TimestampDiff`; an
+    /// unknown unit answers 0.
+    TimestampDiff,
     /// See [`SimpleSig::CharLengthUtf8`].
     UpperUtf8,
     /// See [`SimpleSig::CharLengthUtf8`].
@@ -2334,11 +2342,14 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::GeInt => SimpleSig::GeInt,
             tipb::ScalarFuncSig::EqInt => SimpleSig::EqInt,
             tipb::ScalarFuncSig::NeInt => SimpleSig::NeInt,
-            // `LogicalAnd` is absent from the trimmed proto build — and the
-            // wire rarely carries it: a WHERE conjunction arrives as SEPARATE
-            // selection conditions, the list itself being the AND. The
-            // evaluator keeps the semantics for that list.
+            // The wire rarely carries a logical AND scalar: a WHERE
+            // conjunction arrives as SEPARATE selection conditions, the
+            // list itself being the AND. The evaluator keeps the
+            // three-valued semantics for both shapes.
+            tipb::ScalarFuncSig::LogicalAnd => SimpleSig::LogicalAnd,
             tipb::ScalarFuncSig::LogicalOr => SimpleSig::LogicalOr,
+            tipb::ScalarFuncSig::ModReal => SimpleSig::ModReal,
+            tipb::ScalarFuncSig::TimestampDiff => SimpleSig::TimestampDiff,
             tipb::ScalarFuncSig::UnaryNotInt => SimpleSig::UnaryNot,
             tipb::ScalarFuncSig::IntIsNull => SimpleSig::IntIsNull,
             tipb::ScalarFuncSig::Date => SimpleSig::Date,
@@ -2513,6 +2524,7 @@ fn eval_real(
             | SimpleSig::MinusReal
             | SimpleSig::MultiplyReal
             | SimpleSig::DivideReal
+            | SimpleSig::ModReal
             | SimpleSig::CastIntAsReal
             | SimpleSig::CastDecimalAsReal
             | SimpleSig::CastRealAsReal
@@ -2537,6 +2549,7 @@ fn eval_real(
                     | SimpleSig::MinusReal
                     | SimpleSig::MultiplyReal
                     | SimpleSig::DivideReal
+                    | SimpleSig::ModReal
             ) {
                 // Go wraps the operand in the cast signature; the widening
                 // itself is exact for the admitted source kinds.
@@ -2614,6 +2627,10 @@ fn eval_real(
                 SimpleSig::PlusReal => Some(left + right),
                 SimpleSig::MinusReal => Some(left - right),
                 SimpleSig::MultiplyReal => Some(left * right),
+                // Go `math.Mod`: the remainder carries the dividend's
+                // sign; a zero divisor answers NULL (error folded).
+                SimpleSig::ModReal if right != 0.0 => Some(left % right),
+                SimpleSig::ModReal => None,
                 _ if right != 0.0 => Some(left / right),
                 _ => None,
             }
@@ -2815,7 +2832,7 @@ fn add_sub_time(
 ) -> Option<tidb_datatype::Time> {
     let parsed = tidb_datatype::parse_duration_value(unit, interval).ok()?;
     let sign: i64 = if subtract { -1 } else { 1 };
-    let mut core = date.core();
+    let mut core = date.core_time();
     core = core.add_duration(sign * parsed.nanoseconds);
     core = core
         .add_date(
@@ -3103,7 +3120,7 @@ fn eval_bytes(
                 interval_text(children, row, div_precision_increment, interval_kind, &unit)?;
             let mut result = add_sub_time(date, subtract, &unit, &interval)?;
             // Go refits the fraction: whole seconds render short.
-            let fsp = i64::from(result.core().microsecond() != 0) * 6;
+            let fsp = i64::from(result.core_time().microsecond() != 0) * 6;
             result.set_fsp(fsp).ok()?;
             Some(result.to_string().into_bytes())
         }
@@ -3618,7 +3635,8 @@ pub fn eval_expr(
                 SimpleSig::PlusReal
                 | SimpleSig::MinusReal
                 | SimpleSig::MultiplyReal
-                | SimpleSig::DivideReal => {
+                | SimpleSig::DivideReal
+                | SimpleSig::ModReal => {
                     // A bare real arithmetic as a condition answers its own
                     // truth (`ToBool`): non-zero and not-NaN is true, NULL
                     // is filtered. MySQL's `ToBool` treats NaN as 0.
@@ -3921,6 +3939,45 @@ pub fn eval_expr(
                         first.core_time(),
                         tidb_datatype::TimestampInterval::Day,
                     )))
+                }
+                SimpleSig::TimestampDiff => {
+                    let Some(unit_raw) = eval_bytes(children.first(), row, div_precision_increment)
+                    else {
+                        return Ok(None);
+                    };
+                    let (Some(first), Some(second)) = (
+                        eval_time(children.get(1), row, div_precision_increment),
+                        eval_time(children.get(2), row, div_precision_increment),
+                    ) else {
+                        return Ok(None);
+                    };
+                    if first.is_zero() || second.is_zero() {
+                        // Go: `InvalidZero` on either side answers NULL
+                        // under the folded wrong-value error.
+                        return Ok(None);
+                    }
+                    // Go compares the unit raw (the parser always emits
+                    // the uppercase keyword); unknown units answer 0.
+                    let interval = match unit_raw.as_slice() {
+                        b"YEAR" => Some(tidb_datatype::TimestampInterval::Year),
+                        b"QUARTER" => Some(tidb_datatype::TimestampInterval::Quarter),
+                        b"MONTH" => Some(tidb_datatype::TimestampInterval::Month),
+                        b"WEEK" => Some(tidb_datatype::TimestampInterval::Week),
+                        b"DAY" => Some(tidb_datatype::TimestampInterval::Day),
+                        b"HOUR" => Some(tidb_datatype::TimestampInterval::Hour),
+                        b"MINUTE" => Some(tidb_datatype::TimestampInterval::Minute),
+                        b"SECOND" => Some(tidb_datatype::TimestampInterval::Second),
+                        b"MICROSECOND" => Some(tidb_datatype::TimestampInterval::Microsecond),
+                        _ => None,
+                    };
+                    let Some(interval) = interval else {
+                        return Ok(Some(0));
+                    };
+                    Some(i128::from(
+                        first
+                            .core_time()
+                            .timestamp_diff(second.core_time(), interval),
+                    ))
                 }
                 SimpleSig::JsonMemberOfSig => {
                     // Go `builtinJSONMemberOfSig.evalInt`: the target (any
@@ -5946,5 +6003,88 @@ mod tests {
         // The datetime-promoted duration ids anchor on the current date
         // and answer no stable predicate.
         assert_eq!(eval_time(Some(&arith(true)), &row, 4), None);
+    }
+
+    #[test]
+    fn mod_real_follows_binary64_remainder_semantics() {
+        let modulo = |left: f64, right: f64| {
+            SimpleExpr::Func(
+                SimpleSig::ModReal,
+                vec![SimpleExpr::Real(left), SimpleExpr::Real(right)],
+            )
+        };
+        // Go `math.Mod`: the remainder carries the dividend's sign; a
+        // bare remainder answers its non-zero truth.
+        assert_eq!(
+            eval_expr(&modulo(7.5, 2.0), &[], 4).expect("evals"),
+            Some(1) // 1.5
+        );
+        assert_eq!(
+            eval_expr(&modulo(-7.5, 2.0), &[], 4).expect("evals"),
+            Some(1) // -1.5
+        );
+        // A zero divisor answers NULL (Go's division-by-zero error folded).
+        assert_eq!(eval_expr(&modulo(1.0, 0.0), &[], 4), Ok(None));
+        // A bare remainder as a condition answers its own truth.
+        assert_eq!(
+            eval_expr(&modulo(4.0, 2.0), &[], 4).expect("evals"),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn timestamp_diff_follows_go_unit_table() {
+        use tidb_datatype::{Datum, Time, TimeType};
+        let time = |y: i32, m: i32, d: i32, hh: i32, mm: i32, ss: i32| {
+            Time::from_date_checked(y, m, d, hh, mm, ss, 0, TimeType::DateTime, 0)
+                .expect("constructs")
+        };
+        let diff = |unit: &[u8], lhs: Time, rhs: Time| {
+            eval_expr(
+                &SimpleExpr::Func(
+                    SimpleSig::TimestampDiff,
+                    vec![
+                        SimpleExpr::Bytes(unit.to_vec()),
+                        SimpleExpr::Time(lhs),
+                        SimpleExpr::Time(rhs),
+                    ],
+                ),
+                &[],
+                4,
+            )
+            .expect("evals")
+        };
+        // MySQL doc example: TIMESTAMPDIFF(MONTH, '2003-02-01', '2003-05-01') = 3.
+        assert_eq!(
+            diff(
+                b"MONTH",
+                time(2003, 2, 1, 0, 0, 0),
+                time(2003, 5, 1, 0, 0, 0)
+            ),
+            Some(3)
+        );
+        // The clock participates: a full day plus two hours floors to 1 day.
+        assert_eq!(
+            diff(b"DAY", time(2024, 3, 4, 0, 0, 0), time(2024, 3, 5, 2, 0, 0),),
+            Some(1)
+        );
+        // MONTH rounds down through the month-end clamp.
+        assert_eq!(
+            diff(
+                b"MONTH",
+                time(2024, 1, 31, 0, 0, 0),
+                time(2024, 2, 29, 0, 0, 0),
+            ),
+            Some(0)
+        );
+        // An unknown unit answers 0 (Go's default arm).
+        assert_eq!(
+            diff(
+                b"FORTNIGHT",
+                time(2024, 3, 4, 0, 0, 0),
+                time(2024, 3, 5, 0, 0, 0),
+            ),
+            Some(0)
+        );
     }
 }

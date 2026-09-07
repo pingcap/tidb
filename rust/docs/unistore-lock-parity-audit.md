@@ -607,3 +607,32 @@ missing: landing it would require the label-aware region cache, the
 batch-cop task builder, and the exchange executor family together, and
 none of them is reachable while the store serves a single unlabeled
 node.
+
+## Refusal-surface closure pass (ModReal, TimestampDiff, LogicalAnd)
+
+An id-level diff of the trimmed proto's `ScalarFuncSig` against the
+convert mapping (after rendering proto names through prost's camel
+rule -- the earlier apparent aliases `LTInt`/`PI`/`*UTF8` are the same
+ids as the mapped `LtInt`/`Pi`/`*Utf8` variants) shrinks the carried-
+but-unmapped surface to 52 ids. This round lands three of them:
+`ModReal` composes through the real channel exactly like the real
+arithmetic family (`math.Mod` with the dividend's sign, zero divisor
+answering NULL under the folded division-by-zero error, a bare
+remainder answering its `ToBool` truth) -- its earlier refusal
+predated the real comparison family it now feeds; `TimestampDiff`
+answers through the int channel over `types.TimestampDiff`'s unit
+table (raw-uppercase unit compare, unknown units answering 0, a zero
+date on either side answering NULL, the clock flooring the result --
+`2024-03-04 00:00:00` to `2024-03-05 02:00:00` is 1 day); and
+`LogicalAnd` gains its convert arm -- the evaluator already kept the
+three-valued semantics, the arm had merely been withheld behind a
+stale comment claiming the proto lacked the id. The remaining refusal
+surface is 40 cast combinations (the string/time/duration/json
+answers plus the int/real answers of temporal and json sources --
+waiting on the projection-executor course, with the decimal-answer
+casts composable earlier as comparison operands), the three projection
+value functions already on record (`JsonReplaceSig`,
+`JsonArrayAppendSig`, `JsonMergePatchSig`), and the session-timezone-
+anchored `UnixTimestamp*`/`FromUnixTime*` pair. The redundant
+`Time::core()` accessor added alongside the date-arithmetic batch is
+dropped in favor of the pre-existing `core_time()`.
