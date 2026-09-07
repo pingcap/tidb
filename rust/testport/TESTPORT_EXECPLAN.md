@@ -10668,3 +10668,7 @@ risks without claiming repository-wide parity.
   exposes the base columns under the aliases, and SHOW CREATE VIEW
   round-trips the column list. Pinned in
   `crates/tidb-session/tests/view_column_aliases_source.rs`.
+- 2026-09-06 (CHECK IS NULL allowance pin): `check (b is null or b > 0)`
+  passes NULL rows (UNKNOWN is not a violation), refuses negatives, and
+  accepts positives. Pinned in
+  `crates/tidb-session/tests/check_is_null_allowance_source.rs`.
