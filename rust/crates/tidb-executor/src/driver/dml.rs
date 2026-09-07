@@ -425,6 +425,11 @@ fn run_insert_with_physical(
         chunk.set_num_virtual_rows(1);
         chunk
     };
+    let source_output_names = insert
+        .source
+        .as_ref()
+        .map(|query| source_output_names(query, catalog, current_db))
+        .unwrap_or_default();
     let select_on_duplicate = if insert.source.is_some() {
         Some(prepare_on_duplicate_assignments(
             &insert.on_duplicate,
@@ -733,6 +738,7 @@ fn run_insert_with_physical(
         )?,
         assignments: on_duplicate_assignments,
         selected_partitions: insert_partition_ids.clone(),
+        source_output_names,
     };
 
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
@@ -1185,6 +1191,7 @@ fn run_insert_with_physical(
                     &prepared_on_duplicate,
                     &column_list,
                     position,
+                    &table_name,
                     ctx,
                 );
                 match result {
@@ -1613,6 +1620,11 @@ struct PreparedOnDuplicate {
     assignments: Vec<PreparedOnDuplicateAssignment>,
     on_update_now: PreparedOnUpdateNow,
     selected_partitions: Option<Vec<i64>>,
+    /// The source query's output names, in output order — the names an ODKU
+    /// assignment may use to read the row the insert would have written.
+    /// Empty when there is no source (plain VALUES) or it could not be
+    /// resolved.
+    source_output_names: Vec<String>,
 }
 
 /// Resolves ON DUPLICATE assignments once, whether or not an inserted row
@@ -1715,6 +1727,7 @@ fn apply_on_duplicate(
     prepared: &PreparedOnDuplicate,
     column_list: &[(String, FieldType)],
     row_index: usize,
+    target_table_name: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     let Some(existing) = table
@@ -1740,7 +1753,13 @@ fn apply_on_duplicate(
                 // `VALUES(col)` is the value the insert would have written,
                 // resolved only after this candidate exists. DEFAULT leaves
                 // remain bound to the statement constants prepared earlier.
-                let bound = substitute_values_references(value, candidate, column_list)?;
+                let bound = substitute_values_references(
+                    value,
+                    candidate,
+                    column_list,
+                    &prepared.source_output_names,
+                    target_table_name,
+                )?;
                 rewrite_with_prepared_defaults(&bound, &resolver, defaults)?
             }
         };
@@ -1792,16 +1811,128 @@ fn apply_on_duplicate(
 /// and subquery, where it then resolved as an unknown function. Riding the
 /// package-wide [`tidb_ast::Visitable`] walk -- the same traversal Go's
 /// `Node.Accept` gives its rewriter -- removes the variant list entirely.
-pub(crate) fn substitute_values_references(
+/// The output column names a source query exposes, in output order — the
+/// names an ODKU assignment may use to read the row the insert would have
+/// written. Wildcards expand from the catalog (a sole FROM table); anything
+/// unresolvable stays absent, which only degrades resolution for those
+/// names.
+pub(crate) fn source_output_names(
+    source: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Vec<String> {
+    match source {
+        tidb_ast::QueryStmt::Select(select) => select_output_names(select, catalog, current_db),
+        tidb_ast::QueryStmt::SetOpr(set_opr) => set_opr
+            .terms
+            .first()
+            .map(|term| match &term.body {
+                tidb_ast::SetOprTermBody::Select(select) => {
+                    select_output_names(select, catalog, current_db)
+                }
+                tidb_ast::SetOprTermBody::Nested(nested) => {
+                    // A nested set-op term recursively bottoms out in the
+                    // first SELECT; recurse through the same match shape.
+                    select_output_names_nested(nested, catalog, current_db)
+                }
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn select_output_names(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Vec<String> {
+    let wildcard_names = |scope: &[String]| -> Vec<String> {
+        // `t.*` names the table aliased/renamed `t`; `*` needs a sole table.
+        let matches_scope = |table_ref: &tidb_ast::TableRef| -> bool {
+            scope.is_empty()
+                || scope.last().is_some_and(|prefix| {
+                    table_ref
+                        .alias
+                        .as_deref()
+                        .is_some_and(|alias| alias.eq_ignore_ascii_case(prefix))
+                        || table_ref
+                            .name
+                            .last()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(prefix))
+                })
+        };
+        let Some(table_ref) = super::access::sole_table_ref(&select.from) else {
+            return Vec::new();
+        };
+        if !matches_scope(table_ref) {
+            return Vec::new();
+        }
+        let Ok((database, name)) = super::from::single_table_name(table_ref, current_db) else {
+            return Vec::new();
+        };
+        catalog
+            .get_in(&database, &name)
+            .map(|entry| {
+                entry
+                    .column_list()
+                    .iter()
+                    .map(|(column, _)| column.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut names = Vec::new();
+    for field in select.fields.fields() {
+        match field {
+            tidb_ast::SelectField::Wildcard(scope) => names.extend(wildcard_names(scope)),
+            tidb_ast::SelectField::Expr { expr, alias } => {
+                if let Some(alias) = alias {
+                    names.push(alias.clone());
+                } else if let tidb_ast::Expr::Column(path) = expr {
+                    if let Some(last) = path.last() {
+                        names.push(last.clone());
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
+/// A set-op's parenthesized nested body: its first SELECT's output names
+/// (UNION output names come from the first term).
+fn select_output_names_nested(
+    nested: &tidb_ast::SetOprStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Vec<String> {
+    nested
+        .terms
+        .first()
+        .map(|term| match &term.body {
+            tidb_ast::SetOprTermBody::Select(select) => {
+                select_output_names(select, catalog, current_db)
+            }
+            tidb_ast::SetOprTermBody::Nested(inner) => {
+                select_output_names_nested(inner, catalog, current_db)
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn substitute_values_references(
     expr: &tidb_ast::Expr,
     candidate: &[Datum],
     column_list: &[(String, FieldType)],
+    source_output_names: &[String],
+    target_table_name: &str,
 ) -> Result<tidb_ast::Expr, DriverError> {
     use tidb_ast::Visitable;
 
     struct Substitute<'a> {
         candidate: &'a [Datum],
         column_list: &'a [(String, FieldType)],
+        source_output_names: &'a [String],
+        target_table_name: &'a str,
         error: Option<DriverError>,
     }
 
@@ -1833,19 +1964,52 @@ pub(crate) fn substitute_values_references(
             let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
                 return false;
             };
-            let tidb_ast::Expr::Func { name, args, .. } = expr else {
-                return false;
-            };
-            if !name.eq_ignore_ascii_case("values") {
-                return false;
+            match expr {
+                tidb_ast::Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("values") => {
+                    match self.value_of(args) {
+                        Ok(literal) => *expr = literal,
+                        Err(error) => self.error = Some(error),
+                    }
+                    // The arguments of a substituted `VALUES()` are gone with it, and
+                    // its replacement is a literal: nothing below is left to visit.
+                    true
+                }
+                // A source-table column reference (`src.v` in `INSERT ... SELECT
+                // ... FROM src ... ON DUPLICATE KEY UPDATE t.v = src.v`) reads the
+                // row the insert would have written, exactly like `VALUES(src.v)`.
+                // Go resolves an ODKU assignment column against the target tables
+                // first and falls back to the source's output; an unqualified name
+                // that lives on BOTH sides reads the TARGET (the stored row).
+                tidb_ast::Expr::Column(path) => {
+                    let Some(last) = path.last() else {
+                        return false;
+                    };
+                    let Some(source_offset) = self
+                        .source_output_names
+                        .iter()
+                        .position(|name| name.eq_ignore_ascii_case(last))
+                    else {
+                        return false;
+                    };
+                    let reads_target = if path.len() > 1 {
+                        path.first()
+                            .is_some_and(|first| first.eq_ignore_ascii_case(self.target_table_name))
+                    } else {
+                        self.column_list
+                            .iter()
+                            .any(|(name, _)| name.eq_ignore_ascii_case(last))
+                    };
+                    if reads_target {
+                        return false;
+                    }
+                    match datum_to_literal(&self.candidate[source_offset]) {
+                        Ok(literal) => *expr = literal,
+                        Err(error) => self.error = Some(error),
+                    }
+                    true
+                }
+                _ => false,
             }
-            match self.value_of(args) {
-                Ok(literal) => *expr = literal,
-                Err(error) => self.error = Some(error),
-            }
-            // The arguments of a substituted `VALUES()` are gone with it, and
-            // its replacement is a literal: nothing below is left to visit.
-            true
         }
 
         fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
@@ -1859,6 +2023,8 @@ pub(crate) fn substitute_values_references(
     let mut visitor = Substitute {
         candidate,
         column_list,
+        source_output_names,
+        target_table_name,
         error: None,
     };
     rewritten.accept(&mut visitor);

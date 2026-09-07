@@ -10021,3 +10021,12 @@ risks without claiming repository-wide parity.
   range (25 routes into the new p2); TRUNCATE PARTITION clears p1's rows
   while keeping its definition (a re-insert routes back). Pinned in
   `crates/tidb-session/tests/add_truncate_partition_source.rs`.
+- 2026-09-06 (ODKU source-column resolution wired, REAL DIVERGENCE):
+  `insert ... select ... on duplicate key update t.v = src.v` failed with
+  UnknownColumn("src.v") — ODKU assignment columns only resolved against the
+  target. Go resolves target-first, then falls back to the source's output
+  row (the VALUES(col) semantics generalized). Fix: prepare the source's
+  output names once per statement and substitute source-ref columns (and
+  VALUES()) with the candidate row's literals at apply time; qualified
+  target refs and unqualified target names still read the stored row.
+  Session-level pin in `crates/tidb-session/tests/insert_select_odku_source.rs`.
