@@ -10799,3 +10799,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (reserved-word quoting pin): SHOW CREATE backtick-quotes
   reserved-word column names. Pinned in
   `crates/tidb-session/tests/reserved_word_show_create_source.rs`.
+- 2026-09-06 (DEFAULT keyword pin): the DEFAULT keyword inside INSERT
+  VALUES takes the column's default. Pinned in
+  `crates/tidb-session/tests/default_keyword_values_source.rs`.
