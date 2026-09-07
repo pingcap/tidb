@@ -9880,3 +9880,11 @@ risks without claiming repository-wide parity.
   handle_partition_write_error downgrade; pinned in
   `tests/update_ignore_check_constraint_source.rs`. NOTE: Go has no
   session-level ignore flag; IGNORE is per-statement syntax.
+- 2026-09-06 (REPLACE x CHECK port, REAL DIVERGENCE): a REPLACE whose new row
+  violated an attached CHECK rejected with 3819 but DELETED the conflicting
+  row first, losing it -- Go deletes and re-adds inside one transaction, so
+  the addRecord failure rolls the statement back and the old row survives.
+  The port validates the candidate row before any deletion (same observable
+  end). Pin `tests/replace_check_constraint_source.rs` fails on the old code
+  (empty table) and passes with the fix. Multi-row UPDATE IGNORE skipping
+  verified faithful in the same probe.

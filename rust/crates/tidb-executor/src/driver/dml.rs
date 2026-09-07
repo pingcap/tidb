@@ -1100,6 +1100,15 @@ fn run_insert_with_physical(
         };
         if !conflicts.is_empty() {
             if insert.replace {
+                // Go's REPLACE removes the conflicting rows and adds the new
+                // one inside ONE transaction, so a failure at addRecord -- a
+                // violated CHECK (3819) foremost -- rolls the statement back
+                // and the conflicting rows survive. This harness commits row
+                // state as it goes, so the add-time validation runs BEFORE
+                // any deletion to the same observable end.
+                target(catalog, &database, &table_name)
+                    .validate_check_constraints(row, ctx)
+                    .map_err(kv_write_error)?;
                 // Go `InsertValues.removeRow` (`insert_common.go`): a
                 // conflicting row IDENTICAL to the one being written is left
                 // in place -- not deleted and not rewritten -- and counts
