@@ -10916,3 +10916,6 @@ risks without claiming repository-wide parity.
   VIRTUAL generated column's recomputed values exactly as a stored column
   would. Pinned in
   `crates/tidb-session/tests/order_by_virtual_generated_source.rs`.
+- 2026-09-06 (GROUP BY virtual generated pin): GROUP BY and DISTINCT run on
+  a VIRTUAL generated column's recomputed values. Pinned in
+  `crates/tidb-session/tests/group_by_virtual_generated_source.rs`.
