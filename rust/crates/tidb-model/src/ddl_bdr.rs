@@ -38,7 +38,6 @@ use crate::{ActionType, JobArgsValue};
 /// with a default, or is `NOT NULL` with a default. `COMMENT` and the
 /// generated-column option are discounted from the option count before the
 /// shape is judged, so either may accompany any allowed form.
-#[must_use]
 pub fn is_add_column_denied(role: Option<BdrRole>, options: &[ColumnOption]) -> bool {
     if role != Some(BdrRole::Primary) {
         return false;
@@ -74,7 +73,6 @@ pub fn is_add_column_denied(role: Option<BdrRole>, options: &[ColumnOption]) -> 
 /// Only the primary role restricts anything, and any change to the field type
 /// is denied outright. With the type unchanged, the column may change its
 /// default value, optionally alongside its comment, and nothing else.
-#[must_use]
 pub fn is_modify_column_denied(
     role: Option<BdrRole>,
     new_field_type: &FieldType,
@@ -115,7 +113,6 @@ pub fn is_modify_column_denied(
 /// from the classification map. The primary role additionally allows only
 /// safe and unmanaged DDL, and refuses to add a unique index; the secondary
 /// role allows only unmanaged DDL.
-#[must_use]
 pub fn is_denied(role: Option<BdrRole>, action: ActionType, args: Option<&JobArgsValue>) -> bool {
     let ddl_type = ACTION_BDR_MAP.read().get(&action).cloned();
 
@@ -183,6 +180,15 @@ mod tests {
             assert!(!is_add_column_denied(role, &denied_shape));
         }
         assert!(is_add_column_denied(Some(BdrRole::Primary), &denied_shape));
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn bdr_policy_returns_may_be_ignored_like_go() {
+        is_add_column_denied(None, &[]);
+        let long = FieldType::parser(FieldTypeCode::Long);
+        is_modify_column_denied(None, &long, &long, &[]);
+        is_denied(None, ActionType::ACTION_NONE, None);
     }
 
     // Go `TestIsAddColumnDenied`'s allowed shapes.

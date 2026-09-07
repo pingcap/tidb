@@ -41,3 +41,34 @@ cargo test --locked -q -p tidb-model --lib bdr::tests
 
 The policy suite passes 10 tests and the complete shared classification suite
 passes 13 tests.
+
+## Rust-only return-contract alignment (2026-09-07)
+
+The complete three-artifact `pkg/ddl/bdr` inventory above was re-read before
+this correction, including `bdr.go`, `bdr_test.go`, and `BUILD.bazel`. There is
+no fixture, generated input/output, benchmark, platform variant, or extra
+test harness. The Rust policy owner and its shared BDR classification caller
+were also re-enumerated before editing.
+
+Go permits callers to discard the results of `IsAddColumnDenied`,
+`IsModifyColumnDenied`, and `IsDenied`. Rust had marked the three direct policy
+counterparts with explicit `#[must_use]` diagnostics; those annotations are
+removed without changing role, option-shape, action-class, or typed-argument
+policy. The shared `DDLBDRType` constructors and action-class map remain
+outside this `pkg/ddl/bdr` boundary.
+
+`ddl_bdr::tests::bdr_policy_returns_may_be_ignored_like_go` discards all three
+corrected values under `#[deny(unused_must_use)]`. Against the pre-fix owner,
+the focused compile failed with exactly three diagnostics; after the edit the
+focused test passes.
+
+Ready evidence for this bounded Rust-only follow-up:
+
+- focused post-fix regression — 1 passed;
+- `ddl_bdr` policy tests — 11 passed;
+- shared `bdr` classification/policy tests — 14 passed;
+- pinned nightly rustfmt, `git diff --check`, and repository `make lint` —
+  passed (lint exit 0).
+
+No Go, Bazel, Cargo metadata, generated/platform artifact, or fixture changed,
+so `make bazel_prepare` is not required.

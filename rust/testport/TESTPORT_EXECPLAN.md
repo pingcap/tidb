@@ -9338,6 +9338,14 @@ risks without claiming repository-wide parity.
   deny-on-discard regression failed with exactly 29 diagnostics before the
   edit and passes after; all 255 `tidb-model` tests and its all-target check
   pass. Evidence is recorded in `receipts/meta_model_materialized_view.md`.
+- 2026-09-07 (`pkg/ddl/bdr` policy return contracts): the complete
+  three-artifact Go inventory and shared Rust BDR policy owner were re-read.
+  Three Rust-only `#[must_use]` diagnostics were removed from the direct
+  add-column, modify-column, and general-denial policy functions; shared
+  classification constructors remain outside the package boundary. The
+  focused regression failed with exactly three diagnostics before the edit and
+  passes after; policy tests pass 11/11 and shared BDR tests pass 14/14.
+  Evidence is recorded in `receipts/ddl_bdr.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
