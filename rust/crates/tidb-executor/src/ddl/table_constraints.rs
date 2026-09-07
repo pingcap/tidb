@@ -860,6 +860,7 @@ fn fk_action(action: Option<tidb_ast::ReferentialAction>) -> FkAction {
         tidb_ast::ReferentialAction::SetNull => FkAction::SetNull,
         tidb_ast::ReferentialAction::NoAction => FkAction::NoAction,
         tidb_ast::ReferentialAction::SetDefault => FkAction::SetDefault,
+        tidb_ast::ReferentialAction::Unknown(_) => FkAction::NoOption,
     }
 }
 

@@ -437,6 +437,7 @@ impl HandleKind {
         let clustered = match storage {
             Some(tidb_ast::PrimaryKeyStorage::Clustered) => true,
             Some(tidb_ast::PrimaryKeyStorage::NonClustered) => false,
+            Some(tidb_ast::PrimaryKeyStorage::Unknown(_)) => false,
             None => match mode {
                 tidb_vardef::modes::ClusteredIndexDefMode::ON => true,
                 tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY => single_int,

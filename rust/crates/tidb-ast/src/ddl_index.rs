@@ -301,6 +301,7 @@ impl IndexOptions {
                 out.push_str(match storage {
                     PrimaryKeyStorage::Clustered => "CLUSTERED",
                     PrimaryKeyStorage::NonClustered => "NONCLUSTERED",
+                    PrimaryKeyStorage::Unknown(_) => "",
                 });
             });
         }

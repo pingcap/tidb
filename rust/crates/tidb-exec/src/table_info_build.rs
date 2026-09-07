@@ -1631,6 +1631,7 @@ fn should_build_clustered_index(
     match declared {
         Some(PrimaryKeyStorage::Clustered) => true,
         Some(PrimaryKeyStorage::NonClustered) => false,
+        Some(PrimaryKeyStorage::Unknown(_)) => false,
         None => match mode {
             ClusteredIndexDefMode::On => true,
             ClusteredIndexDefMode::IntOnly => single_int_primary_key,
