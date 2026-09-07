@@ -10928,3 +10928,7 @@ risks without claiming repository-wide parity.
   accepted for a generated column and takes the generated value —
   contrasting with the explicit-value refusal (3108). Pinned in
   `crates/tidb-session/tests/default_keyword_generated_source.rs`.
+- 2026-09-06 (REPLACE partitioned pin): REPLACE on a HASH-partitioned
+  table places the replacement row by the partition function and the
+  partition-qualified read agrees. Pinned in
+  `crates/tidb-session/tests/replace_partitioned_source.rs`.
