@@ -363,11 +363,11 @@ replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
-	github.com/pingcap/kvproto => github.com/AilinKid/kvproto v0.0.0-20260907024454-fa40b23b2dfd
+	github.com/pingcap/kvproto => github.com/AilinKid/kvproto v0.0.0-20260907072229-f4a0f7af3e51
 	github.com/pingcap/tipb => github.com/AilinKid/tipb v0.0.0-20260903085709-4768c71070e4
 	github.com/pingcap/tidb/pkg/indexer => ./pkg/tici
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-	github.com/tikv/client-go/v2 => github.com/AilinKid/client-go/v2 v2.0.0-20260907025817-7f85179af40f
+	github.com/tikv/client-go/v2 => github.com/AilinKid/client-go/v2 v2.0.0-20260907072612-e544f6d4ec57
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
