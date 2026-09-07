@@ -676,3 +676,24 @@ remaining gap is the time, duration, and json ANSWER casts
 (`CastXAsTime`/`CastXAsDuration`/`CastXAsJson`) plus the int/real
 answers of json sources -- they need the temporal and json channels to
 admit cast sources, which lands with the projection-executor course.
+
+## The temporal-answer casts (10 ids)
+
+The time and duration answer casts land through their comparison
+channels. `CastIntAsTime` 5, `CastRealAsTime` 14, `CastDecimalAsTime`
+24, `CastStringAsTime` 34, and `CastTimeAsTime` 44 compose through the
+time channel: Go's numeric converters (`ParseTimeFromInt64`/
+`ParseTimeFromFloat64`/`ParseTimeFromDecimal`) keep the eight-digit
+date form a date and widen datetimes, a pure-date text stays a date
+while anything with a clock widens (the expression's target kind folds
+-- no field type rides the wire), and the temporal identity passes
+through. `CastIntAsDuration` 6, `CastRealAsDuration` 15,
+`CastDecimalAsDuration` 25, `CastStringAsDuration` 35, and
+`CastDurationAsDuration` 55 compose through the duration channel:
+integer digits read as HHMMSS through Go's `NumberToDuration`
+(101010 -> 10:10:10), text parses through `ParseDuration` with the
+truncated-wrong-value folds answering NULL, and the identity passes a
+column through. Both families answer their non-NULL truth as bare
+conditions and keep the refusal posture for the now-anchored
+`CastDurationAsTime` 54 and the JSON sources 64/65, which wait on the
+JSON channel round.

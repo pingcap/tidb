@@ -1860,6 +1860,33 @@ pub enum SimpleSig {
     CastTimeAsString,
     /// See [`SimpleSig::CastIntAsString`].
     CastDurationAsString,
+    /// The `AS TIME ...`-wire casts over numeric and text sources: Go
+    /// parses them through the same temporal converters the string-form
+    /// arithmetic uses (`ParseTimeFromInt64`/`...Float64`/`...Decimal`/
+    /// `ParseTime`), and an already-temporal source passes through.
+    /// The expression's target kind folds to the source's natural kind
+    /// -- no field type rides the wire.
+    CastIntAsTime,
+    /// See [`SimpleSig::CastIntAsTime`].
+    CastRealAsTime,
+    /// See [`SimpleSig::CastIntAsTime`].
+    CastDecimalAsTime,
+    /// See [`SimpleSig::CastIntAsTime`].
+    CastStringAsTime,
+    /// See [`SimpleSig::CastIntAsTime`].
+    CastTimeAsTime,
+    /// The `AS TIME`-wire duration casts: Go's `NumberToDuration` reads
+    /// integer digits as HHMMSS, text goes through `ParseDuration`, and
+    /// an already-duration source passes through.
+    CastIntAsDuration,
+    /// See [`SimpleSig::CastIntAsDuration`].
+    CastRealAsDuration,
+    /// See [`SimpleSig::CastIntAsDuration`].
+    CastDecimalAsDuration,
+    /// See [`SimpleSig::CastIntAsDuration`].
+    CastStringAsDuration,
+    /// See [`SimpleSig::CastIntAsDuration`].
+    CastDurationAsDuration,
     /// `CastIntAsReal`/`CastRealAsReal`/`CastDecimalAsReal`: widening to
     /// binary64 (`AS REAL`); a bare cast answers its own truth.
     CastIntAsReal,
@@ -2419,6 +2446,16 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::CastStringAsString => SimpleSig::CastStringAsString,
             tipb::ScalarFuncSig::CastTimeAsString => SimpleSig::CastTimeAsString,
             tipb::ScalarFuncSig::CastDurationAsString => SimpleSig::CastDurationAsString,
+            tipb::ScalarFuncSig::CastIntAsTime => SimpleSig::CastIntAsTime,
+            tipb::ScalarFuncSig::CastRealAsTime => SimpleSig::CastRealAsTime,
+            tipb::ScalarFuncSig::CastDecimalAsTime => SimpleSig::CastDecimalAsTime,
+            tipb::ScalarFuncSig::CastStringAsTime => SimpleSig::CastStringAsTime,
+            tipb::ScalarFuncSig::CastTimeAsTime => SimpleSig::CastTimeAsTime,
+            tipb::ScalarFuncSig::CastIntAsDuration => SimpleSig::CastIntAsDuration,
+            tipb::ScalarFuncSig::CastRealAsDuration => SimpleSig::CastRealAsDuration,
+            tipb::ScalarFuncSig::CastDecimalAsDuration => SimpleSig::CastDecimalAsDuration,
+            tipb::ScalarFuncSig::CastStringAsDuration => SimpleSig::CastStringAsDuration,
+            tipb::ScalarFuncSig::CastDurationAsDuration => SimpleSig::CastDurationAsDuration,
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             // Go reads the comparison's collation off the `ScalarFunc`'s own
             // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
@@ -2998,6 +3035,53 @@ fn eval_duration(
                 duration.checked_add(delta).ok()
             }
         }
+        // The duration-answer casts: Go's `NumberToDuration` reads
+        // integer digits as HHMMSS and text goes through `ParseDuration`
+        // (the truncated-wrong-value folds answer NULL); the identity
+        // passes through. `CastJsonAsDuration` stays refused.
+        SimpleExpr::Func(
+            sig @ (SimpleSig::CastIntAsDuration
+            | SimpleSig::CastRealAsDuration
+            | SimpleSig::CastDecimalAsDuration
+            | SimpleSig::CastStringAsDuration
+            | SimpleSig::CastDurationAsDuration),
+            children,
+        ) => {
+            let to_duration = |parsed: tidb_datatype::ParsedDuration| {
+                tidb_datatype::MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp())
+                    .ok()
+            };
+            match sig {
+                SimpleSig::CastIntAsDuration => children
+                    .first()
+                    .and_then(|c| eval_expr(c, row, div_precision_increment).ok())
+                    .flatten()
+                    .and_then(|value| i64::try_from(value).ok())
+                    .and_then(|value| {
+                        tidb_datatype::number_to_duration(value, 6)
+                            .ok()
+                            .map(|converted| converted.value)
+                    }),
+                SimpleSig::CastRealAsDuration => {
+                    // Go formats shortest-'f', then `ParseDuration`.
+                    let value = eval_real(children.first(), row, div_precision_increment)?;
+                    to_duration(
+                        tidb_datatype::parse_duration(format!("{value}").as_bytes(), 6).ok()?,
+                    )
+                }
+                SimpleSig::CastDecimalAsDuration => {
+                    let value = eval_decimal(children.first(), row, div_precision_increment)?;
+                    to_duration(
+                        tidb_datatype::parse_duration(value.to_string().as_bytes(), 6).ok()?,
+                    )
+                }
+                SimpleSig::CastStringAsDuration => {
+                    let raw = eval_bytes(children.first(), row, div_precision_increment)?;
+                    to_duration(tidb_datatype::parse_duration(&raw, 6).ok()?)
+                }
+                _ => eval_duration(children.first(), row, div_precision_increment),
+            }
+        }
         _ => None,
     }
 }
@@ -3053,6 +3137,52 @@ fn eval_time(
             },
             _,
         ) => None,
+        // The temporal-answer casts compose for the comparison channels:
+        // Go parses numeric and text sources with the converters the
+        // string-form arithmetic uses. A pure-date text stays a date;
+        // anything else widens to datetime. `CastDurationAsTime` (a
+        // now-anchored convert) and the JSON sources stay refused.
+        SimpleExpr::Func(
+            sig @ (SimpleSig::CastIntAsTime
+            | SimpleSig::CastRealAsTime
+            | SimpleSig::CastDecimalAsTime
+            | SimpleSig::CastStringAsTime
+            | SimpleSig::CastTimeAsTime),
+            children,
+        ) => {
+            let zone = utc_anchor();
+            match sig {
+                SimpleSig::CastIntAsTime => children
+                    .first()
+                    .and_then(|c| eval_expr(c, row, div_precision_increment).ok())
+                    .flatten()
+                    .and_then(|value| i64::try_from(value).ok())
+                    .and_then(|value| {
+                        tidb_datatype::parse_time_from_int64(value, false, false, &zone).ok()
+                    }),
+                SimpleSig::CastRealAsTime => {
+                    let value = eval_real(children.first(), row, div_precision_increment)?;
+                    tidb_datatype::parse_time_from_float64(value, false, false, &zone).ok()
+                }
+                SimpleSig::CastDecimalAsTime => {
+                    let value = eval_decimal(children.first(), row, div_precision_increment)?;
+                    tidb_datatype::parse_time_from_decimal(&value, false, false, &zone).ok()
+                }
+                SimpleSig::CastStringAsTime => {
+                    let raw = eval_bytes(children.first(), row, div_precision_increment)?;
+                    let text = String::from_utf8_lossy(&raw).into_owned();
+                    let kind = if tidb_datatype::is_date_format(&text) {
+                        tidb_datatype::TimeType::Date
+                    } else {
+                        tidb_datatype::TimeType::DateTime
+                    };
+                    tidb_datatype::parse_time(&text, kind, 6, false, false, false, &zone)
+                        .ok()
+                        .map(|parsed| parsed.time)
+                }
+                _ => eval_time(children.first(), row, div_precision_increment),
+            }
+        }
         _ => None,
     }
 }
@@ -4242,6 +4372,30 @@ pub fn eval_expr(
                     } else {
                         Some(0)
                     }
+                }
+                SimpleSig::CastIntAsTime
+                | SimpleSig::CastRealAsTime
+                | SimpleSig::CastDecimalAsTime
+                | SimpleSig::CastStringAsTime
+                | SimpleSig::CastTimeAsTime
+                | SimpleSig::CastIntAsDuration
+                | SimpleSig::CastRealAsDuration
+                | SimpleSig::CastDecimalAsDuration
+                | SimpleSig::CastStringAsDuration
+                | SimpleSig::CastDurationAsDuration => {
+                    // A bare temporal cast as a condition answers its own
+                    // non-NULL truth (Go `ToBool` over the rendering).
+                    let answered = match sig {
+                        SimpleSig::CastIntAsTime
+                        | SimpleSig::CastRealAsTime
+                        | SimpleSig::CastDecimalAsTime
+                        | SimpleSig::CastStringAsTime
+                        | SimpleSig::CastTimeAsTime => {
+                            eval_time(Some(expr), row, div_precision_increment).is_some()
+                        }
+                        _ => eval_duration(Some(expr), row, div_precision_increment).is_some(),
+                    };
+                    Some(i128::from(answered))
                 }
             });
         }
@@ -6395,5 +6549,55 @@ mod tests {
         // "-42" reads -42 -> true.
         let bare = SimpleExpr::Func(SimpleSig::CastIntAsString, vec![SimpleExpr::Int(-42)]);
         assert_eq!(eval_expr(&bare, &[], 4).expect("evals"), Some(1));
+    }
+
+    #[test]
+    fn temporal_casts_admit_numeric_and_text_sources() {
+        use tidb_datatype::{Datum, MySqlDuration, Time, TimeType};
+        let zone_anchor = utc_anchor();
+        // A pure-date number parses to a date: 20240305.
+        let as_time = SimpleExpr::Func(SimpleSig::CastIntAsTime, vec![SimpleExpr::Int(20_240_305)]);
+        let expected =
+            Time::from_date_checked(2024, 3, 5, 0, 0, 0, 0, TimeType::Date, 0).expect("constructs");
+        assert_eq!(eval_time(Some(&as_time), &[], 4), Some(expected));
+        // A datetime text widens to the datetime kind.
+        let as_text_time = SimpleExpr::Func(
+            SimpleSig::CastStringAsTime,
+            vec![SimpleExpr::Bytes(b"2024-03-05 14:30:45".to_vec())],
+        );
+        let expected = Time::from_date_checked(2024, 3, 5, 14, 30, 45, 0, TimeType::DateTime, 6)
+            .expect("constructs");
+        assert_eq!(eval_time(Some(&as_text_time), &[], 4), Some(expected));
+        // The parsed kinds order like Go's packed times: the earlier
+        // text compares less.
+        let earlier = SimpleExpr::Func(
+            SimpleSig::CastStringAsTime,
+            vec![SimpleExpr::Bytes(b"2024-03-04".to_vec())],
+        );
+        let condition = SimpleExpr::Func(SimpleSig::LtTime, vec![earlier, as_text_time]);
+        let _ = zone_anchor;
+        assert_eq!(eval_expr(&condition, &[], 4).expect("evals"), Some(1));
+        // Digits read as HHMMSS: 101010 -> 10:10:10 (Go NumberToDuration).
+        let as_duration =
+            SimpleExpr::Func(SimpleSig::CastIntAsDuration, vec![SimpleExpr::Int(101_010)]);
+        let expected = MySqlDuration::from_nanoseconds(36_610_000_000_000, 6).expect("constructs");
+        assert_eq!(eval_duration(Some(&as_duration), &[], 4), Some(expected));
+        // A clock text parses: '11:30:45'.
+        let as_text_duration = SimpleExpr::Func(
+            SimpleSig::CastStringAsDuration,
+            vec![SimpleExpr::Bytes(b"11:30:45".to_vec())],
+        );
+        let expected = MySqlDuration::from_nanoseconds(41_445_000_000_000, 6).expect("constructs");
+        assert_eq!(
+            eval_duration(Some(&as_text_duration), &[], 4),
+            Some(expected)
+        );
+        // The duration identity passes a column through.
+        let identity = SimpleExpr::Func(
+            SimpleSig::CastDurationAsDuration,
+            vec![SimpleExpr::Column(0)],
+        );
+        let row = [Datum::Duration(expected)];
+        assert_eq!(eval_duration(Some(&identity), &row, 4), Some(expected));
     }
 }
