@@ -314,10 +314,11 @@ func createAddIndexTask(t *testing.T,
 
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{
-			ID:    time.Now().UnixMicro(),
-			Type:  taskType,
-			Step:  proto.StepInit,
-			State: proto.TaskStatePending,
+			ID:          time.Now().UnixMicro(),
+			Type:        taskType,
+			Step:        proto.StepInit,
+			State:       proto.TaskStatePending,
+			Concurrency: 16,
 		},
 		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),
