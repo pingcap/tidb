@@ -10150,3 +10150,9 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (autocommit-off pin): with autocommit = 0 an INSERT opens a
   txn — visible in-session, persists on COMMIT, reverts on ROLLBACK.
   Pinned in `crates/tidb-session/tests/autocommit_off_source.rs`.
+- 2026-09-06 (temp table isolation pin): CREATE TEMPORARY TABLE is
+  session-local — invisible to other sessions, per-session data under the
+  same name, no cross-shadowing. Pinned in
+  `crates/tidb-session/tests/temp_table_isolation_source.rs`. NOTE: sessions
+  in this harness keep independent catalogs (no shared globals), so base
+  tables are per-session too.
