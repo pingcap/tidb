@@ -1105,7 +1105,7 @@ func resolveMViewColumnName(col *ast.ColumnName, baseTableName *ast.TableName, f
 
 func collectColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	collector := &columnNameCollector{cols: make([]*ast.ColumnName, 0, 8)}
-	expr.Accept(collector)
+	ast.Walk(expr, collector)
 	return collector.cols
 }
 
@@ -1113,14 +1113,14 @@ type columnNameCollector struct {
 	cols []*ast.ColumnName
 }
 
-func (c *columnNameCollector) Enter(n ast.Node) (ast.Node, bool) {
+func (c *columnNameCollector) Enter(n ast.Node) bool {
 	if x, ok := n.(*ast.ColumnNameExpr); ok {
 		c.cols = append(c.cols, x.Name)
 	}
-	return n, false
+	return false
 }
 
-func (*columnNameCollector) Leave(n ast.Node) (ast.Node, bool) { return n, true }
+func (*columnNameCollector) Leave(ast.Node) bool { return true }
 
 func isCountStarOrOne(arg ast.ExprNode) bool {
 	v, ok := arg.(*driver.ValueExpr)
@@ -1156,26 +1156,26 @@ func normalizeMVDefinitionHintDBNames(node ast.Node, defaultDB ast.CIStr) {
 	if node == nil || defaultDB.L == "" {
 		return
 	}
-	_, _ = node.Accept(&mvDefinitionHintDBNameNormalizer{defaultDB: defaultDB})
+	ast.Walk(node, &mvDefinitionHintDBNameNormalizer{defaultDB: defaultDB})
 }
 
 type mvDefinitionHintDBNameNormalizer struct {
 	defaultDB ast.CIStr
 }
 
-func (v *mvDefinitionHintDBNameNormalizer) Enter(node ast.Node) (ast.Node, bool) {
+func (v *mvDefinitionHintDBNameNormalizer) Enter(node ast.Node) bool {
 	hint, ok := node.(*ast.TableOptimizerHint)
 	if !ok {
-		return node, false
+		return false
 	}
 	for i := range hint.Tables {
 		if hint.Tables[i].DBName.L == "" {
 			hint.Tables[i].DBName = v.defaultDB
 		}
 	}
-	return hint, true
+	return true
 }
 
-func (*mvDefinitionHintDBNameNormalizer) Leave(node ast.Node) (ast.Node, bool) {
-	return node, true
+func (*mvDefinitionHintDBNameNormalizer) Leave(ast.Node) bool {
+	return true
 }

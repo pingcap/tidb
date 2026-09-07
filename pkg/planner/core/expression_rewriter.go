@@ -305,7 +305,7 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 			planCtx.plan.SetOutputNames(names)
 		}()
 	}
-	exprNode.Accept(rewriter)
+	ast.Walk(exprNode, rewriter)
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
 	}
@@ -526,16 +526,17 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ct
 	return
 }
 
-// Enter implements Visitor interface.
-func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
+// Enter implements InPlaceVisitor interface.
+func (er *expressionRewriter) Enter(inNode ast.Node) bool {
 	er.astNodeStack = append(er.astNodeStack, inNode)
-	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
+	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) bool {
 		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
 			er.err = err
-			return inNode, true
+			return true
 		}
-		return fn(planCtx)
+		_, skipChildren := fn(planCtx)
+		return skipChildren
 	}
 
 	switch v := inNode.(type) {
@@ -569,7 +570,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if planCtx := er.planCtx; planCtx != nil {
 			if index, ok := planCtx.builder.colMapper[v]; ok {
 				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
-				return inNode, true
+				return true
 			}
 		}
 	case *ast.CompareSubqueryExpr:
@@ -590,7 +591,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			// IN-list operands are scalar expression children. A nested IN-subquery on the left
 			// must therefore append its boolean result for this parent IN expression.
 			er.asScalar = true
-			return inNode, false
+			return false
 		}
 		// For 10 in ((select * from t)), the parser won't set v.Sel.
 		// So we must process this case here.
@@ -607,7 +608,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			default:
 				// Expect its left and right child to be a scalar value.
 				er.asScalar = true
-				return inNode, false
+				return false
 			}
 		}
 	case *ast.SubqueryExpr:
@@ -678,7 +679,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	default:
 		er.asScalar = true
 	}
-	return inNode, false
+	return false
 }
 
 // canTreatInSubqueryAsExistsForFilter reports whether the IN subquery is in a WHERE/HAVING boolean chain
@@ -821,7 +822,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 	defer resetCTECheckForSubQuery(ci)
 	asScalar := er.asScalar
 	er.asScalar = true
-	v.L.Accept(er)
+	ast.Walk(v.L, er)
 	if er.err != nil {
 		return v, true
 	}
@@ -1282,7 +1283,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	defer resetCTECheckForSubQuery(ci)
 	asScalar := er.asScalar
 	er.asScalar = true
-	v.Expr.Accept(er)
+	ast.Walk(v.Expr, er)
 	if er.err != nil {
 		return v, true
 	}
@@ -1663,15 +1664,15 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 	}
 }
 
-// Leave implements Visitor interface.
-func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
+// Leave implements InPlaceVisitor interface.
+func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 	defer func() {
 		if len(er.astNodeStack) > 0 {
 			er.astNodeStack = er.astNodeStack[:len(er.astNodeStack)-1]
 		}
 	}()
 	if er.err != nil {
-		return retNode, false
+		return false
 	}
 	var inNode = originInNode
 	if er.preprocess != nil {
@@ -1704,7 +1705,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		initConstantRepertoire(er.sctx.GetEvalCtx(), value)
 		er.adjustUTF8MB4Collation(retType)
 		if er.err != nil {
-			return retNode, false
+			return false
 		}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
@@ -1756,25 +1757,25 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.FuncCastExpr:
 		if v.Tp.IsArray() && !er.allowBuildCastArray {
 			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
-			return retNode, false
+			return false
 		}
 		arg := er.ctxStack[len(er.ctxStack)-1]
 		er.err = expression.CheckArgsNotMultiColumnRow(arg)
 		if er.err != nil {
-			return retNode, false
+			return false
 		}
 
 		// check the decimal precision of "CAST(AS TIME)".
 		er.err = er.checkTimePrecision(v.Tp)
 		if er.err != nil {
-			return retNode, false
+			return false
 		}
 
 		targetTp := v.Tp.DeepCopy()
 		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, targetTp, false, v.ExplicitCharSet)
 		if err != nil {
 			er.err = err
-			return retNode, false
+			return false
 		}
 		if v.Tp.EvalType() == types.ETString {
 			castFunction.SetCoercibility(expression.CoercibilityImplicit)
@@ -1796,7 +1797,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		jsonSumFunction, err := expression.BuildJSONSumCrc32FunctionWithCheck(er.sctx, arg, targetTp)
 		if err != nil {
 			er.err = err
-			return retNode, false
+			return false
 		}
 
 		jsonSumFunction.SetCoercibility(expression.CoercibilityNumeric)
@@ -1891,13 +1892,13 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.matchAgainstToExpression(v)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
-		return retNode, false
+		return false
 	}
 
 	if er.err != nil {
-		return retNode, false
+		return false
 	}
-	return originInNode, true
+	return true
 }
 
 // newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.
