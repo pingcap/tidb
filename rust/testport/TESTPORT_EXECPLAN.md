@@ -9945,3 +9945,6 @@ risks without claiming repository-wide parity.
   computed projections (`a + 10`, `concat(b, '!')`) and WHERE filtering land
   in the target with correct affected-rows accounting. Pinned in
   `tests/insert_select_source.rs`.
+- 2026-09-06 (UPDATE subquery pin): a correlated scalar subquery in SET
+  evaluates per row (max(v) per matching k). Pinned in
+  `tests/update_subquery_source.rs`.
