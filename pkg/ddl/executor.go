@@ -1440,10 +1440,10 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 		return
 	}
 	sp, ok := store.(kv.SplittableStore)
-	explicitSplit := tbInfo.PreSplitRegions > 0 || hasSplitPolicies(tbInfo)
-	// split-table controls implicit table-boundary splitting. Explicit split
-	// options should take effect regardless of that configuration.
-	if !ok || (atomic.LoadUint32(&EnableSplitTableRegion) == 0 && !explicitSplit) {
+	hasRegionSplitConfig := tbInfo.PreSplitRegions > 0 || hasSplitPolicies(tbInfo)
+	// split-table controls only implicit table-boundary splitting. PRE_SPLIT_REGIONS,
+	// tidb_pre_split_regions, and Region split policies take precedence.
+	if !ok || (atomic.LoadUint32(&EnableSplitTableRegion) == 0 && !hasRegionSplitConfig) {
 		return
 	}
 	var preSplit func()
