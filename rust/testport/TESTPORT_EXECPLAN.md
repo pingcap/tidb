@@ -9824,3 +9824,6 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (DELETE and FOUND_ROWS pins): DELETE reports removed rows (0 on
   no match); FOUND_ROWS() answers the preceding SELECT's returned row count.
   Pinned in `tests/delete_found_rows_source.rs`.
+- 2026-09-06 (DML expression pin): VALUES and SET evaluate scalar
+  expressions; an UPDATE may reference its own column with the new value
+  feeding later assignments. Pinned in `tests/dml_expression_values_source.rs`.
