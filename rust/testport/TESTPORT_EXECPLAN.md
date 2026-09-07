@@ -10806,3 +10806,7 @@ risks without claiming repository-wide parity.
   ((select max(a) from s))` hits the recorded uncorrelated-scalar-subquery
   family (rewriter boundary, sibling stream); divergence doc extended with
   the VALUES form.
+- 2026-09-06 (auto-inc rebase pin): an explicit auto-increment write rebases
+  the allocator — the next implicit insert continues from max(id) + 1.
+  Pinned in
+  `crates/tidb-session/tests/auto_inc_explicit_continuation_source.rs`.
