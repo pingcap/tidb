@@ -384,6 +384,29 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1265|Data truncated for column 'a', value is '10000'"))
 
 	tk.MustExec("drop table tt;")
+	tk.MustExec("set @@sql_mode=default")
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit=3")
+	defer tk.MustExec("set @@global.tidb_ddl_error_count_limit=default")
+
+	// issue 70285: identifiers in the generated check SQL can contain backticks.
+	tk.MustExec("create database `issue``70285`")
+	tk.MustExec("create table `issue``70285`.`range``check` (`value``col` int not null)")
+	tk.MustExec("insert into `issue``70285`.`range``check` values (1)")
+	tk.MustExec("alter table `issue``70285`.`range``check` modify column `value``col` tinyint not null")
+	rangeCol := external.GetModifyColumn(t, tk, "issue`70285", "range`check", "value`col", false)
+	require.Equal(t, mysql.TypeTiny, rangeCol.GetType())
+
+	tk.MustExec("create table `issue``70285`.`length``check` (`value``col` varchar(10))")
+	tk.MustExec("insert into `issue``70285`.`length``check` values ('value')")
+	tk.MustExec("alter table `issue``70285`.`length``check` modify column `value``col` varchar(5)")
+	lengthCol := external.GetModifyColumn(t, tk, "issue`70285", "length`check", "value`col", false)
+	require.Equal(t, 5, lengthCol.GetFlen())
+
+	tk.MustExec("create table `issue``70285`.`null``check` (`value``col` int)")
+	tk.MustExec("insert into `issue``70285`.`null``check` values (1)")
+	tk.MustExec("alter table `issue``70285`.`null``check` modify column `value``col` int not null")
+	nullCol := external.GetModifyColumn(t, tk, "issue`70285", "null`check", "value`col", false)
+	require.True(t, mysql.HasNotNullFlag(nullCol.GetFlag()))
 }
 
 func TestModifyColumnCharset(t *testing.T) {
