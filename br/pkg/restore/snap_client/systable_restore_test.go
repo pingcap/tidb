@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/testkit"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,12 +59,11 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	// user table in cluster have more columns(failed)
 	mockedUserTI := userTI.Clone()
 	userTI.Columns = append(userTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
-	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedUserTI,
 	}}, false)
-	require.NoError(t, err)
-	require.False(t, canLoadSysTablePhysical)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 	userTI.Columns = userTI.Columns[:len(userTI.Columns)-1]
 
 	// user table in cluster have less columns(failed)
@@ -102,17 +103,86 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, canLoadSysTablePhysical)
 
+	// mysql.user backup from older TiDB may miss Operate_view_priv. It cannot be
+	// loaded physically, but logical restore can fill the target default value and
+	// execute a fixed compatibility SQL after copying rows into mysql.user.
+	mockedUserTI = cloneTableInfoWithoutColumn(userTI, "Operate_view_priv")
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}}, false)
+	require.NoError(t, err)
+	require.False(t, canLoadSysTablePhysical)
+
 	// use the mysql.db table to test for column count mismatch.
 	dbTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("db"))
 	require.NoError(t, err)
 
+	// mysql.db backup from older TiDB may miss Operate_view_priv. It cannot be
+	// loaded physically, but logical restore can fill the missing column by the
+	// configured compatibility SQL.
+	mockedDBTI := cloneTableInfoWithoutColumn(dbTI, "Operate_view_priv")
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedDBTI,
+	}}, false)
+	require.NoError(t, err)
+	require.False(t, canLoadSysTablePhysical)
+
+	tablesPrivTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("tables_priv"))
+	require.NoError(t, err)
+	mockedTablesPrivTI := tablesPrivTI.Clone()
+	tablePrivCol := model.FindColumnInfo(mockedTablesPrivTI.Columns, "Table_priv")
+	require.NotNil(t, tablePrivCol)
+	tablePrivElems := make([]string, 0, len(tablePrivCol.GetElems()))
+	for _, elem := range tablePrivCol.GetElems() {
+		if elem != mysql.OperateViewPriv.SetString() {
+			tablePrivElems = append(tablePrivElems, elem)
+		}
+	}
+	tablePrivCol.SetElems(tablePrivElems)
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedTablesPrivTI,
+	}}, false)
+	require.NoError(t, err)
+	require.True(t, canLoadSysTablePhysical)
+
+	mockedTablesPrivTI = tablesPrivTI.Clone()
+	tablePrivCol = model.FindColumnInfo(mockedTablesPrivTI.Columns, "Table_priv")
+	require.NotNil(t, tablePrivCol)
+	tablePrivElems = append(tablePrivCol.GetElems(), "Future Priv")
+	tablePrivCol.SetElems(tablePrivElems)
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedTablesPrivTI,
+	}}, false)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
 	// other system tables in cluster have more columns(failed)
-	mockedDBTI := dbTI.Clone()
-	//dbTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
+	mockedDBTI = dbTI.Clone()
 	mockedDBTI.Columns = append(dbTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
 	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedDBTI,
+	}}, false)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	// bind_info is also a recoverable system table and should be checked.
+	bindInfoTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("bind_info"))
+	require.NoError(t, err)
+	mockedBindInfoTI := cloneTableInfoWithoutColumn(bindInfoTI, "source")
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedBindInfoTI,
+	}}, false)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
+	mockedBindInfoTI = bindInfoTI.Clone()
+	mockedBindInfoTI.Columns = append(bindInfoTI.Columns, &model.ColumnInfo{Name: ast.NewCIStr("new-name")})
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedBindInfoTI,
 	}}, false)
 	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 
@@ -137,12 +207,12 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	// skip check collate but type mismatch
 	mockedDBTI = dbTI.Clone()
 	mockedDBTI.Columns[1].SetCollate("utf8mb4_bin")
-	mockedUserTI.Columns[1].FieldType.SetFlen(2000) // Columns[1] is `DB` char(64)
+	mockedDBTI.Columns[1].FieldType.SetFlen(2000) // Columns[1] is `DB` char(64)
 	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
 		DB:   tmpSysDB,
 		Info: mockedDBTI,
 	}}, true)
-	require.NoError(t, err)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 
 	// another column collate mismatch
 	mockedDBTI = dbTI.Clone()
@@ -161,6 +231,57 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 		Info: mockedDBTI,
 	}}, true)
 	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+}
+
+func TestBuildSystemTableReplaceColumns(t *testing.T) {
+	cluster := mc
+	sysDB := ast.NewCIStr(mysql.SystemDB)
+	userTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("user"))
+	require.NoError(t, err)
+
+	oldUserTI := cloneTableInfoWithoutColumn(userTI, "Operate_view_priv")
+	columnNames, updateSQLs, err := snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "user", oldUserTI, userTI)
+	require.NoError(t, err)
+	require.NotContains(t, columnNames, "`operate_view_priv`")
+	require.Len(t, updateSQLs, 1)
+	require.Contains(t, updateSQLs[0], "UPDATE `mysql`.`user` AS dst JOIN `__tidb_br_temporary_mysql`.`user` AS src")
+	require.Contains(t, updateSQLs[0], "dst.`Super_priv` = 'Y'")
+	require.NotContains(t, updateSQLs[0], "src.`Super_priv`")
+
+	dbTI, err := restore.GetTableSchema(cluster.Domain, sysDB, ast.NewCIStr("db"))
+	require.NoError(t, err)
+	oldDBTI := cloneTableInfoWithoutColumn(dbTI, "Operate_view_priv")
+	columnNames, updateSQLs, err = snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "db", oldDBTI, dbTI)
+	require.NoError(t, err)
+	require.NotContains(t, columnNames, "`operate_view_priv`")
+	require.Len(t, updateSQLs, 1)
+	require.Contains(t, updateSQLs[0], "UPDATE `mysql`.`db` AS dst JOIN `__tidb_br_temporary_mysql`.`db` AS src")
+	require.Contains(t, updateSQLs[0], "dst.`DB` = src.`DB`")
+	require.Contains(t, updateSQLs[0], "dst.`Operate_view_priv` = 'N'")
+
+	columnNames, updateSQLs, err = snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "user", userTI, userTI)
+	require.NoError(t, err)
+	require.Contains(t, columnNames, "`operate_view_priv`")
+	require.Empty(t, updateSQLs)
+
+	downstreamWithFutureColumn := userTI.Clone()
+	downstreamWithFutureColumn.Columns = append(downstreamWithFutureColumn.Columns, &model.ColumnInfo{Name: ast.NewCIStr("future_priv")})
+	_, _, err = snapclient.BuildSystemTableReplaceColumns(mysql.SystemDB, "user", oldUserTI, downstreamWithFutureColumn)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+}
+
+func cloneTableInfoWithoutColumn(ti *model.TableInfo, colName string) *model.TableInfo {
+	clone := ti.Clone()
+	colName = ast.NewCIStr(colName).L
+	columns := make([]*model.ColumnInfo, 0, len(clone.Columns))
+	for _, col := range clone.Columns {
+		if col.Name.L == colName {
+			continue
+		}
+		columns = append(columns, col)
+	}
+	clone.Columns = columns
+	return clone
 }
 
 type mustExecuteSession struct {
@@ -380,6 +501,82 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 		require.NoError(t, err)
 	}
 	mse.MustExecute("DROP TABLE __TiDB_BR_Temporary_mysql.columns_priv")
+}
+
+func TestRestoreSystemSchemasUpgradeOperateViewPrivilege(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	err := client.InitConnections(g, cluster.Storage)
+	require.NoError(t, err)
+	defer client.Close()
+	client.SetWithSysTable(true)
+
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	const (
+		userName     = "br_restore_operate_view"
+		dbName       = "br_restore_operate_view_db"
+		tableName    = "br_restore_operate_view_table"
+		keepUserName = "br_restore_operate_keep"
+		keepDBName   = "br_restore_operate_keep_db"
+	)
+	cleanup := func() {
+		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.tables_priv WHERE User='%s' AND Host='%%' AND DB='%s' AND Table_name='%s'", userName, dbName, tableName))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", userName, dbName))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.user WHERE User='%s' AND Host='%%'", userName))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", keepUserName, keepDBName))
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.user WHERE User='%s' AND Host='%%'", keepUserName))
+	}
+	cleanup()
+	defer cleanup()
+
+	tk.MustExec(fmt.Sprintf("INSERT INTO mysql.user (Host, User, authentication_string, plugin, Super_priv, Operate_view_priv) VALUES ('%%', '%s', '', 'mysql_native_password', 'Y', 'N')", keepUserName))
+	tk.MustExec(fmt.Sprintf("INSERT INTO mysql.db (Host, DB, User, Operate_view_priv) VALUES ('%%', '%s', '%s', 'Y')", keepDBName, keepUserName))
+
+	tk.MustExec("CREATE DATABASE __TiDB_BR_Temporary_mysql")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.user LIKE mysql.user")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.user DROP COLUMN Operate_view_priv")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.db LIKE mysql.db")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.db DROP COLUMN Operate_view_priv")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.tables_priv LIKE mysql.tables_priv")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References') DEFAULT NULL")
+
+	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.user (Host, User, authentication_string, plugin, Super_priv) VALUES ('%%', '%s', '', 'mysql_native_password', 'Y')", userName))
+	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.db (Host, DB, User, Show_view_priv) VALUES ('%%', '%s', '%s', 'Y')", dbName, userName))
+	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.tables_priv (Host, DB, User, Table_name, Table_priv) VALUES ('%%', '%s', '%s', '%s', 'Select,Show View')", dbName, userName, tableName))
+
+	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoError(t, err)
+	tmpSysDB, ok := info.SchemaByName(utils.TemporaryDBName(mysql.SystemDB))
+	require.True(t, ok)
+	backupTables := make([]*metautil.Table, 0, 3)
+	for _, name := range []string{"user", "db", "tables_priv"} {
+		ti, err := restore.GetTableSchema(cluster.Domain, tmpSysDB.Name, ast.NewCIStr(name))
+		require.NoError(t, err)
+		backupTables = append(backupTables, &metautil.Table{DB: tmpSysDB, Info: ti})
+	}
+	client.SetDatabases(map[string]*metautil.Database{
+		tmpSysDB.Name.O: {
+			Info:   tmpSysDB,
+			Tables: backupTables,
+		},
+	})
+
+	err = client.RestoreSystemSchemas(ctx, filter.CaseInsensitive(filter.NewSchemasFilter(mysql.SystemDB)), false)
+	require.NoError(t, err)
+
+	tk.MustQuery(fmt.Sprintf("SELECT Operate_view_priv FROM mysql.user WHERE User='%s' AND Host='%%'", userName)).
+		Check(testkit.Rows("Y"))
+	tk.MustQuery(fmt.Sprintf("SELECT Operate_view_priv FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", userName, dbName)).
+		Check(testkit.Rows("N"))
+	tk.MustQuery(fmt.Sprintf("SELECT Table_priv FROM mysql.tables_priv WHERE User='%s' AND Host='%%' AND DB='%s' AND Table_name='%s'", userName, dbName, tableName)).
+		Check(testkit.Rows("Select,Show View"))
+	tk.MustQuery(fmt.Sprintf("SELECT Operate_view_priv FROM mysql.user WHERE User='%s' AND Host='%%'", keepUserName)).
+		Check(testkit.Rows("N"))
+	tk.MustQuery(fmt.Sprintf("SELECT Operate_view_priv FROM mysql.db WHERE User='%s' AND Host='%%' AND DB='%s'", keepUserName, keepDBName)).
+		Check(testkit.Rows("Y"))
 }
 
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
