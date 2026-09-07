@@ -11106,3 +11106,7 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (GREATEST/LEAST/RAND pin): NULL propagation in GREATEST/LEAST
   and seeded-RAND determinism within [0, 1). Pinned in
   `crates/tidb-session/tests/greatest_least_rand_source.rs`.
+- 2026-09-06 (CAST wrap/BINARY pin): signed<->unsigned boundary wraps,
+  DECIMAL(3,1) rounds 1.999 -> 2.0, and BINARY forces byte-exact
+  comparison. Pinned in
+  `crates/tidb-session/tests/cast_wraps_binary_source.rs`.
