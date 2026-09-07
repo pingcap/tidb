@@ -11173,3 +11173,6 @@ risks without claiming repository-wide parity.
   global substitution, REGEXP_SUBSTR first match, REGEXP_INSTR's 1-based
   position, and case-insensitive REGEXP_LIKE. Pinned in
   `crates/tidb-session/tests/regexp_family_source.rs`.
+- 2026-09-06 (theta join pin): a self-join with an inequality ON emits
+  exactly the strictly-increasing pairs. Pinned in
+  `crates/tidb-session/tests/theta_self_join_source.rs`.
