@@ -11169,3 +11169,7 @@ risks without claiming repository-wide parity.
   assigned value, persists the variable across statements, and supports
   chained reads of earlier assignments. Pinned in
   `crates/tidb-session/tests/assign_operator_source.rs`.
+- 2026-09-06 (REGEXP family pin): REGEXP/RLIKE matching, REGEXP_REPLACE
+  global substitution, REGEXP_SUBSTR first match, REGEXP_INSTR's 1-based
+  position, and case-insensitive REGEXP_LIKE. Pinned in
+  `crates/tidb-session/tests/regexp_family_source.rs`.
