@@ -9791,3 +9791,6 @@ risks without claiming repository-wide parity.
   duplicate primary key SKIPS the row (0 rows written, original intact);
   `update ignore` truncates an over-long value with a warning. Both verified
   faithful and pinned in `tests/insert_ignore_semantics_source.rs`.
+- 2026-09-06 (REPLACE semantics pin): `replace into` on a duplicate key
+  deletes + inserts (2 affected rows, Go's accounting) and the surviving row
+  carries the new values. Pinned in `tests/replace_semantics_source.rs`.
