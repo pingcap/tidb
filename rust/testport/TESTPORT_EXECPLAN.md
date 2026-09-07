@@ -11146,3 +11146,8 @@ risks without claiming repository-wide parity.
 - 2026-09-06 (JSON family pin): JSON_OBJECT/JSON_ARRAY canonical rendering,
   JSON_TYPE, nested-path JSON_EXTRACT, and JSON_VALID. Pinned in
   `crates/tidb-session/tests/json_construct_extract_source.rs`.
+- 2026-09-06 (set-membership pin): FIELD's 1-based index with a 0 miss,
+  ELT's nth element, and FIND_IN_SET's list position. Pinned in
+  `crates/tidb-session/tests/set_membership_source.rs`.
+  Observed: JSON_OBJECTAGG works (BinaryJSON datum; rendered bytes not
+  asserted — the projection goes through the JSON envelope).
