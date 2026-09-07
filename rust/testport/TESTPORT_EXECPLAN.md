@@ -9907,3 +9907,8 @@ risks without claiming repository-wide parity.
   the rewrites themselves). Pin
   `tests/update_statement_atomicity_source.rs` fails on the old code and
   passes with the fix; the CHECK-family pins stay green.
+- 2026-09-06 (FK lifecycle + DELETE atomicity pins): TRUNCATE/DROP of a
+  referenced parent rejected with Go's exact ErrTruncateIllegalForeignKey /
+  ErrForeignKeyCannotDropParent texts naming the child; multi-row DELETE
+  with a mid-statement FK restrict verified atomic (restrict pre-checks all
+  rows, nothing deleted). Pinned in `tests/fk_table_lifecycle_source.rs`.
