@@ -78,3 +78,31 @@ No Go source, Bazel metadata, Cargo manifest, or dependency file changed, so
 `make bazel_prepare` is not required. Go test execution and live TiDB
 integration were intentionally skipped per the Rust-only scope; existing Go
 fixtures remain inventory evidence rather than edited artifacts.
+
+## Follow-up: direct `pkg/statistics` return contracts (2026-09-07)
+
+The direct Go package inventory above remains the atomic scope: 33 tracked
+artifacts (15 production files, 16 test/benchmark/fuzz files, BUILD, and
+OWNERS), 13,905 direct Go lines, and the two 20/51-line integration fixtures.
+The Rust owner was re-read file by file, including all direct root modules in
+`tidb-stats`, every source-derived test, the aggregate-test generator and
+generated registration, the benchmark/build targets, workspace/lock entries,
+and reverse callers. `async_load`, `global_stats`, `json_metadata`,
+`lock_stats`, `stats_lock_table`, and executor-owned independent-index
+analysis remain separate package boundaries.
+
+The direct Go-shaped scalar, tuple, collection, and ordinary struct returns
+across analysis policy/jobs/table identity/version, scalar geometry and
+estimators, FM/CMS/TopN, histogram, column/index/table/status/memory, and
+sampling no longer carry Rust-only `#[must_use]` diagnostics. `Option`/`Result`
+boundaries and Rust-only helpers (hash/counter/query-failpoint paths, TopN
+metadata, builder buffers, count summaries, stable-map helpers, quota APIs,
+and weighted-reservoir internals) retain their native annotations. No runtime
+algorithm, storage layout, error, or fixture behavior changed.
+
+Focused `#[deny(unused_must_use)]` regressions cover the complete direct
+return surface. Restoring the annotations failed before the edit with exactly
+162 diagnostics; the edited source passes all 52 focused tests. The complete
+owner aggregate passes 302 tests, and the `tidb-stats --all-targets` check
+passes. Ready-profile lint and the final package commit/publication are
+recorded in the handoff and ExecPlan below.

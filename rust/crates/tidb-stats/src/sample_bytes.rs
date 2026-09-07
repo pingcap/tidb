@@ -26,7 +26,6 @@ pub const MAX_FIELD_VARCHAR_LENGTH: usize = 65_535;
 pub const MAX_SAMPLE_VALUE_LENGTH: usize = MAX_FIELD_VARCHAR_LENGTH / 2;
 
 /// Returns whether a sample survives `SampleCollectorFromProto`'s length gate.
-#[must_use]
 pub const fn sample_value_is_usable(byte_len: usize) -> bool {
     byte_len <= MAX_SAMPLE_VALUE_LENGTH
 }
@@ -36,7 +35,6 @@ pub const fn sample_value_is_usable(byte_len: usize) -> bool {
 /// Go converts each length to `int64` and adds it to an `int64` accumulator.
 /// The wrapping operations preserve that behavior even for synthetic
 /// `usize` values that exceed the signed range.
-#[must_use]
 pub fn calc_total_size(sample_lengths: &[usize]) -> i64 {
     sample_lengths
         .iter()

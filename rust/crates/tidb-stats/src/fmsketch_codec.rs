@@ -94,7 +94,6 @@ fn skip_field(
     Ok(())
 }
 
-#[must_use]
 pub fn fm_sketch_to_proto(sketch: Option<&FmSketch>) -> FmSketchProto {
     sketch.map_or_else(FmSketchProto::default, |sketch| FmSketchProto {
         mask: sketch.mask(),

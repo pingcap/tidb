@@ -167,7 +167,6 @@ impl SamplePolicy {
 /// has no row there at all; `approximate_count` is PD's region-derived
 /// estimate, `None` when PD/storage could not provide one. The branches are
 /// Go's, in Go's order.
-#[must_use]
 pub fn adjusted_sample_rate(realtime_count: Option<i64>, approximate_count: Option<f64>) -> f64 {
     if realtime_count.is_none() && approximate_count.is_none() {
         return 0.001;
@@ -493,7 +492,6 @@ impl RowSampleCollector {
     }
 
     /// Go `baseCollector.ToProto` and `RowSamplesToProto`.
-    #[must_use]
     pub fn to_proto(&self) -> RowSampleCollectorProto {
         RowSampleCollectorProto {
             samples: self

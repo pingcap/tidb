@@ -342,7 +342,6 @@ pub struct LegacyRecordChunk {
 
 /// Go `RowToDatums`: return one datum per result field, ignoring any extra
 /// physical row values and panicking when a declared field is absent.
-#[must_use]
 pub fn legacy_row_to_datums(row: &[Datum], field_count: usize) -> Vec<Datum> {
     (0..field_count).map(|index| row[index].clone()).collect()
 }

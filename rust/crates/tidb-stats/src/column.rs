@@ -44,13 +44,11 @@ pub struct Column {
 
 impl Column {
     /// Go `(*Column).Copy`; all owned payloads are independent in the result.
-    #[must_use]
     pub fn copy(&self) -> Self {
         self.clone()
     }
 
     /// Go `TotalRowCount`. Analyze-v2 requires a TopN, as the source does.
-    #[must_use]
     pub fn total_row_count(&self) -> f64 {
         let histogram = self.histogram.total_row_count();
         if self.stats_version >= 2 {
@@ -66,7 +64,6 @@ impl Column {
     }
 
     /// Go `NotNullCount`. Analyze-v2 requires a TopN, as the source does.
-    #[must_use]
     pub fn not_null_count(&self) -> f64 {
         let histogram = self.histogram.not_null_count();
         if self.stats_version >= 2 {
@@ -82,7 +79,6 @@ impl Column {
     }
 
     /// Go `GetIncreaseFactor`, including its zero-count identity fallback.
-    #[must_use]
     pub fn increase_factor(&self, realtime_row_count: i64) -> f64 {
         let column_count = self.total_row_count();
         if column_count == 0.0 {
@@ -94,7 +90,6 @@ impl Column {
 
     /// Go `MemoryUsage`, with all integer additions retaining Go `int64`
     /// wrapping.
-    #[must_use]
     pub fn memory_usage(&self) -> ColumnMemUsage {
         let mut usage = ColumnMemUsage {
             column_id: self.info.as_ref().expect("column has no metadata").id,
@@ -129,7 +124,6 @@ impl Column {
             StatsLoadedStatus::new(self.stats_loaded_status.stats_initialized(), ALL_EVICTED);
     }
 
-    #[must_use]
     pub const fn item_id(&self) -> i64 {
         match &self.info {
             Some(info) => info.id,
@@ -137,48 +131,39 @@ impl Column {
         }
     }
 
-    #[must_use]
     pub const fn is_all_evicted(&self) -> bool {
         self.stats_loaded_status.is_all_evicted()
     }
 
-    #[must_use]
     pub const fn evicted_status(&self) -> i32 {
         self.stats_loaded_status.evicted_status()
     }
 
-    #[must_use]
     pub const fn is_stats_initialized(&self) -> bool {
         self.stats_loaded_status.stats_initialized()
     }
 
-    #[must_use]
     pub const fn is_full_load(&self) -> bool {
         self.stats_loaded_status.is_full_load()
     }
 
-    #[must_use]
     pub const fn stats_version(&self) -> i64 {
         self.stats_version
     }
 
-    #[must_use]
     pub const fn is_cms_exist(&self) -> bool {
         self.cmsketch.is_some()
     }
 
-    #[must_use]
     pub const fn is_analyzed(&self) -> bool {
         self.stats_version > 0
     }
 
     /// Go `StatsAvailable`, including synthesized default-value statistics.
-    #[must_use]
     pub const fn stats_available(&self) -> bool {
         self.stats_version > 0 || self.histogram.ndv > 0 || self.histogram.null_count > 0
     }
 
-    #[must_use]
     pub const fn histogram(&self) -> &Histogram {
         &self.histogram
     }
@@ -196,13 +181,11 @@ pub fn copy_column(column: Option<&Column>) -> Option<Column> {
 }
 
 /// Go's nil-receiver behavior for `(*Column).IsAllEvicted`.
-#[must_use]
 pub fn column_is_all_evicted(column: Option<&Column>) -> bool {
     column.is_none_or(Column::is_all_evicted)
 }
 
 /// Go `EmptyColumn` at the dependency-closed metadata boundary.
-#[must_use]
 pub fn empty_column(physical_id: i64, pk_is_handle: bool, info: ColumnInfo) -> Column {
     let id = info.id;
     let is_handle = pk_is_handle && info.primary_key;

@@ -32,7 +32,6 @@ pub struct DatumMapCache {
 
 impl DatumMapCache {
     /// Creates an empty cache.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

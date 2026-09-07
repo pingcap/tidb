@@ -19,7 +19,6 @@
 
 /// Returns the average row count per non-null value after scaling counts to a
 /// realtime row count.
-#[must_use]
 pub fn avg_count_per_not_null_value(
     realtime_row_count: i64,
     histogram_total_count: f64,

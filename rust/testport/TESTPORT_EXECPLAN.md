@@ -9737,3 +9737,15 @@ risks without claiming repository-wide parity.
   HashJoin. The complete `pkg/planner/core` inventory, focused join/explain
   tests, and Ready evidence are recorded in
   `receipts/planner_physical_index_join_explain.md`.
+- 2026-09-07 (`pkg/statistics` direct return-contract parity): the complete
+  direct root inventory (33 tracked Go artifacts, 13,905 production/test
+  lines, and two JSON fixtures) and the complete Rust `tidb-stats` direct
+  owner were re-read before editing. Ordinary Go-shaped returns across
+  analysis policy/jobs, scalar calculations and estimators, FM/CMS/TopN,
+  histogram, column/index/table/status/memory, and sampling no longer impose
+  Rust-only discard diagnostics; `Option`/`Result` boundaries and Rust-only
+  helpers remain annotated. The focused deny-on-discard probe failed with
+  exactly 162 diagnostics before the edit and all 52 focused tests pass after
+  it; the full owner aggregate passes 302 tests and all-target compilation
+  passes. Evidence is in `receipts/statistics_builder_walk.md` and
+  `docs/operations/statistics-builder-audit-execplan.md`.

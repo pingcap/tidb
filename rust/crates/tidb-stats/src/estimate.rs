@@ -63,7 +63,6 @@ fn intest_assert_func_when(enabled: bool, condition: impl FnOnce() -> bool, mess
 /// The scalar arguments are the fields read from Go's private `topNHelper`.
 /// Keeping the estimator independent of the CMSketch builder avoids a second
 /// estimator implementation while preserving the source branch order.
-#[must_use]
 pub(crate) fn calculate_estimate_ndv(
     sample_size: u64,
     sample_ndv: u64,
@@ -90,7 +89,6 @@ pub(crate) fn calculate_estimate_ndv(
 ///
 /// This is the source formula `sqrt(N/n) * f1 + d - f1`, rounded half up and
 /// clamped to the observed sample NDV and the row count.
-#[must_use]
 pub fn estimate_ndv_by_gee(
     sample_ndv: u64,
     singleton_items: u64,
@@ -155,7 +153,6 @@ fn estimate_ndv_by_gee_with_internal_checks(
 /// `None` is the Rust representation of a nil Go `*FMSketch`. Debug builds
 /// reject nil entries with the same internal invariants as the source; the
 /// defensive empty/mismatched-length return remains effective in release.
-#[must_use]
 pub fn estimate_global_singleton_by_sketches(
     ndv_sketches: &[Option<FmSketch>],
     singleton_sketches: &[Option<FmSketch>],
@@ -366,8 +363,10 @@ mod tests {
         assert_eq!(source, source_before);
     }
 
+    #[deny(unused_must_use)]
     #[test]
     fn private_estimate_symbols_compile() {
+        calculate_estimate_ndv(1, 1, 1, 1);
         let _ = calculate_estimate_ndv;
         let _ = estimate_global_singleton_in_range;
         let _ = merge_copied_fm_sketch;

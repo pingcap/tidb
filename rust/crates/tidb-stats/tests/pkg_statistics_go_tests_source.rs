@@ -578,3 +578,49 @@ fn sample_serial_collector_proto_conversion() {
         assert_eq!(restored.samples.len(), collector.samples.len());
     }
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_statistics_scalar_returns_can_be_ignored() {
+    tidb_stats::analysis_policy::table_is_analyzed(1);
+    tidb_stats::analysis_policy::meets_auto_analyze_min_count(Some(1), 1);
+    tidb_stats::analysis_policy::is_eligible_for_analysis(Some(1), false, 1);
+    tidb_stats::go_zero_time();
+
+    let progress = tidb_stats::AnalyzeProgress::default();
+    progress.get_delta_count();
+    progress.get_last_dump_time();
+
+    let id = tidb_stats::AnalyzeTableId::new(10, -1);
+    id.statistics_id();
+    id.is_partition_table();
+    id.display_string();
+    id.equals(id);
+    tidb_stats::AnalyzeTableId::equals_optional(Some(&id), Some(&id));
+    tidb_stats::analyze_version_matches(Some(2), false, 2);
+    tidb_stats::avg_count_per_not_null_value(100, 10.0, 8.0, 4.0);
+    tidb_stats::calc_correlation(2, 1.0);
+
+    tidb_stats::estimate_ndv_by_gee(1, 1, 1, 1);
+    let sketches = vec![Some(tidb_stats::FmSketch::new(1))];
+    tidb_stats::estimate_global_singleton_by_sketches(&sketches, &sketches);
+    tidb_stats::left_overlap_percent(0.0, 1.0, 0.0, 0.5, 1.0);
+    tidb_stats::right_overlap_percent(0.0, 1.0, 0.5, 1.0, 1.0);
+    tidb_stats::default_row_est(1.0);
+    tidb_stats::calculate_skew_ratio_counts(1.0, 2.0, 0.5);
+
+    tidb_stats::sample_value_is_usable(1);
+    tidb_stats::calc_total_size(&[1, 2]);
+    tidb_stats::scalar_geometry::calc_fraction(0.0, 1.0, 0.5);
+    tidb_stats::scalar_geometry::common_prefix_length(&[b"a", b"ab"]);
+    tidb_stats::scalar_geometry::convert_bytes_to_scalar(b"a");
+    tidb_stats::scalar_geometry::convert_datum_to_scalar(&Datum::Int(1), 0);
+    tidb_stats::scalar_geometry::calc_fraction_from_datums(
+        &Datum::Int(0),
+        &Datum::Int(2),
+        &Datum::Int(1),
+    );
+    tidb_stats::is_analyzed(1);
+    tidb_stats::is_column_analyzed_or_synthesized(0, 1, 0);
+    tidb_stats::query_index_bytes(None, None, 1);
+}

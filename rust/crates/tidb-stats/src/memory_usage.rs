@@ -37,19 +37,16 @@ pub struct ColumnMemUsage {
 
 impl ColumnMemUsage {
     /// Returns the measured total.
-    #[must_use]
     pub const fn total_memory_usage(self) -> i64 {
         self.total_mem_usage
     }
 
     /// Returns the column ID.
-    #[must_use]
     pub const fn item_id(self) -> i64 {
         self.column_id
     }
 
     /// Returns cache-tracked bytes (histogram + CMSketch + TopN).
-    #[must_use]
     pub const fn tracking_mem_usage(self) -> i64 {
         self.cmsketch_mem_usage
             .wrapping_add(self.topn_mem_usage)
@@ -57,19 +54,16 @@ impl ColumnMemUsage {
     }
 
     /// Returns measured histogram bytes.
-    #[must_use]
     pub const fn hist_mem_usage(self) -> i64 {
         self.histogram_mem_usage
     }
 
     /// Returns measured TopN bytes.
-    #[must_use]
     pub const fn topn_mem_usage(self) -> i64 {
         self.topn_mem_usage
     }
 
     /// Returns measured CMSketch bytes.
-    #[must_use]
     pub const fn cms_mem_usage(self) -> i64 {
         self.cmsketch_mem_usage
     }
@@ -92,19 +86,16 @@ pub struct IndexMemUsage {
 
 impl IndexMemUsage {
     /// Returns the measured total.
-    #[must_use]
     pub const fn total_memory_usage(self) -> i64 {
         self.total_mem_usage
     }
 
     /// Returns the index ID.
-    #[must_use]
     pub const fn item_id(self) -> i64 {
         self.index_id
     }
 
     /// Returns cache-tracked bytes (histogram + CMSketch + TopN).
-    #[must_use]
     pub const fn tracking_mem_usage(self) -> i64 {
         self.cmsketch_mem_usage
             .wrapping_add(self.topn_mem_usage)
@@ -112,19 +103,16 @@ impl IndexMemUsage {
     }
 
     /// Returns measured histogram bytes.
-    #[must_use]
     pub const fn hist_mem_usage(self) -> i64 {
         self.histogram_mem_usage
     }
 
     /// Returns measured TopN bytes.
-    #[must_use]
     pub const fn topn_mem_usage(self) -> i64 {
         self.topn_mem_usage
     }
 
     /// Returns measured CMSketch bytes.
-    #[must_use]
     pub const fn cms_mem_usage(self) -> i64 {
         self.cmsketch_mem_usage
     }

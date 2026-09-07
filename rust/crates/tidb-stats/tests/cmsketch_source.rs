@@ -27,11 +27,12 @@ use chrono::Utc;
 use tidb_datatype::Datum;
 use tidb_stats::cmsketch::encode_integer_datum_value;
 use tidb_stats::{
-    cmsketch_and_topn_from_proto, decode_cmsketch, decode_cmsketch_and_embedded_topn,
-    decode_cmsketch_and_topn, encode_cmsketch_and_topn, encode_cmsketch_without_topn, find_topn,
-    get_merged_topn_from_sorted_slice, hash_bytes, merge_topn, merge_topn_and_update_cmsketch,
-    new_cmsketch_and_topn, new_cmsketch_and_topn_with_tie_stabilization, query_topn, query_value,
-    sort_topn_meta, topn_between_count, topn_decoded_string, topn_display_string, topn_lower_bound,
+    check_empty_topns, cmsketch_and_topn_from_proto, decode_cmsketch,
+    decode_cmsketch_and_embedded_topn, decode_cmsketch_and_topn, encode_cmsketch_and_topn,
+    encode_cmsketch_without_topn, find_topn, get_merged_topn_from_sorted_slice, hash_bytes,
+    merge_topn, merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
+    new_cmsketch_and_topn_with_tie_stabilization, query_topn, query_value, sort_topn_meta,
+    topn_between_count, topn_decoded_string, topn_display_string, topn_lower_bound,
     topn_meta_compare, topn_min_count, topn_total_count, CmsSketch, CmsSketchProto,
     CmsSketchProtoRow, CmsSketchProtoTopN, CodecError, Hash128, MergeError, SharedTopNBytes, TopN,
     TopNEntry,
@@ -1843,4 +1844,42 @@ fn source_decoder_finishes_wire_parse_before_converting_row_shapes() {
         decode_cmsketch_and_embedded_topn(&valid_topn_after_longer_row)
     })
     .is_err());
+}
+
+#[deny(unused_must_use)]
+#[test]
+fn go_cms_and_topn_returns_can_be_ignored() {
+    let cms = CmsSketch::new(1, 2);
+    cms.memory_usage();
+    cms.query_bytes(b"x");
+    cms.query_with_topn(None, b"x");
+
+    let mut topn = TopN::new(1);
+    topn.append(b"x", 1);
+    topn.sort();
+    topn.num();
+    topn.display_string();
+    topn.between_count(b"a", b"z");
+    topn.lower_bound(b"x");
+    topn.total_count();
+    topn.min_count();
+    topn.memory_usage();
+    topn.equal(Some(&topn));
+
+    topn_lower_bound(Some(&topn), b"x");
+    topn_between_count(Some(&topn), b"a", b"z");
+    topn_total_count(Some(&topn));
+    topn_min_count(Some(&topn));
+    topn_display_string(Some(&topn));
+    topn_meta_compare(&topn.entries()[0], &topn.entries()[0]);
+    get_merged_topn_from_sorted_slice(
+        vec![TopNEntry {
+            encoded: b"x".to_vec(),
+            count: 1,
+        }],
+        1,
+    );
+    check_empty_topns(&[Some(&topn)]);
+    merge_topn(&[Some(&topn)], 1);
+    cmsketch_and_topn_from_proto(None);
 }

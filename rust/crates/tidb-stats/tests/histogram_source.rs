@@ -838,3 +838,50 @@ fn source_bound_access_copy_and_deep_slice_match_go_ownership() {
     assert_eq!(histogram.get_lower(0), &Datum::new_int(1));
     assert_eq!(deep_slice(&[1_u8, 2, 3]), vec![1, 2, 3]);
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_histogram_returns_can_be_ignored() {
+    let histogram = int_histogram();
+    deep_slice(&[1_u8, 2]);
+    tidb_stats::histogram::common_prefix_length(b"a", b"ab");
+    histogram.memory_usage();
+    histogram.get_lower(0);
+    histogram.lower_to_datum(0);
+    histogram.get_upper(0);
+    histogram.upper_to_datum(0);
+    histogram.truncate(1);
+    histogram.copy();
+    histogram.len();
+    histogram.is_empty();
+    histogram.bucket_count(0);
+    histogram.not_null_count();
+    histogram.total_row_count();
+    histogram.locate_bucket(&Datum::new_int(1), Collation::Binary);
+    histogram.calc_fraction(0, &Datum::new_int(1));
+    histogram.equal_row_count(&Datum::new_int(1), true, Collation::Binary);
+    histogram.less_row_count_with_bkt_idx(&Datum::new_int(1), Collation::Binary);
+    histogram.less_row_count(&Datum::new_int(1), Collation::Binary);
+    histogram.greater_row_count(&Datum::new_int(1), Collation::Binary);
+    histogram.between_row_count(
+        &Datum::new_int(1),
+        &Datum::new_int(2),
+        Collation::Binary,
+        None,
+    );
+    histogram.out_of_range(&Datum::new_int(1), Collation::Binary);
+    histogram.abs_row_count_difference(1);
+    histogram.get_increase_factor(1);
+    histogram.out_of_range_row_count(
+        &Datum::new_int(1),
+        &Datum::new_int(2),
+        OutOfRangeContext {
+            realtime_row_count: 2,
+            modify_count: 0,
+            hist_ndv: 1,
+            unsigned: false,
+            allow_use_modify_count: true,
+            skew_ratio: 0.0,
+        },
+    );
+}

@@ -103,7 +103,10 @@ fn source_memory_usage_composes_every_optional_payload() {
     assert_eq!(usage.fmsketch_mem_usage, 16);
     assert_eq!(
         usage.total_mem_usage,
-        histogram_memory + usage.cmsketch_mem_usage + usage.topn_mem_usage + usage.fmsketch_mem_usage
+        histogram_memory
+            + usage.cmsketch_mem_usage
+            + usage.topn_mem_usage
+            + usage.fmsketch_mem_usage
     );
 
     let mut minimal = column;
@@ -166,4 +169,28 @@ fn source_status_availability_and_empty_column_boundaries_match() {
     assert_eq!(empty.histogram.id, 5);
     assert!(empty.histogram.buckets.is_empty());
     assert!(empty.is_handle);
+}
+
+#[deny(unused_must_use)]
+#[test]
+fn go_column_returns_can_be_ignored() {
+    let column = populated_column(1);
+    column.copy();
+    column.total_row_count();
+    column.not_null_count();
+    column.increase_factor(10);
+    column.memory_usage();
+    column.item_id();
+    column.is_all_evicted();
+    column.evicted_status();
+    column.is_stats_initialized();
+    column.is_full_load();
+    column.stats_version();
+    column.is_cms_exist();
+    column.is_analyzed();
+    column.stats_available();
+    column.histogram();
+    let _ = column.top_n();
+    empty_column(1, false, ColumnInfo::default());
+    column_is_all_evicted(Some(&column));
 }

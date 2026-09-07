@@ -44,7 +44,6 @@ pub const MAX_DELTA: i64 = 10_000_000;
 pub const DUMP_TIME_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Go's `time.Time{}` value: midnight UTC on 0001-01-01.
-#[must_use]
 pub fn go_zero_time() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(1, 1, 1, 0, 0, 0)
         .single()
@@ -135,7 +134,6 @@ impl AnalyzeProgress {
     }
 
     /// Returns rows accumulated since the last persisted update.
-    #[must_use]
     pub fn get_delta_count(&self) -> i64 {
         self.delta_count.load(Ordering::SeqCst)
     }
@@ -150,7 +148,6 @@ impl AnalyzeProgress {
     }
 
     /// Returns the timestamp of the last persisted update.
-    #[must_use]
     pub fn get_last_dump_time(&self) -> DateTime<Utc> {
         *self
             .last_dump_time

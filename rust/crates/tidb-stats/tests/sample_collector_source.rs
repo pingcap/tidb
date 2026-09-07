@@ -684,3 +684,9 @@ fn source_row_to_datums_uses_field_count_not_physical_width() {
 fn source_row_to_datums_panics_when_declared_field_is_absent() {
     let _ = legacy_row_to_datums(&[Datum::Int(1)], 2);
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_sample_row_conversion_return_can_be_ignored() {
+    legacy_row_to_datums(&[Datum::Int(1)], 1);
+}

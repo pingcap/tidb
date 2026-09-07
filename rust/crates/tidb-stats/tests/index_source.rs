@@ -117,6 +117,28 @@ fn source_drop_and_test_only_evict_match_status_boundaries() {
     assert_eq!(index.evicted_status(), ALL_EVICTED);
 }
 
+#[deny(unused_must_use)]
+#[test]
+fn go_index_returns_can_be_ignored() {
+    let index = populated_index(1);
+    index.copy();
+    index.item_id();
+    index.is_all_evicted();
+    index.evicted_status();
+    index.stats_version();
+    index.is_cms_exist();
+    index.is_evicted();
+    index.is_full_load();
+    index.total_row_count();
+    index.memory_usage();
+    index.query_bytes(b"x", 1);
+    index.increase_factor(10);
+    index.histogram();
+    let _ = index.top_n();
+    index.is_analyzed();
+    index_is_all_evicted(Some(&index));
+}
+
 #[test]
 fn source_memory_excludes_fm_sketch() {
     let index = populated_index(1);

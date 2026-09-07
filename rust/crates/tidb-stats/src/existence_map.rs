@@ -29,7 +29,6 @@ pub struct ColAndIdxExistenceMap {
 
 impl ColAndIdxExistenceMap {
     /// Creates an empty map with source-compatible capacity hints.
-    #[must_use]
     pub fn new(column_capacity: usize, index_capacity: usize) -> Self {
         Self {
             columns: HashMap::with_capacity(column_capacity),
@@ -38,7 +37,6 @@ impl ColAndIdxExistenceMap {
     }
 
     /// Creates an empty map using the default Rust map capacity.
-    #[must_use]
     pub fn new_without_size() -> Self {
         Self::default()
     }
@@ -54,13 +52,11 @@ impl ColAndIdxExistenceMap {
     }
 
     /// Returns whether a known column/index also has analyzed statistics.
-    #[must_use]
     pub fn has_analyzed(&self, id: i64, is_index: bool) -> bool {
         self.map(is_index).get(&id).copied().unwrap_or(false)
     }
 
     /// Returns whether a column/index ID is known, regardless of analysis.
-    #[must_use]
     pub fn has(&self, id: i64, is_index: bool) -> bool {
         self.map(is_index).contains_key(&id)
     }
@@ -76,25 +72,21 @@ impl ColAndIdxExistenceMap {
     }
 
     /// Returns whether no column or index metadata is present.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.columns.is_empty() && self.indices.is_empty()
     }
 
     /// Returns the number of known columns.
-    #[must_use]
     pub fn column_count(&self) -> usize {
         self.columns.len()
     }
 
     /// Deep-copies both metadata maps.
-    #[must_use]
     pub fn deep_clone(&self) -> Self {
         self.clone()
     }
 
     /// Compares both metadata maps.
-    #[must_use]
     pub fn is_equal(&self, other: &Self) -> bool {
         self == other
     }

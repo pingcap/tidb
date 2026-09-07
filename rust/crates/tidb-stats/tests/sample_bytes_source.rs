@@ -38,3 +38,10 @@ fn source_sample_total_size_preserves_go_int64_wrapping() {
     assert_eq!(calc_total_size(&[usize::MAX, 1]), 0);
     assert_eq!(calc_total_size(&[usize::MAX]), -1);
 }
+
+#[deny(unused_must_use)]
+#[test]
+fn go_sample_byte_returns_can_be_ignored() {
+    sample_value_is_usable(1);
+    calc_total_size(&[1, 2]);
+}
