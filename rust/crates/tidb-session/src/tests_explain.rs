@@ -1101,25 +1101,28 @@ fn explain_union_distinct_records_its_hash_aggregation() {
     let rows = row_text(
         session.run("EXPLAIN (SELECT a FROM t WHERE a <= 2) UNION (SELECT a FROM t WHERE a >= 2)"),
     );
-    assert_eq!(rows.len(), 8);
+    // Re-captured through gorun: HashAgg <- Union <- two
+    // [TableReader <- TableRangeScan] sides = 6 operator rows.
+    assert_eq!(rows.len(), 6);
     assert!(rows[0][0].starts_with("HashAgg_"));
     assert_eq!(rows[0][2], "root");
     assert!(rows[1][0].contains("Union_"));
     assert_eq!(rows[1][2], "root");
+    // The two sides, in tree order: root reader over cop range scan, with
+    // the pushed ranges [-inf,2] and [2,+inf].
+    assert!(rows[2][0].contains("TableReader"));
+    assert!(rows[3][0].contains("TableRangeScan"));
+    assert!(rows[4][0].contains("TableReader"));
+    assert!(rows[5][0].contains("TableRangeScan"));
     assert_eq!(
         rows.iter()
             .skip(2)
             .map(|row| row[2].as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "root",
-            "cop[tikv]",
-            "cop[tikv]",
-            "root",
-            "cop[tikv]",
-            "cop[tikv]"
-        ]
+        vec!["root", "cop[tikv]", "root", "cop[tikv]"]
     );
+    assert!(rows[3][4].starts_with("range:[-inf,2]"));
+    assert!(rows[5][4].starts_with("range:[2,+inf]"));
     assert_eq!(
         row_text(session.run("SELECT a FROM t ORDER BY a")),
         vec![
@@ -1280,7 +1283,10 @@ fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
             "{sql}: {:?}",
             rows[0][4]
         );
-        assert!(rows[1][0].ends_with("Selection_2") || rows[1][0].contains("Selection"), "{sql}");
+        assert!(
+            rows[1][0].ends_with("Selection_2") || rows[1][0].contains("Selection"),
+            "{sql}"
+        );
         assert_eq!(rows[1][2], "cop[tikv]", "{sql}");
         assert_eq!(rows[1][4], printed, "{sql}");
         assert!(rows[2][0].contains("TableFullScan"), "{sql}");
@@ -1288,20 +1294,24 @@ fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
         assert_eq!(rows[2][2], "cop[tikv]", "{sql}");
     }
 
-    // The conjunct the catalog cannot lower stays at root, over the same
-    // reader; the conjunct it can keeps its cop `Selection`.
+    // Re-captured through gorun against the current pinned tree: BOTH
+    // conditions push into the cop Selection (ast.Plus is in the pushdown
+    // sets, infer_pushdown.go:198/304), giving the 3-row shape.
     let rows = row_text(session.run("EXPLAIN SELECT a, b FROM t WHERE a > 5 AND b + 1 < 10"));
-    assert_eq!(rows.len(), 4);
-    assert!(rows[0][0].starts_with("Selection"));
+    assert_eq!(rows.len(), 3);
+    assert!(rows[0][0].starts_with("TableReader"));
     assert_eq!(rows[0][2], "root");
-    assert_eq!(rows[0][4], "lt(plus(test.t.b, 1), 10)");
-    assert!(rows[1][0].contains("TableReader"));
-    assert!(rows[2][0].contains("Selection"));
+    assert!(rows[0][4].starts_with("data:Selection"));
+    assert!(rows[1][0].contains("Selection"));
+    assert_eq!(rows[1][2], "cop[tikv]");
+    assert!(rows[1][4].starts_with("gt(test.t.a, 5), lt(plus(test.t.b, 1), 10)"));
+    assert!(rows[2][0].contains("TableFullScan"));
+    assert_eq!(rows[2][1], "10000.00");
     assert_eq!(rows[2][2], "cop[tikv]");
-    assert_eq!(rows[2][4], "gt(test.t.a, 5)");
-    // Go's captured estimates, both of them.
+    // Go's captured estimates (gorun re-verified): the reader/copy selection
+    // carries 2666.67; the full scan's 10000.00 is unchanged.
     assert_eq!(rows[0][1], "2666.67");
-    assert_eq!(rows[2][1], "3333.33");
+    assert_eq!(rows[2][1], "10000.00");
 
     // The single `>` keeps Go's captured 3333.33 estimate, which the split
     // must not disturb.
