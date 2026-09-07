@@ -10538,3 +10538,7 @@ risks without claiming repository-wide parity.
   '839:00:00' fails strict with Go's 1264 text, and negative durations
   store ('-100:00:00'). Pinned in
   `crates/tidb-session/tests/time_boundary_writes_source.rs`.
+- 2026-09-06 (CI/BINARY collation pin): on a utf8mb4_general_ci column, `=`,
+  LIKE, and DISTINCT all fold case (DISTINCT keeps the first-seen spelling),
+  while `= BINARY 'apple'` restores byte-exact matching. Pinned in
+  `crates/tidb-session/tests/ci_collation_binary_override_source.rs`.
