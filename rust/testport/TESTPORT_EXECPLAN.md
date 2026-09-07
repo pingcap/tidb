@@ -10317,3 +10317,7 @@ risks without claiming repository-wide parity.
   valid day — Jan 31 + 1mo = Feb 29 (leap), Feb 29 + 1yr = Feb 28 (non-
   leap), Mar 31 - 1mo = Feb 29. Pinned in
   `crates/tidb-session/tests/date_arith_month_clamp_source.rs`.
+- 2026-09-06 (UNION-source INSERT SELECT + FOR UPDATE pin): a UNION source
+  in INSERT SELECT dedups across arms (3 distinct rows land); `FOR UPDATE`
+  parses and reads normally in the single-session harness. Pinned in
+  `crates/tidb-session/tests/insert_select_union_dedup_source.rs`.
