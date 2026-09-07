@@ -3761,7 +3761,12 @@ fn an_unsigned_row_handle_is_read_through_ranges_like_go() {
         tests_support::row_text(session.run(sql))
             .into_iter()
             .map(|row| row.join(" "))
-            .find(|line| line.contains("Scan") || line.contains("Point_Get"))
+            // The scan OPERATOR line carries the range/handle info; the
+            // parent reader line only references the scan via its
+            // `data:...` access object and never names the range itself.
+            .find(|line| {
+                (line.contains("Scan") || line.contains("Point_Get")) && !line.contains("data:")
+            })
             .unwrap_or_default()
     };
 

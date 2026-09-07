@@ -466,6 +466,18 @@ fn point_handle_text(range: &tidb_planner::ranger::types::Range) -> String {
         .unwrap_or_default()
 }
 
+/// Go `physical_batch_point_get.go:206`: with `UnsignedHandle`, the batch's
+/// handle values print as their uint64 reading (`strconv.FormatUint`) — a
+/// `BIGINT UNSIGNED` handle's `u64::MAX` is `18446744073709551615`, never the
+/// signed reinterpretation `-1`.
+fn point_handle_text_unsigned(range: &tidb_planner::ranger::types::Range) -> String {
+    match range.low_val.first() {
+        Some(tidb_datatype::Datum::Int(value)) => format!("{}", *value as u64),
+        Some(value) => value.sql_string().unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
 fn physical_operator_info(
     plan: &PhysicalPlan,
     catalog: &Catalog,
@@ -641,10 +653,17 @@ fn physical_operator_info(
                 .kv_table_by_id(batch.table_id)
                 .is_some_and(|table| !table.common_handle_offsets().is_empty());
             let prefix = if batch.index_id.is_none() && !common_handle {
+                let handle_text = |range: &tidb_planner::ranger::types::Range| {
+                    if batch.unsigned_handle {
+                        point_handle_text_unsigned(range)
+                    } else {
+                        point_handle_text(range)
+                    }
+                };
                 let handles = batch
                     .ranges
                     .iter()
-                    .map(point_handle_text)
+                    .map(handle_text)
                     .collect::<Vec<_>>()
                     .join(" ");
                 format!("handle:[{handles}]")

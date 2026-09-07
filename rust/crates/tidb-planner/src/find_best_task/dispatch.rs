@@ -1965,6 +1965,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             table_id: explicit_physical_id.unwrap_or(ds.physical_table_id),
                             index_id: None,
                             ranges,
+                            unsigned_handle: handle_type.is_unsigned(),
                             range_rebuild: table_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Table),
@@ -2308,6 +2309,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                             table_id: ds.physical_table_id,
                             index_id: Some(source_index.id),
                             ranges: ranges.clone(),
+                            unsigned_handle: false,
                             range_rebuild: index_range_rebuild
                                 .clone()
                                 .map(crate::physical_plan_cache::PointRangeRebuild::Index),

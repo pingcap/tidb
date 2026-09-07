@@ -2121,6 +2121,10 @@ pub struct PhysicalBatchPointGet {
     pub table_id: i64,
     /// The selected index, or `None` for table handles.
     pub index_id: Option<i64>,
+    /// Go `UnsignedHandle` (`physical_batch_point_get.go`): the table handle
+    /// column is unsigned, so `handle:` values print as their uint64 reading
+    /// (`strconv.FormatUint`), never the signed reinterpretation.
+    pub unsigned_handle: bool,
     /// One range per retained point key.
     pub ranges: crate::ranger::types::Ranges,
     /// Parameter-dependent range metadata retained for cache rebuilding.
@@ -3422,6 +3426,7 @@ impl PhysicalPlan {
                 table_id: op.table_id,
                 index_id: op.index_id,
                 ranges: op.ranges.clone(),
+                unsigned_handle: op.unsigned_handle,
                 range_rebuild: op.range_rebuild.clone(),
                 keep_order: op.keep_order,
                 desc: op.desc,

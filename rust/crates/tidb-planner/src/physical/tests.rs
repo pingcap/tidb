@@ -369,6 +369,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         base: BasePhysicalPlan::with_id(12, "BatchPointGet", 0),
         table_id: 1,
         index_id: Some(2),
+        unsigned_handle: false,
         ranges: vec![point_range(0), point_range(1)],
         range_rebuild: Some(PointRangeRebuild::Index(IndexRangeRebuild::new(
             vec![parameter_in_condition(index_column.clone(), &[1, 2])],

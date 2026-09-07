@@ -1796,6 +1796,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
                 base,
                 table_id: table.table_id,
                 index_id: batch.index.as_ref().map(|(id, _)| *id),
+                unsigned_handle: table.unsigned_pk_handle(),
                 ranges,
                 range_rebuild: None,
                 keep_order: false,
