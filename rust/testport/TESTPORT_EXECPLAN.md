@@ -9932,3 +9932,7 @@ risks without claiming repository-wide parity.
   members ('y'==2, 3=='z', 'p,r'==5, 2=='q'); out-of-range ENUM fails strict
   with 1265 and stores the empty enum under IGNORE; unknown SET members
   truncate strictly. Pinned in `tests/enum_set_write_source.rs`.
+- 2026-09-06 (DECIMAL/TINYINT boundary pins): scale rounding is silent and
+  accepted (1.005 -> 1.01), overflow fails strict with Go's "Out of range
+  value for column 'd' at row 1" (1264), IGNORE clamps to 99.99 / 255.
+  Pinned in `tests/decimal_int_boundary_source.rs`.
