@@ -10726,3 +10726,7 @@ risks without claiming repository-wide parity.
   generated columns round-trip through SHOW CREATE with their respective
   GENERATED ALWAYS AS (...) STORED/VIRTUAL markers. Pinned in
   `crates/tidb-session/tests/generated_show_create_source.rs`.
+- 2026-09-06 (FK index guard pin): dropping an index needed by a foreign
+  key fails with Go's exact 1553 text "Cannot drop index 'ik': needed in a
+  foreign key constraint". Pinned in
+  `crates/tidb-session/tests/fk_index_guard_source.rs`.
