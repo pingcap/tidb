@@ -2583,6 +2583,63 @@ WHERE t1.id IN (SELECT MIN(id) FROM t1)`
 	require.NoError(t, err)
 }
 
+func TestNoDecorrelateCorrelatedAggregate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1, 10, 10), (1, 20, 10), (2, 30, 20)")
+	tk.MustExec("insert into t2 values (1, 1), (1, 2), (2, 3)")
+
+	testCases := []struct {
+		name string
+		sql  string
+		rows []string
+	}{
+		{
+			name: "outer aggregate",
+			sql: `select t1.a, sum(t1.b),
+				(select sum(t2.b) + sum(t1.b) from t2 where t2.a = t1.a)
+				from t1 group by t1.a order by t1.a`,
+			rows: []string{"1 30 33", "2 30 33"},
+		},
+		{
+			name: "mixed aggregate before outer aggregate",
+			sql: `select t1.a,
+				(select sum(t2.b + t1.c) + sum(t1.b) from t2 where t2.a = t1.a)
+				from t1 group by t1.a order by t1.a`,
+			rows: []string{"1 53", "2 53"},
+		},
+		{
+			name: "nested outer aggregate",
+			sql: `select t1.a,
+				(select sum(sum(t1.b) + t2.b) from t2 where t2.a = t1.a)
+				from t1 group by t1.a order by t1.a`,
+			rows: []string{"1 63", "2 33"},
+		},
+		{
+			name: "mixed aggregate",
+			sql: `select t1.a,
+				(select sum(t2.b + t1.c) from t2 where t2.a = t1.a)
+				from t1 group by t1.a order by t1.a`,
+			rows: []string{"1 23", "2 23"},
+		},
+	}
+
+	for _, noDecorrelate := range []int{0, 1} {
+		for _, testCase := range testCases {
+			t.Run(fmt.Sprintf("%s/no_decorrelate=%d", testCase.name, noDecorrelate), func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec(fmt.Sprintf("set session tidb_opt_enable_no_decorrelate_in_select = %d", noDecorrelate))
+				tk.MustQuery(testCase.sql).Check(testkit.Rows(testCase.rows...))
+			})
+		}
+	}
+}
+
 func TestIssue66619(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
