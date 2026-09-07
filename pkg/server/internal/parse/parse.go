@@ -18,31 +18,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
-	"math"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
-
-var errUnknownFieldType = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
 
 // maxFetchSize constants
 const (
 	maxFetchSize = 1024
 )
 
+<<<<<<< HEAD
 // ExecArgs parse execute arguments to datum slice.
 func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boundParams [][]byte,
 	nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (err error) {
@@ -384,6 +374,8 @@ func binaryDurationWithMS(pos int, paramValues []byte,
 	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
 }
 
+=======
+>>>>>>> 8ce2ad16961 (parse: fix the type of date/time parameters (#48237))
 // StmtFetchCmd parse COM_STMT_FETCH command
 func StmtFetchCmd(data []byte) (stmtID uint32, fetchSize uint32, err error) {
 	if len(data) != 8 {
