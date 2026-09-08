@@ -306,6 +306,39 @@ struct AggInput {
 }
 
 impl AggFunc {
+    /// Go's window executor recomputes one frame per output row
+    /// (`pkg/executor/windows/window.go`'s `process`): fold `chunk`'s rows
+    /// `[start, end)` into a fresh state and finish it. `row_number` is NOT
+    /// routed here -- Go's `row_number` aggfunc ignores the frame and counts
+    /// output rows.
+    pub(crate) fn window_frame_value<C: Columns>(
+        &self,
+        ctx: &C,
+        chunk: &Chunk,
+        start: usize,
+        end: usize,
+        output_type: &tidb_datatype::FieldType,
+    ) -> Result<Datum, ExecError> {
+        let mut state = AggState::new(self);
+        for index in start..end {
+            let row = chunk.get_row(index);
+            let mut extra_values = Vec::new();
+            let input = eval_agg_input(self, ctx, row, &mut extra_values)?;
+            let mut sort_key = Vec::with_capacity(self.order_by.len());
+            for (expr, _) in &self.order_by {
+                sort_key.push(expr.eval(ctx, row)?);
+            }
+            if let Some((coefficient, scale)) = input.decimal_coefficient {
+                if state.partial_update_with_coefficient(coefficient, scale) {
+                    continue;
+                }
+            }
+            state.update(input.value, &extra_values, sort_key, input.distinct_key)?;
+        }
+        let mut truncated = false;
+        finish_agg_value(&mut state, self, output_type, ctx, &mut truncated)
+    }
+
     /// An aggregate without the `DISTINCT` modifier.
     #[must_use]
     pub fn new(kind: AggKind, arg: Option<Expression>) -> Self {

@@ -334,6 +334,104 @@ fn aggregate_info(
     parts.join(", ")
 }
 
+/// Go `PhysicalWindow.ExplainInfo` (`physical_window.go:167`) and
+/// `FormatWindowFuncDescs` (`:218`): the window functions' own renderings
+/// (each consuming its trailing schema column) followed by
+/// `over(partition by ... order by ... <frame>)`.
+fn window_info(window: &tidb_planner::physical::PhysicalWindow) -> String {
+    use tidb_expr::expression::Expression;
+    let schema = window.base.base.schema();
+    let result_start = schema
+        .map(|schema| {
+            schema
+                .columns
+                .len()
+                .saturating_sub(window.window_func_descs.len())
+        })
+        .unwrap_or(0);
+    let functions = window
+        .window_func_descs
+        .iter()
+        .enumerate()
+        .map(|(index, descriptor)| {
+            let output = schema
+                .and_then(|schema| schema.columns.get(result_start + index))
+                .map(|column| expression_text(&Expression::Column(column.clone())))
+                .unwrap_or_else(|| format!("Column#{}", result_start + index));
+            format!(
+                "{}({})->{output}",
+                descriptor.base.name,
+                expressions_text(&descriptor.base.args)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut parts = Vec::new();
+    if !window.partition_by.is_empty() {
+        parts.push(format!(
+            "partition by {}",
+            window
+                .partition_by
+                .iter()
+                .map(|item| expression_text(&Expression::Column(item.col.clone())))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !window.order_by.is_empty() {
+        parts.push(format!(
+            "order by {}",
+            window
+                .order_by
+                .iter()
+                .map(|item| {
+                    let text = expression_text(&Expression::Column(item.col.clone()));
+                    if item.desc {
+                        format!("{text} desc")
+                    } else {
+                        text
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if let Some(frame) = &window.frame {
+        let kind = match frame.frame_type {
+            tidb_planner::logical::window::FrameType::Rows => "rows",
+            tidb_planner::logical::window::FrameType::Ranges => "range",
+            tidb_planner::logical::window::FrameType::Groups => "groups",
+        };
+        parts.push(format!(
+            "{kind} between {} and {}",
+            frame_bound_text(frame.start.as_ref()),
+            frame_bound_text(frame.end.as_ref())
+        ));
+    }
+    format!("{functions} over({})", parts.join(" "))
+}
+
+fn frame_bound_text(bound: Option<&tidb_planner::logical::window::FrameBound>) -> String {
+    use tidb_planner::logical::window::{BoundType, FrameBound};
+    let Some(bound) = bound else {
+        return String::new();
+    };
+    let _: &FrameBound = bound;
+    if bound.bound_type == BoundType::CurrentRow {
+        return "current row".to_owned();
+    }
+    let direction = if bound.bound_type == BoundType::Preceding {
+        "preceding"
+    } else {
+        "following"
+    };
+    if bound.unbounded {
+        format!("unbounded {direction}")
+    } else {
+        format!("{} {direction}", bound.num)
+    }
+}
+
 fn scan_ranges_text(ranges: &tidb_planner::ranger::types::Ranges) -> String {
     ranges
         .iter()
@@ -942,6 +1040,7 @@ fn physical_operator_info(
             &aggregation.group_by_items,
             aggregation.base.base.schema(),
         ),
+        PhysicalPlan::Window(window) => window_info(window),
         PhysicalPlan::MaxOneRow(_)
         | PhysicalPlan::NominalSort(_)
         | PhysicalPlan::Show(_)

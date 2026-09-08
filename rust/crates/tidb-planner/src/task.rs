@@ -1920,6 +1920,13 @@ pub fn attach2_task(
                  CanExprsPushDown, not ported",
             )),
         },
+        // `attach2Task4PhysicalWindow` (`task.go:2230`): convert the child to
+        // a root task and attach. The TiFlash MPP arm is absent with that
+        // tier.
+        PhysicalPlan::Window(_) => {
+            let converted = first.copy().convert_to_root_task(allocator)?;
+            Ok(attach_plan_to_task(plan, converted))
+        }
         // `attach2Task4PhysicalProjection` (`task.go:1506`): the cop arm
         // pushes the projection onto the cop task — staying a COP task —
         // when there are no root conds, no index-merge parts, and every

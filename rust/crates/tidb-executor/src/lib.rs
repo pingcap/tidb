@@ -195,6 +195,7 @@ pub mod topn_spill;
 pub mod union_scan;
 pub(crate) mod vec_group_checker;
 pub mod view;
+pub mod window;
 pub mod zero_date;
 
 pub use apply::ApplyExec;

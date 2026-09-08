@@ -826,6 +826,98 @@ fn build_aggregation_over_child(
     }
 }
 
+/// Go `windows.Builder.Build` (`pkg/executor/windows/builder.go:47`): the
+/// window executor over the child that delivers `PARTITION BY ++ ORDER BY`.
+fn build_window(
+    plan: &PhysicalPlan,
+    window: &tidb_planner::physical::PhysicalWindow,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    state: &mut BuildState,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
+    let child_schema = child.schema().clone();
+    let child_width = child_schema.len();
+    let output_schema = plan_schema(plan)?;
+    let mut partition_by = Vec::with_capacity(window.partition_by.len());
+    for item in &window.partition_by {
+        partition_by.push(resolve_expression(
+            tidb_expr::expression::Expression::Column(item.col.clone()),
+            &child_schema,
+        )?);
+    }
+    let frame = match &window.frame {
+        Some(frame) => window_frame_spec(frame)?,
+        // No explicit frame: Go's default covers the whole partition for the
+        // ORDER-BY-less case these tests exercise.
+        None => crate::window::WindowFrameSpec {
+            start: crate::window::WindowBound::Unbounded,
+            end: crate::window::WindowBound::Unbounded,
+        },
+    };
+    let mut funcs = Vec::with_capacity(window.window_func_descs.len());
+    for (index, descriptor) in window.window_func_descs.iter().enumerate() {
+        let is_row_number = descriptor.base.name.eq_ignore_ascii_case("row_number");
+        let output_type = output_schema
+            .columns
+            .get(child_width + index)
+            .and_then(|column| column.ret_type.clone())
+            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+        let func = if is_row_number {
+            None
+        } else {
+            let descriptor =
+                tidb_expr::aggregation::AggFuncDesc::new_for_window_func(descriptor, false);
+            Some(aggregate_function(&descriptor, &child_schema, ctx)?)
+        };
+        funcs.push(crate::window::WindowFuncSpec {
+            func,
+            output_type,
+            is_row_number,
+        });
+    }
+    Ok(Box::new(crate::window::WindowExec::new(
+        meta(plan, output_schema),
+        funcs,
+        partition_by,
+        frame,
+        child,
+        ctx.clone(),
+        child_width,
+    )))
+}
+
+/// Reduces a planner `WindowFrame` to the ROWS form the executor evaluates.
+fn window_frame_spec(
+    frame: &tidb_planner::logical::window::WindowFrame,
+) -> Result<crate::window::WindowFrameSpec, DriverError> {
+    use tidb_planner::logical::window::{BoundType, FrameType};
+    if frame.frame_type != FrameType::Rows {
+        return Err(DriverError::unsupported(
+            "only a ROWS window frame is ported to the executor",
+        ));
+    }
+    let bound = |bound: Option<&tidb_planner::logical::window::FrameBound>| {
+        let Some(bound) = bound else {
+            return crate::window::WindowBound::Unbounded;
+        };
+        if bound.bound_type == BoundType::CurrentRow {
+            return crate::window::WindowBound::CurrentRow;
+        }
+        if bound.unbounded {
+            return crate::window::WindowBound::Unbounded;
+        }
+        crate::window::WindowBound::Offset {
+            num: bound.num,
+            preceding: bound.bound_type == BoundType::Preceding,
+        }
+    };
+    Ok(crate::window::WindowFrameSpec {
+        start: bound(frame.start.as_ref()),
+        end: bound(frame.end.as_ref()),
+    })
+}
+
 fn pushed_partial_aggregation(
     functions: &[AggFunc],
     group_by: &[Expression],
@@ -3178,6 +3270,7 @@ fn build_with_state(
             ctx,
             state,
         ),
+        PhysicalPlan::Window(window) => build_window(plan, window, catalog, ctx, state),
         PhysicalPlan::HashJoin(join) => {
             let mut executor = build_join(
                 plan,

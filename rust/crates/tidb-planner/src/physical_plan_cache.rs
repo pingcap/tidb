@@ -452,6 +452,11 @@ fn bind_plan_expressions(
             bind_conditions(&mut join.right_conditions, context)?;
             bind_conditions(&mut join.other_conditions, context)?;
         }
+        PhysicalPlan::Window(window) => {
+            for descriptor in &mut window.window_func_descs {
+                bind_conditions(&mut descriptor.base.args, context)?;
+            }
+        }
         PhysicalPlan::IndexJoin(join) => {
             bind_conditions(&mut join.left_conditions, context)?;
             bind_conditions(&mut join.right_conditions, context)?;

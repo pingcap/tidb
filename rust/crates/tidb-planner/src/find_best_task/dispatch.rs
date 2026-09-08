@@ -441,6 +441,12 @@ fn exhaust_physical_plans(
             }
             Ok(slices)
         }
+        LogicalPlan::Window(op) => Ok(one(physical::exhaust_physical_plans_4_logical_window(
+            op,
+            prop,
+            ctx.allocator,
+            ctx.skew_ratio,
+        ))),
         LogicalPlan::Aggregation(op) => {
             // `ExhaustPhysicalPlans4LogicalAggregation`
             // (`base_physical_agg.go:935`): Go enumerates HashAgg first and

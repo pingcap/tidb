@@ -2620,6 +2620,75 @@ pub fn get_stream_aggs(
     stream_aggs
 }
 
+/// Go `physicalop.PhysicalWindow` (`physical_window.go:38`).
+///
+/// Narrowings by name: `StoreTp` (only read by the absent TiFlash/MPP
+/// tiers) and the fine-grained-shuffle stream count.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalWindow {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `WindowFuncDescs`, one per trailing schema column.
+    pub window_func_descs: Vec<tidb_expr::aggregation::WindowFuncDesc>,
+    /// Go `PartitionBy`.
+    pub partition_by: Vec<crate::logical::window::WindowSortItem>,
+    /// Go `OrderBy`.
+    pub order_by: Vec<crate::logical::window::WindowSortItem>,
+    /// Go `Frame`.
+    pub frame: Option<crate::logical::window::WindowFrame>,
+}
+
+/// Go `physicalop.ExhaustPhysicalPlans4LogicalWindow`
+/// (`physical_window.go:448`): the TiDB-side window rides the
+/// `PartitionBy ++ OrderBy` child order and refuses when the required
+/// property is not a prefix of it. The MPP arm is absent with the TiFlash
+/// tier.
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_window(
+    window: &crate::logical::LogicalWindow,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Vec<PhysicalPlan> {
+    let mut by_items = window.partition_by.clone();
+    by_items.extend(window.order_by.iter().cloned());
+    let child_prop = PhysicalProperty {
+        sort_items: by_items
+            .iter()
+            .map(|item| crate::physical_property::SortItem::new(item.col.unique_id, item.desc))
+            .collect(),
+        task_tp: TaskType::Root,
+        expected_cnt: f64::MAX,
+        can_add_enforcer: true,
+        cte_producer_status: prop.cte_producer_status,
+        no_cop_push_down: prop.no_cop_push_down,
+        ..PhysicalProperty::default()
+    };
+    if !prop.is_prefix(&child_prop) {
+        return Vec::new();
+    }
+    let stats = window
+        .base
+        .base
+        .stats_info()
+        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalWindow::TYPE,
+        window.base.base.query_block_offset(),
+    );
+    base.base.set_stats(stats);
+    base.base.set_schema(window.base.base.schema().cloned());
+    base.set_children_req_props(vec![Some(child_prop)]);
+    vec![PhysicalPlan::Window(PhysicalWindow {
+        base,
+        window_func_descs: window.window_func_descs.clone(),
+        partition_by: window.partition_by.clone(),
+        order_by: window.order_by.clone(),
+        frame: window.frame.clone(),
+    })]
+}
+
 /// Go `base.PhysicalPlan`: a tree of physical operators.
 #[derive(Clone, Debug)]
 pub enum PhysicalPlan {
@@ -2690,6 +2759,8 @@ pub enum PhysicalPlan {
     HashAgg(PhysicalHashAgg),
     /// Go `physicalop.PhysicalStreamAgg` (planning slice).
     StreamAgg(PhysicalStreamAgg),
+    /// Go `physicalop.PhysicalWindow`.
+    Window(PhysicalWindow),
 }
 
 impl PhysicalPlan {
@@ -2730,6 +2801,7 @@ impl PhysicalPlan {
             Self::TopN(op) => &op.base,
             Self::HashAgg(op) => &op.base,
             Self::StreamAgg(op) => &op.base,
+            Self::Window(op) => &op.base,
         }
     }
 
@@ -2769,6 +2841,7 @@ impl PhysicalPlan {
             Self::TopN(op) => &mut op.base,
             Self::HashAgg(op) => &mut op.base,
             Self::StreamAgg(op) => &mut op.base,
+            Self::Window(op) => &mut op.base,
         }
     }
 
@@ -3474,6 +3547,13 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 agg_funcs: op.agg_funcs.clone(),
                 group_by_items: op.group_by_items.clone(),
+            }),
+            Self::Window(op) => Self::Window(PhysicalWindow {
+                base: base_of(&op.base),
+                window_func_descs: op.window_func_descs.clone(),
+                partition_by: op.partition_by.clone(),
+                order_by: op.order_by.clone(),
+                frame: op.frame.clone(),
             }),
         }
     }

@@ -1310,6 +1310,18 @@ both `oltp_read_only` and `oltp_read_write`.
   `rust/testport/receipts/planner_physical_index_join_explain.md`,
   `rust/testport/receipts/planner_index_join_runtime_probe_paths.md`,
   `rust/testport/receipts/executor_index_lookup_partial_aggregate.md`.
+- [x] 2026-09-09: ported the ROWS slice of `pkg/executor/windows` and the
+  `pkg/planner/core` physical window. `LogicalPlan::Window` had no dispatcher
+  arm, so every window statement failed with `exhaustPhysicalPlans over
+  Window is not ported to the dispatcher`. The port now builds
+  `PhysicalWindow` over the `PartitionBy ++ OrderBy` child order, attaches it
+  at root, renders Go's `<funcs> over(...)` explain text, and executes it
+  with a `WindowExec` that partitions the buffered child and evaluates each
+  ROWS frame per row (reusing the aggregate accumulator for non-`row_number`
+  functions). `column_name_resolution` and
+  `issue52984_named_window_self_frame_runs_repeatedly` pass; executor 1258
+  passed / 4 failed. Receipt:
+  `rust/testport/receipts/executor_window_rows_frame.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1318,7 +1330,7 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1,256 passed / 6 failed; the 13 statistics-request transport
+  lib serialized: 1,258 passed / 4 failed; the 13 statistics-request transport
   tests still flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
   - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
@@ -1353,8 +1365,7 @@ both `oltp_read_only` and `oltp_read_write`.
     `not(isnull(cast(d_ytd)))` selectivity, which the pre-push-down
     `InitStats` pass cannot see.
   - `pkg/executor` Window executor (`exhaustPhysicalPlans over Window`):
-    `tests_executor_suite_statements_source::{column_name_resolution,
-    issue52984_named_window_self_frame_runs_repeatedly}`.
+    DONE (ROWS frame + `row_number`, see the 2026-09-09 entry).
   - `aggregates::tpcc_condition_six_*` now clears the predicate-placement
     assertions (`simplifyOuterJoin` ported) and remains blocked only on the
     same `skylinePruning` choice as the list above.
