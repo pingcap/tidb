@@ -409,6 +409,11 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 	retryStartTime    time.Time
+	// auditLogged guards against reporting the same statement twice, which would otherwise
+	// happen for a statement executed without delay that still returns a record set, such
+	// as INSERT ... RETURNING: it is reported once when it finishes executing and once when
+	// the record set is closed.
+	auditLogged bool
 
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
@@ -1070,6 +1075,15 @@ func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
 	return nil
 }
 
+// returningInsertExec returns e as an *InsertExec if it is an INSERT that carries a
+// RETURNING clause, and nil otherwise.
+func returningInsertExec(e exec.Executor) *InsertExec {
+	if insert, ok := e.(*InsertExec); ok && len(insert.returningExprs) > 0 {
+		return insert
+	}
+	return nil
+}
+
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimistic bool) (bool, sqlexec.RecordSet, error) {
 	toCheck := e
 	isExplainAnalyze := false
@@ -1081,15 +1095,40 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimi
 		}
 	}
 
+	// An INSERT with a RETURNING clause does return a result to the client, but it is still
+	// executed here: this is the path that runs the foreign key triggers and, in a
+	// pessimistic transaction, acquires the locks and retries on a lock error. Its rows are
+	// buffered while writing and handed to the client afterwards.
+	returningInsert := returningInsertExec(toCheck)
+
 	// If the executor doesn't return any result to the client, we execute it without delay.
-	if toCheck.Schema().Len() == 0 {
+	if toCheck.Schema().Len() == 0 || returningInsert != nil {
 		handled := !isExplainAnalyze
 		if isPessimistic {
-			err := a.handlePessimisticDML(ctx, toCheck)
-			return handled, nil, err
+			// A lock error rebuilds the executor, so the rows must be read from the one
+			// that ran last.
+			lastExec, err := a.handlePessimisticDML(ctx, toCheck)
+			if err != nil {
+				return handled, nil, err
+			}
+			toCheck = lastExec
+		} else {
+			r, err := a.handleNoDelayExecutor(ctx, toCheck)
+			if err != nil || returningInsert == nil || isExplainAnalyze {
+				return handled, r, err
+			}
 		}
-		r, err := a.handleNoDelayExecutor(ctx, toCheck)
-		return handled, r, err
+		if returningInsert == nil || isExplainAnalyze {
+			return handled, nil, nil
+		}
+		// The executor is closed by now; the rows stay valid because they hold their chunks.
+		rows := returningInsertExec(toCheck).takeReturningRows()
+		// The cleanup deferred in Exec only runs when no record set is returned, and
+		// chunkRowRecordSet.Close does not reset the CTE storage, so do it here.
+		if cteErr := resetCTEStorageMap(a.Ctx); cteErr != nil {
+			return handled, nil, cteErr
+		}
+		return handled, &chunkRowRecordSet{rows: rows, e: toCheck, execStmt: a}, nil
 	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
@@ -1271,14 +1310,17 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	return nil, err
 }
 
-func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (err error) {
+// handlePessimisticDML executes a DML statement in a pessimistic transaction and returns
+// the executor that ran it: a lock error rebuilds the executor, so the caller cannot
+// assume the one it passed in is the one that produced the result.
+func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (finalExec exec.Executor, err error) {
 	sctx := a.Ctx
 	// Do not activate the transaction here.
 	// When autocommit = 0 and transaction in pessimistic mode,
 	// statements like set xxx = xxx; should not active the transaction.
 	txn, err := sctx.Txn(false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	defer func() {
@@ -1303,7 +1345,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 	txnManager := sessiontxn.GetTxnManager(a.Ctx)
 	err = txnManager.OnPessimisticStmtStart(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		isSuccessful := err == nil
@@ -1362,7 +1404,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		startTime := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
-			return err
+			return e, err
 		}
 
 		if isFirstAttempt {
@@ -1379,14 +1421,14 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 				if exeerrors.ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startTime).Seconds())
 				}
-				return err
+				return nil, err
 			}
 			continue
 		}
 
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
-			return err1
+			return nil, err1
 		}
 
 		if !a.Ctx.GetSessionVars().ForeignKeyCheckInSharedLock {
@@ -1396,14 +1438,14 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			startLock := time.Now()
 			ex, err := tryLockKeys(e, keys, false)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if ex != nil {
 				e = ex
 				continue
 			}
 			updateFKCheckLockStats(e, time.Since(startLock))
-			return nil
+			return e, nil
 		}
 
 		// When `tidb_foreign_key_check_in_shared_lock` is on, lock keys in two phases:
@@ -1416,10 +1458,10 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		sharedKeys := txnCtx.CollectUnchangedKeysForSLock(nil)
 		keys, sharedKeys, err = moveWrittenSharedLockKeysToExclusive(ctx, txn, keys, sharedKeys)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if ex, err := tryLockKeys(e, keys, false); err != nil {
-			return err
+			return nil, err
 		} else if ex != nil {
 			e = ex
 			continue
@@ -1428,14 +1470,14 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		// acquire slocks
 		startLock := time.Now()
 		if ex, err := tryLockKeys(e, sharedKeys, true); err != nil {
-			return err
+			return nil, err
 		} else if ex != nil {
 			e = ex
 			continue
 		}
 		updateFKCheckLockStats(e, time.Since(startLock))
 
-		return nil
+		return e, nil
 	}
 }
 
@@ -1664,6 +1706,10 @@ func (a *ExecStmt) logAudit() {
 	if sessVars.InRestrictedSQL {
 		return
 	}
+	if a.auditLogged {
+		return
+	}
+	a.auditLogged = true
 
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)

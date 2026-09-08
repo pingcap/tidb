@@ -1042,12 +1042,16 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 	if selectExec != nil {
 		children = append(children, selectExec)
 	}
+	// An INSERT only produces rows when it carries a RETURNING clause; in that case the
+	// plan's schema describes them and the executor keeps a normal initial chunk size.
 	var schema *expression.Schema
-	if v.ReturningSchema != nil {
-		schema = v.ReturningSchema
+	if len(v.Returning) > 0 {
+		schema = v.Schema()
 	}
 	baseExec := exec.NewBaseExecutor(b.sctx, schema, v.ID(), children...)
-	baseExec.SetInitCap(chunk.ZeroCapacity)
+	if schema == nil {
+		baseExec.SetInitCap(chunk.ZeroCapacity)
+	}
 
 	op := "INSERT"
 	sourceStmt := tables.MLogSourceInsert
@@ -1099,7 +1103,6 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 		InsertValues:             ivs,
 		OnDuplicate:              append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 		returningExprs:           v.Returning,
-		returningSchema:          v.ReturningSchema,
 		returningNeedExtraHandle: v.NeedExtraHandleReturning,
 	}
 	return insert

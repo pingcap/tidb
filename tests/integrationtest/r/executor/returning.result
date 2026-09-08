@@ -35,10 +35,21 @@ insert into t (id, name, val) values (200, 'dup', 1);
 insert ignore into t (id, name, val) values (200, 'dup2', 2), (201, 'ok', 3) returning id, name;
 id	name
 201	ok
+insert ignore into t (id, name, val) values (200, 'dup3', 4) returning id, name;
+id	name
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '200' for key 't.PRIMARY'
 insert into t (id, name, val) values (300, 'orig', 1);
 insert into t (id, name, val) values (300, 'updated', 5) on duplicate key update name=values(name), val=values(val)+1 returning id, name, val;
 id	name	val
 300	updated	6
+insert into t (id, name, val) values (300, 'updated', 5) on duplicate key update val = if(values(val) > val, values(val), val) returning id, name, val;
+id	name	val
+300	updated	6
+insert into t (id, name, val) values (300, 'ignored', 1) on duplicate key update name = 'qualified' returning t.*;
+id	name	val
+300	qualified	6
 drop table if exists t_auto_random_returning;
 create table t_auto_random_returning (id bigint primary key auto_random(3), name varchar(20));
 insert into t_auto_random_returning (name) values ('auto-random-1'), ('auto-random-2') returning id > 0 as generated_id, name;
@@ -55,6 +66,9 @@ insert into t_nonclustered_returning values (1, 'nonclustered-1'), (2, 'nonclust
 id	name	_tidb_rowid
 1	nonclustered-1	1
 2	nonclustered-2	2
+insert into t_nonclustered_returning values (3, 'nonclustered-3') returning *;
+id	name
+3	nonclustered-3
 drop table t_nonclustered_returning;
 drop table if exists t_shard_rowid_returning;
 create table t_shard_rowid_returning (id int, name varchar(20), primary key(id) nonclustered) shard_row_id_bits=4;
@@ -64,6 +78,12 @@ id	_tidb_rowid	rowid_sequence
 2	<sharded_rowid>	2
 3	<sharded_rowid>	3
 drop table t_shard_rowid_returning;
+drop table if exists t_hidden_returning;
+create table t_hidden_returning (id int primary key, name varchar(20), key idx((lower(name))));
+insert into t_hidden_returning values (1, 'Hidden') returning *;
+id	name
+1	Hidden
+drop table t_hidden_returning;
 select * from t order by id;
 id	name	val
 1	alice	10
@@ -76,11 +96,126 @@ id	name	val
 8	henry	80
 200	dup	1
 201	ok	3
-300	updated	6
+300	qualified	6
+begin pessimistic;
+insert into t (name, val) values ('pessimistic', 90) returning name, val;
+name	val
+pessimistic	90
+commit;
+select name, val from t where name = 'pessimistic';
+name	val
+pessimistic	90
+set @@tidb_constraint_check_in_place_pessimistic = off;
+begin pessimistic;
+insert into t (name, val) values ('lazy-check', 91) returning name, val;
+name	val
+lazy-check	91
+commit;
+select name, val from t where name = 'lazy-check';
+name	val
+lazy-check	91
+set @@tidb_constraint_check_in_place_pessimistic = default;
+drop table if exists fk_child_returning;
+drop table if exists fk_parent_returning;
+create table fk_parent_returning (id int primary key);
+create table fk_child_returning (id int primary key, pid int, key(pid), constraint fk_child_parent_returning foreign key(pid) references fk_parent_returning(id));
+insert into fk_parent_returning values (1) returning id;
+id
+1
+insert into fk_child_returning values (1, 42) returning id, pid;
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__returning`.`fk_child_returning`, CONSTRAINT `fk_child_parent_returning` FOREIGN KEY (`pid`) REFERENCES `fk_parent_returning` (`id`))
+select * from fk_child_returning;
+id	pid
+insert into fk_child_returning values (1, 1) returning id, pid;
+id	pid
+1	1
+select * from fk_child_returning;
+id	pid
+1	1
+explain analyze insert into fk_child_returning values (2, 43) returning id, pid;
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__returning`.`fk_child_returning`, CONSTRAINT `fk_child_parent_returning` FOREIGN KEY (`pid`) REFERENCES `fk_parent_returning` (`id`))
+select * from fk_child_returning;
+id	pid
+1	1
+drop table fk_child_returning;
+drop table fk_parent_returning;
+drop table if exists t_explain_returning;
+create table t_explain_returning (id int primary key, val int);
+explain insert into t_explain_returning values (1, 1) returning id;
+id	estRows	task	access object	operator info
+Insert_1	<est_rows>	<task>	<access_object>	<operator_info>
+select count(*) from t_explain_returning;
+count(*)
+0
+explain analyze insert into t_explain_returning values (2, 2) returning id;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Insert_1	<est_rows>	<actRows>	<task>	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+select count(*) from t_explain_returning;
+count(*)
+1
+drop table t_explain_returning;
+set @@tidb_enable_prepared_plan_cache = on;
+drop table if exists t_prepared_returning;
+create table t_prepared_returning (id int primary key, val int);
+prepare st from 'insert into t_prepared_returning values (?, ?) returning id, val + 1';
+set @id = 1, @val = 10;
+execute st using @id, @val;
+id	val + 1
+1	11
+set @id = 2, @val = 20;
+execute st using @id, @val;
+id	val + 1
+2	21
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+deallocate prepare st;
+drop table t_prepared_returning;
+set @@tidb_enable_prepared_plan_cache = default;
+insert into t (name) values ('bad-qualifier') returning bad.*;
+Error 1051 (42S02): Unknown table 'bad'
+insert into t (name) values ('bad-column') returning no_such_column;
+Error 1054 (42S22): Unknown column 'no_such_column' in 'field list'
+insert into t (name) values ('aggregate') returning max(id);
+Error 1111 (HY000): Invalid use of group function
+insert into t (name) values ('window') returning row_number() over ();
+Error 3593 (HY000): You cannot use the window function 'row_number' in this context.'
+insert into t (name) values ('subquery') returning (select id from t limit 1);
+Error 1235 (42000): This version of TiDB doesn't yet support 'subquery in RETURNING clause'
+insert into t (name) values ('subquery') returning (select 1 + 1);
+Error 1235 (42000): This version of TiDB doesn't yet support 'subquery in RETURNING clause'
+insert into t (name) values ('expression') returning name, val * 2 as double_val, upper(name);
+name	double_val	upper(name)
+expression	20	EXPRESSION
+drop table if exists t_source_returning;
+create table t_source_returning (src_id int, src_name varchar(20));
+insert into t_source_returning values (1, 'source');
+insert into t (name) select s.src_name from t_source_returning s returning src_id;
+Error 1054 (42S22): Unknown column 'src_id' in 'field list'
+insert into t (name) select s.src_name from t_source_returning s returning name;
+name
+source
+insert into t (name) select src_name from t_source_returning returning name;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 75 near "name" 
+insert into t (name) (select src_name from t_source_returning) returning name;
+name
+source
+drop table t_source_returning;
+replace into t (id, name) values (1, 'replaced') returning id;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 58 near "returning id" 
+set @@tidb_low_resolution_tso = on;
+insert into t (name) values ('low-resolution') returning id;
+Error 1105 (HY000): can not execute write statement when 'tidb_low_resolution_tso' is set
+set @@tidb_low_resolution_tso = default;
 update t set val = val + 1 returning *;
 Error 1235 (42000): This version of TiDB doesn't yet support 'RETURNING clause'
 update t set val = 100 where id = 1 returning id, val;
 Error 1235 (42000): This version of TiDB doesn't yet support 'RETURNING clause'
+drop table if exists t_multi_returning;
+create table t_multi_returning (id int primary key, val int);
+update t, t_multi_returning set t.val = 1 where t.id = t_multi_returning.id returning t.id;
+Error 1235 (42000): This version of TiDB doesn't yet support 'RETURNING clause'
+drop table t_multi_returning;
 delete from t returning *;
 Error 1235 (42000): This version of TiDB doesn't yet support 'RETURNING clause'
 delete from t where id = 1 returning id, name;

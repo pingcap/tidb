@@ -524,6 +524,67 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 	}
 }
 
+func TestInsertReturningPessimisticRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	session1 := testkit.NewTestKit(t, store)
+	session1.MustExec("use test")
+	session2 := testkit.NewTestKit(t, store)
+	session2.MustExec("use test")
+
+	session1.MustExec("drop table if exists x")
+	session1.MustExec("create table x (id int primary key, c int)")
+	session1.MustExec("insert into x values (1, 1)")
+
+	session1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	session2.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	// session1 holds the row lock, so session2's insert blocks and is retried once the
+	// lock is released. The RETURNING row must come from the retried execution, which sees
+	// session1's committed value.
+	session1.MustExec("begin")
+	session1.MustExec("update x set c = c + 100 where id = 1")
+
+	session2.MustExec("begin")
+	var returned [][]any
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		returned = session2.MustQuery(
+			"insert into x values (1, 0) on duplicate key update c = c + 10 returning id, c").Rows()
+	})
+	session1.MustExec("commit")
+	wg.Wait()
+	session2.MustExec("commit")
+
+	require.Equal(t, [][]any{{"1", "111"}}, returned)
+	session2.MustQuery("select * from x").Check(testkit.Rows("1 111"))
+}
+
+func TestInsertReturningMemoryQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists src, dst")
+	tk.MustExec("create table src (id int primary key, pad varchar(512))")
+	tk.MustExec("create table dst (id int primary key, pad varchar(512))")
+	tk.MustExec("insert into src select n, repeat('x', 512) from " +
+		"(select 1 n union all select 2 union all select 3 union all select 4 union all select 5 " +
+		"union all select 6 union all select 7 union all select 8 union all select 9 union all select 10) t")
+	for _, offset := range []int{100, 200, 400} {
+		tk.MustExec("insert into src select ? + s.id, s.pad from src s", offset)
+	}
+	tk.MustQuery("select count(*) from src").Check(testkit.Rows("80"))
+
+	// The buffered RETURNING rows are charged to the statement, so a small quota stops the
+	// statement instead of letting the buffer grow without bound.
+	tk.MustExec("set @@global.tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("set @@global.tidb_mem_oom_action = default")
+	tk.MustExec("set @@tidb_mem_quota_query = 8192")
+	err := tk.ExecToErr("insert into dst select s.id, s.pad from src s returning id, pad")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "exceeding the allowed memory limit")
+}
+
 func TestPessimisticDeleteYourWrites(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

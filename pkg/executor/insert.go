@@ -55,30 +55,101 @@ type InsertExec struct {
 
 	Priority mysql.PriorityEnum
 
-	// For RETURNING clause support
+	// RETURNING clause support.
+	//
+	// The output rows are evaluated while the rows are written, and buffered in
+	// returningList until the statement finishes. They are handed to the record set by
+	// takeReturningRows, which the adapter calls *after* exec.Close, so Close must not
+	// reset the buffer. The list is charged to e.memTracker, which Close zeroes: an
+	// executor abandoned by a pessimistic retry therefore releases its tracked bytes.
 	returningExprs           []expression.Expression
-	returningSchema          *expression.Schema
 	returningNeedExtraHandle bool
-	returningRows            [][]types.Datum
-	returningDone            bool
+	returningList            *chunk.List
+	// returningEvalBuf holds one written row (public columns, plus the extra handle when
+	// the RETURNING list refers to _tidb_rowid) as the input of the RETURNING expressions.
+	returningEvalBuf chunk.MutRow
+	// returningOutBuf holds the evaluated RETURNING row before it is appended to the list.
+	returningOutBuf chunk.MutRow
 }
 
-func (e *InsertExec) appendReturningRow(row []types.Datum, handle kv.Handle) {
+// initReturningBuffers prepares the buffers used to evaluate and store the RETURNING rows.
+func (e *InsertExec) initReturningBuffers() {
+	cols := e.Table.Cols()
+	inputTypes := make([]*types.FieldType, 0, len(cols)+1)
+	for _, col := range cols {
+		inputTypes = append(inputTypes, &(col.FieldType))
+	}
+	// The planner places the extra handle right after the public columns, see
+	// PlanBuilder.buildReturningClause.
+	inputTypes = append(inputTypes, types.NewFieldType(mysql.TypeLonglong))
+	e.returningEvalBuf = chunk.MutRowFromTypes(inputTypes)
+
+	outputTypes := e.RetFieldTypes()
+	e.returningOutBuf = chunk.MutRowFromTypes(outputTypes)
+	vars := e.Ctx().GetSessionVars()
+	// Do not size the list from e.InitCap(): the executor builder sets ZeroCapacity for
+	// INSERT, which would make List.AppendRow allocate a fresh chunk for every row.
+	e.returningList = chunk.NewListWithMemTracker(outputTypes, vars.InitChunkSize, vars.MaxChunkSize, e.memTracker)
+}
+
+// appendReturningRow evaluates the RETURNING expressions over a row that has just been
+// written and buffers the result. `row` is indexed by column offset, which is what the
+// RETURNING expressions were resolved against.
+func (e *InsertExec) appendReturningRow(row []types.Datum, handle kv.Handle) error {
 	if len(e.returningExprs) == 0 {
-		return
+		return nil
 	}
-	rowLen := len(row)
-	if e.returningNeedExtraHandle && !e.hasExtraHandle {
-		rowLen++
+	// `row` may be wider than the public columns: on the ON DUPLICATE KEY UPDATE path it is
+	// sized by WritableCols(). Only the public columns are addressable from RETURNING.
+	numCols := len(e.Table.Cols())
+	for i := range numCols {
+		if i < len(row) {
+			e.returningEvalBuf.SetDatum(i, row[i])
+		} else {
+			e.returningEvalBuf.SetDatum(i, types.Datum{})
+		}
 	}
-	rowCopy := make([]types.Datum, rowLen)
-	for i := range row {
-		row[i].Copy(&rowCopy[i])
+	handleDatum := types.Datum{}
+	if e.returningNeedExtraHandle {
+		switch {
+		case e.hasExtraHandle && numCols < len(row):
+			// _tidb_rowid was given explicitly, it is the last column of the written row.
+			handleDatum = row[numCols]
+		case handle != nil && handle.IsInt():
+			handleDatum.SetInt64(handle.IntValue())
+		}
 	}
-	if e.returningNeedExtraHandle && !e.hasExtraHandle && handle != nil && handle.IsInt() {
-		rowCopy[len(row)].SetInt64(handle.IntValue())
+	e.returningEvalBuf.SetDatum(numCols, handleDatum)
+
+	input := e.returningEvalBuf.ToRow()
+	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
+	for i, expr := range e.returningExprs {
+		val, err := expr.Eval(evalCtx, input)
+		if err != nil {
+			return err
+		}
+		e.returningOutBuf.SetDatum(i, val)
 	}
-	e.returningRows = append(e.returningRows, rowCopy)
+	e.returningList.AppendRow(e.returningOutBuf.ToRow())
+	return nil
+}
+
+// takeReturningRows returns the buffered RETURNING rows and detaches the buffer. It is
+// called after the executor is closed; the rows stay valid because they keep their chunks
+// alive.
+func (e *InsertExec) takeReturningRows() []chunk.Row {
+	if e.returningList == nil {
+		return nil
+	}
+	rows := make([]chunk.Row, 0, e.returningList.Len())
+	for i := range e.returningList.NumChunks() {
+		chk := e.returningList.GetChunk(i)
+		for j := range e.returningList.NumRowsOfChunk(i) {
+			rows = append(rows, chk.GetRow(j))
+		}
+	}
+	e.returningList = nil
+	return rows
 }
 
 func (e *InsertExec) addRecord(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
@@ -86,8 +157,7 @@ func (e *InsertExec) addRecord(ctx context.Context, row []types.Datum, dupKeyChe
 	if err != nil {
 		return err
 	}
-	e.appendReturningRow(row, handle)
-	return nil
+	return e.appendReturningRow(row, handle)
 }
 
 func (e *InsertExec) addRecordWithAutoIDHint(
@@ -97,8 +167,7 @@ func (e *InsertExec) addRecordWithAutoIDHint(
 	if err != nil {
 		return err
 	}
-	e.appendReturningRow(row, handle)
-	return nil
+	return e.appendReturningRow(row, handle)
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
@@ -411,11 +480,9 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
 	}
 
-	// Handle RETURNING clause
-	if len(e.returningExprs) > 0 {
-		return e.nextWithReturning(ctx, req)
-	}
-
+	// A RETURNING clause does not change how the rows are written: the output rows are
+	// buffered by appendReturningRow while writing, and leave through takeReturningRows
+	// once the statement has finished. Nothing is appended to req here.
 	if !e.EmptyChildren() && e.Children(0) != nil {
 		return insertRowsFromSelect(ctx, e)
 	}
@@ -435,52 +502,6 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-// nextWithReturning handles the RETURNING clause for INSERT statements.
-func (e *InsertExec) nextWithReturning(ctx context.Context, req *chunk.Chunk) error {
-	// If we've already returned all rows, we're done
-	if e.returningDone {
-		return nil
-	}
-
-	e.returningRows = e.returningRows[:0]
-
-	// First, execute the insert operation
-	if !e.EmptyChildren() && e.Children(0) != nil {
-		err := insertRowsFromSelect(ctx, e)
-		if err != nil {
-			return err
-		}
-	} else {
-		err := insertRows(ctx, e)
-		if err != nil {
-			terr, ok := errors.Cause(err).(*terror.Error)
-			if ok && len(e.OnDuplicate) == 0 && terr.Code() == errno.ErrAutoincReadFailed {
-				ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
-				return ec.HandleError(err)
-			}
-			return err
-		}
-	}
-
-	// Now evaluate RETURNING expressions for each inserted row
-	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
-	for _, row := range e.returningRows {
-		// Create a chunk row from the inserted data for expression evaluation
-		chkRow := chunk.MutRowFromDatums(row).ToRow()
-
-		for i, expr := range e.returningExprs {
-			val, err := expr.Eval(evalCtx, chkRow)
-			if err != nil {
-				return err
-			}
-			req.AppendDatum(i, &val)
-		}
-	}
-
-	e.returningDone = true
-	return nil
-}
-
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
 	if e.writeStats != nil {
@@ -489,6 +510,8 @@ func (e *InsertExec) Close() error {
 	if e.RuntimeStats() != nil && e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	// Note: returningList is deliberately not reset here. The adapter collects the rows
+	// after closing the executor, and they stay valid because they keep their chunks alive.
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.setMessage()
 	if e.SelectExec != nil {
@@ -508,6 +531,9 @@ func (e *InsertExec) Open(ctx context.Context) error {
 
 	if e.OnDuplicate != nil {
 		e.initEvalBuffer4Dup()
+	}
+	if len(e.returningExprs) > 0 {
+		e.initReturningBuffers()
 	}
 	if e.SelectExec != nil {
 		return exec.Open(ctx, e.SelectExec)
@@ -645,7 +671,11 @@ func (e *InsertExec) doDupRowUpdate(
 		return errors.Trace(err)
 	}
 
-	e.appendReturningRow(newData, handle)
+	// MariaDB returns the row as it stands after the update, also when the update turned
+	// out to be a no-op (updateRecord reports that as not-ignored, no error).
+	if err := e.appendReturningRow(newData, handle); err != nil {
+		return err
+	}
 
 	if autoColIdx >= 0 {
 		if e.Ctx().GetSessionVars().StmtCtx.AffectedRows() > 0 {

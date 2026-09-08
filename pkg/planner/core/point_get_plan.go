@@ -1361,7 +1361,6 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		return nil
 	}
 
-
 	selStmt := &ast.SelectStmt{
 		TableHints: delStmt.TableHints,
 		Fields:     &ast.FieldList{},

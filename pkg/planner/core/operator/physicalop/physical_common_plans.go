@@ -97,10 +97,11 @@ type Insert struct {
 	FKChecks   []*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades []*FKCascade `plan-cache-clone:"must-nil"`
 
-	// Returning stores the RETURNING clause expression list.
-	Returning                []expression.Expression
-	ReturningSchema          *expression.Schema `plan-cache-clone:"shallow"`
-	ReturningNames           types.NameSlice    `plan-cache-clone:"shallow"`
+	// Returning holds the expressions of the RETURNING clause. The output schema and names
+	// of those expressions are the plan's own schema and output names, set by
+	// PlanBuilder.buildInsert.
+	Returning []expression.Expression
+	// NeedExtraHandleReturning is true when the RETURNING clause refers to _tidb_rowid.
 	NeedExtraHandleReturning bool
 }
 
@@ -116,9 +117,10 @@ func (p *Insert) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.TableColNames)+
+	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*8 + int64(cap(p.TableColNames)+
 		cap(p.Columns)+cap(p.OnDuplicate)+cap(p.Names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
-		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*4 + size.SizeOfInt
+		int64(cap(p.Returning))*size.SizeOfInterface +
+		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*5 + size.SizeOfInt
 	if p.TableSchema != nil {
 		sum += p.TableSchema.MemoryUsage()
 	}
@@ -178,11 +180,6 @@ type Update struct {
 
 	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
-
-	// Returning stores the RETURNING clause expression list.
-	Returning       []expression.Expression
-	ReturningSchema *expression.Schema `plan-cache-clone:"shallow"`
-	ReturningNames  types.NameSlice    `plan-cache-clone:"shallow"`
 }
 
 // Init initializes Update.
@@ -233,11 +230,6 @@ type Delete struct {
 	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
 
 	IgnoreErr bool
-
-	// Returning stores the RETURNING clause expression list.
-	Returning       []expression.Expression
-	ReturningSchema *expression.Schema `plan-cache-clone:"shallow"`
-	ReturningNames  types.NameSlice    `plan-cache-clone:"shallow"`
 }
 
 // Init initializes Delete.

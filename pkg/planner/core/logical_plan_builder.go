@@ -6101,6 +6101,11 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (base.Plan, error) {
+	// Only INSERT ... RETURNING is implemented so far; the parser accepts the clause on
+	// UPDATE and DELETE too, and silently ignoring it would return a wrong result.
+	if len(update.Returning) > 0 {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("RETURNING clause")
+	}
 	b.pushSelectOffset(0)
 	b.pushTableHints(update.TableHints, 0)
 	defer func() {
@@ -6287,11 +6292,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	err = updt.BuildOnUpdateFKTriggers(b.ctx, b.is, tblID2table)
 	if err != nil {
 		return nil, err
-	}
-
-	// Handle RETURNING clause
-	if update.Returning != nil {
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("RETURNING clause")
 	}
 
 	return updt, nil
@@ -6560,6 +6560,10 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base.Plan, error) {
+	// See buildUpdate: DELETE ... RETURNING is parsed but not implemented.
+	if len(ds.Returning) > 0 {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("RETURNING clause")
+	}
 	b.pushSelectOffset(0)
 	b.pushTableHints(ds.TableHints, 0)
 	defer func() {
@@ -6773,11 +6777,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 	if err != nil {
 		return nil, err
-	}
-
-	// Handle RETURNING clause
-	if len(ds.Returning) > 0 {
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("RETURNING clause")
 	}
 
 	return del, nil

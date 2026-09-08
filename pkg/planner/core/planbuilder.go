@@ -4323,18 +4323,16 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 
-	// Handle RETURNING clause
+	// The RETURNING clause is built last: it overwrites the plan's schema, and
+	// ResolveIndices above still needs the schema the plan was built with.
 	if len(insert.Returning) > 0 {
 		returningExprs, returningSchema, returningNames, needExtraHandle, err := b.buildReturningClause(
-			ctx, insert.Returning, insertPlan.TableSchema, insertPlan.TableColNames, mockTablePlan, tableInfo, tn.Schema)
+			ctx, insert.Returning, insertPlan.TableSchema, insertPlan.TableColNames, mockTablePlan, tableInfo, tnW.DBInfo.Name)
 		if err != nil {
 			return nil, err
 		}
 		insertPlan.Returning = returningExprs
-		insertPlan.ReturningSchema = returningSchema
-		insertPlan.ReturningNames = returningNames
 		insertPlan.NeedExtraHandleReturning = needExtraHandle
-		// Set the output schema for the insert plan to be the returning schema
 		insertPlan.SetSchema(returningSchema)
 		insertPlan.SetOutputNames(returningNames)
 	}
@@ -6780,8 +6778,14 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 	return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(stmtNode.Text())
 }
 
-// buildReturningClause builds the RETURNING clause for DML statements.
-// It takes the RETURNING select_expr list from AST and converts it to expressions.
+// buildReturningClause builds the RETURNING clause of an INSERT statement: it turns the
+// RETURNING select_expr list into expressions evaluated over a written row, and returns
+// them together with the schema and the output names they produce.
+//
+// The expressions are evaluated row by row while the rows are written, so they may only
+// refer to the columns of the written row: anything that would need its own plan, such as
+// a correlated subquery, is rejected. Aggregate and window functions are rejected by the
+// expression rewriter itself, because no aggregation mapper is passed to it.
 func (b *PlanBuilder) buildReturningClause(
 	ctx context.Context,
 	returning []*ast.SelectField,
@@ -6791,17 +6795,8 @@ func (b *PlanBuilder) buildReturningClause(
 	tableInfo *model.TableInfo,
 	dbName ast.CIStr,
 ) ([]expression.Expression, *expression.Schema, types.NameSlice, bool, error) {
-	capacity := 0
-	for _, field := range returning {
-		if field.WildCard != nil {
-			capacity += len(tableSchema.Columns)
-		} else {
-			capacity++
-		}
-	}
-	exprs := make([]expression.Expression, 0, capacity)
-	cols := make([]*expression.Column, 0, capacity)
-	names := make(types.NameSlice, 0, capacity)
+	// A row of a table without a clustered handle carries _tidb_rowid after its public
+	// columns; the executor fills that slot in with the handle of the written row.
 	inputSchema := tableSchema
 	inputNames := tableNames
 	if !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle {
@@ -6814,7 +6809,10 @@ func (b *PlanBuilder) buildReturningClause(
 			Index:    tableSchema.Len(),
 			OrigName: fmt.Sprintf("%v.%v.%v", dbName, tableInfo.Name, model.ExtraHandleName),
 		}
-		inputSchema = expression.NewSchema(append(append([]*expression.Column{}, tableSchema.Columns...), extraCol)...)
+		schemaCols := make([]*expression.Column, 0, tableSchema.Len()+1)
+		schemaCols = append(schemaCols, tableSchema.Columns...)
+		schemaCols = append(schemaCols, extraCol)
+		inputSchema = expression.NewSchema(schemaCols...)
 		inputNames = append(tableNames.Shallow(), &types.FieldName{
 			OrigTblName: tableInfo.Name,
 			OrigColName: model.ExtraHandleName,
@@ -6825,81 +6823,76 @@ func (b *PlanBuilder) buildReturningClause(
 	}
 	mockPlan.SetSchema(inputSchema)
 	mockPlan.SetOutputNames(inputNames)
-	needExtraHandle := false
 
-	for _, field := range returning {
-		// Handle RETURNING *
-		if field.WildCard != nil {
-			// Expand * to all visible columns
-			for i, col := range tableSchema.Columns {
-				exprs = append(exprs, col)
-				cols = append(cols, col)
-				names = append(names, tableNames[i])
-			}
-			continue
+	// The RETURNING list is a select list, so name resolution errors should read the same
+	// way as they do for one.
+	b.curClause = fieldList
+
+	// Expand `*` the same way a projection does, so that a qualifier is validated and
+	// hidden columns and _tidb_rowid are not returned by `RETURNING *`.
+	fields, err := b.unfoldWildStar(mockPlan, returning)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+
+	nameByUniqueID := make(map[int64]*types.FieldName, len(inputNames))
+	for i, col := range inputSchema.Columns {
+		nameByUniqueID[col.UniqueID] = inputNames[i]
+	}
+
+	exprs := make([]expression.Expression, 0, len(fields))
+	cols := make([]*expression.Column, 0, len(fields))
+	names := make(types.NameSlice, 0, len(fields))
+	for _, field := range fields {
+		// A subquery is rejected rather than evaluated: an uncorrelated one would be run
+		// while the statement is planned and would therefore report the table as it was
+		// before the insert, and a correlated one cannot be evaluated over a written row
+		// at all. MariaDB rejects a subquery over the inserted table with ER_UPDATE_TABLE_USED.
+		if field.Expr.GetFlag()&ast.FlagHasSubquery != 0 {
+			return nil, nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("subquery in RETURNING clause")
 		}
-
-		// Handle specific column or expression
 		expr, np, err := b.rewrite(ctx, field.Expr, mockPlan, nil, true)
 		if err != nil {
 			return nil, nil, nil, false, err
 		}
-		_ = np // We don't need the new plan for simple column references
-		for _, col := range expression.ExtractColumns(expr) {
-			if col.ID == model.ExtraHandleID {
-				needExtraHandle = true
-				break
-			}
+		if np != mockPlan {
+			// The rewriter built a plan of its own; such an expression cannot be evaluated
+			// against a single written row.
+			return nil, nil, nil, false, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("expression in RETURNING clause")
 		}
-
 		exprs = append(exprs, expr)
-
-		// Build the column for the schema
-		newCol := &expression.Column{
+		cols = append(cols, &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
-		}
-		cols = append(cols, newCol)
+		})
 
-		// Build the name
 		var colName *types.FieldName
-		if field.AsName.L != "" {
+		switch col, isCol := expr.(*expression.Column); {
+		case field.AsName.L != "":
+			colName = &types.FieldName{ColName: field.AsName}
+		case isCol && nameByUniqueID[col.UniqueID] != nil:
+			origName := nameByUniqueID[col.UniqueID]
 			colName = &types.FieldName{
-				ColName: field.AsName,
+				OrigTblName: origName.OrigTblName,
+				OrigColName: origName.OrigColName,
+				DBName:      origName.DBName,
+				TblName:     origName.TblName,
+				ColName:     origName.ColName,
 			}
-		} else if col, ok := expr.(*expression.Column); ok {
-			// Find the original column name
-			for i, c := range inputSchema.Columns {
-				if c.UniqueID == col.UniqueID {
-					// Copy the FieldName
-					origName := inputNames[i]
-					colName = &types.FieldName{
-						OrigTblName: origName.OrigTblName,
-						OrigColName: origName.OrigColName,
-						DBName:      origName.DBName,
-						TblName:     origName.TblName,
-						ColName:     origName.ColName,
-					}
-					break
-				}
-			}
-			if colName == nil {
-				colName = &types.FieldName{
-					ColName: ast.NewCIStr(col.OrigName),
-				}
-			}
-		} else {
+		case isCol:
+			colName = &types.FieldName{ColName: ast.NewCIStr(col.OrigName)}
+		default:
 			exprName, err := b.buildProjectionFieldNameFromExpressions(ctx, field)
 			if err != nil {
 				return nil, nil, nil, false, err
 			}
-			colName = &types.FieldName{
-				ColName: exprName,
-			}
+			colName = &types.FieldName{ColName: exprName}
 		}
 		names = append(names, colName)
 	}
 
-	schema := expression.NewSchema(cols...)
-	return exprs, schema, names, needExtraHandle, nil
+	needExtraHandle := len(expression.ExtractColumnsFromExpressions(exprs, func(col *expression.Column) bool {
+		return col.ID == model.ExtraHandleID
+	})) > 0
+	return exprs, expression.NewSchema(cols...), names, needExtraHandle, nil
 }
