@@ -11483,3 +11483,7 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (DELETE-over-CHECK pin): CHECKs gate writes only — DELETE
  removes would-violate rows freely and reads never re-check. Pinned in
  `crates/tidb-session/tests/delete_over_check_source.rs`.
+- 2026-09-08 (CHECK json_valid pin): the valid document lands and satisfies
+ the CHECK; an invalid document refuses at the JSON CAST (3140) before the
+ CHECK runs. Pinned in
+ `crates/tidb-session/tests/check_json_valid_source.rs`.
