@@ -742,6 +742,47 @@ func TestModifyColumnRollbackKeepsOriginalNotNull(t *testing.T) {
 	})
 }
 
+func TestModifyColumnIndexReorgAllowsNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, c char(20) collate utf8mb4_bin, index idx(c))")
+	tk.MustExec("insert into t values (1, 'a')")
+	tbl := external.GetTableByName(t, tk, "test", "t")
+
+	var gotTp byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+		gotTp = tp
+	})
+
+	var once sync.Once
+	var insertErr error
+	var preventNullInsert bool
+	var checked bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.TableID != tbl.Meta().ID ||
+			job.Type != model.ActionModifyColumn ||
+			job.SchemaState != model.StateDeleteOnly {
+			return
+		}
+		once.Do(func() {
+			checked = true
+			tk2 := testkit.NewTestKit(t, store)
+			col := external.GetModifyColumn(t, tk2, "test", "t", "c", false)
+			preventNullInsert = mysql.HasPreventNullInsertFlag(col.GetFlag())
+			insertErr = tk2.ExecToErr("insert into test.t values (2, null)")
+		})
+	})
+
+	tk.MustExec("alter table t modify column c varchar(10) collate utf8mb4_bin")
+	require.Equal(t, model.ModifyTypeIndexReorg, gotTp)
+	require.True(t, checked)
+	require.False(t, preventNullInsert)
+	require.NoError(t, insertErr)
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 <nil>"))
+	tk.MustExec("admin check table t")
+}
+
 func TestGetModifyColumnType(t *testing.T) {
 	type testCase struct {
 		beforeType string
