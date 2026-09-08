@@ -19,15 +19,78 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
+
+// CheckMViewUpdatable checks whether a DML operation on a materialized view or materialized view
+// log table should be rejected. It returns an error if the table is an MV or MV log and the current
+// session is not in internal maintenance mode.
+func CheckMViewUpdatable(
+	sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName, op string,
+) error {
+	if tableInfo.MaterializedView == nil && tableInfo.MaterializedViewLog == nil {
+		return nil
+	}
+
+	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+	if err != nil {
+		return err
+	}
+	if allowMaintenance {
+		return nil
+	}
+
+	if aliasName == "" {
+		aliasName = tableInfo.Name.O
+	}
+
+	return plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(aliasName, op)
+}
+
+func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
+	if !sv.InMViewMaintenance {
+		return false, nil
+	}
+	// All MV maintenance work should use internal sessions (restricted SQL).
+	if !sv.InRestrictedSQL {
+		return false, plannererrors.ErrInternal.GenWithStack(
+			"materialized view maintenance should only run in restricted SQL mode",
+		)
+	}
+	return true, nil
+}
+
+// CheckMViewReadable checks whether a read on a materialized view should be rejected because
+// its initial build is not ready yet.
+func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
+	if tableInfo == nil || tableInfo.MaterializedView == nil {
+		return nil
+	}
+	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
+	if initBuildState.IsReady() {
+		return nil
+	}
+	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+	if err != nil {
+		return err
+	}
+	if allowMaintenance {
+		return nil
+	}
+	if aliasName == "" {
+		aliasName = tableInfo.Name.O
+	}
+	return errors.New(initBuildState.AccessErrorMessage(aliasName))
+}
 
 // IsReadOnly check whether the ast.Node is a read only statement.
 func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
@@ -57,17 +120,17 @@ type AggregateFuncExtractor struct {
 	AggFuncs []*ast.AggregateFuncExpr
 }
 
-// Enter implements Visitor interface.
-func (*AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+// Enter implements InPlaceVisitor interface.
+func (*AggregateFuncExtractor) Enter(n ast.Node) bool {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
-		return n, true
+		return true
 	}
-	return n, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+// Leave implements InPlaceVisitor interface.
+func (a *AggregateFuncExtractor) Leave(n ast.Node) bool {
 	//nolint: revive
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
@@ -75,33 +138,33 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 			a.AggFuncs = append(a.AggFuncs, v)
 		}
 	}
-	return n, true
+	return true
 }
 
 // WindowFuncExtractor visits Expr tree.
-// It converts ColumnNameExpr to WindowFuncExpr and collects WindowFuncExpr.
+// It collects WindowFuncExpr from AST Node.
 type WindowFuncExtractor struct {
 	// WindowFuncs is the collected WindowFuncExprs.
 	windowFuncs []*ast.WindowFuncExpr
 }
 
-// Enter implements Visitor interface.
-func (*WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
+// Enter implements InPlaceVisitor interface.
+func (*WindowFuncExtractor) Enter(n ast.Node) bool {
 	switch n.(type) {
 	case *ast.SelectStmt, *ast.SetOprStmt:
-		return n, true
+		return true
 	}
-	return n, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
+// Leave implements InPlaceVisitor interface.
+func (a *WindowFuncExtractor) Leave(n ast.Node) bool {
 	//nolint: revive
 	switch v := n.(type) {
 	case *ast.WindowFuncExpr:
 		a.windowFuncs = append(a.windowFuncs, v)
 	}
-	return n, true
+	return true
 }
 
 // extractStringFromStringSet helps extract string info from set.StringSet.

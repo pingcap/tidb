@@ -78,6 +78,7 @@ const (
 	MaxRocksdbBlockReadCountStr                = "MAX_ROCKSDB_BLOCK_READ_COUNT"
 	AvgRocksdbBlockReadByteStr                 = "AVG_ROCKSDB_BLOCK_READ_BYTE"
 	MaxRocksdbBlockReadByteStr                 = "MAX_ROCKSDB_BLOCK_READ_BYTE"
+	IAExecCountStr                             = "IA_REMOTE_EXEC_COUNT"
 	AvgIARemoteReadSegmentCountStr             = "AVG_IA_REMOTE_READ_SEGMENT_COUNT"
 	MaxIARemoteReadSegmentCountStr             = "MAX_IA_REMOTE_READ_SEGMENT_COUNT"
 	AvgIARemoteReadSegmentSizeStr              = "AVG_IA_REMOTE_READ_SEGMENT_SIZE"
@@ -328,6 +329,9 @@ var columnFactoryMap = map[string]columnFactory{
 	MaxRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockReadByte
 	},
+	IAExecCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.IAExecCount
+	},
 	AvgIARemoteReadSegmentCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgFloat4Uint(record.SumIARemoteReadSegmentCount, record.ExecCount)
 	},
@@ -437,16 +441,16 @@ var columnFactoryMap = map[string]columnFactory{
 		return record.MaxDisk
 	},
 	AvgKvTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumKVTotal), record.CommitCount)
+		return avgInt(int64(record.SumKVTotal), record.ExecCount)
 	},
 	AvgPdTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumPDTotal), record.CommitCount)
+		return avgInt(int64(record.SumPDTotal), record.ExecCount)
 	},
 	AvgBackoffTotalTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumBackoffTotal), record.CommitCount)
+		return avgInt(int64(record.SumBackoffTotal), record.ExecCount)
 	},
 	AvgWriteSQLRespTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumWriteSQLRespTotal), record.CommitCount)
+		return avgInt(int64(record.SumWriteSQLRespTotal), record.ExecCount)
 	},
 	AvgTidbCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumTidbCPU), record.ExecCount)

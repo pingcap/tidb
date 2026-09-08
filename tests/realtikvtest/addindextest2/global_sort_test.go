@@ -83,6 +83,8 @@ func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 func genServerWithStorage(t *testing.T) (*fakestorage.Server, string) {
 	t.Helper()
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	// Use the existing test-only unauthenticated path without probing GCE metadata.
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", t.TempDir()+"/missing-gcs-credentials.json")
 	opt := fakestorage.Options{
 		Scheme:     "http",
 		Host:       gcsHost,

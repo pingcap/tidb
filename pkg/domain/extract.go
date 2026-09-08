@@ -288,7 +288,7 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 			if err != nil {
 				return err
 			}
-			node.Accept(tne)
+			ast.Walk(node, tne)
 		}
 	}
 	if tne.err != nil {

@@ -65,7 +65,9 @@ Example:
 
 This script runs external starter-mode tests against a real `tidb-server`
 process. It first reuses `bootstrap-test-with-cluster.sh` to start PD, TiKV,
-TiKV-Worker, and MinIO. Then it starts `bin/tidb-server` with
+TiKV-Worker, and MinIO. When `STARTER_COLUMNAR_AP` is enabled, bootstrap also
+starts a TiFlash compute/read node in `tiflash_compute` mode; it never starts a
+TiFlash write node. Then it starts `bin/tidb-server` with
 `deploy-mode = "starter"` and runs Go tests through the MySQL protocol and
 status HTTP APIs. The standard `startertest` Makefile target runs against a
 non-`SYSTEM` keyspace. For a non-`SYSTEM` target keyspace, the script first
@@ -93,7 +95,18 @@ current checkout before starting the external server. The script exports
 next-gen code paths.
 
 Because the script reuses `bootstrap-test-with-cluster.sh`, `bin/pd-server`,
-`bin/tikv-server`, and `bin/tikv-worker` must also be available.
+`bin/tikv-server`, and `bin/tikv-worker` must also be available. When
+`STARTER_COLUMNAR_AP` is enabled, `bin/tiflash` (or `TIFLASH_BIN_PATH`) is also
+required, and the external starter server enables `disaggregated-tiflash` with
+`cse.columnar-store-type = "columnar"`. The standard `run-tests.sh startertest`
+path enables `STARTER_COLUMNAR_AP` automatically.
+
+For a focused, one-command Docker Compose run of the two starter txn-file SQL
+cases, see the
+[`startertest/docker-compose` helper](../../startertest/docker-compose/README.md).
+It builds TiDB and the test binary from the current checkout and runs the full
+private NextGen starter lifecycle in containers. This is an additional local
+workflow and does not replace the binary-based commands documented here.
 
 Usage:
 
@@ -120,6 +133,14 @@ Useful environment variables:
   the external server (default: `65536`)
 - `STARTER_TIKV_WORKER_URL`: Starter `tikv-worker-url` config used by the
   external server (default: `localhost:19000`)
+- `STARTER_TXN_CHUNK_WRITER_ADDR`: Address of the transaction chunk writer for
+  file-based transactions (default: the `STARTER_TIKV_WORKER_URL` value)
+- `STARTER_TXN_CHUNK_WRITER_CONCURRENCY`: Concurrency used to request the
+  transaction chunk writer (default: `2`)
+- `STARTER_TXN_CHUNK_MAX_SIZE`: Maximum transaction chunk size in bytes for
+  file-based transactions (default: `262144`)
+- `STARTER_TXN_FILE_MIN_MUTATION_SIZE`: Minimum mutation size in bytes for
+  selecting file-based transactions (default: `1048576`)
 - `STARTER_KEYSPACE_NAME`: Starter keyspace activated by the script
   (default: `SYSTEM`)
 - `STARTER_PREPARE_KEYSPACE`: Whether to bootstrap the shared `SYSTEM` keyspace
@@ -154,13 +175,27 @@ Useful environment variables:
   for the SQL and status listeners (defaults: `4000` / `10080`; the script
   advances to the next available port if needed)
 
+- `STARTER_COLUMNAR_AP`: Enables the Starter native-columnar AP topology when
+  using a lower-level runner. TiKV builds columnar and FTS indexes, the worker
+  runs Schema Manager, and bootstrap starts one TiFlash compute/read node. The
+  standard `run-tests.sh startertest` command enables it automatically. For
+  example:
+
+  ```bash
+  tests/realtikvtest/scripts/next-gen/run-tests.sh startertest
+  ```
+- `TIFLASH_BIN_PATH`: TiFlash executable used by Starter tests (default:
+  `bin/tiflash`)
+
 ## Configuration Files
 
 The test cluster uses configuration files from `tests/realtikvtest/configs/next-gen/`:
 
 - `pd.toml`: Configuration for PD servers with keyspace settings
-- `tikv.toml`: Configuration for TiKV servers with storage, DFS and IA settings
-- `tikv-worker.toml`: Configuration for TiKV-Worker with DFS and IA settings
+- `tikv.toml`: Configuration for TiKV servers with storage, DFS, IA, and
+  native columnar/FTS index construction settings
+- `tikv-worker.toml`: Configuration for TiKV-Worker with DFS, IA, and Schema
+  Manager settings
 
 ## Required Ports
 
@@ -170,6 +205,7 @@ The test cluster requires the following TCP ports to be available:
 - TiKV: 20160, 20161, 20162, 20180, 20181, 20182
 - TiKV-Worker: 19000
 - MinIO: 9000 (configurable via MINIO_PORT environment variable)
+- TiFlash compute when `STARTER_COLUMNAR_AP=1`: 3930, 9001, 20170, 20292
 
 ## Environment Variables
 

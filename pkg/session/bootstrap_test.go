@@ -103,7 +103,11 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
+	match(t, rows, `%`, "root", "", "mysql_native_password",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "N",
+		"Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	r.Close()
 
 	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
@@ -244,7 +248,11 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
+	match(t, rows, `%`, "root", "", "mysql_native_password",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "N",
+		"Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	require.NoError(t, r.Close())
 
 	MustExec(t, se, "USE test")
@@ -1891,8 +1899,13 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	versions := make([]int, 0, len(versionedBootstrapSchemas))
 	dbNameToID := make(map[string]int64)
 	allTableIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	foundStorageClassTransitionSchema := false
 	for _, vbs := range versionedBootstrapSchemas {
 		versions = append(versions, int(vbs.ver))
+		if vbs.ver == meta.StorageClassTransitionNextGenBootTableVersion {
+			require.True(t, vbs.nextGenOnly)
+			foundStorageClassTransitionSchema = true
+		}
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
@@ -1910,8 +1923,37 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	}
 	require.IsIncreasing(t, versions,
 		"versions in versionedBootstrapSchemas should be monotonically increasing, and cannot have duplicate versions")
+	require.True(t, foundStorageClassTransitionSchema)
 	slices.Sort(allTableIDs)
 	require.IsIncreasing(t, allTableIDs, "versionedBootstrapSchemas should not have duplicate table IDs")
+
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		return meta.NewMutator(txn).SetNextGenBootTableVersion(meta.MaterializedViewNextGenBootTableVersion)
+	}))
+	require.NoError(t, bootstrapSchemas(store))
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		ver, err := m.GetNextGenBootTableVersion()
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, ver, meta.StorageClassTransitionNextGenBootTableVersion)
+		dbID, err := m.GetSystemDBID()
+		require.NoError(t, err)
+		tables, err := m.ListTables(ctx, dbID)
+		require.NoError(t, err)
+		require.True(t, slices.ContainsFunc(tables, func(table *model.TableInfo) bool {
+			return table.ID == metadef.TiDBStorageClassTransitionHistoryTableID
+		}))
+		return nil
+	}))
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {

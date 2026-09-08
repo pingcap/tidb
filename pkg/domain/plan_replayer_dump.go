@@ -146,22 +146,22 @@ func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tab
 	return nil
 }
 
-func (*tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+func (*tableNameExtractor) Enter(in ast.Node) bool {
 	if _, ok := in.(*ast.TableName); ok {
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
+func (tne *tableNameExtractor) Leave(in ast.Node) bool {
 	if tne.err != nil {
-		return in, true
+		return true
 	}
 	if t, ok := in.(*ast.TableName); ok {
 		isView, err := tne.handleIsView(t)
 		if err != nil {
 			tne.err = err
-			return in, true
+			return true
 		}
 		schema := t.Schema
 		if schema.L == "" {
@@ -178,7 +178,7 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 			}
 		}
 	}
-	return in, true
+	return true
 }
 
 func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
@@ -200,7 +200,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	node.Accept(tne)
+	ast.Walk(node, tne)
 	return true, nil
 }
 
@@ -844,7 +844,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 		cteNames: make(map[string]struct{}),
 	}
 	for _, execStmt := range execStmts {
-		execStmt.Accept(tableExtractor)
+		ast.Walk(execStmt, tableExtractor)
 	}
 	if tableExtractor.err != nil {
 		return nil, tableExtractor.err

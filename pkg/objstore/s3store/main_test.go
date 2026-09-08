@@ -18,17 +18,151 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/s3store/mock"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestAliyunEndpointPrefersAWSCredentialChain(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "aws-access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "aws-secret-key")
+	t.Setenv("AWS_SESSION_TOKEN", "aws-session-token")
+
+	metadataCalls := 0
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		metadataCalls++
+		var body string
+		switch req.URL.Path {
+		case "/latest/meta-data/ram/security-credentials/":
+			body = "test-role"
+		case "/latest/meta-data/ram/security-credentials/test-role":
+			body = `{"AccessKeyId":"ram-access-key","AccessKeySecret":"ram-secret-key","SecurityToken":"ram-session-token","Expiration":"2099-01-02T03:04:05Z","Code":"Success"}`
+		default:
+			return nil, fmt.Errorf("unexpected metadata request: %s", req.URL)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    req,
+		}, nil
+	})
+	originalClientTransport := http.DefaultClient.Transport
+	originalDefaultTransport := http.DefaultTransport
+	http.DefaultClient.Transport = transport
+	http.DefaultTransport = transport
+	t.Cleanup(func() {
+		http.DefaultClient.Transport = originalClientTransport
+		http.DefaultTransport = originalDefaultTransport
+	})
+
+	backend := &backup.S3{
+		Bucket:   "bucket",
+		Endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+		Provider: "alibaba",
+	}
+	storage, err := NewS3Storage(context.Background(), backend, &storeapi.Options{SendCredentials: true})
+	require.NoError(t, err)
+	t.Cleanup(storage.Close)
+	require.Equal(t, "aws-access-key", backend.AccessKey)
+	require.Equal(t, "aws-secret-key", backend.SecretAccessKey)
+	require.Equal(t, "aws-session-token", backend.SessionToken)
+	require.Zero(t, metadataCalls)
+
+	ramCred, err := newOssRAMCredentialsProvider().Retrieve(context.Background())
+	require.NoError(t, err)
+	require.True(t, ramCred.CanExpire)
+	require.Equal(t, time.Date(2099, time.January, 2, 3, 4, 5, 0, time.UTC), ramCred.Expires)
+}
+
+func TestFallbackCredentialsProvider(t *testing.T) {
+	t.Run("real AWS default chain fails without credential sources", func(t *testing.T) {
+		for _, name := range []string{
+			"AWS_ACCESS_KEY_ID",
+			"AWS_ACCESS_KEY",
+			"AWS_SECRET_ACCESS_KEY",
+			"AWS_SECRET_KEY",
+			"AWS_SESSION_TOKEN",
+			"AWS_PROFILE",
+			"AWS_DEFAULT_PROFILE",
+			"AWS_WEB_IDENTITY_TOKEN_FILE",
+			"AWS_ROLE_ARN",
+			"AWS_ROLE_SESSION_NAME",
+			"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+			"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+			"AWS_CONTAINER_AUTHORIZATION_TOKEN",
+			"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+		} {
+			t.Setenv(name, "")
+		}
+		emptyConfigDir := t.TempDir()
+		t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(emptyConfigDir, "credentials"))
+		t.Setenv("AWS_CONFIG_FILE", filepath.Join(emptyConfigDir, "config"))
+		t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+
+		cfg, err := awsconfig.LoadDefaultConfig(context.Background())
+		require.NoError(t, err)
+		_, err = cfg.Credentials.Retrieve(context.Background())
+		require.Error(t, err)
+	})
+
+	primaryErr := fmt.Errorf("primary credentials unavailable")
+	for _, test := range []struct {
+		name                  string
+		primaryErr            error
+		expectedAccessKey     string
+		expectedFallbackCalls int
+	}{
+		{
+			name:                  "primary credentials take priority",
+			expectedAccessKey:     "primary-access-key",
+			expectedFallbackCalls: 0,
+		},
+		{
+			name:                  "fallback after primary failure",
+			primaryErr:            primaryErr,
+			expectedAccessKey:     "fallback-access-key",
+			expectedFallbackCalls: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fallbackCalls := 0
+			provider := &fallbackCredentialsProvider{
+				primary: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+					return aws.Credentials{AccessKeyID: "primary-access-key", SecretAccessKey: "primary-secret-key"}, test.primaryErr
+				}),
+				fallback: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+					fallbackCalls++
+					return aws.Credentials{AccessKeyID: "fallback-access-key", SecretAccessKey: "fallback-secret-key"}, nil
+				}),
+			}
+			cred, err := provider.Retrieve(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, test.expectedAccessKey, cred.AccessKeyID)
+			require.Equal(t, test.expectedFallbackCalls, fallbackCalls)
+		})
+	}
+}
 
 type Suite struct {
 	Controller *gomock.Controller

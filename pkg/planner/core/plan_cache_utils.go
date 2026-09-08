@@ -75,15 +75,15 @@ type paramMarkerExtractor struct {
 	markers []ast.ParamMarkerExpr
 }
 
-func (*paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
-	return in, false
+func (*paramMarkerExtractor) Enter(ast.Node) bool {
+	return false
 }
 
-func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
+func (e *paramMarkerExtractor) Leave(in ast.Node) bool {
 	if x, ok := in.(*driver.ParamMarkerExpr); ok {
 		e.markers = append(e.markers, x)
 	}
-	return in, true
+	return true
 }
 
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
@@ -93,7 +93,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, base.Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
-	paramStmt.Accept(&extractor)
+	ast.Walk(paramStmt, &extractor)
 
 	// DDL Statements can not accept parameters
 	if _, ok := paramStmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
@@ -239,7 +239,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
-	paramStmt.Accept(stmtProcessor)
+	ast.Walk(paramStmt, stmtProcessor)
 
 	if err = checkPreparedPriv(ctx, sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -704,8 +704,8 @@ type planCacheStmtProcessor struct {
 	stmt *PlanCacheStmt
 }
 
-// Enter implements Visitor interface.
-func (f *planCacheStmtProcessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements InPlaceVisitor interface.
+func (f *planCacheStmtProcessor) Enter(in ast.Node) (skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
 		f.stmt.limits = append(f.stmt.limits, node)
@@ -717,12 +717,12 @@ func (f *planCacheStmtProcessor) Enter(in ast.Node) (out ast.Node, skipChildren 
 			f.stmt.tables = append(f.stmt.tables, t)
 		}
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (*planCacheStmtProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+// Leave implements InPlaceVisitor interface.
+func (*planCacheStmtProcessor) Leave(ast.Node) (proceed bool) {
+	return true
 }
 
 // PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
@@ -802,7 +802,7 @@ type PrepareStmtCacheEntry struct {
 // for prepared statements where the actual parameter values are not yet known).
 func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
 	var extractor paramMarkerExtractor
-	stmtNode.Accept(&extractor)
+	ast.Walk(stmtNode, &extractor)
 	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) int {
 		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
@@ -820,7 +820,7 @@ func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
 // re-parse so that limit nodes and table references point into the new tree.
 func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, stmtNode ast.StmtNode) {
 	processor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: stmt}
-	stmtNode.Accept(processor)
+	ast.Walk(stmtNode, processor)
 }
 
 // DBName returns the dbName field (used for metadata lock during Execute).

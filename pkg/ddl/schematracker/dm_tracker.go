@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // SchemaTracker is used to track schema changes by DM. It implements
@@ -288,6 +289,129 @@ func (d *SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt
 	}
 
 	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, nil, ddl.WithOnExist(onExist))
+}
+
+// CreateMaterializedViewLog implements the DDL interface.
+func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) error {
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if ctx == nil || ctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	schema := d.SchemaByName(schemaName)
+	if schema == nil {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	baseTable, err := d.TableClonedByName(schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+	if baseTable.IsView() || baseTable.IsSequence() || baseTable.TempTableType != model.TempTableNone ||
+		baseTable.MaterializedView != nil || baseTable.MaterializedViewLog != nil {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+	if baseTable.GetPartitionInfo() != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CREATE MATERIALIZED VIEW LOG on partition table")
+	}
+
+	mlogName := model.MaterializedViewLogTableName(baseTable.Name)
+	if _, err := d.TableByName(context.Background(), schemaName, mlogName); err == nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogName})
+	} else if !infoschema.ErrTableNotExists.Equal(err) {
+		return err
+	}
+
+	mlogTableInfo, err := ddl.BuildMaterializedViewLogTableInfo(
+		ctx,
+		schemaName,
+		schema.Charset,
+		schema.Collate,
+		nil,
+		baseTable,
+		s,
+		metabuild.WithSuppressTooLongIndexErr(true),
+		metabuild.WithClusteredIndexDefMode(vardef.ClusteredIndexDefModeOff),
+	)
+	if err != nil {
+		return err
+	}
+	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
+		return err
+	}
+	if baseTable.MaterializedViewBase == nil {
+		baseTable.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
+	}
+	if mlogTableInfo.ID != 0 {
+		baseTable.MaterializedViewBase.MLogID = mlogTableInfo.ID
+	} else {
+		baseTable.MaterializedViewBase.MLogID = 1
+	}
+	return d.PutTable(schemaName, baseTable)
+}
+
+// CreateMaterializedView rejects MV creation because the schema tracker does not support MVs.
+func (*SchemaTracker) CreateMaterializedView(sessionctx.Context, *ast.CreateMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW is not supported in schema tracker")
+}
+
+// DropMaterializedView implements the DDL interface.
+func (*SchemaTracker) DropMaterializedView(sessionctx.Context, *ast.DropMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("DROP MATERIALIZED VIEW is not supported in schema tracker")
+}
+
+// DropMaterializedViewLog implements the DDL interface.
+func (d *SchemaTracker) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMaterializedViewLogStmt) error {
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if ctx == nil || ctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	schema := d.SchemaByName(schemaName)
+	if schema == nil {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	baseTable, err := d.TableByName(context.Background(), schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+	if baseTable.IsView() || baseTable.IsSequence() || baseTable.TempTableType != model.TempTableNone ||
+		baseTable.MaterializedView != nil || baseTable.MaterializedViewLog != nil {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+
+	mlogName := model.MaterializedViewLogTableName(baseTable.Name)
+	mlogTable, err := d.TableByName(context.Background(), schemaName, mlogName)
+	if err != nil {
+		if s.IfExists && infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		return err
+	}
+	if mlogTable.MaterializedViewLog == nil || mlogTable.MaterializedViewLog.BaseTableID != baseTable.ID {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, mlogName, "MATERIALIZED VIEW LOG")
+	}
+	if len(mlogTable.MaterializedViewLog.DependentMViewIDs) > 0 {
+		return errors.Errorf("cannot drop materialized view log on %s.%s: dependent materialized views exist", schemaName, s.Table.Name)
+	}
+
+	if err := d.DeleteTable(schemaName, mlogName); err != nil {
+		return err
+	}
+	if baseTable.MaterializedViewBase != nil && baseTable.MaterializedViewBase.MLogID != 0 {
+		baseTable = baseTable.Clone()
+		baseTable.MaterializedViewBase.MLogID = 0
+		if len(baseTable.MaterializedViewBase.MViewIDs) == 0 {
+			baseTable.MaterializedViewBase = nil
+		}
+		return d.PutTable(schemaName, baseTable)
+	}
+	return nil
 }
 
 // DropTable implements the DDL interface.

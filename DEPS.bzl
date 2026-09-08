@@ -299,13 +299,6 @@ def go_deps():
         version = "v0.2.0",
     )
     go_repository(
-        name = "com_github_aliyun_alibaba_cloud_sdk_go",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/aliyun/alibaba-cloud-sdk-go",
-        sum = "h1:Q/yk4z/cHUVZfgTqtD09qeYBxHwshQAjVRX73qs8UH0=",
-        version = "v1.61.1581",
-    )
-    go_repository(
         name = "com_github_aliyun_alibabacloud_oss_go_sdk_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aliyun/alibabacloud-oss-go-sdk-v2",
@@ -1992,13 +1985,6 @@ def go_deps():
         importpath = "github.com/gogo/status",
         sum = "h1:+eIkrewn5q6b30y+g/BJINVVdi2xH7je5MPJ3ZPK3JA=",
         version = "v1.1.0",
-    )
-    go_repository(
-        name = "com_github_goji_httpauth",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/goji/httpauth",
-        sum = "h1:lBXNCxVENCipq4D1Is42JVOP4eQjlB8TQ6H69Yx5J9Q=",
-        version = "v0.0.0-20160601135302-2da839ab0f4d",
     )
     go_repository(
         name = "com_github_golang_freetype",
@@ -3791,8 +3777,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:Z1gFEBIzhT7Cuc0IBAsKgUxMapL2kwqe3QQq7g9XiJw=",
-        version = "v0.0.0-20260820070758-623e58e60fa9",
+        sum = "h1:6yUryXKVbKpCNdZWL58/OcZj8NPLUA/xsJYXSbsD59w=",
+        version = "v0.0.0-20260903054228-107095f1d250",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4542,17 +4528,16 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
         replace = "github.com/JmPotato/client-go/v2",
-        sum = "h1:+yGFF7CapkJR+8mV/eRXNgegc2u+AYLWLiPmclZwDak=",
-        version = "v2.0.0-20260821050331-653c1824be20",
+        sum = "h1:pw2mvupJ4v55Rtsn9U5CXbnF3/5HWBJnql1Z0s15aKQ=",
+        version = "v2.0.0-20260908070927-5ec8cbd82875",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        replace = "github.com/JmPotato/pd/client",
-        sum = "h1:0/9o+chqwsjhjvN/JR7KeJYGur+3sXvfWRIYa+bOCkQ=",
-        version = "v0.0.0-20260821050134-d9b686cee60b",
+        sum = "h1:7C3yQBiR06tgp9QBHXNigCx9w6qje7bdijEWmQpbopE=",
+        version = "v0.0.0-20260908055558-001881051f7e",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",

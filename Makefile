@@ -163,6 +163,10 @@ test_part_parser_dev: parser_fmt parser_unit_test
 parser:
 	@cd pkg/parser && make parser
 
+.PHONY: parser_ast_visitor
+parser_ast_visitor: ## Regenerate in-place AST visitor methods
+	@cd pkg/parser && $(GO) run ./ast/visitor_codegen/cmd -source-dir ast -output ast/visitor_inplace_generated.go
+
 .PHONY: parser_yacc
 parser_yacc:
 	@cd pkg/parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed

@@ -15,7 +15,6 @@
 package stmtsummary
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"strings"
@@ -97,6 +96,7 @@ type StmtRecord struct {
 	MaxRocksdbBlockReadCount       uint64        `json:"max_rocksdb_block_read_count"`
 	SumRocksdbBlockReadByte        uint64        `json:"sum_rocksdb_block_read_byte"`
 	MaxRocksdbBlockReadByte        uint64        `json:"max_rocksdb_block_read_byte"`
+	IAExecCount                    int64         `json:"ia_remote_exec_count"`
 	SumIARemoteReadSegmentCount    uint64        `json:"sum_ia_remote_read_segment_count"`
 	MaxIARemoteReadSegmentCount    uint64        `json:"max_ia_remote_read_segment_count"`
 	SumIARemoteReadSegmentSize     uint64        `json:"sum_ia_remote_read_segment_size"`
@@ -180,20 +180,19 @@ type StmtRecord struct {
 // statistics of the StmtExecInfo into the StmtRecord.
 func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	// Use "," to separate table names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range info.StmtCtx.Tables {
+	var tableNames strings.Builder
+	for _, value := range info.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		buffer.WriteString(strings.ToLower(value.DB))
-		buffer.WriteString(".")
-		buffer.WriteString(strings.ToLower(value.Table))
-		if i < len(info.StmtCtx.Tables)-1 {
-			buffer.WriteString(",")
+		if tableNames.Len() > 0 {
+			tableNames.WriteByte(',')
 		}
+		tableNames.WriteString(strings.ToLower(value.DB))
+		tableNames.WriteByte('.')
+		tableNames.WriteString(strings.ToLower(value.Table))
 	}
-	tableNames := buffer.String()
 	planDigest := info.PlanDigest
 	if len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
@@ -215,8 +214,8 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		Digest:        info.Digest,
 		PlanDigest:    planDigest,
 		StmtType:      info.StmtCtx.StmtType,
-		NormalizedSQL: info.NormalizedSQL,
-		TableNames:    tableNames,
+		NormalizedSQL: formatSQL(info.NormalizedSQL),
+		TableNames:    tableNames.String(),
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
 		BindingDigest: bindingDigest,
@@ -327,6 +326,9 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 			r.MaxRocksdbBlockReadByte = info.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		}
 		iaStats := execdetails.GetIARemoteReadSegmentStats(info.ExecDetail.ScanDetail)
+		if iaStats.Count > 0 {
+			r.IAExecCount++
+		}
 		r.SumIARemoteReadSegmentCount += iaStats.Count
 		if iaStats.Count > r.MaxIARemoteReadSegmentCount {
 			r.MaxIARemoteReadSegmentCount = iaStats.Count
@@ -544,6 +546,7 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	if r.MaxRocksdbBlockReadByte < other.MaxRocksdbBlockReadByte {
 		r.MaxRocksdbBlockReadByte = other.MaxRocksdbBlockReadByte
 	}
+	r.IAExecCount += other.IAExecCount
 	r.SumIARemoteReadSegmentCount += other.SumIARemoteReadSegmentCount
 	if r.MaxIARemoteReadSegmentCount < other.MaxIARemoteReadSegmentCount {
 		r.MaxIARemoteReadSegmentCount = other.MaxIARemoteReadSegmentCount

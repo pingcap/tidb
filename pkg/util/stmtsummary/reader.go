@@ -304,6 +304,7 @@ const (
 	MaxRocksdbBlockReadCountStr                = "MAX_ROCKSDB_BLOCK_READ_COUNT"
 	AvgRocksdbBlockReadByteStr                 = "AVG_ROCKSDB_BLOCK_READ_BYTE"
 	MaxRocksdbBlockReadByteStr                 = "MAX_ROCKSDB_BLOCK_READ_BYTE"
+	IAExecCountStr                             = "IA_REMOTE_EXEC_COUNT"
 	AvgIARemoteReadSegmentCountStr             = "AVG_IA_REMOTE_READ_SEGMENT_COUNT"
 	MaxIARemoteReadSegmentCountStr             = "MAX_IA_REMOTE_READ_SEGMENT_COUNT"
 	AvgIARemoteReadSegmentSizeStr              = "AVG_IA_REMOTE_READ_SEGMENT_SIZE"
@@ -659,6 +660,9 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	MaxRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.maxRocksdbBlockReadByte
 	},
+	IAExecCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.iaExecCount
+	},
 	AvgIARemoteReadSegmentCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return avgFloat4Uint(ssStats.sumIARemoteReadSegmentCount, ssStats.execCount)
 	},
@@ -819,25 +823,25 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return int64(ssStats.sumKVTotal)
 	},
 	AvgKvTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumKVTotal), ssStats.commitCount)
+		return avgInt(int64(ssStats.sumKVTotal), ssStats.execCount)
 	},
 	PdTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return int64(ssStats.sumPDTotal)
 	},
 	AvgPdTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumPDTotal), ssStats.commitCount)
+		return avgInt(int64(ssStats.sumPDTotal), ssStats.execCount)
 	},
 	BackoffTotalTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return int64(ssStats.sumBackoffTotal)
 	},
 	AvgBackoffTotalTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumBackoffTotal), ssStats.commitCount)
+		return avgInt(int64(ssStats.sumBackoffTotal), ssStats.execCount)
 	},
 	WriteSQLRespTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return int64(ssStats.sumWriteSQLRespTotal)
 	},
 	AvgWriteSQLRespTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumWriteSQLRespTotal), ssStats.commitCount)
+		return avgInt(int64(ssStats.sumWriteSQLRespTotal), ssStats.execCount)
 	},
 	AvgTidbCPUTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return avgInt(int64(ssStats.sumTidbCPU), ssStats.execCount)

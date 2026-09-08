@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -100,7 +101,7 @@ func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) e
 	var secondResult distsql.SelectResult
 	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
-		return err
+		return errors.Join(err, firstResult.Close())
 	}
 	e.resultHandler.open(firstResult, secondResult)
 
@@ -119,10 +120,15 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	}
 	// Full-sampling analyze sorts collected samples by handle before computing
 	// correlation, so this request does not need KeepOrder.
+	storeBatchSize := e.ctx.GetSessionVars().AnalyzeStoreBatchSize
+	enableStoreBatch := storeBatchSize > 0
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
 		SetConcurrency(e.concurrency).
+		SetStoreBatchSize(storeBatchSize).
+		SetAllowBatchTaskDataMerge(enableStoreBatch).
+		SetExecuteBatchTasksSerially(enableStoreBatch).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
@@ -131,7 +137,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		return nil, err
 	}
 	failpoint.InjectCall("analyzeColumnsRequestBuilt", kvReq)
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx(), e.planID)
 	if err != nil {
 		return nil, err
 	}

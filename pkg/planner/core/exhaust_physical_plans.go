@@ -1885,6 +1885,9 @@ func getJoinChildStatsAndSchema(ge base.GroupExpression, p base.LogicalPlan) (st
 // If we can use mpp broadcast join, that's our first choice.
 func preferMppBCJ(super base.LogicalPlan) bool {
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
+	if p.JoinType == base.FullOuterJoin {
+		return false
+	}
 	if len(p.EqualConditions) == 0 && p.SCtx().GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
@@ -1961,8 +1964,12 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		return nil
 	}
 
-	if p.JoinType != base.InnerJoin && p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.SemiJoin && p.JoinType != base.AntiSemiJoin && p.JoinType != base.LeftOuterSemiJoin && p.JoinType != base.AntiLeftOuterSemiJoin {
+	if p.JoinType != base.InnerJoin && p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.FullOuterJoin && p.JoinType != base.SemiJoin && p.JoinType != base.AntiSemiJoin && p.JoinType != base.LeftOuterSemiJoin && p.JoinType != base.AntiLeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because join type `" + p.JoinType.String() + "` is not supported now.")
+		return nil
+	}
+	if p.JoinType == base.FullOuterJoin && useBCJ {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because `full outer join` is only supported by shuffle join now.")
 		return nil
 	}
 
@@ -1976,12 +1983,12 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 			return nil
 		}
 	}
-	if len(p.LeftConditions) != 0 && p.JoinType != base.LeftOuterJoin {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.")
+	if len(p.LeftConditions) != 0 && p.JoinType != base.LeftOuterJoin && p.JoinType != base.FullOuterJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because left conditions are only supported for `left outer join` and `full outer join` now.")
 		return nil
 	}
-	if len(p.RightConditions) != 0 && p.JoinType != base.RightOuterJoin {
-		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `right join` but has right conditions, which is not supported by mpp now.")
+	if len(p.RightConditions) != 0 && p.JoinType != base.RightOuterJoin && p.JoinType != base.FullOuterJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because right conditions are only supported for `right outer join` and `full outer join` now.")
 		return nil
 	}
 
@@ -2035,7 +2042,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 			fixedBuildSide = true
 		}
 	}
-	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
+	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin || p.JoinType == base.FullOuterJoin {
 		// TiFlash does not require that the build side must be the inner table for outer join.
 		// so we can choose the build side based on the row count, except that:
 		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
@@ -2107,6 +2114,9 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 	} else {
 		lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
 		if prop.MPPPartitionTp == property.HashType {
+			if p.JoinType == base.FullOuterJoin {
+				return nil
+			}
 			var matches []int
 			switch p.JoinType {
 			case base.InnerJoin:
@@ -2208,32 +2218,6 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil, false, nil
 	}
-	if p.JoinType == base.FullOuterJoin {
-		// Planner-only/root phase restriction: full outer join uses root hash
-		// join only. TiFlash MPP is introduced in a later PR.
-		if prop.IsFlashProp() {
-			return nil, true, nil
-		}
-		hashJoins, forced := getHashJoins(p, prop)
-		if forced && len(hashJoins) > 0 {
-			return hashJoins, true, nil
-		}
-		if p.PreferJoinType > 0 {
-			// recordWarnings only reports index-join-family hint failures for LogicalJoin.
-			// Since full outer join returns before merge join enumeration, report the
-			// merge-join hint here while leaving index-join-family hints to that path.
-			if p.PreferJoinType&h.PreferMergeJoin > 0 {
-				var mergeJoinTables []h.HintedTable
-				if p.HintInfo != nil {
-					mergeJoinTables = p.HintInfo.SortMergeJoin
-				}
-				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
-					h.Restore2JoinHint(h.HintSMJ, mergeJoinTables), h.Restore2JoinHint(h.TiDBMergeJoin, mergeJoinTables)))
-			}
-			return hashJoins, false, nil
-		}
-		return hashJoins, true, nil
-	}
 	joins := make([]base.PhysicalPlan, 0, 8)
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
 	if prop.IndexJoinProp == nil {
@@ -2273,6 +2257,30 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		if prop.IsFlashProp() {
 			return joins, true, nil
 		}
+	}
+
+	if p.JoinType == base.FullOuterJoin {
+		// Non-MPP full outer join keeps the phase-1 restriction: root HashJoin v1 only.
+		hashJoins, forced := getHashJoins(super, prop)
+		joins = append(joins, hashJoins...)
+		if forced && len(hashJoins) > 0 {
+			return joins, true, nil
+		}
+		if p.PreferJoinType > 0 {
+			// recordWarnings only reports index-join-family hint failures for LogicalJoin.
+			// Since full outer join does not support merge join, report the merge-join
+			// hint here while leaving index-join-family hints to that path.
+			if p.PreferJoinType&h.PreferMergeJoin > 0 {
+				var mergeJoinTables []h.HintedTable
+				if p.HintInfo != nil {
+					mergeJoinTables = p.HintInfo.SortMergeJoin
+				}
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
+					h.Restore2JoinHint(h.HintSMJ, mergeJoinTables), h.Restore2JoinHint(h.TiDBMergeJoin, mergeJoinTables)))
+			}
+			return joins, false, nil
+		}
+		return joins, forced || len(joins) > 0, nil
 	}
 
 	hashJoins, forced := getHashJoins(super, prop)

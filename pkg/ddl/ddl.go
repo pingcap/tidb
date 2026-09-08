@@ -200,6 +200,8 @@ type DDL interface {
 	GetID() string
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
+	// StorageClassTransitionStatuses returns active explicit storage-class operation statuses.
+	StorageClassTransitionStatuses() []StorageClassTransitionStatus
 }
 
 type jobSubmitResult struct {
@@ -265,12 +267,13 @@ type ddl struct {
 	wg tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 
 	*ddlCtx
-	sessPool          *sess.Pool
-	delRangeMgr       delRangeManager
-	enableTiFlashPoll *atomicutil.Bool
-	sysTblMgr         systable.Manager
-	minJobIDRefresher *systable.MinJobIDRefresher
-	eventPublishStore notifier.Store
+	sessPool                      *sess.Pool
+	delRangeMgr                   delRangeManager
+	enableTiFlashPoll             *atomicutil.Bool
+	sysTblMgr                     systable.Manager
+	minJobIDRefresher             *systable.MinJobIDRefresher
+	eventPublishStore             notifier.Store
+	storageClassTransitionManager *storageClassTransitionManager
 
 	executor     *executor
 	jobSubmitter *JobSubmitter
@@ -794,6 +797,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		eventPublishStore: opt.EventPublishStore,
 	}
+	d.storageClassTransitionManager = newStorageClassTransitionManager(d)
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {

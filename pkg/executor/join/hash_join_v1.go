@@ -70,6 +70,7 @@ type HashJoinCtxV1 struct {
 	FullOuterJoinBuildFilter expression.CNFExprs
 	FullOuterJoinProbeFilter expression.CNFExprs
 	stats                    *hashJoinRuntimeStats
+	hashStateStats           *execdetails.HashStateRuntimeStats
 }
 
 // ProbeSideTupleFetcherV1 reads tuples from ProbeSideExec and send them to ProbeWorkers.
@@ -177,6 +178,9 @@ func (e *HashJoinV1Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	if e.hashStateStats != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.hashStateStats)
+	}
 
 	IsChildCloseCalledForTest.Store(true)
 	return e.BaseExecutor.Close()
@@ -184,6 +188,7 @@ func (e *HashJoinV1Exec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinV1Exec) Open(ctx context.Context) error {
+	e.hashStateStats = nil
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		e.closeCh = nil
 		e.Prepared = false
@@ -218,6 +223,7 @@ func (e *HashJoinV1Exec) OpenSelf() error {
 		e.stats = &hashJoinRuntimeStats{
 			concurrent: int(e.Concurrency),
 		}
+		e.hashStateStats = execdetails.NewHashStateRuntimeStats()
 	}
 	return nil
 }
@@ -1179,6 +1185,10 @@ func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
 		if err = <-fetchBuildSideRowsOk; err != nil {
 			e.buildFinished <- err
 		}
+	}
+	if err == nil && e.hashStateStats != nil {
+		e.hashStateStats.AddRows(e.RowContainer.hashStateRows())
+		e.hashStateStats.Complete()
 	}
 }
 

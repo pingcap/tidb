@@ -28,6 +28,7 @@ go_test(
         "//pkg/store/helper",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/util/chunk",
         "//pkg/util/sqlkiller",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",

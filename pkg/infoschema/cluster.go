@@ -82,7 +82,8 @@ var memTableToAllTiDBClusterTablesWithLowerCase = make(map[string]string)
 
 // memTableToDDLOwnerClusterTables means add memory table to cluster table that will send cop request to DDL owner node.
 var memTableToDDLOwnerClusterTables = map[string]string{
-	TableTiFlashReplica: TableTiFlashReplica,
+	TableTiFlashReplica:          TableTiFlashReplica,
+	TableStorageClassTransitions: TableStorageClassTransitions,
 }
 
 var memTableToDDLOwnerClusterTablesWithLowerCase = make(map[string]string)

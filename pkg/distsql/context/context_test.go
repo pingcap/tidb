@@ -112,6 +112,7 @@ func TestContextDetach(t *testing.T) {
 			"$.RunawayChecker",
 			"$.RUConsumptionReporter",
 			"$.ExecDetails",
+			"$.QueryCopStoreLimiter",
 		}))
 
 	staticObj := obj.Detach()

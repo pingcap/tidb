@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
@@ -74,6 +76,37 @@ func (*mockCursorTrackerRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
 func (*mockCursorTrackerRecordSet) Close() error { return nil }
 
 var _ sqlexec.RecordSet = &mockCursorTrackerRecordSet{}
+
+type executeStmtRecordSetSession struct {
+	sessionapi.Session
+	recordSet sqlexec.RecordSet
+}
+
+func (s *executeStmtRecordSetSession) ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error) {
+	return s.recordSet, nil
+}
+
+type connectionAliveCheckRecordSet struct {
+	check      func()
+	nextCalled bool
+}
+
+func (*connectionAliveCheckRecordSet) Fields() []*resolve.ResultField { return nil }
+
+func (rs *connectionAliveCheckRecordSet) Next(_ context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	rs.check()
+	rs.nextCalled = true
+	return nil
+}
+
+func (*connectionAliveCheckRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+
+func (*connectionAliveCheckRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &connectionAliveCheckRecordSet{}
 
 type firstNextErrRecordSet struct{}
 
@@ -478,6 +511,84 @@ func TestMemoryTrackForPrepareBinaryProtocol(t *testing.T) {
 		require.NoError(t, stmt.Close())
 	}
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
+}
+
+func TestShouldInstallConnectionAlive(t *testing.T) {
+	tests := []struct {
+		name       string
+		stmt       ast.StmtNode
+		autocommit bool
+		inTxn      bool
+		expected   bool
+	}{
+		{name: "autocommit DML", stmt: &ast.UpdateStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction DML", stmt: &ast.UpdateStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit select", stmt: &ast.SelectStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction select", stmt: &ast.SelectStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit do", stmt: &ast.DoStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction do", stmt: &ast.DoStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit off do", stmt: &ast.DoStmt{}, expected: true},
+		{name: "set", stmt: &ast.SetStmt{}, autocommit: true, expected: true},
+		{name: "begin", stmt: &ast.BeginStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction DDL", stmt: &ast.CreateTableStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "autocommit off DDL", stmt: &ast.CreateTableStmt{}, expected: false},
+		{name: "analyze", stmt: &ast.AnalyzeTableStmt{}, autocommit: true, expected: false},
+		{name: "load data", stmt: &ast.LoadDataStmt{}, autocommit: true, expected: false},
+		{name: "import into", stmt: &ast.ImportIntoStmt{}, autocommit: true, expected: false},
+		{name: "backup", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindBackup}, autocommit: true, expected: false},
+		{name: "restore", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindRestore}, autocommit: true, expected: false},
+		{name: "show BR job", stmt: &ast.BRIEStmt{Kind: ast.BRIEKindShowJob}, autocommit: true, expected: true},
+		{name: "commit", stmt: &ast.CommitStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "rollback", stmt: &ast.RollbackStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "trace select", stmt: &ast.TraceStmt{Stmt: &ast.SelectStmt{}}, autocommit: true, expected: true},
+		{name: "trace analyze", stmt: &ast.TraceStmt{Stmt: &ast.AnalyzeTableStmt{}}, autocommit: true, expected: false},
+		{name: "trace load data", stmt: &ast.TraceStmt{Stmt: &ast.LoadDataStmt{}}, autocommit: true, expected: false},
+		{name: "trace commit", stmt: &ast.TraceStmt{Stmt: &ast.CommitStmt{}}, autocommit: true, inTxn: true, expected: false},
+		{name: "trace rollback", stmt: &ast.TraceStmt{Stmt: &ast.RollbackStmt{}}, autocommit: true, inTxn: true, expected: false},
+		{name: "explain DDL", stmt: &ast.ExplainStmt{Stmt: &ast.AlterTableStmt{}}, autocommit: true, expected: true},
+		{name: "explain import into", stmt: &ast.ExplainStmt{Stmt: &ast.ImportIntoStmt{}}, autocommit: true, expected: true},
+		{name: "explain analyze select", stmt: &ast.ExplainStmt{Stmt: &ast.SelectStmt{}, Analyze: true}, autocommit: true, expected: true},
+		{name: "explain analyze DDL", stmt: &ast.ExplainStmt{Stmt: &ast.AlterTableStmt{}, Analyze: true}, autocommit: true, expected: false},
+		{name: "explain analyze import into", stmt: &ast.ExplainStmt{Stmt: &ast.ImportIntoStmt{}, Analyze: true}, autocommit: true, expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessVars := variable.NewSessionVars(nil)
+			sessVars.SetStatusFlag(mysql.ServerStatusAutocommit, tt.autocommit)
+			sessVars.SetInTxn(tt.inTxn)
+			require.Equal(t, tt.expected, shouldInstallConnectionAlive(tt.stmt, sessVars))
+		})
+	}
+
+	t.Run("denylisted lazy result set", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		srv := CreateMockServer(t, store)
+		srv.SetDomain(dom)
+		defer srv.Close()
+
+		conn := CreateMockConn(t, srv).(*mockConn)
+		defer conn.Close()
+		sessVars := conn.Context().GetSessionVars()
+		rs := &connectionAliveCheckRecordSet{
+			check: func() {
+				require.Nil(t, sessVars.SQLKiller.IsConnectionAlive.Load())
+			},
+		}
+		conn.Context().Session = &executeStmtRecordSetSession{
+			Session:   conn.Context().Session,
+			recordSet: rs,
+		}
+
+		_, err := conn.clientConn.handleStmt(
+			context.Background(),
+			&ast.BRIEStmt{Kind: ast.BRIEKindBackup},
+			nil,
+			true,
+		)
+		require.NoError(t, err)
+		require.True(t, rs.nextCalled)
+	})
 }
 
 func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *clientConn)) []byte {

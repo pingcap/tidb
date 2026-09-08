@@ -149,6 +149,8 @@ const (
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 	// TableTiFlashReplica is the string constant of tiflash replica table.
 	TableTiFlashReplica = "TIFLASH_REPLICA"
+	// TableStorageClassTransitions is the string constant of the active storage class transitions table.
+	TableStorageClassTransitions = "TIKV_STORAGE_CLASS_TRANSITIONS"
 	// TableInspectionResult is the string constant of inspection result table.
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricTables is a table that contains all metrics table definition.
@@ -355,6 +357,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
 	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 100,
 	TableSchemataExtensions:              autoid.InformationSchemaDBID + 101,
+	TableStorageClassTransitions:         autoid.InformationSchemaDBID + 102,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1237,6 +1240,27 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
 }
 
+var tableStorageClassTransitionsCols = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DIRECTION", tp: mysql.TypeVarchar, size: 16},
+	{name: "TOTAL_REPLICAS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "COMPLETED_REPLICAS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "DURATION", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "LAST_UPDATE_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+}
+
+// GetStorageClassTransitionsTableColumns returns fresh column metadata for
+// INFORMATION_SCHEMA.TIKV_STORAGE_CLASS_TRANSITIONS.
+func GetStorageClassTransitionsTableColumns() []*model.ColumnInfo {
+	return buildTableMeta(TableStorageClassTransitions, tableStorageClassTransitionsCols).Columns
+}
+
 var tableInspectionResultCols = []columnInfo{
 	{name: "RULE", tp: mysql.TypeVarchar, size: 64},
 	{name: "ITEM", tp: mysql.TypeVarchar, size: 64},
@@ -1373,6 +1397,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.MaxRocksdbBlockReadCountStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read count"},
 	{name: stmtsummary.AvgRocksdbBlockReadByteStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb block read byte"},
 	{name: stmtsummary.MaxRocksdbBlockReadByteStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read byte"},
+	{name: stmtsummary.IAExecCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Count of executions that read IA remote segments"},
 	{name: stmtsummary.AvgIARemoteReadSegmentCountStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of IA remote segments read"},
 	{name: stmtsummary.MaxIARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of IA remote segments read"},
 	{name: stmtsummary.AvgIARemoteReadSegmentSizeStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of bytes returned from IA remote segment reads"},
@@ -2517,6 +2542,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterLog:                         tableClusterLogCols,
 	TableClusterLoad:                        tableClusterLoadCols,
 	TableTiFlashReplica:                     tableTableTiFlashReplicaCols,
+	TableStorageClassTransitions:            tableStorageClassTransitionsCols,
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,

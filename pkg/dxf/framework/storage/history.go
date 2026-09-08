@@ -135,6 +135,14 @@ type HistoryTaskPage struct {
 	ApproxTotalCount int64
 }
 
+// TaskCleanupInfo contains task metadata needed to clean up external files.
+type TaskCleanupInfo struct {
+	ID      int64
+	Type    proto.TaskType
+	State   proto.TaskState
+	EndTime *time.Time
+}
+
 // ValidateHistoryTaskPageSize validates page size for history task listing.
 func ValidateHistoryTaskPageSize(pageSize int) error {
 	if pageSize < MinHistoryTaskPageSize || pageSize > MaxHistoryTaskPageSize {

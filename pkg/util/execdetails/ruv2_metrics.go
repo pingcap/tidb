@@ -962,9 +962,9 @@ func FormatRUCalculationDetail(ruDetails *tikvutil.RUDetails) string {
 			"WRITE_PER_BATCH_BASE_COST", factors.WritePerBatchBaseCost, "BATCH_PROPORTION", factors.BatchProportion)
 		addRUFormulaTerm(&wruTerms, "replica_weighted_write_bytes", inputs.ReplicaWeightedWriteBytes,
 			"WRITE_BYTES_COST", factors.WriteBytesCost)
-		addNegativeRUFormulaTerm(&wruTerms, "failed_write_rpc_count", inputs.FailedWriteRPCCount,
+		addNegativeRUFormulaTerm(&wruTerms, "failed_write_base_cost_refund_count", inputs.FailedWriteBaseCostRefundCount,
 			"WRITE_BASE_COST", factors.WriteBaseCost)
-		addNegativeRUFormulaTerm(&wruTerms, "failed_write_bytes", inputs.FailedWriteBytes,
+		addNegativeRUFormulaTerm(&wruTerms, "failed_write_refund_bytes", inputs.FailedWriteRefundBytes,
 			"WRITE_BYTES_COST", factors.WriteBytesCost)
 		formulaWRU := sumRUFormulaTerms(wruTerms)
 		if !sameDisplayedRUValue(formulaRRU, calculation.RRU) || !sameDisplayedRUValue(formulaWRU, calculation.WRU) {

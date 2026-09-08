@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -336,10 +337,10 @@ type Plan struct {
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
 	// UseNewCollate captures whether the new collation implementation was enabled
-	// when this import plan's target table snapshot was created. Import execution
-	// may happen in another keyspace, so key and expression encoding must use this
-	// captured value instead of the executor process default. Nil means old metadata
-	// and should fall back to the caller-provided default.
+	// in the submitting keyspace. Import execution may happen in another keyspace,
+	// so key and expression encoding must use this captured value instead of the
+	// executor process default. Nil means old metadata and should fall back to the
+	// caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
@@ -364,8 +365,8 @@ func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	return *p.UseNewCollate
 }
 
-// setUseNewCollate stores the new-collation mode captured from the target table
-// snapshot.
+// setUseNewCollate stores the new-collation mode captured from the submitting
+// keyspace.
 func (p *Plan) setUseNewCollate(useNewCollate bool) {
 	p.UseNewCollate = &useNewCollate
 }
@@ -574,7 +575,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
-	p.setUseNewCollate(tbl.UseNewCollate())
+	p.setUseNewCollate(collate.NewCollationEnabled())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
@@ -1950,7 +1951,6 @@ func createColAssignSimpleExprs(
 	assignments []*ast.Assignment,
 	ctx expression.BuildContext,
 	mu *sync.Mutex,
-	useNewCollate bool,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
 	if mu != nil {
 		mu.Lock()
@@ -1959,7 +1959,7 @@ func createColAssignSimpleExprs(
 	res := make([]expression.Expression, 0, len(assignments))
 	var allWarnings []contextutil.SQLWarn
 	for _, assign := range assignments {
-		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr, expression.WithUseNewCollate(useNewCollate))
+		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		if ctx.GetEvalCtx().WarningCount() > 0 {
@@ -1979,7 +1979,6 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 		e.ColumnAssignments,
 		ctx,
 		&e.colAssignMu,
-		e.Table.UseNewCollate(),
 	)
 }
 
