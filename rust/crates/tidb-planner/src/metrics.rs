@@ -154,19 +154,16 @@ static CHILDREN: LazyLock<Children> = LazyLock::new(|| Children {
 });
 
 /// Go `PseudoEstimationNotAvailable`.
-#[must_use]
 pub fn pseudo_estimation_not_available() -> &'static Counter {
     &CHILDREN.pseudo_nodata
 }
 
 /// Go `PseudoEstimationOutdate`.
-#[must_use]
 pub fn pseudo_estimation_outdate() -> &'static Counter {
     &CHILDREN.pseudo_outdate
 }
 
 /// Go `GetPlanCacheHitCounter`.
-#[must_use]
 pub fn plan_cache_hit_counter(is_non_prepared: bool) -> &'static Counter {
     if is_non_prepared {
         &CHILDREN.non_prepared_hit
@@ -176,7 +173,6 @@ pub fn plan_cache_hit_counter(is_non_prepared: bool) -> &'static Counter {
 }
 
 /// Go `GetPlanCacheMissCounter`.
-#[must_use]
 pub fn plan_cache_miss_counter(is_non_prepared: bool) -> &'static Counter {
     if is_non_prepared {
         &CHILDREN.non_prepared_miss
@@ -186,13 +182,11 @@ pub fn plan_cache_miss_counter(is_non_prepared: bool) -> &'static Counter {
 }
 
 /// Go `GetNonPrepPlanCacheUnsupportedCounter`.
-#[must_use]
 pub fn non_prep_plan_cache_unsupported_counter() -> &'static Counter {
     &CHILDREN.non_prepared_unsupported
 }
 
 /// Go `GetPlanCacheInstanceNumCounter`.
-#[must_use]
 pub fn plan_cache_instance_num_counter(instance_plan_cache: bool) -> &'static Gauge {
     if instance_plan_cache {
         &CHILDREN.instance_plan_num
@@ -202,7 +196,6 @@ pub fn plan_cache_instance_num_counter(instance_plan_cache: bool) -> &'static Ga
 }
 
 /// Go `GetPlanCacheInstanceMemoryUsage`.
-#[must_use]
 pub fn plan_cache_instance_memory_usage(instance_plan_cache: bool) -> &'static Gauge {
     if instance_plan_cache {
         &CHILDREN.instance_memory
@@ -212,13 +205,11 @@ pub fn plan_cache_instance_memory_usage(instance_plan_cache: bool) -> &'static G
 }
 
 /// Go `GetPlanCacheInstanceEvict`.
-#[must_use]
 pub fn plan_cache_instance_evict() -> &'static Gauge {
     &CHILDREN.instance_evict
 }
 
 /// Go `GetPlanCacheLookupDuration`.
-#[must_use]
 pub fn plan_cache_lookup_duration(instance_plan_cache: bool) -> &'static Histogram {
     if instance_plan_cache {
         &CHILDREN.instance_lookup
@@ -228,7 +219,6 @@ pub fn plan_cache_lookup_duration(instance_plan_cache: bool) -> &'static Histogr
 }
 
 /// Go `GetPlanCacheCloneDuration`.
-#[must_use]
 pub fn plan_cache_clone_duration() -> &'static Histogram {
     &CHILDREN.instance_clone
 }
@@ -280,5 +270,20 @@ mod tests {
             pseudo_estimation_not_available(),
             pseudo_estimation_outdate()
         ));
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        pseudo_estimation_not_available();
+        pseudo_estimation_outdate();
+        plan_cache_hit_counter(false);
+        plan_cache_miss_counter(false);
+        non_prep_plan_cache_unsupported_counter();
+        plan_cache_instance_num_counter(false);
+        plan_cache_instance_memory_usage(false);
+        plan_cache_instance_evict();
+        plan_cache_lookup_duration(false);
+        plan_cache_clone_duration();
     }
 }
