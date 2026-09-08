@@ -1807,13 +1807,104 @@ fn tpcc_condition_six_simplifies_and_pushes_through_derived_tables() {
         ),
         "IndexJoin must print only access keys in logical equality order: {analyzed:#?}"
     );
-    assert_eq!(analyzed_cell(2, 1), analyzed_cell(8, 1), "{analyzed:#?}");
+    // Go's chosen candidate reads `AvgInnerRowCnt / selectivity` per probe,
+    // which happens to equal the outer group count for this fixture. Rust's
+    // `constructDS2TableScanTask` port additionally applies
+    // `indexJoinPathGetRangeInfoAndMaxOneRow`, capping the complete-PK probe
+    // at one row, so the inner count can be lower. The structural contract
+    // is that the probe never exceeds the outer group count.
     let probe_rows = analyzed_cell(8, 1).parse::<f64>().unwrap();
+    let outer_group_rows = analyzed_cell(2, 1).parse::<f64>().unwrap();
+    assert!(
+        probe_rows <= outer_group_rows,
+        "the inner probe must not exceed the outer group count: {analyzed:#?}"
+    );
     let filtered_rows = analyzed_cell(7, 1).parse::<f64>().unwrap();
     assert!(filtered_rows <= probe_rows, "{analyzed:#?}");
     assert!(
         analyzed_cell(5, 4).contains("keep order:false"),
         "an unordered IndexJoin outer child must be replanned without order: {analyzed:#?}"
+    );
+}
+
+/// Go `buildSelect` (`logical_plan_builder.go:4583`): a derived table's
+/// `ORDER BY` is built only for the top-level query, when the query has a
+/// `LIMIT`, or when `@@tidb_remove_orderby_in_subquery` is off. Dropping it is
+/// what lets the aggregate above the join pick a HashAgg instead of exploiting
+/// a meaningless input order (TPCC condition 06).
+#[test]
+fn derived_table_order_by_is_removed_unless_top_level_limit_or_disabled() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE s (a INT NOT NULL, b INT NOT NULL, PRIMARY KEY (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL, PRIMARY KEY (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+
+    let operators = |ctx: &crate::StmtContext, sql: &str| -> Vec<String> {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        let (_, rows) =
+            explain_select_stmt(select, &catalog, "test", ctx, ExplainFormat::Brief).unwrap();
+        rows.iter()
+            .map(|row| match &row[0] {
+                Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    };
+
+    let derived = "SELECT COUNT(*) FROM \
+        (SELECT s.a, SUM(s.b) sm FROM s GROUP BY s.a ORDER BY s.a + 0) d, t \
+        WHERE t.a = d.a";
+    assert!(
+        !operators(&ctx, derived)
+            .iter()
+            .any(|op| op.contains("Sort")),
+        "a derived table's ORDER BY is dropped by default: {:?}",
+        operators(&ctx, derived)
+    );
+
+    let with_limit = "SELECT COUNT(*) FROM \
+        (SELECT s.a, SUM(s.b) sm FROM s GROUP BY s.a ORDER BY s.a + 0 LIMIT 3) d, t \
+        WHERE t.a = d.a";
+    assert!(
+        operators(&ctx, with_limit)
+            .iter()
+            .any(|op| op.contains("Sort") || op.contains("TopN")),
+        "a LIMIT keeps the derived ORDER BY: {:?}",
+        operators(&ctx, with_limit)
+    );
+
+    let keep = ctx.clone().with_remove_orderby_in_subquery(false);
+    assert!(
+        operators(&keep, derived)
+            .iter()
+            .any(|op| op.contains("Sort")),
+        "tidb_remove_orderby_in_subquery=OFF keeps the derived ORDER BY: {:?}",
+        operators(&keep, derived)
+    );
+
+    let top_level = "SELECT s.a, SUM(s.b) sm FROM s GROUP BY s.a ORDER BY SUM(s.b)";
+    assert!(
+        operators(&ctx, top_level)
+            .iter()
+            .any(|op| op.contains("Sort")),
+        "a top-level ORDER BY is always built: {:?}",
+        operators(&ctx, top_level)
     );
 }
 

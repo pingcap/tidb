@@ -644,6 +644,10 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck` (default OFF).
     /// It also gates statement-scoped projection expression-ID registration.
     pub new_only_full_group_by_check: bool,
+    /// Go `SessionVars.RemoveOrderbyInSubquery` (`@@tidb_remove_orderby_in_subquery`,
+    /// default ON): a derived table's `ORDER BY` is dropped unless the query is
+    /// top level or carries a `LIMIT`.
+    pub remove_orderby_in_subquery: bool,
     /// Go `SessionVars.OptimizerUseInvisibleIndexes` (default OFF): whether
     /// `getPossibleAccessPaths` may enumerate invisible indexes.
     pub optimizer_use_invisible_indexes: bool,
@@ -1138,6 +1142,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
             new_only_full_group_by_check: false,
+            // Go `DefTiDBRemoveOrderbyInSubquery = true`.
+            remove_orderby_in_subquery: true,
             // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
             optimizer_use_invisible_indexes: false,
             tikv_in_isolation_read: true,
@@ -3650,19 +3656,29 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             plan = self.build_distinct(plan, old_len)?;
         }
         if !order_by.is_empty() {
-            let items: Vec<tidb_ast::OrderItem> = order_by
-                .into_iter()
-                .zip(&order_items)
-                .map(|(expr, original)| tidb_ast::OrderItem {
-                    expr,
-                    desc: original.desc,
-                })
-                .collect();
-            plan = if self.only_full_group_by {
-                self.build_sort_with_check(plan, &items, &markers, select, &source_names)?
-            } else {
-                self.build_sort(plan, &items, &markers)?
-            };
+            // Go `buildSelect` (`logical_plan_builder.go:4583`): a derived
+            // table's ORDER BY is kept only for the top-level query, when the
+            // query has a LIMIT, or when `tidb_remove_orderby_in_subquery` is
+            // off. Dropping it lets the aggregate above the join choose a
+            // HashAgg instead of exploiting a meaningless input order.
+            let keep_order_by = self.qb_offset.len() == 1
+                || select.limit.is_some()
+                || !self.remove_orderby_in_subquery;
+            if keep_order_by {
+                let items: Vec<tidb_ast::OrderItem> = order_by
+                    .into_iter()
+                    .zip(&order_items)
+                    .map(|(expr, original)| tidb_ast::OrderItem {
+                        expr,
+                        desc: original.desc,
+                    })
+                    .collect();
+                plan = if self.only_full_group_by {
+                    self.build_sort_with_check(plan, &items, &markers, select, &source_names)?
+                } else {
+                    self.build_sort(plan, &items, &markers)?
+                };
+            }
         }
         if let Some(limit) = &select.limit {
             plan = self.build_limit(plan, limit)?;

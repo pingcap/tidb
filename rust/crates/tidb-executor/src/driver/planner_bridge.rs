@@ -590,6 +590,7 @@ pub(crate) fn logical_from_scope(
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
+    builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
@@ -1307,6 +1308,7 @@ fn planner_optimized_query_with_allocators(
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
+    builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
@@ -1350,6 +1352,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
+    builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
@@ -1698,6 +1701,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
+    builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();

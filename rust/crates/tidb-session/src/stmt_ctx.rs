@@ -86,6 +86,7 @@ pub(crate) struct StatementVarSnapshot {
     index_merge: bool,
     static_partition_prune: bool,
     new_only_full_group_by_check: bool,
+    remove_orderby_in_subquery: bool,
     mem_quota: i64,
     replica_read: tidb_executor::ReplicaReadType,
     isolation_read_engines: String,
@@ -741,6 +742,7 @@ impl Session {
             new_only_full_group_by_check: on(
                 tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NEW_ONLY_FULL_GROUP_BY_CHECK,
             ),
+            remove_orderby_in_subquery: on(tidb_vardef::tidb_vars::TIDB_REMOVE_ORDERBY_IN_SUBQUERY),
             mem_quota: self
                 .vars
                 .get_system("tidb_mem_quota_query")
@@ -906,6 +908,7 @@ impl Session {
         let index_merge = snapshot.index_merge && !self.stmt_hints.no_index_merge_hint;
         let static_partition_prune = snapshot.static_partition_prune;
         let new_only_full_group_by_check = snapshot.new_only_full_group_by_check;
+        let remove_orderby_in_subquery = snapshot.remove_orderby_in_subquery;
         let mem_quota = if self.stmt_hints.has_mem_quota_hint {
             self.stmt_hints.mem_quota_query
         } else {
@@ -981,6 +984,7 @@ impl Session {
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(sql_mode.has_only_full_group_by())
                 .with_new_only_full_group_by_check(new_only_full_group_by_check)
+                .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
                 .with_session_state(current_db, version)
                 .with_isolation_read_engines(isolation_read_engines)
                 .with_connection_charset_info(
@@ -1075,6 +1079,7 @@ impl Session {
         .with_allow_write_row_id(allow_write_row_id)
         .with_only_full_group_by(sql_mode.has_only_full_group_by())
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
+        .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
         .with_session_state(current_db, version)
         .with_isolation_read_engines(isolation_read_engines)
         .with_connection_charset_info(connection_charset, connection_collation)

@@ -480,6 +480,10 @@ pub struct StmtContext {
     /// functional-dependency `ONLY_FULL_GROUP_BY` checker, gating the checks
     /// Go runs only under it.
     new_only_full_group_by_check: bool,
+    /// Go `SessionVars.RemoveOrderbyInSubquery`
+    /// (`@@tidb_remove_orderby_in_subquery`, default ON): a derived table's
+    /// `ORDER BY` is dropped unless the query is top level or has a `LIMIT`.
+    remove_orderby_in_subquery: bool,
     /// Go `SessionVars`'s `default_week_format` and `div_precision_increment`,
     /// which `EvalContext::GetDefaultWeekFormatMode` and
     /// `GetDivPrecisionIncrement` hand to `WEEK()` and to the `/` operator's
@@ -939,6 +943,8 @@ impl StmtContext {
             shard_allocate_step: i64::MAX as u64,
             only_full_group_by: false,
             new_only_full_group_by_check: false,
+            // Go `DefTiDBRemoveOrderbyInSubquery = true`.
+            remove_orderby_in_subquery: true,
             default_week_format: 0,
             foreign_key_checks: true,
             enable_check_constraint: false,
@@ -2299,6 +2305,21 @@ impl StmtContext {
     #[must_use]
     pub fn new_only_full_group_by_check(&self) -> bool {
         self.new_only_full_group_by_check
+    }
+
+    /// Sets `@@tidb_remove_orderby_in_subquery` for this statement.
+    #[must_use]
+    pub fn with_remove_orderby_in_subquery(mut self, remove: bool) -> Self {
+        self.remove_orderby_in_subquery = remove;
+        self
+    }
+
+    /// Whether a derived table's `ORDER BY` is dropped
+    /// (`@@tidb_remove_orderby_in_subquery`, default ON as Go's
+    /// `DefTiDBRemoveOrderbyInSubquery`).
+    #[must_use]
+    pub fn remove_orderby_in_subquery(&self) -> bool {
+        self.remove_orderby_in_subquery
     }
 
     /// Sets `@@foreign_key_checks` for this statement.
