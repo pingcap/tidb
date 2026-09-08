@@ -467,11 +467,11 @@ func TestAlterMaterializedViewMetadataDDL(t *testing.T) {
 	}
 
 	tk.MustExec("alter materialized view mv comment = 'updated comment'")
-	mvTable, mvInfo := getMView()
+	mvTable, _ := getMView()
 	require.Equal(t, "updated comment", mvTable.Comment)
 
 	tk.MustExec("alter materialized view mv refresh start with date_add(now(), interval 40 minute) next date_add(now(), interval 20 minute)")
-	_, mvInfo = getMView()
+	_, mvInfo := getMView()
 	require.Equal(t, "FAST", mvInfo.RefreshMethod)
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 40 MINUTE)", mvInfo.RefreshStartWith)
 	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 20 MINUTE)", mvInfo.RefreshNext)
