@@ -154,9 +154,11 @@ Then, independently of each other:
   COMMIT**. Application‑level data loss from one status bit. Fix the seam — read
   the live session status where each packet is written — not the three
   hardcoded constants.
-- **#187 long data.** `COM_STMT_SEND_LONG_DATA` gets an ERR where Go sends
-  nothing, desynchronising every later response. Needs the per‑statement buffer;
-  answering with silence alone would drop the data instead.
+- **#187 long data — FIXED (2026-09-08, stale finding).**
+  `mysql_connection.rs` already implements the per-statement buffer
+  (`bound_params: Vec<Option<Vec<u8>>>` matching Go's `TiDBStatement.boundParams`),
+  memory-quota tracking with sticky Go `AppendParam` state, silent response
+  for SEND_LONG_DATA chunks, and deferred error reporting at EXECUTE time.
 - **Coprocessor flags — FIXED (2026-09-08, stale finding).**
   `real_tikv_read.rs` computes `push_down_flags` via
   `select_push_down_flags()` (tidb-executor/src/statement_pushdown.rs),
@@ -205,7 +207,7 @@ the lost‑update work.
 | Item | Rough size | Needs |
 | --- | --- | --- |
 | #186 status flags | small — one seam, three call sites | wire capture to confirm |
-| #187 long data | medium — a buffer with a lifecycle | wire capture |
+| #187 long data | **FIXED (2026-09-08): per-statement buffer already implemented** | — |
 | Coprocessor flags + warnings | small — two missing calls | a live query |
 | #202 name-keyed column refs | large — representation change | fixtures + DDL cases |
 | #191 decimal representation | **DECIDED (2026-09-08): decimal.rs (digit-string) is the canonical runtime type.** `Datum::Decimal` holds it; `MyDecimal` is a conversion intermediary (parse/format). Both are tested and production-exercised; no migration needed. Read the datatype audit's structural observations for details. |
