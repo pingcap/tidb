@@ -284,3 +284,38 @@ passes after. Ready validation: `tidb-executor` lib serialized 1176 passed /
 (passes in isolation); `cargo check --locked --all-targets -p tidb-executor`
 clean; `rustfmt --edition 2021 --check` clean on both changed files;
 `git diff --check -- rust`.
+
+## Follow-up: join condition lists follow Go's per-operator format (2026-09-09)
+
+Each join operator formats its condition lists differently, and the Rust
+`join_info`/IndexJoin arm used one bracketed, unsorted shape for all of them.
+
+- `PhysicalHashJoin.explainInfo` (`physical_hash_join.go:240`): `equal:[...]`
+  and `left cond:[...]` keep the original order and are space-separated; the
+  `right cond`/`other cond` clauses use `expression.SortedExplainExpressionList`
+  (`explain.go:232`) — rendered strings SORTED and joined with `", "`, and NOT
+  bracketed.
+- `PhysicalMergeJoin.explainInfo` (`physical_merge_join.go:303`): no `equal:`;
+  it prints `left key:<columns>` / `right key:<columns>`, and every condition
+  list uses the sorted, unbracketed form.
+- `PhysicalIndexJoin.ExplainInfoInternal` (`physical_index_join.go:150`):
+  `equal cond:` uses the sorted, unbracketed form, as do `left/right/other
+  cond`.
+
+The Rust now matches all three. `other cond:[or(...)]` on a merge join became
+`other cond:or(...)`, a merge join renders `left key:...` instead of
+`equal:[...]`, and the IndexJoin `equal cond` list is sorted and comma-joined.
+
+Regression: the new
+`explain::tests::merge_join_lists_keys_and_unbracketed_conditions_like_go`
+fails before and passes after, and
+`explain::tests::physical_index_join_explain_uses_null_safe_equal_condition`
+was updated to Go's sorted `eq(...), nulleq(...)` form (it failed on the old
+space-separated shape). Ready validation: `tidb-executor` lib serialized 1181
+passed / 66 failed with no additions;
+`cargo check --locked --all-targets -p tidb-executor` clean;
+`rustfmt --edition 2021 --check` clean on the changed file;
+`git diff --check -- rust`. `driver::tests::joins::tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves`
+now clears its condition-format assertion and fails only on its second half,
+where Go's analyzed plan is an `IndexHashJoin` but this port still costs a
+`MergeJoin` — a separate cost/choice divergence.

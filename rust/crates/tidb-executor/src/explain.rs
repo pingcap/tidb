@@ -139,16 +139,29 @@ fn plan_explain_id(plan: &PhysicalPlan, ignore_suffix: bool) -> String {
     }
 }
 
+/// Go `expression.SortedExplainExpressionList`: render each condition, SORT
+/// the rendered strings, and join with `", "`. `PhysicalHashJoin`'s and
+/// `PhysicalMergeJoin`'s `right cond`/`other cond` both use it, and so does
+/// MergeJoin's `left cond`.
+fn sorted_expressions_text(expressions: &[tidb_expr::expression::Expression]) -> String {
+    let mut rendered = expressions.iter().map(expression_text).collect::<Vec<_>>();
+    rendered.sort();
+    rendered.join(", ")
+}
+
 /// Go `PhysicalHashJoin`/`PhysicalMergeJoin`'s operator text.
 ///
 /// `explainJoinLeftSide` (`physical_index_join.go:135`) appends
 /// `, left side:<child>` for every join that is NOT an inner join, using the
 /// child's plan TYPE under a normalized (brief) explain and its explain id
-/// otherwise.
+/// otherwise. A merge join lists its keys as `left key:`/`right key:`; a hash
+/// join renders its equal conditions, and only the HASH join brackets
+/// `left cond`.
 fn join_info(
     join_type: tidb_planner::find_best_task::LogicalJoinType,
     left_child: Option<&PhysicalPlan>,
     ignore_explain_id_suffix: bool,
+    merge: bool,
     left_keys: &[tidb_expr::column::Column],
     right_keys: &[tidb_expr::column::Column],
     is_null_eq: &[bool],
@@ -165,36 +178,65 @@ fn join_info(
             ));
         }
     }
-    let equal = left_keys
-        .iter()
-        .zip(right_keys)
-        .enumerate()
-        .map(|(index, (left, right))| {
-            // Go renders each `EqualCondition`'s OWN function name; a
-            // set-operator semi join keys on `<=>` (`nulleq`).
-            let operator = if is_null_eq.get(index).copied().unwrap_or(false) {
-                "nulleq"
-            } else {
-                "eq"
-            };
-            format!(
-                "{operator}({}, {})",
-                expression_text(&tidb_expr::expression::Expression::Column(left.clone())),
-                expression_text(&tidb_expr::expression::Expression::Column(right.clone()))
-            )
-        })
-        .collect::<Vec<_>>();
-    if !equal.is_empty() {
-        parts.push(format!("equal:[{}]", equal.join(" ")));
-    }
-    for (name, conditions) in [
-        ("left cond", left_conditions),
-        ("right cond", right_conditions),
-        ("other cond", other_conditions),
-    ] {
-        if !conditions.is_empty() {
-            parts.push(format!("{name}:[{}]", expressions_text(conditions)));
+    if merge {
+        if !left_keys.is_empty() {
+            parts.push(format!("left key:{}", columns_text(left_keys)));
         }
+        if !right_keys.is_empty() {
+            parts.push(format!("right key:{}", columns_text(right_keys)));
+        }
+    } else {
+        let equal = left_keys
+            .iter()
+            .zip(right_keys)
+            .enumerate()
+            .map(|(index, (left, right))| {
+                // Go renders each `EqualCondition`'s OWN function name; a
+                // set-operator semi join keys on `<=>` (`nulleq`).
+                let operator = if is_null_eq.get(index).copied().unwrap_or(false) {
+                    "nulleq"
+                } else {
+                    "eq"
+                };
+                format!(
+                    "{operator}({}, {})",
+                    expression_text(&tidb_expr::expression::Expression::Column(left.clone())),
+                    expression_text(&tidb_expr::expression::Expression::Column(right.clone()))
+                )
+            })
+            .collect::<Vec<_>>();
+        if !equal.is_empty() {
+            parts.push(format!("equal:[{}]", equal.join(" ")));
+        }
+    }
+    if !left_conditions.is_empty() {
+        if merge {
+            parts.push(format!(
+                "left cond:{}",
+                sorted_expressions_text(left_conditions)
+            ));
+        } else {
+            // Go's `PhysicalHashJoin` non-normalized `left cond` is the ONLY
+            // bracketed condition list, and it keeps the original order.
+            let rendered = left_conditions
+                .iter()
+                .map(expression_text)
+                .collect::<Vec<_>>()
+                .join(" ");
+            parts.push(format!("left cond:[{rendered}]"));
+        }
+    }
+    if !right_conditions.is_empty() {
+        parts.push(format!(
+            "right cond:{}",
+            sorted_expressions_text(right_conditions)
+        ));
+    }
+    if !other_conditions.is_empty() {
+        parts.push(format!(
+            "other cond:{}",
+            sorted_expressions_text(other_conditions)
+        ));
     }
     parts.join(", ")
 }
@@ -556,6 +598,7 @@ fn physical_operator_info(
             join.join_type,
             join.base.children().first(),
             ignore_explain_id_suffix,
+            false,
             &join.left_join_keys,
             &join.right_join_keys,
             &join.is_null_eq,
@@ -567,6 +610,7 @@ fn physical_operator_info(
             join.join_type,
             join.base.children().first(),
             ignore_explain_id_suffix,
+            true,
             &join.left_join_keys,
             &join.right_join_keys,
             &join.is_null_eq,
@@ -599,7 +643,7 @@ fn physical_operator_info(
             if !join.outer_hash_keys.is_empty()
                 && join.kind != tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin
             {
-                let equal = join
+                let mut equal = join
                     .outer_hash_keys
                     .iter()
                     .zip(&join.inner_hash_keys)
@@ -620,18 +664,28 @@ fn physical_operator_info(
                             )),
                         )
                     })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                parts.push(format!("equal cond:{equal}"));
+                    .collect::<Vec<_>>();
+                // Go `sortedExplainExpressionList`: sorted, `", "`-joined.
+                equal.sort();
+                parts.push(format!("equal cond:{}", equal.join(", ")));
             }
-            for (name, conditions) in [
-                ("left cond", &join.left_conditions),
-                ("right cond", &join.right_conditions),
-                ("other cond", &join.other_conditions),
-            ] {
-                if !conditions.is_empty() {
-                    parts.push(format!("{name}:[{}]", expressions_text(conditions)));
-                }
+            if !join.left_conditions.is_empty() {
+                parts.push(format!(
+                    "left cond:{}",
+                    sorted_expressions_text(&join.left_conditions)
+                ));
+            }
+            if !join.right_conditions.is_empty() {
+                parts.push(format!(
+                    "right cond:{}",
+                    sorted_expressions_text(&join.right_conditions)
+                ));
+            }
+            if !join.other_conditions.is_empty() {
+                parts.push(format!(
+                    "other cond:{}",
+                    sorted_expressions_text(&join.other_conditions)
+                ));
             }
             parts.join(", ")
         }
@@ -639,6 +693,7 @@ fn physical_operator_info(
             apply.hash_join.join_type,
             apply.hash_join.base.children().first(),
             ignore_explain_id_suffix,
+            false,
             &apply.hash_join.left_join_keys,
             &apply.hash_join.right_join_keys,
             &apply.hash_join.is_null_eq,
@@ -1781,7 +1836,43 @@ mod tests {
             false,
             None,
         );
-        assert!(info.contains("equal cond:nulleq(Column#1, Column#3) eq(Column#2, Column#4)"));
+        assert!(info.contains("equal cond:eq(Column#2, Column#4), nulleq(Column#1, Column#3)"));
+    }
+
+    #[test]
+    fn merge_join_lists_keys_and_unbracketed_conditions_like_go() {
+        let column =
+            |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+        let condition = |name: &str, left: i64, right: i64| {
+            tidb_expr::expression::Expression::ScalarFunction(
+                tidb_expr::scalar_function::ScalarFunction::new(
+                    tidb_ast::CiString::new(name),
+                    FieldType::new(FieldTypeCode::LongLong),
+                    vec![
+                        tidb_expr::expression::Expression::Column(column(left)),
+                        tidb_expr::expression::Expression::Column(column(right)),
+                    ],
+                ),
+            )
+        };
+        let mut merge = tidb_planner::physical::PhysicalMergeJoin::default();
+        merge.join_type = tidb_planner::find_best_task::LogicalJoinType::Inner;
+        merge.left_join_keys = vec![column(1), column(2)];
+        merge.right_join_keys = vec![column(3), column(4)];
+        // Go sorts the rendered conditions; `eq` precedes `gt` here.
+        merge.other_conditions = vec![condition("gt", 1, 5), condition("eq", 2, 6)];
+        let info = physical_operator_info(
+            &PhysicalPlan::MergeJoin(merge),
+            &Catalog::default(),
+            true,
+            None,
+        );
+        assert!(
+            info.starts_with(
+                "inner join, left key:Column#1, Column#2, right key:Column#3, Column#4, other cond:eq(Column#2, Column#6), gt(Column#1, Column#5)"
+            ),
+            "{info}"
+        );
     }
 
     #[test]

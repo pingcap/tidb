@@ -849,6 +849,12 @@ both `oltp_read_only` and `oltp_read_write`.
   columns, so a probe that narrowed the next key column lost both the pairs
   and the bounds. Receipt:
   `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: matched Go's per-operator join condition-list format. A
+  merge join prints `left key:`/`right key:` and sorted unbracketed
+  conditions; a hash join brackets only `left cond`; an index join's
+  `equal cond` is sorted and comma-joined. The Rust used one bracketed,
+  unsorted shape for all. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
