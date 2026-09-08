@@ -159,7 +159,25 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
-	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+	useLateMaterializationCost := p.StoreType == kv.TiFlash && len(p.LateMaterializationFilterCondition) > 0 && p.lateMaterializationSelectivity > 0
+	if useLateMaterializationCost {
+		cols := make([]*expression.Column, 0, len(p.Columns))
+		cols = expression.ExtractColumnsFromExpressions(cols, p.LateMaterializationFilterCondition, nil)
+		lmRowSize := getAvgRowSize(p.StatsInfo(), cols)
+		totalRowCount := rows/p.lateMaterializationSelectivity + TiFlashStartupRowPenalty
+		p.PlanCostVer2 = costusage.NewCostVer2(option, scanFactor,
+			totalRowCount*max(math.Log2(lmRowSize), 0)*scanFactor.Value,
+			func() string {
+				return fmt.Sprintf("lm_col_scan(%v*logrowsize(%v)*%v)", totalRowCount, lmRowSize, scanFactor)
+			})
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, scanFactor,
+			rows*max(math.Log2(rowSize-lmRowSize), 0)*scanFactor.Value*defaultVer2Factors.LateMaterializationScan.Value,
+			func() string {
+				return fmt.Sprintf("lm_rest_col_scan(%v*logrowsize(%v)*%v*lm_scan_factor(%v))", rows, rowSize-lmRowSize, scanFactor, defaultVer2Factors.LateMaterializationScan.Value)
+			}))
+	} else {
+		p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+	}
 
 	var unsignedIntHandle bool
 	if p.Table.PKIsHandle {
@@ -171,7 +189,9 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
-		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
+		if !useLateMaterializationCost {
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
+		}
 	} else if !p.isChildOfIndexLookUp && hasFullRangeScan {
 		newRowCount := getTableScanPenalty(p, rows)
 		if newRowCount > 0 {
@@ -1023,24 +1043,25 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 
 // In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.
 type costVer2Factors struct {
-	TiDBTemp        costusage.CostVer2Factor // operations on TiDB temporary table
-	TiKVScan        costusage.CostVer2Factor // per byte
-	TiKVDescScan    costusage.CostVer2Factor // per byte
-	TiFlashScan     costusage.CostVer2Factor // per byte
-	TiDBCPU         costusage.CostVer2Factor // per column or expression
-	TiKVCPU         costusage.CostVer2Factor // per column or expression
-	TiFlashCPU      costusage.CostVer2Factor // per column or expression
-	TiDB2KVNet      costusage.CostVer2Factor // per byte
-	TiDB2FlashNet   costusage.CostVer2Factor // per byte
-	TiFlashMPPNet   costusage.CostVer2Factor // per byte
-	TiDBMem         costusage.CostVer2Factor // per byte
-	TiKVMem         costusage.CostVer2Factor // per byte
-	TiFlashMem      costusage.CostVer2Factor // per byte
-	TiDBDisk        costusage.CostVer2Factor // per byte
-	TiDBRequest     costusage.CostVer2Factor // per net request
-	ANNIndexStart   costusage.CostVer2Factor // ANN index's warmup cost, related to row num.
-	ANNIndexScanRow costusage.CostVer2Factor // ANN index's scan cost, by row.
-	ANNIndexNoTopK  costusage.CostVer2Factor // special factor for ANN index without top-k: max uint64
+	TiDBTemp                costusage.CostVer2Factor // operations on TiDB temporary table
+	TiKVScan                costusage.CostVer2Factor // per byte
+	TiKVDescScan            costusage.CostVer2Factor // per byte
+	TiFlashScan             costusage.CostVer2Factor // per byte
+	TiDBCPU                 costusage.CostVer2Factor // per column or expression
+	TiKVCPU                 costusage.CostVer2Factor // per column or expression
+	TiFlashCPU              costusage.CostVer2Factor // per column or expression
+	TiDB2KVNet              costusage.CostVer2Factor // per byte
+	TiDB2FlashNet           costusage.CostVer2Factor // per byte
+	TiFlashMPPNet           costusage.CostVer2Factor // per byte
+	TiDBMem                 costusage.CostVer2Factor // per byte
+	TiKVMem                 costusage.CostVer2Factor // per byte
+	TiFlashMem              costusage.CostVer2Factor // per byte
+	TiDBDisk                costusage.CostVer2Factor // per byte
+	TiDBRequest             costusage.CostVer2Factor // per net request
+	ANNIndexStart           costusage.CostVer2Factor // ANN index's warmup cost, related to row num.
+	ANNIndexScanRow         costusage.CostVer2Factor // ANN index's scan cost, by row.
+	ANNIndexNoTopK          costusage.CostVer2Factor // special factor for ANN index without top-k: max uint64
+	LateMaterializationScan costusage.CostVer2Factor // late materialization rest column scan penalty
 }
 
 func (c costVer2Factors) tolist() (l []costusage.CostVer2Factor) {
@@ -1049,24 +1070,25 @@ func (c costVer2Factors) tolist() (l []costusage.CostVer2Factor) {
 }
 
 var defaultVer2Factors = costVer2Factors{
-	TiDBTemp:        costusage.CostVer2Factor{Name: "tidb_temp_table_factor", Value: 0.00},
-	TiKVScan:        costusage.CostVer2Factor{Name: "tikv_scan_factor", Value: 40.70},
-	TiKVDescScan:    costusage.CostVer2Factor{Name: "tikv_desc_scan_factor", Value: 61.05},
-	TiFlashScan:     costusage.CostVer2Factor{Name: "tiflash_scan_factor", Value: 11.60},
-	TiDBCPU:         costusage.CostVer2Factor{Name: "tidb_cpu_factor", Value: 49.90},
-	TiKVCPU:         costusage.CostVer2Factor{Name: "tikv_cpu_factor", Value: 49.90},
-	TiFlashCPU:      costusage.CostVer2Factor{Name: "tiflash_cpu_factor", Value: 2.40},
-	TiDB2KVNet:      costusage.CostVer2Factor{Name: "tidb_kv_net_factor", Value: 3.96},
-	TiDB2FlashNet:   costusage.CostVer2Factor{Name: "tidb_flash_net_factor", Value: 2.20},
-	TiFlashMPPNet:   costusage.CostVer2Factor{Name: "tiflash_mpp_net_factor", Value: 1.00},
-	TiDBMem:         costusage.CostVer2Factor{Name: "tidb_mem_factor", Value: 0.20},
-	TiKVMem:         costusage.CostVer2Factor{Name: "tikv_mem_factor", Value: 0.20},
-	TiFlashMem:      costusage.CostVer2Factor{Name: "tiflash_mem_factor", Value: 0.05},
-	TiDBDisk:        costusage.CostVer2Factor{Name: "tidb_disk_factor", Value: 200.00},
-	TiDBRequest:     costusage.CostVer2Factor{Name: "tidb_request_factor", Value: 6000000.00},
-	ANNIndexStart:   costusage.CostVer2Factor{Name: "ann_index_start_factor", Value: 0.000144},
-	ANNIndexScanRow: costusage.CostVer2Factor{Name: "ann_index_scan_factor", Value: 1.65},
-	ANNIndexNoTopK:  costusage.CostVer2Factor{Name: "ann_index_no_topk_factor", Value: math.MaxUint64},
+	TiDBTemp:                costusage.CostVer2Factor{Name: "tidb_temp_table_factor", Value: 0.00},
+	TiKVScan:                costusage.CostVer2Factor{Name: "tikv_scan_factor", Value: 40.70},
+	TiKVDescScan:            costusage.CostVer2Factor{Name: "tikv_desc_scan_factor", Value: 61.05},
+	TiFlashScan:             costusage.CostVer2Factor{Name: "tiflash_scan_factor", Value: 11.60},
+	TiDBCPU:                 costusage.CostVer2Factor{Name: "tidb_cpu_factor", Value: 49.90},
+	TiKVCPU:                 costusage.CostVer2Factor{Name: "tikv_cpu_factor", Value: 49.90},
+	TiFlashCPU:              costusage.CostVer2Factor{Name: "tiflash_cpu_factor", Value: 2.40},
+	TiDB2KVNet:              costusage.CostVer2Factor{Name: "tidb_kv_net_factor", Value: 3.96},
+	TiDB2FlashNet:           costusage.CostVer2Factor{Name: "tidb_flash_net_factor", Value: 2.20},
+	TiFlashMPPNet:           costusage.CostVer2Factor{Name: "tiflash_mpp_net_factor", Value: 1.00},
+	TiDBMem:                 costusage.CostVer2Factor{Name: "tidb_mem_factor", Value: 0.20},
+	TiKVMem:                 costusage.CostVer2Factor{Name: "tikv_mem_factor", Value: 0.20},
+	TiFlashMem:              costusage.CostVer2Factor{Name: "tiflash_mem_factor", Value: 0.05},
+	TiDBDisk:                costusage.CostVer2Factor{Name: "tidb_disk_factor", Value: 200.00},
+	TiDBRequest:             costusage.CostVer2Factor{Name: "tidb_request_factor", Value: 6000000.00},
+	ANNIndexStart:           costusage.CostVer2Factor{Name: "ann_index_start_factor", Value: 0.000144},
+	ANNIndexScanRow:         costusage.CostVer2Factor{Name: "ann_index_scan_factor", Value: 1.65},
+	ANNIndexNoTopK:          costusage.CostVer2Factor{Name: "ann_index_no_topk_factor", Value: math.MaxUint64},
+	LateMaterializationScan: costusage.CostVer2Factor{Name: "lm_scan_factor", Value: 1.5},
 }
 
 func getTaskCPUFactorVer2(_ base.PhysicalPlan, taskType property.TaskType) costusage.CostVer2Factor {
