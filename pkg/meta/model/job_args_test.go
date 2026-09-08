@@ -588,6 +588,94 @@ func TestGetModifyTableCommentArgs(t *testing.T) {
 	}
 }
 
+func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewRefreshArgs{
+		RefreshMethod:           "FAST",
+		RefreshStartWith:        "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		RefreshNext:             "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		RefreshScheduleTimeZone: TimeZoneLocation{Name: "UTC", Offset: 0},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewRefresh)))
+		args, err := GetAlterMaterializedViewRefreshArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+
+	j := &Job{Version: JobVersion1, Type: ActionAlterMaterializedViewRefresh}
+	j.FillArgs(inArgs)
+	inArgs.RefreshScheduleTimeZone.Name = "Asia/Shanghai"
+	encoded, err := j.Encode(true)
+	require.NoError(t, err)
+	decoded := &Job{}
+	require.NoError(t, decoded.Decode(encoded))
+	args, err := GetAlterMaterializedViewRefreshArgs(decoded)
+	require.NoError(t, err)
+	require.Equal(t, "UTC", args.RefreshScheduleTimeZone.Name)
+}
+
+func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewAttributesArgs{
+		AlertWarningSec:    10,
+		AlertOverdueSec:    20,
+		AlertRefreshFailed: true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewAttributes)))
+		args, err := GetAlterMaterializedViewAttributesArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+
+	legacy := &AlterMaterializedViewAttributesArgs{
+		AlertWarningSec: 10,
+		AlertOverdueSec: 20,
+	}
+	legacyRawArgs, err := marshalArgs(JobVersion1, []any{legacy.AlertWarningSec, legacy.AlertOverdueSec})
+	require.NoError(t, err)
+	j := &Job{
+		Version: JobVersion1,
+		Type:    ActionAlterMaterializedViewAttributes,
+		RawArgs: legacyRawArgs,
+	}
+	args, err := GetAlterMaterializedViewAttributesArgs(j)
+	require.NoError(t, err)
+	require.Equal(t, legacy.AlertWarningSec, args.AlertWarningSec)
+	require.Equal(t, legacy.AlertOverdueSec, args.AlertOverdueSec)
+	require.False(t, args.AlertRefreshFailed)
+}
+
+func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewLogPurgeArgs{
+		PurgeMethod:           "DEFERRED",
+		PurgeStartWith:        "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		PurgeNext:             "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		PurgeScheduleTimeZone: TimeZoneLocation{Name: "UTC", Offset: 0},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewLogPurge)))
+		args, err := GetAlterMaterializedViewLogPurgeArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+
+	j := &Job{Version: JobVersion1, Type: ActionAlterMaterializedViewLogPurge}
+	j.FillArgs(inArgs)
+	inArgs.PurgeScheduleTimeZone.Name = "Asia/Shanghai"
+	encoded, err := j.Encode(true)
+	require.NoError(t, err)
+	decoded := &Job{}
+	require.NoError(t, decoded.Decode(encoded))
+	args, err := GetAlterMaterializedViewLogPurgeArgs(decoded)
+	require.NoError(t, err)
+	require.Equal(t, "UTC", args.PurgeScheduleTimeZone.Name)
+}
+
 func TestGetAlterIndexVisibilityArgs(t *testing.T) {
 	inArgs := &AlterIndexVisibilityArgs{
 		IndexName: ast.NewCIStr("index-name"),
