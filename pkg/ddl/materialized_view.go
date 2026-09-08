@@ -1044,6 +1044,11 @@ func (e *executor) alterMaterializedViewLogPurge(ctx sessionctx.Context, schemaI
 		return errors.Trace(err)
 	}
 
+	// Keep the DDL metadata update and the runtime schedule-info update deliberately
+	// decoupled. Metadata is the source of truth and must not depend on schedule
+	// evaluation or acquiring an info-table row lock held by a running purge. Errors
+	// below therefore do not roll back the completed DDL job; lock contention becomes
+	// a warning.
 	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, sessionVars.SQLMode, purgeScheduleTimeZone)
 	defer restoreEvalSession()
 
@@ -1095,6 +1100,11 @@ func (e *executor) alterMaterializedViewRefresh(ctx sessionctx.Context, schemaID
 		return errors.Trace(err)
 	}
 
+	// Keep the DDL metadata update and the runtime schedule-info update deliberately
+	// decoupled. Metadata is the source of truth and must not depend on schedule
+	// evaluation or acquiring an info-table row lock held by a running refresh. Errors
+	// below therefore do not roll back the completed DDL job; lock contention becomes
+	// a warning.
 	restoreEvalSession := setCreateMaterializedViewScheduleEvalSession(ctx, sessionVars.SQLMode, refreshScheduleTimeZone)
 	defer restoreEvalSession()
 
