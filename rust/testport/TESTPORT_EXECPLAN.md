@@ -11451,3 +11451,7 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (stored recompute pin): updating a STORED generated column's
  base recomputes the stored value on disk. Pinned in
  `crates/tidb-session/tests/stored_recompute_source.rs`.
+- 2026-09-08 (chained generated pin): a generated column referencing
+ another generated column resolves in dependency order and re-resolves on
+ base updates. Pinned in
+ `crates/tidb-session/tests/chained_generated_source.rs`.
