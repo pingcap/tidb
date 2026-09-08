@@ -93,6 +93,7 @@ func (*mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, er
 // MergeOperator is the operator that merges overlapping files.
 type MergeOperator struct {
 	*operator.AsyncOperator[*mergeMinimalTask, workerpool.None]
+	concurrency int
 }
 
 // getMergeReaderMemory returns the concurrent-reader budget for one merge subtask.
@@ -115,6 +116,7 @@ func NewMergeOperator(
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
 ) *MergeOperator {
+	concurrency = max(concurrency, 1)
 	readerMemorySize := getMergeReaderMemory(memoryPerCore, concurrency)
 	logutil.Logger(ctx).Info("create merge operator",
 		zap.Int64("memory-per-core", memoryPerCore),
@@ -140,6 +142,7 @@ func NewMergeOperator(
 
 	return &MergeOperator{
 		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
+		concurrency:   concurrency,
 	}
 }
 
@@ -186,9 +189,9 @@ func (*mergeWorker) Close() error {
 func MergeOverlappingFiles(
 	ctx *workerpool.Context,
 	paths []string,
-	concurrency int,
 	op *MergeOperator,
 ) error {
+	concurrency := op.concurrency
 	dataFilesSlice := splitDataFiles(paths, concurrency)
 	logutil.Logger(ctx).Info("start to merge overlapping files",
 		zap.Int("file-count", len(paths)),
@@ -383,6 +386,8 @@ func mergeOverlappingFilesInternal(
 }
 
 func getMergePartSize(inputSize int64, fileCount, blockSize int) int64 {
+	// Conservatively allow each input file to contribute up to one additional
+	// block of output due to block alignment.
 	padding := int64(fileCount) * int64(blockSize)
 	maxOutputSize := inputSize + padding
 	partSize := maxOutputSize / simplesst.MaxUploadPartCount

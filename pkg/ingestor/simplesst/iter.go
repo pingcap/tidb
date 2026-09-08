@@ -504,6 +504,9 @@ type MergeKVIter struct {
 // Next() then Key() or Values(). readBufferSize is the buffer size for each file
 // reader, which means the total memory usage is readBufferSize * len(paths).
 // readerMemorySize bounds the memory used to read a hotspot file concurrently.
+// The range-read fan-out for one file is capped at concurrentReaderTotalConcurrency.
+// If readerMemorySize is smaller than one concurrent-reader buffer, hotspot
+// detection and concurrent reading are disabled.
 func NewMergeKVIter(
 	ctx context.Context,
 	paths []string,
@@ -514,7 +517,7 @@ func NewMergeKVIter(
 	readerMemorySize int64,
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*KVPair, kvReaderProxy], 0, len(paths))
-	concurrentReaderConcurrency := int(readerMemorySize / int64(ConcurrentReaderBufferSizePerConc))
+	concurrentReaderConcurrency := getConcurrentReaderConcurrency(readerMemorySize)
 	memPool := membuf.NewPool(
 		membuf.WithBlockNum(concurrentReaderConcurrency), // currently only one reader will become hotspot
 		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
@@ -557,6 +560,11 @@ func NewMergeKVIter(
 		inputSize += size
 	}
 	return &MergeKVIter{iter: it, memPool: memPool, inputSize: inputSize}, nil
+}
+
+func getConcurrentReaderConcurrency(readerMemorySize int64) int {
+	concurrency := max(readerMemorySize/int64(ConcurrentReaderBufferSizePerConc), 0)
+	return int(min(concurrency, int64(concurrentReaderTotalConcurrency)))
 }
 
 // InputSize returns the total unread size of input files when the iterator was created.

@@ -550,7 +550,6 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 	err = MergeOverlappingFiles(
 		wctx,
 		datas,
-		s.concurrency,
 		op,
 	)
 
