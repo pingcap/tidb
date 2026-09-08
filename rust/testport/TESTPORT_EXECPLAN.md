@@ -11448,3 +11448,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (EXTRACT compound units pin): DAY_HOUR, YEAR_MONTH,
  MINUTE_SECOND, and SECOND_MICROSECOND positional packing. Pinned in
  `crates/tidb-session/tests/extract_compound_source.rs`.
+- 2026-09-08 (stored recompute pin): updating a STORED generated column's
+ base recomputes the stored value on disk. Pinned in
+ `crates/tidb-session/tests/stored_recompute_source.rs`.
