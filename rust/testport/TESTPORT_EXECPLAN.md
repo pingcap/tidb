@@ -11422,3 +11422,8 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (DROP FOREIGN KEY pin): dropping the constraint re-enables
  violating inserts; the previously refused row lands. Pinned in
  `crates/tidb-session/tests/drop_foreign_key_source.rs`.
+- 2026-09-08 (ADD FK validation pin): ADD FOREIGN KEY validates existing
+ rows — a violating row refuses the ALTER and leaves the data untouched;
+ after removing the offender the ALTER lands (affected 0) and the
+ constraint is live. Pinned in
+ `crates/tidb-session/tests/add_fk_validates_source.rs`.
