@@ -502,7 +502,8 @@ func TestBasicReadFile(t *testing.T) {
 // rowCountTrackingStorage tracks readers retained by metadata-only reads.
 type rowCountTrackingStorage struct {
 	storage.ExternalStorage
-	readers []*rowCountTrackingReader
+	readers  []*rowCountTrackingReader
+	closeErr error
 }
 
 func (s *rowCountTrackingStorage) Open(ctx context.Context, path string, opts *storage.ReaderOption) (storage.ExternalFileReader, error) {
@@ -510,19 +511,28 @@ func (s *rowCountTrackingStorage) Open(ctx context.Context, path string, opts *s
 	if err != nil {
 		return nil, err
 	}
-	reader := &rowCountTrackingReader{ExternalFileReader: r}
+	reader := &rowCountTrackingReader{ExternalFileReader: r, closeErr: s.closeErr}
 	s.readers = append(s.readers, reader)
 	return reader, nil
 }
 
 type rowCountTrackingReader struct {
 	storage.ExternalFileReader
-	closed bool
+	closed     bool
+	closeErr   error
+	closeCalls int
 }
 
 func (r *rowCountTrackingReader) Close() error {
+	r.closeCalls++
+	if r.closeErr != nil {
+		return r.closeErr
+	}
+	if err := r.ExternalFileReader.Close(); err != nil {
+		return err
+	}
 	r.closed = true
-	return r.ExternalFileReader.Close()
+	return nil
 }
 
 func TestReadParquetFileRowCountClosesReader(t *testing.T) {
@@ -561,4 +571,28 @@ func TestReadParquetFileRowCountClosesReader(t *testing.T) {
 			}
 		})
 	}
+	for _, name := range []string{"valid.parquet", "invalid.parquet"} {
+		t.Run(name+"/close-error", func(t *testing.T) {
+			store := &rowCountTrackingStorage{ExternalStorage: base, closeErr: io.ErrClosedPipe}
+			t.Cleanup(func() {
+				for _, reader := range store.readers {
+					_ = reader.ExternalFileReader.Close()
+				}
+			})
+			_, err := ReadParquetFileRowCountByFile(ctx, store, SourceFileMeta{Path: name})
+			require.Error(t, err)
+			require.Len(t, store.readers, 1)
+			require.Equal(t, 1, store.readers[0].closeCalls)
+			require.False(t, store.readers[0].closed)
+			if name == "valid.parquet" {
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+				require.ErrorContains(t, err, "close parquet row-count reader")
+			} else {
+				_, metadataErr := ReadParquetFileRowCountByFile(ctx, base, SourceFileMeta{Path: name})
+				require.EqualError(t, err, metadataErr.Error())
+				require.NotErrorIs(t, err, io.ErrClosedPipe)
+			}
+		})
+	}
+
 }
