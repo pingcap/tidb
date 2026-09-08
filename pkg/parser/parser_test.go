@@ -7477,7 +7477,7 @@ func TestSignedInt64OutOfRange(t *testing.T) {
 // For test only.
 func CleanNodeText(node ast.Node) {
 	var cleaner nodeTextCleaner
-	node.Accept(&cleaner)
+	ast.Walk(node, &cleaner)
 }
 
 // nodeTextCleaner clean the text of a node and it's child node.
@@ -7491,19 +7491,19 @@ func cleanPartition(n ast.Node) {
 		if p.Interval != nil {
 			p.Interval.SetText(nil, "")
 			p.Interval.SetOriginTextPosition(0)
-			p.Interval.IntervalExpr.Expr.Accept(&tmpCleaner)
+			ast.Walk(p.Interval.IntervalExpr.Expr, &tmpCleaner)
 			if p.Interval.FirstRangeEnd != nil {
-				(*p.Interval.FirstRangeEnd).Accept(&tmpCleaner)
+				ast.Walk(*p.Interval.FirstRangeEnd, &tmpCleaner)
 			}
 			if p.Interval.LastRangeEnd != nil {
-				(*p.Interval.LastRangeEnd).Accept(&tmpCleaner)
+				ast.Walk(*p.Interval.LastRangeEnd, &tmpCleaner)
 			}
 		}
 	}
 }
 
-// Enter implements Visitor interface.
-func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements ast.InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Enter(in ast.Node) bool {
 	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	if v, ok := in.(ast.ValueExpr); ok && v != nil {
@@ -7587,12 +7587,12 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	case *ast.PartitionOptions:
 		cleanPartition(node)
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (checker *nodeTextCleaner) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+// Leave implements ast.InPlaceVisitor interface.
+func (checker *nodeTextCleaner) Leave(in ast.Node) bool {
+	return true
 }
 
 // For BRIE
