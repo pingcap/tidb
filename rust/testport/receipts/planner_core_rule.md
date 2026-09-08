@@ -231,3 +231,13 @@ The two existing owner tests pass via the usual cargo command with filter
 logical::rule_order_aware_join_reorder::tests; log
 `/tmp/core-rule-order-audit-20260908.log`. No production changes or Ready
 behavior claim are part of this checkpoint.
+
+## Statement-context prerequisite reading
+
+At parent cb54e38fc5, all four Go stmtctx artifacts (2455 lines) were read,
+including seventeen tests and one benchmark. The separate inventory records
+every blob and function declaration. Constructor/reset/build-state restoration
+rebind range fallback handling to warnings and plan-cache state; this expands
+the required evidence for the pending range-limit transmission repair.
+No Rust behavior changed, no tests were claimed run for this reading step,
+and the range-limit gap remains open pending variable/session inventories.

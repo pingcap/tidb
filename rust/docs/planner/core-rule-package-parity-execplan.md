@@ -378,3 +378,11 @@ Revalidated clean worktree at pushed `69b5be8c52`. No production edit in this ch
 Read the complete Go (245 lines) and Rust order-aware join-reorder owner. Function mapping: Optimize to the trait implementation; optimizeRecursive to optimize_recursive; optimizeChildren to optimize_children plus optimize_choice_vertices for the owned-tree vertex traversal; shouldUseCDCBasedJoinReorder to should_use_cdc_based_join_reorder; extractOrderingColumns to extract_ordering_columns; sameOrderingColumns to same_ordering_columns; rewriteOrderingForProjection to rewrite_ordering_for_projection; Name to name. Forward column-only extraction, TopN/Sort replacement of inherited order, projection mapping, Limit propagation, mutable-selection barriers, filter accumulation, threshold gating, and carrier-only propagation were compared. No new confirmed owner mismatch was found. Joinorder choice/annotation and data-source ordering remain dependency comparisons, not established parity.
 
 Focused evidence: logical::rule_order_aware_join_reorder::tests passes 2/2 in `/tmp/core-rule-order-audit-20260908.log`. This is an audit checkpoint, not a Ready behavior batch or whole-package completion claim. Next work is the missing range-limit context chain and remaining source-to-owner declarations/test mapping.
+
+
+## Statement-context prerequisite inventory
+
+
+Revalidated clean state at `cb54e38fc5`. Completed reading every direct artifact in Go pkg/sessionctx/stmtctx: BUILD.bazel (67 lines), main_test.go (34), stmtctx.go (1713), stmtctx_test.go (641), totaling 2455 lines. All seventeen tests, the benchmark and build targets were inspected. Exact blobs and function declarations are recorded in `rust/docs/planner/stmtctx-reading-inventory-20260908.md`.
+
+The audit extends the range-limit fix requirements: constructor, full reset and logical-build-state restore recreate RangeFallbackHandler bound to the current plan-cache tracker and warning appender. Retry reset has different semantics. A range-budget repair must not claim complete behavior merely by delivering the byte limit while dropping warning/cache fallback effects. No production edits were made; session-variable and session package prerequisites still need inventory before cross-package changes. This is source-reading progress, not validation or completion of the range-limit fix.
