@@ -1001,7 +1001,9 @@ pub mod util_config;
 mod variables;
 pub mod varsutil;
 mod warnings;
-pub(crate) use classify::{statement_kind_of, StatementKind};
+pub(crate) use classify::{
+    statement_kind_of, statement_not_fill_cache, statement_priority_of, StatementKind,
+};
 pub use classify::{StmtKind, StoredStateChange};
 pub use prepared_ast::PreparedAst;
 pub(crate) use txn::Transaction;

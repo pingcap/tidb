@@ -669,6 +669,16 @@ both `oltp_read_only` and `oltp_read_write`.
   context carries it now, and the read-only tier gained
   `set_div_precision_increment`. Receipt:
   `rust/testport/receipts/executor_internal_builder.md`.
+- [x] 2026-09-09: threaded the statement's `Priority` and `NotFillCache` into
+  every KV request. Go's `ResetContextOfStmt` copies `sc.Priority` from the
+  statement's own modifier and `sc.NotFillCache` from a SELECT's
+  `SQL_NO_CACHE`; `SetFromSessionVars` then sends both on `kv.Request`. The
+  Rust request builder already mapped them, but nothing populated the
+  `StmtContext`, so every request went out at `PriorityNormal` with the
+  storage cache enabled. `statement_context_for_stmt` now reads both off the
+  AST (SELECT, UPDATE, DELETE, INSERT, LOAD DATA, with `WITH` unwrapped) and
+  `cop_scan` copies them onto the `DistSqlContext`. Receipt:
+  `rust/testport/receipts/distsql_audit.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

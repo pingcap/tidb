@@ -239,3 +239,54 @@ Ready validation for this Rust-only package batch:
 
 No Go, fixture, generated/platform, Bazel, or Cargo metadata changed, so
 `make bazel_prepare` is not required.
+
+## Current Rust alignment batch: statement priority and `NotFillCache` (2026-09-09)
+
+Re-verified against Go `origin/master` at
+`f5cf8f6337612c6ae51fb6e384e4bb3469dde680`. `SetFromSessionVars` copies two
+statement-scoped inputs onto every `kv.Request` that the Rust request builder
+already understood but no production caller supplied:
+
+- `pkg/executor/select.go:1173-1174` — the `*ast.SelectStmt` arm sets
+  `sc.Priority = opts.Priority` and `sc.NotFillCache = !opts.SQLCache`;
+  `select.go:1139`, `:1296`, and `:1317` set `sc.Priority = stmt.Priority`
+  for INSERT, UPDATE, and DELETE, and `select.go:1155` maps LOAD DATA's
+  dedicated `LowPriority` word to the same field.
+- `pkg/distsql/request_builder.go:357-359` — `SetFromSessionVars` copies
+  `dctx.NotFillCache` and `getKVPriority(dctx)` (`:324-335`) onto the request.
+- `pkg/distsql/context/context.go` builds `DistSQLContext.NotFillCache` and
+  `.Priority` from the same `StmtCtx` fields
+  (`pkg/session/session.go:3615-3616`).
+
+Rust already mapped `RequestContext.priority`/`.not_fill_cache` through
+`ReadRequestMetadata` and `tikv_rpc_contract` onto `kvrpcpb.Context`, but
+`StmtContext` carried neither, so `SELECT HIGH_PRIORITY SQL_NO_CACHE` still
+sent `PriorityNormal` with the storage cache enabled. `StmtContext` now owns
+both fields; `statement_context_for_stmt` reads them off the AST (SELECT plus
+INSERT/UPDATE/DELETE/LOAD DATA, unwrapping `WITH`), the SELECT funnel uses it,
+and `cop_scan` copies `PushdownStatementContext.priority`/`.not_fill_cache`
+onto the `DistSqlContext`.
+
+Regression evidence:
+
+- `cop_scan_string_selection_source::each_request_carries_the_statements_priority_and_cache_policy`
+  failed before the `cop_scan` assignment with `left: Priority(0), right:
+  Priority(2)` and passes after, asserting the default request stays
+  `PriorityNormal`/`not_fill_cache = false`.
+- `stmt_ctx::tests::statement_priority_and_no_cache_reach_the_statement_context`
+  pins the AST projection, including `UPDATE LOW_PRIORITY`,
+  `LOAD DATA LOW_PRIORITY`, and the SELECT-only `NotFillCache`.
+
+Ready validation for this Rust-only package batch:
+
+- focused `tidb-session` and `tidb-exec` regressions — passed;
+- `cargo check --locked -p tidb-executor -p tidb-session -p tidb-exec
+  --all-targets` — passed;
+- `cargo fmt --all -- --check` and `git diff --check -- rust` — passed;
+- no Go, fixture, generated/platform, Bazel, or Cargo metadata changed, so
+  `make bazel_prepare` is not required; no live TiKV/PD transport or Go test
+  execution was claimed locally.
+
+The remaining `SetFromSessionVars` inputs with no `StmtContext` owner are the
+request source, task id, `max_execution_time`, `tidb_kv_read_timeout`, and the
+runaway checker.

@@ -31,7 +31,7 @@
 //! and rewrites stored accounts, `INSERT` is `Write`-shaped and changes nothing
 //! stored outside this process.
 
-use tidb_ast::{DmlStmt, Stmt};
+use tidb_ast::{DmlStmt, QueryStmt, StatementPriority, Stmt};
 use tidb_datatype::Datum;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::DriverError;
@@ -129,6 +129,44 @@ pub(crate) fn statement_kind_of(stmt: &Stmt) -> StatementKind {
         Stmt::Dml(dml) => dml_kind(dml),
         _ => StatementKind::Other,
     }
+}
+
+/// Go `ResetContextOfStmt`'s `sc.Priority` assignment: the statement's own
+/// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier. SELECT reads it from
+/// `SelectStmtOpts`, UPDATE/DELETE from `ResetUpdateStmtCtx`/`ResetDeleteStmtCtx`,
+/// and INSERT from its own arm; every other statement leaves the zero value.
+/// A `WITH` prefix is unwrapped because Go sets the priority on the mutation
+/// the CTE belongs to.
+pub(crate) fn statement_priority_of(stmt: &Stmt) -> StatementPriority {
+    fn dml_priority(dml: &DmlStmt) -> StatementPriority {
+        match dml {
+            DmlStmt::With { statement, .. } => dml_priority(statement),
+            DmlStmt::Insert(insert) => insert.priority,
+            DmlStmt::Update(update) => update.priority,
+            DmlStmt::Delete(delete) => delete.priority,
+            // Go's `*ast.LoadDataStmt` arm has a dedicated `LowPriority` word
+            // rather than the shared `stmt.Priority` field.
+            DmlStmt::LoadData(load) if load.low_priority => StatementPriority::Low,
+            _ => StatementPriority::None,
+        }
+    }
+    match stmt {
+        Stmt::Query(query) => match &**query {
+            QueryStmt::Select(select) => select.priority,
+            QueryStmt::SetOpr(_) => StatementPriority::None,
+        },
+        Stmt::Dml(dml) => dml_priority(dml),
+        _ => StatementPriority::None,
+    }
+}
+
+/// Go `ResetContextOfStmt`'s `sc.NotFillCache = !SelectStmtOpts.SQLCache`.
+/// Only a SELECT carries the modifier; every other statement leaves it false.
+pub(crate) fn statement_not_fill_cache(stmt: &Stmt) -> bool {
+    matches!(
+        stmt,
+        Stmt::Query(query) if matches!(&**query, QueryStmt::Select(select) if select.sql_no_cache)
+    )
 }
 
 impl Session {

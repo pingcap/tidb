@@ -554,6 +554,8 @@ where
             time_zone: request.statement.time_zone.clone(),
             resource_group_name: request.statement.resource_group_name.clone(),
             replica_read: request.statement.replica_read,
+            priority: request.statement.priority,
+            not_fill_cache: request.statement.not_fill_cache,
             query_cop_store_limiter: request.statement.query_cop_store_limiter.clone(),
             warnings: request.statement.warnings.clone(),
             cop_plan_ids,
@@ -609,6 +611,10 @@ struct RemoteScanPlan {
     resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` for this request.
     replica_read: tidb_distsql::ReplicaReadType,
+    /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)` for this request.
+    priority: tidb_distsql::Priority,
+    /// Go `StmtCtx.NotFillCache` for this request.
+    not_fill_cache: bool,
     /// Query-scoped per-store limiter shared by all region tasks for this
     /// statement.
     query_cop_store_limiter: Option<Arc<tidb_txnkv::QueryCopStoreLimiter>>,
@@ -638,14 +644,16 @@ where
     // `ResourceGroupName`, neither of which any TiDB sends: a stock session
     // is `tidb_distsql_scan_concurrency = 15` and resource group `default`.
     //
-    // The remaining `SetFromSessionVars` fields (statement priority, request
-    // source, task id, max_execution_time,
-    // tidb_kv_read_timeout, the runaway checker) are session variables no
-    // `StmtContext` carries yet. Resource group is statement-scoped in Go and
-    // is therefore copied from this request rather than the stock context.
+    // The remaining `SetFromSessionVars` fields (request source, task id,
+    // max_execution_time, tidb_kv_read_timeout, the runaway checker) are
+    // session variables no `StmtContext` carries yet. Resource group,
+    // priority, and `NotFillCache` are statement-scoped in Go and are
+    // therefore copied from this request rather than the stock context.
     let mut context = DistSqlContext::new();
     context.request.resource_group_name = plan.resource_group_name;
     context.request.replica_read = plan.replica_read;
+    context.request.priority = plan.priority;
+    context.request.not_fill_cache = plan.not_fill_cache;
     context.request.query_cop_store_limiter = plan.query_cop_store_limiter;
     if let Some(min_size) = plan.paging_min_size {
         // Go's buildIndexSelectResultForRange raises both paging bounds to

@@ -476,6 +476,20 @@ impl Session {
         self.statement_context_ignoring(is_dml, false)
     }
 
+    /// Go `ResetContextOfStmt`'s statement-scoped modifiers: the session
+    /// snapshot plus the statement's own priority and `SQL_NO_CACHE`. Both
+    /// ride the `StmtContext` into every coprocessor request the statement
+    /// issues (`SetFromSessionVars`).
+    pub(crate) fn statement_context_for_stmt(
+        &self,
+        stmt: &tidb_ast::Stmt,
+        is_dml: bool,
+    ) -> tidb_executor::StmtContext {
+        self.statement_context(is_dml)
+            .with_statement_priority(crate::statement_priority_of(stmt))
+            .with_not_fill_cache(crate::statement_not_fill_cache(stmt))
+    }
+
     fn latest_index_schema_snapshot(
         &self,
     ) -> Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>> {
@@ -1333,6 +1347,41 @@ mod tests {
         assert!(session
             .statement_context(false)
             .enable_no_decorrelate_in_select());
+    }
+
+    /// Go `ResetContextOfStmt` sets `sc.Priority` from the statement's own
+    /// modifier and `sc.NotFillCache` from a SELECT's `SQL_NO_CACHE`; both
+    /// then ride `SetFromSessionVars` into every coprocessor request.
+    #[test]
+    fn statement_priority_and_no_cache_reach_the_statement_context() {
+        let session = Session::new();
+        let parse = |sql: &str| session.parse(sql).expect("the statement parses");
+
+        let ctx = session.statement_context_for_stmt(
+            &parse("select high_priority sql_no_cache id from t"),
+            false,
+        );
+        assert_eq!(ctx.statement_priority(), tidb_ast::StatementPriority::High);
+        assert!(ctx.not_fill_cache());
+
+        let ctx =
+            session.statement_context_for_stmt(&parse("update low_priority t set id = 1"), true);
+        assert_eq!(ctx.statement_priority(), tidb_ast::StatementPriority::Low);
+        assert!(
+            !ctx.not_fill_cache(),
+            "NotFillCache is a SELECT-only modifier"
+        );
+
+        // Go's `*ast.LoadDataStmt` arm reads the dedicated `LowPriority` word.
+        let ctx = session.statement_context_for_stmt(
+            &parse("load data low_priority infile '/a.csv' into table t"),
+            true,
+        );
+        assert_eq!(ctx.statement_priority(), tidb_ast::StatementPriority::Low);
+
+        let ctx = session.statement_context_for_stmt(&parse("select id from t"), false);
+        assert_eq!(ctx.statement_priority(), tidb_ast::StatementPriority::None);
+        assert!(!ctx.not_fill_cache());
     }
 
     #[test]

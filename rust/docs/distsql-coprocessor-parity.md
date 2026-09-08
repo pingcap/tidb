@@ -149,13 +149,16 @@ I cannot send one request to check.
 The cluster scan path now builds a real `DistSqlContext` per request and
 drives the builder through `RequestBuilder::from_context` (`cop_scan.rs`
 `open_scan`): the resource group name travels per request (statement-scoped
-in Go), the replica-read preference is threaded from the `StmtContext`, and
-the IndexLookUp first-window paging floor raises the paging bounds. The
-remaining `SetFromSessionVars` inputs that no `StmtContext` carries yet —
-statement priority, request source, task id, `max_execution_time`,
-`tidb_kv_read_timeout`, the runaway checker — are documented in the code at
-the construction site as the explicit residual, so the gap is now a listed
-plumbing queue rather than an invisible default.
+in Go), the replica-read preference is threaded from the `StmtContext`, the
+statement's `Priority` and `NotFillCache` (`SQL_NO_CACHE`) are threaded from
+the AST through `StmtContext` (`statement_context_for_stmt`,
+`pkg/executor/select.go`'s `ResetContextOfStmt` arms), and the IndexLookUp
+first-window paging floor raises the paging bounds. The remaining
+`SetFromSessionVars` inputs that no `StmtContext` carries yet — request
+source, task id, `max_execution_time`, `tidb_kv_read_timeout`, the runaway
+checker — are documented in the code at the construction site as the
+explicit residual, so the gap is now a listed plumbing queue rather than an
+invisible default.
 
 Original finding, retained for the Go evidence:
 
@@ -191,8 +194,8 @@ SELECT LOW_PRIORITY SQL_NO_CACHE * FROM t WHERE id > 100;
 | --- | --- | --- |
 | `isolation_level` | `RC` (1) | `SI` (0) |
 | `replica_read` | `true`, type Follower | `false`, Leader |
-| `priority` | `Low` (1) | `Normal` (0) |
-| `not_fill_cache` | `true` | `false` |
+| `priority` | `Low` (1) | `Low` (1) — carried since this batch |
+| `not_fill_cache` | `true` | `true` — carried since this batch |
 | `resource_group_tag` | SQL+plan digest | empty |
 | `resource_control_context.resource_group_name` | session's group | `""` |
 | `task_id` | statement task id | `0` |

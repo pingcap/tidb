@@ -26,7 +26,8 @@ use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{
-    infoschema, privilege, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel,
+    infoschema, privilege, statement_kind_of, statement_priority_of, Session, StatementKind,
+    StmtOutput, WarningLevel,
 };
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
@@ -1855,7 +1856,10 @@ impl Session {
                     return Ok(output);
                 }
                 let current_db = self.current_db.clone();
-                let ctx = self.statement_context(false);
+                // Go `ResetContextOfStmt`'s `*ast.SelectStmt` arm copies the
+                // statement's own priority and `SQL_NO_CACHE` onto the
+                // statement context before anything reads storage.
+                let ctx = self.statement_context_for_stmt(&stmt, false);
                 if let Some(parameterized) = non_prepared.as_ref() {
                     let mut effective_parameterized = parameterized.statement.clone();
                     if binding_sql.is_some() {
@@ -1957,6 +1961,9 @@ impl Session {
                         // every value-level error to a warning.
                         let ctx = self
                             .statement_context_ignoring(true, insert.ignore)
+                            // Go's `*ast.InsertStmt` arm sets
+                            // `sc.Priority = stmt.Priority`.
+                            .with_statement_priority(statement_priority_of(&stmt))
                             .with_statement_class(tidb_executor::StatementClass::Insert)
                             .with_single_insert_bad_null_policy(
                                 insert.rows.len() == 1,
@@ -2017,6 +2024,9 @@ impl Session {
                         // request this statement's read half issues.
                         let ctx = self
                             .statement_context_for_update_read(update.ignore)
+                            // Go `ResetUpdateStmtCtx` sets
+                            // `sc.Priority = stmt.Priority`.
+                            .with_statement_priority(statement_priority_of(&stmt))
                             .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                         let output = match &update.kind {
                             tidb_ast::UpdateKind::Single(table_ref) => self
@@ -2066,6 +2076,9 @@ impl Session {
                         // request this statement's read half issues.
                         let ctx = self
                             .statement_context_for_update_read(delete.ignore)
+                            // Go `ResetDeleteStmtCtx` sets
+                            // `sc.Priority = stmt.Priority`.
+                            .with_statement_priority(statement_priority_of(&stmt))
                             .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                         let output = match &delete.kind {
                             tidb_ast::DeleteKind::Single(table_ref) => self

@@ -377,6 +377,16 @@ pub struct StmtContext {
     resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` for this statement.
     replica_read: ReplicaReadType,
+    /// Go `StmtCtx.Priority` (`mysql.PriorityEnum`): the statement's own
+    /// `LOW_PRIORITY`/`HIGH_PRIORITY`/`DELAYED` modifier, which
+    /// `ResetContextOfStmt` copies off the AST and
+    /// `RequestBuilder.getKVPriority` turns into the KV request priority.
+    /// `NoPriority` and `Delayed` both send `kv.PriorityNormal`.
+    statement_priority: tidb_ast::StatementPriority,
+    /// Go `StmtCtx.NotFillCache`: a SELECT's `SQL_NO_CACHE` modifier, which
+    /// `ResetContextOfStmt` sets as `!SelectStmtOpts.SQLCache` and
+    /// `SetFromSessionVars` copies to every KV request.
+    not_fill_cache: bool,
     /// Go `SessionVars.IsolationReadEngines`, in the session variable's
     /// canonical comma-separated spelling.
     isolation_read_engines: String,
@@ -905,6 +915,8 @@ impl StmtContext {
             time_zone: None,
             resource_group_name: "default".to_owned(),
             replica_read: ReplicaReadType::Leader,
+            statement_priority: tidb_ast::StatementPriority::None,
+            not_fill_cache: false,
             isolation_read_engines: "tikv,tiflash,tidb".to_owned(),
             connection_charset: "utf8mb4".to_owned(),
             connection_collation: "utf8mb4_bin".to_owned(),
@@ -2575,6 +2587,35 @@ impl StmtContext {
     pub const fn with_replica_read(mut self, replica_read: ReplicaReadType) -> Self {
         self.replica_read = replica_read;
         self
+    }
+
+    /// Sets Go `StmtCtx.Priority` from the statement's own priority modifier.
+    #[must_use]
+    pub const fn with_statement_priority(
+        mut self,
+        statement_priority: tidb_ast::StatementPriority,
+    ) -> Self {
+        self.statement_priority = statement_priority;
+        self
+    }
+
+    /// Sets Go `StmtCtx.NotFillCache` from a SELECT's `SQL_NO_CACHE`.
+    #[must_use]
+    pub const fn with_not_fill_cache(mut self, not_fill_cache: bool) -> Self {
+        self.not_fill_cache = not_fill_cache;
+        self
+    }
+
+    /// Go `StmtCtx.Priority` for this statement.
+    #[must_use]
+    pub const fn statement_priority(&self) -> tidb_ast::StatementPriority {
+        self.statement_priority
+    }
+
+    /// Go `StmtCtx.NotFillCache` for this statement.
+    #[must_use]
+    pub const fn not_fill_cache(&self) -> bool {
+        self.not_fill_cache
     }
 
     /// The resource group selected for this statement.

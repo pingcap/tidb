@@ -450,6 +450,11 @@ pub struct PushdownStatementContext {
     pub resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
     pub replica_read: tidb_distsql::ReplicaReadType,
+    /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)`: the statement's
+    /// own priority modifier projected onto KV's three values.
+    pub priority: tidb_distsql::Priority,
+    /// Go `StmtCtx.NotFillCache`, set by a SELECT's `SQL_NO_CACHE`.
+    pub not_fill_cache: bool,
     /// Go's query-scoped per-store coprocessor limiter, shared by every
     /// remote scan in this statement.
     pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
@@ -467,6 +472,8 @@ impl Default for PushdownStatementContext {
             time_zone: SessionTimeZone::default(),
             resource_group_name: "default".to_owned(),
             replica_read: tidb_distsql::ReplicaReadType::Leader,
+            priority: tidb_distsql::Priority::NoPriority,
+            not_fill_cache: false,
             query_cop_store_limiter: None,
             // Go `vardef.DefDivPrecisionIncrement`; a caller with no statement
             // behind it has no session value to send.
@@ -486,6 +493,8 @@ impl PushdownStatementContext {
             time_zone: ctx.session_zone(),
             resource_group_name: ctx.resource_group_name().to_owned(),
             replica_read: ctx.replica_read(),
+            priority: kv_priority(ctx.statement_priority()),
+            not_fill_cache: ctx.not_fill_cache(),
             query_cop_store_limiter: ctx.query_cop_store_limiter(),
             div_precision_increment: ctx.div_precision_increment(),
         }
@@ -496,6 +505,19 @@ impl PushdownStatementContext {
     pub fn with_plan_id(mut self, plan_id: i64) -> Self {
         self.plan_id = plan_id as isize;
         self
+    }
+}
+
+/// Go `RequestBuilder.getKVPriority`: the AST priority enum projected onto
+/// DistSQL's own copy of the same enum. `Delayed` maps to `NoPriority` only
+/// later, at the KV boundary, so the DistSQL context keeps the spelling the
+/// statement used.
+const fn kv_priority(priority: tidb_ast::StatementPriority) -> tidb_distsql::Priority {
+    match priority {
+        tidb_ast::StatementPriority::None => tidb_distsql::Priority::NoPriority,
+        tidb_ast::StatementPriority::Low => tidb_distsql::Priority::Low,
+        tidb_ast::StatementPriority::High => tidb_distsql::Priority::High,
+        tidb_ast::StatementPriority::Delayed => tidb_distsql::Priority::Delayed,
     }
 }
 
