@@ -53,16 +53,17 @@ def main(root):
             "--peer-urls=http://127.0.0.1:22380", "--advertise-peer-urls=http://127.0.0.1:22380"])
         ready("http://127.0.0.1:22379/health")
         # Health becomes available before PD has elected a leader. Configuration
-        # writes must wait for the leader endpoint, otherwise they can return 500.
+        # writes also require TiKV to bootstrap the cluster before they can succeed.
         ready("http://127.0.0.1:22379/pd/api/v1/leader")
+        start("tikv", ["bin/tikv-server", "--addr=127.0.0.1:23160", "--advertise-addr=127.0.0.1:23160",
+            "--status-addr=127.0.0.1:23180", "--pd-endpoints=127.0.0.1:22379", "--data-dir", str(root / "tikv-data")])
+        ready("http://127.0.0.1:23180/status")
+        ready("http://127.0.0.1:22379/pd/api/v1/regions")
         req = Request("http://127.0.0.1:22379/pd/api/v1/config/replicate", data=b'{"max-replicas":1}',
                       headers={"Content-Type": "application/json"})
         (root / "replication-request.json").write_text(json.dumps({"url": req.full_url, "method": "POST", "body": {"max-replicas": 1}, "time": now()}))
         with urlopen(req, timeout=10) as response:
             (root / "replication-response").write_bytes(response.read())
-        start("tikv", ["bin/tikv-server", "--addr=127.0.0.1:23160", "--advertise-addr=127.0.0.1:23160",
-            "--status-addr=127.0.0.1:23180", "--pd-endpoints=127.0.0.1:22379", "--data-dir", str(root / "tikv-data")])
-        ready("http://127.0.0.1:23180/status")
         start("tidb", ["bin/tidb-server", "--store=tikv", "--path=127.0.0.1:22379", "--host=127.0.0.1",
             "-P=24000", "--status=20080", "--temp-dir", str(root / "tidb-tmp")])
         ready("http://127.0.0.1:20080/status")
