@@ -422,7 +422,7 @@ func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObj
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
-	if len(p.TableScanAndPartitionInfos) == 0 {
+	if len(p.ScanAndPartitionInfos) == 0 {
 		ts, ok := p.TablePlans[0].(*PhysicalTableScan)
 		if !ok {
 			return OtherAccessObject("")
@@ -437,14 +437,8 @@ func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObj
 		}
 		return DynamicPartitionAccessObjects{res}
 	}
-	if len(p.TableScanAndPartitionInfos) == 1 {
-		tp := p.TableScanAndPartitionInfos[0]
-		ts := tp.tableScan
-		asName := ""
-		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
-			asName = ts.TableAsName.O
-		}
-		res := getDynamicAccessPartition(sctx, ts.Table, tp.physPlanPartInfo, asName)
+	if len(p.ScanAndPartitionInfos) == 1 {
+		res := p.accessObjectForScanAndPartitionInfo(sctx, p.ScanAndPartitionInfos[0])
 		if res == nil {
 			return DynamicPartitionAccessObjects(nil)
 		}
@@ -452,16 +446,8 @@ func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObj
 	}
 
 	res := make(DynamicPartitionAccessObjects, 0)
-	for _, info := range p.TableScanAndPartitionInfos {
-		if info.tableScan.Table.GetPartitionInfo() == nil {
-			continue
-		}
-		ts := info.tableScan
-		asName := ""
-		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
-			asName = ts.TableAsName.O
-		}
-		accessObj := getDynamicAccessPartition(sctx, ts.Table, info.physPlanPartInfo, asName)
+	for _, info := range p.ScanAndPartitionInfos {
+		accessObj := p.accessObjectForScanAndPartitionInfo(sctx, info)
 		if accessObj != nil {
 			res = append(res, accessObj)
 		}
@@ -470,6 +456,35 @@ func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObj
 		return DynamicPartitionAccessObjects(nil)
 	}
 	return res
+}
+
+func (*PhysicalTableReader) accessObjectForScanAndPartitionInfo(sctx base.PlanContext, info scanAndPartitionInfo) *DynamicPartitionAccessObject {
+	if info.physPlanPartInfo == nil {
+		return nil
+	}
+	if info.tableScan != nil {
+		ts := info.tableScan
+		if ts.Table.GetPartitionInfo() == nil {
+			return nil
+		}
+		asName := ""
+		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
+			asName = ts.TableAsName.O
+		}
+		return getDynamicAccessPartition(sctx, ts.Table, info.physPlanPartInfo, asName)
+	}
+	if info.indexScan != nil {
+		is := info.indexScan
+		if is.Table.GetPartitionInfo() == nil {
+			return nil
+		}
+		asName := ""
+		if is.TableAsName != nil && len(is.TableAsName.O) > 0 {
+			asName = is.TableAsName.O
+		}
+		return getDynamicAccessPartition(sctx, is.Table, info.physPlanPartInfo, asName)
+	}
+	return nil
 }
 
 func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, p *PhysPlanPartInfo) base.AccessObject {

@@ -95,13 +95,14 @@ var (
 	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
 
-type tableScanAndPartitionInfo struct {
+type scanAndPartitionInfo struct {
 	tableScan        *PhysicalTableScan
+	indexScan        *PhysicalIndexScan
 	physPlanPartInfo *PhysPlanPartInfo
 }
 
-// MemoryUsage return the memory usage of tableScanAndPartitionInfo
-func (t *tableScanAndPartitionInfo) MemoryUsage() (sum int64) {
+// MemoryUsage return the memory usage of scanAndPartitionInfo
+func (t *scanAndPartitionInfo) MemoryUsage() (sum int64) {
 	if t == nil {
 		return
 	}
@@ -109,6 +110,9 @@ func (t *tableScanAndPartitionInfo) MemoryUsage() (sum int64) {
 	sum += t.physPlanPartInfo.MemoryUsage()
 	if t.tableScan != nil {
 		sum += t.tableScan.MemoryUsage()
+	}
+	if t.indexScan != nil {
+		sum += t.indexScan.MemoryUsage()
 	}
 	return
 }
@@ -157,8 +161,8 @@ type PhysicalTableReader struct {
 
 	// Used by partition table.
 	PlanPartInfo *PhysPlanPartInfo
-	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
-	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
+	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 scan
+	ScanAndPartitionInfos []scanAndPartitionInfo `plan-cache-clone:"must-nil"`
 }
 
 // SetTablePlanForTest sets the private table plan for executor regression tests.
@@ -263,7 +267,7 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 		sum += p.tablePlan.MemoryUsage()
 	}
 	// since TablePlans is the flats of tablePlan, so we don't count it
-	for _, pInfo := range p.TableScanAndPartitionInfos {
+	for _, pInfo := range p.ScanAndPartitionInfos {
 		sum += pInfo.MemoryUsage()
 	}
 	return
@@ -868,6 +872,10 @@ type PhysicalIndexScan struct {
 	StoreType kv.StoreType
 
 	FtsQueryInfo *tipb.FTSQueryInfo `plan-cache-clone:"must-nil"`
+
+	// PlanPartInfo carries partition-pruning metadata for TiCI MPP IndexScan.
+	// TiKV IndexScan keeps using the outer IndexReader/IndexLookUpReader's PlanPartInfo.
+	PlanPartInfo *PhysPlanPartInfo `plan-cache-clone:"must-nil"`
 }
 
 // TryToPassTiCITopN checks whether the TopN can be embedded into a TiCI index scan.
@@ -960,6 +968,9 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	}
 	if p.dataSourceSchema != nil {
 		sum += p.dataSourceSchema.MemoryUsage()
+	}
+	if p.PlanPartInfo != nil {
+		sum += p.PlanPartInfo.MemoryUsage()
 	}
 	// slice memory usage
 	for _, cond := range p.AccessCondition {

@@ -185,7 +185,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
-	collectPartitionInfosFromMPPPlan(p, t.p)
+	collectScanPartitionInfosFromMPPPlan(p, t.p)
 	rt := &RootTask{}
 	rt.SetPlan(p)
 

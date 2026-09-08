@@ -2587,13 +2587,17 @@ func (p *PhysicalSequence) Attach2Task(tasks ...base.Task) base.Task {
 	return mppTask
 }
 
-func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.PhysicalPlan) {
+func collectScanPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan base.PhysicalPlan) {
 	switch x := mppPlan.(type) {
 	case *PhysicalTableScan:
-		p.TableScanAndPartitionInfos = append(p.TableScanAndPartitionInfos, tableScanAndPartitionInfo{x, x.PlanPartInfo})
+		p.ScanAndPartitionInfos = append(p.ScanAndPartitionInfos, scanAndPartitionInfo{tableScan: x, physPlanPartInfo: x.PlanPartInfo})
+	case *PhysicalIndexScan:
+		if x.PlanPartInfo != nil {
+			p.ScanAndPartitionInfos = append(p.ScanAndPartitionInfos, scanAndPartitionInfo{indexScan: x, physPlanPartInfo: x.PlanPartInfo})
+		}
 	default:
 		for _, ch := range mppPlan.Children() {
-			collectPartitionInfosFromMPPPlan(p, ch)
+			collectScanPartitionInfosFromMPPPlan(p, ch)
 		}
 	}
 }

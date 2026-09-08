@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	ticipkg "github.com/pingcap/tidb/pkg/tici"
 	"github.com/stretchr/testify/require"
 )
 
@@ -611,6 +612,70 @@ func TestTiCISearchIgnoreIndex(t *testing.T) {
 			"select /*+ ignore_index(r, idx_n) */ * from reviews r where match(title) against('hello' in boolean mode)",
 		} {
 			tk.MustQuery("explain format='brief' " + sql).CheckContain("search func:fts_match_word")
+		}
+	})
+}
+
+func TestTiCIMPPIndexScanPartitionPruning(t *testing.T) {
+	ticipkg.InstallMockTiCIManagerForTest(t)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishPartitionUpload", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishPartitionUpload")
+		require.NoError(t, err)
+	}()
+
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec("set tidb_allow_mpp=on")
+		tk.MustExec("set tidb_enforce_mpp=on")
+		tk.MustExec(`create table employees(
+			id bigint primary key,
+			fname varchar(25) not null,
+			store_id bigint not null,
+			body varchar(255)
+		) partition by range(id) (
+			partition p0 values less than (100),
+			partition p1 values less than (200),
+			partition p2 values less than maxvalue
+		)`)
+		tk.MustExec(`create hybrid index h_idx on employees(id, fname, store_id, body) parameter '{
+			"inverted": {
+				"columns": ["id", "fname", "store_id", "body"]
+			},
+			"sort": {
+				"columns": ["id", "fname", "store_id"],
+				"order": ["asc", "desc", "asc"]
+			},
+			"sharding_key": {
+				"columns": ["id", "fname", "store_id"]
+			}
+		}'`)
+		tk.MustExec(`create table stores(
+			id bigint primary key,
+			name varchar(25) not null
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "employees")
+		testkit.SetTiFlashReplica(t, dom, "test", "stores")
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		integrationSuiteData := GetFTSIndexSuiteData()
+		integrationSuiteData.LoadTestCasesByName("TestTiCIMPPIndexScanPartitionPruning", t, &input, &output)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
 	})
 }
