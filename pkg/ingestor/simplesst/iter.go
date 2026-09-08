@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -522,7 +523,7 @@ func NewMergeKVIter(
 		membuf.WithBlockNum(concurrentReaderConcurrency), // currently only one reader will become hotspot
 		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 	)
-	fileSizes := make([]int64, len(paths))
+	var inputSize atomic.Int64
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
@@ -535,7 +536,7 @@ func NewMergeKVIter(
 				_ = rd.Close()
 				return nil, err
 			}
-			fileSizes[i] = fileSize - int64(pathsStartOffset[i])
+			inputSize.Add(fileSize - int64(pathsStartOffset[i]))
 			rd.byteReader.mergeSortReadCounter = metrics.MergeSortReadBytes
 			if concurrentReaderConcurrency > 0 {
 				rd.byteReader.enableConcurrentRead(
@@ -555,11 +556,7 @@ func NewMergeKVIter(
 		memPool.Destroy()
 		return nil, err
 	}
-	inputSize := int64(0)
-	for _, size := range fileSizes {
-		inputSize += size
-	}
-	return &MergeKVIter{iter: it, memPool: memPool, inputSize: inputSize}, nil
+	return &MergeKVIter{iter: it, memPool: memPool, inputSize: inputSize.Load()}, nil
 }
 
 func getConcurrentReaderConcurrency(readerMemorySize int64) int {
