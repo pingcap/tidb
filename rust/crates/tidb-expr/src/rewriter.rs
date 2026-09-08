@@ -540,6 +540,33 @@ fn resolve_type4_between(args: [&Expression; 3]) -> EvalType {
     cmp_type
 }
 
+/// Go `newBaseBuiltinFuncWithFieldTypes`' implicit cast for one CASE branch:
+/// every THEN/ELSE argument is wrapped in the MERGED control type. Decimal,
+/// datetime, timestamp, and duration targets take the FULL merged type
+/// (`flen`/`decimal`), which is what turns a folded `0` into `0.0000`; the
+/// other families use the same `WrapWithCastAs*` helpers Go calls.
+fn wrap_case_branch(
+    branch: Expression,
+    target: &FieldType,
+    connection: (&str, &str),
+) -> Result<Expression, EvalError> {
+    let already = branch.static_type().is_some_and(|source| source == target);
+    match target.eval_type() {
+        EvalType::Int => wrap_with_cast_as_int(branch, Some(target)),
+        EvalType::Real => wrap_with_cast_as_real(branch),
+        EvalType::Decimal | EvalType::Datetime | EvalType::Timestamp | EvalType::Duration => {
+            if already {
+                Ok(branch)
+            } else {
+                crate::simple_expr::build_cast_function(branch, target.clone(), false)
+            }
+        }
+        EvalType::String => wrap_with_cast_as_string(branch, connection),
+        EvalType::Json => crate::aggregation::wrap_cast::wrap_with_cast_as_json(branch),
+        EvalType::VectorFloat32 => Ok(branch),
+    }
+}
+
 /// Applies Go's `wrapExpWithCast` to all three BETWEEN operands. The common
 /// type is deliberately chosen once, rather than allowing the lower and upper
 /// comparisons to infer independently from their two arms.
@@ -1364,6 +1391,19 @@ fn rewrite_leaf_compound(
             let ret_type = builtin_return_type("case", &branches).ok_or(EvalError::Unsupported(
                 "a CASE whose branches have different types",
             ))?;
+            // Go's `caseWhenFunctionClass.getFunction` builds the signature
+            // with the merged type as every result argument's expected type,
+            // so the branches are cast to it before the function is built.
+            let connection = resolver.connection_charset_info();
+            let mut result_indexes: Vec<usize> = (1..args.len()).step_by(2).collect();
+            if args.len() % 2 == 1 {
+                // The trailing ELSE is a result branch too.
+                result_indexes.push(args.len() - 1);
+            }
+            for index in result_indexes {
+                let branch = args[index].clone();
+                args[index] = wrap_case_branch(branch, &ret_type, connection)?;
+            }
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new("case"),
                 ret_type,

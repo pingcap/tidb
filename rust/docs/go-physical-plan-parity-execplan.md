@@ -1139,6 +1139,17 @@ both `oltp_read_only` and `oltp_read_write`.
   boundary. `cargo test -p tidb-executor --lib -- --test-threads=1`: 1242
   passed / 14 failed, no new failure. Receipt:
   `rust/testport/receipts/executor_parallel_distinct_spill.md`.
+- [x] 2026-09-09: cast a CASE's THEN/ELSE branches to the merged control
+  type. `caseWhenFunctionClass.getFunction` hands the inferred type to
+  `newBaseBuiltinFuncWithFieldTypes`, which wraps every result argument; Rust
+  computed the type but never wrapped, so a decimal branch beside an integer
+  `ELSE 0` returned `INT:0` and the q14 projection printed `0`. The rewriter
+  now wraps every THEN and the trailing ELSE through `wrap_case_branch`,
+  using the full merged type for the decimal/datetime families (Go's
+  `BuildCastFunction`). `chunk_e("case when false then 1.5 else 0 end")` is
+  `DEC:0.0`; tidb-expr 1206 passed / 2 pre-existing failed, executor and
+  planner suites unchanged. Receipt:
+  `rust/testport/receipts/expression_case_extract_names.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1170,9 +1181,16 @@ both `oltp_read_only` and `oltp_read_write`.
     assertions (`simplifyOuterJoin` ported) and remains blocked only on the
     same `skylinePruning` choice as the list above.
   - `pkg/expression` CASE branch casts to the merged control type
-    (`newBaseBuiltinFuncWithFieldTypes`), `DATE_ADD` month folding, and the
-    identity-projection elimination Go's q14 plan shows:
-    `aggregates::tpch_q14_matches_recorded_hash_join_plan`.
+    (`newBaseBuiltinFuncWithFieldTypes`): DONE. Every THEN index and the
+    trailing ELSE now go through `wrap_case_branch`, so a branch beside a
+    decimal takes the merged type and the CASE returns the promoted datum
+    (`DEC:0.0`). What q14 still needs: `BuildCastFunction`'s build-time fold
+    of a constant cast (Rust defers it, so the plan prints
+    `cast(0, decimal(31,4) BINARY)` where Go prints `0.0000`), the
+    `DATE_ADD` literal fold, the identity-projection elimination, and the
+    logical equal-condition operand order:
+    `aggregates::tpch_q14_matches_recorded_hash_join_plan`. Receipt:
+    `rust/testport/receipts/expression_case_extract_names.md`.
   - `pkg/executor/aggregate` spill-file lifetime: DONE. Go's parallel
     `dataInDisk` lives from `initForParallelExec` until `HashAggExec.Close`, so
     every partition file stays on disk and charged until `Close`;

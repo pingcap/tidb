@@ -93,3 +93,41 @@ cargo check --locked --all-targets -p tidb-expr -p tidb-planner -p tidb-executor
 rustfmt --edition 2021 --check <changed files>
 git diff --check -- rust
 ```
+
+## Follow-up: CASE THEN/ELSE branches are cast to the merged control type
+
+`caseWhenFunctionClass.getFunction` (`builtin_control.go:317`) passes the
+inferred control type as every result argument's expected type to
+`newBaseBuiltinFuncWithFieldTypes`, which wraps each THEN/ELSE argument in
+`WrapWithCastAs*` / `BuildCastFunction` (`builtin.go:264-283`). The branch
+cast is observable twice: the CASE evaluates to the merged type (a
+`DECIMAL` branch beside an integer `ELSE 0` returns a DECIMAL datum), and a
+constant branch renders as the cast's folded type in EXPLAIN
+(`case(..., 0.0000)`).
+
+Rust computed the merged type with `builtin_return_type("case", ...)` but
+never wrapped the result arguments, so the same expression returned
+`INT:0` from the integer ELSE and the q14 projection printed `0`. The
+rewriter now wraps every THEN index and the trailing ELSE through a
+`wrap_case_branch` helper that mirrors Go's per-family cast: `ETInt` uses
+`WrapWithCastAsInt` with the merged type, `ETReal`/`ETString`/`ETJson` use
+their `WrapWithCastAs*`, and decimal/datetime/timestamp/duration targets use
+`BuildCastFunction` with the FULL merged type (`flen`/`decimal`), which is
+what makes the constant carry `0.0000`.
+
+The regression extends
+`tests::control::case_when_source_vectors_preserve_lazy_truthiness` with
+`chunk_e("case when false then 1.5 else 0 end") == "DEC:0.0"`; it returned
+`INT:0` before the wrap.
+
+```text
+cargo test -p tidb-expr
+# 1206 passed; 2 failed; 99 ignored -- the same two pre-existing failures
+# recorded above (live-HTTP JSON schema and build_expression_without_enough_columns)
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1242 passed; 14 failed; the same pre-existing set
+
+cargo test -p tidb-planner
+# 1279 passed; 0 failed
+```
