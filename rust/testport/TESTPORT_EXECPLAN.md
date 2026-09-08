@@ -11360,3 +11360,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (ARRAY_APPEND/INSERT pin): plain and nested appends, positional
   inserts, and the wildcard-path refusal. Pinned in
   `crates/tidb-session/tests/json_array_append_insert_source.rs`.
+- 2026-09-08 (JSON_OVERLAPS/MEMBER OF pin): shared-member detection, the
+  MEMBER OF membership syntax, and OBJECT type reporting. Pinned in
+  `crates/tidb-session/tests/json_overlaps_member_source.rs`.
