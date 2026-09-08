@@ -231,14 +231,24 @@ pub(crate) fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow:
 }
 
 /// Go `deriveTablePathStats`' `path.CountAfterAccess` for clustered handles.
+/// `trigger_load` is false for the executor's eager precompute, which runs
+/// before index pruning; see [`crate::access_cost::index_row_count`].
 pub(crate) fn handle_range_row_count(
     table: &KvTable,
     ranges: &[IndexRange],
     stats: Option<&TableStatistics>,
+    trigger_load: bool,
 ) -> f64 {
     let realtime = realtime_row_count(stats);
     if let Some(index) = clustered_primary_metadata(table) {
-        return crate::access_cost::index_range_row_count(&index, table, ranges, stats, realtime);
+        return crate::access_cost::index_range_row_count(
+            &index,
+            table,
+            ranges,
+            stats,
+            realtime,
+            trigger_load,
+        );
     }
     let Some(column) = handle_column(table) else {
         return realtime;

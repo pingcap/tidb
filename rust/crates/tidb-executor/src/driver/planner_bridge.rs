@@ -789,6 +789,7 @@ impl OwnedRewrite for InitStats<'_> {
                             table,
                             &built.ranges,
                             statistics,
+                            false,
                         )
                     })
                     .or(Some(row_count));
@@ -822,6 +823,7 @@ impl OwnedRewrite for InitStats<'_> {
                         &built.ranges,
                         statistics,
                         row_count,
+                        false,
                     ),
                 );
             }
@@ -846,6 +848,7 @@ impl OwnedRewrite for InitStats<'_> {
                     statistics,
                     self.default_string_match_selectivity,
                     self.selectivity_factor,
+                    false,
                 );
             source.base.base.set_stats(Some(table_stats.scale(
                 selectivity,

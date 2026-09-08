@@ -228,6 +228,12 @@ pub struct SelectivityDefaults {
     /// Go enables TopN-assisted string-match estimation only when the raw
     /// `tidb_default_string_match_selectivity` variable is zero.
     pub eval_topn_string_match: bool,
+    /// Whether estimating an evicted index queues it for asynchronous
+    /// statistics loading (Go `IndexStatsIsInvalid`). The executor's eager
+    /// precompute runs BEFORE `CollectPredicateColumnsPoint` prunes the index
+    /// paths, so it passes `false` and leaves the demand to the pruning rule;
+    /// every later estimation keeps Go's `true`.
+    pub trigger_load: bool,
 }
 
 impl SelectivityDefaults {
@@ -272,6 +278,7 @@ impl SelectivityDefaults {
             str_match_default,
             negate_str_match_default,
             eval_topn_string_match: default_str_match_selectivity == 0.0,
+            trigger_load: true,
         }
     }
 }

@@ -229,3 +229,40 @@ The prior gate had 271 passing and 105 skipped tests; removing one duplicate
 utility assertion and 72 ignored empty functions accounts for the exact new
 totals. No Go or Bazel source changed, so `make bazel_prepare` was not
 required. This is a WIP package audit, not a repository-wide Ready claim.
+
+## Follow-up: the eager precompute no longer queues pruned indexes (2026-09-09)
+
+`pruned_indexes_do_not_enter_async_statistics_demand` failed because the
+executor's eager precompute queued every covering index before
+`CollectPredicateColumnsPoint` pruned the paths. `InitStats` computes the
+DataSource selectivity and fills `index_path_count_after_access` with
+`index_row_count`, whose Go-faithful `IndexStatsIsInvalid` side effect inserts
+into `AsyncLoadHistogramNeededItems`. Rust runs that precompute BEFORE the
+pruning rule, so all 13 `ia*` indexes were queued even though the rule kept
+only ten.
+
+`SelectivityDefaults` now carries `trigger_load`, threaded to `index_row_count`
+and `index_range_row_count`/`handle_range_row_count`. The executor's precompute
+passes `false`; every later estimation keeps Go's `true`. The pruning rule's
+`request_statistics_load` remains the only authority for the demand, which is
+what its retained-index filter already assumed.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib pruned_indexes_do_not_enter_async_statistics_demand
+# passed: 1
+cargo test -p tidb-executor --lib statistics_request_tests
+# passed: 16
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,138 passed / 89 failed (baseline 1,136 / 91; the target test is fixed and
+# the only other delta is the documented hash-agg spill flake)
+cargo test -p tidb-planner --lib selectivity
+# passed: 5
+cargo check --locked --all-targets -p tidb-executor -p tidb-planner
+# passed
+cargo fmt -p tidb-executor -p tidb-planner -- --check
+# three pre-existing drift files only
+git diff --check -- rust
+# passed
+```

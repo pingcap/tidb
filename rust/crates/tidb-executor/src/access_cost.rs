@@ -481,6 +481,7 @@ fn index_row_count(
     ranges: &[IndexRange],
     stats: Option<&TableStatistics>,
     realtime: f64,
+    trigger_load: bool,
 ) -> RowEstimate {
     let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
         return RowEstimate::default_est(pseudo_index_row_count(index, ranges, realtime));
@@ -491,7 +492,11 @@ fn index_row_count(
     // `AsyncLoadHistogramNeededItems` so the domain's async loader can fetch
     // the real histogram for later statements. Without the enqueue, an evicted
     // index stays pseudo forever.
-    if stats.index_is_load_needed(index.id) {
+    //
+    // `trigger_load` is false only for the executor's eager precompute, which
+    // runs before `CollectPredicateColumnsPoint` has pruned the paths; that
+    // rule owns the demand so a pruned index is never queued.
+    if trigger_load && stats.index_is_load_needed(index.id) {
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(
             tidb_model::TableItemID {
                 table_id: table.table_id,
@@ -562,8 +567,9 @@ pub(crate) fn index_range_row_count(
     ranges: &[IndexRange],
     stats: Option<&TableStatistics>,
     realtime: f64,
+    trigger_load: bool,
 ) -> f64 {
-    index_row_count(index, table, ranges, stats, realtime).est
+    index_row_count(index, table, ranges, stats, realtime, trigger_load).est
 }
 
 /// The stats-less index estimate: Go `getPseudoRowCountByIndexRanges`
@@ -806,11 +812,14 @@ pub(crate) fn selectivity_with_default_string_match_selectivity(
         stats,
         default_string_match_selectivity,
         tidb_planner::cost_factors::SELECTION_FACTOR,
+        true,
     )
 }
 
 /// [`selectivity_with_default_string_match_selectivity`] with the session's
-/// `tidb_opt_selectivity_factor` supplied by the caller.
+/// `tidb_opt_selectivity_factor` supplied by the caller. `trigger_load` is
+/// false only for the executor's eager precompute; see
+/// [`SelectivityDefaults::trigger_load`].
 pub(crate) fn selectivity_with_default_string_match_selectivity_and_factor(
     predicate: &tidb_ast::Expr,
     table: &KvTable,
@@ -818,6 +827,7 @@ pub(crate) fn selectivity_with_default_string_match_selectivity_and_factor(
     stats: Option<&TableStatistics>,
     default_string_match_selectivity: f64,
     selectivity_factor: f64,
+    trigger_load: bool,
 ) -> f64 {
     let mut conjuncts = Vec::new();
     crate::plan_trace::collect_and(predicate, &mut conjuncts);
@@ -828,6 +838,7 @@ pub(crate) fn selectivity_with_default_string_match_selectivity_and_factor(
         stats,
         default_string_match_selectivity,
         selectivity_factor,
+        trigger_load,
     )
 }
 
@@ -870,6 +881,7 @@ pub(crate) fn selectivity_of_conjuncts_with_default_string_match_selectivity(
         stats,
         default_string_match_selectivity,
         tidb_planner::cost_factors::SELECTION_FACTOR,
+        true,
     )
 }
 
@@ -880,14 +892,12 @@ fn selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
     stats: Option<&TableStatistics>,
     default_string_match_selectivity: f64,
     selectivity_factor: f64,
+    trigger_load: bool,
 ) -> f64 {
-    selectivity_of_conjuncts_with_defaults(
-        conjuncts,
-        table,
-        resolver,
-        stats,
-        SelectivityDefaults::from_session(default_string_match_selectivity, selectivity_factor),
-    )
+    let mut defaults =
+        SelectivityDefaults::from_session(default_string_match_selectivity, selectivity_factor);
+    defaults.trigger_load = trigger_load;
+    selectivity_of_conjuncts_with_defaults(conjuncts, table, resolver, stats, defaults)
 }
 
 fn selectivity_of_conjuncts_with_defaults(
@@ -1211,7 +1221,15 @@ fn selectivity_of_conjuncts_with_path_context(
         ) else {
             continue;
         };
-        let row_count = index_row_count(index, table, &built.ranges, stats, realtime).est;
+        let row_count = index_row_count(
+            index,
+            table,
+            &built.ranges,
+            stats,
+            realtime,
+            defaults.trigger_load,
+        )
+        .est;
         nodes.push(StatsNode {
             selectivity: (row_count / realtime).clamp(0.0, 1.0),
             ..StatsNode::new(
@@ -2522,7 +2540,7 @@ mod index_async_load_queue_tests {
         let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
         needed.delete(item);
 
-        let estimate = index_row_count(&index, &table, &[], Some(&stats), 10.0);
+        let estimate = index_row_count(&index, &table, &[], Some(&stats), 10.0, true);
         assert!(
             estimate.est >= 0.0,
             "the estimate still answers the pseudo rate"
@@ -2851,7 +2869,7 @@ mod index_async_load_queue_tests {
         let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
         needed.delete(item);
 
-        let _ = index_row_count(&index, &table, &[], Some(&stats), 10.0);
+        let _ = index_row_count(&index, &table, &[], Some(&stats), 10.0, true);
         assert!(
             !needed
                 .all_items()

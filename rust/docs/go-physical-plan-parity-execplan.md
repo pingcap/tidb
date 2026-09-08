@@ -752,6 +752,14 @@ both `oltp_read_only` and `oltp_read_write`.
   Rust seeded it only after `logical_optimize`, so a rule that derived stats
   first failed with `LogicalCTE.DeriveStats: seed physical plan is nil`.
   Receipt: `rust/testport/receipts/executor_cte_class_optimization_order.md`.
+- [x] 2026-09-09: stopped the eager precompute from queueing pruned indexes
+  for async statistics loading. `InitStats` estimates selectivity and fills
+  the index path counts before `CollectPredicateColumnsPoint` prunes, so
+  `IndexStatsIsInvalid` queued all 13 covering indexes instead of the ten the
+  rule keeps. `SelectivityDefaults.trigger_load` now gates that side effect
+  and the precompute passes `false`; the pruning rule stays the demand
+  authority. Receipt:
+  `rust/testport/receipts/statistics_handle_handletest_audit.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
