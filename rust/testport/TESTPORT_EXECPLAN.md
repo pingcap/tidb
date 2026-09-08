@@ -11472,3 +11472,7 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (CHECK over stored generated pin): the constraint evaluates
  the RECOMPUTED stored value — a = -5 (b would be -10) violates. Pinned
  in `crates/tidb-session/tests/check_stored_generated_source.rs`.
+- 2026-09-08 (UPDATE recompute CHECK pin): moving the base to a value whose
+ recomputation violates the CHECK refuses the UPDATE and leaves the stored
+ row untouched. Pinned in
+ `crates/tidb-session/tests/update_recompute_check_source.rs`.
