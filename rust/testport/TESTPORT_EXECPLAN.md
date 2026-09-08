@@ -11502,3 +11502,8 @@ risks without claiming repository-wide parity.
  from a JSON document (json_unquote + ->) computes on write and filters in
  WHERE. Pinned in
  `crates/tidb-session/tests/generated_over_json_source.rs`.
+- 2026-09-08 (grouped JSON_ARRAYAGG datapoint): `select g, json_arrayagg(v)
+  ... group by g` panics in the chunk column layer — column.rs:587
+  "append_bytes on a fixed-length column" (the aggregate's variable-length
+  JSON result is appended into a fixed-length column). Sibling chunk-crate
+  region; NOT FIXED, no pin.
