@@ -9487,6 +9487,17 @@ risks without claiming repository-wide parity.
   regression failed before the fix with exactly one diagnostic and passes
   after; all eight package owner tests and the planner library check pass.
   Evidence is recorded in `receipts/planner_cascades_base.md`.
+- 2026-09-08 (`pkg/planner/cascades/util` return contract): current Go master
+  `aec988ea500d` was re-read as the complete two-artifact, 61-line package,
+  including its single production file, BUILD target, and absence of tests,
+  fixtures, generated/platform variants, and nested packages. The complete
+  planner string-writer owner and binder diagnostic consumer were inventoried.
+  The one Rust-only `#[must_use]` diagnostic on the Go-shaped `NewStrBuffer`
+  constructor was removed; Rust-native writer ownership conveniences remain
+  annotated. The focused deny-on-discard regression failed before the fix with
+  exactly one diagnostic and passes after; the planner library check and Ready
+  lint pass. Evidence is recorded in
+  `receipts/planner_cascades_util.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
