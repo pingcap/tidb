@@ -1106,6 +1106,70 @@ fn selectivity_of_conjuncts_with_path_context(
         return pseudo_selectivity(&predicates, &indexes, realtime as i64, defaults.selectivity_factor);
     }
 
+    // Go extracts ordinary-column = correlated-column before assigning
+    // masks to the remaining predicates.
+    let mut correlated_factor = 1.0;
+    let conjuncts: Vec<_> = conjuncts
+        .into_iter()
+        .filter(|conjunct| {
+            let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = strip_parens(conjunct)
+            else {
+                return true;
+            };
+            let offset = [(lhs.as_ref(), rhs.as_ref()), (rhs.as_ref(), lhs.as_ref())]
+                .into_iter()
+                .find_map(|(local, outer)| {
+                    let tidb_ast::Expr::Column(local_path) = strip_parens(local) else {
+                        return None;
+                    };
+                    let tidb_ast::Expr::Column(outer_path) = strip_parens(outer) else {
+                        return None;
+                    };
+                    if !matches!(
+                        resolver.resolve_expression(local_path),
+                        Some(tidb_expr::expression::Expression::Column(_))
+                    ) || !matches!(
+                        resolver.resolve_expression(outer_path),
+                        Some(tidb_expr::expression::Expression::CorrelatedColumn(_))
+                    ) {
+                        return None;
+                    }
+                    physical_column_offset(local_path, table, resolver)
+                });
+            let Some(offset) = offset else {
+                return true;
+            };
+            let id = table.columns[offset].id;
+            let mut factor = 0.001;
+            if let Some(collection) =
+                stats.filter(|stats| !stats.cache_pseudo && stats.row_count != 0)
+            {
+                let column = collection.columns.get(&id);
+                if defaults.trigger_load {
+                    queue_column_stats_load_if_invalid(table, collection, id, column);
+                }
+                if let Some(column) = column {
+                    let essential = collection
+                        .column_load_status
+                        .get(&id)
+                        .is_some_and(|status| status.is_essential_stats_loaded());
+                    if !collection.pseudo
+                        && column.total_row_count() > 0.0
+                        && essential
+                        && column.histogram.ndv > 0
+                    {
+                        factor = 1.0 / column.histogram.ndv as f64;
+                    }
+                }
+            }
+            correlated_factor *= factor;
+            false
+        })
+        .collect();
+    if conjuncts.is_empty() {
+        return correlated_factor.max(1.0 / realtime);
+    }
+
     // A pseudo table is not a table without statistics as far as
     // `Selectivity` is concerned: `statistics.PseudoTable` fills a
     // `NewPseudoHistogram` entry for every public column and index
@@ -1341,7 +1405,13 @@ fn selectivity_of_conjuncts_with_path_context(
         .iter()
         .map(|conjunct| condition_kind(conjunct, table, resolver, stats, defaults, range_context))
         .collect();
-    combine_selectivity(&mut nodes, &conditions, 1.0, realtime as i64, defaults)
+    combine_selectivity(
+        &mut nodes,
+        &conditions,
+        correlated_factor,
+        realtime as i64,
+        defaults,
+    )
 }
 
 /// Whether one statistics condition is `column IS NOT NULL` for `offset`.
@@ -2105,6 +2175,101 @@ mod tests {
             comment: String::new(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn correlated_equality_uses_pseudo_ndv_instead_of_residual_factor() {
+        struct OuterResolver;
+        impl ColumnResolver for OuterResolver {
+            fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+                let id = if path.last()?.eq_ignore_ascii_case("a") {
+                    1
+                } else {
+                    2
+                };
+                Some((0, FieldType::new(FieldTypeCode::LongLong), id))
+            }
+            fn resolve_expression(
+                &self,
+                path: &[String],
+            ) -> Option<tidb_expr::expression::Expression> {
+                let column = self.resolve_column(path)?;
+                Some(if path.last()?.eq_ignore_ascii_case("outer_a") {
+                    tidb_expr::expression::Expression::CorrelatedColumn(
+                        tidb_expr::column::CorrelatedColumn::new(column),
+                    )
+                } else {
+                    tidb_expr::expression::Expression::Column(column)
+                })
+            }
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+        }
+        let table = KvTable::new(9501, vec![long_column("a", 1)]);
+        let estimate = |condition: &str, stats: Option<&TableStatistics>| {
+            let statement =
+                tidb_parser::parse(&format!("SELECT * FROM t WHERE {condition}")).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            selectivity(
+                select.where_clause.as_ref().unwrap(),
+                &table,
+                &OuterResolver,
+                stats,
+            )
+        };
+        for (condition, expected) in [
+            ("a=outer_a", 0.001),
+            ("outer_a=a", 0.001),
+            ("a<=>outer_a", 0.8),
+            ("a!=outer_a", 0.8),
+            ("a=outer_a AND a+1=2", 0.0008),
+            ("a=outer_a AND outer_a=a", 0.0001),
+        ] {
+            let actual = estimate(condition, None);
+            assert!((actual - expected).abs() < 1e-12, "{condition}: {actual}");
+        }
+        let column = ColumnStats {
+            histogram: tidb_stats::Histogram {
+                id: 1,
+                ndv: 20,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 100,
+                    repeat: 5,
+                    ndv: 20,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(20),
+                }],
+                ..Default::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        };
+        let mut stats =
+            TableStatistics::new(10000, 0, BTreeMap::from([(1, column)]), BTreeMap::new());
+        assert!((estimate("a=outer_a", Some(&stats)) - 0.05).abs() < 1e-12);
+        stats
+            .column_load_status
+            .insert(1, tidb_stats::StatsLoadedStatus::all_evicted());
+        assert!((estimate("a=outer_a", Some(&stats)) - 0.001).abs() < 1e-12);
+        stats
+            .column_load_status
+            .insert(1, tidb_stats::StatsLoadedStatus::full_load());
+        stats.columns.get_mut(&1).unwrap().histogram.ndv = 0;
+        assert!((estimate("a=outer_a", Some(&stats)) - 0.001).abs() < 1e-12);
+        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(tidb_model::TableItemID {
+            table_id: 9501,
+            id: 1,
+            is_index: false,
+            is_sync_load_failed: false,
+        });
     }
 
     #[test]
