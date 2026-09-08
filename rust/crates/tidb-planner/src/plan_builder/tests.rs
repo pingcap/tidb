@@ -83,32 +83,46 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
     }
 }
 
-/// `CREATE TABLE test.t (a BIGINT PRIMARY KEY, b BIGINT, KEY idx_b(b))`.
+/// `CREATE TABLE test.t (a BIGINT PRIMARY KEY, b BIGINT, KEY idx_b(b))` and
+/// the second table `test.hs (x BIGINT PRIMARY KEY, y BIGINT)` a correlated
+/// subquery needs.
 fn catalog() -> TestCatalog {
     TestCatalog {
         current_database: "test".to_owned(),
-        tables: vec![SourceTable {
-            table_id: 100,
-            table_name: "t".to_owned(),
-            db_name: "test".to_owned(),
-            physical_table_id: 100,
-            columns: vec![column(0, "a", true), column(1, "b", false)],
-            indexes: vec![SourceIndex {
-                id: 1,
-                name: "idx_b".to_owned(),
-                columns: vec![SourceIndexColumn {
-                    name: "b".to_owned(),
-                    offset: 1,
-                    length: -1,
+        tables: vec![
+            SourceTable {
+                table_id: 100,
+                table_name: "t".to_owned(),
+                db_name: "test".to_owned(),
+                physical_table_id: 100,
+                columns: vec![column(0, "a", true), column(1, "b", false)],
+                indexes: vec![SourceIndex {
+                    id: 1,
+                    name: "idx_b".to_owned(),
+                    columns: vec![SourceIndexColumn {
+                        name: "b".to_owned(),
+                        offset: 1,
+                        length: -1,
+                    }],
+                    is_public: true,
+                    is_visible: true,
+                    ..SourceIndex::default()
                 }],
-                is_public: true,
-                is_visible: true,
-                ..SourceIndex::default()
-            }],
-            pk_is_handle: true,
-            handle_col_offsets: vec![0],
-            ..SourceTable::default()
-        }],
+                pk_is_handle: true,
+                handle_col_offsets: vec![0],
+                ..SourceTable::default()
+            },
+            SourceTable {
+                table_id: 200,
+                table_name: "hs".to_owned(),
+                db_name: "test".to_owned(),
+                physical_table_id: 200,
+                columns: vec![column(0, "x", true), column(1, "y", false)],
+                pk_is_handle: true,
+                handle_col_offsets: vec![0],
+                ..SourceTable::default()
+            },
+        ],
     }
 }
 
@@ -510,6 +524,49 @@ fn test_sort_resolves_a_positional_order_by() {
     assert!(builder
         .build_select(&parse_select("SELECT a FROM t ORDER BY 9"))
         .is_err());
+}
+
+/// Go `buildSelect` calls `resolveGbyExprs` only under `if sel.GroupBy != nil`
+/// (`logical_plan_builder.go:4361`), and that call stamps
+/// `b.curClause = groupByClause`. A query with no GROUP BY must therefore
+/// leave the builder's clause alone, or a subquery built later in HAVING
+/// reports the wrong clause for an outer name the select list does not carry.
+#[test]
+fn a_having_subquery_names_the_having_clause_for_an_unresolved_outer_column() {
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let error = builder
+        .build_select(&parse_select(
+            "SELECT a FROM t HAVING (SELECT y FROM hs WHERE hs.x = t.b) > 0",
+        ))
+        .expect_err("t.b is not in the select list");
+    assert!(
+        matches!(
+            error.kind(),
+            crate::plan_base::PlanErrorKind::UnknownColumnInClause { column, clause }
+                if column == "t.b" && clause == "having clause"
+        ),
+        "{error:?}"
+    );
+}
+
+/// The same clause has to survive the executor's planner-error lift, so the
+/// rewriter's `EvalError` is converted to the typed planner error rather than
+/// a generic evaluation failure.
+#[test]
+fn an_unknown_column_from_the_rewriter_keeps_its_clause() {
+    let error = crate::plan_base::PlanError::from(EvalError::UnknownColumnInClause(
+        "t.b".to_owned(),
+        "having clause",
+    ));
+    assert!(
+        matches!(
+            error.kind(),
+            crate::plan_base::PlanErrorKind::UnknownColumnInClause { column, clause }
+                if column == "t.b" && clause == "having clause"
+        ),
+        "{error:?}"
+    );
 }
 
 #[test]

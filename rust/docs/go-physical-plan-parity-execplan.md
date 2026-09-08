@@ -927,6 +927,16 @@ both `oltp_read_only` and `oltp_read_write`.
   range instead of collapsing to an empty relation. That gap was hidden until
   the `cast_*` admission above made the predicate pushable. Receipt:
   `rust/testport/receipts/planner_empty_range.md`.
+- [x] 2026-09-09: named the right clause for an unresolved outer column in a
+  HAVING subquery. Go calls `resolveGbyExprs` only under
+  `if sel.GroupBy != nil` (`logical_plan_builder.go:4361`), and that call sets
+  `b.curClause = groupByClause`; the unconditional call stamped `GroupBy` on a
+  query with no GROUP BY, so the subquery's `build_selection` downgraded it to
+  `where clause` instead of Go's `having clause`. `From<EvalError> for
+  PlanError` also wrapped the rewriter's unknown-column error as a generic
+  evaluation failure; it now keeps the typed
+  `PlanErrorKind::UnknownColumnInClause`. Two executor tests fixed. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

@@ -243,9 +243,20 @@ impl From<RewriteError> for PlanError {
 
 /// The expression rewriter's own error, which reaches a builder through
 /// [`rewrite_expr_resolved`].
+///
+/// An unknown column is Go's typed `plannererrors.ErrUnknownColumn`, not a
+/// generic evaluation failure, so it keeps the clause the resolver named.
+/// Without this arm the clause survives only inside the debug-formatted
+/// message and the executor lifts the error as `Exec(Eval(..))`, losing the
+/// typed variant the plan-time resolution path produces.
 impl From<EvalError> for PlanError {
     fn from(error: EvalError) -> Self {
-        Self::eval(error)
+        match error {
+            EvalError::UnknownColumnInClause(column, clause) => {
+                Self::unknown_column_in_clause(column, clause)
+            }
+            other => Self::eval(other),
+        }
     }
 }
 
@@ -3394,7 +3405,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // is resolved against the SOURCE scope and the written select list,
         // both of which exist before any operator above the FROM.
         let mut fields = Self::expand_fields_for_plan(&select.fields, &plan);
-        let gby_exprs = self.resolve_gby_exprs(&select.group_by, &fields, &source_names)?;
+        // Go `buildSelect` calls `resolveGbyExprs` only under
+        // `if sel.GroupBy != nil` (`logical_plan_builder.go:4361`). The call
+        // sets `b.curClause = groupByClause`, so invoking it for a query with
+        // no GROUP BY leaves that clause stamped on the builder; a subquery
+        // built later in HAVING then names the GROUP BY clause (and its
+        // `buildSelection` downgrades it to `where clause`) instead of Go's
+        // enclosing `having clause`.
+        let gby_exprs = if select.group_by.is_empty() {
+            Vec::new()
+        } else {
+            self.resolve_gby_exprs(&select.group_by, &fields, &source_names)?
+        };
 
         // `:4370` "checkOnlyFullGroupBy should be executed before rewrite
         // gbyExprs, because the field type of the fields may change."

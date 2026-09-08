@@ -370,3 +370,40 @@ Remaining blocker for the tests that assert the exact text
 `tpcc_condition_{four,nine}`): the rendered `Column#N` still carries this
 port's allocation id (`Column#12` where Go records `Column#1`), a separate
 plan-column-id ordering divergence.
+
+## Follow-up: HAVING subquery clause attribution and the typed unknown-column lift (2026-09-09)
+
+The gap recorded above — `ht.b`-in-a-subquery attributed to `where clause`
+instead of Go's `having clause` — is closed.
+
+Go `buildSelect` calls `resolveGbyExprs` only under `if sel.GroupBy != nil`
+(`logical_plan_builder.go:4361`), and that call sets
+`b.curClause = groupByClause` (`:4067`). The Rust called `resolve_gby_exprs`
+unconditionally, so a query with NO GROUP BY still stamped the builder's
+`cur_clause` as `GroupBy`. A subquery built later while resolving HAVING then
+saw `GroupBy`; its own `build_selection` downgraded that to `Where` because
+`cur_clause != Having`. `build_select_body` now skips the call when
+`select.group_by` is empty, matching Go's guard.
+
+The clause also has to survive the executor boundary as the typed variant.
+`From<EvalError> for PlanError` wrapped every rewriter error in
+`PlanErrorKind::Eval`, so the executor lifted an unknown column as
+`Exec(Eval(UnknownColumnInClause(..)))` even though the clause name was
+correct. The conversion now maps `EvalError::UnknownColumnInClause` to
+`PlanError::unknown_column_in_clause`, the same typed error the plan-time
+resolution path produces.
+
+Regressions: the new
+`plan_builder::tests::a_having_subquery_names_the_having_clause_for_an_unresolved_outer_column`
+builds `SELECT a FROM t HAVING (SELECT y FROM hs WHERE hs.x = t.b) > 0` and
+asserts `UnknownColumnInClause { column: "t.b", clause: "having clause" }`
+(before: `where clause`); the new
+`plan_builder::tests::an_unknown_column_from_the_rewriter_keeps_its_clause`
+pins the typed `From` conversion. The executor tests
+`driver::tests::select_clauses::an_empty_correlated_having_subquery_is_null_and_drops_its_row`
+and `driver::tests::subqueries::a_having_subquery_may_only_correlate_to_the_aggregations_output`
+now pass. Ready validation: `tidb-planner` lib 997 passed / 0 failed;
+`tidb-executor` lib serialized 1215 passed / 37 failed, exactly the two above
+removed from the baseline and no additions; `cargo check --locked --all-targets
+-p tidb-planner -p tidb-executor` clean; `rustfmt --edition 2021 --check`
+clean on both changed files; `git diff --check -- rust` clean.
