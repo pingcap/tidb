@@ -319,3 +319,23 @@ passed / 66 failed with no additions;
 now clears its condition-format assertion and fails only on its second half,
 where Go's analyzed plan is an `IndexHashJoin` but this port still costs a
 `MergeJoin` — a separate cost/choice divergence.
+
+## Follow-up: a `unique_id == i64::MIN` column no longer aborts EXPLAIN (2026-09-09)
+
+`plan_trace::physical_expression_text_with_columns` renders a negative-`unique_id`
+column as `ScalarQueryCol#-unique_id`. A placeholder column whose `unique_id`
+is `i64::MIN` reached that arm (TPCC condition 11's nested derived joins) and
+`-i64::MIN` aborted EXPLAIN with an arithmetic-overflow panic. Go's runtime
+`-col.UniqueID` wraps instead of panicking, so the arm now uses
+`wrapping_neg()`, preserving the two's-complement result.
+
+This is a robustness fix, not the root cause: the column itself carries
+`i64::MIN` as a placeholder and should not reach EXPLAIN. Recorded here so the
+placeholder's origin can be chased separately.
+
+Regression: `plan_trace::tests::a_min_unique_id_column_renders_without_overflow`
+fails before (panic) and passes after. Ready validation: `tidb-executor` lib
+serialized 1203 passed / 48 failed, no additions;
+`rustfmt --edition 2021 --check` clean; `git diff --check -- rust`.
+`tpcc_condition_eleven_pushes_filters_through_nested_derived_joins` now clears
+the panic and fails on its plan-shape assertion instead.

@@ -41,7 +41,13 @@ pub(crate) fn physical_expression_text_with_columns(
 ) -> Option<String> {
     match expression {
         Expression::Column(column) if column.unique_id < 0 => {
-            Some(format!("ScalarQueryCol#{}", -column.unique_id))
+            // Go's `-col.UniqueID` wraps at runtime rather than panicking; a
+            // placeholder column with `i64::MIN` reached this arm and aborted
+            // EXPLAIN. `wrapping_neg` keeps Go's two's-complement result.
+            Some(format!(
+                "ScalarQueryCol#{}",
+                column.unique_id.wrapping_neg()
+            ))
         }
         Expression::Column(column) => {
             let index = usize::try_from(column.index).ok()?;
@@ -189,4 +195,25 @@ pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_a
         return;
     }
     out.push(expr);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::physical_expression_text_with_columns;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+    use tidb_expr::expression::Expression;
+
+    /// Go's `-col.UniqueID` wraps at run time rather than panicking. A
+    /// placeholder column whose `unique_id` is `i64::MIN` used to abort
+    /// EXPLAIN with an arithmetic-overflow panic.
+    #[test]
+    fn a_min_unique_id_column_renders_without_overflow() {
+        let column = Column::new(i64::MIN, FieldType::new(FieldTypeCode::LongLong));
+        let rendered = physical_expression_text_with_columns(&Expression::Column(column), &[]);
+        assert_eq!(
+            rendered.as_deref(),
+            Some("ScalarQueryCol#-9223372036854775808")
+        );
+    }
 }

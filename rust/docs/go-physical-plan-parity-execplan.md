@@ -876,6 +876,12 @@ both `oltp_read_only` and `oltp_read_write`.
   projection explain append its output column (`expr->Column#N`) like
   `expression.ExplainExpressionList`. Receipt:
   `rust/testport/receipts/cast_hybrid_push.md`.
+- [x] 2026-09-09: stopped a `unique_id == i64::MIN` placeholder column from
+  aborting EXPLAIN. `plan_trace` rendered a negative-`unique_id` column as
+  `ScalarQueryCol#-unique_id`; `-i64::MIN` overflowed and panicked. Go's
+  runtime negation wraps, so the arm uses `wrapping_neg()`. The placeholder's
+  origin is still unlocated and recorded as a separate follow-up. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
