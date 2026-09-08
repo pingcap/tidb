@@ -458,10 +458,6 @@ type mergeSortStepExecutor struct {
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
-func (*mergeSortStepExecutor) Init(context.Context) error {
-	return nil
-}
-
 func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	defer func() {
 		err = normalizeSubtaskErr(err)

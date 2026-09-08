@@ -44,6 +44,8 @@ var (
 )
 
 const (
+	// maxMergeReaderMemoryPerCore allows 32 concurrent 8 MiB range reads per CPU;
+	// AWS S3 benchmarks showed this was sufficient for merge throughput.
 	maxMergeReaderMemoryPerCore = 256 * units.MiB
 )
 
