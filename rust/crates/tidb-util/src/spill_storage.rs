@@ -162,8 +162,19 @@ pub struct SpillStorage {
 
 impl SpillStorage {
     /// Applies Go's startup capacity check and constructs the global tracker.
-    /// Directory initialization is owned by [`crate::disk::initialize_temp_dir`].
+    ///
+    /// Go's `disk.InitializeTempDir` creates the GLOBAL configured temp
+    /// directory, but a `SpillStorage` may be rooted at a different path (the
+    /// standalone executor roots one under `std::env::temp_dir()`, and a
+    /// server roots one under the configured endpoint/UID path). Creating
+    /// `spec.path` here is what makes `DataInDiskByChunks`'s first spill file
+    /// openable instead of failing with `No such file or directory`.
     pub fn open(spec: SpillStorageSpec) -> Result<Self, SpillStorageOpenError> {
+        std::fs::create_dir_all(&spec.path).map_err(|source| SpillStorageOpenError::Io {
+            operation: "create temporary storage directory",
+            path: spec.path.clone(),
+            source,
+        })?;
         if spec.quota_bytes >= 0 {
             let available_bytes = get_target_directory_capacity(&spec.path).map_err(|source| {
                 SpillStorageOpenError::Io {
@@ -223,5 +234,38 @@ impl SpillStorage {
             .tempfile_in(&self.path)?
             .keep()
             .map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go's `disk.InitializeTempDir` only creates the GLOBAL configured temp
+    /// directory; a `SpillStorage` rooted elsewhere (the standalone executor,
+    /// or a server's endpoint/UID subdirectory) has to create its own path, or
+    /// the first `DataInDiskByChunks` spill fails with `No such file or
+    /// directory`.
+    #[test]
+    fn open_creates_the_storage_directory() {
+        let unique = format!(
+            "tidb-spill-storage-open-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(unique).join("nested");
+        assert!(!path.exists(), "the fixture path starts absent");
+        let storage = SpillStorage::open(SpillStorageSpec {
+            path: path.clone(),
+            quota_bytes: -1,
+            encryption: SpillEncryptionMethod::Plaintext,
+        })
+        .expect("open creates the directory");
+        assert!(path.is_dir(), "open created {path:?}");
+        assert_eq!(storage.path(), path);
+        std::fs::remove_dir_all(path.parent().expect("fixture parent")).ok();
     }
 }

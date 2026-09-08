@@ -855,6 +855,14 @@ both `oltp_read_only` and `oltp_read_write`.
   `equal cond` is sorted and comma-joined. The Rust used one bracketed,
   unsorted shape for all. Receipt:
   `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: made `SpillStorage::open` create its own root directory.
+  Go's `disk.InitializeTempDir` only creates the GLOBAL configured temp
+  directory, but this port roots a storage under the standalone executor's
+  temp path or a server's endpoint/UID path; that path was never created, so
+  the first `DataInDiskByChunks` spill failed with `No such file or
+  directory`. This unblocked 16 spill tests across hash-agg, join, memory
+  quota, and merge-join-in-disk. Receipt:
+  `rust/testport/receipts/util_disk.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

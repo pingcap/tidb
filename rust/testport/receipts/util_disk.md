@@ -88,3 +88,43 @@ cleanup. The source test covers deletion and concurrent reinitialization; the
 chunk test covers the real spill consumer. Windows and unsupported-target
 runtime locking are not executed on this macOS host. Pre-existing warnings in
 unrelated crates remain unchanged.
+
+## Follow-up: `SpillStorage::open` creates its own root (2026-09-09)
+
+Go's `disk.InitializeTempDir` creates the GLOBAL configured temp directory
+(`tempDir.go`), and every spill file lives under it. This port's `SpillStorage`
+can be rooted at a DIFFERENT path: the standalone executor roots one under
+`std::env::temp_dir()` (`mem_quota.rs:167`), and a server roots one under the
+configured endpoint/UID path. `SpillStorage::open` only applied the quota
+check, so that path was never created and the first `DataInDiskByChunks` spill
+failed with `SpillFailed("No such file or directory ... /defaultChunkDataInDiskByChunksPath-...")`.
+
+`open` now calls `std::fs::create_dir_all(&spec.path)` before the quota check
+(idempotent, and it makes the capacity probe see the real directory).
+
+Regression: the new `spill_storage::tests::open_creates_the_storage_directory`
+fails before and passes after. This unblocked 16 executor tests, all of which
+failed on the same missing directory:
+`hash_agg::parallel::tests::parallel_hashagg_spills_partial_results_and_finishes`,
+`hash_agg_spill_tests::test_random_fail`,
+`join::merge_path_tests::{a_large_duplicate_group_spills_and_matches_the_unspilled_result,
+merge_close_unbinds_its_spill_action, right_merge_spills_its_left_inner_group,
+spilled_merge_cross_product_honors_required_rows}`,
+`join::spill_tests::{a_spilled_build_side_answers_exactly_the_unspilled_rows,
+a_spilled_build_side_keeps_null_and_miss_semantics,
+a_spilled_outer_join_pads_exactly_where_the_unspilled_one_does,
+a_spilled_preserved_build_side_scans_unmatched_rows,
+close_unbinds_the_spill_action_from_the_session_tracker,
+the_read_back_buffer_does_not_accumulate_across_a_spilled_probe}`,
+`mem_quota::tests::{disabling_tmp_storage_detaches_the_session_from_global_disk_quota,
+statement_disk_usage_reaches_the_one_startup_global_tracker}`, and
+`tests_merge_join_in_disk_source::{merge_join_in_disk_rows_under_log_quota,
+shuffle_merge_join_in_disk_rows_under_log_quota}`.
+
+Ready validation: `tidb-executor` lib serialized 1197 passed / 50 failed
+versus 1181 / 66, the 16 above and no additions; `tidb-util --lib` focused
+regression passes; `cargo check --locked --all-targets` clean;
+`rustfmt --edition 2021 --check` clean on the changed file;
+`git diff --check -- rust`. The remaining
+`hash_agg_spill_tests::test_get_correct_result` still fails, now on its own
+assertion that a spill file existed while the aggregation ran.
