@@ -72,7 +72,8 @@ Original finding, retained for the Go evidence:
   third argument is `push_down_flags`, and it is the literal `0`.
 
 The port itself is correct and complete:
-`rust/crates/tidb-exec/src/statement_pushdown.rs:85-125` reproduces
+`rust/crates/tidb-executor/src/statement_pushdown.rs:85-125` (re-exported as
+`tidb_exec::statement_pushdown`) reproduces
 `PushDownFlagsWithTypeFlagsAndErrLevels` and `PushDownFlags` bit for bit,
 including the `FLAG_TRUNCATE_AS_WARNING | FLAG_OVERFLOW_AS_WARNING` pairing and
 the `IGNORE_TRUNCATE`-wins precedence. It has **no production caller**. The
