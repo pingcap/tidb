@@ -1952,8 +1952,8 @@ fn condition_kind(
         // classification (`selectivity.go:299-304`); a wrapped string match
         // is classified — and evaluated — through the wrapper.
         tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
-            match string_match_shape(strip_parens(inner)) {
-                Some(_) => {
+            match is_string_match(strip_parens(inner)) {
+                true => {
                     let selectivity = defaults
                         .eval_topn_string_match
                         .then(|| string_match_selectivity(conjunct, table, resolver, stats, defaults.trigger_load))
@@ -1962,7 +1962,7 @@ fn condition_kind(
                     // evaluation itself handles the inversion per value.
                     ConditionKind::NegatedStringMatch(selectivity)
                 }
-                None => ConditionKind::Other,
+                false => ConditionKind::Other,
             }
         }
         tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => {
@@ -1975,46 +1975,19 @@ fn condition_kind(
     }
 }
 
-/// One string-match predicate shape: the tested expression, the pattern, the
-/// negation, and the matcher.
-enum StringMatchKind<'a> {
-    Like {
-        ilike: &'a bool,
-        escape: &'a Option<u8>,
-    },
-    Regexp,
-}
-
-/// Go's classification set (`ast.Like`, `ast.Ilike`, `ast.Regexp`,
-/// `ast.RegexpLike`, and `GetExprInsideIsTruth` unwrapping a NOT wrapper).
-/// This AST carries `NOT LIKE`'s negation on the node, so a NOT wrapper only
-/// appears around parenthesized or already-negated shapes.
-fn string_match_shape(
-    expr: &tidb_ast::Expr,
-) -> Option<(&tidb_ast::Expr, &tidb_ast::Expr, bool, StringMatchKind<'_>)> {
+/// Recognize the string-match family through NOT wrappers; evaluation uses
+/// the complete native expression so wrappers retain SQL NULL semantics.
+fn is_string_match(expr: &tidb_ast::Expr) -> bool {
     match strip_parens(expr) {
-        tidb_ast::Expr::Like {
-            expr,
-            pattern,
-            not,
-            ilike,
-            escape,
-        } => Some((expr, pattern, *not, StringMatchKind::Like { ilike, escape })),
-        tidb_ast::Expr::Regexp { expr, pattern, not } => {
-            Some((expr, pattern, *not, StringMatchKind::Regexp))
-        }
+        tidb_ast::Expr::Like { .. } | tidb_ast::Expr::Regexp { .. } => true,
         tidb_ast::Expr::Unary(
-            op @ (tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword),
-            inner,
-        ) => {
-            let (expr, pattern, not, kind) = string_match_shape(inner)?;
-            Some((expr, pattern, !not, kind))
-        }
-        _ => None,
+            tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner,
+        ) => is_string_match(inner),
+        _ => false,
     }
 }
 
-/// Go `GetSelectivityByFilter` for a direct-column `LIKE`/`ILIKE`/`REGEXP`
+/// Go `GetSelectivityByFilter` for safe single-column string predicates
 /// over fully loaded StatsVer2 column statistics, falling back to a
 /// single-column non-prefix index when the column statistics are unavailable.
 fn string_match_selectivity(
@@ -2025,27 +1998,49 @@ fn string_match_selectivity(
     trigger_load: bool,
 ) -> Option<f64> {
     let stats = stats.filter(|stats| !stats.pseudo)?;
-    // Go `GetExprInsideIsTruth` unwraps a NOT wrapper before the str-match
-    // classification, so the negation rides on the inner shape here too.
-    let (tested, pattern_expr, negated, kind) = string_match_shape(strip_parens(predicate))?;
-    let tidb_ast::Expr::Column(path) = strip_parens(tested) else {
-        return None;
-    };
-    if !matches!(
-        resolver.resolve_expression(path),
-        Some(tidb_expr::expression::Expression::Column(_))
-    ) {
+    use tidb_expr::expression::Expression;
+    let mut filter = tidb_expr::rewriter::rewrite_expr_resolved(
+        predicate,
+        &StatisticsResolver { base: resolver },
+    )
+    .ok()?;
+    if tidb_expr::expr_util::is_mutable_effects_expr(&filter)
+        || tidb_expr::expr_util::contain_correlated_column(std::slice::from_ref(&filter))
+    {
         return None;
     }
-    let pattern = match strip_parens(pattern_expr) {
-        tidb_ast::Expr::String(pattern) | tidb_ast::Expr::RawString(pattern) => pattern.as_bytes(),
-        _ => return None,
+    let columns = tidb_expr::expr_util::extract_columns_map_from_expressions(
+        None,
+        std::slice::from_ref(&filter),
+    );
+    if columns.len() != 1 {
+        return None;
+    }
+    let mut offsets = physical_column_offsets(predicate, table, resolver)?;
+    offsets.sort_unstable();
+    offsets.dedup();
+    let [offset] = offsets.as_slice() else {
+        return None;
     };
-    let offset = physical_column_offset(path, table, resolver)?;
+    let offset = *offset;
     let column = table.columns.get(offset)?;
     if !tidb_datatype::is_bin_collation(column.field_type.collation_name()) {
         return None;
     }
+    // Go temporarily points the unique column at slot zero in its sample
+    // chunk. Rewrite our private tree so repeated references use that slot.
+    fn bind_sample_column(expr: &mut Expression) {
+        match expr {
+            Expression::Column(column) => column.index = 0,
+            Expression::ScalarFunction(function) => {
+                for arg in &mut function.args {
+                    bind_sample_column(arg);
+                }
+            }
+            _ => {}
+        }
+    }
+    bind_sample_column(&mut filter);
     if trigger_load {
         queue_column_stats_load_if_invalid(table, stats, column.id, stats.columns.get(&column.id));
     }
@@ -2118,34 +2113,21 @@ fn string_match_selectivity(
         return None;
     }
 
-    let datum_matches = |datum: &Datum| -> Option<bool> {
-        let value = match datum {
-            Datum::Bytes(value) => value.as_slice(),
-            Datum::String(value) => value.bytes(),
-            _ => return None,
-        };
-        let matched = match kind {
-            StringMatchKind::Like { ilike, escape } => {
-                if *ilike {
-                    tidb_expr::ilike_match(
-                        value,
-                        pattern,
-                        escape.unwrap_or_else(|| resolver.like_default_escape()),
-                    )
-                } else {
-                    tidb_expr::like_match_with_collation(
-                        value,
-                        pattern,
-                        Some(escape.unwrap_or_else(|| resolver.like_default_escape())),
-                        column.field_type.collation(),
-                    )
-                }
-            }
-            // The estimator's own gate only reaches binary-collation string
-            // columns, so the case-sensitive regexp matcher is exact.
-            StringMatchKind::Regexp => tidb_expr::regexp_match_bin_collation(value, pattern)?,
-        };
-        Some(if negated { !matched } else { matched })
+    let fallback = tidb_expr::ZonedNoColumns(resolver.time_zone());
+    let ctx = resolver.comparison_context().unwrap_or(&fallback);
+    let mut sample = tidb_chunk::chunk::Chunk::new_with_capacity(&[column.field_type.clone()], 1);
+    let mut datum_matches = |datum: &Datum| -> Option<bool> {
+        sample.reset();
+        sample.append_datum(0, datum);
+        let value = filter.eval(ctx, sample.get_row(0)).ok()?;
+        if value == Datum::Null {
+            return Some(false);
+        }
+        let converted = value.to_bool().ok()?;
+        if converted.event.is_some() {
+            return None;
+        }
+        Some(converted.value != 0)
     };
 
     let topn_total = column_stats
@@ -2201,7 +2183,14 @@ fn string_match_selectivity(
     } else {
         0.0
     };
-    Some(topn_selected as f64 / total + histogram_selectivity)
+    // NULL evaluation errors contribute zero, without discarding the
+    // successfully evaluated TopN and histogram portions (Go stage 5).
+    let null_selectivity = if datum_matches(&Datum::Null).unwrap_or(false) {
+        column_stats.histogram.null_count.max(0) as f64 / total
+    } else {
+        0.0
+    };
+    Some(topn_selected as f64 / total + histogram_selectivity + null_selectivity)
 }
 
 /// One condition as `pseudoSelectivity` reads it (`pseudo.go:44-67`).
@@ -3273,6 +3262,84 @@ mod tests {
             BTreeMap::new(),
         );
         (table, stats)
+    }
+
+    #[test]
+    fn string_match_selectivity_evaluates_single_column_expressions_and_nulls() {
+        let (table, mut stats) = stats_v2_name_column_fixture();
+        stats.columns.get_mut(&1).unwrap().histogram.null_count = 20;
+        let resolver = NamedColumnResolver { table: &table };
+        let column = || tidb_ast::Expr::Column(vec!["name".to_owned()]);
+        let call = |name: &str, args| tidb_ast::Expr::Func {
+            name: name.to_owned(),
+            args,
+            origin_position: 0,
+        };
+        let pattern = || tidb_ast::Expr::String("%needle%".to_owned());
+        for (tested, pattern, expected) in [
+            (call("lower", vec![column()]), pattern(), 52.5 / 120.0),
+            (
+                call(
+                    "ifnull",
+                    vec![column(), tidb_ast::Expr::String("needle".to_owned())],
+                ),
+                pattern(),
+                72.5 / 120.0,
+            ),
+            (column(), column(), 100.0 / 120.0),
+        ] {
+            let predicate = tidb_ast::Expr::Like {
+                expr: Box::new(tested),
+                pattern: Box::new(pattern),
+                not: false,
+                ilike: false,
+                escape: None,
+            };
+            assert_eq!(
+                string_match_selectivity(&predicate, &table, &resolver, Some(&stats), false),
+                Some(expected)
+            );
+            let actual = selectivity(&predicate, &table, &resolver, Some(&stats));
+            assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+        }
+        let mut other = table.columns[0].clone();
+        other.name = "other".to_owned();
+        other.id = 2;
+        let two_columns = KvTable::with_storage(
+            table.table_id,
+            vec![table.columns[0].clone(), other],
+            Box::new(MemTableStorage::new()),
+        );
+        let two_column_filter = tidb_ast::Expr::Like {
+            expr: Box::new(column()),
+            pattern: Box::new(tidb_ast::Expr::Column(vec!["other".to_owned()])),
+            not: false,
+            ilike: false,
+            escape: None,
+        };
+        assert_eq!(
+            string_match_selectivity(
+                &two_column_filter,
+                &two_columns,
+                &NamedColumnResolver {
+                    table: &two_columns
+                },
+                Some(&stats),
+                false,
+            ),
+            None
+        );
+        let mutable = tidb_ast::Expr::Like {
+            expr: Box::new(call("concat", vec![column(), call("rand", vec![])])),
+            pattern: Box::new(pattern()),
+            not: false,
+            ilike: false,
+            escape: None,
+        };
+        assert_eq!(
+            string_match_selectivity(&mutable, &table, &resolver, Some(&stats), false),
+            None
+        );
     }
 
     #[test]
