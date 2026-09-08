@@ -27,9 +27,12 @@
 use tidb_expr::aggregation::AggFuncDesc;
 use tidb_expr::aggregation::AggFunctionMode;
 use tidb_expr::column::Column;
+use tidb_expr::expr_util::substitute::{evaluate_expr_with_null, SubstituteOptions};
+use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expression::{ConstLevel, CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
+use tidb_expr::NoColumns;
 
 use crate::hash_equaler::{new_hash_equaler, Hasher};
 use crate::logical::schema_producer;
@@ -420,6 +423,41 @@ impl LogicalAggregation {
         }
         schema_producer::propagate_child_keys(self_schema, child_schema);
         self.build_self_key_info(self_schema);
+    }
+
+    /// Go `LogicalAggregation.CanPullUp()` (`logical_aggregation.go:815`):
+    /// only an UNGROUPED aggregation whose every argument becomes NULL over a
+    /// NULL child row may be pulled above an apply. That is exactly what makes
+    /// the pull-up sound: an empty input contributes no value, so the outer
+    /// join's NULL extension is the same answer.
+    ///
+    /// # Narrowing
+    ///
+    /// Go evaluates through the statement's `ExprContext`; this port has no
+    /// `Columns` value here, so the substitution/evaluation uses
+    /// [`NoColumns`]. An argument that needs the session context therefore
+    /// answers `false`, which only keeps the apply correlated.
+    #[must_use]
+    pub fn can_pull_up(&self, child_schema: &Schema) -> bool {
+        if !self.group_by_items.is_empty() {
+            return false;
+        }
+        let builder = RealFunctionBuilder::new(&NoColumns);
+        let options = SubstituteOptions::new(&builder);
+        for func in &self.agg_funcs {
+            for arg in func.args() {
+                let Ok(result) =
+                    evaluate_expr_with_null(arg, child_schema, true, &NoColumns, &options)
+                else {
+                    return false;
+                };
+                match result {
+                    Expression::Constant(constant) if constant.value.is_null() => {}
+                    _ => return false,
+                }
+            }
+        }
+        true
     }
 
     /// Go `LogicalAggregation.ExtractColGroups(_)`

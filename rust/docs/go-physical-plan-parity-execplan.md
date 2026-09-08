@@ -1086,6 +1086,17 @@ both `oltp_read_only` and `oltp_read_write`.
   table range. With the duplicate slots removed the Go oracle's
   `IndexRangeScan` wins. Receipt:
   `rust/testport/receipts/planner_column_prune_and_index_cost.md`.
+- [x] 2026-09-09: ported `DecorrelateSolver`'s projection arm and both
+  aggregation arms. The projection arm substitutes the projection's outputs
+  into the join conditions, decorrelates both sides, and re-attaches the
+  projection above the optimized apply for a non-semi join. The aggregation
+  arms move an ungrouped pull-up-able aggregation above the apply (grouping by
+  the outer key, `firstrow()` carriers for every outer column), and otherwise
+  pull the correlated equalities out of the aggregation's child `Selection`
+  as join keys plus group-by keys. `correlated_avg_predicate_decorrelates_to_grouped_join`
+  and `tpch_q2_correlated_min_matches_recorded_hash_join_plan` now match the
+  Go `testkit` plans; no deterministic new failures. Receipt:
+  `rust/testport/receipts/planner_decorrelate_solver.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1094,14 +1105,14 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1,233 passed / 21 failed, plus the 13 statistics-request
+  lib serialized: 1,235 passed / 19 failed, plus the 13 statistics-request
   transport tests that flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
   - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
-    the uncorrelated/Selection/MaxOneRow/Sort/Limit arms are ported; the
-    aggregation pull-up arm, the projection arm, the aggregate group-below arm
-    and `pruneRedundantApply` remain. Eight
-    `driver::tests::subqueries::*` failures.
+    the uncorrelated/Selection/MaxOneRow/Sort/Limit/projection/aggregation
+    arms are ported; the aggregate group-below arm, the `aggDefaultValueMap`
+    (scalar `COUNT`/`BIT_*`) projections, and `pruneRedundantApply` remain.
+    Six `driver::tests::subqueries::*` failures.
   - `pkg/planner/core` `compareCandidates` (`find_best_task.go:866`): the
     prefer-range override is ported, but the metric-by-metric skyline
     comparison (`accessResult`/`scanResult`/`eqOrInResult`/risk ratio) that

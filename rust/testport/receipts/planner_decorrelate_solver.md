@@ -112,3 +112,76 @@ in the expression rewriter.
 The planner lib suite stays `999 passed / 0 failed`; the executor regression
 and its Ready counts are recorded in
 `receipts/executor_root_distsql_indexjoin.md`.
+
+## Follow-up: the projection arm and both aggregation arms
+
+Go's `DecorrelateSolver.optimize` chain (`rule_decorrelate.go:229`) continues
+past the arms already ported. This batch adds the three that the remaining
+subquery tests need, in Go's order:
+
+- **Projection (`:314`).** `ColumnSubstituteAll` replaces the projection's
+  outputs in every join condition (all-or-nothing, NAEQ conditions untouched,
+  exactly Go's helper), both the projection's expressions and the conditions
+  are decorrelated, and the projection between the apply and its child is
+  dropped. For a non-semi apply Go re-attaches the projection ABOVE the
+  optimized apply with the outer child's columns prepended;
+  `skipDecorrelateProjectionForLeftOuterApply` (`:573`) keeps an all-constant
+  projection, or one that reads only the outer side, in place.
+- **Aggregation pull-up (`:441` first branch).** When
+  `apply.CanPullUpAgg() && agg.CanPullUp()`, the whole aggregation moves above
+  the apply, groups by the outer key, and carries every outer column through
+  `firstrow()`. `LogicalAggregation::can_pull_up` is the port of Go's
+  `EvaluateExprWithNull` argument test (`aggregation.rs`).
+- **Aggregation equalities (`:441` second branch).** Otherwise the correlated
+  equalities in the aggregation's child `Selection` become join keys and their
+  inner column joins the grouping, with a `firstrow()` carrier when the
+  aggregation does not already output it. Go's `aggDefaultValueMap` arm
+  (scalar `COUNT`/`BIT_*`) is a documented narrowing: the arm is skipped, which
+  leaves the apply correlated rather than producing a wrong default.
+
+The Rust wrapper projection builds one expression per OUTPUT column of the
+apply (an outer column projects itself; each remaining column takes the next
+decorrelated projection expression) instead of Go's `outer columns + all
+projection expressions`, because column pruning may already have removed outer
+columns from the apply's schema. That keeps `exprs.len() == schema.len()`
+without changing the mapping.
+
+## Fixed by this batch
+
+- `driver::tests::subqueries::correlated_avg_predicate_decorrelates_to_grouped_join`
+- `driver::tests::subqueries::tpch_q2_correlated_min_matches_recorded_hash_join_plan`
+  (the two grouped joins now match Go's `testkit` plan)
+
+Both fail on the pre-batch tree. New focused unit test:
+`logical::operator_tests::aggregation_can_pull_up_needs_no_grouping_and_null_arguments`.
+
+## Remaining gaps this batch exposed
+
+- `subqueries::correlated_sum_predicate_pulls_above_unique_outer_join`: the
+  decorrelated plan is `Projection -> Selection -> Projection -> HashAgg ->
+  HashJoin`, while Go's oracle has no wrapper projection and inlines
+  `mul(0.5, Column#14)` into the Selection. Go's `ProjectionEliminator` only
+  eliminates all-column projections, so the rule that removes Go's wrapper is
+  still unidentified.
+- `subqueries::tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums`: the
+  decorrelated plan now reaches execution and fails with
+  `an index-join inner HashJoin must contain one retained lookup reader`,
+  i.e. the index-join enumeration no longer matches the new plan shape.
+
+## Validation
+
+Profile: **Ready** for this package batch.
+
+```text
+cargo test -p tidb-planner --lib -- --test-threads=1
+# 1,001 passed / 0 failed
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,235 passed / 19 failed (baseline 1,233 / 21 after the previous batch;
+# the two tests above fixed, no deterministic additions -- the two spill
+# tests are flaky and were observed passing and failing in isolation)
+
+cargo check --locked --all-targets -p tidb-planner -p tidb-executor
+rustfmt --edition 2021 --config skip_children=true --check <changed files>
+git diff --check -- rust
+```

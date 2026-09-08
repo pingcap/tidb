@@ -409,6 +409,36 @@ fn projection_pruning_empties_when_no_output_is_used() {
     assert!(output.columns.is_empty());
 }
 
+/// Go `LogicalAggregation.CanPullUp()` (`logical_aggregation.go:815`): an
+/// aggregation may move above an apply only when it has no grouping and every
+/// argument becomes NULL over a NULL child row. `COUNT(*)`'s constant argument
+/// is the canonical refusal.
+#[test]
+fn aggregation_can_pull_up_needs_no_grouping_and_null_arguments() {
+    let child = schema(&[1]);
+    let mut sum = LogicalAggregation::new(
+        BaseLogicalPlan::with_id(1, LogicalAggregation::TYPE, 0),
+        vec![agg("sum", vec![col_expr(1)])],
+        Vec::new(),
+    );
+    assert!(sum.can_pull_up(&child));
+    sum.group_by_items = vec![col_expr(1)];
+    assert!(
+        !sum.can_pull_up(&child),
+        "a grouping makes the pull-up unsound"
+    );
+
+    let count = LogicalAggregation::new(
+        BaseLogicalPlan::with_id(2, LogicalAggregation::TYPE, 0),
+        vec![agg("count", vec![one()])],
+        Vec::new(),
+    );
+    assert!(
+        !count.can_pull_up(&child),
+        "COUNT's constant argument is not NULL over an empty input"
+    );
+}
+
 /// Go `LogicalProjection.buildSchemaByExprs` (`logical_projection.go:505`)
 /// and `BuildKeyInfo` (`:163`): a key survives only when its columns are
 /// projected as bare references.
