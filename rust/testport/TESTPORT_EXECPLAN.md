@@ -11476,3 +11476,7 @@ risks without claiming repository-wide parity.
  recomputation violates the CHECK refuses the UPDATE and leaves the stored
  row untouched. Pinned in
  `crates/tidb-session/tests/update_recompute_check_source.rs`.
+- 2026-09-08 (mixed IGNORE CHECK pin): UPDATE IGNORE with one violating and
+ one valid row skips only the violating row (affected 1) and updates the
+ other. Pinned in
+ `crates/tidb-session/tests/update_ignore_mixed_check_source.rs`.
