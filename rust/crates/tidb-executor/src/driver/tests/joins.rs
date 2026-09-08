@@ -1699,11 +1699,14 @@ fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
 }
 
 /// The clustered primary key can build a range from only `k1`, while the
-/// secondary index can use both equality keys. Costing both paths from the
-/// complete join output incorrectly makes the broad primary-key prefix look
-/// like a one-row probe.
+/// secondary index can use both equality keys. Go's `fixcontrol.Fix44855`
+/// raises the prefix path's probe row count to the average rows per leading
+/// key value; only with that floor does the complete-key secondary index win.
+/// Go reads the fix with `GetBoolWithDefault(..., false)`, so the DEFAULT
+/// session prices the broad clustered prefix as a one-row probe and keeps
+/// `TableRangeScan`; enabling `44855:ON` selects `idx_k1_k2` instead.
 ///
-/// The shared planner must select the complete-key secondary index. Executor
+/// The shared planner must select the path the fix control asks for. Executor
 /// lowering receives that exact `inner_access_index_id`; it must not compare
 /// the broad clustered prefix against it a second time.
 #[test]
@@ -1751,24 +1754,42 @@ fn index_join_probe_rows_use_only_the_access_paths_join_keys() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let (_, plan) =
-        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
-    let plan = plan
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|datum| match datum {
-                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-                    other => format!("{other:?}"),
-                })
-                .collect::<Vec<_>>()
-                .join("\t")
-        })
-        .collect::<Vec<_>>();
-    assert!(
+    let explain = |ctx: &crate::StmtContext| {
+        let (_, plan) =
+            explain_select_stmt(select, &catalog, "test", ctx, ExplainFormat::Brief).unwrap();
         plan.iter()
+            .map(|row| {
+                row.iter()
+                    .map(|datum| match datum {
+                        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // Default session: `44855` is OFF, so the broad clustered prefix stays a
+    // one-row probe and the index join reads the primary range scan.
+    let default_plan = explain(&ctx);
+    assert!(
+        !default_plan.iter().any(|line| line.contains("idx_k1_k2")),
+        "the default session must price the broad primary-key prefix as Go does: {default_plan:#?}"
+    );
+
+    // `44855:ON` raises the prefix probe to `rows / NDV(k1) = 1000`, so the
+    // complete-key secondary index becomes the cheaper inner access.
+    let (fix_control, warnings) =
+        tidb_planner::fix_control::OptimizerFixControl::parse("44855:ON").unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let fix_on = ctx.clone().with_optimizer_fix_control(fix_control);
+    let fixed_plan = explain(&fix_on);
+    assert!(
+        fixed_plan
+            .iter()
             .any(|line| line.contains("index:idx_k1_k2(k1, k2)")),
-        "the complete-key index must beat the broad primary-key prefix: {plan:#?}"
+        "with 44855:ON the complete-key index must beat the broad primary-key prefix: {fixed_plan:#?}"
     );
 }
 

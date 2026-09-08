@@ -125,8 +125,9 @@ pub struct DispatchContext<'a> {
     pub apply_cache_capacity: i64,
     /// Go `fixcontrol.Fix44855`, which raises an IndexJoin probe's scan-row
     /// floor when the chosen access path can use only a prefix of the equality
-    /// join keys. The source default is enabled; callers that resolve the
-    /// session fix-control map can turn it off explicitly.
+    /// join keys. Go reads it with `GetBoolWithDefault(..., false)`: the fix is
+    /// OFF unless the session's `tidb_opt_fix_control` turns it on. Callers
+    /// that resolve the session fix-control map pass its value.
     pub index_join_probe_row_count_fix: bool,
     /// Go `fixcontrol.Fix45132`: the row-count ratio at which skyline pruning
     /// prefers one IndexJoin inner access path over another. A non-positive
@@ -172,7 +173,7 @@ impl<'a> DispatchContext<'a> {
             enable_paging: true,
             hash_join_concurrency: 5,
             apply_cache_capacity: 0,
-            index_join_probe_row_count_fix: true,
+            index_join_probe_row_count_fix: false,
             index_join_skyline_threshold: 1_000.0,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
@@ -1470,6 +1471,62 @@ fn append_common_handle_cols_to_index_prefix(
     );
 }
 
+/// Go `indexJoinPathGetRangeInfoAndMaxOneRow` (`index_join_path.go:588`): a
+/// UNIQUE access path whose complete key is covered by equality access
+/// conditions -- the runtime join keys plus any equality-fixed columns --
+/// reads at most one row per outer row. The inner scan's row count is capped
+/// at 1.0 for such a path, which is what lets plain `IndexJoin` (whose hash
+/// table is built over `probeRowsOne * buildRows`) beat `IndexHashJoin` when
+/// the per-probe average exceeds one row.
+fn index_join_path_is_max_one_row(
+    ds: &crate::logical::DataSource,
+    path: &crate::access_path::PossiblePath,
+    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+) -> bool {
+    let (access_columns, unique) = match path {
+        crate::access_path::PossiblePath::TiFlashTable => return false,
+        crate::access_path::PossiblePath::Table { .. } if ds.handle_is_int => (
+            ds.handle_cols.iter().take(1).cloned().collect::<Vec<_>>(),
+            true,
+        ),
+        crate::access_path::PossiblePath::Table { .. } => (
+            ds.common_handle_cols.clone(),
+            // The clustered primary key is unique by definition.
+            true,
+        ),
+        crate::access_path::PossiblePath::Index { index } => {
+            let Some(source_index) = ds.indexes.get(*index) else {
+                return false;
+            };
+            let schema = ds.base.base.schema();
+            let columns = source_index
+                .columns
+                .iter()
+                .filter_map(|column| schema.and_then(|schema| schema.columns.get(column.offset)))
+                .cloned()
+                .collect::<Vec<_>>();
+            (columns, source_index.unique)
+        }
+    };
+    if !unique || access_columns.is_empty() {
+        return false;
+    }
+    let fixed = equality_fixed_ids(ds);
+    let mut matched_runtime_key = false;
+    for column in &access_columns {
+        if runtime
+            .inner_join_keys
+            .iter()
+            .any(|key| key.unique_id == column.unique_id)
+        {
+            matched_runtime_key = true;
+        } else if !fixed.contains(&column.unique_id) {
+            return false;
+        }
+    }
+    matched_runtime_key
+}
+
 /// Go `completeIndexJoinFeedBackInfo`: return the selected access's complete
 /// prefix lengths and map every logical inner key to the chosen key column.
 /// A key left at `-1` becomes a residual equality when the parent completes
@@ -2028,18 +2085,21 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     }
                 }
                 if let Some(runtime) = &prop.index_join_prop {
+                    // Go `constructDS2TableScanTask`: the runtime row count is
+                    // the per-outer-row average, capped at one row for a
+                    // complete unique equality probe.
+                    let mut runtime_rows =
+                        probe_access_rows_floor.unwrap_or(runtime.avg_inner_row_count);
+                    if index_join_path_is_max_one_row(ds, path, runtime) {
+                        runtime_rows = runtime_rows.min(1.0);
+                    }
                     stats = probe_access_rows_floor
-                        .and_then(|floor| {
+                        .and_then(|_| {
                             table_stats.as_ref().map(|table_stats| {
-                                table_stats.scale_by_expect_cnt(floor, ctx.skew_ratio)
+                                table_stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio)
                             })
                         })
-                        .or_else(|| {
-                            Some(crate::stats_info::StatsInfo::new(
-                                runtime.avg_inner_row_count,
-                                [],
-                            ))
-                        });
+                        .or_else(|| Some(crate::stats_info::StatsInfo::new(runtime_rows, [])));
                 }
                 base.base.set_stats(stats.clone());
                 let table_range_rebuild = if table_access_conds.is_empty() {
@@ -2215,9 +2275,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     selection_base
                         .base
                         .set_schema(ds.base.base.schema().cloned());
+                    // Go `addPushedDownSelection4PhysicalTableScan` builds the
+                    // pushed-down Selection with the property's stats. An
+                    // IndexJoin inner scan was already rescaled to its
+                    // per-outer-row average, so the Selection must carry that
+                    // same count rather than the DataSource's full estimate.
                     selection_base
                         .base
-                        .set_stats(ds.base.base.stats_info().cloned());
+                        .set_stats(if prop.index_join_prop.is_some() {
+                            stats.clone()
+                        } else {
+                            ds.base.base.stats_info().cloned()
+                        });
                     selection_base.set_children(vec![scan]);
                     PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                         base: selection_base,
@@ -2638,18 +2707,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     )
                 });
                 if let Some(runtime) = &prop.index_join_prop {
+                    let mut runtime_rows =
+                        probe_access_rows_floor.unwrap_or(runtime.avg_inner_row_count);
+                    if index_join_path_is_max_one_row(ds, path, runtime) {
+                        runtime_rows = runtime_rows.min(1.0);
+                    }
                     stats = probe_access_rows_floor
-                        .and_then(|floor| {
+                        .and_then(|_| {
                             table_stats.as_ref().map(|table_stats| {
-                                table_stats.scale_by_expect_cnt(floor, ctx.skew_ratio)
+                                table_stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio)
                             })
                         })
-                        .or_else(|| {
-                            Some(crate::stats_info::StatsInfo::new(
-                                runtime.avg_inner_row_count,
-                                [],
-                            ))
-                        });
+                        .or_else(|| Some(crate::stats_info::StatsInfo::new(runtime_rows, [])));
                 }
                 base.base.set_stats(stats.clone());
                 let mut cost_columns = source_index

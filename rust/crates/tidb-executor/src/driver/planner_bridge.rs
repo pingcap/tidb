@@ -968,6 +968,10 @@ pub(crate) fn physical_plan_for_logical(
                 .max(1.0) as usize,
         )
         .with_apply_cache_capacity(ctx.apply_cache_capacity())
+        .with_index_join_probe_row_count_fix(
+            ctx.optimizer_fix_control()
+                .get_bool_with_default(tidb_planner::fix_control::FIX_44855, false),
+        )
         .with_column_ids(column_ids);
     let task = find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)?;
     let physical = task.plan().cloned().ok_or_else(|| {

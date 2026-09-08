@@ -16,6 +16,7 @@ After this plan is complete, setting `tidb_opt_fix_control` through session, glo
 - [x] (2026-09-08) Added a regression for invalid suffixes following overflowing hexadecimal exponents; standalone Go `strconv.ParseFloat` returns positive zero and syntax errors in all four cases.
 - [x] (2026-09-08) Observed the regression fail with infinity instead of zero; validated exponent digits before overflow classification. Package tests pass 7/7 and the unchanged live session fixture passes 1/1.
 - [x] (2026-09-08) Ready `make lint`, targeted tests, rustfmt and diff checks passed; package receipt updated.
+- [x] (2026-09-09) Wired the parsed map's first live consumer outside point-get admission: `physical_plan_for_logical` now resolves `Fix44855` with Go's `GetBoolWithDefault(..., false)` fallback and hands it to `DispatchContext::with_index_join_probe_row_count_fix`. The dispatcher's own default was corrected from `true` to `false`, matching Go's empty `tidb_opt_fix_control` default; `planner_index_join_row_floor.md` carries the full comparison. `cargo test -p tidb-planner --lib` stays 1002/1002.
 - [ ] Commit and push the validated package batch.
 
 - [x] (2026-08-11 12:58Z) Pinned the seven-artifact Go package at its last-change commit `811a10e115d416aadcc9407ac4df0fdd4deb1181`, tree `c7f04c91c529664398fda49f92bd7c5bbc0b1404`; `git diff --quiet <pin>..HEAD -- pkg/planner/util/fixcontrol` succeeds.

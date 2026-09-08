@@ -42,6 +42,43 @@ fallbacks. The source-derived SQL plan-tree test remains `#[ignore]`: this
 crate still has no dependency-closed mock-store/analyze/cascades harness for
 the full two-path plan choice.
 
+### 2026-09-09 correction: the default is OFF, and the inner scan's stats
+
+Three Go behaviors the first batch did not carry:
+
+1. **`Fix44855` defaults to disabled.** Go reads it with
+   `fixcontrol.GetBoolWithDefault(map, Fix44855, false)`
+   (`exhaust_physical_plans.go:1124`); the session's
+   `tidb_opt_fix_control` is the only way to turn it on, and the sysvar's
+   default text is empty (`sysvar.go:3497`). `DispatchContext::new` therefore
+   defaults `index_join_probe_row_count_fix` to `false`, and
+   `physical_plan_for_logical` (`planner_bridge.rs`) now resolves the
+   statement's parsed fix-control map with the same `false` fallback. The
+   earlier default of `true` priced every prefix probe with the floor even
+   though the default session does not.
+2. **The inner Selection carries the runtime count.**
+   `constructDS2TableScanTask` builds the pushed-down Selection with
+   `selStats := ts.StatsInfo().Scale(selectivity)`, i.e. the per-outer-row
+   average after the table filters, not the DataSource's full post-filter
+   estimate. The table-scan arm now reuses the runtime `stats` for the
+   Selection when `index_join_prop` is set (the secondary-index arm already
+   did this whenever table filters remained).
+3. **A complete unique equality probe is capped at one row.**
+   `indexJoinPathGetRangeInfoAndMaxOneRow` (`index_join_path.go:588`) marks a
+   unique path whose every key column is an equality access condition as
+   `maxOneRow`, and `constructDS2TableScanTask` caps `rowCount` at `1.0`.
+   `index_join_path_is_max_one_row` reproduces the admission (runtime join
+   keys plus equality-fixed columns covering the whole chosen key), so the
+   inner probe is priced at one row and plain `IndexJoin` -- whose hash table
+   is built over `probeRowsOne * buildRows` -- can beat `IndexHashJoin`, which
+   is what Go chooses for TPCC condition 06.
+
+The executor regression
+`driver::tests::joins::index_join_probe_rows_use_only_the_access_paths_join_keys`
+now asserts BOTH fix states: the default session keeps the broad clustered
+`TableRangeScan` and never mentions `idx_k1_k2`, while an explicit
+`44855:ON` statement selects `idx_k1_k2`.
+
 ## Validation
 
 Ready validation for the Rust owner:
