@@ -772,10 +772,10 @@ impl OwnedRewrite for InitStats<'_> {
                     row_size_columns,
                 ))
                 .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |statistics| {
-                    if statistics.pseudo {
+                    if statistics.pseudo || statistics.stats_ver <= 0 {
                         tidb_stats::PSEUDO_VERSION
                     } else {
-                        statistics.version
+                        statistics.stats_ver as u64
                     }
                 })),
         );

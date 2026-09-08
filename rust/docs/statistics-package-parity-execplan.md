@@ -676,3 +676,18 @@ Revision note (2026-08-30): reconciled pinned `globalstats.TestGlobalStats` thro
 Revision note (2026-08-29): removed the in-process Rust refusal for pinned special-global-index ANALYZE tasks. The ordinary row-sampling plan now excludes GLOBAL prefix and virtual-generated indexes, while a separate ordered logical-index-key scan builds their stats-v2 histogram/TopN/FM result. Task selection matches pinned `checkIsAllSpecialGlobalIndex`, including its partition-scoped error, ordinary-index warning boundary, and empty-name branch; publishing an independent result replaces only that index and preserves existing table row-count metadata. This closes the in-process execution gap without claiming the enclosing executor or globalstats package complete.
 
 Revision note (2026-08-29): wired pinned Go's static `PartitionProcessor` into the ordinary logical-rule and physical-executor path. Logical tables now retain their complete partition definition inventory, pruning shallow-copies one `DataSource` per surviving physical ID, and zero/one/many survivors become `TableDual`, the child, or `PartitionUnion` respectively. Physical lookup resolves partition IDs, statistics use the physical ID, point reads honor Go's partition restrictions, task memoization follows plan-object identity despite Go-retained numeric IDs, and column pruning inserts Go's repair projection when a child keeps condition-only columns. Focused session regressions cover negated pruning, empty pruning, join leaves, row-ID point reads, and multi-partition batch point reads. This is planner/executor integration evidence, not a completion claim for either enclosing Go package.
+
+Revision note (2026-09-09): corrected the planner view's `StatsVersion`.
+Pinned `statistics.Table.StatsInfo` publishes `int64(t.HistColl.StatsVer)` --
+the loaded objects' format version -- while Rust published
+`TableStatistics::version`, the `mysql.stats_meta` TSO that the JSON loader
+leaves zero. Because `EXPLAIN` compares `StatsInfo.StatsVersion` against
+`statistics.PseudoVersion`, every table loaded through the JSON path rendered
+`stats:pseudo` over a real histogram; `tpch_q14_matches_recorded_hash_join_plan`
+recorded Go's plan without it. `TableStatistics` now carries `stats_ver`,
+filled from `Table::hist_coll.stats_version` by the JSON loader, stamped `2`
+by the in-process ANALYZE producers, and consumed by the planner bridge with
+Go's zero-is-pseudo rule. The executor suite stays at 1242 passed / 14 failed
+(the same pre-existing planner/subquery/window set) and the planner suite at
+1279 passed / 0 failed. Receipt:
+`rust/testport/receipts/statistics_handle_storage_audit.md`.

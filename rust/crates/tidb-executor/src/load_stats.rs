@@ -1028,6 +1028,11 @@ pub fn table_statistics_from_table_schema(
         indexes,
     )
     .with_stat_versions(stats.version, stats.last_analyze_version)
+    // Go `StatsInfo.StatsVersion` is `HistColl.StatsVer`, the per-object
+    // stats version, NOT `Table.Version` (the stats_meta TSO). A loaded dump
+    // whose columns carry `stats_ver = 2` therefore has a real distribution
+    // even when its meta version is unset.
+    .with_stats_ver(i64::from(stats.hist_coll.stats_version))
     .with_load_statuses(column_load_status, index_load_status)
     .with_stats_existence(column_stats_existence, index_stats_existence);
     // Go `GetStatsTable` marks the planner copy pseudo when the canonical
@@ -1250,6 +1255,12 @@ mod tests {
 
         let stats = statistics_table_from_json(&schema, 99, &dumped).expect("load dump");
         assert_eq!(stats.hist_coll.physical_id, 99);
+        // Go `Table.StatsInfo` publishes `HistColl.StatsVer`, the format
+        // version of the loaded objects. The planner view must carry it or
+        // EXPLAIN labels a real histogram `stats:pseudo` (version zero).
+        let planner = table_statistics_from_json(&schema, &dumped).expect("planner view");
+        assert_eq!(planner.stats_ver, 2);
+        assert!(!planner.pseudo);
         assert_eq!(stats.hist_coll.column_count(), 2);
         assert_eq!(stats.hist_coll.stats_version, 2);
         assert!(stats.is_pk_handle);

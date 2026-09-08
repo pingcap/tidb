@@ -172,3 +172,40 @@ requests. Focused failpoint-wrapped regressions cover the atomic snapshot and
 the histogram-read skip; the full Go-master storage package suite passes in a
 detached test worktree. The existing branch's broader statistics-handle
 integration remains a separate dependency boundary.
+
+## Follow-up: `StatsInfo.StatsVersion` is `HistColl.StatsVer`, not the meta TSO
+
+`statistics.Table.StatsInfo` publishes `StatsInfo.StatsVersion =
+int64(t.HistColl.StatsVer)` -- the statistics FORMAT version of the loaded
+objects (`1` or `2`) -- not `Table.Version`, the `mysql.stats_meta` TSO.
+`EXPLAIN` compares that field against `statistics.PseudoVersion` (`0`), so
+conflating the two labels every table loaded through the JSON path
+`stats:pseudo` even when its distribution is real.
+
+Rust's planner view (`tidb-executor::access_cost::TableStatistics`) carried
+only the two TSOs, and `driver/planner_bridge.rs` fed
+`TableStatistics::version` into `StatsInfo::with_stats_version`. The JSON
+loader leaves that field zero (`TableStatsFromJSON` only sets `StatsVer`), so
+`tpch_q14_matches_recorded_hash_join_plan` saw `stats:pseudo` on both loaded
+scans where the recorded Go plan has none.
+
+The planner view now carries `stats_ver`, filled from
+`Table::hist_coll.stats_version` by
+`load_stats::table_statistics_from_table_schema`, stamped `2` by the two
+in-process ANALYZE producers (`analyze::kv`), and consumed by the bridge with
+Go's zero-is-pseudo rule. The regression extends
+`load_stats::tests::json_builds_full_table_including_hidden_columns_and_fm_sketch`
+to assert the planner view reports `stats_ver == 2` and is not pseudo. The q14
+plan loses both `stats:pseudo` suffixes; the full `tidb-executor` and
+`tidb-planner` suites show no new failure.
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1242 passed; 14 failed; identical failure set to before this change
+
+cargo test -p tidb-planner
+# 1279 passed; 0 failed
+
+cargo check --locked --all-targets -p tidb-executor
+# passed
+```

@@ -160,7 +160,8 @@ pub fn analyze_kv_table_columns(
         // TSO, so the stamp is this process's clock in Go's TSO shape -- the
         // physical half in the high bits, exactly what
         // `show_stats::version_to_time` decodes back for `SHOW STATS_META`.
-        .with_stat_versions(now_tso_shaped(), now_tso_shaped()))
+        .with_stat_versions(now_tso_shaped(), now_tso_shaped())
+        .with_stats_ver(2))
 }
 
 /// Runs Go's independent stats-v2 task for one special global index.
@@ -222,7 +223,8 @@ pub fn analyze_kv_table_independent_index(
         },
     );
     Ok(TableStatistics::new(0, 0, BTreeMap::new(), indexes)
-        .with_stat_versions(now_tso_shaped(), now_tso_shaped()))
+        .with_stat_versions(now_tso_shaped(), now_tso_shaped())
+        .with_stats_ver(2))
 }
 
 /// The current wall clock as a Go TSO: milliseconds since the epoch shifted

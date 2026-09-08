@@ -75,6 +75,12 @@ pub struct TableStatistics {
     /// has a stats row but was never ANALYZEd, which is what makes
     /// `SHOW STATS_META` report a NULL `Last_analyze_time`.
     pub last_analyze_version: u64,
+    /// Go `HistColl.StatsVer`: the statistics FORMAT version of the loaded
+    /// objects (1 or 2). It is what `statistics.Table.StatsInfo` publishes as
+    /// `StatsInfo.StatsVersion`, and therefore what `EXPLAIN` reads to decide
+    /// `stats:pseudo` -- a zero here is `statistics.PseudoVersion`. It is a
+    /// different clock from [`Self::version`], the stats_meta TSO.
+    pub stats_ver: i64,
     /// Column statistics by column ID.
     pub columns: BTreeMap<i64, ColumnStats>,
     /// Index statistics by index ID.
@@ -216,6 +222,7 @@ impl TableStatistics {
             modify_count,
             version: 0,
             last_analyze_version: 0,
+            stats_ver: 0,
             columns,
             indexes,
             column_load_status,
@@ -295,6 +302,14 @@ impl TableStatistics {
     pub fn with_stat_versions(mut self, version: u64, last_analyze_version: u64) -> Self {
         self.version = version;
         self.last_analyze_version = last_analyze_version;
+        self
+    }
+
+    /// Stamps Go `HistColl.StatsVer`, the stats-format version of the loaded
+    /// objects. It becomes `StatsInfo.StatsVersion`.
+    #[must_use]
+    pub const fn with_stats_ver(mut self, stats_ver: i64) -> Self {
+        self.stats_ver = stats_ver;
         self
     }
 
