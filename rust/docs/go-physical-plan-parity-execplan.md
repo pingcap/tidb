@@ -602,11 +602,23 @@ both `oltp_read_only` and `oltp_read_write`.
   GLOBAL state, SET, and statement-scoped restore. Deleted the session-local
   string lookup, and made PointGet, DML, and SELECT reuse consult the same
   field. The previously missing PointGet disable gate is now enforced.
+- [x] 2026-09-08: ported Go `rank_topn_test.go`'s two-column case. Rust
+  `RankPrefix` held one child column, so `getPrefixKeys`/`slices.Equal`'s
+  every-entry comparison was reproducible only for one `TruncateKeyExprs`
+  entry. It now stores one `RankPrefixColumn` per entry, compares all of them
+  with each column's own `-1`/truncation rule, and
+  `topn::tests::rank_topn_compares_every_declared_prefix_column` fails before
+  (a first-column-only comparison emitted 5 rows instead of 3) and passes
+  after. The same batch restored the `tidb-executor` lib-test build, whose
+  three stale `list_columns_pruned_ids` call sites had lost the new
+  `StmtContext` argument.
 - [ ] Complete the `pkg/executor/sortexec` package inventory in Rust. The
   parallel fetch/worker/local-merge/coordinated-spill lifecycle and TopN
-  workers are active; RankTopN, benchmark, and the upstream failpoint-only
-  fault-injection matrix remain. Parallel worker panic recovery and
-  comparison-loop cancellation are now covered by focused receipts.
+  workers are active; benchmark and the upstream failpoint-only
+  fault-injection matrix remain. RankTopN now retains and compares every
+  `TruncateKeyExprs` entry, so the `rank_topn_test.go` multi-column case is
+  ported. Parallel worker panic recovery and comparison-loop cancellation are
+  covered by focused receipts.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. Previously
   absent MPP probe, cache metrics, and range diagnostics owners are now
   implemented, and Go master’s query-scoped per-store limiter is enforced by

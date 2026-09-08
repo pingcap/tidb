@@ -254,14 +254,22 @@ struct TopNMergeHead {
     key: Vec<Datum>,
 }
 
-/// The one prefix-index key that makes Go's RankTopN safe to stop reading.
+/// The prefix-index keys that make Go's RankTopN safe to stop reading.
 ///
-/// Go carries this as `RankInfo.TruncateKeyExprs`, field types, and prefix
-/// lengths. The physical TopN exposes the same fact as one
+/// Go carries these as `RankInfo.TruncateKeyExprs`, field types, and prefix
+/// lengths: `getPrefixKeys` builds one key per declared column and
+/// `slices.Equal` compares every element. The physical TopN exposes one
 /// `PrefixCol`/`PrefixLen` pair, so the executor stores the resolved child
-/// column index and type instead of re-evaluating an expression on every row.
+/// column index and type instead of re-evaluating an expression on every row,
+/// while the source package's multi-key surface keeps more than one.
 #[derive(Clone, Debug)]
 struct RankPrefix {
+    columns: Vec<RankPrefixColumn>,
+}
+
+/// One `RankInfo.TruncateKeyExprs` entry resolved to a child column.
+#[derive(Clone, Debug)]
+struct RankPrefixColumn {
     column_idx: usize,
     prefix_len: i64,
     field_type: FieldType,
@@ -443,10 +451,32 @@ where
         field_type: FieldType,
     ) -> Self {
         self.rank_prefix = Some(RankPrefix {
-            column_idx,
-            prefix_len,
-            field_type,
+            columns: vec![RankPrefixColumn {
+                column_idx,
+                prefix_len,
+                field_type,
+            }],
         });
+        self
+    }
+
+    /// Installs every Go `RankInfo.TruncateKeyExprs` entry at once, the source
+    /// package's multi-column surface. An empty list is the source's
+    /// `len(TruncateKeyExprs) == 0`, which does not take the RankTopN path.
+    #[must_use]
+    pub fn with_rank_prefixes<I>(mut self, columns: I) -> Self
+    where
+        I: IntoIterator<Item = (usize, i64, FieldType)>,
+    {
+        let columns = columns
+            .into_iter()
+            .map(|(column_idx, prefix_len, field_type)| RankPrefixColumn {
+                column_idx,
+                prefix_len,
+                field_type,
+            })
+            .collect::<Vec<_>>();
+        self.rank_prefix = (!columns.is_empty()).then_some(RankPrefix { columns });
         self
     }
 
@@ -514,34 +544,52 @@ where
             .collect()
     }
 
-    /// Returns Go's truncated RankTopN prefix key for one child row.
-    fn rank_prefix_key(&self, row: tidb_chunk::row::Row<'_>) -> Datum {
+    /// Returns Go's truncated RankTopN prefix keys for one child row.
+    fn rank_prefix_key(&self, row: tidb_chunk::row::Row<'_>) -> Vec<Datum> {
         let prefix = self.rank_prefix.as_ref().expect("rank prefix configured");
-        let mut value = row.get_datum(prefix.column_idx, &prefix.field_type);
-        crate::index_prefix_cut::cut_datum_by_prefix_len(
-            &mut value,
-            prefix.prefix_len,
-            &prefix.field_type,
-        );
-        value
+        prefix
+            .columns
+            .iter()
+            .map(|column| {
+                let mut value = row.get_datum(column.column_idx, &column.field_type);
+                crate::index_prefix_cut::cut_datum_by_prefix_len(
+                    &mut value,
+                    column.prefix_len,
+                    &column.field_type,
+                );
+                value
+            })
+            .collect()
     }
 
-    /// Compares two truncated prefix keys under the source column's
-    /// collation. NULL remains equal to NULL and ordered below every value,
-    /// exactly as Go's `slices.Equal` over `truncateKey` treats the marker.
-    fn rank_prefixes_equal(&self, left: &Datum, right: &Datum) -> Result<bool, ExecError> {
+    /// Compares two truncated prefix-key vectors under each source column's
+    /// rule. Go's `slices.Equal` requires equal lengths and equal elements;
+    /// NULL remains equal to NULL and ordered below every value, exactly as
+    /// Go's `truncateKey` marker behaves.
+    fn rank_prefixes_equal(&self, left: &[Datum], right: &[Datum]) -> Result<bool, ExecError> {
         let prefix = self.rank_prefix.as_ref().expect("rank prefix configured");
-        // Go's `UnspecifiedLength` (`-1`) path compares the hash-encoded
-        // complete datum, not its expression collation.  In particular,
-        // `utf8mb4_general_ci` values that differ only by case remain
-        // distinct here; collation folding belongs only to a truncated key.
-        if prefix.prefix_len == tidb_datatype::UNSPECIFIED_LENGTH {
-            return Ok(left == right);
+        if left.len() != prefix.columns.len() || right.len() != prefix.columns.len() {
+            return Ok(false);
         }
-        Ok(
-            tidb_expr::compare_datums_with_collation(left, right, prefix.field_type.collation())?
-                == Ordering::Equal,
-        )
+        for (index, column) in prefix.columns.iter().enumerate() {
+            let equal = if column.prefix_len == tidb_datatype::UNSPECIFIED_LENGTH {
+                // Go's `UnspecifiedLength` (`-1`) path compares the hash-encoded
+                // complete datum, not its expression collation. In particular,
+                // `utf8mb4_general_ci` values that differ only by case remain
+                // distinct here; collation folding belongs only to a truncated key.
+                left[index] == right[index]
+            } else {
+                tidb_expr::compare_datums_with_collation(
+                    &left[index],
+                    &right[index],
+                    column.field_type.collation(),
+                )? == Ordering::Equal
+            };
+            if !equal {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Go `chunk.List.Add`: takes a whole child chunk into the store, with the
@@ -579,7 +627,7 @@ where
     /// `Concurrency` workers, matching Go's post-spill worker boundary.
     fn fetch_rank_topn(&mut self) -> Result<(), ExecError> {
         self.ensure_heap_init();
-        let mut boundary_prefix = None;
+        let mut boundary_prefix: Option<Vec<Datum>> = None;
         let mut boundary_complete = false;
         while !boundary_complete || (self.stored_len() as u64) < self.total_limit {
             let mut chunk = self.child.new_chunk();
@@ -1315,6 +1363,177 @@ mod tests {
         );
     }
 
+    /// A child of two string key columns and an integer payload, emitted
+    /// `batch` rows at a time so the RankTopN boundary scan crosses chunk edges.
+    struct RankPrefixSource {
+        meta: ExecutorMeta,
+        rows: Vec<(String, String, i64)>,
+        cursor: usize,
+        batch: usize,
+        emitted: Arc<AtomicUsize>,
+    }
+
+    impl Executor for RankPrefixSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            self.cursor = 0;
+            self.emitted.store(0, SeqCst);
+            Ok(())
+        }
+
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            let end = (self.cursor + self.batch).min(self.rows.len());
+            for (first, second, payload) in &self.rows[self.cursor..end] {
+                req.append_string(0, first.as_str());
+                req.append_string(1, second.as_str());
+                req.append_int64(2, *payload);
+            }
+            self.emitted.fetch_add(end - self.cursor, SeqCst);
+            self.cursor = end;
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    fn rank_prefix_schema(field_type: &FieldType) -> Schema {
+        let columns = [
+            (0i64, field_type.clone()),
+            (1, field_type.clone()),
+            (2, long()),
+        ]
+        .into_iter()
+        .map(|(index, field_type)| {
+            let mut column = Column::new(index + 1, field_type);
+            column.index = index;
+            column
+        })
+        .collect();
+        Schema::new(columns)
+    }
+
+    fn by_typed(items: &[(usize, bool, FieldType)]) -> Vec<SortByItem> {
+        items
+            .iter()
+            .map(|(idx, desc, field_type)| {
+                let mut column = Column::new(*idx as i64 + 1, field_type.clone());
+                column.index = *idx as i64;
+                SortByItem {
+                    expr: Expression::Column(column),
+                    desc: *desc,
+                }
+            })
+            .collect()
+    }
+
+    /// Reads only the payload column, which the string key columns make
+    /// `drain` (all-int64) unusable for.
+    fn drain_payload(exec: &mut dyn Executor) -> Vec<i64> {
+        exec.open().unwrap();
+        let mut out = Vec::new();
+        let mut req = exec.new_chunk();
+        loop {
+            exec.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            for r in 0..req.num_rows() {
+                out.push(req.get_row(r).get_int64(2));
+            }
+        }
+        exec.close().unwrap();
+        out
+    }
+
+    /// Go `TestRankTopN`'s second case: two `RankInfo.TruncateKeyExprs`
+    /// entries with prefix counts `-1` (whole value) and `12`. Go builds one
+    /// `truncateKey` per entry and compares all of them with `slices.Equal`,
+    /// so a row differing only in EITHER column ends the boundary group.
+    #[test]
+    fn rank_topn_compares_every_declared_prefix_column() {
+        let field_type = FieldType::new(FieldTypeCode::Varchar)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+
+        // Scenario A: the first row after the boundary differs only in the
+        // 12-character prefix of column 1, so an implementation that compared
+        // only column 0 would keep reading later chunks.
+        let scenario_a = vec![
+            ("A".to_owned(), "0123456789ab_1".to_owned(), 1),
+            ("A".to_owned(), "0123456789ab_2".to_owned(), 2),
+            ("A".to_owned(), "0123456789cd_1".to_owned(), 3),
+            ("A".to_owned(), "0123456789zz_1".to_owned(), 4),
+            ("B".to_owned(), "0123456789ab_1".to_owned(), 5),
+            ("B".to_owned(), "0123456789cd_1".to_owned(), 6),
+        ];
+        // Scenario B: the first row after the boundary differs only in column
+        // 0, so an implementation that compared only column 1 would keep
+        // reading later chunks.
+        let scenario_b = vec![
+            ("A".to_owned(), "0123456789ab_1".to_owned(), 1),
+            ("A".to_owned(), "0123456789ab_2".to_owned(), 2),
+            ("B".to_owned(), "0123456789ab_1".to_owned(), 3),
+            ("B".to_owned(), "0123456789cd_1".to_owned(), 4),
+        ];
+
+        for (rows, label) in [(scenario_a, "column-1 prefix"), (scenario_b, "column 0")] {
+            let emitted = Arc::new(AtomicUsize::new(0));
+            let schema = rank_prefix_schema(&field_type);
+            let child = Box::new(RankPrefixSource {
+                meta: ExecutorMeta::new(schema.clone(), 0, 4, 1),
+                rows,
+                cursor: 0,
+                batch: 1,
+                emitted: Arc::clone(&emitted),
+            });
+            let mut exec = TopNExec::new(
+                ExecutorMeta::new(schema, 1, 2, 1),
+                by_typed(&[
+                    (0, false, field_type.clone()),
+                    (1, false, field_type.clone()),
+                ]),
+                child,
+                NoColumns,
+                0,
+                2,
+                StatementMemory::default(),
+            )
+            .with_rank_prefixes([(0, -1, field_type.clone()), (1, 12, field_type.clone())]);
+
+            assert_eq!(
+                drain_payload(&mut exec),
+                vec![1, 2],
+                "RankTopN must emit the boundary pair for the {label} scenario"
+            );
+            assert_eq!(
+                emitted.load(SeqCst),
+                3,
+                "RankTopN must stop at the first row outside the boundary pair for the {label} scenario"
+            );
+        }
+    }
+
     #[test]
     fn rank_topn_unspecified_prefix_uses_exact_value_equality() {
         let field_type = FieldType::new(FieldTypeCode::Varchar)
@@ -1330,14 +1549,14 @@ mod tests {
         )
         .with_rank_prefix(0, tidb_datatype::UNSPECIFIED_LENGTH, field_type);
 
-        let upper = Datum::new_collation_string(
+        let upper = vec![Datum::new_collation_string(
             b"Prefix".to_vec(),
             tidb_datatype::Collation::Utf8Mb4GeneralCi,
-        );
-        let lower = Datum::new_collation_string(
+        )];
+        let lower = vec![Datum::new_collation_string(
             b"prefix".to_vec(),
             tidb_datatype::Collation::Utf8Mb4GeneralCi,
-        );
+        )];
         assert!(!exec.rank_prefixes_equal(&upper, &lower).unwrap());
     }
 
@@ -1362,7 +1581,7 @@ mod tests {
         let left = exec.rank_prefix_key(chunk.get_row(0));
         let right = exec.rank_prefix_key(chunk.get_row(1));
         assert!(exec.rank_prefixes_equal(&left, &right).unwrap());
-        assert_eq!(left.as_raw_bytes(), Some(&b"abc"[..]));
+        assert_eq!(left[0].as_raw_bytes(), Some(&b"abc"[..]));
     }
 
     /// The INDEPENDENT oracle: the `Sort` + `Limit` pair this operator

@@ -15,7 +15,7 @@ complete; it is not a completion claim.
 | `parallel_sort_spill_test.go` | `sort::tests::parallel_sort_spills_worker_rounds_and_final_batches` and helper tests | Partial — normal/multi-round/error/cleanup and worker/spill panic recovery covered; Go failpoint matrix remains |
 | `parallel_sort_test.go` | `sort::tests::parallel_sort_workers_share_input_and_heap_merge_their_runs` | Partial — parallel correctness and worker-run merge covered; randomized type matrix remains |
 | `parallel_sort_worker.go` | `tidb-executor/src/sort.rs::ParallelSortWorker` | Partial — bounded fetch/worker overlap, 30-chunk-size batch boundary, local merge, coordinated spill, and panic-to-error worker recovery active; Go failpoint injection remains |
-| `rank_topn_test.go` | no Rust `RankInfo` prefix-key truncation owner | Missing |
+| `rank_topn_test.go` | `tidb-executor/src/topn.rs::RankPrefix` (one `RankPrefixColumn` per `TruncateKeyExprs` entry) | Implemented behavior; `topn::tests::rank_topn_compares_every_declared_prefix_column` ports both Go cases (`-1` whole value and `12`-character truncation), and `rank_topn_stops_after_the_boundary_prefix_group` pins the read short-circuit |
 | `sort.go` | `tidb-executor/src/sort.rs` | Partial — default parallel lifecycle, serial test path, heap result merge, spill and trackers active; Go asynchronous result channel/failpoint receipts remain |
 | `sort_partition.go` | `tidb-executor/src/sort_partition.rs` | Implemented core in-memory/disk-run behavior; focused serial and parallel-spill tests |
 | `sort_spill.go` | serial action in `sort_partition.rs`, parallel action in `sort.rs` | Partial — both active with Go-style panic-to-error spill recovery; failpoint timing matrix remains |
@@ -23,14 +23,16 @@ complete; it is not a completion claim.
 | `sort_test.go` | Rust sort tests and `tidb-executor/tests/sort_execution_source.rs` | Partial — scalar/type and cancellation inventory not yet source-complete |
 | `sort_util.go` | `tidb-executor/src/sort_util.rs` and `tidb-chunk/src/compare.rs` | Partial — common comparison/cursor contract covered; full upstream symbol receipt pending |
 | `sortexec_pkg_test.go` | package-private Rust unit tests | Partial — harness substitutes exist; global setup/teardown receipt pending |
-| `topn.go` | `tidb-executor/src/topn.rs` | Partial — bounded heap, spill segments and heap K-way result merge active; `RankInfo` missing |
+| `topn.go` | `tidb-executor/src/topn.rs` | Partial — bounded heap, spill segments, heap K-way result merge, and the multi-column `RankInfo` prefix short-circuit are active; Go asynchronous result channel/failpoint receipts remain |
 | `topn_chunk_heap.go` | `tidb-executor/src/topn_chunk_heap.rs` | Implemented core heap behavior; focused tie/sift/compaction tests |
 | `topn_spill.go` | `tidb-executor/src/topn_spill.rs` | Partial — active spill action/run lifecycle; full fault matrix pending |
 | `topn_spill_test.go` | Rust TopN spill and variable-output-chunk tests | Partial |
 | `topn_worker.go` | persistent-pool bounded-channel workers in `tidb-executor/src/topn.rs` | Partial — active after first spill; Go random fault/panic hooks remain |
 
 Current count: 21 tracked artifacts; no complete-package claim. The remaining
-blockers are explicit: RankTopN metadata, benchmark parity, the Go failpoint
-matrix, and complete test/build receipts. Parallel worker and spill panic
-boundaries now recover into `ExecError` and preserve the persistent pool for
-later tasks; the failpoint-only fault-injection matrix remains unavailable.
+blockers are explicit: benchmark parity, the Go failpoint matrix, and complete
+test/build receipts. `RankInfo` now owns every `TruncateKeyExprs` entry, so the
+`rank_topn_test.go` two-column case is ported rather than missing. Parallel
+worker and spill panic boundaries recover into `ExecError` and preserve the
+persistent pool for later tasks; the failpoint-only fault-injection matrix
+remains unavailable.
