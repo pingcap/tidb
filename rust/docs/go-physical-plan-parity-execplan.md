@@ -1000,6 +1000,13 @@ both `oltp_read_only` and `oltp_read_write`.
   `StringWithCtx` (bare string constants) while conditions keep
   `ExplainInfo` (quoted). One executor test fixed. Receipt:
   `rust/testport/receipts/expression_case_extract_names.md`.
+- [x] 2026-09-09: stopped the driver from re-deciding predicate push-down. A
+  physical `Selection` is what the planner LEFT above a reader; the builder's
+  `accept_scan_filter` fusion skipped `SelectionExec` (and its statement
+  memory accounting) for conditions the planner refused, such as `oct(a) > 0`.
+  The offer is now gated on `tidb_planner::pushdown::can_exprs_push_down_tikv`.
+  One executor test fixed. Receipt:
+  `rust/testport/receipts/executor_selection_pushdown_gate.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

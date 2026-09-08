@@ -2925,12 +2925,21 @@ fn build_with_state(
         PhysicalPlan::Selection(selection) => {
             let mut child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
             let filters = resolve_expressions(&selection.conditions, child.schema())?;
+            // Go decides push-down in the planner: a `PhysicalSelection` still
+            // standing above a reader is exactly what `PredicatePushDown` LEFT
+            // there. The driver must not re-decide, because fusing a refused
+            // condition skips Go's `SelectionExec` -- including its statement
+            // memory accounting -- and hands the cop task a predicate the
+            // planner never admitted (`oct(a) > '0'`, `RAND()` without a
+            // seed). Only a condition the shared admission would have pushed
+            // may be offered to the source.
             let pushed = crate::predicate_pushdown::PushedScanFilter::from_physical_conditions(
                 filters.clone(),
             );
-            if child
-                .table_access()
-                .is_some_and(|access| access.accept_scan_filter(&pushed, ctx))
+            if tidb_planner::pushdown::can_exprs_push_down_tikv(&filters)
+                && child
+                    .table_access()
+                    .is_some_and(|access| access.accept_scan_filter(&pushed, ctx))
             {
                 Ok(child)
             } else {

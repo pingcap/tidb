@@ -180,11 +180,17 @@ fn log_lets_an_over_quota_write_finish() {
     );
 }
 
+/// `OCT()` is Go's non-pushable predicate here: `ast.Oct` is commented out of
+/// `scalarExprSupportedByTiKV`'s whitelist
+/// (`pkg/expression/infer_pushdown.go:214`), so a root `Selection` survives
+/// with an `oct`-bearing filter. A predicate like `a + 0 > 0` is pushed into
+/// the cop reader instead, leaving no root `SelectionExec` to account
+/// anything.
 #[test]
 fn selection_cached_chunk_is_part_of_the_query_quota() {
     let catalog = seeded();
     let cancelling = cancelling();
-    let error = run_select_on("SELECT a FROM t WHERE a + 0 > 0", &catalog, &cancelling)
+    let error = run_select_on("SELECT a FROM t WHERE oct(a) > '0'", &catalog, &cancelling)
         .expect_err("Selection's cached child chunk must be charged to the statement");
     assert!(is_memory_exceeded(&error), "expected 8175, got {error:?}");
     assert_eq!(
@@ -194,7 +200,12 @@ fn selection_cached_chunk_is_part_of_the_query_quota() {
     );
 
     assert_eq!(
-        run_select_on("SELECT a FROM t WHERE a + 0 > 0", &catalog, &permitting()).unwrap(),
+        run_select_on(
+            "SELECT a FROM t WHERE oct(a) > '0'",
+            &catalog,
+            &permitting()
+        )
+        .unwrap(),
         vec![
             vec![Datum::Int(1)],
             vec![Datum::Int(2)],
