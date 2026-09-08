@@ -594,6 +594,28 @@ func calculateStatementRUPlanChildFirst(
 		); state != statementRUOperatorComplete {
 			return statementRUOperatorResult{state: state}
 		}
+	case *physicalop.PhysicalIndexMergeReader:
+		// Before statement-level charges, IndexMerge subtree RU is:
+		// sum(child subtree RU) + statementRUScanByteWeight *
+		// (sum(partialScanBytes) + tableScanBytes).
+		// Each request estimates scanBytes = ProcessedKeysSize / ProcessedKeys *
+		// TotalKeys when those counters are usable; missing/unavailable evidence
+		// contributes zero. Child RU covers pushed operators such as Selection.
+		// TiDB handle union/intersection has no separate charge in this model.
+		// Network and frontend RU are added once at the statement root.
+		if !operator.IsRoot || origin.TablePlan == nil {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		requestRoots := make([]base.Plan, 0, len(origin.PartialPlansRaw)+1)
+		for _, partial := range origin.PartialPlansRaw {
+			requestRoots = append(requestRoots, partial)
+		}
+		requestRoots = append(requestRoots, origin.TablePlan)
+		if state := collectStatementRUReaderScanBytes(
+			tree, operator, runtimeStatsColl, calculator, requestRoots,
+		); state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
 	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
 		// Point Get and Batch Point Get are root-only operators. Their client-go
 		// snapshot stats own both storage scan evidence and logical response
@@ -654,6 +676,19 @@ func calculateStatementRUPlanChildFirst(
 		) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
+	case *physicalop.PhysicalUnionScan:
+		// UnionScan overlays transaction-local rows on one child stream. The
+		// current model charges one unit of CPU work per typed child output row.
+		// The formula is linear across repeated shared-ID executions.
+		if !operator.IsRoot {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
 	case *physicalop.PhysicalMaxOneRow:
 		// MaxOneRow examines the direct child's actual output. It must not use
 		// the NULL row synthesized for an empty scalar subquery as input work.
@@ -686,6 +721,20 @@ func calculateStatementRUPlanChildFirst(
 		if !operator.IsRoot || len(children) != 2 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
+	case *physicalop.PhysicalShuffle:
+		if !operator.IsRoot || (origin.SplitterType != physicalop.PartitionHashSplitterType &&
+			origin.SplitterType != physicalop.PartitionRangeSplitterType) {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if state := collectStatementRUShuffleUnits(origin, runtimeStatsColl, calculator); state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PhysicalShuffleReceiverStub:
+		// A receiver is a zero-self exchange wrapper. Its explicit flat child is
+		// the original data source; worker clones share the root row statistic.
+		if !operator.IsRoot {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
 	case *physicalop.PhysicalSequence:
 		// Sequence orders CTE orchestration and the main query but owns no modeled
 		// self RU. Its explicit children remain responsible for their own work.
@@ -699,6 +748,23 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
 		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)*float64(len(origin.Conditions))) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalWindow:
+		// Window evaluates its function, partition, order, and range-frame
+		// calculation slots for every direct-child row. Only the TiDB/root
+		// executor path is modeled here.
+		if !operator.IsRoot {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+		expressionCount := statementRUWindowExpressionCount(origin)
+		if !addStatementRUCPUWork(
+			calculator,
+			float64(children[0].outputRows)*float64(expressionCount),
+		) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
 	case *physicalop.PhysicalSort:
@@ -984,6 +1050,44 @@ func collectStatementRUAggregationUnits(
 	}
 	if !mergeStatementRUUnitDelta(calculator, delta.units) {
 		return statementRUOperatorInvalid
+	}
+	return statementRUOperatorComplete
+}
+
+func statementRUWindowExpressionCount(window *physicalop.PhysicalWindow) int {
+	count := len(window.WindowFuncDescs) + len(window.PartitionBy) + len(window.OrderBy)
+	if window.Frame != nil {
+		if window.Frame.Start != nil {
+			count += len(window.Frame.Start.CalcFuncs)
+		}
+		if window.Frame.End != nil {
+			count += len(window.Frame.End.CalcFuncs)
+		}
+	}
+	return count
+}
+
+// collectStatementRUShuffleUnits computes CPUWork = sum_i(n_i * (k_i + 1)),
+// where n_i is DataSources[i]'s output-row count and k_i is
+// len(ByItemArrays[i]). The +1 accounts for partitioning each row.
+// Worker clones share row statistics, so concurrency is not another multiplier.
+func collectStatementRUShuffleUnits(
+	shuffle *physicalop.PhysicalShuffle,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+) statementRUOperatorState {
+	if runtimeStatsColl == nil {
+		return statementRUOperatorComplete
+	}
+	for sourceOrdinal, dataSource := range shuffle.DataSources {
+		rows := runtimeStatsColl.GetRootRowsSnapshot(dataSource.ID())
+		if rows.Invalid() {
+			return statementRUOperatorInvalid
+		}
+		multiplier := len(shuffle.ByItemArrays[sourceOrdinal]) + 1
+		if !addStatementRUCPUWork(calculator, float64(rows.Rows)*float64(multiplier)) {
+			return statementRUOperatorInvalid
+		}
 	}
 	return statementRUOperatorComplete
 }

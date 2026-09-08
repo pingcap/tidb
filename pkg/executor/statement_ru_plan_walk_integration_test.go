@@ -211,7 +211,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
+		tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b), index idx_c(c))")
 		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
 		tk.MustExec("create table nullable_join(a int)")
 		tk.MustExec("insert into nullable_join values (1), (null), (2)")
@@ -281,6 +281,8 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			{name: "Limit", query: "select * from t ignore index (idx_b) limit 2", rows: testkit.Rows("1 10 100", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalLimit], wantPublish: true, wantCPUWork: true},
 			{name: "IndexReader", query: "select b from t use index (idx_b) where b >= 20", rows: testkit.Rows("20", "30"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexReader], sortRows: true, wantPublish: true},
 			{name: "IndexLookup", query: "select * from t use index (idx_b) where b >= 20", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexLookUpReader], sortRows: true, wantPublish: true},
+			{name: "IndexMergeReader", query: "select /*+ USE_INDEX_MERGE(t, idx_b, idx_c) */ * from t where b = 10 or c = 200", rows: testkit.Rows("1 10 100", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexMergeReader], sortRows: true, wantPublish: true},
+			{name: "UnionScan", before: []string{"begin", "insert into t values (4, 40, 400)"}, after: []string{"rollback"}, query: "select * from t ignore index (idx_b, idx_c) where a >= 3", rows: testkit.Rows("3 30 300", "4 40 400"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalUnionScan], sortRows: true, wantPublish: true, wantCPUWork: true},
 			{name: "HashJoin optimized", before: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantJoinOutput: true},
 			{name: "HashJoin legacy", before: []string{"set tidb_hash_join_version = 'legacy'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantJoinOutput: true},
 			{name: "HashJoin legacy excludes ordinary null keys", before: []string{"set tidb_hash_join_version = 'legacy'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(n1, n2) */ * from nullable_join n1 join nullable_join n2 on n1.a = n2.a", rows: testkit.Rows("1 1", "2 2"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 2, wantJoinOutput: true},
@@ -292,7 +294,8 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			{name: "HashAgg serial", before: []string{"set tidb_hashagg_partial_concurrency = 1", "set tidb_hashagg_final_concurrency = 1"}, after: []string{"set tidb_hashagg_partial_concurrency = default", "set tidb_hashagg_final_concurrency = default"}, query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
 			{name: "StreamAgg", query: "select /*+ STREAM_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalStreamAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantRootAndCop: true},
 			{name: "Projection", query: "select b + 1 from t ignore index (idx_b)", rows: testkit.Rows("11", "21", "31"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalProjection], sortRows: true, wantPublish: true, wantCPUWork: true},
-			{name: "unsupported Window", query: "select row_number() over () from t ignore index (idx_b)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalWindow], sortRows: true},
+			{name: "Window", query: "select row_number() over () from t ignore index (idx_b, idx_c)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalWindow], sortRows: true, wantPublish: true, wantCPUWork: true},
+			{name: "Shuffle Window", query: "select sum(a) over(partition by a order by b) from t ignore index (idx_b, idx_c)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalShuffle], sortRows: true, wantPublish: true, wantCPUWork: true},
 		}
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {

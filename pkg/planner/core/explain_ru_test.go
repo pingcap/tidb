@@ -783,4 +783,40 @@ func TestExplainAnalyzeRUFormatEndToEndMonotonicity(t *testing.T) {
 		require.Zero(t, getOperatorRU(t, rows, "Apply", selfRUColumn))
 		require.Positive(t, getOperatorRU(t, rows, "Apply", cumRUColumn))
 	})
+
+	t.Run("UnionScan owns overlay work", func(t *testing.T) {
+		tk.MustExec("drop table if exists t_unistore_ru_union_scan")
+		tk.MustExec("create table t_unistore_ru_union_scan(a int primary key, b int)")
+		tk.MustExec("insert into t_unistore_ru_union_scan values (1, 10), (2, 20)")
+		tk.MustExec("begin")
+		t.Cleanup(func() { tk.MustExec("rollback") })
+		tk.MustExec("insert into t_unistore_ru_union_scan values (3, 30)")
+		rows := explainRU(t, "select * from t_unistore_ru_union_scan where a >= 1")
+		requireForestReconciliation(t, rows)
+		require.Positive(t, getOperatorRU(t, rows, "UnionScan", selfRUColumn))
+		tk.MustExec("rollback")
+	})
+
+	t.Run("IndexMerge owns partial and table scan work", func(t *testing.T) {
+		tk.MustExec("drop table if exists t_unistore_ru_index_merge")
+		tk.MustExec("create table t_unistore_ru_index_merge(a int primary key, b int, c int, key idx_b(b), key idx_c(c))")
+		tk.MustExec("insert into t_unistore_ru_index_merge values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+		rows := explainRU(t, "select /*+ use_index_merge(t_unistore_ru_index_merge, idx_b, idx_c) */ * from t_unistore_ru_index_merge where b = 10 or c = 200")
+		requireForestReconciliation(t, rows)
+		require.Positive(t, getOperatorRU(t, rows, "IndexMerge", selfRUColumn))
+		require.Zero(t, getOperatorRU(t, rows, "IndexRangeScan", selfRUColumn))
+		require.Zero(t, getOperatorRU(t, rows, "TableRowIDScan", selfRUColumn))
+	})
+
+	t.Run("Shuffle and Window retain self and cumulative RU", func(t *testing.T) {
+		tk.MustExec("drop table if exists t_unistore_ru_shuffle_window")
+		tk.MustExec("create table t_unistore_ru_shuffle_window(a int, b int)")
+		insertIntRows("t_unistore_ru_shuffle_window", 0, 20)
+		rows := explainRU(t, "select sum(a) over(partition by a order by b) from t_unistore_ru_shuffle_window")
+		requireForestReconciliation(t, rows)
+		require.Positive(t, getOperatorRU(t, rows, "Shuffle", selfRUColumn))
+		require.Positive(t, getOperatorRU(t, rows, "Window", selfRUColumn))
+		require.Zero(t, getOperatorRU(t, rows, "ShuffleReceiver", selfRUColumn))
+		require.Positive(t, getOperatorRU(t, rows, "ShuffleReceiver", cumRUColumn))
+	})
 }
