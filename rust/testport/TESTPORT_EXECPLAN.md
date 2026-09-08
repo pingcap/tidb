@@ -11407,3 +11407,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (self-referencing FK pin): NULL-root insert, valid-child
   insert, bad-manager child-row refusal, and parent-delete refusal.
   Pinned in `crates/tidb-session/tests/self_referencing_fk_source.rs`.
+- 2026-09-08 (ON DELETE SET NULL pin): parent deletion NULLs exactly the
+ referencing children. Pinned in
+ `crates/tidb-session/tests/fk_on_delete_set_null_source.rs`.
