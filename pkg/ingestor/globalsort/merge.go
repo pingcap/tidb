@@ -117,25 +117,25 @@ func NewMergeOperator(
 	onDup engineapi.OnDuplicateKey,
 ) *MergeOperator {
 	concurrency = max(concurrency, 1)
-	readerMemorySize := getMergeReaderMemory(memoryPerCore, concurrency)
+	totalReaderMemorySize := getMergeReaderMemory(memoryPerCore, concurrency)
 	logutil.Logger(ctx).Info("create merge operator",
 		zap.Int64("memory-per-core", memoryPerCore),
-		zap.Int64("reader-memory-size", readerMemorySize))
+		zap.Int64("total-reader-memory-size", totalReaderMemorySize))
 	pool := workerpool.NewWorkerPool(
 		"mergeOperator",
 		util.ImportInto,
 		concurrency,
 		func() workerpool.Worker[*mergeMinimalTask, workerpool.None] {
 			return &mergeWorker{
-				ctx:              ctx,
-				store:            store,
-				readerMemorySize: readerMemorySize,
-				newFilePrefix:    newFilePrefix,
-				blockSize:        blockSize,
-				onWriterClose:    onWriterClose,
-				collector:        collector,
-				checkHotspot:     checkHotspot,
-				onDup:            onDup,
+				ctx:                   ctx,
+				store:                 store,
+				totalReaderMemorySize: totalReaderMemorySize,
+				newFilePrefix:         newFilePrefix,
+				blockSize:             blockSize,
+				onWriterClose:         onWriterClose,
+				collector:             collector,
+				checkHotspot:          checkHotspot,
+				onDup:                 onDup,
 			}
 		},
 	)
@@ -154,17 +154,18 @@ func (*MergeOperator) String() string {
 type mergeWorker struct {
 	ctx context.Context
 
-	store            storeapi.Storage
-	readerMemorySize int64
-	newFilePrefix    string
-	blockSize        int
-	onWriterClose    simplesst.OnWriterCloseFunc
-	collector        execute.Collector
-	checkHotspot     bool
-	onDup            engineapi.OnDuplicateKey
+	store                 storeapi.Storage
+	totalReaderMemorySize int64
+	newFilePrefix         string
+	blockSize             int
+	onWriterClose         simplesst.OnWriterCloseFunc
+	collector             execute.Collector
+	checkHotspot          bool
+	onDup                 engineapi.OnDuplicateKey
 }
 
 func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)) error {
+	memorySizePerGroup := w.totalReaderMemorySize / int64(task.activeGroupCount)
 	return mergeOverlappingFilesInternal(
 		w.ctx,
 		task.files,
@@ -176,7 +177,7 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 		w.collector,
 		w.checkHotspot,
 		w.onDup,
-		w.readerMemorySize/int64(task.activeGroupCount),
+		memorySizePerGroup,
 	)
 }
 
@@ -285,8 +286,8 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // 4 or more MiB, http1 for S3, it's smaller.
 //
 // The data part size is calculated from the actual input size below. Concurrent
-// reader memory is bounded separately by readerMemorySize when hotspot reads are
-// enabled.
+// reader memory is bounded separately by memorySizePerGroup when hotspot reads
+// are enabled.
 func mergeOverlappingFilesInternal(
 	ctx context.Context,
 	paths []string,
@@ -298,7 +299,7 @@ func mergeOverlappingFilesInternal(
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
-	readerMemorySize int64,
+	memorySizePerGroup int64,
 ) (err error) {
 	failpoint.Inject("mergeOverlappingFilesInternal", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
@@ -331,7 +332,7 @@ func mergeOverlappingFilesInternal(
 		store,
 		simplesst.DefaultReadBufferSize,
 		checkHotspot,
-		readerMemorySize,
+		memorySizePerGroup,
 	)
 	if err != nil {
 		return err
