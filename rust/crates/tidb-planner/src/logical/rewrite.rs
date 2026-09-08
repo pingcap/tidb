@@ -157,7 +157,10 @@ fn all_join_leaf_schemas(node: &LogicalPlan) -> Vec<Schema> {
 /// of values out of that NDV). Returning `None` keeps genuinely pseudo tables
 /// on `pseudoSelectivity`; it must not overwrite loaded NDVs with the pseudo
 /// 1/1000 equality rate.
-fn analyzed_filter_selectivity(table_stats: &StatsInfo, conditions: &[Expression]) -> Option<f64> {
+pub(crate) fn analyzed_filter_selectivity(
+    table_stats: &StatsInfo,
+    conditions: &[Expression],
+) -> Option<f64> {
     if table_stats.col_ndvs().is_empty() {
         return None;
     }
@@ -479,7 +482,7 @@ fn update_join_equal_conditions_in_plan(
 /// collection has no columns/indexes (or more than 63 predicates). A normal
 /// unanalyzed table still builds ranges, so `k >= 1 AND k <= 3` is one
 /// bounded range (`1/pseudoBetweenRate`), not two unrelated `1/3` guesses.
-fn pseudo_range_filter_selectivity(
+pub(crate) fn pseudo_range_filter_selectivity(
     source: &super::data_source::DataSource,
     table_stats: &StatsInfo,
     conditions: &[Expression],

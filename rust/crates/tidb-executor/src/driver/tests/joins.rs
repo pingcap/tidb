@@ -1178,6 +1178,20 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
         Some("1.25"),
         "the inner scan must display its one clamped row times the 1.25 outer probes: {plan:?}",
     );
+    // Go `constructDS2TableScanTask`: `selStats =
+    // ts.StatsInfo().Scale(selectivity)` over the RESIDUAL filters only
+    // (`lt(s_quantity, 18)`; the `s_w_id = 1` access condition is re-attached
+    // afterwards), so the probe's post-filter estimate is
+    // `0.332333 * 1.25 = 0.42`.
+    let probe_reader = plan
+        .iter()
+        .find(|line| line.contains("TableReader") && line.contains("(Probe)"))
+        .unwrap_or_else(|| panic!("no probe reader: {plan:?}"));
+    assert_eq!(
+        probe_reader.split('\t').nth(1),
+        Some("0.42"),
+        "the probe Selection must apply its residual quantity selectivity: {plan:?}",
+    );
 }
 
 /// A complete equality on every column of a clustered common handle is a

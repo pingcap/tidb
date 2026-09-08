@@ -102,6 +102,9 @@ pub struct DispatchContext<'a> {
     pub skew_ratio: f64,
     /// Session range memory limit used during initial access-path construction.
     pub range_max_size: i64,
+    /// Go `SessionVars.SelectivityFactor`, the pseudo estimator's starting
+    /// factor (`tidb_opt_selectivity_factor`).
+    pub selectivity_factor: f64,
     /// Statement warning and plan-cache fallback state.
     pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
     /// Go `SessionVars.OptOrderingIdxSelRatio`, used by the ordered LIMIT
@@ -165,6 +168,8 @@ impl<'a> DispatchContext<'a> {
             coster,
             skew_ratio,
             range_max_size: 64 * 1024 * 1024,
+            // Go `vardef.DefOptSelectivityFactor`.
+            selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
             range_fallback_handler: None,
             ordering_index_selectivity_ratio: 0.01,
             allow_projection_push_down: true,
@@ -206,6 +211,13 @@ impl<'a> DispatchContext<'a> {
                 self.range_max_size,
             ),
         }
+    }
+
+    /// Attach `tidb_opt_selectivity_factor`, the pseudo estimator's start.
+    #[must_use]
+    pub const fn with_selectivity_factor(mut self, selectivity_factor: f64) -> Self {
+        self.selectivity_factor = selectivity_factor;
+        self
     }
 
     /// Attach the statement's range quota and shared fallback state.
@@ -2003,6 +2015,10 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         &table_access_conds,
                     )
                 };
+                // Go `constructDS2TableScanTask` computes the residual
+                // selectivity from `chosenRemained` BEFORE the inner-only
+                // access conditions are re-attached to the Selection.
+                let residual_table_filters = table_filters.clone();
                 if prop.index_join_prop.is_some() {
                     // Go `constructDS2TableScanTask` re-attaches every
                     // inner-only access condition as an explicit probe-side
@@ -2294,15 +2310,41 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     selection_base
                         .base
                         .set_schema(ds.base.base.schema().cloned());
-                    // Go `addPushedDownSelection4PhysicalTableScan` builds the
-                    // pushed-down Selection with the property's stats. An
-                    // IndexJoin inner scan was already rescaled to its
-                    // per-outer-row average, so the Selection must carry that
-                    // same count rather than the DataSource's full estimate.
+                    // Go `addPushedDownSelection4PhysicalTableScan`:
+                    // `selStats = ts.StatsInfo().Scale(selectivity)`. For an
+                    // IndexJoin inner scan the scan carries the per-probe
+                    // ACCESS rows, so the Selection applies the residual
+                    // filters' selectivity once more; an ordinary scan starts
+                    // from the DataSource's post-filter estimate.
                     selection_base
                         .base
                         .set_stats(if prop.index_join_prop.is_some() {
-                            stats.clone()
+                            let residual_selectivity = table_stats.as_ref().map_or(1.0, |stats| {
+                                if ds.table_scan_penalty.pseudo_stats {
+                                    crate::logical::rewrite::pseudo_range_filter_selectivity(
+                                        ds,
+                                        stats,
+                                        &residual_table_filters,
+                                        ds.base
+                                            .base
+                                            .schema()
+                                            .unwrap_or(&tidb_expr::schema::Schema::default()),
+                                        ctx.range_max_size,
+                                        ctx.selectivity_factor,
+                                        ctx.range_fallback_handler,
+                                    )
+                                    .unwrap_or(1.0)
+                                } else {
+                                    crate::logical::rewrite::analyzed_filter_selectivity(
+                                        stats,
+                                        &residual_table_filters,
+                                    )
+                                    .unwrap_or(1.0)
+                                }
+                            });
+                            stats
+                                .as_ref()
+                                .map(|stats| stats.scale(residual_selectivity, ctx.skew_ratio))
                         } else {
                             ds.base.base.stats_info().cloned()
                         });

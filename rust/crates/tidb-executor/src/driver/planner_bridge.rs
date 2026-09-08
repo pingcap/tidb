@@ -1039,6 +1039,7 @@ pub(crate) fn physical_plan_for_logical(
     let coster = Ver2Coster::from_env(ctx.optimizer_cost_env());
     let mut dispatch = DispatchContext::new(plan_ids, &coster, 1.0)
         .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
+        .with_selectivity_factor(ctx.selectivity_factor())
         .with_ordering_index_selectivity_ratio(ctx.ordering_index_selectivity_ratio())
         .with_projection_push_down(ctx.allow_projection_push_down())
         .with_limit_push_down_threshold(ctx.limit_push_down_threshold())
