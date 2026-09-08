@@ -69,7 +69,7 @@ def prepare(args):
     sql(rec, "index-regions", port, f"SHOW TABLE {db}.rows_to_restore INDEX by_tag REGIONS")
     rec.run("br-version", [br, "-V"])
     rec.run("backup", [br, "backup", "full", "--pd", os.environ["SOURCE_PD"], "--filter", db + ".*",
-                       "--storage", storage, "--check-requirements=false", "--log-file", str(root / "backup.log")])
+                       "--storage", storage, "--check-requirements=false", "--log-file", str(root / "backup.log")], timeout=900)
     rec.run("decode", [br, "debug", "decode", "--storage", storage, "--log-file", str(root / "decode.log")])
     url = urlparse(storage)
     endpoint = parse_qs(url.query)["endpoint"][0]
@@ -117,12 +117,18 @@ def restore(args):
     if exists != "0":
         raise RuntimeError("target database exists; preserve/archive the previous target before a new attempt")
     br = os.environ["RESTORE_BR"]
+    storage = os.environ.get("RESTORE_REGION_STORAGE", info["storage"])
+    # Source and target may access the same immutable objects through different
+    # endpoints (host loopback versus the Compose network).
+    original, selected = urlparse(info["storage"]), urlparse(storage)
+    if (original.scheme, original.netloc, original.path) != (selected.scheme, selected.netloc, selected.path):
+        raise RuntimeError("storage override must reference the same fixture bucket and prefix")
     (root / "fixture-reference.json").write_text(json.dumps({"path": str(fixture),
         "manifest_sha256": digest(fixture / "SHA256.json"), "fixture": info}, indent=2) + "\n")
     rec.run("br-version", [br, "-V"])
     rec.run("restore", [br, "restore", "full", "--pd", os.environ["TARGET_PD"], "--keyspace-name",
         os.environ["TARGET_KEYSPACE"], "--filter", db + ".*", "--with-sys-table=false", "--load-stats=false",
-        "--merge-region-key-count=3", "--experimental-restore-region", "--storage", info["storage"],
+        "--merge-region-key-count=3", "--experimental-restore-region", "--storage", storage,
         "--check-requirements=false", "--checksum=true", "--log-level=debug", "--log-file", "/dev/stderr"], timeout=900)
     expected = (fixture / "expected.tsv").read_text()
     actual = sql(rec, "actual", port, table_query(db))

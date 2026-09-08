@@ -36,7 +36,8 @@ class Recorder:
         meta = {"argv": [str(x) for x in argv], "cwd": os.getcwd(), "start": now(),
                 "env": {k: v for k, v in os.environ.items() if k in {
                     "PATH", "GOFLAGS", "GOCACHE", "NEXT_GEN", "AWS_ACCESS_KEY_ID",
-                    "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "RUSTUP_TOOLCHAIN"}}}
+                    "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "RUSTUP_TOOLCHAIN",
+                    "http_proxy", "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"}}}
         record = out / "command.json"
         record.write_text(json.dumps(meta, indent=2) + "\n")
         with (out / "stdout").open("wb") as stdout, (out / "stderr").open("wb") as stderr:
