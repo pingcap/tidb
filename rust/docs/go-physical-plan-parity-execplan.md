@@ -1092,6 +1092,15 @@ both `oltp_read_only` and `oltp_read_write`.
     group 304). The restore order across partial workers is not the row order
     Go's final merge preserves, so the order-sensitive aggregate needs the
     deterministic merge order ported before the file-lifetime change lands.
+  - `subqueries::evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join`
+    (q22): the injected projection and the anti-semi join are both present, but
+    the test's `rposition(HashAgg)` picks the scalar subquery's own aggregate
+    on the join's build side instead of the outer grouped aggregate, and the
+    next assertion needs Go's `ScalarSubQuery` EXPLAIN root, which the Rust
+    explain does not emit because the uncorrelated scalar subquery is planned
+    inline rather than evaluated separately. Both depend on the
+    separate-evaluation path (`DoOptimize` + `EvalSubqueryFirstRow`) that the
+    planner crate cannot reach; see the `expression_rewriter` module header.
   - `aggregates::tpcc_condition_eleven_*`: the Rust plan has a reordering
     Projection between the root StreamAgg and the outer MergeJoin
     (`Projection([10,13,12,15,18,17]) -> Join([10,15,12,13,17,18])`), while a
