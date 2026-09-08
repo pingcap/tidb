@@ -29,7 +29,6 @@ use crate::ranger::ranger::{build_column_range, union_ranges};
 /// `opt_prefix_index_single_scan` is the sole `RangerContext` field read by
 /// the source package. It is the session value of
 /// `tidb_opt_prefix_index_single_scan`.
-#[must_use]
 pub fn check_constraints(
     opt_prefix_index_single_scan: bool,
     pre_predicates: &[Expression],
@@ -179,7 +178,6 @@ fn as_column(expression: &Expression) -> Option<&Column> {
 
 /// Go `AlwaysMeetConstraints`: the deliberately narrow plan-cache proof for
 /// one stored `NOT(ISNULL(column))` predicate.
-#[must_use]
 pub fn always_meet_constraints(pre_predicates: &[Expression], filters: &[Expression]) -> bool {
     let [Expression::ScalarFunction(not)] = pre_predicates else {
         return false;
@@ -421,5 +419,17 @@ mod tests {
             vec![PossiblePath::Index { index: 0 }]
         );
         assert!(source.partial_index_noncacheable_ids.contains(&10));
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        let predicate = compare("gt", integer_column(1), integer(0));
+        check_constraints(
+            true,
+            std::slice::from_ref(&predicate),
+            std::slice::from_ref(&predicate),
+        );
+        always_meet_constraints(&[], &[]);
     }
 }
