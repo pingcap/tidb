@@ -83,3 +83,37 @@ Profile: **Ready** for this focused batch.
 - `cargo fmt` changed files clean; `git diff --check` clean.
 
 No Go, Bazel, Cargo manifest, generated, or fixture file changed.
+
+## Follow-up: a complete common-handle equality is a point get (2026-09-09)
+
+Go's `canConvertPointGet` (`find_best_task.go:2199`) admits a non-integer
+handle path when the index is UNIQUE, has no prefix, and every range covers
+all its key columns — the clustered composite primary key qualifies. The Rust
+table-path conversion required `handle_column.is_some()`, which is only true
+for an integer handle (or `_tidb_rowid`), so a common handle stayed a
+`TableRangeScan` even when its range was a single point.
+
+The conversion now accepts a complete non-prefix unique common handle, and
+scales the point plan's stats by `min(CountAfterAccess, 1)` as Go's
+`convertToPointGet` does (`ds.TableStats.ScaleByExpectCnt(accessCnt)`).
+
+Regression: `driver::tests::joins::a_complete_common_handle_equality_is_a_point_get`
+plans `customer, warehouse WHERE w_id = 1 AND c_w_id = w_id AND c_d_id = 6
+AND c_id = 629` and asserts the customer side is a `Point_Get`; it saw a
+`TableRangeScan` before the change.
+
+Boundary: `tpcc_customer_warehouse_join_uses_two_point_gets` now reaches its
+join-cardinality assertion (`1.00` vs Go's `1.17`) with the plan shape already
+correct; that estimate gap is separate.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib a_complete_common_handle_equality_is_a_point_get
+# passed: 1
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,160 passed / 75 failed (baseline 1,159 / 74): one new regression, the
+# documented hash-agg spill flake in the failure list, no additions
+cargo check -p tidb-planner
+# passed
+```

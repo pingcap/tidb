@@ -1009,6 +1009,74 @@ fn tpcc_stock_level_bounds_both_join_leaves() {
     );
 }
 
+/// A complete equality on every column of a clustered common handle is a
+/// `Point_Get`, not a `TableRangeScan`: Go's `canConvertPointGet`
+/// (`find_best_task.go:2199`) admits a non-prefix UNIQUE index whose range
+/// covers every key column. The `c_w_id = w_id` join equality propagates the
+/// constant into the composite primary key, so the customer side is a point
+/// get even though `c_w_id` is not written as a constant.
+#[test]
+fn a_complete_common_handle_equality_is_a_point_get() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (\
+            c_id INT NOT NULL, c_d_id INT NOT NULL, c_w_id INT NOT NULL, \
+            c_last VARCHAR(16), \
+            PRIMARY KEY (c_w_id, c_d_id, c_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE warehouse (w_id INT NOT NULL, PRIMARY KEY (w_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO customer VALUES (629, 6, 1, 'Smith')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on("INSERT INTO warehouse VALUES (1)", &mut catalog, &ctx).unwrap();
+    let stmt = tidb_parser::parse(
+        "SELECT c_last FROM customer, warehouse \
+         WHERE w_id = 1 AND c_w_id = w_id AND c_d_id = 6 AND c_id = 629",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\\t")
+        })
+        .collect();
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("Point_Get") && line.contains("table:customer")),
+        "a complete common-handle equality must be a point get: {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|line| line.contains("TableRangeScan")),
+        "no range scan remains: {plan:?}"
+    );
+}
+
 /// The TPCC NewOrder customer/warehouse lookup over go-tpc's complete table
 /// schemas and analyzed ten-warehouse cardinalities. A constant on the
 /// warehouse join key propagates to the customer's clustered composite

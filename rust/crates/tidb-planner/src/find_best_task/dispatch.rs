@@ -1966,8 +1966,24 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         .and_then(|index| ds.partition_definition_ids.get(index).copied()),
                     _ => None,
                 };
+                // Go `canConvertPointGet`: an integer handle, or a complete
+                // non-prefix UNIQUE common handle whose range covers every key
+                // column.
+                let point_handle_ok = common_handle.map_or(handle_column.is_some(), |index| {
+                    index.unique
+                        && !crate::ranger::ranger::has_prefix(
+                            &index
+                                .columns
+                                .iter()
+                                .map(|column| column.length)
+                                .collect::<Vec<_>>(),
+                        )
+                        && ranges
+                            .iter()
+                            .all(|range| range.low_val.len() == index.columns.len())
+                });
                 if prop.index_join_prop.is_none()
-                    && handle_column.is_some()
+                    && point_handle_ok
                     && !ranges.is_empty()
                     && ranges.iter().all(|range| {
                         !range.low_exclude
@@ -1989,7 +2005,20 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         ds.base.base.query_block_offset(),
                     );
                     point_base.base.set_schema(ds.base.base.schema().cloned());
-                    point_base.base.set_stats(stats);
+                    // Go `convertToPointGet`: the point plan's stats are the
+                    // DataSource's scaled by `min(CountAfterAccess, 1)`, not
+                    // the range path's full access estimate.
+                    point_base.base.set_stats(
+                        table_stats
+                            .as_ref()
+                            .map(|table_stats| {
+                                table_stats.scale_by_expect_cnt(
+                                    count_after_access.unwrap_or(1.0).min(1.0),
+                                    ctx.skew_ratio,
+                                )
+                            })
+                            .or(stats),
+                    );
                     let mut point = if ranges.len() == 1 {
                         PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
                             base: point_base,

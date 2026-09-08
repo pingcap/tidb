@@ -789,6 +789,12 @@ both `oltp_read_only` and `oltp_read_write`.
   nor `NeedValue` lists the family and the Rust partial state is not exposed
   as partial-result columns. Receipt:
   `rust/testport/receipts/expression_aggregation_audit.md`.
+- [x] 2026-09-09: converted a complete clustered common-handle equality to a
+  `Point_Get`. The table path required an integer handle, so a composite
+  primary key stayed a `TableRangeScan` even at a single point; the conversion
+  now admits a non-prefix unique common handle and scales the point stats by
+  `min(CountAfterAccess, 1)` like Go's `convertToPointGet`. Receipt:
+  `rust/testport/receipts/executor_point_get_admission.md`.
 - [x] 2026-09-09: threaded `div_precision_increment` into the planner's
   expression resolver. `PlanScopeResolver` used the trait default of 4, so a
   `/` built through `rewrite_scalar` minted its decimal scale from 4 and
