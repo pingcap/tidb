@@ -79,3 +79,23 @@ parallel-apply registries, chunk-reuse hints). `eliminateUnionScanAndLock`
 is a pure performance elision whose condition guarantees results identical
 to executing the nodes; this tier executes `PhysicalUnionScan`/`Lock`
 faithfully, so observable behavior matches either way.
+
+## Follow-up: the HashAgg `firstrow` identity is structural (2026-09-09)
+
+`driver::tests::aggregates::grouped_order_by_projects_visible_fields_below_sort`
+pinned the TPC-H q12 HashAgg carrier as `funcs:firstrow(Column#2)`. That is
+not Go's contract. Go `InjectProjBelowAgg`
+(`pkg/planner/core/rule_inject_extra_projection.go:185-207`) rewrites every
+non-constant group item to a FRESH projection column (`groupByItems[i] =
+newArg` with a newly allocated `UniqueID`), and the `firstrow` carrier for a
+group column renders that same column, so the group-by item and its carrier
+always share one id whose number only reflects allocation order. Go's own
+recorded plans show the shape:
+`pkg/planner/core/casetest/tpch/testdata/tpch_suite_out.json` renders q1 as
+`group by:Column#100, Column#101, ... funcs:firstrow(Column#100)->test.lineitem.l_returnflag`.
+
+The Rust plan already satisfies that contract (`group by:Column#15, ...
+funcs:firstrow(Column#15)->test.lineitem.l_shipmode`); only the hard-coded id
+was wrong. The test now extracts the group-by column from the same operator
+row and asserts the `firstrow` carrier names it, which is the Go rule rather
+than one allocation. No production behavior changed.

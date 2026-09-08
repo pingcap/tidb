@@ -679,6 +679,12 @@ both `oltp_read_only` and `oltp_read_write`.
   AST (SELECT, UPDATE, DELETE, INSERT, LOAD DATA, with `WITH` unwrapped) and
   `cop_scan` copies them onto the `DistSqlContext`. Receipt:
   `rust/testport/receipts/distsql_audit.md`.
+- [x] 2026-09-09: corrected the TPC-H q12 HashAgg `firstrow` expectation to
+  Go's structural rule. `InjectProjBelowAgg` gives the group item and its
+  carrier one fresh allocated id, so hard-coding `Column#2` pinned Rust's
+  allocation order rather than Go's behavior; Go's own recorded plans show
+  `group by:Column#100, ... funcs:firstrow(Column#100)`. Receipt:
+  `rust/testport/receipts/planner_inject_extra_projection.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

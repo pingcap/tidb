@@ -887,9 +887,24 @@ fn grouped_order_by_projects_visible_fields_below_sort() {
             && info(3).contains("test.lineitem.l_shipmode"),
         "InjectProjBelowAgg must resolve compact offsets against the restored schema: {rows:#?}",
     );
+    // Go's contract is structural, not a fixed id: `InjectProjBelowAgg` gives
+    // the HashAgg group column and the `firstrow` carrier it renders the SAME
+    // fresh identity, and only the allocation order decides the number.
+    // `pkg/planner/core/casetest/tpch/testdata/tpch_suite_out.json` shows the
+    // shape for q1: `group by:Column#100, Column#101, ...
+    // funcs:firstrow(Column#100)->test.lineitem.l_returnflag`.
+    let hash_agg = info(2);
+    let group = hash_agg
+        .strip_prefix("group by:")
+        .and_then(|rest| rest.split(',').next())
+        .expect("HashAgg renders its group-by column")
+        .trim();
     assert!(
-        info(2).contains("funcs:firstrow(Column#2)->test.lineitem.l_shipmode"),
-        "HashAgg must carry the restored group-column identity: {rows:#?}",
+        hash_agg.contains(&format!(
+            "funcs:firstrow({group})->test.lineitem.l_shipmode"
+        )),
+        "HashAgg must carry the restored group-column identity in its firstrow carrier \
+         (group {group}): {rows:#?}",
     );
 }
 
