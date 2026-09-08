@@ -969,14 +969,14 @@ func matchURIWithWildcard(required, given string) bool {
 	if len(requiredSegments) != len(givenSegments) {
 		return false
 	}
-	for i, requiredSegment := range requiredSegments {
-		if requiredSegment == "*" {
+	for i := range requiredSegments {
+		if requiredSegments[i] == "*" {
 			if givenSegments[i] == "" {
 				return false
 			}
 			continue
 		}
-		if requiredSegment != givenSegments[i] {
+		if requiredSegments[i] != givenSegments[i] {
 			return false
 		}
 	}
