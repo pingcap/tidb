@@ -772,6 +772,12 @@ both `oltp_read_only` and `oltp_read_write`.
   `accept_scan_limit`, and `isnull(col)` / `not(isnull(col))` lower to
   `ScanPredicate::IsNull`. Receipt:
   `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
+- [x] 2026-09-09: lowered an uncorrelated scalar subquery instead of refusing
+  it. Go pre-evaluates it through `DoOptimize` + `ScalarSubQueryExpr`; that
+  evaluator is unported, so the subquery now takes the same MaxOneRow-guarded
+  left-outer Apply the correlated case uses, and the FROM-less dual gets its
+  empty schema first. The value is correct but recomputed per outer row.
+  Receipt: `rust/testport/receipts/planner_coalesced_qualified_names.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

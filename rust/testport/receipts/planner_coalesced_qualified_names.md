@@ -201,3 +201,41 @@ cargo fmt -p tidb-planner -p tidb-executor -- --check
 git diff --check -- rust
 # passed
 ```
+
+## Follow-up: an uncorrelated scalar subquery is lowered, not refused (2026-09-09)
+
+Go's `handleScalarSubquery` (`expression_rewriter.go:1522`) pre-evaluates an
+UNCORRELATED scalar subquery: `DoOptimize` builds its physical plan and wraps
+it in a `ScalarSubQueryExpr` that runs once per statement. That evaluator is
+not ported, so Rust returned `ScalarSubqueryOutcome::EvaluateSeparately` and
+`lower_scalar_subqueries` turned it into
+`Unsupported("uncorrelated scalar-subquery evaluation is not available to the
+planner")` -- every statement with a non-correlated scalar subquery failed.
+
+`handle_scalar_subquery` now lowers every scalar subquery into the
+MaxOneRow-guarded left-outer Apply (the same shape the correlated case already
+used), and materializes the FROM-less dual's EMPTY schema before building the
+Apply so `SELECT (SELECT 1)` keeps a schema. The answer is Go's; the cost is
+that the subquery is re-executed once per outer row instead of once per
+statement. That performance divergence is bounded and recorded here as the
+unported `ScalarSubQueryExpr` boundary.
+
+Regressions (all failed before and pass after):
+`driver::field_name_tests::a_folded_literal_is_not_a_written_literal`,
+`driver::tests::primary_keys::issue_50051_unsigned_boundaries_range_correctly`,
+and `driver::tests::aggregates::explain_distinct_scalar_subquery_with_filter`.
+The HAVING test's alias correlation (`hs.x = bb`) now answers `10` like Go and
+its assertion was updated; the test still fails on the separate
+`ht.b`-in-a-subquery clause attribution (`where clause` vs Go's `having
+clause`), which is not a regression.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,147 passed / 81 failed (baseline 1,144 / 84; three fixed, no new)
+cargo fmt -p tidb-planner -p tidb-executor -- --check
+# three pre-existing drift files only
+git diff --check -- rust
+# passed
+```

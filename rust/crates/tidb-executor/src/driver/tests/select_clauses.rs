@@ -481,13 +481,12 @@ fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
         run("SELECT a FROM ht HAVING (SELECT count(*) FROM hs) > 0").unwrap(),
         vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
     );
-    // The correlation resolves against the PROJECTION, so the underlying
-    // column's name is NOT what it answers to.
-    //
-    // DEFERRED, the other side of that same rule: a correlation to the ALIAS
-    // (`hs.x = bb`, which TiDB answers `10`) is refused rather than answered
-    // -- see `bind_having_correlations`. It is an error, not a wrong row set.
-    assert!(run("SELECT b AS bb FROM ht HAVING (SELECT y FROM hs WHERE hs.x = bb) > 0").is_err());
+    // The correlation resolves against the PROJECTION, so the ALIAS is what it
+    // answers to -- `bb`, not the underlying `b`.
+    assert_eq!(
+        run("SELECT b AS bb FROM ht HAVING (SELECT y FROM hs WHERE hs.x = bb) > 0").unwrap(),
+        vec![vec![Datum::Int(10)]]
+    );
     for (sql, name) in [
         (
             "SELECT a FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",

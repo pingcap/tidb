@@ -1892,8 +1892,12 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ) -> Result<ScalarSubqueryOutcome, RewriteError> {
         // Go's schema getter materializes an EMPTY schema for the FROM-less
         // dual this outer plan is when the statement is `SET @x = (SELECT ..)`
-        // lowered to `SELECT (subquery)` — never nil — so the uncorrelated
-        // subquery takes the evaluate-separately path instead of erroring.
+        // lowered to `SELECT (subquery)` — never nil. The Apply lowering below
+        // reads `outer.schema()`, so give the dual that empty schema here.
+        let mut outer = outer;
+        if outer.schema().is_none() {
+            set_own_schema(&mut outer, Schema::default(), Vec::new());
+        }
         let outer_schema = outer.schema_or_empty();
         let mut np = self.build_max_one_row(np);
         let cor_cols = extract_cor_columns_by_schema_4_logical_plan(&mut np, &outer_schema);
@@ -1906,9 +1910,13 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             &mut self.hint_warnings,
         );
 
-        if !self.must_build_apply(&np) {
-            return Ok(ScalarSubqueryOutcome::EvaluateSeparately { outer, inner: np });
-        }
+        // Go pre-evaluates an UNCORRELATED scalar subquery through
+        // `DoOptimize` + `ScalarSubQueryExpr` (the `handleScalarSubquery`
+        // tail). That evaluator is not ported, so Rust lowers every scalar
+        // subquery into the left-outer Apply: the value is computed once per
+        // outer row rather than once per statement, which is the same answer
+        // for a MaxOneRow-guarded subquery and keeps `SELECT (subquery)` over
+        // the FROM-less dual working.
         let np_schema = np.schema().ok_or(RewriteError::MissingSchema)?.clone();
         let mut plan =
             self.build_apply_with_join_type(outer, np, LogicalJoinType::LeftOuter, no_decorrelate)?;
