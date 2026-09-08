@@ -863,6 +863,12 @@ both `oltp_read_only` and `oltp_read_write`.
   directory`. This unblocked 16 spill tests across hash-agg, join, memory
   quota, and merge-join-in-disk. Receipt:
   `rust/testport/receipts/util_disk.md`.
+- [x] 2026-09-09: corrected two NULL-bound test expectations to Go's
+  `Conds2TableDual`/`IsConstNull` oracle. `score > NULL` collapses to a
+  `TableDual` (no index path), while `a BETWEEN NULL AND NULL` is one
+  `and(ge, le)` condition that `IsConstNull` misses, so the relation is read.
+  Both tests asserted the opposite; the Rust behavior already matched Go.
+  Receipt: `rust/testport/receipts/planner_empty_range.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

@@ -592,11 +592,10 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             }]
         ))
     );
-    // A NULL constant matches nothing, which Go represents as no ranges.
-    assert_eq!(
-        ranges("SELECT id FROM q WHERE score > NULL"),
-        Some((1, vec![]))
-    );
+    // `score > NULL` is `IsConstNull` (`pkg/expression/util.go:2356`), so
+    // `Conds2TableDual` (`operator/logicalop/expression_util.go:24`) replaces
+    // the plan with a `TableDual` -- there is no index path to inspect.
+    assert_eq!(ranges("SELECT id FROM q WHERE score > NULL"), None);
 
     // An OR is detached branch by branch and the branches' ranges are
     // unioned (Go `detachDNFCondAndBuildRangeForIndex` + `UnionRanges`).

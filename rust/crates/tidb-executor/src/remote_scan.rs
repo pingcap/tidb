@@ -1699,12 +1699,13 @@ mod tests {
     /// A clustered handle whose `WHERE` admits NO handle at all reads nothing
     /// -- it does not send a coprocessor request with no ranges.
     ///
-    /// Both halves matter. `id > 97 AND id < 97` and a NULL bound each build an
-    /// EMPTY range list, which the local cursor states exactly by opening no
-    /// iterator; the coprocessor's `Ranges` list cannot state it, and the
-    /// transport rejects the request instead (`missing_ranges`). The control
-    /// below keeps the ordinary narrowed range on the coprocessor, so this is
-    /// not "stop pushing ranges down".
+    /// `id > 97 AND id < 97` builds an EMPTY range list, which the local cursor
+    /// states exactly by opening no iterator; the coprocessor's `Ranges` list
+    /// cannot state it, and the transport rejects the request instead
+    /// (`missing_ranges`). A NULL bound is NOT the same case: Go's BETWEEN
+    /// rewrite is one `and(ge, le)` condition, so `IsConstNull` misses it and
+    /// the relation is read. The control below keeps the ordinary narrowed
+    /// range on the coprocessor, so this is not "stop pushing ranges down".
     #[test]
     fn an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request() {
         let mut fixture = clustered_fixture();
@@ -1724,6 +1725,16 @@ mod tests {
             Vec::<Vec<Datum>>::new()
         );
         assert_eq!(
+            fixture.returned.load(Ordering::Relaxed),
+            0,
+            "no row crossed the network for an empty handle range"
+        );
+        // `a BETWEEN NULL AND NULL` rewrites to `and(ge(a, NULL), le(a, NULL))`
+        // (`betweenToExpression`, `expression_rewriter.go:2788`), which is NOT
+        // an access condition: Go's `IsConstNull` (`util.go:2356`) only fires
+        // on a bare comparison, so the whole relation is read and the filter
+        // drops every row.
+        assert_eq!(
             run_select_on(
                 "SELECT a FROM t WHERE a BETWEEN NULL AND NULL",
                 &catalog,
@@ -1734,11 +1745,12 @@ mod tests {
         );
         assert_eq!(
             fixture.returned.load(Ordering::Relaxed),
-            0,
-            "no row crossed the network for a range that admits none"
+            100,
+            "a NULL bound is not an access condition, so the relation is read"
         );
 
         // Control: a range that DOES admit rows still reaches the coprocessor.
+        fixture.returned.store(0, Ordering::Relaxed);
         assert_eq!(
             run_select_on("SELECT a FROM t WHERE a BETWEEN 98 AND 100", &catalog, &ctx).unwrap(),
             vec![

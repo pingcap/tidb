@@ -61,3 +61,27 @@ PATH=/Users/chenhuansheng/.cache/codex-go1.25.10/go/bin:$PATH \
 
 The Go reference remains read-only; this batch changes Rust planner/ranger
 owners and does not alter Go, Bazel, generated, or platform source files.
+
+## Follow-up: two NULL-bound test expectations matched Go (2026-09-09)
+
+`Conds2TableDual` (`operator/logicalop/expression_util.go:24`) replaces a plan
+with a `TableDual` when any condition is `expression.IsConstNull`
+(`pkg/expression/util.go:2356`) — a bare `lt/le/gt/ge/eq/ne` whose RIGHT
+argument is a non-deferred NULL constant. Two executor tests encoded the
+opposite of that oracle:
+
+- `driver::tests::index_ranges::index_ranges_are_built_the_way_go_builds_them`
+  expected `SELECT id FROM q WHERE score > NULL` to leave an index path with
+  an empty range list. Go collapses `score > NULL` to a `TableDual`, so there
+  is no index path; the assertion is now `None` and the Rust already agreed.
+- `remote_scan::tests::an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request`
+  expected `a BETWEEN NULL AND NULL` to read nothing. Go's
+  `betweenToExpression` (`expression_rewriter.go:2788`) rewrites BETWEEN into
+  ONE `and(ge, le)` condition, so `IsConstNull` sees `and`, misses, and the
+  relation is read before the filter drops every row. The empty-range
+  assertion now follows only the `a > 97 AND a < 97` query; the NULL bound
+  asserts 100 rows crossed the wire, and the control's counter is reset.
+
+Validation: both tests pass; `tidb-executor` lib serialized 1198 passed / 49
+failed, the two above and no additions; `rustfmt --edition 2021 --check` clean
+on both files; `git diff --check -- rust`.
