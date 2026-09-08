@@ -1888,9 +1888,13 @@ fn tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd() {
         ],
         "{rows:#?}",
     );
+    // Go's plain EXPLAIN for this fixture prints the evaluated aggregate
+    // column as `Column#8` (the derived table's SUM slot); the earlier
+    // `Column#1` expectation came from a build that had not yet carried the
+    // derived aggregate's output id.
     assert_eq!(
         cell(1, 4),
-        "ne(test.warehouse.w_ytd, Column#1)",
+        "ne(test.warehouse.w_ytd, Column#8)",
         "{rows:#?}"
     );
     for row in [3, 4, 6, 7, 9] {
@@ -1961,7 +1965,10 @@ fn tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd() {
         "HashAgg must resolve group columns against its projection input: {analyzed:#?}"
     );
     assert!(
-        aggregate.contains("funcs:sum(test.history.h_amount)->Column#0"),
+        // Go's plan for this query allocates the derived SUM slot as
+        // `Column#8` (the plain-EXPLAIN probe above confirms the same id), so
+        // analyzed statistics must not change the resolved aggregate output.
+        aggregate.contains("funcs:sum(test.history.h_amount)->Column#8"),
         "HashAgg must resolve SUM against its projection input: {analyzed:#?}"
     );
     assert!(

@@ -521,9 +521,33 @@ fn pseudo_range_filter_selectivity(
         if mask == 0 {
             continue;
         }
-        let count =
-            crate::ranger::stats_bridge::pseudo_count_by_column_ranges(&range_result.ranges, rows);
-        let kind = if source.handle_cols.iter().any(|handle| handle.unique_id == column.unique_id) {
+        // Go `Selectivity` marks the handle column `PkType` and estimates it
+        // with `GetRowCountByColumnRanges(..., pkIsHandle=true)`
+        // (`planner/cardinality/selectivity.go:123`,
+        // `row_count_column.go:47`): a pseudo point range on an integer
+        // handle is ONE row, not `RealtimeCount / pseudoEqualRate`. The
+        // generic column estimate made a fixed primary-key lookup cost ten
+        // rows, which in turn reordered the join group away from Go's plan.
+        let is_int_handle = source.handle_is_int
+            && source
+                .handle_cols
+                .iter()
+                .any(|handle| handle.unique_id == column.unique_id);
+        let count = if is_int_handle {
+            crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
+                &range_result.ranges,
+                rows,
+                field_type.is_unsigned(),
+            )
+        } else {
+            crate::ranger::stats_bridge::pseudo_count_by_column_ranges(&range_result.ranges, rows)
+        };
+        let kind = if is_int_handle
+            || source
+                .handle_cols
+                .iter()
+                .any(|handle| handle.unique_id == column.unique_id)
+        {
             StatsNodeType::PrimaryKey
         } else {
             StatsNodeType::Column

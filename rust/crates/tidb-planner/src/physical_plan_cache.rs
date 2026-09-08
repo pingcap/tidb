@@ -743,6 +743,14 @@ fn update_inner_scan_ranges(plan: &mut PhysicalPlan, ranges: &Ranges) -> bool {
             scan.ranges = ranges.clone();
             true
         }
+        // Go's index-join inner scan may carry a pushed-down Selection (the
+        // `IndexRangeScan -> Selection` shape `constructDS2IndexScanTask`
+        // builds); the runtime ranges still belong to the scan below it.
+        PhysicalPlan::Selection(selection) => selection
+            .base
+            .children_mut()
+            .first_mut()
+            .is_some_and(|plan| update_inner_scan_ranges(plan, ranges)),
         PhysicalPlan::TableReader(reader) => reader
             .table_plan
             .as_deref_mut()

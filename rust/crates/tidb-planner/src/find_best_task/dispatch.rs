@@ -2506,10 +2506,30 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .as_ref()
                     .is_some_and(|result| result.eq_or_in_count > 0)
                     && !cur_is_full_range;
-                let remained_conds = detach.as_ref().map_or_else(
+                let mut remained_conds = detach.as_ref().map_or_else(
                     || ds.pushed_down_conds.clone(),
                     |result| result.remained_conds.clone(),
                 );
+                if prop.index_join_prop.is_some() {
+                    // Go `constructDS2IndexScanTask` re-attaches every
+                    // inner-only access condition as an explicit probe-side
+                    // Selection: the runtime ranges come from the join keys,
+                    // so a static predicate such as `h_w_id = 1` is a residual
+                    // filter that keeps the `IndexRangeScan -> Selection`
+                    // shape (`exhaust_physical_plans.go:913-917`).
+                    if let (Some(result), Some(schema)) = (detach.as_ref(), ds.base.base.schema()) {
+                        for condition in &result.access_conds {
+                            if tidb_expr::expr_util::normal_form::expr_from_schema(
+                                condition, schema,
+                            ) && !remained_conds
+                                .iter()
+                                .any(|existing| existing.equal(condition))
+                            {
+                                remained_conds.push(condition.clone());
+                            }
+                        }
+                    }
+                }
                 // Go retains `AccessCondition` on PhysicalIndexScan, not
                 // every pushed predicate. Rebuilding the latter would feed
                 // residual filters back into the ranger and make a safe
@@ -2700,27 +2720,73 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         *count = adjusted;
                     }
                 }
-                let mut stats = table_stats.as_ref().map(|stats| {
+                let stats = table_stats.as_ref().map(|stats| {
                     stats.scale_by_expect_cnt(
                         count_after_access.unwrap_or_else(|| stats.row_count()),
                         ctx.skew_ratio,
                     )
                 });
-                if let Some(runtime) = &prop.index_join_prop {
+                // Go `constructDS2IndexScanTask` keeps TWO counts apart: the
+                // IndexScan carries `tmpPath.CountAfterAccess` (the static
+                // access estimate), while the pushed-down Selection and the
+                // lookup's table side carry `finalStats`/`CountAfterIndex`,
+                // the per-outer-row runtime count.
+                let runtime_probe_stats = prop.index_join_prop.as_ref().map(|runtime| {
                     let mut runtime_rows =
                         probe_access_rows_floor.unwrap_or(runtime.avg_inner_row_count);
                     if index_join_path_is_max_one_row(ds, path, runtime) {
                         runtime_rows = runtime_rows.min(1.0);
                     }
-                    stats = probe_access_rows_floor
-                        .and_then(|_| {
-                            table_stats.as_ref().map(|table_stats| {
-                                table_stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio)
-                            })
+                    table_stats
+                        .as_ref()
+                        .map(|table_stats| {
+                            table_stats.scale_by_expect_cnt(runtime_rows, ctx.skew_ratio)
                         })
-                        .or_else(|| Some(crate::stats_info::StatsInfo::new(runtime_rows, [])));
-                }
-                base.base.set_stats(stats.clone());
+                        .unwrap_or_else(|| crate::stats_info::StatsInfo::new(runtime_rows, []))
+                });
+                let fully_covered_columns = source_index
+                    .columns
+                    .iter()
+                    .filter(|column| column.length < 0)
+                    .filter_map(|column| {
+                        ds.schema_column_for_index_column(column)
+                            .map(|column| column.unique_id)
+                    })
+                    .collect::<std::collections::BTreeSet<_>>();
+                let (index_filters, table_filters): (Vec<_>, Vec<_>) =
+                    remained_conds.into_iter().partition(|condition| {
+                        tidb_expr::simple_expr::extract_columns(condition)
+                            .iter()
+                            .all(|column| fully_covered_columns.contains(&column.unique_id))
+                    });
+                // Go `constructDS2IndexScanTask` sets the scan to
+                // `tmpPath.CountAfterAccess`, which for a runtime probe is the
+                // per-outer-row count divided by the residual index-filter
+                // selectivity; the static access estimate is used otherwise.
+                let table_rows = table_stats.as_ref().map_or(0.0, |stats| stats.row_count());
+                let scan_stats = match (&runtime_probe_stats, count_after_access) {
+                    (Some(runtime_stats), Some(access))
+                        if !index_filters.is_empty() && access > 0.0 && table_rows > 0.0 =>
+                    {
+                        let scan_rows = runtime_stats.row_count() * table_rows / access;
+                        Some(
+                            table_stats
+                                .as_ref()
+                                .map(|table_stats| {
+                                    table_stats.scale_by_expect_cnt(scan_rows, ctx.skew_ratio)
+                                })
+                                .unwrap_or_else(|| {
+                                    crate::stats_info::StatsInfo::new(scan_rows, [])
+                                }),
+                        )
+                    }
+                    // With no residual index filters the runtime ranges ARE
+                    // the whole access: the scan carries the per-outer-row
+                    // count directly.
+                    (Some(runtime_stats), _) => Some(runtime_stats.clone()),
+                    _ => stats.clone(),
+                };
+                base.base.set_stats(scan_stats);
                 let mut cost_columns = source_index
                     .columns
                     .iter()
@@ -2760,21 +2826,6 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     covering_ranges: Vec::new(),
                     tikv_pushdown: None,
                 });
-                let fully_covered_columns = source_index
-                    .columns
-                    .iter()
-                    .filter(|column| column.length < 0)
-                    .filter_map(|column| {
-                        ds.schema_column_for_index_column(column)
-                            .map(|column| column.unique_id)
-                    })
-                    .collect::<std::collections::BTreeSet<_>>();
-                let (index_filters, table_filters): (Vec<_>, Vec<_>) =
-                    remained_conds.into_iter().partition(|condition| {
-                        tidb_expr::simple_expr::extract_columns(condition)
-                            .iter()
-                            .all(|column| fully_covered_columns.contains(&column.unique_id))
-                    });
                 let index_plan = if index_filters.is_empty() {
                     scan
                 } else {
@@ -2786,11 +2837,15 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     selection_base
                         .base
                         .set_schema(ds.base.base.schema().cloned());
-                    selection_base.base.set_stats(if table_filters.is_empty() {
-                        ds.base.base.stats_info().cloned()
-                    } else {
-                        stats.clone()
-                    });
+                    selection_base.base.set_stats(
+                        if let Some(runtime_stats) = &runtime_probe_stats {
+                            Some(runtime_stats.clone())
+                        } else if table_filters.is_empty() {
+                            ds.base.base.stats_info().cloned()
+                        } else {
+                            stats.clone()
+                        },
+                    );
                     selection_base.set_children(vec![scan]);
                     PhysicalPlan::Selection(crate::physical::PhysicalSelection {
                         base: selection_base,
@@ -2813,9 +2868,11 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         "TableScan",
                         ds.base.base.query_block_offset(),
                     );
-                    table_base
-                        .base
-                        .set_stats(index_plan.base().base.stats_info().cloned());
+                    table_base.base.set_stats(
+                        runtime_probe_stats
+                            .clone()
+                            .or_else(|| index_plan.base().base.stats_info().cloned()),
+                    );
                     table_base.base.set_schema(ds.base.base.schema().cloned());
                     let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                         base: table_base,

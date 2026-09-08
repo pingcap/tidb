@@ -460,6 +460,10 @@ fn point_access(catalog: &Catalog, table_id: i64, index_id: Option<i64>) -> Scan
 #[derive(Clone, Copy)]
 struct IndexJoinExplainContext<'a> {
     table_id: i64,
+    /// The inner access object: `None` is the clustered table range, `Some`
+    /// is a secondary index. Go renders `range: decided by [...]` on whichever
+    /// scan the runtime join keys probe.
+    index_id: Option<i64>,
     /// Go `indexJoinResult.chosenPath.IdxCols` at each matched key offset: the
     /// INNER index columns the outer keys probe.
     inner_keys: &'a [tidb_expr::column::Column],
@@ -477,8 +481,46 @@ fn is_index_join_table_range(
     let PhysicalPlan::TableScan(scan) = plan else {
         return false;
     };
-    context
-        .is_some_and(|context| context.table_id == scan.table_id && !context.outer_keys.is_empty())
+    context.is_some_and(|context| {
+        context.index_id.is_none()
+            && context.table_id == scan.table_id
+            && !context.outer_keys.is_empty()
+    })
+}
+
+/// Go `PhysicalIndexScan.RangeInfo` for an index-join probe: the secondary
+/// index the runtime join keys decide.
+fn is_index_join_index_range(
+    plan: &PhysicalPlan,
+    context: Option<IndexJoinExplainContext<'_>>,
+) -> bool {
+    let PhysicalPlan::IndexScan(scan) = plan else {
+        return false;
+    };
+    context.is_some_and(|context| {
+        context.index_id == Some(scan.index_id)
+            && context.table_id == scan.table_id
+            && !context.outer_keys.is_empty()
+    })
+}
+
+/// Go `indexJoinPathRangeInfo`: `eq(inner_idx_col, outer_key)` for every
+/// matched key, then `chosenAccess`.
+fn index_join_decided_by_text(context: IndexJoinExplainContext<'_>) -> String {
+    let mut decided = context
+        .inner_keys
+        .iter()
+        .zip(context.outer_keys)
+        .map(|(inner, outer)| {
+            format!(
+                "eq({}, {})",
+                expression_text(&tidb_expr::expression::Expression::Column(inner.clone())),
+                expression_text(&tidb_expr::expression::Expression::Column(outer.clone()))
+            )
+        })
+        .collect::<Vec<_>>();
+    decided.extend(context.access_conditions.iter().map(expression_text));
+    format!("range: decided by [{}]", decided.join(" "))
 }
 
 fn columns_text(columns: &[tidb_expr::column::Column]) -> String {
@@ -762,27 +804,9 @@ fn physical_operator_info(
         PhysicalPlan::TableScan(scan) => {
             let mut parts = Vec::new();
             if is_index_join_table_range(plan, index_join_context) {
-                let context = index_join_context.expect("index join context");
-                // Go `indexJoinPathRangeInfo`: `eq(inner_idx_col, outer_key)`
-                // for every matched key, then `chosenAccess`.
-                let mut decided = context
-                    .inner_keys
-                    .iter()
-                    .zip(context.outer_keys)
-                    .map(|(inner, outer)| {
-                        format!(
-                            "eq({}, {})",
-                            expression_text(&tidb_expr::expression::Expression::Column(
-                                inner.clone()
-                            )),
-                            expression_text(&tidb_expr::expression::Expression::Column(
-                                outer.clone()
-                            ))
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                decided.extend(context.access_conditions.iter().map(expression_text));
-                parts.push(format!("range: decided by [{}]", decided.join(" ")));
+                parts.push(index_join_decided_by_text(
+                    index_join_context.expect("index join context"),
+                ));
             } else if scan
                 .scan_kind()
                 .is_some_and(|kind| kind.plan_type() == "TableRangeScan")
@@ -808,7 +832,11 @@ fn physical_operator_info(
         PhysicalPlan::TableReader(reader) => reader.explain_info(ignore_explain_id_suffix),
         PhysicalPlan::IndexScan(scan) => {
             let mut parts = Vec::new();
-            if !scan.ranges.is_empty()
+            if is_index_join_index_range(plan, index_join_context) {
+                parts.push(index_join_decided_by_text(
+                    index_join_context.expect("index join context"),
+                ));
+            } else if !scan.ranges.is_empty()
                 && !tidb_planner::ranger::types::has_full_range(&scan.ranges, false)
             {
                 parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
@@ -1037,17 +1065,13 @@ fn physical_explain_operator(
             .map(|(index, child)| {
                 let child_context = match plan {
                     PhysicalPlan::IndexJoin(join) if index == join.inner_child_idx => join
-                        .inner_access_index_id
-                        .is_none()
-                        .then_some(())
-                        .and_then(|()| {
-                            join.inner_access_table_id
-                                .map(|table_id| IndexJoinExplainContext {
-                                    table_id,
-                                    inner_keys: &join.inner_join_keys,
-                                    outer_keys: &join.outer_join_keys,
-                                    access_conditions: &join.other_conditions,
-                                })
+                        .inner_access_table_id
+                        .map(|table_id| IndexJoinExplainContext {
+                            table_id,
+                            index_id: join.inner_access_index_id,
+                            inner_keys: &join.inner_join_keys,
+                            outer_keys: &join.outer_join_keys,
+                            access_conditions: &join.other_conditions,
                         }),
                     PhysicalPlan::IndexJoin(_) => None,
                     _ => index_join_context,

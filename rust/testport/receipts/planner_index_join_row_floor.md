@@ -79,6 +79,47 @@ now asserts BOTH fix states: the default session keeps the broad clustered
 `TableRangeScan` and never mentions `idx_k1_k2`, while an explicit
 `44855:ON` statement selects `idx_k1_k2`.
 
+### 2026-09-09 follow-up: the inner scan's pushed-down shape
+
+TPCC condition 08 exposed three more `constructDS2IndexScanTask` details the
+same function pair owns:
+
+* **The inner-only access conditions stay as a Selection.**
+  `exhaust_physical_plans.go:913-917` re-appends every access condition that
+  is evaluable on the inner schema to the probe scan's filter list
+  (`ranger.AppendConditionsIfNotExist`). The runtime ranges come from the join
+  keys, so a static predicate such as `h_w_id = 1` is a residual filter and
+  the plan keeps the `IndexRangeScan -> Selection` shape. The index arm now
+  appends the chosen path's `access_conds` to `remained_conds` when
+  `index_join_prop` is set.
+* **The scan and its Selection carry different counts.**
+  `constructDS2IndexScanTask` sets the scan to
+  `tmpPath.CountAfterAccess = rowCount / selectivity(indexConds)` and the
+  pushed-down Selection and the lookup's table side to `finalStats` /
+  `CountAfterIndex` (the per-outer-row count). The index arm now keeps the
+  static access estimate for the scan only when no runtime probe exists; a
+  runtime probe puts the per-outer-row count on the Selection (and on the
+  table side) and, when residual index filters remain, divides that count by
+  their selectivity for the scan.
+* **`PhysicalIndexScan.RangeInfo` renders `range: decided by [...]` for a
+  secondary-index inner.** `explain.rs` only carried the table-range form;
+  the index form now shares `index_join_decided_by_text`, keyed by the
+  join's recorded `inner_access_index_id`.
+
+The plan-cache rebuild also learns the new shape:
+`update_inner_scan_ranges` (`physical_plan_cache.rs`) now recurses through a
+pushed-down `Selection` to reach the range-bearing scan, so a cached
+`IndexJoin` whose inner is `TableReader -> Selection -> IndexScan` can rebind
+its parameters instead of failing closed.
+
+The executor regression
+`driver::tests::aggregates::tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd`
+now passes end to end (plan tree, estRows, and both analyzed/unanalyzed
+projection text). Its two stale absolute column ids (`Column#1` on the outer
+Selection and `Column#0` on the analyzed SUM) were corrected to the Go oracle's
+`Column#8`, captured from a `testkit.CreateMockStore` probe of the same
+fixture.
+
 ## Validation
 
 Ready validation for the Rust owner:

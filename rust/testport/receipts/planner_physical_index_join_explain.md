@@ -70,6 +70,19 @@ multi-way join shape. The executor unit test
 `explain::tests::physical_join_names_match_go_plancodec_types` covers all three
 index-join families plus hash and merge joins.
 
+## 2026-09-09 follow-up: the secondary-index inner scan
+
+`indexJoinPathRangeInfo` renders on whichever scan the runtime join keys
+probe, not only the clustered table range. The explain context now carries
+`inner_access_index_id`, `is_index_join_index_range` matches it against a
+`PhysicalIndexScan`, and `index_join_decided_by_text` is shared by both scan
+kinds, so a secondary-index inner prints
+`range: decided by [eq(inner_col, outer_col) ...]` exactly as it does in Go.
+TPCC condition 08's probe (a `history` index lookup driven by
+`warehouse.w_id`) is the regression:
+`driver::tests::aggregates::tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd`
+asserts the text and now passes.
+
 Focused commands and results:
 
 ```text
