@@ -1592,6 +1592,21 @@ fn index_inner_reader_payload<'a>(plan: &'a PhysicalPlan) -> Option<(&'a Physica
 /// key, so mere reader presence cannot choose the probe side. Go identifies it
 /// through `IndexJoinInfo`/the chosen `AccessPath`, whose table is what
 /// `join.inner_access_table_id` records here.
+/// The cop partial aggregate Go pushes into an index-join inner reader's
+/// table plan (`attach2Task4PhysicalHashAgg`). The lookup leaf emits
+/// physical-width rows, so the port runs the partial aggregate locally above
+/// the leaf instead of inside the lookup source.
+fn index_inner_partial_aggregate(
+    plan: &PhysicalPlan,
+) -> Option<(&PhysicalPlan, &[AggFuncDesc], &[Expression], bool)> {
+    let (embedded, _) = index_inner_reader_payload(plan)?;
+    match embedded {
+        PhysicalPlan::HashAgg(agg) => Some((embedded, &agg.agg_funcs, &agg.group_by_items, false)),
+        PhysicalPlan::StreamAgg(agg) => Some((embedded, &agg.agg_funcs, &agg.group_by_items, true)),
+        _ => None,
+    }
+}
+
 fn contains_index_inner_reader(plan: &PhysicalPlan, table_id: Option<i64>) -> bool {
     if let Some((embedded, _)) = index_inner_reader_payload(plan) {
         if retained_table_id(embedded).ok() == table_id {
@@ -1610,6 +1625,7 @@ fn build_index_inner_reader(
     shared: Option<&std::rc::Rc<std::cell::RefCell<SharedIndexJoinProbes>>>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
+    offset_schema: Option<&Schema>,
 ) -> Result<IndexJoinLookupExec, DriverError> {
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
@@ -1638,12 +1654,15 @@ fn build_index_inner_reader(
         LookupObject::CommonHandle
     };
     let schema = plan_schema(plan)?;
-    let output_offsets = index_inner_output_offsets(&schema, &table)?;
+    // A cop partial aggregate's reader output is the aggregate's result, not
+    // the table row; project the aggregate's INPUT columns instead.
+    let row_schema = offset_schema.unwrap_or(&schema);
+    let output_offsets = index_inner_output_offsets(row_schema, &table)?;
     let filter_schema = physical_table_schema(embedded, &table);
     let mut filters = Vec::new();
     collect_index_inner_filters(embedded, &filter_schema, &mut filters)?;
     let mut source = IndexJoinLookupExec::new_with_context(
-        meta(plan, schema),
+        meta(plan, row_schema.clone()),
         table.clone(),
         object,
         RowDecodeContext::for_query(ctx),
@@ -1681,6 +1700,37 @@ fn build_index_inner_subtree(
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
     if index_inner_reader_payload(plan).is_some() {
+        if let Some((partial_plan, descriptors, group_by, stream)) =
+            index_inner_partial_aggregate(plan)
+        {
+            let row_schema = partial_plan
+                .children()
+                .first()
+                .and_then(PhysicalPlan::schema)
+                .cloned()
+                .ok_or_else(|| {
+                    DriverError::unsupported(
+                        "an index-join inner partial aggregate has no input schema",
+                    )
+                })?;
+            let leaf = build_index_inner_reader(
+                plan,
+                join,
+                probe_parts,
+                Some(shared),
+                catalog,
+                ctx,
+                Some(&row_schema),
+            )?;
+            return build_aggregation_over_child(
+                partial_plan,
+                descriptors,
+                group_by,
+                stream,
+                Box::new(leaf),
+                ctx,
+            );
+        }
         return Ok(Box::new(build_index_inner_reader(
             plan,
             join,
@@ -1688,6 +1738,7 @@ fn build_index_inner_subtree(
             Some(shared),
             catalog,
             ctx,
+            None,
         )?));
     }
     match plan {
@@ -1852,8 +1903,9 @@ fn build_index_lookup_source(
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<IndexLookupSource, DriverError> {
-    if index_inner_reader_payload(inner).is_some() {
-        return build_index_inner_reader(inner, join, probe_parts, None, catalog, ctx)
+    if index_inner_reader_payload(inner).is_some() && index_inner_partial_aggregate(inner).is_none()
+    {
+        return build_index_inner_reader(inner, join, probe_parts, None, catalog, ctx, None)
             .map(IndexLookupSource::Leaf);
     }
     let probes = std::rc::Rc::new(std::cell::RefCell::new(SharedIndexJoinProbes::default()));

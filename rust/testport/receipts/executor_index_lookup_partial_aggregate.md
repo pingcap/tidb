@@ -66,3 +66,35 @@ still fails on a SEPARATE stale reference: after the aggregation-elimination
 rewrite, `not(isnull(cast_decimal(d_ytd)))` still names the pre-rewrite
 `d_ytd` (`UniqueID 10`) while the child schema carries the cast's output
 (`UniqueID 13`).
+
+## Follow-up: an index-join inner reader's cop partial aggregate (2026-09-09)
+
+`build_index_inner_reader` built the lookup leaf from the READER's schema and
+projected those columns onto the retained table. When the reader's table plan
+is a cop partial aggregate (`attach2Task4PhysicalHashAgg`), that schema is the
+aggregate's output (group keys plus partial states), so the projection failed
+with "an index-join reader output is absent from its retained table".
+
+The leaf is now built against the partial aggregate's INPUT schema, and
+`build_index_inner_subtree` runs the partial aggregate locally above the
+leaf (`build_aggregation_over_child`); the root final aggregate consumes the
+partial columns exactly as it consumes a remote partial. A reader with a
+partial aggregate no longer takes the leaf shortcut in
+`build_index_lookup_source`, so the composite subtree path wraps it.
+
+Covered by
+`driver::tests::aggregates::tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup`,
+which executes the grouped index-join plan; before the change the same plan
+answered `Unsupported("an index-join reader output is absent from its
+retained table")`.
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1256 passed; 6 failed; no additions
+
+cargo check --locked --all-targets -p tidb-planner -p tidb-executor
+rustfmt --edition 2021 --config skip_children=true --check <changed files>
+git diff --check
+# clean
+```
+

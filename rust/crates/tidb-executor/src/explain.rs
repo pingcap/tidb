@@ -718,6 +718,15 @@ fn physical_operator_info(
         ),
         PhysicalPlan::IndexJoin(join) => {
             let mut parts = vec![join_type_text(join.join_type).to_owned()];
+            // Go `PhysicalIndexJoin.ExplainInfoInternal`
+            // (`physical_index_join.go:159-165`): the `inner:` field comes
+            // BEFORE `explainJoinLeftSide`'s `left side:` field.
+            if let Some(inner) = join.base.children().get(join.inner_child_idx) {
+                parts.push(format!(
+                    "inner:{}",
+                    inner.explain_id(ignore_explain_id_suffix)
+                ));
+            }
             if join.join_type != tidb_planner::find_best_task::LogicalJoinType::Inner {
                 if let Some(left) = join.base.children().first() {
                     parts.push(format!(
@@ -725,12 +734,6 @@ fn physical_operator_info(
                         plan_explain_id(left, ignore_explain_id_suffix)
                     ));
                 }
-            }
-            if let Some(inner) = join.base.children().get(join.inner_child_idx) {
-                parts.push(format!(
-                    "inner:{}",
-                    inner.explain_id(ignore_explain_id_suffix)
-                ));
             }
             if !join.outer_join_keys.is_empty() {
                 parts.push(format!("outer key:{}", columns_text(&join.outer_join_keys)));

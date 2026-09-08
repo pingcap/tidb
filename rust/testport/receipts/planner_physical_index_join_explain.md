@@ -120,3 +120,32 @@ currently red on unrelated pre-existing upstream files (`access_cost.rs`,
 planner test helpers, and other files outside this batch). None of this
 batch's Rust files are listed in that format diff, and no unrelated formatting
 was changed.
+
+## Follow-up: the `inner:` field precedes `left side:` (2026-09-09)
+
+Go `PhysicalIndexJoin.ExplainInfoInternal`
+(`pkg/planner/core/operator/physicalop/physical_index_join.go:155-165`)
+writes `, inner:<child>` first and only then calls `explainJoinLeftSide`,
+which appends `, left side:<child>` for every non-inner join type. The Rust
+arm pushed `left side:` first, so a semi-join probe's info began
+`semi join, left side:TableReader, inner:TableReader, ...` where Go prints
+`semi join, inner:TableReader, left side:TableReader, ...`.
+
+`driver::tests::subqueries` compares that prefix and failed on field order
+alone: the operator name, both key lists, the equality conditions and every
+downstream estimate already matched. The arm now emits `inner:` before
+`left side:`, and the test passes.
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1 subqueries
+# 17 passed; 2 failed (the two unrelated subquery failures), subqueries passed
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1256 passed; 6 failed; no additions
+
+cargo check --locked --all-targets -p tidb-planner -p tidb-executor
+rustfmt --edition 2021 --config skip_children=true --check <changed files>
+git diff --check
+# clean
+```
+
