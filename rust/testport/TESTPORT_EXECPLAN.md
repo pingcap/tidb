@@ -11363,3 +11363,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (JSON_OVERLAPS/MEMBER OF pin): shared-member detection, the
   MEMBER OF membership syntax, and OBJECT type reporting. Pinned in
   `crates/tidb-session/tests/json_overlaps_member_source.rs`.
+- 2026-09-08 (JSON storage pin): JSON_STORAGE_FREE's zero-for-parsed-docs
+  rule, JSON_STORAGE_SIZE's plausible binary size, and NULL propagation.
+  Pinned in `crates/tidb-session/tests/json_storage_source.rs`.
