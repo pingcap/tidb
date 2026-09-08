@@ -1929,7 +1929,7 @@ fn condition_kind(
         tidb_ast::Expr::Like { not, .. } => {
             let selectivity = defaults
                 .eval_topn_string_match
-                .then(|| string_match_selectivity(conjunct, table, resolver, stats))
+                .then(|| string_match_selectivity(conjunct, table, resolver, stats, defaults.trigger_load))
                 .flatten();
             if *not {
                 ConditionKind::NegatedStringMatch(selectivity)
@@ -1940,7 +1940,7 @@ fn condition_kind(
         tidb_ast::Expr::Regexp { not, .. } => {
             let selectivity = defaults
                 .eval_topn_string_match
-                .then(|| string_match_selectivity(conjunct, table, resolver, stats))
+                .then(|| string_match_selectivity(conjunct, table, resolver, stats, defaults.trigger_load))
                 .flatten();
             if *not {
                 ConditionKind::NegatedStringMatch(selectivity)
@@ -1956,7 +1956,7 @@ fn condition_kind(
                 Some(_) => {
                     let selectivity = defaults
                         .eval_topn_string_match
-                        .then(|| string_match_selectivity(conjunct, table, resolver, stats))
+                        .then(|| string_match_selectivity(conjunct, table, resolver, stats, defaults.trigger_load))
                         .flatten();
                     // The wrapper is what makes Go's negate family; the
                     // evaluation itself handles the inversion per value.
@@ -2015,14 +2015,14 @@ fn string_match_shape(
 }
 
 /// Go `GetSelectivityByFilter` for a direct-column `LIKE`/`ILIKE`/`REGEXP`
-/// over a fully available StatsVer2 column. This tier eagerly loads every
-/// statistics payload, so the presence of the column histogram and TopN is
-/// its `IsFullLoad` proof.
+/// over fully loaded StatsVer2 column statistics, falling back to a
+/// single-column non-prefix index when the column statistics are unavailable.
 fn string_match_selectivity(
     predicate: &tidb_ast::Expr,
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
+    trigger_load: bool,
 ) -> Option<f64> {
     let stats = stats.filter(|stats| !stats.pseudo)?;
     // Go `GetExprInsideIsTruth` unwraps a NOT wrapper before the str-match
@@ -2031,6 +2031,12 @@ fn string_match_selectivity(
     let tidb_ast::Expr::Column(path) = strip_parens(tested) else {
         return None;
     };
+    if !matches!(
+        resolver.resolve_expression(path),
+        Some(tidb_expr::expression::Expression::Column(_))
+    ) {
+        return None;
+    }
     let pattern = match strip_parens(pattern_expr) {
         tidb_ast::Expr::String(pattern) | tidb_ast::Expr::RawString(pattern) => pattern.as_bytes(),
         _ => return None,
@@ -2040,7 +2046,74 @@ fn string_match_selectivity(
     if !tidb_datatype::is_bin_collation(column.field_type.collation_name()) {
         return None;
     }
-    let column_stats = stats.columns.get(&column.id)?;
+    if trigger_load {
+        queue_column_stats_load_if_invalid(table, stats, column.id, stats.columns.get(&column.id));
+    }
+    let column_stats = if let Some(loaded) = stats.columns.get(&column.id).filter(|loaded| {
+        loaded.total_row_count() > 0.0
+            && stats
+                .column_load_status
+                .get(&column.id)
+                .is_some_and(|status| status.is_full_load())
+    }) {
+        Cow::Borrowed(loaded)
+    } else {
+        // Go findAvailableStatsForCol falls back only to a fully loaded
+        // single-column, full-length index. Its bounds are encoded keys.
+        let index = table.indexes().iter().find_map(|index| {
+            if index.column_offsets != [offset] {
+                return None;
+            }
+            let loaded = stats.indexes.get(&index.id);
+            if trigger_load
+                && (loaded.is_none()
+                    || !stats
+                        .index_load_status
+                        .get(&index.id)
+                        .is_some_and(|status| status.is_full_load()))
+            {
+                tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(
+                    tidb_model::TableItemID {
+                        table_id: table.table_id,
+                        id: index.id,
+                        is_index: true,
+                        is_sync_load_failed: false,
+                    },
+                    true,
+                );
+            }
+            if index.prefix_lengths != [-1] {
+                return None;
+            }
+            let loaded = loaded?;
+            (loaded.total_row_count() > 0.0
+                && stats
+                    .index_load_status
+                    .get(&index.id)
+                    .is_some_and(|status| status.is_full_load()))
+            .then_some(loaded)
+        })?;
+        let mut histogram = index.histogram.clone();
+        for bucket in &mut histogram.buckets {
+            for bound in [&mut bucket.lower_bound, &mut bucket.upper_bound] {
+                let Datum::Bytes(encoded) = bound else {
+                    return None;
+                };
+                let (remaining, decoded) = tidb_codec::decode_one(encoded).ok()?;
+                if !remaining.is_empty() {
+                    return None;
+                }
+                *bound = decoded;
+            }
+        }
+        Cow::Owned(ColumnStats {
+            histogram,
+            topn: index.topn.clone(),
+            cms: None,
+            stats_ver: index.stats_ver,
+            unsigned: false,
+        })
+    };
     if column_stats.stats_ver != 2 {
         return None;
     }
@@ -3206,7 +3279,7 @@ mod tests {
         let mut field_type = FieldType::new(FieldTypeCode::Varchar);
         field_type.set_charset_name("utf8mb4");
         field_type.set_collation_name("utf8mb4_bin");
-        let table = KvTable::with_storage(
+        let mut table = KvTable::with_storage(
             81,
             vec![KvColumn {
                 name: "name".to_owned(),
@@ -3278,6 +3351,171 @@ mod tests {
             Some(&stats),
         );
         assert!((actual - 0.525).abs() < 1e-12, "{actual} != 0.525");
+        let mut evicted = stats.clone();
+        evicted
+            .column_load_status
+            .insert(1, tidb_stats::StatsLoadedStatus::all_evicted());
+        assert_eq!(
+            string_match_selectivity(
+                &predicate,
+                &table,
+                &NamedColumnResolver { table: &table },
+                Some(&evicted),
+                false
+            ),
+            None,
+            "evicted statistics cannot supply filter estimates"
+        );
+
+        table.add_index(
+            KvIndex {
+                id: 9,
+                name: "iname".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![0],
+                prefix_lengths: vec![-1],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        let source = &stats.columns[&1];
+        let mut histogram = source.histogram.clone();
+        histogram.id = 9;
+        for bucket in &mut histogram.buckets {
+            bucket.lower_bound =
+                Datum::Bytes(tidb_codec::encode_key(&[bucket.lower_bound.clone()]).unwrap());
+            bucket.upper_bound =
+                Datum::Bytes(tidb_codec::encode_key(&[bucket.upper_bound.clone()]).unwrap());
+        }
+        evicted.indexes.insert(
+            9,
+            IndexStats {
+                histogram,
+                topn: source.topn.clone(),
+                cms: None,
+                stats_ver: 2,
+                num_columns: 1,
+                unique: false,
+            },
+        );
+        evicted
+            .index_load_status
+            .insert(9, tidb_stats::StatsLoadedStatus::full_load());
+        let fallback = string_match_selectivity(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&evicted),
+            false,
+        )
+        .unwrap();
+        assert!(
+            (fallback - actual).abs() < 1e-12,
+            "index fallback={fallback}, column={actual}"
+        );
+        evicted
+            .index_load_status
+            .insert(9, tidb_stats::StatsLoadedStatus::all_evicted());
+        assert_eq!(
+            string_match_selectivity(
+                &predicate,
+                &table,
+                &NamedColumnResolver { table: &table },
+                Some(&evicted),
+                false
+            ),
+            None
+        );
+        evicted
+            .index_load_status
+            .insert(9, tidb_stats::StatsLoadedStatus::full_load());
+        evicted.indexes.get_mut(&9).unwrap().stats_ver = 1;
+        assert_eq!(
+            string_match_selectivity(
+                &predicate,
+                &table,
+                &NamedColumnResolver { table: &table },
+                Some(&evicted),
+                false
+            ),
+            None
+        );
+        evicted.indexes.get_mut(&9).unwrap().stats_ver = 2;
+        let mut prefix_table = KvTable::new(82, table.columns.as_ref().clone());
+        let mut prefix_index = table.indexes()[0].clone();
+        prefix_index.prefix_lengths = vec![3];
+        prefix_table.add_index(prefix_index, false);
+        assert_eq!(
+            string_match_selectivity(
+                &predicate,
+                &prefix_table,
+                &NamedColumnResolver {
+                    table: &prefix_table
+                },
+                Some(&evicted),
+                false
+            ),
+            None
+        );
+
+        let mut multi_table = KvTable::new(9701, table.columns.as_ref().clone());
+        let mut multi_index = table.indexes()[0].clone();
+        multi_index.column_offsets = vec![0, 0];
+        multi_index.prefix_lengths = vec![-1, -1];
+        multi_table.add_index(multi_index, false);
+        assert_eq!(
+            string_match_selectivity(
+                &predicate,
+                &multi_table,
+                &NamedColumnResolver {
+                    table: &multi_table
+                },
+                Some(&evicted),
+                false
+            ),
+            None
+        );
+        let mut load_table = KvTable::new(9702, table.columns.as_ref().clone());
+        load_table.add_index(table.indexes()[0].clone(), false);
+        evicted
+            .index_load_status
+            .insert(9, tidb_stats::StatsLoadedStatus::all_evicted());
+        let items = [(1, false), (9, true)].map(|(id, is_index)| tidb_model::TableItemID {
+            table_id: 9702,
+            id,
+            is_index,
+            is_sync_load_failed: false,
+        });
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        for trigger in [false, true] {
+            for item in items {
+                needed.delete(item);
+            }
+            assert_eq!(
+                string_match_selectivity(
+                    &predicate,
+                    &load_table,
+                    &NamedColumnResolver { table: &load_table },
+                    Some(&evicted),
+                    trigger
+                ),
+                None
+            );
+            let queued = items.map(|item| {
+                needed
+                    .all_items()
+                    .iter()
+                    .any(|entry| entry.table_item_id == item)
+            });
+            for item in items {
+                needed.delete(item);
+            }
+            assert_eq!(queued, [trigger, trigger]);
+        }
     }
 
     #[test]
