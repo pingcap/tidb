@@ -22,7 +22,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
 
 use tidb_expr::expr_util::normal_form::extract_filters_from_dnfs;
@@ -820,6 +820,111 @@ fn equality_sides(expr: &tidb_ast::Expr) -> Option<(&tidb_ast::Expr, &tidb_ast::
     Some((left, right))
 }
 
+/// The columns Go's lite statistics initialization loads for this statement:
+/// every column compared against a constant in any query block. Go loads
+/// exactly these payloads (and the indexes whose first column they cover) and
+/// leaves every other column evicted, which is what makes
+/// `EstimateColumnNDV` borrow a loaded index's analyzed row count.
+fn predicate_column_names(select: &tidb_ast::SelectStmt) -> Vec<(Option<String>, String)> {
+    struct FilterColumns(Vec<(Option<String>, String)>);
+
+    impl FilterColumns {
+        fn collect_paths(&mut self, expr: &tidb_ast::Expr) {
+            struct Paths(Vec<Vec<String>>);
+            impl tidb_ast::Visitor for Paths {
+                fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+                    if let Some(tidb_ast::Expr::Column(path)) =
+                        node.downcast_ref::<tidb_ast::Expr>()
+                    {
+                        self.0.push(path.clone());
+                    }
+                    false
+                }
+                fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+                    true
+                }
+            }
+            let mut paths = Paths(Vec::new());
+            let mut owned = expr.clone();
+            tidb_ast::Visitable::accept(&mut owned, &mut paths);
+            for path in paths.0 {
+                let Some(name) = path.last() else {
+                    continue;
+                };
+                let qualifier = (path.len() > 1).then(|| path[path.len() - 2].clone());
+                self.0.push((qualifier, name.clone()));
+            }
+        }
+    }
+
+    impl tidb_ast::Visitor for FilterColumns {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() else {
+                return false;
+            };
+            match expr {
+                tidb_ast::Expr::Binary(op, lhs, rhs) if is_comparison_operator(*op) => {
+                    if is_constant_literal(rhs) {
+                        self.collect_paths(lhs);
+                    } else if is_constant_literal(lhs) {
+                        self.collect_paths(rhs);
+                    }
+                }
+                tidb_ast::Expr::In { expr, list, .. }
+                    if !list.is_empty() && list.iter().all(is_constant_literal) =>
+                {
+                    self.collect_paths(expr);
+                }
+                tidb_ast::Expr::Is { expr, .. } => self.collect_paths(expr),
+                _ => {}
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut visitor = FilterColumns(Vec::new());
+    let mut owned = select.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut visitor);
+    visitor.0
+}
+
+fn is_comparison_operator(op: tidb_ast::BinaryOp) -> bool {
+    matches!(
+        op,
+        tidb_ast::BinaryOp::Eq
+            | tidb_ast::BinaryOp::NullEq
+            | tidb_ast::BinaryOp::Ne
+            | tidb_ast::BinaryOp::Lt
+            | tidb_ast::BinaryOp::Le
+            | tidb_ast::BinaryOp::Gt
+            | tidb_ast::BinaryOp::Ge
+    )
+}
+
+fn is_constant_literal(expr: &tidb_ast::Expr) -> bool {
+    matches!(
+        expr,
+        tidb_ast::Expr::Int(_)
+            | tidb_ast::Expr::Decimal(_)
+            | tidb_ast::Expr::Float(_)
+            | tidb_ast::Expr::Hex(_)
+            | tidb_ast::Expr::Bit(_)
+            | tidb_ast::Expr::String(_)
+            | tidb_ast::Expr::RawString(_)
+            | tidb_ast::Expr::Null
+            | tidb_ast::Expr::Bool(_)
+            | tidb_ast::Expr::ParamMarker {
+                in_execute: true,
+                value: Some(_),
+                ..
+            }
+    )
+}
+
 struct InitStats<'a> {
     range_context: crate::index_range::RangeContext<'a>,
     catalog: &'a Catalog,
@@ -828,6 +933,66 @@ struct InitStats<'a> {
     selectivity_factor: f64,
     enable_pseudo_for_outdated_stats: bool,
     zone: &'a tidb_datatype::SessionTimeZone,
+}
+
+impl InitStats<'_> {
+    /// The `(column ids, index ids)` Go's lite statistics initialization
+    /// loads for this source: the columns its own predicates compare against
+    /// a constant, plus the indexes whose first column those cover.
+    ///
+    /// `None` when the statement carries no such predicate for this source,
+    /// which leaves the caller on the "everything is loaded" approximation
+    /// that predates the loading model.
+    fn predicate_loaded_items(
+        &self,
+        source: &tidb_planner::logical::DataSource,
+        statistics: Option<&crate::access_cost::TableStatistics>,
+    ) -> Option<(BTreeSet<i64>, BTreeSet<i64>)> {
+        statistics?;
+        let names = predicate_column_names(self.select?);
+        if names.is_empty() {
+            return None;
+        }
+        let visible = source
+            .table_as_name
+            .as_deref()
+            .unwrap_or(&source.table_name)
+            .to_lowercase();
+        let table_name = source.table_name.to_lowercase();
+        let db_name = source.db_name.to_lowercase();
+        let mut columns = BTreeSet::new();
+        for (qualifier, name) in &names {
+            if let Some(qualifier) = qualifier {
+                let qualifier = qualifier.to_lowercase();
+                if qualifier != visible && qualifier != table_name && qualifier != db_name {
+                    continue;
+                }
+            }
+            for column in &source.columns {
+                if column.name.eq_ignore_ascii_case(name) {
+                    columns.insert(column.id);
+                }
+            }
+        }
+        if columns.is_empty() {
+            return None;
+        }
+        let mut indexes = BTreeSet::new();
+        if let Some(TableEntry::Kv(table)) =
+            self.catalog.get_in(&source.db_name, &source.table_name)
+        {
+            for index in table.indexes() {
+                let first = index
+                    .column_offsets
+                    .first()
+                    .and_then(|offset| table.visible_columns().get(*offset));
+                if first.is_some_and(|column| columns.contains(&column.id)) {
+                    indexes.insert(index.id);
+                }
+            }
+        }
+        Some((columns, indexes))
+    }
 }
 
 impl OwnedRewrite for InitStats<'_> {
@@ -856,12 +1021,23 @@ impl OwnedRewrite for InitStats<'_> {
         });
         let statistics = statistics.as_deref();
         let row_count = crate::access_cost::realtime_row_count(statistics);
-        let loaded_columns = statistics
-            .map(|statistics| statistics.columns.keys().copied().collect())
-            .unwrap_or_default();
-        let loaded_indexes = statistics
-            .map(|statistics| statistics.indexes.keys().copied().collect())
-            .unwrap_or_default();
+        // Go loads only the predicate columns' payloads (and the indexes they
+        // cover) and leaves the rest evicted; `estimate_column_ndv` then
+        // borrows a loaded same-version index's analyzed count for an evicted
+        // column. Without a predicate for this source the approximation is
+        // "everything is loaded", which is the pre-lite-init shape.
+        let (loaded_columns, loaded_indexes) = self
+            .predicate_loaded_items(source, statistics)
+            .unwrap_or_else(|| {
+                (
+                    statistics
+                        .map(|statistics| statistics.columns.keys().copied().collect())
+                        .unwrap_or_default(),
+                    statistics
+                        .map(|statistics| statistics.indexes.keys().copied().collect())
+                        .unwrap_or_default(),
+                )
+            });
         let ndvs = source
             .columns
             .iter()
@@ -2101,4 +2277,32 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
         ctx.opt_index_prune_threshold(),
     );
     Ok((before, after))
+}
+
+#[cfg(test)]
+mod predicate_column_tests {
+    use super::predicate_column_names;
+
+    /// The loading model must read the source's OWN constant filters. A
+    /// column=column join condition is not one: Go's `PushedDownConds` do not
+    /// contain it, so the column stays evicted and borrows a loaded index's
+    /// analyzed row count.
+    #[test]
+    fn filter_columns_load_and_join_keys_do_not() {
+        let statement = tidb_parser::parse(
+            "SELECT sum(h_amount) FROM history \
+             WHERE h_c_w_id = 1 AND h_c_d_id = 5 AND h_c_id = c_id",
+        )
+        .unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("not a query");
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        let names = predicate_column_names(select);
+        let loaded = |name: &str| names.iter().any(|(_, candidate)| candidate == name);
+        assert!(loaded("h_c_w_id") && loaded("h_c_d_id"), "{names:?}");
+        assert!(!loaded("h_c_id"), "{names:?}");
+    }
 }

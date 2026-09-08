@@ -32,6 +32,18 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] 2026-09-09: ported the predicate-column statistics-loading model that
+  Go's lite initialization uses. `predicate_column_names` walks every query
+  block for columns compared against constants; `InitStats` maps them to each
+  source and marks an index loaded when its first column is loaded, so an
+  evicted column borrows a loaded same-version index's analyzed count exactly
+  as `EstimateColumnNDV` does. Condition ten's grouped history HashAgg now
+  estimates `297.03`, Go's captured value, and
+  `tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums` leaves the failure
+  set: executor 1253 passed / 8 failed with no additions. Red/green:
+  `planner_bridge::predicate_column_tests::filter_columns_load_and_join_keys_do_not`.
+  Receipt: `testport/receipts/planner_data_source_stats_per_source.md`.
+
 - [x] 2026-09-09: the DataSource-statistics rule now estimates `eq`/`in`
   conditions through the LOADED histograms, matching Go's
   `deriveStats4DataSource` -> `cardinality.Selectivity`. `HistColl` carries

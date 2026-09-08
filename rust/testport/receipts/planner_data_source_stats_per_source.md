@@ -200,11 +200,31 @@ Passing the row-size `is_handle` flag alone made every point range on
 twelve's plan to a root StreamAgg.
 
 Result on condition ten: `h_c_w_id = 1` now estimates
-`29_702 * 300_000/299_995 / 300_000 = 0.0990083` and the grouped history
-HashAgg `297.02` (was `300.00`; Go's captured plan prints `297.03`). The
-remaining 0.01 is Go's `EstimateColumnNDV` borrowing the loaded index's
-299,995-row analyzed count for the evicted `h_c_id` (`3000.05` instead of
-`3000`), which needs the predicate-column loading model at `InitStats` time.
+`29_702 * 300_000/299_995 / 300_000 = 0.0990083`, and the predicate-column
+loading model below makes the grouped history HashAgg estimate `297.03`,
+which is Go's captured value.
+
+## Follow-up: the predicate-column loading model (2026-09-09)
+
+Go's lite statistics initialization loads the payloads for the statement's
+PREDICATE columns and the indexes they cover; every other column is evicted
+and `EstimateColumnNDV` borrows the first loaded, same-version index's
+analyzed row count. `InitStats` had passed every column and index as loaded,
+so the evicted `h_c_id` used its own 300,000-row histogram and estimated
+`3000.0` instead of `3000.05`.
+
+`predicate_column_names` walks the statement AST (all query blocks) and
+collects every column a constant comparison or constant `IN`/`IS` names;
+`InitStats::predicate_loaded_items` maps those names onto the source's columns
+and marks an index loaded when its first column is loaded. A source with no
+such predicate keeps the previous "everything loaded" approximation.
+
+Red/green: `driver::tests::subqueries::tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums`
+failed at `297.02` before and passes after; new
+`planner_bridge::predicate_column_tests::filter_columns_load_and_join_keys_do_not`
+pins that a constant filter loads its column while a column=column join key
+does not. Executor lib 1253 passed / 8 failed, the condition-ten test leaving
+the baseline with no additions.
 
 Regression: new
 `logical::rewrite::analyzed_filter_selectivity_tests::equality_uses_the_loaded_histogram_repeat`
