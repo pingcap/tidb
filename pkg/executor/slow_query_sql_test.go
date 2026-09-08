@@ -212,6 +212,7 @@ func TestLogSlowLogIndex(t *testing.T) {
 }
 
 func TestLogSlowLogRUV3(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
@@ -230,9 +231,10 @@ func TestLogSlowLogRUV3(t *testing.T) {
 	tk.MustExec("set tidb_slow_log_threshold=0;")
 	tk.MustQuery("select * from t use index (idx) where a in (1) union select * from t use index (idx) where a in (2,3);")
 	tk.MustExec("set tidb_slow_log_threshold=300;")
+	// The empty result charges 101 frontend bytes and eight plan occurrences.
 	tk.MustQuery("select Request_unit_v2 from `information_schema`.`slow_query` " +
 		"where query like 'select%union%' limit 1").
-		Check(testkit.Rows("101"))
+		Check(testkit.Rows("109"))
 }
 
 func TestSlowQuerySessionAlias(t *testing.T) {
