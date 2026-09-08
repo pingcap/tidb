@@ -64,8 +64,10 @@ Profile: **Ready** for this focused batch.
   55 passed, 5 failed. The 5 are the branch's pre-existing failures; the
   failure set is byte-identical before and after this batch.
 - `cargo test --offline --locked -j12 -p tidb-executor --lib` —
-  `1111 passed; 114 failed`, against the branch's earlier `1107 passed; 115
-  failed`; no failure in this batch's files and no new failing test.
+  `1111 passed; 114-115 failed` across runs, against the branch's earlier
+  `1107 passed; 115 failed`. The varying failure is the branch's known-flaky
+  `access_cost::index_async_load_queue_tests::a_fully_loaded_column_is_not_queued`;
+  no failure is in this batch's files and no new failing test appeared.
 - `cargo fmt --all -- --check` — the changed files are rustfmt-clean (the
   branch's pre-existing drift is in `ddl.rs`, `ddl/alter_table.rs`, and
   `cluster_session_node/mod.rs`, untouched here); `git diff --check` passed.
