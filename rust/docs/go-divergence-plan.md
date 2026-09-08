@@ -202,7 +202,7 @@ the lost‑update work.
 | #187 long data | medium — a buffer with a lifecycle | wire capture |
 | Coprocessor flags + warnings | small — two missing calls | a live query |
 | #202 name-keyed column refs | large — representation change | fixtures + DDL cases |
-| #191 decimal representation | **large, decide before building** | read why `decimal.rs` exists |
+| #191 decimal representation | **DECIDED (2026-09-08): decimal.rs (digit-string) is the canonical runtime type.** `Datum::Decimal` holds it; `MyDecimal` is a conversion intermediary (parse/format). Both are tested and production-exercised; no migration needed. Read the datatype audit's structural observations for details. |
 | #196 identifier case | small **if** the one-line check confirms it | one Go/Rust comparison |
 | #197 unknown enum values | small — the house style already exists | catalog fixture |
 | #203 type-change table | small — transcribe Go's pairs | DDL capture harness |
