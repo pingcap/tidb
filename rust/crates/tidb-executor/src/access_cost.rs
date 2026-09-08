@@ -1973,10 +1973,10 @@ fn pseudo_predicate(
         (true, false) => args[1],
         _ => return PseudoPredicate::Unresolved,
     };
-    let Some(offsets) = physical_column_offsets(column, table, resolver) else {
+    let tidb_ast::Expr::Column(path) = strip_parens(column) else {
         return PseudoPredicate::Unresolved;
     };
-    let [offset] = offsets[..] else {
+    let Some(offset) = physical_column_offset(path, table, resolver) else {
         return PseudoPredicate::Unresolved;
     };
     let Some(column) = table.columns.get(offset) else {
@@ -2088,6 +2088,43 @@ mod tests {
             origin_default: None,
             comment: String::new(),
             generated: None,
+        }
+    }
+
+    #[test]
+    fn pseudo_fallback_requires_a_direct_column_argument() {
+        let table = KvTable::with_storage(
+            94,
+            vec![long_column("a", 1)],
+            Box::new(MemTableStorage::new()),
+        );
+        let mut stats = TableStatistics::new(10000, 0, BTreeMap::new(), BTreeMap::new());
+        stats.cache_pseudo = false;
+        for (condition, expected) in [
+            ("a+1=2", 0.8),
+            ("2=a+1", 0.8),
+            ("a=2", 0.001),
+            ("2=a", 0.001),
+            ("(a)=2", 0.001),
+        ] {
+            let statement =
+                tidb_parser::parse(&format!("SELECT * FROM t WHERE {condition}")).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            let actual = selectivity(
+                select.where_clause.as_ref().unwrap(),
+                &table,
+                &NamedColumnResolver { table: &table },
+                Some(&stats),
+            );
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "{condition}: actual={actual}"
+            );
         }
     }
 
