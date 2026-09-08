@@ -34,7 +34,6 @@ pub struct ScanAccessObject {
 
 impl ScanAccessObject {
     /// Go `NormalizedString`.
-    #[must_use]
     pub fn normalized_string(&self) -> String {
         self.render(true)
     }
@@ -96,7 +95,6 @@ pub struct IndexAccess {
 
 impl IndexAccess {
     /// Go `ToPB` for a non-nil receiver.
-    #[must_use]
     pub fn to_pb(&self) -> tipb::IndexAccess {
         tipb::IndexAccess {
             name: self.name.clone(),
@@ -112,7 +110,6 @@ pub struct OtherAccessObject(pub String);
 
 impl OtherAccessObject {
     /// Go `NormalizedString`.
-    #[must_use]
     pub fn normalized_string(&self) -> String {
         self.0.clone()
     }
@@ -160,7 +157,6 @@ pub struct DynamicPartitionAccessObjects(pub Vec<DynamicPartitionAccessObject>);
 
 impl DynamicPartitionAccessObjects {
     /// Go `NormalizedString`, which deliberately equals `String`.
-    #[must_use]
     pub fn normalized_string(&self) -> String {
         self.to_string()
     }
@@ -195,7 +191,6 @@ pub enum AccessObject {
 
 impl AccessObject {
     /// Calls the source implementor's `NormalizedString`.
-    #[must_use]
     pub fn normalized_string(&self) -> String {
         match self {
             Self::Scan(object) => object.normalized_string(),
@@ -354,5 +349,15 @@ mod tests {
         AccessObject::DynamicPartitions(DynamicPartitionAccessObjects::default())
             .set_into_pb(&mut operator);
         assert_eq!(operator.access_objects, old);
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        ScanAccessObject::default().normalized_string();
+        IndexAccess::default().to_pb();
+        OtherAccessObject::default().normalized_string();
+        DynamicPartitionAccessObjects::default().normalized_string();
+        AccessObject::Other(OtherAccessObject::default()).normalized_string();
     }
 }

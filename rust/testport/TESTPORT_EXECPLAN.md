@@ -9532,6 +9532,16 @@ risks without claiming repository-wide parity.
   the fix with exactly nine diagnostics and passes after; the session fixture
   test and planner library check pass. Evidence is recorded in
   `receipts/planner_util_fixcontrol.md`.
+- 2026-09-08 (`pkg/planner/core/access` return contracts): current Go master
+  `aec988ea500d` was re-read as the complete two-artifact, 219-line package,
+  including the access-object production source, BUILD target, and absence of
+  tests, fixtures, generated/platform variants, and nested packages. The
+  dependency-closed `access.rs` owner, inline tests, explain consumer, and
+  physical-plan consumers were inventoried. Five Rust-only `#[must_use]`
+  diagnostics were removed from Go-shaped normalized-string and protobuf
+  conversion results. The focused deny-on-discard regression failed before the
+  fix with exactly five diagnostics and passes after; the planner library check
+  passes. Evidence is recorded in `receipts/planner_core_access.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
