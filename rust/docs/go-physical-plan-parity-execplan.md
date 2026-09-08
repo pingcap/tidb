@@ -720,6 +720,11 @@ both `oltp_read_only` and `oltp_read_write`.
   index record for a clustered COMMON handle and omits it only for
   `PKIsHandle`. Receipt:
   `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: completed two `physicalop` explain clauses: the scan
+  `keep order:<bool>, desc` suffix (Go appends `, desc` on a reverse walk) and
+  the IndexLookUp reader's `limit embedded(offset:o, count:c)` text (Go prints
+  only the embedded limit; the children are implied by the relation symbol).
+  Receipt: `rust/testport/receipts/planner_physicalop_engine_usage.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

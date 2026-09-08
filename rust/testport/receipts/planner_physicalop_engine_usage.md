@@ -159,3 +159,28 @@ passes after. Ready validation: `tidb-executor` lib serialized 1129 passed /
 `tidb-planner` all four test targets green (990/268/6/3);
 `cargo fmt --all -- --check` (three pre-existing drift files only);
 `git diff --check -- rust`.
+
+## Follow-up: the scan `desc` and IndexLookUp embedded-limit text (2026-09-09)
+
+Two more `physicalop` explain clauses were missing.
+
+- Go's `PhysicalTableScan.OperatorInfo` (`physical_table_scan.go:512`) and
+  `PhysicalIndexScan.OperatorInfo` (`physical_index_scan.go:296`) append
+  `, desc` after `keep order:<bool>` when the scan walks backwards. The Rust
+  `explain.rs` printed only `keep order:<bool>`, so a reversed scan that
+  answered the largest ids still looked forward in EXPLAIN.
+  `scan_keep_order_text` now owns the clause for both arms.
+- Go's `PhysicalIndexLookUpReader.ExplainInfo`
+  (`physical_indexlookup_reader.go:189`) renders only
+  `limit embedded(offset:o, count:c)` when `PushedLimit` is set (the children
+  are implied by the relation symbol), and nothing otherwise. The Rust arm
+  printed `index:<plan>, table:<plan>` instead.
+
+Regression: `index_ranges::a_descending_handle_limit_answers_the_largest_ids`
+failed on the missing `desc` and passes after;
+`index_ranges::ordered_limit_adjusts_the_common_handle_scan_estimate` failed
+on `index:Limit, table:TableRowIDScan` and passes after. Ready validation:
+`tidb-executor` lib serialized 1131 passed / 95 failed with those two as the
+only removals and no additions; `tidb-planner` all four test targets green;
+`cargo fmt --all -- --check` (three pre-existing drift files only);
+`git diff --check -- rust`.

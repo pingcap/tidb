@@ -210,6 +210,17 @@ fn scan_ranges_text(ranges: &tidb_planner::ranger::types::Ranges) -> String {
         .join(", ")
 }
 
+/// Go `PhysicalTableScan/PhysicalIndexScan.OperatorInfo`'s order clause:
+/// `keep order:<bool>` followed by `, desc` only when the scan walks
+/// backwards (`physical_table_scan.go:512`, `physical_index_scan.go:296`).
+fn scan_keep_order_text(keep_order: bool, desc: bool) -> String {
+    if desc {
+        format!("keep order:{keep_order}, desc")
+    } else {
+        format!("keep order:{keep_order}")
+    }
+}
+
 fn table_name(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
     alias.map_or_else(
         || {
@@ -589,7 +600,7 @@ fn physical_operator_info(
             {
                 parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
             }
-            parts.push(format!("keep order:{}", scan.keep_order));
+            parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
             if scan_uses_pseudo_statistics(&scan.base) {
                 parts.push("stats:pseudo".to_owned());
             }
@@ -612,7 +623,7 @@ fn physical_operator_info(
             {
                 parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
             }
-            parts.push(format!("keep order:{}", scan.keep_order));
+            parts.push(scan_keep_order_text(scan.keep_order, scan.desc));
             if scan_uses_pseudo_statistics(&scan.base) {
                 parts.push("stats:pseudo".to_owned());
             }
@@ -627,20 +638,18 @@ fn physical_operator_info(
                     plan.explain_id(ignore_explain_id_suffix)
                 })
         ),
-        PhysicalPlan::IndexLookUpReader(reader) => format!(
-            "index:{}, table:{}",
-            reader
-                .index_plan
-                .as_deref()
-                .map_or_else(String::new, |plan| {
-                    plan.explain_id(ignore_explain_id_suffix)
-                }),
-            reader
-                .table_plan
-                .as_deref()
-                .map_or_else(String::new, |plan| {
-                    plan.explain_id(ignore_explain_id_suffix)
-                })
+        PhysicalPlan::IndexLookUpReader(reader) => reader.pushed_limit.map_or_else(
+            String::new,
+            // Go `PhysicalIndexLookUpReader.ExplainInfo`
+            // (`physical_indexlookup_reader.go:189`): the children are implied
+            // by the relation symbol, so the reader prints only its embedded
+            // index-side limit.
+            |limit| {
+                format!(
+                    "limit embedded(offset:{}, count:{})",
+                    limit.offset, limit.count
+                )
+            },
         ),
         PhysicalPlan::LocalIndexLookUp(lookup) => {
             format!("index handle offsets:{:?}", lookup.index_handle_offsets)
