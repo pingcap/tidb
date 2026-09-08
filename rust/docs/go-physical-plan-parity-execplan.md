@@ -1083,7 +1083,15 @@ both `oltp_read_only` and `oltp_read_write`.
   - `pkg/executor/aggregate` spill-file lifetime: Go keeps
     `DataInDiskByChunks` files open until `Close`, while
     `ParallelSpillPartitions::restore_partition` closes each file during the
-    pipeline: `hash_agg_spill_tests::test_get_correct_result`.
+    pipeline: `hash_agg_spill_tests::test_get_correct_result`. A trial that
+    retained the partitions on `HashAggExec` until `close()` (dropping the
+    256 staging chunks after restore, since keeping them blew the memory
+    quota) moved the failure past the `saw_spill_file` oracle and unmasked a
+    second, deeper gap: the spilled run's `GROUP_CONCAT` value order differs
+    from the unspilled reference (`3041,3040,3042` vs `3041,3042,3040` for
+    group 304). The restore order across partial workers is not the row order
+    Go's final merge preserves, so the order-sensitive aggregate needs the
+    deterministic merge order ported before the file-lifetime change lands.
   - `aggregates::tpcc_condition_eleven_*`: the Rust plan has a reordering
     Projection between the root StreamAgg and the outer MergeJoin
     (`Projection([10,13,12,15,18,17]) -> Join([10,15,12,13,17,18])`), while a
