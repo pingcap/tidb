@@ -2127,12 +2127,16 @@ fn string_match_selectivity(
         let matched = match kind {
             StringMatchKind::Like { ilike, escape } => {
                 if *ilike {
-                    tidb_expr::ilike_match(value, pattern, escape.unwrap_or(b'\\'))
+                    tidb_expr::ilike_match(
+                        value,
+                        pattern,
+                        escape.unwrap_or_else(|| resolver.like_default_escape()),
+                    )
                 } else {
                     tidb_expr::like_match_with_collation(
                         value,
                         pattern,
-                        *escape,
+                        Some(escape.unwrap_or_else(|| resolver.like_default_escape())),
                         column.field_type.collation(),
                     )
                 }
@@ -3269,6 +3273,53 @@ mod tests {
             BTreeMap::new(),
         );
         (table, stats)
+    }
+
+    #[test]
+    fn string_match_selectivity_respects_session_escape() {
+        struct NoEscapeResolver<'a>(NamedColumnResolver<'a>);
+        impl ColumnResolver for NoEscapeResolver<'_> {
+            fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+                self.0.resolve(path)
+            }
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                self.0.time_zone()
+            }
+            fn like_default_escape(&self) -> u8 {
+                0
+            }
+        }
+        let (table, stats) = stats_v2_name_column_fixture();
+        let resolver = NoEscapeResolver(NamedColumnResolver { table: &table });
+        // With escaping enabled, backslash-n matches n; with session escaping
+        // disabled the literal backslash is absent from every sampled value.
+        for ilike in [false, true] {
+            for not in [false, true] {
+                for escape in [None, Some(b'\\')] {
+                    let predicate = tidb_ast::Expr::Like {
+                        expr: Box::new(tidb_ast::Expr::Column(vec!["name".to_owned()])),
+                        pattern: Box::new(tidb_ast::Expr::String(r"%\needle%".to_owned())),
+                        not,
+                        ilike,
+                        escape,
+                    };
+                    let selected = if escape.is_some() { 0.525 } else { 0.0 };
+                    let expected = if not { 1.0 - selected } else { selected };
+                    let actual = string_match_selectivity(
+                        &predicate,
+                        &table,
+                        &resolver,
+                        Some(&stats),
+                        false,
+                    )
+                    .unwrap();
+                    assert!(
+                        (actual - expected).abs() < 1e-12,
+                        "ilike={ilike} not={not} escape={escape:?}: {actual} != {expected}"
+                    );
+                }
+            }
+        }
     }
 
     /// Go `GetSelectivityByFilter` evaluates one-column string predicates
