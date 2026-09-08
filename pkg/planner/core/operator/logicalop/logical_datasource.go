@@ -1120,10 +1120,17 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	tableFilters := make([]expression.Expression, 0, len(ds.PushedDownConds)-len(matchedCondIdxes))
 	for i, cond := range ds.PushedDownConds {
 		if _, ok := matchedCondSet[i]; ok {
-			// MATCH ... AGAINST(NULL) rewrites to a NULL constant. Keep it as a
-			// residual filter instead of sending a Null expression through FtsQueryInfo.
-			if c, isConst := cond.(*expression.Constant); isConst && c.Value.IsNull() {
-				tableFilters = append(tableFilters, cond)
+			// Keep false/null MATCH constants for normal dual conversion and drop
+			// true constants as no-op predicates. Do not send constants to TiCI.
+			if c, isConst := cond.(*expression.Constant); isConst {
+				isFalse := c.Value.IsNull()
+				if !isFalse {
+					isTrue, err := c.Value.ToBool(ds.SCtx().GetSessionVars().StmtCtx.TypeCtxOrDefault())
+					isFalse = err == nil && isTrue == 0
+				}
+				if isFalse {
+					tableFilters = append(tableFilters, cond)
+				}
 				continue
 			}
 			matchedConds = append(matchedConds, cond)

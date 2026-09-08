@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -48,9 +50,12 @@ func TestTiCISearchPathEstimateStats(t *testing.T) {
 	sctx := mock.NewContext()
 	store := &ticiStatsTestStore{Storage: &mock.Store{Client: &mock.Client{}}, count: 321}
 	sctx.Store = store
+	// Remote estimation is restricted to multi-table statements.
+	sctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: "test", Table: "t"}, {DB: "test", Table: "t2"}}
 	sctx.GetSessionVars().TimeZone = time.FixedZone("test-zone", 28800)
 	ds := logicalop.DataSource{TableInfo: &model.TableInfo{ID: 42}, PhysicalTableID: 43}.Init(sctx.GetPlanCtx(), 0)
 	ds.StatisticTable = &statistics.Table{HistColl: statistics.HistColl{RealtimeCount: 10000}}
+	ds.TableStats = &property.StatsInfo{RowCount: 10000, HistColl: &ds.StatisticTable.HistColl}
 	path := &util.AccessPath{
 		Index:        &model.IndexInfo{ID: 7, FullTextInfo: &model.FullTextIndexInfo{}},
 		FtsQueryInfo: &tipb.FTSQueryInfo{},

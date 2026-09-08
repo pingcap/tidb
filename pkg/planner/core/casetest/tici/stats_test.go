@@ -74,7 +74,7 @@ func TestTiCISearchEstimateOnlyForMultiTable(t *testing.T) {
 	}
 	tk.MustExec("insert into t values " + tValues.String())
 	tk.MustExec("insert into t2 values " + t2Values.String())
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table t2")
 
 	dom := domain.GetDomain(tk.Session())
@@ -106,6 +106,16 @@ func TestTiCISearchEstimateOnlyForMultiTable(t *testing.T) {
 		tk.MustQuery("explain format='brief' select /*+ hash_join(t2, t) */ t.id from t2, t where t.id = t2.a and fts_match_word('hello', t.title)").Rows())
 	requirePlanLineContains(t, smallEstimatePlan, "IndexRangeScan 1.00", "search func:fts_match_word")
 	requirePlanLineContains(t, smallEstimatePlan, "HashJoin 1.00")
+
+	// Retaining the indexed column makes value NDV available; the remote mock is ignored.
+	localEstimatePlan := testdata.ConvertRowsToStrings(
+		tk.MustQuery("explain format='brief' select title from t where fts_match_word('hello', title)").Rows())
+	requirePlanLineContains(t, localEstimatePlan, "IndexRangeScan 100.00")
+	// Punctuation and prefix operators retain the capped fallback, not value NDV.
+	for _, predicate := range []string{"fts_match_word('hello.world', title)", "fts_match_prefix('hel', title)"} {
+		plan := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' select title from t where " + predicate).Rows())
+		requirePlanLineContains(t, plan, "IndexRangeScan 10.00")
+	}
 }
 
 func requirePlanLineContains(t *testing.T, plan []string, expected ...string) {

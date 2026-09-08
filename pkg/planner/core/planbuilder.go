@@ -1535,15 +1535,16 @@ func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, t
 	availableEngine := map[kv.StoreType]struct{}{}
 	var availableEngineStr string
 	for i := len(paths) - 1; i >= 0; i-- {
+		engine := isolationReadEngineForPath(paths[i].StoreType)
 		// availableEngineStr is for warning message.
-		if _, ok := availableEngine[paths[i].StoreType]; !ok {
-			availableEngine[paths[i].StoreType] = struct{}{}
+		if _, ok := availableEngine[engine]; !ok {
+			availableEngine[engine] = struct{}{}
 			if availableEngineStr != "" {
 				availableEngineStr += ", "
 			}
-			availableEngineStr += paths[i].StoreType.Name()
+			availableEngineStr += engine.Name()
 		}
-		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
+		if _, ok := isolationReadEngines[engine]; !ok && engine != kv.TiDB {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
@@ -1570,6 +1571,13 @@ func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, t
 		}
 	}
 	return paths, err
+}
+
+func isolationReadEngineForPath(storeType kv.StoreType) kv.StoreType {
+	if storeType == kv.TiCI {
+		return kv.TiFlash
+	}
+	return storeType
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
