@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -343,6 +344,50 @@ func TestStoreWriteLimiter(t *testing.T) {
 		}(uint64(i))
 	}
 	wg.Wait()
+
+	t.Run("disable while creating limiter", func(t *testing.T) {
+		limiter := newStoreWriteLimiter(100)
+		beforeLock := make(chan struct{})
+		continueGetLimiter := make(chan struct{})
+		t.Cleanup(func() {
+			select {
+			case <-continueGetLimiter:
+			default:
+				close(continueGetLimiter)
+			}
+		})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeStoreWriteLimiterLock",
+			func() {
+				close(beforeLock)
+				<-continueGetLimiter
+			},
+		)
+
+		getLimiterDone := make(chan bool, 1)
+		go func() {
+			getLimiterDone <- limiter.getLimiter(1) == nil
+		}()
+
+		select {
+		case <-beforeLock:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for getLimiter to reach the failpoint")
+		}
+		limiter.UpdateLimit(0)
+		close(continueGetLimiter)
+
+		select {
+		case disabled := <-getLimiterDone:
+			require.True(t, disabled, "getLimiter returned a limiter after rate limiting was disabled")
+		case <-time.After(time.Second):
+			t.Fatal("getLimiter did not return after rate limiting was disabled")
+		}
+
+		limiter.rwm.RLock()
+		defer limiter.rwm.RUnlock()
+		require.Empty(t, limiter.limiters)
+	})
 }
 
 func TestTuneStoreWriteLimiter(t *testing.T) {

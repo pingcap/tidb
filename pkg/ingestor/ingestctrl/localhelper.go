@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -173,6 +174,7 @@ type storeWriteLimiter struct {
 	rwm      sync.RWMutex
 	limiters map[uint64]*rate.Limiter
 	// limit and burst can only be non-negative, 0 means no rate limiting.
+	// Updates to both fields are published while holding rwm.
 	limit atomic.Int64
 	burst atomic.Int64
 }
@@ -225,6 +227,7 @@ func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 	if s.limit.Load() == 0 {
 		return nil
 	}
+	failpoint.InjectCall("beforeStoreWriteLimiterLock")
 	s.rwm.RLock()
 	limiter, ok := s.limiters[storeID]
 	s.rwm.RUnlock()
@@ -233,9 +236,14 @@ func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 	}
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
+	// The limit may have been disabled while getLimiter was waiting for the write lock.
+	limit := s.limit.Load()
+	if limit == 0 {
+		return nil
+	}
 	limiter, ok = s.limiters[storeID]
 	if !ok {
-		limiter = rate.NewLimiter(rate.Limit(s.limit.Load()), int(s.burst.Load()))
+		limiter = rate.NewLimiter(rate.Limit(limit), int(s.burst.Load()))
 		s.limiters[storeID] = limiter
 	}
 	return limiter
@@ -247,18 +255,21 @@ func (s *storeWriteLimiter) UpdateLimit(newLimit int) {
 		return
 	}
 
+	s.rwm.Lock()
+	defer s.rwm.Unlock()
+	if s.limit.Load() == limit {
+		return
+	}
 	s.limit.Store(limit)
 	s.burst.Store(burst)
 	// Update all existing limiters with the new limit and burst values.
-	s.rwm.Lock()
-	defer s.rwm.Unlock()
-	if s.limit.Load() == 0 {
+	if limit == 0 {
 		s.limiters = make(map[uint64]*rate.Limiter)
 		return
 	}
 	for _, limiter := range s.limiters {
-		limiter.SetLimit(rate.Limit(s.limit.Load()))
-		limiter.SetBurst(int(s.burst.Load()))
+		limiter.SetLimit(rate.Limit(limit))
+		limiter.SetBurst(int(burst))
 	}
 }
 
