@@ -692,6 +692,12 @@ both `oltp_read_only` and `oltp_read_write`.
   before falling back to the schema, so `SELECT * FROM (SELECT count(*) FROM
   t) d` reports `count(*)` instead of `Column#1`. Receipt:
   `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: kept a left-outer-semi join's marker column through column
+  pruning. `MergeSchema` concatenated the children's schemas, so the marker
+  (owned only by the join) was dropped and the join ended with an empty
+  schema; it now rebuilds the schema like Go's `BuildLogicalJoinSchema` and
+  re-appends the marker. Six pre-existing semi-apply tests are repaired.
+  Receipt: `rust/testport/receipts/planner_coalesced_qualified_names.md`.
 - [x] 2026-09-09: corrected the YEAR/BIT underflow assertion in
   `column_type_flags`. The test pinned a constant `BIGINT value is out of
   range` while its own captured TiDB session records `BIGINT UNSIGNED value is

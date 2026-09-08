@@ -75,6 +75,35 @@ fn child_schemas(node: &LogicalPlan) -> Vec<Schema> {
     node.children().iter().map(effective_schema).collect()
 }
 
+/// Go `BuildLogicalJoinSchema` (`logical_join.go:2229`), the body of
+/// `LogicalJoin.MergeSchema`: a semi join outputs the left child's schema,
+/// while a left-outer-semi join appends the marker column the join already
+/// carries as its last output.
+fn build_logical_join_schema(
+    join_type: LogicalJoinType,
+    children: &[Schema],
+    own: Option<&Schema>,
+) -> Schema {
+    let left = children.first().cloned().unwrap_or_default();
+    match join_type {
+        LogicalJoinType::Semi | LogicalJoinType::AntiSemi => left,
+        LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi => {
+            let mut schema = left;
+            if let Some(last) = own.and_then(|schema| schema.columns.last()).cloned() {
+                schema.append([last]);
+            }
+            schema
+        }
+        _ => {
+            let mut merged = Vec::new();
+            for schema in children {
+                merged.extend(schema.columns.iter().cloned());
+            }
+            Schema::new(merged)
+        }
+    }
+}
+
 /// The schema a child can resolve for column pruning.  A coalesced
 /// `USING`/`NATURAL` join exposes its redundant qualified columns through
 /// `FullSchema`; transparent selections preserve that capability, while a
@@ -1242,12 +1271,47 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
                 (child, ())
             }
             PendingColumns::MergeSchema(parent_used_cols) => {
-                // Go `p.MergeSchema()` then `p.InlineProjection(parentUsedCols)`.
-                let mut merged = Vec::new();
-                for schema in &schemas {
-                    merged.extend(schema.columns.iter().cloned());
+                // Go `p.MergeSchema()` (`BuildLogicalJoinSchema`) then
+                // `p.InlineProjection(parentUsedCols)`. A left-outer-semi join
+                // re-appends its marker column before inlining
+                // (`logical_join.go:339`), which is what keeps the appended
+                // boolean alive after pruning.
+                let own_schema = node.base().base.schema().cloned();
+                let mut parent_used_cols = parent_used_cols;
+                let mut schema = match &node {
+                    LogicalPlan::Join(op) => {
+                        build_logical_join_schema(op.join_type, &schemas, own_schema.as_ref())
+                    }
+                    LogicalPlan::Apply(op) => {
+                        build_logical_join_schema(op.join.join_type, &schemas, own_schema.as_ref())
+                    }
+                    _ => {
+                        let mut merged = Vec::new();
+                        for schema in &schemas {
+                            merged.extend(schema.columns.iter().cloned());
+                        }
+                        Schema::new(merged)
+                    }
+                };
+                if matches!(
+                    &node,
+                    LogicalPlan::Join(op)
+                        if matches!(
+                            op.join_type,
+                            LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+                        )
+                ) || matches!(
+                    &node,
+                    LogicalPlan::Apply(op)
+                        if matches!(
+                            op.join.join_type,
+                            LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi
+                        )
+                ) {
+                    if let Some(last) = schema.columns.last().cloned() {
+                        parent_used_cols.push(last);
+                    }
                 }
-                let mut schema = Schema::new(merged);
                 schema_producer::inline_projection(&mut schema, &parent_used_cols);
                 set_own_schema(&mut node, schema);
                 (node, ())

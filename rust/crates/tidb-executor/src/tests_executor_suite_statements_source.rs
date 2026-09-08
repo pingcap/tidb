@@ -520,6 +520,18 @@ fn a_select_field_quantified_subquery_is_lowered() {
         )),
         vec![vec!["0".to_owned()]]
     );
+    // IN and EXISTS evaluate in the select list too.
+    assert_eq!(
+        rows_text(&select(&catalog, "select c in (select c from t) from t")),
+        vec![vec!["1".to_owned()]]
+    );
+    assert_eq!(
+        rows_text(&select(
+            &catalog,
+            "select exists (select 1 from t where t.c = t2.c) from t t2"
+        )),
+        vec![vec!["1".to_owned()]]
+    );
 }
 
 /// Go `executor_test.go:1624::TestSelectVar`'s tail: `SQL_BIG_RESULT`,

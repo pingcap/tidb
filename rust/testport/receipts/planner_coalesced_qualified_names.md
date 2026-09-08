@@ -270,3 +270,39 @@ cargo test -p tidb-executor --lib -- --test-threads=1
 cargo check -p tidb-planner
 # passed
 ```
+
+## Follow-up: a left-outer-semi join keeps its marker through pruning (2026-09-09)
+
+Go's `LogicalJoin.PruneColumns` (`logical_join.go:339`) calls `MergeSchema`
+(`BuildLogicalJoinSchema`) and then re-appends the left-outer-semi join's
+marker column to `parentUsedCols` before `InlineProjection`. The Rust
+`PendingColumns::MergeSchema` handler concatenated the CHILDREN's schemas, so
+the marker column -- which lives only on the join's own schema -- was dropped
+and the join ended with an empty schema (the `noUnexpectedZeroColumnSchema`
+panic). A SELECT-field `IN`/`EXISTS` is exactly that shape.
+
+`MergeSchema` now rebuilds the schema the way `BuildLogicalJoinSchema` does
+(a semi join outputs the left child's schema; a left-outer-semi join appends
+its own last column) and re-appends the marker before inlining.
+
+This also repairs six pre-existing failures, all of which build a
+left-outer-semi apply: `aggregates::global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader`,
+`subqueries::{correlated_exists_under_or_is_explainable,
+nested_in_subquery_under_or_is_explainable,
+tpcds_q10_correlated_exists_under_or_is_explainable}`, and
+`tests_parallel_apply_sql_source::{ordered_parallel_apply_edge_cases_source,
+ordered_parallel_apply_left_outer_semi_source}`. The regression
+`a_select_field_quantified_subquery_is_lowered` now covers IN and EXISTS as
+well as the quantified comparison.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib a_select_field_quantified_subquery_is_lowered
+# passed: 1
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,157 passed / 76 failed (baseline 1,150 / 81): six repaired, one new
+# regression, no additions
+cargo check -p tidb-planner
+# passed
+```
