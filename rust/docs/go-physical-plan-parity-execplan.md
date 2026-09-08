@@ -1023,6 +1023,36 @@ both `oltp_read_only` and `oltp_read_write`.
   enforced by the Rust direct-unary TiKV dispatch. The worker lifecycle,
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
+- [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
+  lib serialized: 1227 passed / 25 failed). Each needs a package-sized port,
+  not a test tweak:
+  - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines;
+    `logical/rule.rs:447` still returns `None`): the 11
+    `driver::tests::subqueries::*` failures.
+  - `pkg/planner/core` `skylinePruning`/`compareCandidates`
+    (`find_best_task.go:1778`+): the Rust access-path chooser compares costs
+    only, so `prefer_range` (`tidb_opt_prefer_range_scan`) never keeps a
+    range path. `access_path::tests::the_double_read_issues_one_batch_get_per_index_batch`
+    and the MergeJoin-vs-IndexHashJoin choices in
+    `tpcc_grouped_join_matches_go_shared_planner_choice`,
+    `joins::tpcc_check_seven_*`, `aggregates::tpcc_condition_four_*` (analyzed
+    arm), `tpcc_condition_eight_*`, `tpcc_condition_nine_rebuilds_*`,
+    `joins::tpcc_customer_warehouse_*`, `joins::tpcc_stock_level_*`.
+  - `pkg/executor` Window executor (`exhaustPhysicalPlans over Window`):
+    `tests_executor_suite_statements_source::{column_name_resolution,
+    issue52984_named_window_self_frame_runs_repeatedly}`.
+  - `pkg/planner/core` predicate push-down into an outer join's conditions
+    (`LogicalJoin.PredicatePushDown` null-rejecting inner-side filters):
+    `aggregates::tpcc_condition_six_*`.
+  - `pkg/expression` CASE branch casts to the merged control type
+    (`newBaseBuiltinFuncWithFieldTypes`), `DATE_ADD` month folding, and the
+    identity-projection elimination Go's q14 plan shows:
+    `aggregates::tpch_q14_matches_recorded_hash_join_plan`.
+  - `pkg/executor/aggregate` spill-file lifetime: Go keeps
+    `DataInDiskByChunks` files open until `Close`, while
+    `ParallelSpillPartitions::restore_partition` closes each file during the
+    pipeline: `hash_agg_spill_tests::test_get_correct_result`.
+  - `aggregates::{tpcc_condition_eleven_*}` operator list still differs.
 - [ ] Run correctness, compatibility, performance, and Ready validation.
 
 ## Surprises & Discoveries
