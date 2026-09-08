@@ -1219,3 +1219,59 @@ fn physical_index_range_quota_rejects_prepared_cache() {
         }
     }
 }
+
+#[test]
+fn integer_handle_range_quota_preserves_filters_and_rejects_cache() {
+    for tp in ["INT", "BIGINT UNSIGNED"] {
+        let mut session = Session::new();
+        session
+            .run(&format!(
+                "CREATE TABLE integer_quota (a {tp} PRIMARY KEY CLUSTERED, b INT)"
+            ))
+            .unwrap();
+        session
+            .run("INSERT INTO integer_quota VALUES (1,1),(2,2),(3,3),(4,4)")
+            .unwrap();
+        for quota in [1, 0] {
+            session
+                .run(&format!("SET tidb_opt_range_max_size = {quota}"))
+                .unwrap();
+            assert_eq!(
+                row_text(session.run("SELECT a FROM integer_quota WHERE a IN (1,2) AND b=2")),
+                vec![vec!["2"]]
+            );
+            let warnings = row_text(session.run("SHOW WARNINGS"));
+            assert_eq!(
+                warnings
+                    .iter()
+                    .flatten()
+                    .filter(|s| s.contains("tidb_opt_range_max_size"))
+                    .count(),
+                usize::from(quota != 0),
+                "{tp}: {warnings:?}"
+            );
+        }
+        session.run("SET tidb_opt_range_max_size = 1").unwrap();
+        session
+            .run("PREPARE iq FROM 'SELECT a FROM integer_quota WHERE a IN (?,?) ORDER BY a'")
+            .unwrap();
+        for (a, b) in [(1, 2), (3, 4)] {
+            session.run(&format!("SET @a={a}, @b={b}")).unwrap();
+            assert_eq!(
+                row_text(session.run("EXECUTE iq USING @a,@b")),
+                vec![vec![a.to_string()], vec![b.to_string()]]
+            );
+            assert!(!session.found_in_plan_cache);
+            let warnings = row_text(session.run("SHOW WARNINGS"));
+            assert_eq!(
+                warnings
+                    .iter()
+                    .flatten()
+                    .filter(|s| s.contains("tidb_opt_range_max_size"))
+                    .count(),
+                1,
+                "{tp}: {warnings:?}"
+            );
+        }
+    }
+}

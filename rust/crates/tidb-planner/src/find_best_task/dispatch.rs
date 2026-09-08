@@ -1786,34 +1786,52 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         true,
                     )
                 });
+                let int_detach = if common_handle.is_none() && !int_access_conditions.is_empty() {
+                    crate::ranger::ranger::build_table_range(
+                        &int_access_conditions,
+                        &handle_type,
+                        ctx.range_max_size,
+                    )
+                    .ok()
+                } else {
+                    None
+                };
+                if int_detach
+                    .as_ref()
+                    .is_some_and(|result| !result.remained_conds.is_empty())
+                {
+                    // BuildTableRange returns remaining conditions only when its
+                    // memory quota forces a full range. Share statement warning
+                    // and cache state with all other access-path candidates.
+                    if let Some(handler) = ctx.range_fallback_handler {
+                        handler.record_range_fallback(ctx.range_max_size);
+                    }
+                }
                 let (ranges, empty_range) = if common_handle.is_some() {
                     common_detach.as_ref().map_or_else(
                         || (crate::ranger::points::full_range(), false),
                         |result| (result.ranges.clone(), result.ranges.is_empty()),
                     )
-                } else if int_access_conditions.is_empty() {
-                    (
-                        crate::ranger::points::full_int_range(handle_type.is_unsigned()),
-                        false,
-                    )
                 } else {
-                    match crate::ranger::ranger::build_table_range(
-                        &int_access_conditions,
-                        &handle_type,
-                        0,
-                    ) {
-                        Ok(result) => (result.ranges.clone(), result.ranges.is_empty()),
-                        Err(_) => (
-                            crate::ranger::points::full_int_range(handle_type.is_unsigned()),
-                            false,
-                        ),
-                    }
+                    int_detach.as_ref().map_or_else(
+                        || {
+                            (
+                                crate::ranger::points::full_int_range(handle_type.is_unsigned()),
+                                false,
+                            )
+                        },
+                        |result| (result.ranges.clone(), result.ranges.is_empty()),
+                    )
                 };
                 if empty_range {
                     return Ok(empty_range_dual_task(ds, ctx));
                 }
                 let table_access_conds = common_detach.as_ref().map_or_else(
-                    || int_access_conditions.clone(),
+                    || {
+                        int_detach
+                            .as_ref()
+                            .map_or_else(Vec::new, |result| result.access_conds.clone())
+                    },
                     |result| result.access_conds.clone(),
                 );
                 let table_filters = if common_handle.is_some() {
