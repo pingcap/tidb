@@ -297,17 +297,19 @@ fn remove_redundant_or(ctx: &RuleContext<'_>, expression: Expression) -> Express
     let mut items = Vec::new();
     for item in split_dnf_items(&expression) {
         let (_, item_type) = predicate_type(ctx, &item);
-        let item = if item_type == PredicateType::And {
-            compose_cnf_condition(
-                split_cnf_items(&item)
-                    .into_iter()
-                    .map(|condition| remove_redundant_or(ctx, condition))
-                    .collect(),
-            )
-            .unwrap_or(item)
-        } else {
-            item
-        };
+        if item_type == PredicateType::And {
+            // Go appends conjunctions directly after recursive OR cleanup.
+            items.push(
+                compose_cnf_condition(
+                    split_cnf_items(&item)
+                        .into_iter()
+                        .map(|condition| remove_redundant_or(ctx, condition))
+                        .collect(),
+                )
+                .unwrap_or(item),
+            );
+            continue;
+        }
         let key = item.clone().hash_code().to_vec();
         if seen.insert(key) || is_mutable_effects_expr(&item) {
             items.push(item);
@@ -759,6 +761,37 @@ mod tests {
         }
         fn append_warning(&self, code: u16, message: &str) {
             self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn redundant_or_retains_conjunction_branches_after_recursive_cleanup() {
+        let allocator = PlanIdAllocator::new();
+        let ctx = test_context(&allocator);
+        let a = function("eq", vec![column(1), integer(1)]);
+        let b = function("eq", vec![column(2), integer(2)]);
+        let leaf = function("eq", vec![column(3), integer(3)]);
+        let conjunction = function(
+            "and",
+            vec![function("or", vec![a.clone(), a.clone()]), b.clone()],
+        );
+        let original = compose_dnf_condition(vec![
+            conjunction.clone(),
+            leaf.clone(),
+            conjunction,
+            leaf.clone(),
+        ])
+        .unwrap();
+        let result = remove_redundant_or(&ctx, original);
+        let branches = split_dnf_items(&result);
+        // Go cleans OR children inside each AND, but only hashes non-AND branches.
+        assert_eq!(branches.len(), 3);
+        assert!(branches[1].equal(&leaf));
+        for branch in [&branches[0], &branches[2]] {
+            let terms = split_cnf_items(branch);
+            assert_eq!(terms.len(), 2);
+            assert!(terms[0].equal(&a));
+            assert!(terms[1].equal(&b));
         }
     }
 

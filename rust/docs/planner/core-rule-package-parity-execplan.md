@@ -312,3 +312,15 @@ Progress: revalidated clean worktree at pushed `35433b5de2`. The complete ninete
 Go passes the supplied validity filter to PropagateConstant even when propagateConstant is false. Rust's ordinary path did this, but its join path passed None. A DNF containing `(a=b AND a>7) OR c=9` therefore admitted a derived `b>7` predicate rejected by the caller. The regression first failed on missing callback invocation and then, independently, on the resulting expression mismatch. Pass valid through the existing call; no new algorithm or additional behavior is introduced.
 
 Ready evidence: all six predicate owner tests and 57 logical-rule consumer tests pass, as does make lint. Red logs are `/tmp/core-rule-join-red-20260908.log` and `/tmp/core-rule-join-shape-red-20260908.log`; green logs and commands are recorded in the package receipt. Outcome: join propagation now respects the caller's filter on this path. Continue the remaining package audit; the join final-deletion implementation and other predicate helpers are still open comparisons.
+
+
+## OR conjunction preservation batch (2026-09-08)
+
+
+Progress: revalidated clean state at pushed `63a4d3cda7`. The nineteen-artifact inventory remains current for the pinned Go authority. Re-read recursiveRemoveRedundantORBranch and the Rust normal-form consumer boundaries.
+
+Go handles AND branches separately: recursively clean each conjunct, append the recomposed conjunction, and do not enter it into the non-AND deduplication map. Rust additionally hashed and removed duplicate conjunctions. Remove that Rust-only step while preserving leaf deduplication and recursive processing. The regression uses repeated AND branches containing repeated OR leaves, interleaved with a repeated ordinary leaf; Go retains three outer branches and removes duplicates inside both conjunctions.
+
+The pre-fix run failed with two branches instead of three. During validation, the test's whole-expression comparison also exposed a test-construction type mismatch (the convenience function assigns Tiny, the normal-form composer infers its own logical result type). The test now checks the two preserved branches' ordered conjuncts and the middle leaf directly. This retains the original failing branch-count assertion and verifies the actual intended semantics without asserting that unrelated test-helper metadata is identical.
+
+Ready: seven predicate tests, 57 logical-rule tests, make lint, rustfmt check and git diff check pass. Evidence is in the package receipt. Outcome: OR cleanup now preserves Go's conjunction branch boundary. Full package parity remains open; continue the declaration inventory and original test mapping.

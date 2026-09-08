@@ -87,3 +87,24 @@ Ready commands use the same toolchain and flags above: predicate owner filter
 `/tmp/core-rule-join-consumers-20260908.log`, and
 `/tmp/core-rule-join-ready-lint-20260908.log`. Formatting and diff checks are
 performed before commit. This does not close the remaining package audit.
+
+## Follow-up: preserve conjunctions during OR cleanup
+
+Parent `63a4d3cda7`; same full Go inventory and pinned authority.
+Rust recursive OR cleanup applied its hash deduplication to AND branches as
+well as leaves. Go appends recursively cleaned AND branches directly and only
+deduplicates other branches. Rust now follows that branch boundary.
+
+Regression `redundant_or_retains_conjunction_branches_after_recursive_cleanup`
+uses `((a OR a) AND b) OR c OR ((a OR a) AND b) OR c`. It verifies three outer
+branches in order, both conjunctions reduced to the ordered terms a,b, and one
+ordinary c leaf. Before the fix, branch count was two; see
+`/tmp/core-rule-or-red-20260908.log`. A later test-only assertion correction
+avoids comparing convenience-function Tiny metadata with the composer's
+inferred result type; the failing branch-count assertion is unchanged.
+
+Ready commands are the same predicate/consumer test commands above: 7/7
+predicate tests and 57/57 consumer tests passed. `make lint` passed, along with
+rustfmt and diff checks. Logs: `/tmp/core-rule-or-green-20260908.log`,
+`/tmp/core-rule-or-consumers-20260908.log`, and
+`/tmp/core-rule-or-ready-lint-20260908.log`. No Go files were changed.
