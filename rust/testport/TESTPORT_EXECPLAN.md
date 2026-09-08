@@ -11339,3 +11339,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (JSON_SEARCH pin): 'one' first-path mode, 'all' array mode,
   %-wildcard matching, and the no-match NULL. Pinned in
   `crates/tidb-session/tests/json_search_source.rs`.
+- 2026-09-08 (CONTAINS_PATH/QUOTE pin): JSON_CONTAINS_PATH's one/all modes
+  and JSON_QUOTE's inner-quote escaping. Pinned in
+  `crates/tidb-session/tests/json_quote_contains_path_source.rs`.
