@@ -11480,3 +11480,6 @@ risks without claiming repository-wide parity.
  one valid row skips only the violating row (affected 1) and updates the
  other. Pinned in
  `crates/tidb-session/tests/update_ignore_mixed_check_source.rs`.
+- 2026-09-08 (DELETE-over-CHECK pin): CHECKs gate writes only — DELETE
+ removes would-violate rows freely and reads never re-check. Pinned in
+ `crates/tidb-session/tests/delete_over_check_source.rs`.
