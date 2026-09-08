@@ -746,6 +746,12 @@ both `oltp_read_only` and `oltp_read_write`.
   the trailing key datums (hash and grouped-stream), and keeps the parallel
   pipeline off that shape. Receipt:
   `rust/testport/receipts/executor_cop_partial_group_keys.md`.
+- [x] 2026-09-09: optimized a shared CTE class BEFORE the logical rule list,
+  matching Go's lazy `LogicalCTE.DeriveStats`. A CTE used twice is
+  materialized and its class seeded lazily inside the first stats request;
+  Rust seeded it only after `logical_optimize`, so a rule that derived stats
+  first failed with `LogicalCTE.DeriveStats: seed physical plan is nil`.
+  Receipt: `rust/testport/receipts/executor_cte_class_optimization_order.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

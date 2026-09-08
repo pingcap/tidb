@@ -1510,6 +1510,22 @@ fn optimize_built_logical(
         plan,
         (),
     );
+    // Go's `LogicalCTE.DeriveStats` optimizes its CTE class the first time a
+    // logical rule asks the producer for statistics, which happens DURING
+    // `logicalOptimize`. A class reference kept alive by two or more uses (a
+    // single use is inlined) therefore has to be optimized before entering the
+    // rule list, or the first `recursive_derive_stats` inside a rule sees a
+    // nil seed physical plan.
+    optimize_cte_classes(
+        &plan,
+        catalog,
+        ctx,
+        session_zone,
+        plan_ids,
+        column_ids,
+        &rule_context,
+        &mut HashSet::new(),
+    )?;
     let mut optimized = logical_optimize(&rule_context, flags, plan)
         .map_err(|(_, error)| error)?
         .plan;
