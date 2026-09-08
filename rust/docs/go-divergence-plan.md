@@ -112,9 +112,16 @@ Then, independently of each other:
   expressions are ALREADY SAFE — they are resolved through
   `simple_resolve_name` at evaluation setup time, re-resolving column
   names against the CURRENT schema each time (so offset shifts are
-  automatically handled). The remaining #202 scope narrows to partition
-  expressions and FK column references in the runtime layer, IF those
-  paths cache resolved offsets rather than re-resolving per evaluation.
+  automatically handled). DEEPER INVESTIGATION (2026-09-08):
+  partition pruning evaluates expressions per query with fresh context;
+  `FKInfo` stores `CiString` column names (not offsets); the AST model
+  has no offset field on column reference nodes. The offset-keyed
+  reference issue may apply to Go's internal `expression.Column.Index`
+  field in the planner's cached expression trees, which Rust's
+  name-based resolution approach may not share. Verdict: #202 is
+  likely a Go-specific planner concern that the Rust tree's
+  name-first approach avoids by design. Closure pending live-cluster
+  confirmation.
 - **#196 — identifier case mapping.** CLOSED (2026-09-08, migration
   complete across all production crates): ~210 `to_lowercase()`/
   `to_uppercase()` call sites migrated to `tidb_hack`'s `go_to_lower`/
