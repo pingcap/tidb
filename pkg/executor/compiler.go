@@ -59,6 +59,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		recoveredErr, ok := r.(error)
 		if !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoveredErr) ||
 			exeerrors.ErrMemoryExceedForInstance.Equal(recoveredErr) ||
+			exeerrors.ErrQueryExecStopped.Equal(recoveredErr) ||
 			exeerrors.ErrQueryInterrupted.Equal(recoveredErr) ||
 			exeerrors.ErrMaxExecTimeExceeded.Equal(recoveredErr)) {
 			panic(r)
