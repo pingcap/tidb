@@ -202,6 +202,48 @@ func checkAnalyzeRUFormat(t *testing.T, tk *testkit.TestKit, sql string, expecte
 	}
 }
 
+func TestExplainAnalyzeRUFormatIgnoresLiteralLength(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = true
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_ru_literal_length")
+	tk.MustExec("create table t_ru_literal_length(a varchar(20))")
+	tk.MustExec("insert into t_ru_literal_length values ('x')")
+
+	explainAnalyzeRUTotal := func(sql string) float64 {
+		t.Helper()
+		rows := tk.MustQuery("explain analyze format = 'ru' " + sql).Rows()
+		require.NotEmpty(t, rows)
+
+		const (
+			cumRUCol    = 4
+			cumRUPctCol = 5
+		)
+		var totalRU *float64
+		for _, row := range rows {
+			require.Len(t, row, 7)
+			if row[cumRUPctCol] != "100.00%" {
+				continue
+			}
+			ru, err := strconv.ParseFloat(row[cumRUCol].(string), 64)
+			require.NoError(t, err)
+			require.Nil(t, totalRU)
+			totalRU = &ru
+		}
+		require.NotNil(t, totalRU)
+		return *totalRU
+	}
+
+	shortRU := explainAnalyzeRUTotal("select * from t_ru_literal_length where a = 'aaa'")
+	longRU := explainAnalyzeRUTotal("select * from t_ru_literal_length where a = 'aaaaaaaaaa'")
+	require.Equal(t, shortRU, longRU)
+}
+
 func TestCheckActRowsWithUnistore(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
