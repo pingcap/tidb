@@ -1059,6 +1059,17 @@ both `oltp_read_only` and `oltp_read_write`.
   the semi family; inner/outer joiners keep the one-row loop because `matched`
   does not settle their outer row. Receipt:
   `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
+- [x] 2026-09-09: lowered a subquery inside an aggregate argument below the
+  aggregation. `build_aggregation` used `rewrite_scalar`, which refuses a
+  plan-carrying subquery, so `SUM((SELECT ...))` failed in the rewriter. Go's
+  `rewriteWithPreprocess` rewrites an aggregate argument like any other
+  expression, so each argument now runs through `lower_scalar_subqueries`,
+  hides the pre-lowering columns, and rebinds the column marker against the
+  refreshed child schema — the sequence the filter path already uses. The
+  Apply lands BELOW the aggregation, so the subquery runs per source row:
+  `grouped_correlated_subqueries` now passes (the two fixes together; the
+  executor half is the entry above). Receipt:
+  `rust/testport/receipts/planner_decorrelate_solver.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1067,12 +1078,13 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1227 passed / 25 failed). Each needs a package-sized port,
-  not a test tweak:
+  lib serialized: 1219 passed / 34 failed; 21 real failures, the other 13 are
+  the statistics-request transport flake that passes 16/16 in isolation).
+  Each needs a package-sized port, not a test tweak:
   - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
     the uncorrelated/Selection/MaxOneRow/Sort/Limit arms are ported; the
     aggregation pull-up arm, the projection arm, the aggregate group-below arm
-    and `pruneRedundantApply` remain. Nine
+    and `pruneRedundantApply` remain. Eight
     `driver::tests::subqueries::*` failures.
   - `pkg/planner/core` `compareCandidates` (`find_best_task.go:866`): the
     prefer-range override is ported, but the metric-by-metric skyline

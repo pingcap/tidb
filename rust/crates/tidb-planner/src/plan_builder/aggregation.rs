@@ -131,7 +131,9 @@ use tidb_expr::Columns;
 
 use super::catalog::TableSource;
 use super::marker::{self, MarkerKind, PlanMarker};
-use super::{find_field_name, snapshot_schema_and_names, PlanBuilder, ProjectionField};
+use super::{
+    find_field_name, hide_rewrite_columns, snapshot_schema_and_names, PlanBuilder, ProjectionField,
+};
 use crate::expression_rewriter::ClauseCode;
 use crate::logical::aggregation::LogicalAggregation;
 use crate::logical::rule::flags;
@@ -911,7 +913,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// (`aggregation.NewAggFuncDesc`).
     pub fn build_aggregation(
         &mut self,
-        plan: LogicalPlan,
+        mut plan: LogicalPlan,
         agg_funcs: &[Expr],
         group_by_items: Vec<Expression>,
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
@@ -927,7 +929,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.opt_flag |= flags::SKEW_DISTINCT_AGG;
         }
         // Rule 3 of [`super`]: both snapshots precede every move of `plan`.
-        let (schema, names) = snapshot_schema_and_names(&plan);
+        // They are refreshed when an aggregate argument lowers a subquery,
+        // because the lowering inserts an Apply into the child.
+        let (mut schema, mut names) = snapshot_schema_and_names(&plan);
         // `:280` a `ROLLUP` block's Expand supplies the extra group keys.
         let rollup_expand = self.current_block_expand.clone();
 
@@ -941,7 +945,35 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let (name, args, distinct, order_by, separator) = decompose_aggregate(agg)?;
             let mut built_args = Vec::with_capacity(args.len() + usize::from(separator.is_some()));
             for arg in args {
-                built_args.push(self.rewrite_scalar(arg, &schema, &names, markers)?);
+                // Go `rewriteWithPreprocess`: an aggregate argument is
+                // rewritten like any other expression, so a scalar subquery
+                // nested inside it inserts an Apply into the child plan and
+                // is replaced by the Apply's output column. Without this the
+                // subquery reached the executor's expression rewriter, which
+                // rejects it ("expression form is not yet supported").
+                let mut scratch = Self::clause_scratch(arg);
+                let plan_len = plan.schema().map_or(0, Schema::len);
+                let (next_plan, lowered) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+                plan = next_plan;
+                if lowered {
+                    hide_rewrite_columns(&mut plan, plan_len);
+                    let (next_schema, next_names) = snapshot_schema_and_names(&plan);
+                    schema = next_schema;
+                    names = next_names;
+                    // The lowering substituted a `#col#<index>` marker for
+                    // the subquery node, so the rewrite needs the Column
+                    // marker bound to the refreshed child schema exactly as
+                    // the select-list path binds it.
+                    let mut current_markers = markers.clone();
+                    current_markers.insert(MarkerKind::Column, schema.columns.clone());
+                    built_args.push(self.rewrite_scalar_with_plan(
+                        &scratch,
+                        &plan,
+                        &current_markers,
+                    )?);
+                } else {
+                    built_args.push(self.rewrite_scalar(arg, &schema, &names, markers)?);
+                }
             }
             if let Some(separator) = separator {
                 let mut field_type = FieldType::parser(FieldTypeCode::VarString);

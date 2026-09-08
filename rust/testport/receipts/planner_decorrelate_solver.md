@@ -86,3 +86,29 @@ cargo check --locked --all-targets -p tidb-planner -p tidb-executor
 rustfmt --edition 2021 --check <changed files>
 git diff --check -- rust
 ```
+
+## Follow-up: a subquery inside an aggregate argument lowers below the aggregation
+
+`PlanBuilder.build_aggregation` (`plan_builder/aggregation.rs`) rewrote every
+aggregate argument with `rewrite_scalar`, which refuses a plan-carrying
+subquery ("expression form is not yet supported by the rewriter"). Go's
+`rewriteWithPreprocess` rewrites an aggregate argument like any other
+expression, so `handleScalarSubquery` inserts the Apply into the
+aggregation's CHILD and the argument reads the Apply's output column. Each
+argument now runs through `lower_scalar_subqueries`; when it lowered
+anything, the builder hides the pre-lowering columns
+(`hide_rewrite_columns`), re-snapshots the child schema, rebinds
+`MarkerKind::Column` to it, and rewrites the scratch argument against the new
+plan -- the sequence `build_selection` already uses for a lowered filter.
+
+Placement is load-bearing: the Apply sits BELOW the aggregation, so a
+correlated subquery in an aggregate argument is evaluated per SOURCE row, not
+per group. `driver::tests::subqueries::grouped_correlated_subqueries` pins it:
+`SELECT g, SUM((SELECT COUNT(*) FROM s WHERE s.k = g)) FROM t GROUP BY g`
+over two `g = 1` rows in `t` and two matching `s` rows answers `4`, where a
+per-group Apply would answer `2`. Before this change the same query stopped
+in the expression rewriter.
+
+The planner lib suite stays `999 passed / 0 failed`; the executor regression
+and its Ready counts are recorded in
+`receipts/executor_root_distsql_indexjoin.md`.
