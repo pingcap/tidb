@@ -662,6 +662,13 @@ both `oltp_read_only` and `oltp_read_write`.
   `build_projection_with_order_by` builds the fields `resolve_order_by`
   appended under the OrderBy clause. Receipt:
   `rust/testport/receipts/executor_point_get_admission.md`.
+- [x] 2026-09-08: threaded the session's `div_precision_increment` into every
+  DAG request. `dag_request` already lowered the field and omitted it at the
+  default, but `cop_scan`'s `ConstructDAGReq` port left it at the default, so
+  `SET div_precision_increment = 5` still sent 4 to TiKV. The statement
+  context carries it now, and the read-only tier gained
+  `set_div_precision_increment`. Receipt:
+  `rust/testport/receipts/executor_internal_builder.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

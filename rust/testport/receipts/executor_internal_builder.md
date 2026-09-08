@@ -57,3 +57,22 @@ go test ./pkg/executor/internal/builder
 Not verified here: caller-level executor tests, Bazel execution, TiFlash
 transport, and full workspace tests. Existing Rust warnings and unrelated
 dirty `tidb-txnkv` files remain.
+
+## Follow-up: the session's division scale reaches the DAG (2026-09-08)
+
+`dag_request` implemented the `DivPrecisionIncrement` field and the lowering
+omitted it at the default, but no production caller assigned it: `cop_scan`'s
+`ConstructDAGReq` port built `DagRequestContext::new(...)` and left the field
+at `DEFAULT_DIV_PRECISION_INCREMENT`, so `SET div_precision_increment = 5`
+still sent the default to TiKV. `PushdownStatementContext` now carries
+`div_precision_increment` from `StmtContext` (populated in `from_stmt`),
+`cop_scan` assigns it to the DAG context, and `real_tikv_read` gained the
+field plus `set_div_precision_increment` for its read-only tier.
+
+Regression:
+`cop_scan_string_selection_source::each_request_carries_the_statements_division_scale`
+asserts the DAG omits the field at the default and carries `Some(5)` when the
+statement sets 5. It failed with `left: None, right: Some(5)` before the
+wiring and passes after. `cargo test -p tidb-exec --test all cop_scan` — 15
+passed, 1 pre-existing failure (`a_limit_over_a_fully_lowered_builtin_
+predicate_travels_with_it`, which fails on the clean baseline too).

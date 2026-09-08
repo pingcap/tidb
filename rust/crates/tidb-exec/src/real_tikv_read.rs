@@ -1008,6 +1008,10 @@ pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSourc
     /// over this tier (the read half of `INSERT ... SELECT`) states it with
     /// [`Self::set_push_down_flags`].
     push_down_flags: u64,
+    /// `DAGRequest.div_precision_increment`, Go `builder_utils.go:73-76`: the
+    /// statement's `div_precision_increment` session variable, omitted from
+    /// the request at its default. [`Self::set_div_precision_increment`].
+    div_precision_increment: u32,
     /// The statement's warning sink; see [`Self::set_warning_sink`].
     warnings: WarningCollector,
 }
@@ -1035,6 +1039,7 @@ where
             _lease: None,
             time_zone: SessionTimeZone::utc(),
             push_down_flags: select_push_down_flags(),
+            div_precision_increment: crate::dag_request::DEFAULT_DIV_PRECISION_INCREMENT,
             warnings: WarningCollector::new(),
         }
     }
@@ -1057,6 +1062,7 @@ where
             _lease: lease,
             time_zone: SessionTimeZone::utc(),
             push_down_flags: select_push_down_flags(),
+            div_precision_increment: crate::dag_request::DEFAULT_DIV_PRECISION_INCREMENT,
             warnings: WarningCollector::new(),
         }
     }
@@ -1065,6 +1071,12 @@ where
     /// as [`Self::set_time_zone`] does for the zone.
     pub const fn set_push_down_flags(&mut self, flags: u64) {
         self.push_down_flags = flags;
+    }
+
+    /// Sets `DAGRequest.div_precision_increment` for every request from this
+    /// point on, Go `builder_utils.go:73-76`.
+    pub const fn set_div_precision_increment(&mut self, increment: u32) {
+        self.div_precision_increment = increment;
     }
 
     /// Installs the statement's warning sink, so the warnings TiKV reports
@@ -1304,13 +1316,17 @@ where
         let snapshot_ts = snapshot_ts.expect("nonempty plans require a supplied snapshot");
 
         let (time_zone_name, time_zone_offset) = self.time_zone.dag_zone();
+        let mut dag_context = DagRequestContext::new(
+            time_zone_name,
+            time_zone_offset,
+            self.push_down_flags,
+            EncodeType::Default,
+        );
+        // Go `builder_utils.go:73-76`: the statement's division scale reaches
+        // every DAG; the lowering omits the field at its default.
+        dag_context.div_precision_increment = self.div_precision_increment;
         let dag = construct_read_only_dag_req(
-            &DagRequestContext::new(
-                time_zone_name,
-                time_zone_offset,
-                self.push_down_flags,
-                EncodeType::Default,
-            ),
+            &dag_context,
             TiKvScanPlan::Table(plan.table_scan()),
             plan.selection(),
             plan.projection_output_offsets(),

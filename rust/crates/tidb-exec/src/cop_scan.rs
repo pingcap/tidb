@@ -423,7 +423,7 @@ where
         // Go `ConstructDAGReq`: the zone comes from the SESSION VARIABLES of
         // the statement that issued this request, read fresh every time.
         let (time_zone_name, time_zone_offset_secs) = request.statement.time_zone.dag_zone();
-        let context = DagRequestContext::new(
+        let mut context = DagRequestContext::new(
             time_zone_name,
             time_zone_offset_secs,
             // Go `builder_utils.go`'s `sc.PushDownFlags()`. The literal
@@ -436,6 +436,10 @@ where
             // this scan's bounded handoff, without per-row materialization.
             EncodeType::Chunk,
         );
+        // Go `builder_utils.go:73-76`: `dagReq.DivPrecisionIncrement` is set
+        // from the statement's session variable when it differs from the
+        // default; the lowering omits the field at the default value.
+        context.div_precision_increment = request.statement.div_precision_increment;
         let mut dag = match aggregate.as_ref() {
             Some(LoweredAggregate::Global {
                 functions,

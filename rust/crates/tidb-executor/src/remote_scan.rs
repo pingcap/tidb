@@ -453,6 +453,9 @@ pub struct PushdownStatementContext {
     /// Go's query-scoped per-store coprocessor limiter, shared by every
     /// remote scan in this statement.
     pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
+    /// Go `SessionVars.DivPrecisionIncrement`, copied to every DAG request's
+    /// `DivPrecisionIncrement` when it differs from the default.
+    pub div_precision_increment: u32,
 }
 
 impl Default for PushdownStatementContext {
@@ -465,6 +468,9 @@ impl Default for PushdownStatementContext {
             resource_group_name: "default".to_owned(),
             replica_read: tidb_distsql::ReplicaReadType::Leader,
             query_cop_store_limiter: None,
+            // Go `vardef.DefDivPrecisionIncrement`; a caller with no statement
+            // behind it has no session value to send.
+            div_precision_increment: 4,
         }
     }
 }
@@ -481,6 +487,7 @@ impl PushdownStatementContext {
             resource_group_name: ctx.resource_group_name().to_owned(),
             replica_read: ctx.replica_read(),
             query_cop_store_limiter: ctx.query_cop_store_limiter(),
+            div_precision_increment: ctx.div_precision_increment(),
         }
     }
 
