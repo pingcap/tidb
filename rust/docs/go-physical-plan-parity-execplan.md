@@ -656,11 +656,11 @@ both `oltp_read_only` and `oltp_read_write`.
 - [x] 2026-09-08: unknown-column errors now name the clause Go's `clauseMsg`
   names. `EvalError::UnknownColumnInClause` carries it, the plan resolver
   supplies it from `cur_clause`, and the sub-expression decorator forwards it;
-  `SELECT no_col FROM uc` reports `in 'field list'` and
-  `SELECT a FROM uc WHERE nc = 1` reports `in 'where clause'`. A name only in
-  `ORDER BY` still reports `field list` because Rust appends it as a hidden
-  projection field instead of running Go's `orderByResolver` pass; that
-  remains open. Receipt:
+  `SELECT no_col FROM uc` reports `in 'field list'`,
+  `SELECT a FROM uc WHERE nc = 1` reports `in 'where clause'`, and an
+  `ORDER BY`-only name reports `in 'order clause'` because
+  `build_projection_with_order_by` builds the fields `resolve_order_by`
+  appended under the OrderBy clause. Receipt:
   `rust/testport/receipts/executor_point_get_admission.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,

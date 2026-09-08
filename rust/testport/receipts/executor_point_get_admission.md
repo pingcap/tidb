@@ -55,10 +55,10 @@ covers `field list`, `where clause`, and `group statement`; it failed with
 `in 'expression'` before the fix and passes after. The full planner suite
 (989 lib tests) still passes.
 
-One Go behavior remains: a name that is only in `ORDER BY` is resolved by
-Go's dedicated `orderByResolver` pass with `curClause = orderByClause`; Rust
-appends it as a hidden projection field and reports `field list`. That is
-recorded in the physical-plan ExecPlan as remaining work.
+The `ORDER BY`-only case is covered too:
+`build_projection_with_order_by` builds the field slice `resolve_order_by`
+appended with `cur_clause = OrderBy`, so
+`SELECT * FROM t WHERE i = 1 ORDER BY j LIMIT 10` reports `in 'order clause'`.
 
 ## Validation
 
@@ -68,12 +68,18 @@ Profile: **Ready** for this focused batch.
   — 13 passed.
 - `cargo test --offline --locked -j12 -p tidb-executor --lib
   an_unknown_column_names_its_clause` — passed.
-- `cargo test --offline --locked -j12 -p tidb-executor --lib` — 1113 passed,
-  113 failed, against 1111/115 before the batch; the two fixed tests are the
+- `cargo test --offline --locked -j12 -p tidb-executor --lib
+  point_get_order_by_unknown_column_is_1054` — passed.
+- `cargo test --offline --locked -j12 -p tidb-executor --lib` — 1114 passed,
+  112 failed, against 1111/115 before the batch; the three fixed tests are the
   delta and no new failing test appeared (the `access_cost` module's two
   order-dependent tests flip between runs and pass in isolation).
 - `cargo test --offline --locked -j12 -p tidb-planner --tests` — 989 + 268 +
   6 + 3 passed.
+- `cargo test --offline --locked -j12 -p tidb-session --tests` — unchanged
+  failure set; the two embedding tests that flipped fail in isolation in the
+  other direction, so they are the crate's existing order-dependent tests, not
+  a clause regression.
 - `cargo fmt` changed files clean; `git diff --check` clean.
 
 No Go, Bazel, Cargo manifest, generated, or fixture file changed.

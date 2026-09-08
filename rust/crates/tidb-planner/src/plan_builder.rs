@@ -2701,8 +2701,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         fields: &[ProjectionField],
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<(LogicalPlan, Vec<Expression>), PlanError> {
+        self.build_projection_with_order_by(plan, fields, markers, None)
+    }
+
+    /// [`Self::build_projection`] with the `[from, to)` slice of fields
+    /// [`Self::resolve_order_by`] appended. Go resolves those with its
+    /// dedicated `orderByResolver` (`curClause = orderByClause`), so an
+    /// unknown name there is reported `in 'order clause'` rather than
+    /// `in 'field list'`.
+    fn build_projection_with_order_by(
+        &mut self,
+        plan: LogicalPlan,
+        fields: &[ProjectionField],
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+        order_by_range: Option<(usize, usize)>,
+    ) -> Result<(LogicalPlan, Vec<Expression>), PlanError> {
         self.opt_flag |= flags::ELIMINATE_PROJECTION;
-        self.cur_clause = ClauseCode::FieldList;
         let mut plan = plan;
         let (_, initial_names) = snapshot_schema_and_names(&plan);
         // Go `b.allNames = append(b.allNames, p.OutputNames())` (`:1782`),
@@ -2712,7 +2726,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut exprs = Vec::with_capacity(fields.len());
         let mut projection_columns = Vec::with_capacity(fields.len());
         let mut projection_names = Vec::with_capacity(fields.len());
-        for field in fields {
+        for (field_index, field) in fields.iter().enumerate() {
+            self.cur_clause = match order_by_range {
+                Some((from, to)) if (from..to).contains(&field_index) => ClauseCode::OrderBy,
+                _ => ClauseCode::FieldList,
+            };
             let mut scratch = Self::clause_scratch(&field.expr);
             // `:1786` "when we build the projection for select fields, we need
             // to skip the window function ... we add fake placeholders for
@@ -3256,8 +3274,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             &source_names,
         )?;
         // 6a's ORDER BY half, which appends its own hidden fields past the
-        // select list.
+        // select list. Go resolves them with `orderByResolver`, so record the
+        // slice they occupy and build it with the OrderBy clause.
+        let order_by_from = fields.len();
         let order_by = Self::resolve_order_by(&order_items, &mut fields);
+        let order_by_to = fields.len();
         // `:4397` `resolveWindowFunction`'s column half, which appends one
         // auxiliary field per column a window specification names; see
         // [`window::PlanBuilder::resolve_window_function`] for why it runs
@@ -3341,7 +3362,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         // `:4523` the projection.
-        let (projected, _) = self.build_projection(plan, &fields, &markers)?;
+        let (projected, _) = self.build_projection_with_order_by(
+            plan,
+            &fields,
+            &markers,
+            Some((order_by_from, order_by_to)),
+        )?;
         plan = projected;
 
         // Every remaining marker kind indexes the PROJECTION's schema.
