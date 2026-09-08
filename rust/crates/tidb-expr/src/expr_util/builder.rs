@@ -58,6 +58,23 @@ impl std::fmt::Display for FunctionBuildError {
 
 impl std::error::Error for FunctionBuildError {}
 
+/// Go `BuildCastFunctionWithCheck`: pick the dedicated `cast_*` signature for
+/// `target`.
+///
+/// The generic name `cast` is one of the four `NewFunction` explicitly
+/// refuses, and the executor has no `cast` arm, so a placeholder node left
+/// under that name fails at run time with "this scalar function is not yet
+/// ported". `crate::simple_expr::build_cast_function` is the port of Go's
+/// dedicated builder.
+fn dedicated_cast(arg: Expression, target: FieldType) -> Result<Expression, FunctionBuildError> {
+    crate::simple_expr::build_cast_function(arg, target, false).map_err(|error| {
+        FunctionBuildError {
+            func_name: "cast".to_owned(),
+            reason: format!("{error:?}"),
+        }
+    })
+}
+
 /// The construction half of Go's `BuildContext`, as the ported `util.go`
 /// rewrites use it.
 pub trait FunctionBuilder {
@@ -96,7 +113,10 @@ pub trait FunctionBuilder {
         is_explicit_charset: bool,
     ) -> Result<Expression, FunctionBuildError> {
         let _ = is_explicit_charset;
-        self.new_function("cast", ret_type, vec![arg])
+        match ret_type {
+            Some(target) => dedicated_cast(arg, target),
+            None => self.new_function("cast", None, vec![arg]),
+        }
     }
 
     /// Go `wrapWithIsTrue(ctx, keepNull=true, expr, wrapForInt=true)`, the one
@@ -231,14 +251,42 @@ impl<C: crate::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> 
         ret_type: Option<FieldType>,
         is_explicit_charset: bool,
     ) -> Result<Expression, FunctionBuildError> {
-        // `// narrowing:` Go routes `cast` to `BuildCastFunctionWithCheck`, a
-        // DEDICATED builder that `NewFunction` explicitly refuses (it is one of
-        // the four refused names). That builder is not in this crate yet, so
-        // the cast node is constructed directly, preserving the target type --
-        // which is the whole of what the substitution rewrites read off it.
-        // Routing it through `new_function` here would turn every cast
-        // substitution into an error, which is strictly worse.
+        // Go routes `cast` to `BuildCastFunctionWithCheck`, a DEDICATED
+        // builder that `NewFunction` explicitly refuses. `dedicated_cast` is
+        // its port; the generic `cast` name has no executor arm, so a
+        // placeholder left under it fails at run time.
         let _ = is_explicit_charset;
-        PreservingFunctionBuilder.new_function("cast", ret_type, vec![arg])
+        match ret_type {
+            Some(target) => dedicated_cast(arg, target),
+            None => PreservingFunctionBuilder.new_function("cast", None, vec![arg]),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::column::Column;
+    use crate::expression::Expression;
+    use tidb_datatype::FieldTypeCode;
+
+    /// Go's `BuildCastFunctionWithCheck` picks the dedicated `cast_*`
+    /// signature. The generic `cast` name is one of the four `NewFunction`
+    /// refuses and has no executor arm, so a node left under it fails at run
+    /// time with "this scalar function is not yet ported".
+    #[test]
+    fn build_cast_uses_the_dedicated_signature_name() {
+        let argument =
+            Expression::Column(Column::new(3, FieldType::new(FieldTypeCode::NewDecimal)));
+        let mut target = FieldType::new(FieldTypeCode::NewDecimal);
+        target.set_flen(34);
+        target.set_decimal(2);
+        let cast = PreservingFunctionBuilder
+            .build_cast(argument, Some(target), false)
+            .expect("a decimal cast builds");
+        let Expression::ScalarFunction(function) = cast else {
+            panic!("a cast is a scalar function");
+        };
+        assert_eq!(function.func_name.lowercase(), "cast_decimal");
     }
 }

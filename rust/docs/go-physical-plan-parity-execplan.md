@@ -869,6 +869,13 @@ both `oltp_read_only` and `oltp_read_write`.
   `and(ge, le)` condition that `IsConstNull` misses, so the relation is read.
   Both tests asserted the opposite; the Rust behavior already matched Go.
   Receipt: `rust/testport/receipts/planner_empty_range.md`.
+- [x] 2026-09-09: made `FunctionBuilder::build_cast` pick Go's dedicated
+  `cast_*` signature instead of the generic `cast` name, which has no executor
+  arm; the aggregation-elimination DECIMAL widening produced such a node and
+  failed with `this scalar function is not yet ported`. Also made the
+  projection explain append its output column (`expr->Column#N`) like
+  `expression.ExplainExpressionList`. Receipt:
+  `rust/testport/receipts/cast_hybrid_push.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

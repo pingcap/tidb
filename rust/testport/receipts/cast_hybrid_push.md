@@ -105,3 +105,34 @@ fails before (returns `Int(15)`) and passes after (`Bit([0, 0, 15])`).
 additions. `tidb-expr --lib` is 1204 passed / 2 failed, both pre-existing and
 unrelated (`build_expression_without_enough_columns` and the documented
 network `json_schema_valid_resolves_file_and_http_references`).
+
+## Follow-up: `build_cast` picks the dedicated signature; projection explains its output column (2026-09-09)
+
+Go routes `cast` to `BuildCastFunctionWithCheck`, the dedicated builder that
+picks a `cast_*` signature by target type; the bare `cast` name is one of the
+four `NewFunction` explicitly refuses. This port's `FunctionBuilder::build_cast`
+instead constructed a generic `ScalarFunction` named `cast`, which has no
+executor arm, so the aggregation-elimination rule's DECIMAL argument widening
+(`rule_aggregation_elimination.rs`) produced a node that failed at run time
+with `this scalar function is not yet ported`. Both `build_cast`
+implementations now route a `Some(target)` through `dedicated_cast`, the port
+of Go's builder; `None` keeps the old generic construction.
+
+`PhysicalProjection.ExplainInfo` uses `expression.ExplainExpressionList`
+(`explain.go:188`), which appends `-><output column>` to every expression
+except a direct column whose own text already equals its output column. The
+Rust printed the bare expression list. `projection_text` now appends the
+output column.
+
+Regression: the new
+`expr_util::builder::tests::build_cast_uses_the_dedicated_signature_name`
+fails before (name `cast`) and passes after (`cast_decimal`). Ready
+validation: `tidb-expr` lib 1205 passed / 2 failed, both pre-existing
+(`build_expression_without_enough_columns` and the network
+`json_schema_valid_resolves_file_and_http_references`);
+`tidb-executor` lib serialized 1199 passed / 49 failed, no additions;
+`cargo check --locked --all-targets` clean; `rustfmt --edition 2021 --check`
+clean on both changed files; `git diff --check -- rust`. The TPCC condition-09
+test now clears the unported-function error and fails only on the output
+column's NAME (`s1` alias vs Go's `Column#2`), the recorded alias/OrigName
+divergence.

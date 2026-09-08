@@ -98,6 +98,40 @@ fn expressions_text(expressions: &[tidb_expr::expression::Expression]) -> String
         .join(", ")
 }
 
+/// Go `expression.ExplainExpressionList` (`explain.go:188`), the Projection's
+/// operator text: every expression is rendered with its OUTPUT column as
+/// `expr->Column#N`, EXCEPT a direct column whose own text already equals the
+/// output column's.
+fn projection_text(
+    expressions: &[tidb_expr::expression::Expression],
+    schema: Option<&tidb_expr::schema::Schema>,
+) -> String {
+    expressions
+        .iter()
+        .enumerate()
+        .map(|(index, expression)| {
+            let rendered = expression_text(expression);
+            let Some(output) = schema.and_then(|schema| schema.columns.get(index)) else {
+                return rendered;
+            };
+            let output =
+                expression_text(&tidb_expr::expression::Expression::Column(output.clone()));
+            match expression {
+                // A column projected under the SAME identity prints once;
+                // a re-projected column with a different UniqueID prints both.
+                tidb_expr::expression::Expression::Column(_)
+                | tidb_expr::expression::Expression::CorrelatedColumn(_)
+                    if rendered == output =>
+                {
+                    rendered
+                }
+                _ => format!("{rendered}->{output}"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn by_items_text(items: &[tidb_expr::aggregation::ByItems]) -> String {
     items
         .iter()
@@ -593,7 +627,9 @@ fn physical_operator_info(
 ) -> String {
     match plan {
         PhysicalPlan::Selection(selection) => expressions_text(&selection.conditions),
-        PhysicalPlan::Projection(projection) => expressions_text(&projection.exprs),
+        PhysicalPlan::Projection(projection) => {
+            projection_text(&projection.exprs, projection.base.base.schema())
+        }
         PhysicalPlan::HashJoin(join) => join_info(
             join.join_type,
             join.base.children().first(),
