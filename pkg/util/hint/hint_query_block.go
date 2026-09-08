@@ -80,7 +80,7 @@ func (p *QBHintHandler) MaxSelectStmtOffset() int {
 }
 
 // Enter implements ast.InPlaceVisitor.
-func (p *QBHintHandler) Enter(in ast.Node) (skipChildren bool) {
+func (p *QBHintHandler) Enter(in ast.Node) bool {
 	switch node := in.(type) {
 	case *ast.UpdateStmt:
 		p.checkQueryBlockHints(node.TableHints, 0)
@@ -101,7 +101,7 @@ func (p *QBHintHandler) Enter(in ast.Node) (skipChildren bool) {
 }
 
 // Leave implements ast.InPlaceVisitor.
-func (*QBHintHandler) Leave(ast.Node) (proceed bool) {
+func (*QBHintHandler) Leave(ast.Node) bool {
 	return true
 }
 

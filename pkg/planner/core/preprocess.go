@@ -636,7 +636,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 }
 
-func (p *preprocessor) Leave(in ast.Node) (proceed bool) {
+func (p *preprocessor) Leave(in ast.Node) bool {
 	switch x := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag &= ^inCreateOrDropTable
@@ -651,7 +651,7 @@ func (p *preprocessor) Leave(in ast.Node) (proceed bool) {
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {
 			p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
-			return
+			return false
 		}
 	case *ast.ExplainStmt:
 		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
