@@ -134,6 +134,68 @@ impl InterestingColumnPruner {
                 .filter(|group| group.iter().all(|column| schema.contains(column)))
                 .cloned(),
         );
+        Self::refresh_group_ndvs(source);
+    }
+
+    /// Go `getGroupNDVs` (`pkg/planner/core/stats.go:491`): every loaded
+    /// index whose whole column list EXACTLY matches one of the source's
+    /// asked column groups publishes its own NDV as that group's exact NDV.
+    /// A join or aggregation above the source then estimates from the
+    /// composite NDV instead of the largest single-column NDV.
+    fn refresh_group_ndvs(source: &mut DataSource) {
+        let Some(table_stats) = source.table_stats.as_mut() else {
+            return;
+        };
+        let index_ndvs = table_stats
+            .hist_coll()
+            .map(|hist_coll| hist_coll.index_ndvs().values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut group_ndvs = Vec::new();
+        for (columns, ndv) in index_ndvs {
+            if !ndv.is_finite() || ndv <= 0.0 {
+                continue;
+            }
+            let mut sorted = columns;
+            sorted.sort_unstable();
+            for group in &source.asked_column_group {
+                let mut asked = group
+                    .iter()
+                    .map(|column| column.unique_id)
+                    .collect::<Vec<_>>();
+                asked.sort_unstable();
+                if asked == sorted {
+                    group_ndvs.push(crate::cardinality::ndv::GroupNdv {
+                        columns: sorted.clone(),
+                        ndv,
+                    });
+                    break;
+                }
+            }
+        }
+        let table_row_count = table_stats.row_count();
+        table_stats.set_group_ndvs(group_ndvs.clone());
+        // `DeriveStats4DataSource` may already have copied the table profile
+        // onto the plan; Go keeps ONE `ds.TableStats` object whose `Scale`
+        // re-scales the group NDVs, so the live profile gets the group NDVs
+        // scaled from the TABLE row count to the plan's own row count.
+        if let Some(stats) = source.base.base.stats_info().cloned() {
+            let scale_ndv = crate::cardinality::derive_stats::scale_ndv;
+            let mut stats = stats;
+            let scaled = group_ndvs
+                .iter()
+                .map(|group| crate::cardinality::ndv::GroupNdv {
+                    columns: group.columns.clone(),
+                    ndv: scale_ndv(
+                        group.ndv,
+                        table_row_count,
+                        stats.row_count(),
+                        crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+                    ),
+                })
+                .collect();
+            stats.set_group_ndvs(scaled);
+            source.base.base.set_stats(Some(stats));
+        }
     }
 
     fn add_node_columns(node: &LogicalPlan, down: &mut InterestingColumnsDown) {
@@ -628,6 +690,7 @@ mod tests {
     use crate::logical::BaseLogicalPlan;
     use crate::plan_base::PlanIdAllocator;
     use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+    use crate::stats_info::{HistColl, StatsInfo};
 
     fn column(id: i64) -> Column {
         let mut column = Column::new(id, FieldType::new(FieldTypeCode::LongLong));
@@ -997,5 +1060,38 @@ mod tests {
             .optimize(&context, plan)
             .expect("wait for statistics load");
         assert_eq!(requester.waits.get(), 1);
+    }
+
+    #[test]
+    fn a_matching_index_ndv_becomes_the_source_group_ndv() {
+        let mut plan = source(1, 7, &[(11, 1), (12, 2)]);
+        let LogicalPlan::DataSource(source) = &mut plan else {
+            unreachable!()
+        };
+        source.asked_column_group = vec![vec![column(1), column(2)]];
+        // Go `getGroupNDVs` matches an index whose WHOLE column list equals
+        // an asked group, in any order; a narrower index publishes nothing.
+        let hist_coll = HistColl::new(false, 1_000, std::iter::empty())
+            .with_index_ndvs([(5, (vec![2, 1], 800.0)), (6, (vec![1], 900.0))]);
+        source.table_stats =
+            Some(StatsInfo::new(1_000.0, [(1, 500.0), (2, 400.0)]).with_hist_coll(hist_coll));
+        // The plan profile is the table profile already scaled by a filter;
+        // Go's single `StatsInfo.Scale` call is what scales the group NDVs.
+        source
+            .base
+            .base
+            .set_stats(Some(StatsInfo::new(100.0, [(1, 50.0), (2, 40.0)])));
+
+        InterestingColumnPruner::refresh_group_ndvs(source);
+
+        let table_stats = source.table_stats.as_ref().expect("table statistics");
+        assert_eq!(table_stats.group_ndvs().len(), 1);
+        assert_eq!(table_stats.group_ndvs()[0].columns, vec![1, 2]);
+        assert_eq!(table_stats.group_ndvs()[0].ndv, 800.0);
+        let live = source.base.base.stats_info().expect("plan statistics");
+        assert_eq!(live.group_ndvs().len(), 1);
+        // `ScaleNDV` with the default skew ratio 1.0 is
+        // `ndv * selected / original` = 800 * 100 / 1000.
+        assert_eq!(live.group_ndvs()[0].ndv, 80.0);
     }
 }

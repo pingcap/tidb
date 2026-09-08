@@ -247,3 +247,64 @@ rustfmt --edition 2021 --config skip_children=true --check <changed files>
 git diff --check
 # clean
 ```
+
+## Follow-up: a loaded index's NDV is the source's group NDV (2026-09-09)
+
+Go `initStats` ends with `ds.TableStats.GroupNDVs = getGroupNDVs(ds,
+colGroups)` (`pkg/planner/core/stats.go:491`). For every asked column group
+the pruner produced, an index whose ENTIRE column list matches that group
+(and whose stats are essential-loaded) publishes its own NDV as the group's
+exact NDV; `property.StatsInfo.Scale` then re-scales the group NDVs with the
+source's filter selectivity. A join above a filtered source therefore
+estimates from the composite NDV, not the largest single-column NDV.
+
+Rust had no group NDVs at all. `HistColl` kept the loaded column histograms
+but not the loaded indexes' column lists and NDVs, `InitStats` never
+populated them, and `record_asked_groups` discarded the asked groups after
+pruning. The `orders x order_line` join of `tpcc_check_seven` estimated from
+`max(NDV(o_w_id)) = 300,000` instead of the `idx_order(o_w_id, o_d_id,
+o_c_id, o_id)`-shaped group NDV, which kept the per-outer-row probe at 0.80
+and the whole `IndexHashJoin` above plain `IndexJoin`.
+
+Change:
+
+* `HistColl` carries `index_ndvs: BTreeMap<i64, (Vec<i64>, f64)>` (Go
+  `HistColl.Indices`' `Idx2ColUniqueIDs` plus each index's NDV) with
+  `with_index_ndvs`/`index_ndvs()`.
+* `InitStats` maps each loaded index's `columns[].offset` onto the planner
+  schema's unique ids and attaches the index's NDV; an index with no loaded
+  histogram or a non-positive NDV is skipped.
+* `record_asked_groups` calls `refresh_group_ndvs` (Go `getGroupNDVs`). It
+  matches each loaded index's whole sorted column set against the source's
+  asked groups, sets the matching NDVs on the table profile, and re-scales
+  them onto the live plan profile when `DeriveStats4DataSource` already ran
+  — Go's single `ds.TableStats` object is scaled in place by
+  `StatsInfo.Scale`, so the live copy must not keep the raw NDV.
+
+Regression: `driver::tests::joins::tpcc_check_seven_propagates_the_warehouse_
+range_to_both_leaves` passes. It failed at `joins.rs:647` (wanted
+`IndexHashJoin`, got `IndexJoin`) before the change, and the pre-analyze
+`MergeJoin` assertion at `joins.rs:585` is unchanged. With a temporary
+candidate-cost trace the join's equal-condition output moved from 30,074.4
+to 300,744 (Go's real-ANALYZE probe: 304,547.92) and the per-outer-row probe
+from 0.801984 to 10.0248 (Go: ~10.15), so the analyzed plan is now Go's
+`IndexHashJoin`.
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1 tpcc_check_seven
+# ok after; FAILED at joins.rs:647 before
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1255 passed; 7 failed; check_seven left the baseline set, no additions
+
+cargo test -p tidb-planner
+# 1002 + 268 + 6 + 3 passed; 0 failed
+
+cargo check --locked --all-targets -p tidb-planner -p tidb-executor
+rustfmt --edition 2021 --config skip_children=true --check \
+  crates/tidb-planner/src/stats_info.rs \
+  crates/tidb-planner/src/logical/rule_collect_plan_stats.rs \
+  crates/tidb-executor/src/driver/planner_bridge.rs
+git diff --check
+# clean
+```

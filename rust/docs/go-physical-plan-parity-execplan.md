@@ -1279,6 +1279,22 @@ both `oltp_read_only` and `oltp_read_write`.
   constant equality. `tpcc_customer_warehouse_join_uses_two_point_gets`
   passes; executor 1248 passed / 11 failed. Receipt:
   `rust/testport/receipts/planner_data_source_stats_per_source.md`.
+- [x] 2026-09-09: published a loaded index's NDV as its source's group NDV.
+  Go `initStats` ends with `ds.TableStats.GroupNDVs = getGroupNDVs(ds,
+  colGroups)` (`stats.go:491`): an index whose whole column list exactly
+  matches one of the pruner's asked groups (and whose stats are
+  essential-loaded) publishes its own NDV, and `StatsInfo.Scale` re-scales
+  it with the source's selectivity. Rust kept no group NDVs, so the
+  `orders x order_line` join estimated from `max(NDV(o_w_id)) = 300,000`
+  instead of the `idx_order`-shaped group NDV. `HistColl` now carries the
+  loaded indexes' `(column ids, NDV)`, `InitStats` populates them, and
+  `record_asked_groups` runs `getGroupNDVs` and re-scales the matched NDVs
+  onto the live plan profile. The equal-condition output rose from 30,074.4
+  to 300,744 (Go's real-ANALYZE probe: 304,547.92) and the per-outer-row
+  probe from 0.80 to 10.02 (Go: 10.15), so
+  `joins::tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves`
+  now picks `IndexHashJoin`; executor 1255 passed / 7 failed. Receipt:
+  `rust/testport/receipts/planner_data_source_stats_per_source.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1287,7 +1303,7 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1,248 passed / 11 failed; the 13 statistics-request transport
+  lib serialized: 1,255 passed / 7 failed; the 13 statistics-request transport
   tests still flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
   - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
@@ -1300,8 +1316,17 @@ both `oltp_read_only` and `oltp_read_write`.
     comparison (`accessResult`/`scanResult`/`eqOrInResult`/risk ratio) that
     decides the MergeJoin-vs-IndexHashJoin and IndexJoin-vs-IndexLookUp
     choices is not. Remaining after the 2026-09-09 rounds:
-    `joins::tpcc_check_seven_*`, `aggregates::tpcc_condition_nine_rebuilds_*`,
     `aggregates::tpcc_condition_eleven_*` (analyzed arm).
+  - `pkg/planner/core` index-join multi-pattern inner child
+    (`extractIndexJoinInnerChildPattern`, `exhaust_physical_plans.go:860`):
+    Go wraps the inner DataSource of an index join with the chain of
+    Projection/Selection/Aggregation/UnionScan nodes above it and rebuilds
+    that chain directly over the constructed inner task. Rust plans the
+    index-join inner by ordinary property propagation, so an Aggregation or
+    Selection inner drops `IndexJoinProp` and no index candidate survives.
+    `aggregates::tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup`
+    (wants `IndexHashJoin` over a grouped `HashAgg` inner) needs this arm.
+  - `joins::tpcc_check_seven_*`: DONE (group NDVs, see the 2026-09-09 entry).
   - `pkg/executor` Window executor (`exhaustPhysicalPlans over Window`):
     `tests_executor_suite_statements_source::{column_name_resolution,
     issue52984_named_window_self_frame_runs_repeatedly}`.
@@ -1378,6 +1403,10 @@ both `oltp_read_only` and `oltp_read_write`.
   the probe term to 139.6M and the whole IndexHashJoin to 45.3M. The inner
   access path's per-outer-row row estimate is the thing to fix; the ordered
   children follow from the MergeJoin candidate winning instead.
+  Resolved (2026-09-09): the per-outer-row probe was mis-derived because the
+  join estimated from a single-column NDV. With `getGroupNDVs` ported the
+  equal-condition output is 300,744 (Go 304,547.92) and the probe is 10.02
+  (Go 10.15), and `tpcc_check_seven` chooses `IndexHashJoin`.
 
 - Observation: commit `e2788410d8` was benchmark-shaped rather than
   Go-shaped. It named `bulk_insert.lua` in production code, recognized only

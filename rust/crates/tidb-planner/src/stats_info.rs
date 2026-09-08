@@ -47,6 +47,9 @@ pub struct HistColl {
     /// a point range on it names at most one row. A common handle is false
     /// even though every handle column is a key column.
     pk_is_handle: bool,
+    /// Go `HistColl.Indices`' `(column unique ids, NDV)` per loaded index,
+    /// which `getGroupNDVs` matches against a source's asked column groups.
+    index_ndvs: BTreeMap<i64, (Vec<i64>, f64)>,
 }
 
 impl PartialEq for HistColl {
@@ -76,6 +79,7 @@ impl HistColl {
             histograms: BTreeMap::new(),
             modify_count: 0,
             pk_is_handle: false,
+            index_ndvs: BTreeMap::new(),
         }
     }
 
@@ -107,6 +111,22 @@ impl HistColl {
     #[must_use]
     pub const fn pk_is_handle(&self) -> bool {
         self.pk_is_handle
+    }
+
+    /// Attaches the loaded indexes' column lists and NDVs.
+    #[must_use]
+    pub fn with_index_ndvs(
+        mut self,
+        index_ndvs: impl IntoIterator<Item = (i64, (Vec<i64>, f64))>,
+    ) -> Self {
+        self.index_ndvs = index_ndvs.into_iter().collect();
+        self
+    }
+
+    /// Go `HistColl.Indices`, as `(column unique ids, NDV)` per index.
+    #[must_use]
+    pub const fn index_ndvs(&self) -> &BTreeMap<i64, (Vec<i64>, f64)> {
+        &self.index_ndvs
     }
 
     /// Go `HistColl.Pseudo`.

@@ -1104,6 +1104,36 @@ impl OwnedRewrite for InitStats<'_> {
                 Some((column.unique_id, std::sync::Arc::new(loaded.clone())))
             })
             .collect::<Vec<_>>();
+        // Go `HistColl.Indices`' NDVs feed `getGroupNDVs`, which matches an
+        // index's whole column list against a source's asked column groups.
+        let planned_columns = source
+            .base
+            .base
+            .schema()
+            .into_iter()
+            .flat_map(|schema| &schema.columns)
+            .collect::<Vec<_>>();
+        let index_ndvs = source
+            .indexes
+            .iter()
+            .filter_map(|index| {
+                let loaded = statistics?.indexes.get(&index.id)?;
+                if loaded.histogram.ndv <= 0 {
+                    return None;
+                }
+                let columns = index
+                    .columns
+                    .iter()
+                    .filter_map(|column| {
+                        planned_columns
+                            .get(column.offset)
+                            .map(|planned| planned.unique_id)
+                    })
+                    .collect::<Vec<_>>();
+                (columns.len() == index.columns.len())
+                    .then(|| (index.id, (columns, loaded.histogram.ndv as f64)))
+            })
+            .collect::<Vec<_>>();
         source.table_stats = Some(
             StatsInfo::new(row_count, ndvs)
                 .with_hist_coll(
@@ -1114,7 +1144,8 @@ impl OwnedRewrite for InitStats<'_> {
                     )
                     .with_histograms(histograms)
                     .with_modify_count(statistics.map_or(0, |statistics| statistics.modify_count))
-                    .with_pk_is_handle(source.handle_is_int),
+                    .with_pk_is_handle(source.handle_is_int)
+                    .with_index_ndvs(index_ndvs),
                 )
                 .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |statistics| {
                     if statistics.pseudo || statistics.stats_ver <= 0 {
