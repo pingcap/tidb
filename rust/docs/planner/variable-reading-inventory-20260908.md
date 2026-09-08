@@ -33,7 +33,7 @@ This is a prerequisite for the planner range-limit transmission repair. Enumerat
 | pkg/sessionctx/variable/tests/slowlog/slow_log_test.go | 707 | 79afe57e8ef2442c4d71af175e772a6eed600895 | pending |
 | pkg/sessionctx/variable/tests/variable_test.go | 743 | 74b2f17fc5b4d7a402473aa5b55d33fa9bee989a | pending |
 | pkg/sessionctx/variable/tidb_vars.go | 69 | 30576c2c4373b63330c4de8446feb0c90c7abe72 | complete |
-| pkg/sessionctx/variable/variable.go | 844 | b586c0965319f351b2f46bd2cbe292e1e1ebbb11 | pending |
+| pkg/sessionctx/variable/variable.go | 844 | b586c0965319f351b2f46bd2cbe292e1e1ebbb11 | complete |
 | pkg/sessionctx/variable/varsutil.go | 557 | 0322d2fd948b13c93b73e320cd3a9d2ba9a0caac | pending |
 | pkg/sessionctx/variable/varsutil_test.go | 728 | 413fbc73c3e46107ee9fe48fcb272289b9b3ef61 | pending |
 
@@ -53,3 +53,11 @@ Seven additional direct artifacts read completely: mock_globalaccessor.go and it
 Mock global setters validate before invoking hooks, while SetGlobalSysVarOnly bypasses hooks/validation after checking registration. The test-mode accessor returns an unknown-variable error where the lightweight accessor returns an empty value. Removed-variable lookup is exact-name and returns the source-specific reason. Status collection stops on the first provider error; later providers overwrite duplicate names. Unregistration removes the last matching provider by swapping the final entry. Default statistics expose live connect-attribute counters and session keys examined. TiDB hook declarations include statistics cache capacity and statistics owner controls and must not be mistaken for implementations.
 
 Remaining direct files: noop.go, session.go, setvar_affect.go, slow_log.go, sysvar.go, sysvar_test.go, variable.go, varsutil.go, varsutil_test.go. Nested test packages remain pending. The intended range-limit repair is still open.
+
+## Generic validation reading checkpoint
+
+variable.go is now read completely in bounded segments, bringing direct coverage to sixteen files. Its functions cover MV execution-variable capture/apply/restore, SysVar hook getters/setters, scope checks, type validation, relaxed validation, time/duration/integer/enum/float/bool checks, native result types, initialization/cache exclusions, registration and dependency ordering.
+
+For range-limit inputs, checkInt64SystemVar parses the entire value first: parsing overflow is ErrWrongTypeForVar, while parsed values outside the configured bounds append ErrTruncatedWrongValue and return the boundary. AllowAutoValue accepts only the exact special string -1 before parsing. Valid integers retain their original spelling. Scope validation precedes type and custom validation. Relaxed validation restores the prior warning slice even when a validator emits warnings. Session hooks execute before systems updates; aliases skip validation and alias recursion. Global custom hooks return before generic alias processing. These must be preserved when wiring the range-limit session value.
+
+Remaining direct files: noop.go, session.go, setvar_affect.go, slow_log.go, sysvar.go, sysvar_test.go, varsutil.go and varsutil_test.go; nested test packages also remain pending. This is reading evidence only, not a Rust fix or passing test claim.

@@ -253,3 +253,9 @@ direct reading coverage to fifteen. The inventory records accessor, removed
 variable, status-variable and registered-hook findings. Nine direct files and
 nested tests remain pending. No production change or test execution is claimed
 for this source-reading checkpoint.
+
+At 2d9fdf901d, completed the generic variable.go implementation, bringing
+direct reading coverage to sixteen files. Integer parse-overflow errors,
+bound-clamping warnings, relaxed validation warning restoration and hook/alias
+ordering are recorded as pending range-limit integration requirements. Eight
+direct files and nested tests remain unread; no behavior change is claimed.
