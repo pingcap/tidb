@@ -948,6 +948,13 @@ both `oltp_read_only` and `oltp_read_write`.
   assertions; the remaining uncorrelated `EXISTS` arm needs Go's separate
   subquery evaluation. Receipt:
   `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: kept a base-table column's `OrigName` on the ORIGINAL table.
+  Go `buildDataSource` computes it from the pre-alias `FieldName`
+  (`logical_plan_builder.go:5259`) and `buildResultSetNode` renames only the
+  OUTPUT name to the alias (`:518-522`); the Rust used the alias for both, so
+  the forced-merge-join Sort enforcer rendered `test.l.k` where Go records
+  `test.ncl.k`. One executor test fixed. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

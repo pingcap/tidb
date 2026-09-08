@@ -440,3 +440,30 @@ baseline; `cargo check --locked --all-targets -p tidb-planner` clean;
 test now clears every IN / NOT IN assertion and stops at the uncorrelated
 `EXISTS` arm, which needs Go's separate-subquery evaluation (the recorded
 `ScalarSubQueryExpr` boundary).
+
+## Follow-up: a base-table column keeps its original table in `OrigName` (2026-09-09)
+
+Go `buildDataSource` sets `Column.OrigName` from the PRE-alias `FieldName`
+(`logical_plan_builder.go:5259`, whose `TblName` is `tableInfo.Name`), and
+`buildResultSetNode` renames only the OUTPUT `FieldName` to the table alias
+afterwards (`:518-522`). A base-table column therefore renders as
+`db.original_table.column` in expression text and explain, while the OUTPUT
+name answers to the alias.
+
+The Rust built the column's `orig_name` from the post-alias `FieldName`, so
+`SELECT /*+ TIDB_SMJ(l, r) */ ... FROM ncl l JOIN ncr r` rendered the Sort
+enforcer's by-items as `test.l.k, test.l.o` where Go records
+`test.ncl.k, test.ncl.o`. `build_data_source` now derives `orig_name` from a
+pre-alias copy of the `FieldName`.
+
+Regression: `plan_builder::tests::test_table_alias_renames_the_output_names`
+now also asserts the DataSource column's `orig_name` is `test.t.a` for
+`SELECT x.a FROM t AS x` (the OUTPUT name still answers to `x`), and
+`driver::tests::joins::a_forced_merge_lowers_the_planner_selected_sort_enforcers`
+passes. Ready validation: `tidb-planner` lib 998 passed / 0 failed;
+`tidb-executor` lib serialized 36 baseline failures (the two earlier fixes
+plus this one removed, no additions, and the documented
+`statistics_request_tests` flake did not fire this run);
+`cargo check --locked --all-targets -p tidb-planner` clean;
+`rustfmt --edition 2021 --check` clean on both changed files;
+`git diff --check -- rust` clean.

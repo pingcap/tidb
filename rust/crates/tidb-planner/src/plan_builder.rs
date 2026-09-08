@@ -1997,7 +1997,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             );
             let mut column = Column::new(self.column_ids.alloc(), source_column.ret_type.clone());
             column.id = source_column.id;
-            column.orig_name = name.display_name();
+            // Go `buildDataSource` sets `Column.OrigName` from the PRE-alias
+            // `FieldName` (`logical_plan_builder.go:5259`) and
+            // `buildResultSetNode` renames only the OUTPUT `FieldName` to the
+            // table alias (`:518-522`). A base-table column therefore keeps
+            // `db.table.column` with the ORIGINAL table name, which is what
+            // expression text and explain render.
+            let mut original_name = name.clone();
+            original_name.names.table = original_name.names.original_table.clone();
+            column.orig_name = original_name.display_name();
             column.is_hidden = source_column.is_hidden;
             columns.push(DataSourceColumn {
                 id: source_column.id,

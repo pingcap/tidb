@@ -627,6 +627,23 @@ fn test_table_alias_renames_the_output_names() {
     assert_eq!(plan.output_names()[0].names.table.original, "x");
     // The ORIGIN table name survives the alias.
     assert_eq!(plan.output_names()[0].names.original_table.original, "t");
+    // Go `buildDataSource` computes `Column.OrigName` from the PRE-alias
+    // `FieldName` (`logical_plan_builder.go:5259`) and `buildResultSetNode`
+    // renames only the OUTPUT `FieldName` to the alias (`:518-522`), so the
+    // base-table column still renders with the ORIGINAL table name.
+    let LogicalPlan::Projection(projection) = &plan else {
+        panic!("expected a Projection");
+    };
+    let LogicalPlan::DataSource(source) = &projection.base.children()[0] else {
+        panic!("expected a DataSource under the projection");
+    };
+    let column = &source
+        .base
+        .base
+        .schema()
+        .expect("the source has a schema")
+        .columns[0];
+    assert_eq!(column.orig_name, "test.t.a");
 }
 
 #[test]
