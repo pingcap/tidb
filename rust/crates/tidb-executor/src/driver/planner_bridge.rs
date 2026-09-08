@@ -1076,10 +1076,38 @@ fn planner_physical_query_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
 ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner::plan_base::PlanError> {
+    planner_physical_query_with_registry(
+        query,
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache,
+        plan_ids,
+        column_ids,
+    )
+    .map(|(logical, physical, _)| (logical, physical))
+}
+
+/// [`planner_physical_query_with_allocators`], additionally handing back the
+/// uncorrelated subqueries the build evaluated so EXPLAIN can append their
+/// registered roots.
+fn planner_physical_query_with_registry(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    use_plan_cache: bool,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+) -> Result<
+    (LogicalPlan, PhysicalPlan, Vec<RegisteredScalarSubquery>),
+    tidb_planner::plan_base::PlanError,
+> {
     let select_hint = match query {
         tidb_ast::QueryStmt::Select(select) => Some(select.as_ref()),
         tidb_ast::QueryStmt::SetOpr(_) => None,
     };
+    let registry = ScalarSubqueryRegistry::default();
     let logical = planner_optimized_query_with_allocators(
         query,
         select_hint,
@@ -1089,9 +1117,13 @@ fn planner_physical_query_with_allocators(
         use_plan_cache,
         plan_ids,
         column_ids,
+        &registry,
     )?;
     let physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
-    Ok((logical, physical))
+    let registered = Rc::try_unwrap(registry)
+        .map(RefCell::into_inner)
+        .unwrap_or_default();
+    Ok((logical, physical, registered))
 }
 
 pub(crate) fn physical_plan_for_logical(
@@ -1385,6 +1417,34 @@ pub(crate) fn physical_query_plan(
         .map(|(_, physical)| physical)
 }
 
+/// [`physical_query_plan`], additionally handing back the uncorrelated
+/// subqueries the build evaluated. Go keeps them in `StmtCtx` and EXPLAIN
+/// appends each one's optimized child as an extra root.
+pub(crate) fn physical_query_plan_with_scalar_subqueries(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(PhysicalPlan, Vec<RegisteredScalarSubquery>), tidb_planner::plan_base::PlanError> {
+    if matches!(query, tidb_ast::QueryStmt::Select(select) if select.rollup) {
+        return Err(tidb_planner::plan_base::PlanError::internal(
+            "ROLLUP physical planning is not implemented",
+        ));
+    }
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    planner_physical_query_with_registry(
+        query,
+        catalog,
+        current_database,
+        ctx,
+        false,
+        &plan_ids,
+        &column_ids,
+    )
+    .map(|(_, physical, registered)| (physical, registered))
+}
+
 /// Builds a query below a non-query physical root using that statement's
 /// plan and column allocators. Go's DML builders allocate the write root and
 /// its `SelectPlan` from the same session counters; keeping those counters
@@ -1415,6 +1475,104 @@ pub(crate) fn physical_query_plan_with_allocators(
     .map(|(_, physical)| physical)
 }
 
+/// One uncorrelated subquery Go registers in the statement context while
+/// `handleScalarSubquery` / `handleExistSubquery` evaluates it.
+///
+/// Go's `ScalarSubqueryEvalCtx` (`pkg/planner/core/scalar_subq_expression.go`)
+/// keeps the OPTIMIZED child plan and the output column ids its placeholder
+/// expressions carry; `FlatPhysicalPlan.flatten` appends the plan as an extra
+/// EXPLAIN root whose `ExplainInfo` names those ids.
+pub(crate) struct RegisteredScalarSubquery {
+    /// Go `ScalarSubqueryEvalCtx.outputColIDs`.
+    pub output_col_ids: Vec<i64>,
+    /// Go `ScalarSubqueryEvalCtx.scalarSubQuery`, the optimized child.
+    pub physical: PhysicalPlan,
+    /// Go `ScalarSubqueryEvalCtx.QueryBlockOffset()`, the EXPLAIN node id.
+    pub block_offset: i32,
+}
+
+/// The per-statement list of [`RegisteredScalarSubquery`]s, Go's
+/// `SessionVars.MapScalarSubQ` narrowed to one statement.
+pub(crate) type ScalarSubqueryRegistry = Rc<RefCell<Vec<RegisteredScalarSubquery>>>;
+
+/// Carries an executor failure back across the planner boundary.
+///
+/// Go's `EvalSubqueryFirstRow` returns a plain error, so the typed identities
+/// the driver layer owns have to survive the round trip through
+/// [`tidb_planner::plan_base::PlanError`]; `planner_error_to_driver` maps them
+/// back when the statement unwinds.
+fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner::plan_base::PlanError {
+    match error {
+        crate::DriverError::SubqueryReturnsMoreThanOneRow => {
+            tidb_planner::plan_base::PlanError::subquery_returns_more_than_one_row()
+        }
+        crate::DriverError::Exec(crate::ExecError::Eval(eval)) => {
+            tidb_planner::plan_base::PlanError::eval(eval)
+        }
+        other => tidb_planner::plan_base::PlanError::internal(other.to_string()),
+    }
+}
+
+/// Go's `EvalSubqueryFirstRow` function variable
+/// (`pkg/planner/core/expression_rewriter.go:55`), closed over one
+/// statement's catalog and allocators.
+///
+/// The body is the executor half of `handleScalarSubquery` /
+/// `handleExistSubquery`: `DoOptimize` the child, allocate its output column
+/// ids, register it for EXPLAIN, then run it and report the first row.
+fn subquery_evaluator<'a>(
+    catalog: &'a Catalog,
+    ctx: &'a crate::StmtContext,
+    plan_ids: &'a PlanIdAllocator,
+    column_ids: &'a ColumnIdAllocator,
+    use_plan_cache: bool,
+    session_zone: &'a tidb_expr::SessionTimeZone,
+    registry: &ScalarSubqueryRegistry,
+) -> impl Fn(
+    &LogicalPlan,
+    tidb_planner::plan_builder::SubqueryKind,
+    u64,
+) -> Result<
+    tidb_planner::plan_builder::EvaluatedSubquery,
+    tidb_planner::plan_base::PlanError,
+> + 'a {
+    let registry = Rc::clone(registry);
+    move |inner, _kind, opt_flag| {
+        // Go `DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag, np)`.
+        let logical = optimize_built_logical(
+            inner.clone(),
+            opt_flag,
+            None,
+            catalog,
+            ctx,
+            use_plan_cache,
+            plan_ids,
+            column_ids,
+            session_zone,
+        )?;
+        let mut physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
+        // Go allocates `outputColIDs` from `np.Schema()` before it runs the
+        // child, so the ids precede any execution-time allocation.
+        let output_col_ids = (0..logical.schema().map_or(0, |schema| schema.len()))
+            .map(|_| column_ids.alloc())
+            .collect::<Vec<_>>();
+        let block_offset = logical.base().base.query_block_offset();
+        let (row, has_row) =
+            crate::driver::physical_builder::execute_first_row(&mut physical, catalog, ctx)
+                .map_err(driver_error_to_plan)?;
+        registry.borrow_mut().push(RegisteredScalarSubquery {
+            output_col_ids: output_col_ids.clone(),
+            physical,
+            block_offset,
+        });
+        Ok(tidb_planner::plan_builder::EvaluatedSubquery {
+            column_ids: output_col_ids,
+            row,
+            has_row,
+        })
+    }
+}
+
 fn planner_optimized_query(
     query: &tidb_ast::QueryStmt,
     select_hint: Option<&tidb_ast::SelectStmt>,
@@ -1425,6 +1583,7 @@ fn planner_optimized_query(
 ) -> Result<(LogicalPlan, PlanIdAllocator, ColumnIdAllocator), tidb_planner::plan_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
     let logical = planner_optimized_query_with_allocators(
         query,
         select_hint,
@@ -1434,6 +1593,7 @@ fn planner_optimized_query(
         use_plan_cache,
         &plan_ids,
         &column_ids,
+        &registry,
     )?;
     Ok((logical, plan_ids, column_ids))
 }
@@ -1448,10 +1608,21 @@ fn planner_optimized_query_with_allocators(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
+    registry: &ScalarSubqueryRegistry,
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
     let source = catalog.planner_catalog(current_database, ctx.latest_index_schema());
     let session_zone = ctx.session_zone();
-    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
+    let evaluator = subquery_evaluator(
+        catalog,
+        ctx,
+        plan_ids,
+        column_ids,
+        use_plan_cache,
+        &session_zone,
+        registry,
+    );
+    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
+        .with_subquery_evaluator(&evaluator);
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
     builder.only_full_group_by = ctx.only_full_group_by();
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();

@@ -253,17 +253,24 @@ type PipelineMap = HashMap<PipelineMapKey, PipelineGroup, BuildHasherDefault<sup
 /// One group inside a worker's map: its aggregate partial states.
 struct PipelineGroup {
     states: Vec<AggState>,
+    /// The input position -- `(chunk index, row index)` in child order -- of
+    /// this group's FIRST row. Go's parallel workers emit in worker-scheduling
+    /// order, which no test can pin down; the port instead orders its output
+    /// by this position, which is exactly the serial executor's first-seen
+    /// order. A group created by two lanes keeps the smaller position.
+    first_seen: (u64, u32),
 }
 
 impl PipelineGroup {
     /// Creates the group; the CALLER batches the tracker consume (one
     /// round-trip per chunk, not per group — 1.5M-group shapes showed the
     /// lock in profiles).
-    fn new(funcs: &[AggFunc], key_len: usize) -> (Self, i64) {
+    fn new(funcs: &[AggFunc], key_len: usize, first_seen: (u64, u32)) -> (Self, i64) {
         let bytes = parallel_new_group_bytes(key_len, funcs);
         (
             PipelineGroup {
                 states: funcs.iter().map(AggState::new_parallel).collect(),
+                first_seen,
             },
             bytes,
         )
@@ -801,6 +808,8 @@ fn encode_spill_entry(
             writer.bytes(value)?;
         }
     }
+    writer.u64(group.first_seen.0);
+    writer.u32(group.first_seen.1);
     writer.u32(
         u32::try_from(group.states.len())
             .map_err(|_| ExecError::SpillFailed("too many HashAgg spill states".to_owned()))?,
@@ -833,6 +842,7 @@ fn decode_spill_entry(
             ));
         }
     };
+    let first_seen = (reader.u64()?, reader.u32()?);
     if reader.u32()? as usize != funcs.len() {
         return Err(ExecError::SpillFailed(
             "aggregate count mismatch in spill state".to_owned(),
@@ -843,7 +853,7 @@ fn decode_spill_entry(
         states.push(read_state(&mut reader, func)?);
     }
     reader.finish()?;
-    Ok((key, PipelineGroup { states }))
+    Ok((key, PipelineGroup { states, first_seen }))
 }
 
 pub(super) struct ParallelSpillPartitions {
@@ -1131,7 +1141,7 @@ struct PipelineEpoch {
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_partial_lane<C: Columns + Send + Sync + Clone + 'static>(
-    lane_rx: std::sync::mpsc::Receiver<(Chunk, i64)>,
+    lane_rx: std::sync::mpsc::Receiver<(Chunk, i64, u64)>,
     abort: PipelineAbort,
     plan: Arc<PipelinePlan<C>>,
     final_concurrency: usize,
@@ -1145,7 +1155,7 @@ fn spawn_partial_lane<C: Columns + Send + Sync + Clone + 'static>(
             .map(|_| PipelineMap::default())
             .collect();
         let mut error: Option<ExecError> = None;
-        while let Ok((chunk, chunk_charge)) = lane_rx.recv() {
+        while let Ok((chunk, chunk_charge, chunk_index)) = lane_rx.recv() {
             if error.is_none() {
                 let fold = fold_chunk(
                     FoldInputs {
@@ -1153,6 +1163,7 @@ fn spawn_partial_lane<C: Columns + Send + Sync + Clone + 'static>(
                         group_by: &plan.group_by,
                         integer_columns: plan.integer_columns.as_deref(),
                         agg_funcs: &plan.agg_funcs,
+                        chunk_index,
                     },
                     &mut maps,
                     final_concurrency,
@@ -1192,13 +1203,14 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
     // so admit the same lane only when the fetcher has a chunk for it. This is
     // work-driven admission, not a row-count/concurrency policy: multi-chunk
     // input still activates every configured lane through round-robin dispatch.
-    let mut lane_txs: Vec<Option<std::sync::mpsc::SyncSender<(Chunk, i64)>>> =
+    let mut lane_txs: Vec<Option<std::sync::mpsc::SyncSender<(Chunk, i64, u64)>>> =
         (0..partial_concurrency).map(|_| None).collect();
     let mut partial_handles: Vec<
         Option<std::sync::mpsc::Receiver<Result<Vec<PipelineMap>, ExecError>>>,
     > = (0..partial_concurrency).map(|_| None).collect();
 
     let mut next_lane = 0usize;
+    let mut next_chunk_index = 0u64;
     let mut fetch_error: Option<ExecError> = None;
     let mut child_drained = false;
     loop {
@@ -1222,7 +1234,7 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         let replacement = child.new_chunk();
         let chunk = std::mem::replace(child_chunk, replacement);
         if lane_txs[next_lane].is_none() {
-            let (lane_tx, lane_rx) = sync_channel::<(Chunk, i64)>(1);
+            let (lane_tx, lane_rx) = sync_channel::<(Chunk, i64, u64)>(1);
             partial_handles[next_lane] = Some(spawn_partial_lane(
                 lane_rx,
                 abort.clone(),
@@ -1237,7 +1249,7 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         if lane_txs[next_lane]
             .as_ref()
             .expect("a dispatched lane has a sender")
-            .send((chunk, chunk_charge))
+            .send((chunk, chunk_charge, next_chunk_index))
             .is_err()
         {
             break;
@@ -1246,6 +1258,7 @@ fn run_pipeline_epoch<C: Columns + Send + Sync + Clone + 'static>(
         stats
             .dispatched_chunks
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        next_chunk_index += 1;
         next_lane = (next_lane + 1) % partial_concurrency;
     }
 
@@ -1377,7 +1390,12 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
         // delete them before the caller can observe the round that spilled.
         self.parallel_spilled = spilled;
 
-        let mut groups = Vec::new();
+        // The workers' maps are hash maps, so their iteration order is not
+        // the order the serial executor emits. Go's parallel output order is
+        // worker-scheduling dependent, which no test can pin down; emit each
+        // group at the child position of its FIRST row instead, which is the
+        // serial executor's first-seen order.
+        let mut keyed_groups: Vec<(PipelineMapKey, PipelineGroup)> = Vec::new();
         if self
             .parallel_spilled
             .as_ref()
@@ -1391,13 +1409,16 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             // partial-result files for that partition before moving on.
             for partition in (0..SPILLED_PARTITION_NUM).rev() {
                 let restored = spilled.restore_partition(partition, &plan.agg_funcs)?;
-                groups.extend(restored.into_values());
+                keyed_groups.extend(restored);
             }
         } else {
             for map in in_memory_maps.unwrap_or_default() {
-                groups.extend(map.into_values());
+                keyed_groups.extend(map);
             }
         }
+        keyed_groups.sort_by_key(|(_, group)| group.first_seen);
+        let mut groups: Vec<PipelineGroup> =
+            keyed_groups.into_iter().map(|(_, group)| group).collect();
 
         let ret_types = self.meta.ret_field_types().to_vec();
         let width = plan.agg_funcs.len();
@@ -1445,6 +1466,9 @@ struct FoldInputs<'a, C> {
     group_by: &'a [Expression],
     integer_columns: Option<&'a [usize]>,
     agg_funcs: &'a [AggFunc],
+    /// The chunk's position in the child's output, so a group's first row can
+    /// be located in child order.
+    chunk_index: u64,
 }
 
 /// Go `HashAggPartialWorker.updatePartialResult`: encode every row's group
@@ -1462,6 +1486,7 @@ fn fold_chunk<C: Columns>(
         group_by,
         integer_columns,
         agg_funcs,
+        chunk_index,
     } = inputs;
     let mut new_group_bytes_total = 0i64;
     for row_index in 0..chunk.num_rows() {
@@ -1501,7 +1526,8 @@ fn fold_chunk<C: Columns>(
         let entry = match maps[bucket].entry(key) {
             std::collections::hash_map::Entry::Occupied(occupied) => occupied.into_mut(),
             std::collections::hash_map::Entry::Vacant(vacant) => {
-                let (group, bytes) = PipelineGroup::new(agg_funcs, key_len);
+                let first_seen = (chunk_index, row_index as u32);
+                let (group, bytes) = PipelineGroup::new(agg_funcs, key_len, first_seen);
                 new_group_bytes_total += bytes;
                 vacant.insert(group)
             }
@@ -1586,6 +1612,9 @@ fn merge_map(global: &mut PipelineMap, incoming: PipelineMap) -> Result<(), Exec
 
 /// Merges two copies of one group in final-worker arrival order.
 fn merge_groups(dst: &mut PipelineGroup, src: PipelineGroup) -> Result<(), ExecError> {
+    if src.first_seen < dst.first_seen {
+        dst.first_seen = src.first_seen;
+    }
     for (c, state) in src.states.into_iter().enumerate() {
         merge_state(&mut dst.states[c], state)?;
     }

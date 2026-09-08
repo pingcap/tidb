@@ -426,13 +426,33 @@ pub(crate) fn optimize_query_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)
+        .map(|(physical, _)| physical)
+}
+
+/// [`optimize_query_stmt`], additionally handing back the uncorrelated
+/// subqueries the build evaluated. Plain EXPLAIN appends each registered
+/// child as its own `ScalarSubQuery` root, which is why only the EXPLAIN
+/// entry point needs them.
+pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
+    query: &QueryStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<
+    (
+        tidb_planner::physical::PhysicalPlan,
+        Vec<planner_bridge::RegisteredScalarSubquery>,
+    ),
+    DriverError,
+> {
     if let QueryStmt::Select(select) = query {
         if let Some(plan) = access::try_fast_point_physical_plan(select, catalog, current_db, ctx)?
         {
-            return Ok(plan);
+            return Ok((plan, Vec::new()));
         }
     }
-    planner_bridge::physical_query_plan(query, catalog, current_db, ctx)
+    planner_bridge::physical_query_plan_with_scalar_subqueries(query, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
 }
 
@@ -500,6 +520,9 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         }
         tidb_planner::plan_base::PlanErrorKind::CteRecursiveForbiddenJoinOrder(name) => {
             DriverError::CteRecursiveForbiddenJoinOrder(name.clone())
+        }
+        tidb_planner::plan_base::PlanErrorKind::SubqueryReturnsMoreThanOneRow => {
+            DriverError::SubqueryReturnsMoreThanOneRow
         }
         tidb_planner::plan_base::PlanErrorKind::NotSupportedYet(feature) => {
             DriverError::NotSupportedYet(feature.clone().into())

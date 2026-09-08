@@ -370,7 +370,7 @@ fn executor_ranges(ranges: &tidb_planner::ranger::types::Ranges) -> Vec<IndexRan
 fn table_scan_schema(
     scan: &PhysicalTableScan,
     table: &crate::KvTable,
-) -> Result<(Schema, Vec<usize>, Option<usize>), DriverError> {
+) -> Result<(Schema, Vec<usize>, Option<usize>, Option<usize>), DriverError> {
     let output = scan
         .base
         .base
@@ -393,15 +393,33 @@ fn table_scan_schema(
     }
     let mut keep = Vec::with_capacity(output.columns.len());
     let mut extra_handle_slot = None;
+    let mut extra_commit_ts_slot = None;
     for (output_offset, wanted) in output.columns.iter().enumerate() {
+        // Go's `DataSource` appends `_tidb_rowid` and then `_tidb_commit_ts`
+        // to the stored columns, and the scan fills both at the tail of its
+        // output row. A stored column after either extra cannot line up.
         if wanted.id == tidb_model::column::EXTRA_HANDLE_ID {
-            if extra_handle_slot.is_some() || output_offset + 1 != output.columns.len() {
+            if extra_handle_slot.is_some() || extra_commit_ts_slot.is_some() {
                 return Err(DriverError::unsupported(
                     "a physical table-scan _tidb_rowid column is not its final output",
                 ));
             }
-            extra_handle_slot = Some(keep.len());
+            extra_handle_slot = Some(output_offset);
             continue;
+        }
+        if wanted.id == tidb_model::column::EXTRA_COMMIT_TS_ID {
+            if extra_commit_ts_slot.is_some() {
+                return Err(DriverError::unsupported(
+                    "a physical table-scan _tidb_commit_ts column is not its final output",
+                ));
+            }
+            extra_commit_ts_slot = Some(output_offset);
+            continue;
+        }
+        if extra_handle_slot.is_some() || extra_commit_ts_slot.is_some() {
+            return Err(DriverError::unsupported(
+                "a physical table-scan extra column is not its final output",
+            ));
         }
         keep.push(
             full.iter()
@@ -416,7 +434,12 @@ fn table_scan_schema(
                 })?,
         );
     }
-    Ok((Schema::new(full), keep, extra_handle_slot))
+    Ok((
+        Schema::new(full),
+        keep,
+        extra_handle_slot,
+        extra_commit_ts_slot,
+    ))
 }
 
 fn build_table_scan(
@@ -428,7 +451,7 @@ fn build_table_scan(
     let table = catalog
         .physical_kv_table_by_id(scan.table_id)
         .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
-    let (schema, keep, extra_handle_slot) = table_scan_schema(scan, &table)?;
+    let (schema, keep, extra_handle_slot, extra_commit_ts_slot) = table_scan_schema(scan, &table)?;
     let mut source = TableScanExec::new_with_context(
         meta(plan, schema.clone()),
         table.clone(),
@@ -479,6 +502,13 @@ fn build_table_scan(
         if !source.accept_extra_handle(slot) {
             return Err(DriverError::unsupported(
                 "the physical table scan cannot emit its _tidb_rowid column",
+            ));
+        }
+    }
+    if let Some(slot) = extra_commit_ts_slot {
+        if !source.accept_extra_commit_ts(slot) {
+            return Err(DriverError::unsupported(
+                "the physical table scan cannot emit its _tidb_commit_ts column",
             ));
         }
     }
@@ -3355,6 +3385,37 @@ pub(crate) fn execute_for_explain(
     result?;
     close_result?;
     Ok(state.runtime_counters.take().unwrap_or_default())
+}
+
+/// Go `executor.EvalSubqueryFirstRow` (`pkg/executor/select.go:598`): build
+/// the separately evaluated child, pull ONE chunk, and hand back its first
+/// row together with whether any row came back.
+///
+/// The child is a scalar subquery's `MaxOneRow` (one NULL row when the inner
+/// query matched nothing, 1242 when it matched more than one) or an `EXISTS`
+/// child whose row count is the whole answer. Nothing is retained: the caller
+/// keeps the physical tree for the EXPLAIN root, so this borrows it.
+pub(crate) fn execute_first_row(
+    physical: &mut PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<(Vec<tidb_datatype::Datum>, bool), DriverError> {
+    prepare_apply_bindings(physical)?;
+    let mut root = build(physical, catalog, ctx)?;
+    let types = root.ret_field_types().to_vec();
+    let result: Result<(Vec<tidb_datatype::Datum>, bool), DriverError> = (|| {
+        root.open()?;
+        let mut req = root.new_chunk();
+        super::next_executor(root.as_mut(), &mut req, &ctx.statement_memory())?;
+        if req.num_rows() == 0 {
+            return Ok((Vec::new(), false));
+        }
+        Ok((req.get_row(0).get_datum_row(&types), true))
+    })();
+    let close_result = root.close().map_err(DriverError::from);
+    let row = result?;
+    close_result?;
+    Ok(row)
 }
 
 /// Builds and drains the retained child of an UPDATE or DELETE. Go's DML

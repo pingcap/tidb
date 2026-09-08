@@ -1272,6 +1272,7 @@ fn physical_explain_roots(
     catalog: &Catalog,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
     ignore_explain_id_suffix: bool,
+    scalar_subqueries: &[crate::driver::planner_bridge::RegisteredScalarSubquery],
 ) -> Vec<ExplainOperator> {
     let mut roots = vec![physical_explain_operator(
         physical,
@@ -1291,7 +1292,45 @@ fn physical_explain_roots(
         &mut roots,
         ignore_explain_id_suffix,
     );
+    for subquery in scalar_subqueries {
+        roots.push(scalar_subquery_root(
+            subquery,
+            catalog,
+            runtime,
+            ignore_explain_id_suffix,
+        ));
+    }
     roots
+}
+
+/// Go `FlatPhysicalPlan.flattenScalarSubQRecursively` (`flat_plan.go:553`):
+/// the registered `ScalarSubqueryEvalCtx` is its own EXPLAIN root, whose
+/// `ExplainInfo` lists the output column ids the folded constants carry and
+/// whose single child is the optimized subquery plan.
+fn scalar_subquery_root(
+    subquery: &crate::driver::planner_bridge::RegisteredScalarSubquery,
+    catalog: &Catalog,
+    runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    ignore_explain_id_suffix: bool,
+) -> ExplainOperator {
+    let output = subquery
+        .output_col_ids
+        .iter()
+        .map(|id| format!("ScalarQueryCol#{id}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    ExplainOperator::new("ScalarSubQuery", subquery.block_offset)
+        .with_operator_info(format!("Output: {output}"))
+        .with_children(vec![physical_explain_operator(
+            &subquery.physical,
+            catalog,
+            ExplainTask::Root,
+            "",
+            runtime,
+            ignore_explain_id_suffix,
+            None,
+            1.0,
+        )])
 }
 
 fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOperator {
@@ -1350,8 +1389,8 @@ fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOp
 /// build-side-first traversal and brief operator metadata.
 #[must_use]
 pub fn brief_binary_plan(physical: &PhysicalPlan, catalog: &Catalog) -> String {
-    let mut full = physical_explain_roots(physical, catalog, None, false);
-    let mut brief = physical_explain_roots(physical, catalog, None, true);
+    let mut full = physical_explain_roots(physical, catalog, None, false, &[]);
+    let mut brief = physical_explain_roots(physical, catalog, None, true, &[]);
     if full.is_empty() || brief.is_empty() {
         return String::new();
     }
@@ -1572,9 +1611,16 @@ fn render_physical_plan(
     format: ExplainFormat,
     analyze: bool,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
+    scalar_subqueries: &[crate::driver::planner_bridge::RegisteredScalarSubquery],
 ) -> Result<SelectMeta, DriverError> {
     let ignore_explain_id_suffix = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
-    let roots = physical_explain_roots(physical, catalog, runtime, ignore_explain_id_suffix);
+    let roots = physical_explain_roots(
+        physical,
+        catalog,
+        runtime,
+        ignore_explain_id_suffix,
+        scalar_subqueries,
+    );
 
     let mut rows = Vec::new();
     let mut columns = Vec::new();
@@ -1614,11 +1660,19 @@ fn render_physical_query(
     analyze: bool,
 ) -> Result<SelectMeta, DriverError> {
     crate::driver::set_opr::validate_query_usage(query)?;
-    let mut physical = crate::driver::optimize_query_stmt(query, catalog, current_db, ctx)?;
+    let (mut physical, scalar_subqueries) =
+        crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
     let runtime = analyze
         .then(|| crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx))
         .transpose()?;
-    render_physical_plan(&physical, catalog, format, analyze, runtime.as_ref())
+    render_physical_plan(
+        &physical,
+        catalog,
+        format,
+        analyze,
+        runtime.as_ref(),
+        &scalar_subqueries,
+    )
 }
 
 /// Plans `select` and reports the plan as EXPLAIN rows, executing nothing:
@@ -1722,7 +1776,7 @@ pub fn explain_insert_stmt(
         current_db,
         ctx,
     )?;
-    render_physical_plan(&physical, catalog, format, false, None)
+    render_physical_plan(&physical, catalog, format, false, None, &[])
 }
 
 /// `EXPLAIN ANALYZE <insert>`: unlike [`explain_insert_stmt`], this really
@@ -1763,7 +1817,7 @@ pub fn explain_analyze_insert_stmt(
         Some(&mut runtime),
     )?;
     runtime.insert(root_key, Rc::new(Cell::new(0)));
-    render_physical_plan(&physical, catalog, format, true, Some(&runtime))
+    render_physical_plan(&physical, catalog, format, true, Some(&runtime), &[])
 }
 
 /// Plans an `UPDATE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -1790,7 +1844,7 @@ pub fn explain_update_stmt(
         current_db,
         ctx,
     )?;
-    render_physical_plan(&physical, catalog, format, false, None)
+    render_physical_plan(&physical, catalog, format, false, None, &[])
 }
 
 /// Plans a `DELETE` and reports the plan as EXPLAIN rows, executing nothing.
@@ -1814,7 +1868,7 @@ pub fn explain_delete_stmt(
         current_db,
         ctx,
     )?;
-    render_physical_plan(&physical, catalog, format, false, None)
+    render_physical_plan(&physical, catalog, format, false, None, &[])
 }
 
 /// `EXPLAIN ANALYZE <update>`: unlike [`explain_update_stmt`], this really
@@ -1855,7 +1909,7 @@ pub fn explain_analyze_update_stmt(
         Some(&mut runtime),
     )?;
     runtime.insert(root_key, Rc::new(Cell::new(0)));
-    render_physical_plan(&physical, catalog, format, true, Some(&runtime))
+    render_physical_plan(&physical, catalog, format, true, Some(&runtime), &[])
 }
 
 /// `EXPLAIN ANALYZE <delete>`: see [`explain_analyze_update_stmt`] -- the
@@ -1890,7 +1944,7 @@ pub fn explain_analyze_delete_stmt(
         Some(&mut runtime),
     )?;
     runtime.insert(root_key, Rc::new(Cell::new(0)));
-    render_physical_plan(&physical, catalog, format, true, Some(&runtime))
+    render_physical_plan(&physical, catalog, format, true, Some(&runtime), &[])
 }
 
 fn text(value: &str) -> Datum {

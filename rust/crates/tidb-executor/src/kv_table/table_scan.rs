@@ -3407,6 +3407,12 @@ pub struct TableScanExec {
     /// `None` for every scan the statement did not ask for it, which is all
     /// of them until the leaf sees the name.
     extra_handle_slot: Option<usize>,
+    /// The output slot carrying `_tidb_commit_ts`, Go's extra commit-ts
+    /// column. Like the handle it is not a stored column, but unlike the
+    /// handle its value does not come from the record: this storage seam has
+    /// no MVCC version, so every row reports the zero version, matching
+    /// `TableSampleExec`'s `SampleOutputColumn::ExtraCommitTs`.
+    extra_commit_ts_slot: Option<usize>,
 }
 
 /// A partial `SUM` in progress.
@@ -3518,6 +3524,7 @@ impl TableScanExec {
             decode_context,
             statement,
             extra_handle_slot: None,
+            extra_commit_ts_slot: None,
         }
     }
 
@@ -3599,9 +3606,10 @@ impl TableScanExec {
     /// locally. A remote that fails after yielding rows cannot be retried
     /// this way -- those rows are already emitted -- so it stays an error.
     fn next_source_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
+        let commit_ts_slot = self.extra_commit_ts_slot;
         if let Some(remote) = self.remote.as_mut() {
             match remote.next_row() {
-                Ok(Some(row)) => return Ok(Some(row)),
+                Ok(Some(row)) => return Ok(Some(insert_extra_commit_ts(row, commit_ts_slot))),
                 Ok(None) => {
                     self.remote = None;
                     self.cursor = None;
@@ -3629,12 +3637,15 @@ impl TableScanExec {
         let next = match (self.remote.as_mut(), self.cursor.as_mut()) {
             (Some(remote), _) => remote.next_row(),
             (None, Some(cursor)) => cursor.next_row().map(|row| {
-                row.map(|(handle, projected)| match self.extra_handle_slot {
-                    // Go's extra handle column IS the record handle, so the
-                    // value the cursor already carries beside the row is the
-                    // one `_tidb_rowid` reports.
-                    Some(slot) => insert_extra_handle(projected, slot, &handle),
-                    None => projected,
+                row.map(|(handle, projected)| {
+                    let row = match self.extra_handle_slot {
+                        // Go's extra handle column IS the record handle, so the
+                        // value the cursor already carries beside the row is the
+                        // one `_tidb_rowid` reports.
+                        Some(slot) => insert_extra_handle(projected, slot, &handle),
+                        None => projected,
+                    };
+                    insert_extra_commit_ts(row, commit_ts_slot)
                 })
             }),
             (None, None) => return Ok(None),
@@ -3643,7 +3654,7 @@ impl TableScanExec {
             ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
         })?;
         match next {
-            Some(row) => Ok(Some(row)),
+            Some(row) => Ok(Some(insert_extra_commit_ts(row, commit_ts_slot))),
             None => {
                 self.remote = None;
                 self.cursor = None;
@@ -4665,6 +4676,38 @@ impl crate::table_access::TableAccess for TableScanExec {
             self.meta.max_chunk_size(),
         );
         self.extra_handle_slot = Some(slot);
+        true
+    }
+
+    /// Offers the scan the output slot that must carry `_tidb_commit_ts`.
+    ///
+    /// The slot sits immediately after every column already promised, which
+    /// for a Go `DataSource` means right after `_tidb_rowid` when the plan
+    /// kept both. The value is the zero version for every row, so unlike the
+    /// handle this promise holds on the remote path too; a partial aggregate
+    /// still cannot make it, because its rows are not table rows at all.
+    fn accept_extra_commit_ts(&mut self, slot: usize) -> bool {
+        if self.partial_aggregate.is_some()
+            || self.extra_commit_ts_slot.is_some()
+            || slot != self.meta.schema().columns.len()
+        {
+            return false;
+        }
+        let mut columns = self.meta.schema().columns.clone();
+        let mut commit_ts = tidb_expr::column::Column::new(
+            slot as i64 + 1,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                .with_flags(tidb_datatype::FieldTypeFlags::UNSIGNED),
+        );
+        commit_ts.index = slot as i64;
+        columns.push(commit_ts);
+        self.meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        self.extra_commit_ts_slot = Some(slot);
         true
     }
 
@@ -5834,6 +5877,23 @@ mod remote_cursor_tests {
 /// A common-handle table has no extra handle column at all -- Go builds its
 /// `HandleCols` from the primary index instead -- so only the integer form
 /// can reach here, and an unsigned one keeps the value it was stored under.
+/// Places Go's synthetic `_tidb_commit_ts` value at `slot`.
+///
+/// The local `TableStorage` seam keeps no MVCC version, so its ordinary read
+/// timestamp is the zero version -- the same value `TableSampleExec` reports
+/// for `SampleOutputColumn::ExtraCommitTs`.
+pub(crate) fn insert_extra_commit_ts(mut row: Vec<Datum>, slot: Option<usize>) -> Vec<Datum> {
+    let Some(slot) = slot else {
+        return row;
+    };
+    if slot == row.len() {
+        row.push(Datum::UInt(0));
+    } else if let Some(cell) = row.get_mut(slot) {
+        *cell = Datum::UInt(0);
+    }
+    row
+}
+
 pub(crate) fn insert_extra_handle(
     mut row: Vec<Datum>,
     slot: usize,

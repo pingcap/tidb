@@ -136,6 +136,13 @@ pub enum MarkerKind {
     /// Go `colMapper` (`resolveFromSelectFields`): the select-list position an
     /// ORDER BY / HAVING column reference resolved to.
     Column,
+    /// The value of a separately evaluated subquery (`DoOptimize` +
+    /// `EvalSubqueryFirstRow`). Go pushes the evaluated `Constant` (or a plain
+    /// 0/1 for EXISTS) straight onto the expression stack; this port cannot
+    /// carry a non-column expression through its marker tail, so the constant
+    /// is stored in a side vector and the marker selects it. Unlike the other
+    /// kinds the index addresses that vector, not a schema.
+    Constant,
 }
 
 impl MarkerKind {
@@ -152,19 +159,21 @@ impl MarkerKind {
             Self::CorrelatedAgg => "corragg",
             Self::Window => "win",
             Self::Column => "col",
+            Self::Constant => "const",
         }
     }
 
     /// Whether this kind's marker INDEX is also the producing operator's
     /// schema index (spec rule 4).
     ///
-    /// True for every kind but [`Self::Window`]: Go's `windowMapper` value IS
-    /// `schema.Len()` at insertion, but this port binds the kind to a vector
-    /// ordered by the k-th window CALL, so the marker index selects the column
-    /// and the column carries its own schema position.
+    /// True for every kind but [`Self::Window`] and [`Self::Constant`]: Go's
+    /// `windowMapper` value IS `schema.Len()` at insertion, but this port
+    /// binds the kind to a vector ordered by the k-th window CALL, so the
+    /// marker index selects the column and the column carries its own schema
+    /// position. [`Self::Constant`] indexes its own side vector.
     #[must_use]
     pub const fn index_is_schema_index(self) -> bool {
-        !matches!(self, Self::Window)
+        !matches!(self, Self::Window | Self::Constant)
     }
 
     fn from_tag(tag: &str) -> Option<Self> {
@@ -177,6 +186,7 @@ impl MarkerKind {
             "corragg" => Self::CorrelatedAgg,
             "win" => Self::Window,
             "col" => Self::Column,
+            "const" => Self::Constant,
             _ => return None,
         })
     }

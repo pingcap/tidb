@@ -32,6 +32,25 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] 2026-09-09: evaluated uncorrelated subqueries at plan time through an
+  executor-installed hook, the way Go's `handleScalarSubquery` /
+  `handleExistSubquery` call `DoOptimize` + `EvalSubqueryFirstRow`
+  (`pkg/planner/core/expression_rewriter.go:1540`/`:1188`). The planner now
+  returns `EvaluateSeparately` for every uncorrelated scalar child, folds the
+  optimized child's first row into a `ScalarQueryCol#N` constant (or Go's
+  plain 1/0 for EXISTS), and the executor registers each optimized child as
+  its own `ScalarSubQuery` EXPLAIN root
+  (`pkg/planner/core/flat_plan.go:553`). Supporting parity fixes in the same
+  batch: `buildSelection` rewrites WHERE/HAVING conjuncts in written order,
+  which keeps the statement-wide plan-column allocator in Go's order; the
+  trailing `oldLen` projection allocates fresh output column ids like Go's
+  `AllocPlanColumnID` loop (`logical_plan_builder.go:4612`); the parallel
+  HashAgg emits groups in first-seen order instead of worker-map order; and a
+  table scan can answer `_tidb_commit_ts`. Executor suite 1251 passed / 9
+  failed (goal baseline 36); planner 1001 passed / 0 failed. Receipts:
+  `testport/receipts/scalar_subquery_plan_time_evaluation.md`,
+  `testport/receipts/executor_hash_agg_order.md`.
+
 - [x] 2026-08-28: rejected remote commit `e669a75c38`'s
   `DriverError::Unsupported(reason) if reason.starts_with("a cached ")`
   fallback. Go does not classify executor-builder errors by message prefix or

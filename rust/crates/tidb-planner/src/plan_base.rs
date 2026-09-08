@@ -329,6 +329,11 @@ pub enum PlanErrorKind {
     CteRecursiveForbidsAggregation(String),
     /// Go `plannererrors.ErrInvalidRequiresSingleReference` (3577).
     CteRecursiveForbiddenJoinOrder(String),
+    /// Go `exeerrors.ErrSubqueryMoreThan1Row` (1242), raised when a
+    /// separately evaluated scalar child produced more than one row. The
+    /// executor's `MaxOneRowExec` detects it; this variant carries the typed
+    /// identity back across the planner boundary.
+    SubqueryReturnsMoreThanOneRow,
     /// Go `plannererrors.ErrNotSupportedYet` (1235).
     NotSupportedYet(String),
 }
@@ -475,6 +480,15 @@ impl PlanError {
                 "In recursive query block of Recursive Common Table Expression '{name}', the recursive table must be referenced only once, and not in any subquery"
             ),
             kind: PlanErrorKind::CteRecursiveForbiddenJoinOrder(name),
+        }
+    }
+
+    /// Go `exeerrors.ErrSubqueryMoreThan1Row` (1242).
+    #[must_use]
+    pub fn subquery_returns_more_than_one_row() -> Self {
+        Self {
+            message: "Subquery returns more than 1 row".to_owned(),
+            kind: PlanErrorKind::SubqueryReturnsMoreThanOneRow,
         }
     }
 

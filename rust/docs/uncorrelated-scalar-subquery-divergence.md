@@ -1,9 +1,8 @@
-# Divergence: uncorrelated scalar subqueries are rejected
+# FIXED: uncorrelated scalar subqueries are evaluated at plan time
 
-Recorded 2026-09-06 (executor-loop batch). NOT FIXED — planner-boundary
-feature; implementation plan below.
+Recorded 2026-09-06 (executor-loop batch) as a divergence; fixed 2026-09-09.
 
-## Divergence
+## Divergence (historical)
 
 Go evaluates an UNCORRELATED scalar subquery by optimizing and running it
 during expression rewriting, folding the first row to a constant
@@ -18,48 +17,37 @@ update t set b = (select count(*) from s);        -- Go: works
 insert into d (a) values ((select max(a) from s)); -- Go: works (VALUES form)
 ```
 
-The VALUES form surfaces a slightly different internal text ("expression
-form is not yet supported by the rewriter") but is the same planner/rewriter
-boundary family, recorded 2026-09-06.
+The port failed all of them with the internal text "uncorrelated
+scalar-subquery evaluation is not available to the planner".
 
-The port fails all four with the internal text "uncorrelated scalar-subquery
-evaluation is not available to the planner" — see
-`crates/tidb-planner/src/plan_builder.rs` (the
-`ScalarSubqueryOutcome::EvaluateSeparately` arm).
-
-CORRELATED scalar subqueries are NOT affected: they take the Apply path and
+CORRELATED scalar subqueries were never affected: they take the Apply path and
 work (`update t set b = (select max(v) from s where s.k = t.a)` is pinned in
 `crates/tidb-executor/tests/update_subquery_source.rs`).
 
-## Why it is not a one-line fix
+## Fix
 
-`ScalarSubqueryOutcome::EvaluateSeparately { outer, inner }` hands the
-rewriter's CALLER both plans: Go's own comment says folding needs
-`DoOptimize`/`EvalSubqueryFirstRow`, which are executor-boundary operations
-(execution). The planner crate cannot execute; the executor crate executes
-`QueryStmt` ASTs it retains (the INSERT SELECT source pattern via
-`physical_builder::execute_query`).
+Implemented 2026-09-09 with the executor-installed hook the implementation plan
+called for, but WITHOUT deferred plan sites: the planner stores an optional
+`SubqueryEvaluator` on `PlanBuilder` and the executor installs a closure that
+performs Go's `DoOptimize` + `EvalSubqueryFirstRow` for one child. The
+evaluated first row is folded into a `Constant` carrying Go's
+`ScalarQueryCol#N` id (a plain signed 1/0 for EXISTS), the optimized child is
+registered as its own `ScalarSubQuery` EXPLAIN root, and a new
+`MarkerKind::Constant` carries the folded expression through the existing
+marker tail. The batch also fixes the Go-order conjunct rewrite in
+`buildSelection`, the trailing projection's fresh output column ids, the
+parallel HashAgg's group order, and the table scan's `_tidb_commit_ts` slot.
 
-## Implementation plan
+Full details, Go file:line table, regression pins, and validation commands:
+`testport/receipts/scalar_subquery_plan_time_evaluation.md`.
 
-1. Planner: instead of erroring, record the subquery as a DEFERRED scalar
-   site — keep the site's `QueryStmt` (the rewriter has the AST node) on the
-   built plan, and emit a placeholder expression whose evaluation reads a
-   pre-evaluated constant (the `getparam` shape or an executor-side
-   constant-table entry).
-2. Executor: when planning a DML/SELECT statement whose plan carries deferred
-   scalar sites, plan + execute each `QueryStmt` via the existing
-   `physical_builder::execute_query` machinery, then apply Go's semantics:
-   zero rows → NULL, more than one row → ER_SUBQUERY_NO_1_ROW (1242, variant
-   already exists), else fold the single row.
-3. Cache interaction: Go folds these before the plan cache sees the plan, so
-   the deferred evaluation must happen in the same pre-cache position.
-4. Pins: the four statement shapes above (SELECT list, WHERE, DELETE WHERE,
-   UPDATE SET), plus zero-row→NULL and multi-row→1242.
+The four statement shapes above are covered by
+`crates/tidb-executor/src/driver/tests/subqueries.rs` (SELECT list, WHERE,
+zero-row → NULL, multi-row → 1242) and by the existing UPDATE/DELETE
+subquery-source tests. Zero rows folds to NULL because Go's `MaxOneRowExec`
+appends a NULL row; more than one row raises 1242 from the same executor.
 
-## Blocked on
-
-Executor/planner boundary plumbing sized like a feature branch (the rewriter
-region is actively shared with sibling in-flight planner work
-`cached_plan_rebuilds`), so it is queued behind that sibling stream rather
-than risk conflicting edits in `expression_rewriter.rs`.
+The plan-cache interaction Go has (folding happens before the cache sees the
+plan, and the statement is marked un-cacheable) is not reachable here: this
+port does not evaluate the subquery from a cached plan, and the hook runs in
+the same pre-cache build position.

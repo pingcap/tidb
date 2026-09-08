@@ -100,6 +100,33 @@ already ascending printed insertion order.
 `sorted_expressions_text` and leaves `funcs:` untouched. The helper already
 sorts and joins with `", "`, which is Go's `slices.Sort` + comma join.
 
+## Follow-up: the parallel pipeline itself now emits first-seen order (2026-09-09)
+
+The workarounds above pinned individual tests to a serial session, but the
+default statement context still runs the parallel pipeline, and its output
+order was the workers' hash-map order. Go's own parallel order is
+worker-scheduling dependent, so no Go-derived expectation can be matched by
+it; two Go-captured assertions needed the serial order from a default session:
+`driver::tests::subqueries::subqueries` (`HAVING SUM(b) > (SELECT MIN(b)...)`
+expects `[2, 3]`) and
+`hash_agg::tests::nested_integer_count_agg_keeps_late_zero_count_groups_across_windows`
+(expects the group opened first, not the smallest key).
+
+`PipelineGroup` now carries `first_seen: (chunk index, row index)`, assigned
+when the group is opened and lowered to the smaller value when two lanes merge
+a group. The spill encoding carries it, and `execute_parallel_pipeline` sorts
+the finished groups by it, which is exactly the serial executor's
+`groupKeys` order. Chunk indices are the fetcher's dispatch order, so the
+order is deterministic for every lane count.
+
+Regression: with the old hash-map order the HAVING subquery returned
+`[[3], [2]]` and the nested integer count test returned the `0` group first;
+both pass after. Ready validation: `tidb-executor` lib serialized 1251 passed
+/ 9 failed (all pre-existing baseline failures, no additions);
+`tidb-planner` lib 1001 passed / 0 failed; `cargo check --locked
+--all-targets -p tidb-planner -p tidb-executor` clean; `rustfmt --edition
+2021 --config skip_children=true --check` clean; `git diff --check` clean.
+
 ## The q3/q13 explain tests read their own plan's ids
 
 The two tpch tests asserted absolute `Column#N` ids from a Rust-authored golden

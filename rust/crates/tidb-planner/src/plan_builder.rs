@@ -530,6 +530,45 @@ pub type SchemaTableKey = (String, String);
 ///
 /// The dropped fields are listed in this module's narrowings, each with the
 /// reason it is absent rather than empty.
+/// Which separately evaluated subquery Go's `handleScalarSubquery` /
+/// `handleExistSubquery` tail is lowering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubqueryKind {
+    /// `(SELECT ...)`: the first row's columns are folded into constants
+    /// carrying `ScalarQueryCol` ids.
+    Scalar,
+    /// `[NOT] EXISTS (SELECT ...)`: Go folds a plain 1/0 constant and only
+    /// registers the child plan for EXPLAIN.
+    Exists,
+}
+
+/// The evaluated first row of one uncorrelated subquery.
+///
+/// `column_ids` is Go's `subqueryCtx.outputColIDs`: one freshly allocated
+/// plan-column id per output column, allocated BEFORE the child runs so the
+/// registered EXPLAIN root can name the placeholders. `row` is
+/// `EvalSubqueryFirstRow`'s datum row, and `has_row` distinguishes Go's nil
+/// row (no child row, which the scalar path never sees because
+/// `MaxOneRowExec` appends NULLs) from a zero-column row.
+#[derive(Clone, Debug, Default)]
+pub struct EvaluatedSubquery {
+    /// `AllocPlanColumnID()` per output column, in schema order.
+    pub column_ids: Vec<i64>,
+    /// The first row's datums, in schema order.
+    pub row: Vec<tidb_datatype::Datum>,
+    /// Whether the child produced a row at all.
+    pub has_row: bool,
+}
+
+/// Go's `planner/core.EvalSubqueryFirstRow` function variable plus the
+/// `DoOptimize` call around it: the executor installs the
+/// optimizer-and-execute hook, the planner calls it from
+/// `handleScalarSubquery` / `handleExistSubquery`. The `u64` is
+/// `planCtx.builder.optFlag` at the moment of the call, which is the flag set
+/// Go hands `DoOptimize`.
+pub type SubqueryEvaluator<'a> =
+    &'a dyn Fn(&LogicalPlan, SubqueryKind, u64) -> Result<EvaluatedSubquery, PlanError>;
+
 pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.is infoschema.InfoSchema`, through the seam.
     pub source: &'a S,
@@ -589,6 +628,14 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub in_straight_join: bool,
     /// Go `handleHelper`.
     pub handle_helper: HandleColHelper,
+    /// Go `EvalSubqueryFirstRow`, installed by the executor. `None` keeps the
+    /// documented planner-only boundary (the `EvaluateSeparately` outcome is
+    /// reported as an error instead of a wrong plan).
+    pub subquery_evaluator: Option<SubqueryEvaluator<'a>>,
+    /// The constants `MarkerKind::Constant` markers select, in insertion
+    /// order. Go pushes them straight onto `ctxStack`; this port stores them
+    /// here because the marker tail can only carry column paths.
+    pub subquery_constants: Vec<Expression>,
     /// Go `allNames [][]*types.FieldName`: the output names as they stood
     /// BEFORE each projection, which `evalDefaultExpr` searches.
     pub all_names: Vec<Vec<FieldName>>,
@@ -755,6 +802,8 @@ pub struct PlanScopeResolver<'a> {
     /// The columns a marker index refers to, per [`MarkerKind`]. A kind absent
     /// from this map has no producer yet in the current build.
     marker_columns: &'a BTreeMap<MarkerKind, Vec<Column>>,
+    /// The side vector `MarkerKind::Constant` markers index.
+    marker_constants: Option<&'a [Expression]>,
     outer_schemas: &'a [Schema],
     outer_names: &'a [Vec<FieldName>],
     time_zone: SessionTimeZone,
@@ -802,6 +851,7 @@ impl<'a> PlanScopeResolver<'a> {
             full_schema: None,
             full_names: None,
             marker_columns,
+            marker_constants: None,
             outer_schemas: &[],
             outer_names: &[],
             time_zone,
@@ -834,6 +884,7 @@ impl<'a> PlanScopeResolver<'a> {
             full_schema: None,
             full_names: None,
             marker_columns,
+            marker_constants: None,
             outer_schemas,
             outer_names,
             time_zone,
@@ -853,6 +904,13 @@ impl<'a> PlanScopeResolver<'a> {
     pub fn with_connection_charset_info(mut self, info: (&str, &str)) -> Self {
         self.connection_charset = info.0.to_owned();
         self.connection_collation = info.1.to_owned();
+        self
+    }
+
+    /// Attach the side vector `MarkerKind::Constant` markers select from.
+    #[must_use]
+    pub const fn with_marker_constants(mut self, constants: &'a [Expression]) -> Self {
+        self.marker_constants = Some(constants);
         self
     }
 
@@ -1046,6 +1104,16 @@ impl ColumnResolver for PlanScopeResolver<'_> {
     }
 
     fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
+        if let [name] = path {
+            if let Some(marker) = PlanMarker::decode(name) {
+                if marker.kind == MarkerKind::Constant {
+                    return self
+                        .marker_constants
+                        .and_then(|constants| constants.get(marker.index))
+                        .cloned();
+                }
+            }
+        }
         if let Some(column) = self.resolve_column(path) {
             return Some(Expression::Column(column));
         }
@@ -1110,6 +1178,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             enable_pipelined_window_exec: true,
             in_straight_join: false,
             handle_helper: HandleColHelper::new(),
+            subquery_evaluator: None,
+            subquery_constants: Vec::new(),
             all_names: Vec::new(),
             correlated_agg_columns: Vec::new(),
             building_cte: false,
@@ -1179,6 +1249,18 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         self.tidb_in_isolation_read = engines
             .split(',')
             .any(|engine| engine.trim().eq_ignore_ascii_case("tidb"));
+    }
+
+    /// Installs Go's `EvalSubqueryFirstRow` function variable, which the
+    /// executor package assigns at init because the planner cannot import it.
+    ///
+    /// Without a hook the `EvaluateSeparately` arms of
+    /// [`Self::lower_scalar_subqueries`] are unsupported, exactly as Go is
+    /// unsupported without `pkg/executor`.
+    #[must_use]
+    pub const fn with_subquery_evaluator(mut self, evaluator: SubqueryEvaluator<'a>) -> Self {
+        self.subquery_evaluator = Some(evaluator);
+        self
     }
 
     /// Go `GetOptFlag()` (`planbuilder.go:455`).
@@ -1446,6 +1528,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             self.time_zone.clone(),
         )
         .with_connection_charset_info(self.ctx.connection_charset_info())
+        .with_marker_constants(&self.subquery_constants)
         .with_like_default_escape(self.ctx.like_default_escape())
         .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
         .with_div_precision_increment(self.ctx.div_precision_increment())
@@ -1467,6 +1550,84 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             tidb_expr::ConstantFoldMode::Normal,
         );
         Ok(rewritten)
+    }
+
+    /// Go's `handleScalarSubquery` / `handleExistSubquery` tail
+    /// (`expression_rewriter.go:1601` / `:1226`): hand the uncorrelated child
+    /// to the executor's [`SubqueryEvaluator`], then fold the evaluated first
+    /// row into the expression Go pushes on `ctxStack`.
+    ///
+    /// A scalar subquery becomes one `Constant` per output column, each
+    /// carrying its `ScalarQueryCol` id; a multi-column one is wrapped in Go's
+    /// `ast.RowFunc`. `EXISTS` becomes the plain 1/0 Go computes from whether
+    /// the row exists, with no `SubqueryRefID`.
+    fn evaluate_subquery(
+        &self,
+        inner: &LogicalPlan,
+        kind: SubqueryKind,
+        negated: bool,
+    ) -> Result<Expression, PlanError> {
+        let Some(evaluator) = self.subquery_evaluator else {
+            return Err(PlanError::internal(
+                "uncorrelated subquery evaluation requires the executor hook",
+            ));
+        };
+        let schema = inner
+            .schema()
+            .ok_or_else(|| PlanError::internal("uncorrelated subquery has no schema"))?
+            .clone();
+        let evaluated = evaluator(inner, kind, self.get_opt_flag())?;
+        if evaluated.column_ids.len() != schema.len() {
+            return Err(PlanError::internal(
+                "uncorrelated subquery allocated the wrong number of output columns",
+            ));
+        }
+        match kind {
+            SubqueryKind::Exists => {
+                // Go `(row != nil && !v.Not) || (row == nil && v.Not)`.
+                let value = i64::from(evaluated.has_row != negated);
+                Ok(Expression::Constant(Constant::new(
+                    tidb_datatype::Datum::Int(value),
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )))
+            }
+            SubqueryKind::Scalar => {
+                if evaluated.row.len() != evaluated.column_ids.len() {
+                    return Err(PlanError::internal(
+                        "uncorrelated scalar subquery returned the wrong column count",
+                    ));
+                }
+                let mut constants = Vec::with_capacity(evaluated.row.len());
+                for ((id, value), column) in evaluated
+                    .column_ids
+                    .into_iter()
+                    .zip(evaluated.row)
+                    .zip(schema.columns.iter())
+                {
+                    let mut constant = Constant::new(
+                        value,
+                        column.ret_type.clone().unwrap_or_else(|| {
+                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                        }),
+                    );
+                    constant.subquery_ref_id = id;
+                    constants.push(Expression::Constant(constant));
+                }
+                if constants.len() == 1 {
+                    return Ok(constants.pop().expect("one scalar constant"));
+                }
+                let ret_type = constants
+                    .first()
+                    .and_then(|constant| constant.static_type().cloned())
+                    .unwrap_or_else(|| {
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny)
+                    });
+                let rewriter = self.expression_rewriter();
+                rewriter
+                    .new_function("row", ret_type, constants)
+                    .map_err(Into::into)
+            }
+        }
     }
 
     /// Go `expressionRewriter.buildSubquery` plus
@@ -1511,6 +1672,17 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     },
                     Exists {
                         not: bool,
+                    },
+                }
+                // Go's two outcomes for a handled subquery: the Apply-bearing
+                // plan with its result column on `ctxStack`, or the folded
+                // constant Go pushes instead when it evaluates the child
+                // itself. The outer plan is carried in both.
+                enum Lowered {
+                    Applied(LogicalPlan),
+                    Evaluated {
+                        outer: LogicalPlan,
+                        value: Expression,
                     },
                 }
                 let (query, form) = match expr {
@@ -1576,16 +1748,22 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 let hint_flags = self.builder.sub_query_hint_flags;
                 let mut rewriter = self.builder.expression_rewriter();
                 rewriter.as_scalar = true;
-                let applied = match form {
+                let lowered = match form {
                     Form::Scalar => {
                         match rewriter.handle_scalar_subquery(outer, inner, hint_flags) {
-                            Ok(ScalarSubqueryOutcome::Applied(plan)) => plan,
-                            Ok(ScalarSubqueryOutcome::EvaluateSeparately { .. }) => {
-                                self.error = Some(PlanError::internal(
-                                    "uncorrelated scalar-subquery evaluation is not available to \
-                                     the planner",
-                                ));
-                                return true;
+                            Ok(ScalarSubqueryOutcome::Applied(plan)) => Lowered::Applied(plan),
+                            Ok(ScalarSubqueryOutcome::EvaluateSeparately { outer, inner }) => {
+                                match self.builder.evaluate_subquery(
+                                    &inner,
+                                    SubqueryKind::Scalar,
+                                    false,
+                                ) {
+                                    Ok(value) => Lowered::Evaluated { outer, value },
+                                    Err(error) => {
+                                        self.error = Some(error);
+                                        return true;
+                                    }
+                                }
                             }
                             Err(error) => {
                                 self.error = Some(error.into());
@@ -1605,7 +1783,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                         match rewriter
                             .handle_compare_subquery(outer, &left, inner, op, all, hint_flags)
                         {
-                            Ok(plan) => plan,
+                            Ok(plan) => Lowered::Applied(plan),
                             Err(error) => {
                                 self.error = Some(error.into());
                                 return true;
@@ -1618,7 +1796,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                         match rewriter.handle_in_subquery(
                             outer, &left, inner, not, true, hint_flags, true, false,
                         ) {
-                            Ok(plan) => plan,
+                            Ok(plan) => Lowered::Applied(plan),
                             Err(error) => {
                                 self.error = Some(error.into());
                                 return true;
@@ -1627,13 +1805,19 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     }
                     Form::Exists { not } => {
                         match rewriter.handle_exist_subquery(outer, inner, not, hint_flags) {
-                            Ok(ScalarSubqueryOutcome::Applied(plan)) => plan,
-                            Ok(ScalarSubqueryOutcome::EvaluateSeparately { .. }) => {
-                                self.error = Some(PlanError::internal(
-                                    "uncorrelated EXISTS evaluation is not available to the \
-                                     planner",
-                                ));
-                                return true;
+                            Ok(ScalarSubqueryOutcome::Applied(plan)) => Lowered::Applied(plan),
+                            Ok(ScalarSubqueryOutcome::EvaluateSeparately { outer, inner }) => {
+                                match self.builder.evaluate_subquery(
+                                    &inner,
+                                    SubqueryKind::Exists,
+                                    not,
+                                ) {
+                                    Ok(value) => Lowered::Evaluated { outer, value },
+                                    Err(error) => {
+                                        self.error = Some(error);
+                                        return true;
+                                    }
+                                }
                             }
                             Err(error) => {
                                 self.error = Some(error.into());
@@ -1642,6 +1826,23 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                         }
                     }
                 };
+                let (applied, evaluated) = match lowered {
+                    Lowered::Applied(plan) => (plan, None),
+                    Lowered::Evaluated { outer, value } => (outer, Some(value)),
+                };
+                if let Some(value) = evaluated {
+                    // Go `er.ctxStackAppend(newCols[0], types.EmptyName)`: the
+                    // folded constant IS the expression. Publish it under a
+                    // `#const#N` marker so the enclosing predicate's rewrite
+                    // resolves it through [`PlanScopeResolver`] exactly like a
+                    // column marker resolves to the Apply output.
+                    let index = self.builder.subquery_constants.len();
+                    self.builder.subquery_constants.push(value);
+                    *expr = PlanMarker::new(MarkerKind::Constant, index).as_expr();
+                    self.plan = Some(applied);
+                    self.changed = true;
+                    return true;
+                }
                 let Some(Expression::Column(column)) = rewriter.ctx_stack.pop() else {
                     self.error = Some(PlanError::internal(
                         "subquery lowering did not publish its result column",
@@ -1793,9 +1994,34 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                     self.sub_query_hint_flags,
                 )? {
                     ScalarSubqueryOutcome::Applied(plan) => Ok((plan, true)),
-                    ScalarSubqueryOutcome::EvaluateSeparately { .. } => Err(PlanError::internal(
-                        "uncorrelated EXISTS evaluation is not available to the planner",
-                    )),
+                    ScalarSubqueryOutcome::EvaluateSeparately { outer, inner } => {
+                        // Go `buildSelection`'s constant fold
+                        // (`logical_plan_builder.go:1386`): the evaluated
+                        // EXISTS is one conjunct whose value is already known,
+                        // so a true one disappears and a false one becomes the
+                        // zero-row dual.
+                        let value = self.evaluate_subquery(&inner, SubqueryKind::Exists, *not)?;
+                        let Expression::Constant(constant) = &value else {
+                            return Err(PlanError::internal(
+                                "evaluated EXISTS did not fold to a constant",
+                            ));
+                        };
+                        match constant_is_always_false(constant) {
+                            Some(true) => {
+                                let mut dual =
+                                    LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
+                                dual.base.base.set_schema(outer.schema().cloned());
+                                dual.base
+                                    .base
+                                    .set_output_names(outer.output_names().to_vec());
+                                Ok((LogicalPlan::TableDual(dual), true))
+                            }
+                            Some(false) => Ok((outer, true)),
+                            None => Err(PlanError::internal(
+                                "evaluated EXISTS did not fold to a boolean constant",
+                            )),
+                        }
+                    }
                 }
             }
             _ => Ok((outer, false)),
@@ -2515,77 +2741,64 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             out
         };
         let mut plan = plan;
-        let original_len = plan.schema().map_or(0, Schema::len);
-        let mut remaining = Vec::new();
-        let mut lowered_filter_subquery = false;
+        // Go rewrites the conjuncts IN ORDER (`buildSelection`'s
+        // `for _, cond := range conditions`), and each rewrite may both
+        // evaluate a subquery and grow the plan with an apply. Interleaving
+        // the two lowering passes here keeps the statement-wide plan-column
+        // allocator in Go's order: splitting them (every filter subquery
+        // first) allocated a later `EXISTS` child's columns before an earlier
+        // scalar child's.
         for conjunct in conjuncts {
-            let (next, lowered) = self.lower_filter_subquery(plan, conjunct, markers)?;
+            let len_before = plan.schema().map_or(0, Schema::len);
+            let (next, lowered_filter) = self.lower_filter_subquery(plan, conjunct, markers)?;
             plan = next;
-            if lowered {
-                lowered_filter_subquery = true;
+            if lowered_filter {
+                // The conjunct became an apply/semi-join; Go's rewrite
+                // returns nil for it and the remaining conditions stay in the
+                // one Selection built below.
+                hide_rewrite_columns(&mut plan, len_before);
+                continue;
+            }
+            // Go `splitWhere(where)` splits the AST's top-level `AND` first,
+            // then `SplitCNFItems` splits the built expression; the second
+            // subsumes the first once every conjunct is built.
+            let mut scratch = Self::clause_scratch(conjunct);
+            let (next, lowered_scalar) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+            plan = next;
+            hide_rewrite_columns(&mut plan, len_before);
+            // Rule 3: both snapshots are taken before `plan` moves anywhere.
+            let mut lowered_markers;
+            let (schema, _) = snapshot_schema_and_names(&plan);
+            let markers = if lowered_scalar {
+                lowered_markers = markers.clone();
+                lowered_markers.insert(MarkerKind::Column, schema.columns.clone());
+                &lowered_markers
             } else {
-                remaining.push(conjunct.clone());
-            }
-        }
-        hide_rewrite_columns(&mut plan, original_len);
-        if lowered_filter_subquery {
-            // Keep ordinary predicates in the same selection above the
-            // lowered apply. Re-entering this builder is finite because
-            // `remaining` contains no filter-subquery conjuncts.
-            if remaining.is_empty() {
-                return Ok(plan);
-            }
-            let mut iter = remaining.into_iter();
-            let mut rebuilt = iter.next().expect("non-empty remaining conjuncts");
-            for conjunct in iter {
-                rebuilt = Expr::Binary(
-                    tidb_ast::BinaryOp::LogicAnd,
-                    Box::new(rebuilt),
-                    Box::new(conjunct),
-                );
-            }
-            return self.build_selection(plan, &rebuilt, markers);
-        }
-        // Go `splitWhere(where)` splits the AST's top-level `AND` first, then
-        // `SplitCNFItems` splits the built expression; the second subsumes the
-        // first once every conjunct is built, so one clause is rewritten here
-        // and split afterwards.
-        let mut scratch = Self::clause_scratch(where_clause);
-        let scalar_len = plan.schema().map_or(0, Schema::len);
-        let (mut plan, lowered_subquery) = self.lower_scalar_subqueries(plan, &mut scratch)?;
-        hide_rewrite_columns(&mut plan, scalar_len);
-        // Rule 3: both snapshots are taken before `plan` moves anywhere.
-        let mut lowered_markers;
-        let (schema, _) = snapshot_schema_and_names(&plan);
-        let markers = if lowered_subquery {
-            lowered_markers = markers.clone();
-            lowered_markers.insert(MarkerKind::Column, schema.columns.clone());
-            &lowered_markers
-        } else {
-            markers
-        };
-        let built = self.rewrite_scalar_with_plan(&scratch, &plan, markers)?;
-
-        for item in split_cnf_items(&built) {
-            if let Expression::Constant(constant) = &item {
-                match constant_is_always_false(constant) {
-                    // "If there is condition which is always false, return
-                    // dual plan directly." (`:1381`)
-                    Some(true) => {
-                        let mut dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
-                        dual.base.base.set_schema(Some(schema));
-                        dual.base
-                            .base
-                            .set_output_names(plan.output_names().to_vec());
-                        return Ok(LogicalPlan::TableDual(dual));
+                markers
+            };
+            let built = self.rewrite_scalar_with_plan(&scratch, &plan, markers)?;
+            for item in split_cnf_items(&built) {
+                if let Expression::Constant(constant) = &item {
+                    match constant_is_always_false(constant) {
+                        // "If there is condition which is always false, return
+                        // dual plan directly." (`:1381`)
+                        Some(true) => {
+                            let mut dual =
+                                LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
+                            dual.base.base.set_schema(Some(schema));
+                            dual.base
+                                .base
+                                .set_output_names(plan.output_names().to_vec());
+                            return Ok(LogicalPlan::TableDual(dual));
+                        }
+                        // An always-true conjunct is dropped.
+                        Some(false) => continue,
+                        // Not decidable at plan time: keep it. Go's `useCache` arm.
+                        None => {}
                     }
-                    // An always-true conjunct is dropped.
-                    Some(false) => continue,
-                    // Not decidable at plan time: keep it. Go's `useCache` arm.
-                    None => {}
                 }
+                conditions.push(item);
             }
-            conditions.push(item);
         }
         if conditions.is_empty() {
             return Ok(plan);
@@ -3081,7 +3294,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 Expression::Column(column)
             })
             .collect();
-        let kept_columns: Vec<Column> = schema.columns.into_iter().take(old_len).collect();
+        // Go `:4614`: "for _, col := range schema.Columns { col.UniqueID =
+        // AllocPlanColumnID() }". The trimmed output columns are FRESH plan
+        // columns carrying the kept names, which is what makes EXPLAIN print
+        // `Column#14->Column#27` for an aggregate output that this projection
+        // re-exports.
+        let mut kept_columns: Vec<Column> = schema.columns.into_iter().take(old_len).collect();
+        for column in &mut kept_columns {
+            column.unique_id = self.column_ids.alloc();
+        }
         let kept_names: Vec<FieldName> = names.into_iter().take(old_len).collect();
         let mut projection = LogicalProjection::new(self.base(LogicalProjection::TYPE), exprs);
         projection.base.set_children(vec![plan]);

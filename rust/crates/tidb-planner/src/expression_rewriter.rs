@@ -796,7 +796,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         self.plan_ctx.cur_clause
     }
 
-    fn new_function(
+    pub(crate) fn new_function(
         &self,
         name: &str,
         ret_type: FieldType,
@@ -1910,13 +1910,13 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             &mut self.hint_warnings,
         );
 
-        // Go pre-evaluates an UNCORRELATED scalar subquery through
-        // `DoOptimize` + `ScalarSubQueryExpr` (the `handleScalarSubquery`
-        // tail). That evaluator is not ported, so Rust lowers every scalar
-        // subquery into the left-outer Apply: the value is computed once per
-        // outer row rather than once per statement, which is the same answer
-        // for a MaxOneRow-guarded subquery and keeps `SELECT (subquery)` over
-        // the FROM-less dual working.
+        // Go's shared guard (`expression_rewriter.go:1540`): an uncorrelated
+        // scalar subquery is OPTIMIZED and RUN here and folded to a constant;
+        // only a correlated or CTE-consuming one becomes an Apply. The caller
+        // supplies the executor hook that performs the optimize-and-run half.
+        if !self.must_build_apply(&np) {
+            return Ok(ScalarSubqueryOutcome::EvaluateSeparately { outer, inner: np });
+        }
         let np_schema = np.schema().ok_or(RewriteError::MissingSchema)?.clone();
         let mut plan =
             self.build_apply_with_join_type(outer, np, LogicalJoinType::LeftOuter, no_decorrelate)?;
