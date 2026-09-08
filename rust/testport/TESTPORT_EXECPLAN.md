@@ -11404,3 +11404,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (RIGHT JOIN pin): every right-side row survives; unmatched
   left columns come back NULL. Pinned in
   `crates/tidb-session/tests/right_join_source.rs`.
+- 2026-09-08 (self-referencing FK pin): NULL-root insert, valid-child
+  insert, bad-manager child-row refusal, and parent-delete refusal.
+  Pinned in `crates/tidb-session/tests/self_referencing_fk_source.rs`.
