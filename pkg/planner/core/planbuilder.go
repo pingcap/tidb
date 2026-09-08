@@ -3180,12 +3180,21 @@ func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
 }
 
 // handleAnalyzeOptions validates the analyze options explicitly specified in the
-// statement and returns them keyed by option type. A nil value marks an option
-// given as DEFAULT, which clears the value persisted in mysql.analyze_options
-// for the analyzed target so that it behaves as if the option had never been
-// persisted for it (genV2AnalyzeOptions decides the fallback: table-level saved
-// value for a partition, otherwise the system default). See ast.AnalyzeOpt for
-// why DEFAULT is the only way to express such a reset.
+// statement and returns them keyed by option type. The value is a pointer so
+// that each option can be in one of three states:
+//   - key absent: the option was not mentioned in the statement, so the value
+//     persisted in mysql.analyze_options for the analyzed target still applies
+//     (falling back to the system default if nothing is persisted).
+//   - non-nil value: an explicit value such as WITH 100 TOPN, which overrides
+//     and replaces the persisted value.
+//   - nil value: the option was given as DEFAULT, which clears the value
+//     persisted in mysql.analyze_options for the analyzed target so that it
+//     behaves as if the option had never been persisted for it
+//     (genV2AnalyzeOptions decides the fallback: table-level saved value for a
+//     partition, otherwise the system default).
+//
+// See ast.AnalyzeOpt for why DEFAULT is the only way to express such a reset.
+
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]*uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]*uint64, len(analyzeOptionLimit))
 	sampleNum, sampleRate := uint64(0), 0.0
