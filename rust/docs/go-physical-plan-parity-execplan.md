@@ -737,6 +737,15 @@ both `oltp_read_only` and `oltp_read_write`.
   the value; the test pinned `Truncated`. It now expects
   `TimestampInDSTTransition` and cites `pkg/types/time.go:459-467`. Receipt:
   `rust/testport/receipts/types_timestamp_dst_gap.md`.
+- [x] 2026-09-09: made the cop partial aggregation emit its group-by key
+  columns. Go's `BuildFinalModeAggregation` drops the redundant `firstrow()`
+  for a cop partial because "group by items are outputted by group by schema",
+  so the partial's schema is its aggregate columns followed by the group-by
+  columns. Rust emitted only `agg_funcs.len()` columns, so a computed
+  `COUNT(DISTINCT <expr>)` counted zero; the executor now retains and emits
+  the trailing key datums (hash and grouped-stream), and keeps the parallel
+  pipeline off that shape. Receipt:
+  `rust/testport/receipts/executor_cop_partial_group_keys.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

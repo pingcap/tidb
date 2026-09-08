@@ -115,6 +115,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     pub(super) fn reset_spill_mode(&mut self) {
         self.cursor = 0;
         self.groups.clear();
+        self.group_key_values.clear();
         self.ordered.clear();
         self.group_count = 0;
         self.prepared = false;

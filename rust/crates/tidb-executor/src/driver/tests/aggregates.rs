@@ -4059,6 +4059,61 @@ fn aggregates_read_the_arguments_collation() {
     );
 }
 
+/// A DISTINCT argument that is a COMPUTED expression forces the cop partial
+/// aggregation to emit its GROUP BY key out of the operator.
+///
+/// Go's `BuildFinalModeAggregation` (`base_physical_agg.go:681`) moves the
+/// distinct argument into the partial's GROUP BY and, for a cop partial, drops
+/// the redundant `firstrow()` ("group by items are outputted by group by
+/// schema"). The partial therefore has NO aggregate functions at all and its
+/// schema is exactly the group-by columns. A bare column key never reaches
+/// this path because the scan's partial-aggregate pushdown deduplicates it
+/// (`pushed_partial_aggregation`), which is why only a computed key exposes a
+/// missing group-key emission.
+#[test]
+fn a_computed_distinct_argument_round_trips_through_the_cop_partial_aggregation() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE g (s VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO g VALUES ('a'), ('B'), ('A')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    // A function-only partial is not enough: the distinct argument shares the
+    // partial with a real aggregate, so the group-by column TRAILS `count(*)`
+    // in the same output schema.
+    assert_eq!(
+        run_select_on(
+            "SELECT COUNT(DISTINCT CONCAT(s, '')), COUNT(*) FROM g",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap()
+        .remove(0),
+        vec![Datum::Int(2), Datum::Int(3)]
+    );
+
+    // A GROUP BY column AND a computed distinct argument: the partial groups
+    // by `(s, concat(s, ''))` and emits both trailing columns.
+    let rows = run_select_on(
+        "SELECT s, COUNT(DISTINCT CONCAT(s, '')) FROM g GROUP BY s ORDER BY s",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(datum_text_for_test(&rows[0][0]), "a");
+    assert_eq!(rows[0][1], Datum::Int(1));
+    assert_eq!(datum_text_for_test(&rows[1][0]), "B");
+    assert_eq!(rows[1][1], Datum::Int(1));
+}
+
 /// TPC-H q17's `SUM(l_extendedprice) / 7.0`: Go's `buildAggregation` splits
 /// every select field that CONTAINS an aggregate into the pure aggregate
 /// function on the Aggregation operator plus a scalar wrapper evaluated by

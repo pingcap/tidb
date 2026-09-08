@@ -1880,6 +1880,11 @@ pub struct GroupedStreamAggExec<C: Columns> {
     states: Vec<AggState>,
     truncated: Vec<bool>,
     current_key: Option<Vec<u8>>,
+    /// The current group's key datums, kept only when the output schema
+    /// carries trailing group-by columns (a cop partial aggregation; see
+    /// [`HashAggExec::output_group_keys`]).
+    current_group_values: Vec<Datum>,
+    output_group_keys: bool,
     child_done: bool,
     child_returned_empty: bool,
 }
@@ -1905,6 +1910,7 @@ impl<C: Columns> GroupedStreamAggExec<C> {
         let child_chunk = child.new_chunk();
         let states = agg_funcs.iter().map(AggState::new).collect();
         let truncated = vec![false; agg_funcs.len()];
+        let output_group_keys = meta.schema().len() > agg_funcs.len();
         Self {
             meta,
             group_by,
@@ -1917,18 +1923,24 @@ impl<C: Columns> GroupedStreamAggExec<C> {
             states,
             truncated,
             current_key: None,
+            current_group_values: Vec::new(),
+            output_group_keys,
             child_done: false,
             child_returned_empty: true,
         }
     }
 
-    fn group_key(&self, row: tidb_chunk::row::Row<'_>) -> Result<Vec<u8>, ExecError> {
+    fn group_key(&self, row: tidb_chunk::row::Row<'_>) -> Result<(Vec<u8>, Vec<Datum>), ExecError> {
         let mut key = Vec::new();
+        let mut values = Vec::new();
         for expr in &self.group_by {
             let datum = expr.eval(&self.ctx, row)?;
             append_hash_agg_group_key_part(&self.ctx, expr, &datum, &mut key)?;
+            if self.output_group_keys {
+                values.push(datum);
+            }
         }
-        Ok(key)
+        Ok((key, values))
     }
 
     fn emit_current(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
@@ -1942,6 +1954,12 @@ impl<C: Columns> GroupedStreamAggExec<C> {
                 &mut self.truncated[index],
             )?;
             req.append_datum(output_position, &value);
+        }
+        if self.output_group_keys {
+            let trailing = self.meta.schema().len() - self.agg_funcs.len();
+            for (offset, datum) in self.current_group_values[..trailing].iter().enumerate() {
+                req.append_datum(self.agg_funcs.len() + offset, datum);
+            }
         }
         Ok(())
     }
@@ -1959,6 +1977,7 @@ impl<C: Columns> Executor for GroupedStreamAggExec<C> {
         self.states = self.agg_funcs.iter().map(AggState::new).collect();
         self.truncated.fill(false);
         self.current_key = None;
+        self.current_group_values.clear();
         self.child_done = false;
         self.child_returned_empty = true;
         Ok(())
@@ -1984,7 +2003,7 @@ impl<C: Columns> Executor for GroupedStreamAggExec<C> {
                 }
             }
 
-            let key = self.group_key(self.child_chunk.get_row(self.child_at))?;
+            let (key, group_values) = self.group_key(self.child_chunk.get_row(self.child_at))?;
             if self
                 .current_key
                 .as_ref()
@@ -1992,6 +2011,9 @@ impl<C: Columns> Executor for GroupedStreamAggExec<C> {
             {
                 self.emit_current(req)?;
                 self.states = self.agg_funcs.iter().map(AggState::new).collect();
+                self.current_group_values = group_values;
+            } else if self.current_key.is_none() {
+                self.current_group_values = group_values;
             }
             self.current_key = Some(key);
             let row = self.child_chunk.get_row(self.child_at);
@@ -2005,6 +2027,7 @@ impl<C: Columns> Executor for GroupedStreamAggExec<C> {
     fn close(&mut self) -> Result<(), ExecError> {
         self.states.clear();
         self.current_key = None;
+        self.current_group_values.clear();
         self.child.close()
     }
 
@@ -2072,6 +2095,18 @@ pub struct HashAggExec<C: HashAggContext> {
     /// moved into `groups` only when a new group is opened; repeated rows
     /// reuse this allocation instead of allocating one `Vec` per row.
     group_key_buffer: Vec<u8>,
+    /// The group-by key datums of every open group, flattened by
+    /// `group_by.len()`. A cop partial aggregation outputs its group-by
+    /// columns after the aggregate columns (see [`super::final_mode_agg`]), so
+    /// the executor has to retain the evaluated keys -- the encoded
+    /// `group_key_buffer` alone cannot be turned back into datums.
+    group_key_values: Vec<Datum>,
+    /// Whether the output schema carries trailing group-by columns. Root
+    /// aggregations report every group-by value through a `firstrow()`
+    /// aggregate, so their schema is exactly as wide as `agg_funcs`; a cop
+    /// partial omits those `firstrow()`s (Go: "group by items are outputted by
+    /// group by schema") and is wider instead.
+    output_group_keys: bool,
     /// The open groups' states, in first-seen order (Go's `groupKeys`). Group
     /// `g` occupies `g * agg_funcs.len()..(g + 1) * agg_funcs.len()` so the
     /// hot path does not allocate one inner `Vec` per group.
@@ -2157,6 +2192,10 @@ impl<C: HashAggContext> HashAggExec<C> {
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let truncated = vec![false; agg_funcs.len()];
+        // A cop partial aggregation's schema appends the group-by columns after
+        // the aggregate columns; a root aggregation reaches the same width
+        // through its `firstrow()` aggregates and has no trailing columns.
+        let output_group_keys = meta.schema().len() > agg_funcs.len();
         let integer_group_columns = group_by
             .iter()
             .map(|expr| {
@@ -2166,6 +2205,13 @@ impl<C: HashAggContext> HashAggExec<C> {
                 (field_type.eval_type() == EvalType::Int).then_some(index)
             })
             .collect::<Option<Vec<_>>>();
+        // The typed fast path encodes keys without materializing a Datum, so it
+        // cannot feed the trailing group-by columns.
+        let integer_group_columns = if output_group_keys {
+            None
+        } else {
+            integer_group_columns
+        };
         HashAggExec {
             meta,
             group_by,
@@ -2177,6 +2223,8 @@ impl<C: HashAggContext> HashAggExec<C> {
             child_returned_empty: true,
             groups: FastBytesMap::default(),
             group_key_buffer: Vec::new(),
+            group_key_values: Vec::new(),
+            output_group_keys,
             ordered: Vec::new(),
             group_count: 0,
             cursor: 0,
@@ -2217,6 +2265,7 @@ impl<C: HashAggContext> HashAggExec<C> {
         for r in 0..rows {
             let row = chunk.get_row(r);
             self.group_key_buffer.clear();
+            let mut group_datums: Vec<Datum> = Vec::new();
             if let Some(columns) = &self.integer_group_columns {
                 for &index in columns {
                     append_integer_group_key_part(row, index, &mut self.group_key_buffer);
@@ -2230,6 +2279,9 @@ impl<C: HashAggContext> HashAggExec<C> {
                         &datum,
                         &mut self.group_key_buffer,
                     )?;
+                    if self.output_group_keys {
+                        group_datums.push(datum);
+                    }
                 }
             }
             let idx = match self.groups.get(&self.group_key_buffer) {
@@ -2251,6 +2303,9 @@ impl<C: HashAggContext> HashAggExec<C> {
                     self.ordered
                         .extend(self.agg_funcs.iter().map(AggState::new));
                     self.group_count += 1;
+                    if self.output_group_keys {
+                        self.group_key_values.extend(group_datums);
+                    }
                     // Consumed HERE, not at the end of the chunk: Go consumes
                     // inside `getPartialResults`, per group, so the spill
                     // action fires PART WAY THROUGH a chunk and the rest of
@@ -2454,6 +2509,16 @@ impl<C: HashAggContext> HashAggExec<C> {
             )?;
             req.append_datum(c, &value);
         }
+        if self.output_group_keys {
+            let trailing = self.meta.schema().len() - self.agg_funcs.len();
+            let base = idx * self.group_by.len();
+            for (offset, datum) in self.group_key_values[base..base + trailing]
+                .iter()
+                .enumerate()
+            {
+                req.append_datum(self.agg_funcs.len() + offset, datum);
+            }
+        }
         Ok(())
     }
 }
@@ -2472,6 +2537,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.child_returned_empty = true;
         self.groups.clear();
         self.group_key_buffer.clear();
+        self.group_key_values.clear();
         self.ordered.clear();
         self.group_count = 0;
         self.cursor = 0;
@@ -2610,6 +2676,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.groups.clear();
+        self.group_key_values.clear();
         self.ordered.clear();
         self.group_count = 0;
         self.parallel_output.clear();

@@ -1084,6 +1084,12 @@ impl<C: HashAggContext> HashAggExec<C> {
         if self.agg_funcs.is_empty() {
             return None;
         }
+        // A cop partial aggregation emits its group-by columns after the
+        // aggregate columns; the pipeline stages only the aggregate values, so
+        // such an aggregation stays serial.
+        if self.output_group_keys {
+            return None;
+        }
         // Go `builder.go:2162`: only an aggregate-local ORDER BY forces
         // `IsUnparallelExec`. `HasDistinct` is recorded independently for
         // spill support and does not disable the partial/final workers.
