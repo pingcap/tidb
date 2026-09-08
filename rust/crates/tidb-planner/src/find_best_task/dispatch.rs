@@ -100,6 +100,10 @@ pub struct DispatchContext<'a> {
     pub coster: &'a dyn TaskCoster,
     /// The `tidb_opt_skew_ratio` the NDV scaling reads; 1.0 is Go's default.
     pub skew_ratio: f64,
+    /// Session range memory limit used during initial access-path construction.
+    pub range_max_size: i64,
+    /// Statement warning and plan-cache fallback state.
+    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
     /// Go `SessionVars.OptOrderingIdxSelRatio`, used by the ordered LIMIT
     /// row-count adjustment for table and index scans.
     pub ordering_index_selectivity_ratio: f64,
@@ -153,6 +157,8 @@ impl<'a> DispatchContext<'a> {
             allocator,
             coster,
             skew_ratio,
+            range_max_size: 64 * 1024 * 1024,
+            range_fallback_handler: None,
             ordering_index_selectivity_ratio: 0.01,
             allow_projection_push_down: true,
             // Go `vardef.DefOptLimitPushDownThreshold`.
@@ -167,6 +173,42 @@ impl<'a> DispatchContext<'a> {
             task_map: HashMap::new(),
             column_ids: None,
         }
+    }
+
+    fn detach_index_range(
+        &self,
+        conditions: &[tidb_expr::expression::Expression],
+        columns: &[tidb_expr::column::Column],
+        lengths: &[i64],
+    ) -> Result<crate::ranger::detacher::DetachRangeResult, crate::ranger::points::PointBuilderError>
+    {
+        match self.range_fallback_handler {
+            Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler(
+                conditions,
+                columns,
+                lengths,
+                self.range_max_size,
+                handler,
+            ),
+            None => crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                conditions,
+                columns,
+                lengths,
+                self.range_max_size,
+            ),
+        }
+    }
+
+    /// Attach the statement's range quota and shared fallback state.
+    #[must_use]
+    pub const fn with_range_quota(
+        mut self,
+        quota: i64,
+        handler: &'a tidb_util::context::RangeFallbackHandler,
+    ) -> Self {
+        self.range_max_size = quota;
+        self.range_fallback_handler = Some(handler);
+        self
     }
 
     /// The same context with the statement's ordering-index selectivity
@@ -1734,13 +1776,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     if ds.pushed_down_conds.is_empty() || common_columns.is_empty() {
                         return None;
                     }
-                    crate::ranger::detacher::detach_cond_and_build_range_for_index(
-                        &ds.pushed_down_conds,
-                        &common_columns,
-                        &common_lengths,
-                        0,
-                    )
-                    .ok()
+                    ctx.detach_index_range(&ds.pushed_down_conds, &common_columns, &common_lengths)
+                        .ok()
                 });
                 let int_access_conditions = handle_column.map_or_else(Vec::new, |handle| {
                     crate::ranger::detacher::extract_access_conditions_for_column(
@@ -2227,12 +2264,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 let detach = if ds.pushed_down_conds.is_empty() || index_cols.is_empty() {
                     None
                 } else {
-                    match crate::ranger::detacher::detach_cond_and_build_range_for_index(
-                        &ds.pushed_down_conds,
-                        &index_cols,
-                        &index_lengths,
-                        0,
-                    ) {
+                    match ctx.detach_index_range(&ds.pushed_down_conds, &index_cols, &index_lengths)
+                    {
                         Ok(result) => Some(result),
                         Err(_) => None,
                     }

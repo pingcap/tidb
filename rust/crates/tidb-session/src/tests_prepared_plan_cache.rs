@@ -1145,3 +1145,77 @@ fn static_partition_quota_covers_partition_kinds() {
         }
     }
 }
+
+#[test]
+fn physical_index_range_quota_preserves_rows_and_warns() {
+    for key in ["KEY k(a,b)", "PRIMARY KEY(a,b) CLUSTERED"] {
+        let mut session = Session::new();
+        session
+            .run(&format!(
+                "CREATE TABLE physical_quota (a INT, b INT, {key})"
+            ))
+            .unwrap();
+        session
+            .run("INSERT INTO physical_quota VALUES (1,1),(2,2),(3,3),(4,4)")
+            .unwrap();
+        for quota in [1, 0] {
+            session
+                .run(&format!("SET tidb_opt_range_max_size = {quota}"))
+                .unwrap();
+            assert_eq!(
+                row_text(session.run(
+                    "SELECT a,b FROM physical_quota WHERE a IN (1,2) AND b IN (1,2) ORDER BY a"
+                )),
+                vec![vec!["1", "1"], vec!["2", "2"]]
+            );
+            let warnings = row_text(session.run("SHOW WARNINGS"));
+            assert_eq!(
+                warnings
+                    .iter()
+                    .flatten()
+                    .filter(|s| s.contains("tidb_opt_range_max_size"))
+                    .count(),
+                usize::from(quota != 0),
+                "{key}, quota={quota}: {warnings:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn physical_index_range_quota_rejects_prepared_cache() {
+    for key in ["KEY k(a,b)", "PRIMARY KEY(a,b) CLUSTERED"] {
+        let mut session = Session::new();
+        session
+            .run(&format!(
+                "CREATE TABLE prepared_physical_quota (a INT, b INT, {key})"
+            ))
+            .unwrap();
+        session
+            .run("INSERT INTO prepared_physical_quota VALUES (1,1),(2,2),(3,3),(4,4)")
+            .unwrap();
+        session.run("SET tidb_opt_range_max_size = 1").unwrap();
+        session.run("PREPARE pq FROM 'SELECT a,b FROM prepared_physical_quota WHERE a IN (?,?) ORDER BY a'").unwrap();
+        for (a, b) in [(1, 2), (3, 4)] {
+            session.run(&format!("SET @a={a}, @b={b}")).unwrap();
+            assert_eq!(
+                row_text(session.run("EXECUTE pq USING @a,@b")),
+                vec![
+                    vec![a.to_string(), a.to_string()],
+                    vec![b.to_string(), b.to_string()]
+                ]
+            );
+            assert!(!session.found_in_plan_cache, "{key}");
+            let warnings = row_text(session.run("SHOW WARNINGS"));
+            assert_eq!(
+                warnings
+                    .iter()
+                    .flatten()
+                    .filter(|s| s.contains("tidb_opt_range_max_size"))
+                    .count(),
+                1,
+                "{key}: {warnings:?}"
+            );
+        }
+    }
+}
