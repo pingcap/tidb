@@ -11487,3 +11487,7 @@ risks without claiming repository-wide parity.
  the CHECK; an invalid document refuses at the JSON CAST (3140) before the
  CHECK runs. Pinned in
  `crates/tidb-session/tests/check_json_valid_source.rs`.
+- 2026-09-08 (generated-over-JSON pin): a STORED generated column extracting
+ from a JSON document (json_unquote + ->) computes on write and filters in
+ WHERE. Pinned in
+ `crates/tidb-session/tests/generated_over_json_source.rs`.
