@@ -11366,3 +11366,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (JSON storage pin): JSON_STORAGE_FREE's zero-for-parsed-docs
   rule, JSON_STORAGE_SIZE's plausible binary size, and NULL propagation.
   Pinned in `crates/tidb-session/tests/json_storage_source.rs`.
+- 2026-09-08 (day-number pin): TO_DAYS's Gregorian day number, FROM_DAYS
+  inversion, and TO_SECONDS's whole-day boundary. Pinned in
+  `crates/tidb-session/tests/day_number_source.rs`.
