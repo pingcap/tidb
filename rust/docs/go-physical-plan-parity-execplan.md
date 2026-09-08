@@ -732,6 +732,11 @@ both `oltp_read_only` and `oltp_read_write`.
   `PlanErrorKind::UnknownColumnInClause` carries the 1054 column/clause pair
   across the planner boundary. Receipt:
   `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: corrected the column-default cast event for a DST-gap wall
+  clock. Go's `Time.Convert` reports `ErrTimestampInDSTTransition` and moves
+  the value; the test pinned `Truncated`. It now expects
+  `TimestampInDSTTransition` and cites `pkg/types/time.go:459-467`. Receipt:
+  `rust/testport/receipts/types_timestamp_dst_gap.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

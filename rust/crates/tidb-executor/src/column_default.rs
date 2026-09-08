@@ -1040,6 +1040,13 @@ mod tests {
 
     #[test]
     fn timestamp_projection_preserves_conversion_event() {
+        // The wall clock is in America/Los_Angeles' spring-forward gap, so
+        // casting the DateTime into the TIMESTAMP type is Go's
+        // `Time.Convert` DST branch: `t1.Check` reports
+        // `ErrTimestampInDSTTransition`, `AdjustedGoTime` moves the value and
+        // Go appends that WARNING (`pkg/types/time.go:459-467`). The event
+        // rides the original cast; the LA->UTC reprojection only changes the
+        // produced wall clock.
         let stored = Datum::new_time(
             Time::new(
                 CoreTime::from_date(2011, 3, 13, 2, 30, 0, 0),
@@ -1063,7 +1070,7 @@ mod tests {
         assert_eq!(materialized_time_text(&converted), "2011-03-13 10:00:00");
         assert_eq!(
             converted.event,
-            Some(tidb_datatype::ScalarConversionEvent::Truncated)
+            Some(tidb_datatype::ScalarConversionEvent::TimestampInDSTTransition)
         );
     }
 

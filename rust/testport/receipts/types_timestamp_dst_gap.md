@@ -99,3 +99,22 @@ claim package-complete parity: numeric zero-date context (T8),
 tracked in the divergence audit. The external expression fixture and the
 unrelated clippy diagnostics are environment/base failures, not regressions
 from this change.
+
+## Follow-up: the column-default cast event is the DST warning (2026-09-09)
+
+`column_default::tests::timestamp_projection_preserves_conversion_event`
+pinned `ScalarConversionEvent::Truncated` for a `DateTime`-typed default whose
+wall clock sits in America/Los_Angeles' spring-forward gap. Go's
+`Time.Convert` (`pkg/types/time.go:459-467`) reports
+`ErrTimestampInDSTTransition`, moves the value with `AdjustedGoTime`, and
+APPENDS that warning; `pkg/table/column.go::getColDefaultValue` reaches it
+through `castColumnValue` -> `Datum.ConvertTo` -> `Time.Convert`. The Rust
+cast already produces that event, so the test now expects
+`TimestampInDSTTransition` and cites the Go branch. The neighbouring
+`timezone_projection_failure_is_a_datum_comparison_error` still covers the
+`Timestamp`-typed datum whose failure is the source-zone projection.
+
+Ready validation: `cargo test --locked -p tidb-executor --lib column_default`
+passed; the full serialized executor suite is recorded with the batch commit.
+`cargo fmt --all -- --check` (three pre-existing drift files only);
+`git diff --check -- rust`.
