@@ -17,7 +17,6 @@ go_test(
     shard_count = 5,
     deps = [
         "//pkg/config/kerneltype",
-        "//pkg/domain",
         "//pkg/dumpformat/testutils",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/metering",
@@ -34,7 +33,6 @@ go_test(
         "//pkg/kv",
         "//pkg/lightning/config",
         "//pkg/lightning/mydump",
-        "//pkg/objstore/storeapi",
         "//pkg/planner/core",
         "//pkg/session",
         "//pkg/sessionctx/vardef",
@@ -50,7 +48,6 @@ go_test(
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_golang_snappy//:snappy",
         "@com_github_klauspost_compress//zstd",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",

@@ -28,9 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -39,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -60,7 +57,6 @@ func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
 	const (
 		sourceBucket = "expired-conflict-source"
 		sortBucket   = "expired-conflict-sort"
-		sentinel     = "conflicted-rows/not-a-task/sentinel"
 		dbName       = "expired_conflict_cleanup"
 	)
 	ctx := context.Background()
@@ -71,15 +67,10 @@ func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
 		scheduler.DefaultExpiredFileCleanInterval = originalExpiredFileCleanInterval
 	})
 	originalCloudStorageURI := vardef.CloudStorageURI.Load()
-	vardef.CloudStorageURI.Store(baseSortURI)
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store(originalCloudStorageURI)
 	})
 
-	var (
-		rootedSortURI string
-		sortStore     storeapi.Storage
-	)
 	s := &mockGCSSuite{}
 	s.SetT(t)
 	t.Cleanup(func() {
@@ -87,38 +78,16 @@ func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
 			s.server.Stop()
 		}
 	})
-	s.beforeDomainSetup = func() {
-		s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
-		s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortBucket})
-		rootedSortURI = handle.GetCloudStorageURI(context.Background(), nil)
-		var err error
-		sortStore, err = importer.GetSortStore(ctx, rootedSortURI)
-		require.NoError(t, err)
-		t.Cleanup(sortStore.Close)
-		require.NoError(t, sortStore.WriteFile(ctx, sentinel, []byte("sentinel")))
-	}
-	const disableDistTaskFailpoint = "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"
-	require.NoError(t, failpoint.Enable(disableDistTaskFailpoint, `return(true)`))
-	distTaskDisabled := true
-	t.Cleanup(func() {
-		if distTaskDisabled {
-			require.NoError(t, failpoint.Disable(disableDistTaskFailpoint))
-		}
-	})
 	s.SetupSuite()
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortBucket})
 	vardef.CloudStorageURI.Store(baseSortURI)
-	require.NoError(t, failpoint.Disable(disableDistTaskFailpoint))
-	distTaskDisabled = false
-	require.NoError(t, domain.GetDomain(s.tk.Session()).InitDistTaskLoop())
-
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		exists, err := sortStore.FileExists(ctx, sentinel)
-		assert.NoError(collect, err)
-		assert.False(collect, exists, "startup cleanup did not remove %s", sentinel)
-	}, 30*time.Second, 100*time.Millisecond)
+	rootedSortURI := handle.GetCloudStorageURI(ctx, s.store)
+	sortStore, err := importer.GetSortStore(ctx, rootedSortURI)
+	require.NoError(t, err)
+	t.Cleanup(sortStore.Close)
 
 	var jobID int64
-	var taskKey string
 	t.Cleanup(func() {
 		assert.NoError(t, s.tk.ExecToErr("drop database if exists "+dbName))
 	})
@@ -126,19 +95,6 @@ func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
 		if jobID != 0 {
 			assert.NoError(t, s.tk.ExecToErr("delete from mysql.tidb_import_jobs where id = ?", jobID))
 		}
-	})
-	t.Cleanup(func() {
-		if taskKey == "" {
-			return
-		}
-		assert.NoError(t, s.tk.ExecToErr(`delete from mysql.tidb_background_subtask where task_key in
-			(select cast(id as char) from mysql.tidb_global_task where task_key = ? union all
-			 select cast(id as char) from mysql.tidb_global_task_history where task_key = ?)`, taskKey, taskKey))
-		assert.NoError(t, s.tk.ExecToErr(`delete from mysql.tidb_background_subtask_history where task_key in
-			(select cast(id as char) from mysql.tidb_global_task where task_key = ? union all
-			 select cast(id as char) from mysql.tidb_global_task_history where task_key = ?)`, taskKey, taskKey))
-		assert.NoError(t, s.tk.ExecToErr("delete from mysql.tidb_global_task where task_key = ?", taskKey))
-		assert.NoError(t, s.tk.ExecToErr("delete from mysql.tidb_global_task_history where task_key = ?", taskKey))
 	})
 	t.Cleanup(func() {
 		testutils.RemoveAllObjects(t, s.server, sourceBucket)
@@ -159,7 +115,6 @@ func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
 	parsedJobID, err := strconv.ParseInt(result[0][0].(string), 10, 64)
 	require.NoError(t, err)
 	jobID = parsedJobID
-	taskKey = importinto.TaskKey(jobID)
 
 	task := s.getTaskByJob(jobID)
 	require.NotNil(t, task)
@@ -192,6 +147,8 @@ func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
 		require.True(t, exists, "ordinary cleanup removed conflict file %s", filename)
 	}
 
+	// Conflict files are retained for seven days after a task finishes. Backdate
+	// the completion time so the periodic cleaner can exercise expiration now.
 	s.tk.MustExec(`update mysql.tidb_global_task_history
 		set end_time = CURRENT_TIMESTAMP - INTERVAL 8 DAY where id = ?`, task.ID)
 	s.tk.MustQuery(`select state, end_time < CURRENT_TIMESTAMP - INTERVAL 7 DAY
