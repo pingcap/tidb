@@ -879,6 +879,52 @@ fn predicate_push_down_does_not_cross_a_limit() {
     out.dismantle();
 }
 
+/// Go `BaseLogicalPlan.PredicatePushDown`'s tail (`base_logical_plan.go:137`):
+/// a projection rewrites the predicate through its expressions, but when the
+/// CHILD refuses the result, the leftover is attached as a `Selection` above
+/// the child (below the projection), not above the projection. The substituted
+/// predicate references the child's columns, so leaving it above the
+/// projection would leave them unavailable.
+#[test]
+fn predicate_push_down_attaches_a_projection_leftover_below_the_projection() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    // Selection(a = 7) / Projection(a) / Limit / DataSource: the Limit
+    // forbids every condition.
+    let source = data_source(&allocator, &[1]);
+    let limit = unary(
+        &allocator,
+        "Limit",
+        LogicalPlan::Limit(LogicalLimit::new(base(&allocator, "Limit", None), 0, 10)),
+        source,
+    );
+    let projection = unary(
+        &allocator,
+        "Projection",
+        LogicalPlan::Projection(LogicalProjection::new(
+            base(&allocator, "Projection", Some(schema_of(&[1]))),
+            vec![col_expr(1)],
+        )),
+        limit,
+    );
+    let root = selection_over(&allocator, vec![eq_const(1, 7)], projection);
+
+    let out = push(&ctx, root);
+    assert!(
+        matches!(out, LogicalPlan::Projection(_)),
+        "the original Selection must disappear: {out:?}"
+    );
+    let LogicalPlan::Selection(selection) = &out.children()[0] else {
+        panic!("expected the leftover Selection below the Projection");
+    };
+    assert_eq!(selection.conditions.len(), 1);
+    assert!(matches!(
+        selection.base.children()[0],
+        LogicalPlan::Limit(_)
+    ));
+    out.dismantle();
+}
+
 #[test]
 fn predicate_push_down_collapses_a_constant_false_selection_to_a_dual() {
     let allocator = PlanIdAllocator::new();

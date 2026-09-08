@@ -320,7 +320,13 @@ impl DecorrelateSolver {
             let Some(agg_child) = aggregation.base.children().first().cloned() else {
                 return Ok(PullUpAggregation::NotFired);
             };
-            let old_apply_schema = apply.base().base.schema().cloned().unwrap_or_default();
+            // Go's `agg.SetSchema(apply.Schema())` reads the apply's schema
+            // BEFORE `apply.SetSchema(applySchema)`, which is
+            // `MergeSchema(outer, aggregation)` — the outer columns followed
+            // by the aggregation's own outputs. Rebuild it from the children
+            // instead of the stored schema, because column pruning can leave
+            // the stored one stale relative to the aggregation.
+            let aggregation_schema = aggregation.base.base.schema().cloned().unwrap_or_default();
             let outer = apply
                 .base_mut()
                 .take_children()
@@ -352,6 +358,7 @@ impl DecorrelateSolver {
                 outer_columns.push(carried);
                 new_funcs.push(first_row);
             }
+            let outer_columns_for_schema = outer_columns.clone();
             let inner_schema = agg_child.schema().cloned().unwrap_or_default();
             let mut apply_schema =
                 merge_schema(Some(&Schema::new(outer_columns)), Some(&inner_schema))
@@ -402,9 +409,12 @@ impl DecorrelateSolver {
                 new_funcs.push(descriptor);
             }
             aggregation.agg_funcs = new_funcs;
-            // Go sets the aggregation's schema BEFORE the apply's changes, so
-            // the aggregation keeps the apply's original output columns.
-            aggregation.base.base.set_schema(Some(old_apply_schema));
+            let aggregation_output = merge_schema(
+                Some(&Schema::new(outer_columns_for_schema)),
+                Some(&aggregation_schema),
+            )
+            .ok_or_else(|| PlanError::internal("aggregation pull-up has no output schema"))?;
+            aggregation.base.base.set_schema(Some(aggregation_output));
             return Ok(PullUpAggregation::Above);
         }
 

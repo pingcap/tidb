@@ -636,6 +636,13 @@ enum PendingPredicates {
     /// take: the child's leftover keeps travelling upward, joined with what
     /// this node could not push.
     PassThrough(Vec<Expression>),
+    /// Go `BaseLogicalPlan.PredicatePushDown`'s tail
+    /// (`base_logical_plan.go:128`): the child's leftovers are attached as a
+    /// `Selection` ABOVE the child (`AddSelection(p.self, newChild, rest, 0)`)
+    /// and only the node's OWN leftovers travel upward. A projection's
+    /// substituted predicates reference columns of its CHILD, so keeping them
+    /// above the projection would leave those columns unavailable.
+    AttachBelow(Vec<Expression>),
     /// `LogicalSelection.PredicatePushDown`'s own tail
     /// (`logical_selection.go:96`), which either absorbs the leftover into its
     /// own conditions, collapses to a `LogicalTableDual`, or disappears.
@@ -681,7 +688,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 let opts = SubstituteOptions::new(self.ctx.builder);
                 let (can_push, cannot_push) =
                     op.break_down_predicates(&predicates, &own_schema, &opts);
-                self.stash.push(PendingPredicates::PassThrough(cannot_push));
+                self.stash.push(PendingPredicates::AttachBelow(cannot_push));
                 Descend::Children(vec![can_push])
             }
             // Go `LogicalJoin.PredicatePushDown` (`logical_join.go:171`).
@@ -805,7 +812,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 let split = LogicalUnionScan::predicate_push_down(&predicates);
                 op.conditions = predicates;
                 self.stash
-                    .push(PendingPredicates::PassThrough(split.with_virtual_column));
+                    .push(PendingPredicates::AttachBelow(split.with_virtual_column));
                 Descend::Children(vec![split.without_virtual_column])
             }
             // Go `LogicalUnionAll.PredicatePushDown`
@@ -988,6 +995,18 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 let mut up: Vec<Expression> = child_ups.into_iter().flatten().collect();
                 up.append(&mut extra);
                 (node, up)
+            }
+            PendingPredicates::AttachBelow(mut extra) => {
+                let children = node.base_mut().take_children();
+                let rebuilt = children
+                    .into_iter()
+                    .zip(child_ups)
+                    .map(|(child, leftover)| {
+                        add_selection(self.ctx, child, leftover, query_block_offset)
+                    })
+                    .collect();
+                node.set_children(rebuilt);
+                (node, extra)
             }
             PendingPredicates::Selection(cannot_push) => {
                 let mut ret: Vec<Expression> = child_ups.into_iter().flatten().collect();

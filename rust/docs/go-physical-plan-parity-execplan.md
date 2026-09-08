@@ -1097,6 +1097,25 @@ both `oltp_read_only` and `oltp_read_write`.
   and `tpch_q2_correlated_min_matches_recorded_hash_join_plan` now match the
   Go `testkit` plans; no deterministic new failures. Receipt:
   `rust/testport/receipts/planner_decorrelate_solver.md`.
+- [x] 2026-09-09: rebuilt a cast inside `NewFunction` through the cast builder.
+  Go's `NewFunction` has `case ast.Cast: return BuildCastFunction(...)`; this
+  port names the dedicated signatures `cast_decimal`/`cast_char`/... and sent
+  every name to the builtin registry, which refuses them. Any substitution
+  that had to rebuild a cast (predicate push-down through a projection)
+  reported `hasFail`, so the predicate stayed above the projection. Receipt:
+  `rust/testport/receipts/expression_new_function_cast.md`.
+- [x] 2026-09-09: attached a projection's un-pushed predicates BELOW it.
+  `BaseLogicalPlan.PredicatePushDown` inserts the child's leftovers as a
+  `Selection` above the child; the port's `PassThrough` returned them upward,
+  so a substituted predicate was re-attached above the projection that no
+  longer outputs its columns. The projection and `LogicalUnionScan` now use
+  `AttachBelow` (the sequence keeps `PassThrough`, matching
+  `logical_sequence.go:60`). The aggregation pull-up arm also rebuilds the
+  aggregation's output schema from the outer columns plus the aggregation's
+  own schema instead of the stale stored apply schema. The correlated-sum
+  plan now matches the Go oracle through its shape and stops on the
+  `IndexHashJoin(Build)` costing choice. Receipt:
+  `rust/testport/receipts/planner_predicate_push_down.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
