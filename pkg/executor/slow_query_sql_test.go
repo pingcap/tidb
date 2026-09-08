@@ -211,6 +211,30 @@ func TestLogSlowLogIndex(t *testing.T) {
 		Check(testkit.Rows("[t:idx]"))
 }
 
+func TestLogSlowLogRUV3(t *testing.T) {
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = f.Name()
+	})
+	require.NoError(t, logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig()))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int,index idx(a));")
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	tk.MustQuery("select * from t use index (idx) where a in (1) union select * from t use index (idx) where a in (2,3);")
+	tk.MustExec("set tidb_slow_log_threshold=300;")
+	tk.MustQuery("select index_names from `information_schema`.`slow_query` " +
+		"where query like 'select%union%' limit 1").
+		Check(testkit.Rows("[t:idx]"))
+}
+
 func TestSlowQuerySessionAlias(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
