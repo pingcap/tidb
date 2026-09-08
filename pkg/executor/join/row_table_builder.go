@@ -530,7 +530,7 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 		seg.validJoinKeyPos = make([]int, 0, b.helpers[partIdx].validRowNum)
 	}
 
-	if totalMemUsage > int64(memory.ServerMemoryLimit.Load())/20 {
+	if memory.UsingGlobalMemArbitration() && totalMemUsage > int64(memory.ServerMemoryLimit.Load())/20 {
 		memory.Run2()
 		logutil.BgLogger().Info("row table build memory usage exceeds 5% of server memory limit, trigger memory arbitrator", zap.Int64("memoryUsage", totalMemUsage), zap.Int64("memoryLimit", int64(memory.ServerMemoryLimit.Load())))
 		if killer := &hashJoinCtx.SessCtx.GetSessionVars().SQLKiller; killer.GetKillSignal() != 0 {
@@ -542,6 +542,7 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 				seg.validJoinKeyPos = nil
 			}
 			runtime.GC()
+			hashJoinCtx.hashTableContext.memoryTracker.Consume(-totalMemUsage)
 			return killer.HandleSignal()
 		}
 	}
