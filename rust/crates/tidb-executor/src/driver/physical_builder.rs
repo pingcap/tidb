@@ -80,6 +80,11 @@ struct CteBuildSlot {
 struct BuildState {
     cte_slots: HashMap<i32, CteBuildSlot>,
     runtime_counters: Option<PhysicalRuntimeStats>,
+    /// The coprocessor `Limit offset:o, count:c` a covering `IndexReader`'s
+    /// `IndexPlan` carries above its `IndexScan`, as `o + c`. Go pushes it into
+    /// the region request; the local cursor has no request, so the scan build
+    /// consumes it here. Set only while the reader's own subtree is built.
+    index_scan_limit: Option<u64>,
 }
 
 pub(crate) type PhysicalRuntimeStats = HashMap<usize, Rc<Cell<u64>>>;
@@ -941,6 +946,17 @@ fn embedded_index_scan(plan: &PhysicalPlan) -> Option<&PhysicalIndexScan> {
     }
 }
 
+/// Go pushes a `Limit offset:o, count:c | cop[tikv]` under the index reader's
+/// `IndexPlan`, so the coprocessor index scan itself stops after `o + c`
+/// entries. The local byte-level cursor has no region request to carry it, so
+/// [`build_index_reader`] hands the same cap to [`IndexRangeSourceExec`].
+fn embedded_index_limit(plan: &PhysicalPlan) -> Option<(u64, u64)> {
+    match plan {
+        PhysicalPlan::Limit(limit) => Some((limit.offset, limit.count)),
+        _ => plan.children().iter().find_map(embedded_index_limit),
+    }
+}
+
 fn reader_has_selection(plan: &PhysicalPlan) -> bool {
     matches!(plan, PhysicalPlan::Selection(_)) || plan.children().iter().any(reader_has_selection)
 }
@@ -1061,6 +1077,7 @@ fn build_index_reader(
     pushed_limit: Option<tidb_planner::physical::PushedDownLimit>,
     expect_cnt: Option<u64>,
     lookup_pushdown: bool,
+    scan_limit: Option<u64>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -1106,6 +1123,13 @@ fn build_index_reader(
     if covering {
         source.mark_covering();
         source.answer_in_index_order();
+        if let Some(cap) = scan_limit {
+            // The covering read answers in index order, so the pushed
+            // coprocessor Limit truncates exactly the prefix the `LimitExec`
+            // above keeps. A refused cap leaves that executor as the sole
+            // authority, which is always correct, only slower.
+            let _ = source.accept_scan_limit(cap);
+        }
     }
     if (scan.keep_order || keep_order) && !source.accept_keep_order(scan.desc) {
         return Err(DriverError::unsupported(
@@ -2805,6 +2829,7 @@ fn build_with_state(
             None,
             None,
             false,
+            state.index_scan_limit.take(),
             catalog,
             ctx,
         ),
@@ -2814,7 +2839,19 @@ fn build_with_state(
             Ok(executor)
         }
         PhysicalPlan::IndexReader(reader) => {
-            build_reader(reader.index_plan.as_deref(), catalog, ctx, state)
+            // Go's `IndexPlan` carries the pushed coprocessor Limit above the
+            // IndexScan; the generic walk below builds it as a `LimitExec`,
+            // and the scan itself needs the same cap so the local cursor stops
+            // early. The reader's subtree is built synchronously, so the slot
+            // cannot leak into a sibling.
+            state.index_scan_limit = reader
+                .index_plan
+                .as_deref()
+                .and_then(embedded_index_limit)
+                .map(|(offset, count)| offset.saturating_add(count));
+            let built = build_reader(reader.index_plan.as_deref(), catalog, ctx, state);
+            state.index_scan_limit = None;
+            built
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             let executor = build_index_reader(
@@ -2828,6 +2865,7 @@ fn build_with_state(
                 reader.pushed_limit,
                 reader.paging.then_some(reader.expect_cnt),
                 reader.index_lookup_push_down,
+                None,
                 catalog,
                 ctx,
             )?;

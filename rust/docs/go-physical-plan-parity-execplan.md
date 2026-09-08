@@ -698,6 +698,13 @@ both `oltp_read_only` and `oltp_read_write`.
   out of range in '(<expr>)'`, which is what the evaluator already emits. The
   test now pins each statement's exact Go message. Receipt:
   `rust/testport/receipts/expression_overflow_column_name.md`.
+- [x] 2026-09-09: pushed a covering IndexReader's coprocessor Limit into the
+  local index cursor. Go's `PhysicalIndexReader.IndexPlan` carries
+  `Limit offset:o, count:c | cop[tikv]` above the `IndexRangeScan`, so the
+  region stops after `o + c` entries; the Rust builder turned that node into a
+  local `LimitExec` and read a full 1,024-entry batch first. The reader now
+  hands the cap to `IndexRangeSourceExec::accept_scan_limit`. Receipt:
+  `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

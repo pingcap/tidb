@@ -744,3 +744,30 @@ silently kills a persistent Rust pool lane.
   workspace `cargo fmt --all -- --check` still reports unrelated pre-existing
   drift in untouched executor and distsql files. `git diff --check` passed.
   The full executor suite and live spill/panic integration were not run.
+
+## Follow-up: a covering IndexReader pushes its coprocessor Limit (2026-09-09)
+
+Go's planner plants `Limit offset:o, count:c | cop[tikv]` inside a
+`PhysicalIndexReader.IndexPlan` above the `IndexRangeScan`, so the region
+request itself stops after `o + c` index entries. The Rust builder walked that
+`IndexPlan` generically: the `Limit` became a local `LimitExec`, and
+`IndexRangeSourceExec` never saw the cap, so its byte-level cursor filled a
+full 1,024-handle batch before the `LimitExec` truncated the output.
+
+`PhysicalPlan::IndexReader` now extracts the embedded coprocessor Limit and
+hands `o + c` to the scan build, which calls
+`IndexRangeSourceExec::accept_scan_limit`; `accept_scan_limit` already caps the
+per-batch handle target (`lookup_batch_target`) and the emission loop, so the
+local cursor stops after the same prefix. A refusal leaves the `LimitExec` as
+the sole authority, which stays correct.
+
+Regression: `access_path::tests::an_order_by_the_index_satisfies_pushes_the_limit`
+failed with `left: 1024, right: 5` and passes after; the neighbouring
+`a_covering_index_filter_counts_qualifying_rows_before_the_limit` still passes.
+
+Ready validation: `tidb-executor` lib 1119 passed / 107 failed with no new
+failures (the only diff against the pre-batch list is this fix and the
+pre-existing flaky `access_cost::index_async_load_queue_tests` pair);
+`cargo check --locked --all-targets -p tidb-executor` passed;
+`cargo fmt --all -- --check` (three pre-existing drift files only);
+`git diff --check -- rust`.
