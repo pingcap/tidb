@@ -11,6 +11,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -21,15 +22,14 @@ const (
 
 func (d *Dumper) startLogProgress(tctx *tcontext.Context) func() {
 	ctx, cancel := tctx.WithCancel()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		d.runLogProgress(ctx)
-	}()
+	})
 	return func() {
 		cancel()
 		// Publish the final snapshot before Dump returns or releases resources.
-		<-done
+		wg.Wait()
 	}
 }
 
