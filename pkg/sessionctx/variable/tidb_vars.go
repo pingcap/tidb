@@ -899,6 +899,9 @@ const (
 	// TiDBEnableStatsUpdateDuringDDL indicate the embedded analyze behavior inside ddl.
 	TiDBEnableStatsUpdateDuringDDL = "tidb_stats_update_during_ddl"
 
+	// TiDBEnableTiCIEstimate indicates whether to call TiCI to estimate full-text search row counts.
+	TiDBEnableTiCIEstimate = "tidb_enable_tici_estimate"
+
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
@@ -1571,6 +1574,7 @@ const (
 	DefTiDBGenerateBinaryPlan                         = true
 	DefEnableTiDBGCAwareMemoryTrack                   = false
 	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBEnableTiCIEstimate                         = true
 	DefTiDBEnableStatsUpdateDuringDDL                 = false
 	DefTiDBEnableTmpStorageOnOOM                      = true
 	DefTiDBEnableMDL                                  = true
@@ -1718,6 +1722,7 @@ var (
 	EnablePProfSQLCPU             = atomic.NewBool(false)
 	EnableBatchDML                = atomic.NewBool(false)
 	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	EnableTiCIEstimate            = atomic.NewBool(DefTiDBEnableTiCIEstimate)
 	ddlReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
 	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency

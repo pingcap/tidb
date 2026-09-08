@@ -585,3 +585,32 @@ func TestTiCIJoinWithNonTiCITable(t *testing.T) {
 		tk.MustQuery(sql).CheckNotContain("mpp[tiflash]")
 	})
 }
+
+func TestTiCISearchIgnoreIndex(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table reviews(id int primary key, title text, n int,
+			fulltext index ft(title), index idx_n(n))`)
+		testkit.SetTiFlashReplica(t, domain.GetDomain(tk.Session()), "test", "reviews")
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = 1")
+
+		// With no local MATCH implementation, excluding the only FTS index must fail.
+		// Do not silently choose the ignored index or use an approximate ILIKE rewrite.
+		for _, sql := range []string{
+			"select * from reviews ignore index(ft) where match(title) against('hello' in boolean mode)",
+			"select * from reviews ignore index(FT) where match(title) against('hello' in boolean mode)",
+			"select /*+ ignore_index(reviews, ft) */ * from reviews where match(title) against('hello' in boolean mode)",
+			"select /*+ ignore_index(r, FT) */ * from reviews r where match(title) against('hello' in boolean mode)",
+		} {
+			require.ErrorContains(t, tk.ExecToErr("explain format='brief' "+sql), "Full text search can only be used with a matching fulltext index", sql)
+		}
+		// Unrelated indexes and ORDER BY hints must not exclude the FTS scan.
+		for _, sql := range []string{
+			"select * from reviews where match(title) against('hello' in boolean mode)",
+			"select * from reviews ignore index(idx_n) where match(title) against('hello' in boolean mode)",
+			"select * from reviews ignore index for order by(ft) where match(title) against('hello' in boolean mode)",
+			"select /*+ ignore_index(r, idx_n) */ * from reviews r where match(title) against('hello' in boolean mode)",
+		} {
+			tk.MustQuery("explain format='brief' " + sql).CheckContain("search func:fts_match_word")
+		}
+	})
+}

@@ -24,6 +24,7 @@ import (
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -43,6 +44,9 @@ func TestTiCISearchEstimateOnlyForMultiTable(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second, mockstore.WithMockTiFlash(2))
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
+	originalEstimate := variable.EnableTiCIEstimate.Load()
+	tk.MustExec("set global tidb_enable_tici_estimate = on")
+	defer tk.MustExec(fmt.Sprintf("set global tidb_enable_tici_estimate = %t", originalEstimate))
 
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
@@ -75,6 +79,13 @@ func TestTiCISearchEstimateOnlyForMultiTable(t *testing.T) {
 	multiTablePlan := testdata.ConvertRowsToStrings(
 		tk.MustQuery("explain format='brief' select /*+ inl_join(t) */ t.id from t2, t where t.id = t2.a and fts_match_word('hello', t.title)").Rows())
 	requirePlanLineContains(t, multiTablePlan, "IndexRangeScan 100.00", "search func:fts_match_word")
+
+	tk.MustQuery("select @@global.tidb_enable_tici_estimate").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_tici_estimate = off")
+	tk.MustQuery("select @@global.tidb_enable_tici_estimate").Check(testkit.Rows("0"))
+	multiTablePlanWithoutEstimate := testdata.ConvertRowsToStrings(
+		tk.MustQuery("explain format='brief' select /*+ inl_join(t) */ t.id from t2, t where t.id = t2.a and match(t.title) against('hello' in boolean mode)").Rows())
+	requirePlanLineContains(t, multiTablePlanWithoutEstimate, "IndexRangeScan 10.00", "search func:fts_match_word")
 }
 
 func requirePlanLineContains(t *testing.T, plan []string, expected ...string) {

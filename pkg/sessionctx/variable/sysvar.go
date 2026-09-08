@@ -2860,6 +2860,14 @@ var defaultSysVars = []*SysVar{
 			s.DefaultStrMatchSelectivity = tidbOptFloat64(val, DefTiDBDefaultStrMatchSelectivity)
 			return nil
 		}},
+	{Scope: ScopeGlobal, Name: TiDBEnableTiCIEstimate, Value: BoolToOnOff(DefTiDBEnableTiCIEstimate), Type: TypeBool,
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return BoolToOnOff(EnableTiCIEstimate.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			EnableTiCIEstimate.Store(TiDBOptOn(val))
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBDDLEnableFastReorg, Value: BoolToOnOff(DefTiDBEnableFastReorg), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableFastReorg.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
