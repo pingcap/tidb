@@ -712,6 +712,14 @@ both `oltp_read_only` and `oltp_read_write`.
   full sampling explicitly, and the stale `None -> 1.0` assertion pins Go's
   0.001 default instead. Receipt:
   `rust/testport/receipts/executor_analyze_store_batch.md`.
+- [x] 2026-09-09: named a table scan from its ranges, not its access
+  conditions. Go's `PhysicalTableScan.IsFullScan` requires every range to be a
+  full range, so a partitioned common-handle scan whose predicate left
+  `[NULL,+inf]` is `TableFullScan`; the port rendered `TableRangeScan`. The
+  clustered-PRIMARY test also pinned the wrong rule: Go keeps a `PRIMARY`
+  index record for a clustered COMMON handle and omits it only for
+  `PKIsHandle`. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

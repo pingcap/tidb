@@ -691,12 +691,15 @@ fn the_clustered_index_mode_decides_the_handle() {
             (*pk_is_handle, common.to_vec()),
             "{ddl} under {mode:?}"
         );
-        // A clustered key is the row key and has no index; a non-clustered
-        // one is enforced by a `PRIMARY` unique index. Exactly one holds.
-        let clustered = *pk_is_handle || !common.is_empty();
+        // Go `BuildTableInfo` skips the physical PRIMARY index only for
+        // `PKIsHandle` (`create_table.go:1502`, `if tbInfo.PKIsHandle {
+        // continue }`). A clustered COMMON handle keeps a `PRIMARY` index entry
+        // with `CommonHandle` metadata -- the encoding IS the row key, but the
+        // index record is what lets the planner range and order the table path
+        // through that key.
         assert_eq!(
             has_primary_index(&catalog, "m"),
-            !clustered,
+            !*pk_is_handle,
             "{ddl} under {mode:?}"
         );
     }

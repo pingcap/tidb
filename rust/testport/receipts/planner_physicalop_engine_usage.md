@@ -128,3 +128,34 @@ with the new owner module present.
 Risks are limited to engine classification and index-join shape detection;
 the helpers are read-only tree walks. The optimizer round integration, full
 Bazel shards, and Rust planner compilation remain unverified locally.
+
+## Follow-up: `PhysicalTableScan.IsFullScan` reads the RANGES (2026-09-09)
+
+Go `PhysicalTableScan.TP` (`physical_table_scan.go:440`) renders
+`TableFullScan` iff `IsFullScan()` (`:666`), which is true when
+`len(RangeInfo) == 0 && !haveCorCol()` and EVERY range `IsFullRange`. The Rust
+port instead named the scan from whether an access condition existed, so a
+predicate on a handle component whose per-partition ranges stayed full (a
+partitioned common-handle table with `part > 199999`, whose explain range is
+`[NULL,+inf]`) was rendered `TableRangeScan`.
+
+`find_best_task/dispatch.rs` now computes the kind from the built ranges with
+Go's unsigned-int-handle flag (`pk_is_handle && handle is unsigned`), and the
+stale comment claiming `RangeInfo` is set for ordinary access conditions is
+gone. `RangeInfo` is an INDEX JOIN string, and the index-join shape already
+has its own `TableRangeScan` branch in `explain.rs`.
+
+The same batch corrects `primary_keys::the_clustered_index_mode_decides_the_handle`:
+Go skips the physical PRIMARY index only for `PKIsHandle`
+(`create_table.go:1502`, `if tbInfo.PKIsHandle { continue }`), while a
+clustered COMMON handle keeps a `PRIMARY` index record. The test asserted the
+opposite and now checks `has_primary_index == !pk_is_handle`.
+
+Regression: `a_common_handle_table_path_is_a_table_scan` failed with the
+`TableRangeScan ... range:[NULL,+inf]` plan and passes after;
+`the_clustered_index_mode_decides_the_handle` failed on the ON/VARCHAR arm and
+passes after. Ready validation: `tidb-executor` lib serialized 1129 passed /
+97 failed with those two as the only removals and no additions;
+`tidb-planner` all four test targets green (990/268/6/3);
+`cargo fmt --all -- --check` (three pre-existing drift files only);
+`git diff --check -- rust`.
