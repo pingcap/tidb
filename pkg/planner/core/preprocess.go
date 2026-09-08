@@ -256,7 +256,7 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
-func (p *preprocessor) Enter(in ast.Node) (skipChildren bool) {
+func (p *preprocessor) Enter(in ast.Node) bool {
 	switch node := in.(type) {
 	case *ast.AdminStmt:
 		p.checkAdminCheckTableGrammar(node)
