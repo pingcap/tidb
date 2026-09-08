@@ -851,21 +851,34 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                 }
                 Descend::Children(downs)
             }
-            // Go `DataSource.PredicatePushDown` (`logical_datasource.go:135`).
+            // Go `DataSource.PredicatePushDown` (`logical_datasource.go:185`).
             //
-            // Go splits `predicates` with
+            // Go first simplifies the predicates, records ALL of them in
+            // `AllConds`, and checks `Conds2TableDual` over that list BEFORE
+            // splitting with
             // `expression.PushDownExprs(pushDownCtx, predicates, kv.UnSpecified)`.
+            // The dual check has to come first: a constant-NULL comparison such
+            // as `gt(cast(col), NULL)` is pushable, so checking only the
+            // leftover would let it reach the scan instead of collapsing the
+            // source to an empty `TableDual`.
+            //
             // The TiKV expression whitelist is the dependency-closed half of
-            // that decision; session blacklist entries are applied later by
-            // the live executor when it negotiates the scan. Keep unsupported
+            // that split; session blacklist entries are applied later by the
+            // live executor when it negotiates the scan. Keep unsupported
             // expressions above the source and let supported expressions grow
             // the DataSource ranges and statistics used by physical planning.
             LogicalPlan::DataSource(op) => {
-                let (pushable, not_pushable): (Vec<_>, Vec<_>) =
-                    predicates.into_iter().partition(|predicate| {
-                        crate::pushdown::can_exprs_push_down_tikv(std::slice::from_ref(predicate))
-                    });
-                Descend::Stop(op.predicate_push_down_local(pushable, not_pushable))
+                let predicates = apply_predicate_simplification(self.ctx, predicates, true, None);
+                if let Some(dual) = conds_to_table_dual(
+                    self.ctx,
+                    &predicates,
+                    Some(&own_schema),
+                    query_block_offset,
+                ) {
+                    *node = dual;
+                    return Descend::Stop(Vec::new());
+                }
+                Descend::Stop(op.predicate_push_down_local(predicates))
             }
             // Go `LogicalTableDual.PredicatePushDown`
             // (`logical_table_dual.go:73`).

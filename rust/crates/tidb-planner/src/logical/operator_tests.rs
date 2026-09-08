@@ -1042,13 +1042,16 @@ fn data_source_correlated_cols_come_from_pushed_down_conds() {
 }
 
 /// Go `DataSource.PredicatePushDown` (`logical_datasource.go:185`): every
-/// predicate is recorded in `AllConds`, and only the pushable ones stay.
+/// predicate is recorded in `AllConds`, and only the store-supported ones
+/// stay in `PushedDownConds`; the rest go back to the parent.
 #[test]
 fn data_source_records_all_conds_and_returns_the_remainder() {
     let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
     let pushable = eq(col_expr(1), one());
-    let kept = eq(col_expr(2), one());
-    let remaining = source.predicate_push_down_local(vec![pushable.clone()], vec![kept.clone()]);
+    // Go admits only the one-argument RoundInt/RoundReal/RoundDec PbCodes, so
+    // `round(col, 1)` is the non-pushable half of the split.
+    let kept = Expression::ScalarFunction(call("round", vec![col_expr(2), one()]));
+    let remaining = source.predicate_push_down_local(vec![pushable.clone(), kept.clone()]);
     assert_eq!(source.all_conds.len(), 2);
     assert_eq!(source.pushed_down_conds.len(), 1);
     assert_eq!(remaining.len(), 1);

@@ -136,3 +136,35 @@ clean on both changed files; `git diff --check -- rust`. The TPCC condition-09
 test now clears the unported-function error and fails only on the output
 column's NAME (`s1` alias vs Go's `Column#2`), the recorded alias/OrigName
 divergence.
+
+## Follow-up: the `cast_*` family is admitted to TiKV push-down under Go's `cast` name (2026-09-09)
+
+Go builds every cast under the single name `ast.Cast`
+(`expression.BuildCastFunctionWithCheck`), and `scalarExprSupportedByTiKV`
+admits that name unconditionally (`pkg/expression/infer_pushdown.go:246`).
+Rust's dedicated-cast transcreation names each target type instead
+(`cast_decimal`, `cast_signed`, `cast_char`, ...), so the planner's
+`can_expr_push_down_tikv` composition asked the shared policy about
+`cast_decimal` and got "not pushable". The derived join-key NOT NULL filter
+`not(isnull(cast(d_ytd)))` was therefore left ABOVE the projection that
+defines the cast instead of being substituted through it and pushed into the
+cop reader, and executor building failed with `a physical expression does not
+resolve in its child` because `d_ytd` is not in that projection's output.
+
+`can_expr_push_down_tikv` now maps the `cast_` name prefix back to Go's
+`cast` before calling `scalar_expr_supported_by_tikv`. This is the same
+answer Go gives: every cast is one name and TiKV evaluates all of them.
+
+Regression: the new
+`pushdown::tests::a_dedicated_cast_name_answers_like_go_cast` pins that
+`cast_decimal` and `not(isnull(cast_decimal(col)))` are admitted and that a
+name outside the family (`castaway`) is still decided by the shared policy.
+Before the fix the `cast_decimal` assertion failed.
+
+The TPCC condition-09 plan now renders the district side as
+`Projection -> TableReader -> Selection -> TableRangeScan` with the Selection
+condition `not(isnull(cast(test.district.d_ytd, decimal(34,2) BINARY)))`,
+which is the Go shape; that test still differs only in the advanced join
+reorder's choice of build side and join algorithm (`HashJoin` with `history`
+build versus Go's `IndexHashJoin` with `district` build), which is a separate
+`pkg/planner/core` join-reorder question.

@@ -376,27 +376,27 @@ impl DataSource {
 
     /// Go `DataSource.PredicatePushDown(predicates)`'s LOCAL half
     /// (`logical_datasource.go:185`): a data source ACCEPTS every predicate,
-    /// recording all of them in `AllConds` and keeping the pushable ones in
-    /// `PushedDownConds`.
+    /// recording all of them in `AllConds` in the order they arrived and
+    /// keeping the store-supported ones in `PushedDownConds`.
     ///
-    /// The split is the caller's: Go asks
+    /// The split asks
     /// `expression.PushDownExprs(pushDownCtx, predicates, kv.UnSpecified)`,
-    /// which consults the store's function whitelist. The whitelist lives in
-    /// `tidb_expr::pushdown_catalog`; this method takes the already-partitioned
-    /// result so the operator never guesses what a store supports.
+    /// which consults the store's function whitelist. That whitelist lives in
+    /// [`crate::pushdown`] and [`tidb_expr::pushdown_catalog`].
+    ///
+    /// The caller has already run `Conds2TableDual` over `AllConds`, which is
+    /// Go's order (`logical_datasource.go:366-369`): a constant-NULL predicate
+    /// becomes a `TableDual` before the split, so a pushable `col > NULL`
+    /// cannot hide the empty result.
     ///
     /// Returns the predicates the PARENT must still apply, which is Go's first
     /// return value.
-    pub fn predicate_push_down_local(
-        &mut self,
-        pushable: Vec<Expression>,
-        not_pushable: Vec<Expression>,
-    ) -> Vec<Expression> {
-        self.all_conds = pushable
-            .iter()
-            .cloned()
-            .chain(not_pushable.iter().cloned())
-            .collect();
+    pub fn predicate_push_down_local(&mut self, predicates: Vec<Expression>) -> Vec<Expression> {
+        self.all_conds = predicates;
+        let (pushable, not_pushable): (Vec<_>, Vec<_>) =
+            self.all_conds.iter().cloned().partition(|predicate| {
+                crate::pushdown::can_exprs_push_down_tikv(std::slice::from_ref(predicate))
+            });
         self.pushed_down_conds = pushable;
         not_pushable
     }

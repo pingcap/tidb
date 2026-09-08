@@ -85,3 +85,33 @@ opposite of that oracle:
 Validation: both tests pass; `tidb-executor` lib serialized 1198 passed / 49
 failed, the two above and no additions; `rustfmt --edition 2021 --check` clean
 on both files; `git diff --check -- rust`.
+
+## Follow-up: the DataSource runs `Conds2TableDual` before the push-down split (2026-09-09)
+
+Go `DataSource.PredicatePushDown` (`logical_datasource.go:185`) simplifies the
+incoming predicates, records ALL of them in `AllConds`, and only then splits
+them with `expression.PushDownExprs`. The `Conds2TableDual(ds, ds.AllConds)`
+call sits between those two steps, so a constant-NULL predicate collapses the
+source to an empty `TableDual` EVEN WHEN the predicate is pushable.
+
+The Rust driver partitioned first and never ran `Conds2TableDual` at the
+DataSource, so the check only happened for the predicates left above the
+source. That was invisible while `gt(cast_double(col), NULL)` was rejected by
+the TiKV whitelist: it stayed in the Selection and collapsed there. Once the
+dedicated `cast_*` family became pushable under Go's `cast` name
+(`cast_hybrid_push.md`), the predicate reached the DataSource and built a
+`[NULL,+inf]` index range instead of the empty relation, breaking
+`driver::tests::index_ranges::index_ranges_are_built_the_way_go_builds_them`.
+
+`rewrite::predicate_push_down`'s DataSource arm now mirrors Go's order —
+simplify, record `AllConds`, `Conds2TableDual`, then split — and
+`DataSource::predicate_push_down_local` takes the full predicate list and does
+the split itself. The operator test that pinned the old two-list signature now
+uses a genuinely non-pushable `round(col, 1)` for the remainder.
+
+Regression: the existing
+`driver::tests::index_ranges::index_ranges_are_built_the_way_go_builds_them`
+fails with the cast admission fix alone (`Some((1, [[NULL,+inf]]))` instead of
+`None`) and passes with this DataSource arm restored. Validation:
+`tidb-planner` lib 995 passed / 0 failed; `tidb-executor` lib serialized 1213
+passed / 39 failed, byte-identical to the pre-change baseline list.

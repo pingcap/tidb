@@ -909,6 +909,24 @@ both `oltp_read_only` and `oltp_read_write`.
   could not resolve. It now derives them from the aggregate's child (table
   scan) schema. Two partition-table tests fixed. Receipt:
   `rust/testport/receipts/executor_index_lookup_partial_aggregate.md`.
+- [x] 2026-09-09: admitted the dedicated `cast_*` family to TiKV push-down
+  under Go's single `cast` name. Go builds every cast as `ast.Cast`, which
+  `scalarExprSupportedByTiKV` admits unconditionally
+  (`pkg/expression/infer_pushdown.go:246`); the dedicated-cast transcreation
+  names each target type, so `can_expr_push_down_tikv` answered "not
+  pushable" for `not(isnull(cast_decimal(col)))`. The derived NOT NULL filter
+  then stayed above the projection that defines the cast and failed executor
+  building with "a physical expression does not resolve in its child"; it now
+  lands inside the cop reader like Go. Receipt:
+  `rust/testport/receipts/cast_hybrid_push.md`.
+- [x] 2026-09-09: made the DataSource run `Conds2TableDual` before the
+  push-down split. Go records every simplified predicate in `AllConds`, checks
+  `Conds2TableDual` there, and only then splits with `PushDownExprs`
+  (`logical_datasource.go:185`); the Rust partitioned first, so a pushable
+  `gt(cast_double(col), NULL)` reached the scan and built a `[NULL,+inf]`
+  range instead of collapsing to an empty relation. That gap was hidden until
+  the `cast_*` admission above made the predicate pushable. Receipt:
+  `rust/testport/receipts/planner_empty_range.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

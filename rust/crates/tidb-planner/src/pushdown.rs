@@ -45,6 +45,19 @@ fn can_expr_push_down_tikv(expr: &Expression) -> bool {
         return false;
     }
     let name = function.func_name.lowercase();
+    // Go builds every cast under the single name `ast.Cast`, which
+    // `scalarExprSupportedByTiKV` admits unconditionally
+    // (`infer_pushdown.go:246`). The dedicated-cast transcreation names each
+    // target type (`cast_decimal`, `cast_signed`, ...), so map that family
+    // back to Go's name before the shared policy sees it. Without this the
+    // policy answers "not pushable" for `not(isnull(cast_decimal(col)))` and
+    // the derived NOT NULL filter is left above the projection that defines
+    // the cast instead of inside the cop reader.
+    let policy_name = if name.starts_with("cast_") {
+        "cast"
+    } else {
+        name.as_ref()
+    };
     let signature = match tidb_expr::pushdown_catalog::from_expression(expr) {
         Some(PbScalar::Call { signature, .. }) => signature.sig,
         _ => ScalarFuncSig::Unspecified,
@@ -53,7 +66,7 @@ fn can_expr_push_down_tikv(expr: &Expression) -> bool {
     // speculation, so require the shared signature catalog to resolve it.
     if signature == ScalarFuncSig::Unspecified
         && matches!(
-            name.as_ref(),
+            policy_name,
             "if" | "ifnull"
                 | "case"
                 | "unix_timestamp"
@@ -69,7 +82,7 @@ fn can_expr_push_down_tikv(expr: &Expression) -> bool {
     {
         return false;
     }
-    scalar_expr_supported_by_tikv(&PushDownPolicy::new(name.as_ref(), signature))
+    scalar_expr_supported_by_tikv(&PushDownPolicy::new(policy_name, signature))
 }
 
 #[cfg(test)]
@@ -112,5 +125,26 @@ mod tests {
         // protobuf signature; conditional functions are no exception.
         assert!(!can_exprs_push_down_tikv(&[func("if", vec![col.clone()])]));
         assert!(!can_exprs_push_down_tikv(&[func("tan", vec![col])]));
+    }
+
+    /// Go builds every cast under the single name `ast.Cast`, which
+    /// `scalarExprSupportedByTiKV` admits unconditionally
+    /// (`pkg/expression/infer_pushdown.go:246`). Rust's dedicated-cast
+    /// transcreation names each target type, so `cast_decimal` must answer
+    /// like `cast`; otherwise a derived `not(isnull(cast(col)))` filter is
+    /// left above the projection that defines the cast instead of inside the
+    /// cop reader.
+    #[test]
+    fn a_dedicated_cast_name_answers_like_go_cast() {
+        let col = Expression::Column(Column::new(1, FieldType::new(FieldTypeCode::NewDecimal)));
+        let cast = func("cast_decimal", vec![col.clone()]);
+        assert!(can_exprs_push_down_tikv(std::slice::from_ref(&cast)));
+        assert!(can_exprs_push_down_tikv(&[func(
+            "not",
+            vec![func("isnull", vec![cast])]
+        )]));
+        // The mapping is name-prefix only; a name outside the cast family is
+        // still decided by the shared policy.
+        assert!(!can_exprs_push_down_tikv(&[func("castaway", vec![col])]));
     }
 }
