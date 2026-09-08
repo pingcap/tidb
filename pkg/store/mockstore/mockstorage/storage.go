@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -83,6 +84,11 @@ func (s *mockStorage) Describe() string {
 }
 
 func (s *mockStorage) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCountRequest, timeout time.Duration) (uint64, error) {
+	failpoint.Inject("MockTiCIEstimateCount", func(val failpoint.Value) {
+		if count, ok := val.(int); ok {
+			failpoint.Return(uint64(count), nil)
+		}
+	})
 	return 1000, nil
 }
 
