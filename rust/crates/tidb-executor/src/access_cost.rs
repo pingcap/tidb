@@ -1488,6 +1488,10 @@ fn physical_column_offsets(
     paths
         .0
         .iter()
+        // Go ExtractColumns visits ordinary columns only. Correlated columns
+        // belong to the outer scope even when their names match local names.
+        .filter(|path| !matches!(resolver.resolve_expression(path),
+            Some(tidb_expr::expression::Expression::CorrelatedColumn(_))))
         .map(|path| physical_column_offset(path, table, resolver))
         .collect()
 }
@@ -1590,6 +1594,14 @@ fn dnf_selectivity(
     }
     let mut selectivity = 0.0_f64;
     for item in items {
+        // Go skips a standalone CorrelatedColumn DNF arm. Its outer value
+        // is not a distribution over this table's rows.
+        if let tidb_ast::Expr::Column(path) = strip_parens(&item) {
+            if matches!(resolver.resolve_expression(path),
+                Some(tidb_expr::expression::Expression::CorrelatedColumn(_))) {
+                continue;
+            }
+        }
         let mut cnf = Vec::new();
         crate::plan_trace::collect_and(strip_parens(&item), &mut cnf);
         let current =
@@ -2225,6 +2237,7 @@ mod tests {
         };
         for (condition, expected) in [
             ("a=outer_a", 0.001),
+            ("a=1 OR outer_a", 0.001),
             ("outer_a=a", 0.001),
             ("a<=>outer_a", 0.8),
             ("a!=outer_a", 0.8),
@@ -2255,6 +2268,13 @@ mod tests {
         let mut stats =
             TableStatistics::new(10000, 0, BTreeMap::from([(1, column)]), BTreeMap::new());
         assert!((estimate("a=outer_a", Some(&stats)) - 0.05).abs() < 1e-12);
+        let ordinary = estimate("a=1", Some(&stats));
+        let disjunction = estimate("a=1 OR outer_a", Some(&stats));
+        assert!(
+            (disjunction - ordinary).abs() < 1e-12,
+            "outer references have no local histogram: ordinary={ordinary}, dnf={disjunction}"
+        );
+
         stats
             .column_load_status
             .insert(1, tidb_stats::StatsLoadedStatus::all_evicted());
