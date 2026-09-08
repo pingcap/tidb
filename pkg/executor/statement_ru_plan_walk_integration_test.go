@@ -1444,5 +1444,4 @@ func TestStatementRUWriteLifecycle(t *testing.T) {
 		checkWork("update ru_noncluster set v=v", 130)
 		checkWork("delete from ru_noncluster", 130)
 	})
-
 }
