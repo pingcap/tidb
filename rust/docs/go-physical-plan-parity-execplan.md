@@ -1027,6 +1027,16 @@ both `oltp_read_only` and `oltp_read_write`.
   the analyzed MergeJoin-vs-IndexJoin choice, which is the separate
   `skylinePruning` gap below. Receipt:
   `rust/testport/receipts/planner_join_simplify_outer_join.md`.
+- [x] 2026-09-09: ported `DecorrelateSolver`'s uncorrelated and simple-apply
+  arms (`pkg/planner/core/rule_decorrelate.go`): an apply with no correlated
+  columns becomes its embedded join; an inner `Selection`'s conditions are
+  decorrelated and attached; an inner `MaxOneRow`/`Sort`/`Limit` is peeled.
+  The rule was wired in `rule.rs`, and `build_expression_subquery` now sets
+  Go's `FlagDecorrelate` family so the rule is reachable for subqueries whose
+  FROM has no join. Two executor tests fixed (`tpch_q16`,
+  `correlated_subqueries`); the left-outer-semi family stays `Apply` until the
+  pruning-projection alignment is ported. Receipt:
+  `rust/testport/receipts/planner_decorrelate_solver.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1037,8 +1047,10 @@ both `oltp_read_only` and `oltp_read_write`.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
   lib serialized: 1227 passed / 25 failed). Each needs a package-sized port,
   not a test tweak:
-  - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines;
-    `logical/rule.rs:447` still returns `None`): the 11
+  - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
+    the uncorrelated/Selection/MaxOneRow/Sort/Limit arms are ported; the
+    aggregation pull-up arm, the projection arm, the aggregate group-below arm
+    and `pruneRedundantApply` remain. Nine
     `driver::tests::subqueries::*` failures.
   - `pkg/planner/core` `skylinePruning`/`compareCandidates`
     (`find_best_task.go:1778`+): the Rust access-path chooser compares costs

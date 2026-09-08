@@ -1698,6 +1698,14 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         outer: &LogicalPlan,
         query: &tidb_ast::QueryStmt,
     ) -> Result<LogicalPlan, PlanError> {
+        // Go `buildApply` (`logical_plan_builder.go:1000`) turns on these four
+        // rules whenever it builds a `LogicalApply`. The subquery handlers are
+        // the other Apply producer, and a query whose FROM has no join (so
+        // `build_join` never ran) still needs `decorrelate` reachable.
+        self.opt_flag |= flags::PREDICATE_PUSH_DOWN
+            | flags::BUILD_KEY_INFO
+            | flags::DECORRELATE
+            | flags::CONSTANT_PROPAGATION;
         let (outer_schema, outer_names) = snapshot_schema_and_names(outer);
         self.outer_schemas.push(outer_schema);
         self.outer_names.push(outer_names);

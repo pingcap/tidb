@@ -444,8 +444,8 @@ impl RuleId {
                 Some(&super::rule_outer_to_inner_join::ConvertOuterToInnerJoin)
             }
             Self::OuterJoinEliminator => Some(&super::rule_join_elimination::OuterJoinEliminator),
-            Self::DecorrelateSolver
-            | Self::FullTextIndexResolverWhere
+            Self::DecorrelateSolver => Some(&super::rule_decorrelate::DecorrelateSolver),
+            Self::FullTextIndexResolverWhere
             | Self::FullTextIndexResolverTopN
             | Self::FullTextIndexResolverProjection
             | Self::CorrelateSolver

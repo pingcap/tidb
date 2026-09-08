@@ -1290,6 +1290,25 @@ fn join_output_offsets(
         .collect()
 }
 
+/// The output offsets of a physical join. A `LeftOuterSemi` join appends its
+/// 0/1 marker column AFTER the outer child's columns (`JoinExec`'s semi paths
+/// call `append_datum(outer_row.len(), ...)`), so the marker is in neither
+/// child schema and `join_output_offsets` cannot place it. The executor's
+/// identity mapping already lands it at `outer_row.len()`, which is exactly
+/// where the marker is emitted.
+fn physical_join_output_offsets(
+    plan: &PhysicalPlan,
+    join_type: LogicalJoinType,
+    left_schema: &Schema,
+    right_schema: &Schema,
+) -> Result<Vec<usize>, DriverError> {
+    let schema = plan_schema(plan)?;
+    match join_type {
+        LogicalJoinType::LeftOuterSemi => Ok((0..schema.len()).collect()),
+        _ => join_output_offsets(&schema, left_schema, right_schema),
+    }
+}
+
 fn physical_table_schema(plan: &PhysicalPlan, table: &crate::KvTable) -> Schema {
     fn scan_columns(plan: &PhysicalPlan) -> Option<&[Column]> {
         match plan {
@@ -1928,8 +1947,9 @@ fn build_index_join(
         ctx.statement_memory(),
         lookup,
     );
-    executor.set_output_offsets(join_output_offsets(
-        &plan_schema(plan)?,
+    executor.set_output_offsets(physical_join_output_offsets(
+        plan,
+        join.join_type,
         &left_schema,
         &right_schema,
     )?);
@@ -2015,7 +2035,8 @@ fn build_join_over_children(
         ctx.clone(),
         ctx.statement_memory(),
     );
-    let output_offsets = join_output_offsets(&plan_schema(plan)?, &left_schema, &right_schema)?;
+    let output_offsets =
+        physical_join_output_offsets(plan, join_type, &left_schema, &right_schema)?;
     executor.set_output_offsets(output_offsets);
     Ok(executor)
 }

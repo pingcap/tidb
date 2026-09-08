@@ -351,6 +351,7 @@ pub mod rule_aggregation_push_down;
 pub mod rule_aggregation_skew_rewrite;
 pub mod rule_collect_plan_stats;
 pub mod rule_constant_propagation;
+pub mod rule_decorrelate;
 pub mod rule_derive_topn_from_window;
 pub mod rule_eliminate_empty_selection;
 pub mod rule_eliminate_unionall_dual_item;
