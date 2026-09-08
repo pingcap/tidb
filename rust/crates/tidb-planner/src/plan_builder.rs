@@ -685,6 +685,30 @@ pub fn snapshot_schema_and_names(plan: &LogicalPlan) -> (Schema, Vec<FieldName>)
     )
 }
 
+/// Go `rewriteExprNode`'s deferred output-name reset
+/// (`expression_rewriter.go:283-299`).
+///
+/// Rewriting one expression can grow the plan's schema — a subquery becomes an
+/// `Apply` or a join with the inner side appended — and Go makes those new
+/// columns invisible to NAME resolution by renaming everything past the
+/// pre-rewrite length to `types.EmptyName`. The comment there spells out the
+/// motivating case: `select * from t where t.a in (select t1.a from t1)`
+/// leaves `t1.*` in the plan, and a second subquery that also uses `t1` would
+/// otherwise resolve against the stale names. Without the reset,
+/// `SELECT a FROM s WHERE a IN (SELECT a FROM u)` makes the join's inner
+/// `u.a` collide with the outer `s.a` and the outer projection's `a` becomes
+/// ambiguous.
+pub fn hide_rewrite_columns(plan: &mut LogicalPlan, original_len: usize) {
+    let schema_len = plan.schema().map_or(0, Schema::len);
+    if schema_len <= original_len {
+        return;
+    }
+    let mut names = plan.output_names().to_vec();
+    names.truncate(original_len);
+    names.resize(schema_len, FieldName::default());
+    plan.set_output_names(names);
+}
+
 /// Go's `expression.EvalBool(ctx, []{con}, chunk.Row{})` on an already-folded
 /// constant, reduced to the materialised [`Datum`].
 ///
@@ -2479,6 +2503,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             out
         };
         let mut plan = plan;
+        let original_len = plan.schema().map_or(0, Schema::len);
         let mut remaining = Vec::new();
         let mut lowered_filter_subquery = false;
         for conjunct in conjuncts {
@@ -2490,6 +2515,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 remaining.push(conjunct.clone());
             }
         }
+        hide_rewrite_columns(&mut plan, original_len);
         if lowered_filter_subquery {
             // Keep ordinary predicates in the same selection above the
             // lowered apply. Re-entering this builder is finite because
@@ -2513,7 +2539,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // first once every conjunct is built, so one clause is rewritten here
         // and split afterwards.
         let mut scratch = Self::clause_scratch(where_clause);
-        let (plan, lowered_subquery) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+        let scalar_len = plan.schema().map_or(0, Schema::len);
+        let (mut plan, lowered_subquery) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+        hide_rewrite_columns(&mut plan, scalar_len);
         // Rule 3: both snapshots are taken before `plan` moves anywhere.
         let mut lowered_markers;
         let (schema, _) = snapshot_schema_and_names(&plan);
@@ -2897,7 +2925,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // expression and `np`, because a scalar subquery inserts an
                 // Apply into the projection's child. Each later field is
                 // rewritten against that updated child.
-                let (next_plan, _) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+                let plan_len = plan.schema().map_or(0, Schema::len);
+                let (mut next_plan, _) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+                hide_rewrite_columns(&mut next_plan, plan_len);
                 plan = next_plan;
                 let (schema, names) = snapshot_schema_and_names(&plan);
                 let mut current_markers = markers.clone();

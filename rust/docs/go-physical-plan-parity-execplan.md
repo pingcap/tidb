@@ -937,6 +937,17 @@ both `oltp_read_only` and `oltp_read_write`.
   evaluation failure; it now keeps the typed
   `PlanErrorKind::UnknownColumnInClause`. Two executor tests fixed. Receipt:
   `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: hid the names of columns an expression rewrite appends.
+  Go `rewriteExprNode` (`expression_rewriter.go:283`) renames every column past
+  the pre-rewrite schema length to `types.EmptyName`, so a later clause cannot
+  resolve a subquery's inner columns by name. The Rust kept them named, making
+  the IN-to-join rewrite's inner `u.a` collide with the outer `s.a` in
+  `SELECT a FROM s WHERE a IN (SELECT a FROM u)`. `hide_rewrite_columns` now
+  mirrors the Go defer in `build_selection` and
+  `build_projection_with_order_by`. The `subqueries` test clears its IN
+  assertions; the remaining uncorrelated `EXISTS` arm needs Go's separate
+  subquery evaluation. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

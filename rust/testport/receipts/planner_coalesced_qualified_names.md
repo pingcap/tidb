@@ -407,3 +407,36 @@ now pass. Ready validation: `tidb-planner` lib 997 passed / 0 failed;
 removed from the baseline and no additions; `cargo check --locked --all-targets
 -p tidb-planner -p tidb-executor` clean; `rustfmt --edition 2021 --check`
 clean on both changed files; `git diff --check -- rust` clean.
+
+## Follow-up: a rewritten subquery's new columns lose their names (2026-09-09)
+
+Go `rewriteExprNode` (`expression_rewriter.go:283-299`) defers a reset of the
+plan's `OutputNames`: after the expression is rewritten, every column past the
+PRE-rewrite schema length is renamed to `types.EmptyName`. Its own comment
+gives the reason — `select * from t where t.a in (select t1.a from t1)` leaves
+`t1.*` in the plan, and a second subquery naming `t1` would resolve against
+the stale names. The Rust kept the appended columns named, so
+`SELECT a FROM s WHERE a IN (SELECT a FROM u)` made the IN-to-join rewrite's
+inner `u.a` collide with the outer `s.a` and the outer projection's `a` failed
+as `UnknownColumnInClause`.
+
+`plan_builder::hide_rewrite_columns(plan, original_len)` now mirrors the Go
+defer, and `build_selection` / `build_projection_with_order_by` call it after
+each plan-growing expression rewrite (`lower_filter_subquery`,
+`lower_scalar_subqueries`).
+
+Regression: the new
+`plan_builder::tests::an_in_subquery_hides_the_join_s_inner_column_name`
+builds `SELECT a FROM t WHERE a IN (SELECT a FROM hs)` against a catalog whose
+`hs.a` shares `t.a`'s name; before the reset the build failed with
+`UnknownColumnInClause`, and now the outer projection resolves `t.a`. Ready
+validation: `tidb-planner` lib 998 passed / 0 failed; `tidb-executor` lib
+serialized 1202 passed / 50 failed, where the 13
+`statistics_request_tests` failures are the documented full-run flake (they
+pass 16/16 in their own group) and the remaining 37 are the pre-change
+baseline; `cargo check --locked --all-targets -p tidb-planner` clean;
+`rustfmt --edition 2021 --check` clean on both changed files;
+`git diff --check -- rust` clean. The `driver::tests::subqueries::subqueries`
+test now clears every IN / NOT IN assertion and stops at the uncorrelated
+`EXISTS` arm, which needs Go's separate-subquery evaluation (the recorded
+`ScalarSubQueryExpr` boundary).

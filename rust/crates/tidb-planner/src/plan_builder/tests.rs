@@ -84,8 +84,9 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
 }
 
 /// `CREATE TABLE test.t (a BIGINT PRIMARY KEY, b BIGINT, KEY idx_b(b))` and
-/// the second table `test.hs (x BIGINT PRIMARY KEY, y BIGINT)` a correlated
-/// subquery needs.
+/// the second table `test.hs (a BIGINT PRIMARY KEY, y BIGINT)` a correlated
+/// subquery needs. `hs.a` deliberately shares `t.a`'s name so a rewrite that
+/// appends the inner side cannot be resolved by an unqualified `a`.
 fn catalog() -> TestCatalog {
     TestCatalog {
         current_database: "test".to_owned(),
@@ -117,7 +118,7 @@ fn catalog() -> TestCatalog {
                 table_name: "hs".to_owned(),
                 db_name: "test".to_owned(),
                 physical_table_id: 200,
-                columns: vec![column(0, "x", true), column(1, "y", false)],
+                columns: vec![column(0, "a", true), column(1, "y", false)],
                 pk_is_handle: true,
                 handle_col_offsets: vec![0],
                 ..SourceTable::default()
@@ -537,7 +538,7 @@ fn a_having_subquery_names_the_having_clause_for_an_unresolved_outer_column() {
     let mut builder = harness.builder();
     let error = builder
         .build_select(&parse_select(
-            "SELECT a FROM t HAVING (SELECT y FROM hs WHERE hs.x = t.b) > 0",
+            "SELECT a FROM t HAVING (SELECT y FROM hs WHERE hs.a = t.b) > 0",
         ))
         .expect_err("t.b is not in the select list");
     assert!(
@@ -547,6 +548,31 @@ fn a_having_subquery_names_the_having_clause_for_an_unresolved_outer_column() {
                 if column == "t.b" && clause == "having clause"
         ),
         "{error:?}"
+    );
+}
+
+/// Go `rewriteExprNode`'s deferred output-name reset
+/// (`expression_rewriter.go:283`): the IN-subquery rewrite appends the inner
+/// side to the join, and those new columns must not be resolvable by NAME
+/// afterwards. Without the reset the outer `a` collides with the inner `hs.a`
+/// and the projection fails as unknown.
+#[test]
+fn an_in_subquery_hides_the_join_s_inner_column_name() {
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let (plan, _) = builder
+        .build_select(&parse_select(
+            "SELECT a FROM t WHERE a IN (SELECT a FROM hs)",
+        ))
+        .expect("the outer a must resolve despite the inner hs.a");
+    // The outer projection resolved the unqualified `a` to `t.a`; before the
+    // reset the inner `hs.a` made it ambiguous and the build failed with
+    // `UnknownColumnInClause`.
+    assert_eq!(column_names(&plan), vec!["a".to_owned()]);
+    assert_eq!(
+        plan.output_names()[0].names.table.original,
+        "t",
+        "the outer column wins, not the hidden inner one"
     );
 }
 
