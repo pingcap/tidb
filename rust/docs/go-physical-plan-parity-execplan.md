@@ -765,6 +765,13 @@ both `oltp_read_only` and `oltp_read_write`.
   appending a select field, so the field-count gate missed it and the
   subquery value leaked as an extra result column. Receipt:
   `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: restored the table reader's cop projection, pushed Limit, and
+  `IS NULL` lowering that the Go-aligned execution refactor dropped. A
+  direct-column `Projection` now folds into the scan as
+  `DAGRequest.output_offsets`, a `Limit` offers `offset + count` to
+  `accept_scan_limit`, and `isnull(col)` / `not(isnull(col))` lower to
+  `ScanPredicate::IsNull`. Receipt:
+  `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

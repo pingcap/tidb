@@ -2880,7 +2880,28 @@ fn build_with_state(
         PhysicalPlan::PointGet(point) => build_point_get(plan, point, catalog, ctx),
         PhysicalPlan::BatchPointGet(batch) => build_batch_point_get(plan, batch, catalog, ctx),
         PhysicalPlan::Projection(projection) => {
-            let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
+            let mut child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
+            // Go keeps a direct-column cop projection inside the reader and
+            // sends it as `DAGRequest.output_offsets`; a computed projection
+            // stays as a local executor. Folding it here is what makes the
+            // remote row narrow at the region instead of at the root.
+            let direct_offsets = projection
+                .exprs
+                .iter()
+                .map(|expression| {
+                    let column = expression.as_column()?;
+                    let offset = usize::try_from(column.index).ok()?;
+                    (offset < child.schema().len()).then_some(offset)
+                })
+                .collect::<Option<Vec<usize>>>();
+            if let Some(offsets) = direct_offsets {
+                if child
+                    .table_access()
+                    .is_some_and(|access| access.accept_post_filter_projection(&offsets))
+                {
+                    return Ok(child);
+                }
+            }
             let expressions = resolve_expressions(&projection.exprs, child.schema())?;
             let executor: Box<dyn Executor> = Box::new(ProjectionExec::new(
                 meta(plan, plan_schema(plan)?),
@@ -2913,7 +2934,16 @@ fn build_with_state(
             }
         }
         PhysicalPlan::Limit(limit) => {
-            let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
+            let mut child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
+            // Go puts a cop-side Limit below the reader's scan; the local
+            // LimitExec still applies the offset. A refused cap leaves that
+            // executor as the sole authority, which is always correct, only
+            // slower.
+            if let Some(cap) = limit.offset.checked_add(limit.count) {
+                let _ = child
+                    .table_access()
+                    .is_some_and(|access| access.accept_scan_limit(cap));
+            }
             let schema = unary_schema(plan, child.as_ref());
             Ok(Box::new(LimitExec::new(
                 meta(plan, schema),

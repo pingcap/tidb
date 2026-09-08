@@ -325,13 +325,21 @@ fn prepared_sysbench_sum_retains_gos_stream_aggregation_receipt() {
         )
         .expect("the first execution builds its cached physical tree");
 
+    // Go's shape is `StreamAgg(root) -> TableReader -> StreamAgg(cop) ->
+    // TableScan`: the cop half rides the reader's `table_plan`, not the
+    // reader's `children()`, so the cop aggregation is one reader hop down.
     assert!(execution
         .with_plan(|_, physical| {
-            matches!(physical, tidb_planner::physical::PhysicalPlan::StreamAgg(_))
-                && matches!(
-                    physical.children().first(),
+            let root_is_stream =
+                matches!(physical, tidb_planner::physical::PhysicalPlan::StreamAgg(_));
+            let cop_is_stream = match physical.children().first() {
+                Some(tidb_planner::physical::PhysicalPlan::TableReader(reader)) => matches!(
+                    reader.table_plan.as_deref(),
                     Some(tidb_planner::physical::PhysicalPlan::StreamAgg(_))
-                )
+                ),
+                _ => false,
+            };
+            root_is_stream && cop_is_stream
         })
         .expect("the cached physical plan generation is current"));
 }

@@ -771,3 +771,54 @@ pre-existing flaky `access_cost::index_async_load_queue_tests` pair);
 `cargo check --locked --all-targets -p tidb-executor` passed;
 `cargo fmt --all -- --check` (three pre-existing drift files only);
 `git diff --check -- rust`.
+
+## Follow-up: the table reader's cop projection, Limit, and `IS NULL` (2026-09-09)
+
+Go keeps a direct-column `PhysicalProjection` inside the `TableReader` cop
+task and sends it as `DAGRequest.output_offsets`; the `PhysicalLimit` rides the
+same task as a row cap, and `column IS NULL` lowers to a TiKV scalar. The Rust
+builder had lost all three when the execution lowering was aligned with Go:
+
+* the `Projection` arm built a local `ProjectionExec`, so every scan column
+  crossed the network;
+* the `Limit` arm never offered `accept_scan_limit`, so the region read the
+  whole relation;
+* `predicate_pushdown::scan_predicate_from_expression` had no `isnull` arm, so
+  `IS NULL` fell through to the opaque-builtin description a backend may
+  ignore, and every row crossed.
+
+The `Projection` arm now folds a pure direct-column projection into the child
+via `accept_post_filter_projection` (the table access rewrites its schema and
+the request carries `output_offsets`); the `Limit` arm offers `offset + count`
+to `accept_scan_limit` and keeps the local `LimitExec` for the offset; and the
+predicate lowering maps `isnull(col)` / `not(isnull(col))` to
+`ScanPredicate::IsNull { negated }`.
+
+Regressions (all failed before and pass after):
+`remote_scan::tests::a_clean_clustered_range_sends_the_cop_projection`,
+`a_cached_clustered_range_sends_the_cop_projection_after_rebuild`,
+`a_pushed_limit_stops_the_remote_scan`,
+`a_pushed_predicate_does_not_move_an_aggregate_value`, and the point-get
+receipt assertion
+`driver::tests::point_get::prepared_sysbench_sum_retains_gos_stream_aggregation_receipt`,
+which checked `physical.children().first()` instead of the reader's
+`table_plan` where the cop aggregation actually lives.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib remote_scan::tests
+# 20 passed, 1 pre-existing empty-range failure
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,144 passed / 84 failed (baseline 1,139 / 89; the five above fixed, no new)
+cargo fmt -p tidb-executor -- --check
+# three pre-existing drift files only
+git diff --check -- rust
+# passed
+```
+
+The remaining
+`remote_scan::tests::an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request`
+still fails: `a BETWEEN NULL AND NULL` reaches the scan as two residual
+`Selection` conditions with a full range instead of an empty one, so the
+planner's handle-range build for NULL bounds stays an open boundary.

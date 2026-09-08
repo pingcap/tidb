@@ -641,6 +641,31 @@ pub(crate) fn scan_predicate_from_expression(expression: &Expression) -> Option<
         "ge" => Some(ScanComparisonOp::Ge),
         _ => None,
     };
+    // `column IS NULL` is Go's `isnull(column)`; `IS NOT NULL` is its `not`
+    // wrapper. Both have a TiKV description, so they must not fall through to
+    // the opaque-builtin arm (which a backend is free not to evaluate).
+    if function.func_name.lowercase() == "isnull" {
+        if let [Expression::Column(column)] = function.args.as_slice() {
+            return Some(ScanPredicate::IsNull {
+                column_offset: u32::try_from(column.index).ok()?,
+                column_type: column.get_static_type()?.clone(),
+                negated: false,
+            });
+        }
+    }
+    if function.func_name.lowercase() == "not" {
+        if let [Expression::ScalarFunction(inner)] = function.args.as_slice() {
+            if inner.func_name.lowercase() == "isnull" {
+                if let [Expression::Column(column)] = inner.args.as_slice() {
+                    return Some(ScanPredicate::IsNull {
+                        column_offset: u32::try_from(column.index).ok()?,
+                        column_type: column.get_static_type()?.clone(),
+                        negated: true,
+                    });
+                }
+            }
+        }
+    }
     if let (Some(operation), [left, right]) = (operation, function.args.as_slice()) {
         if let (Expression::Column(left), Expression::Column(right)) = (left, right) {
             return Some(ScanPredicate::ColumnCompare(ScanColumnComparison {
