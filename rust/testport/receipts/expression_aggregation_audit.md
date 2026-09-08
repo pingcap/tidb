@@ -181,3 +181,31 @@ window-dispatch/SQL owners remain unported.
 - The end-to-end max/min-count feature remains unverified until live hash-agg,
   protobuf, row-based/window, and SQL owners are implemented as one
   dependency-closed batch.
+
+## Follow-up: the variance family runs in one phase (2026-09-09)
+
+`tests_hashagg_aggregate_suite_source::aggregate_family_group_values_match_the_go_definitions`
+failed on `select var_pop(a) from t group by b` with "the variance/stddev
+family requires an argument". `BuildFinalModeAggregation` splits a cop
+partial from a root final, and its final descriptor's arguments come from
+`NeedCount`/`NeedValue`; neither lists the variance family, so the final
+`var_pop` reached the executor with no argument.
+
+The Rust executor keeps the variance partial state as a `(count, sum,
+variance)` struct that is not exposed as partial-result columns, so the split
+cannot be reconstructed. `final_mode_agg` now refuses to split
+`var_pop`/`var_samp`/`stddev_pop`/`stddev_samp`, running them in one phase
+where the argument survives. This is a bounded divergence from Go's two-phase
+shape (Go's executor serializes and merges the partial state); the SQL values
+match, and the plan shape is the only difference.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib aggregate_family_group_values_match_the_go_definitions
+# passed: 1
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,159 passed / 74 failed (baseline 1,157 / 76): the target fixed, no additions
+rustfmt --edition 2021 --check crates/tidb-planner/src/final_mode_agg.rs
+# clean
+```

@@ -363,6 +363,17 @@ pub fn build_final_mode_aggregation(
                 // phase only.
                 return None;
             }
+            // The variance/stddev family keeps a (count, sum, variance)
+            // partial state that neither `NeedCount` nor `NeedValue` exposes,
+            // so a two-phase split would leave the final descriptor without
+            // an argument. Run it in one phase, as the executor's
+            // `AggState::update` requires.
+            if matches!(
+                agg_func.name(),
+                names::VAR_POP | names::VAR_SAMP | names::STDDEV_POP | names::STDDEV_SAMP
+            ) {
+                return None;
+            }
             if need_count(&final_name) {
                 if is_mpp_task && final_name == names::COUNT {
                     // For MPP the final count() merges by sum().

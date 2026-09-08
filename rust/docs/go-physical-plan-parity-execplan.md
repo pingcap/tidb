@@ -784,6 +784,11 @@ both `oltp_read_only` and `oltp_read_write`.
   left-outer Apply the correlated case uses, and the FROM-less dual gets its
   empty schema first. The value is correct but recomputed per outer row.
   Receipt: `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: ran the variance/stddev family in one phase. The cop split
+  left the final descriptor without an argument because neither `NeedCount`
+  nor `NeedValue` lists the family and the Rust partial state is not exposed
+  as partial-result columns. Receipt:
+  `rust/testport/receipts/expression_aggregation_audit.md`.
 - [x] 2026-09-09: threaded `div_precision_increment` into the planner's
   expression resolver. `PlanScopeResolver` used the trait default of 4, so a
   `/` built through `rewrite_scalar` minted its decimal scale from 4 and
