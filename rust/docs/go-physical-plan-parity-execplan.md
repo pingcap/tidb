@@ -1350,10 +1350,18 @@ both `oltp_read_only` and `oltp_read_write`.
     group, times `tidb_opt_merge_join_cost_factor`, default 1.0).
   - `correlated_sum_predicate_pulls_above_unique_outer_join` wants an
     `IndexHashJoin(Build)` where this port builds a MergeJoin; same family.
-  Next step for the final rounds: diff `prepare_possible_properties`' claimed
-  orders against Go's `DataSource.PreparePossibleProperties` /
-  `tryToGetChildReqProp` for common-handle point-range scans before touching
-  any cost formula.
+  A real-ANALYZE Go oracle for the same check-seven query (300k orders, 3M
+  order_line, clustered PKs, `explain format='cost_trace'`) settles the
+  direction: Go picks IndexHashJoin at 18,581,223 and its two scans print
+  `keep order:false`, while this port's MergeJoin children print
+  `keep order:true`. Both cost formulas are Go-identical
+  (`getPlanCostVer24PhysicalIndexJoin` and
+  `getPlanCostVer24PhysicalMergeJoin`), so the divergence is in the inputs:
+  this port's IndexJoin `probe_rows_one` for the dynamic range is 801.984
+  where Go's is 101.516 (3,007,443 rows / 30,000 outer keys), which inflates
+  the probe term to 139.6M and the whole IndexHashJoin to 45.3M. The inner
+  access path's per-outer-row row estimate is the thing to fix; the ordered
+  children follow from the MergeJoin candidate winning instead.
 
 - Observation: commit `e2788410d8` was benchmark-shaped rather than
   Go-shaped. It named `bulk_insert.lua` in production code, recognized only
