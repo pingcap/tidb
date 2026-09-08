@@ -268,6 +268,38 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
 }
 
+func TestStmtSummaryRUV3(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+
+	originalCollectExecutionInfo := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+	defer config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(originalCollectExecutionInfo)
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec("drop table if exists stmt_summary_ru")
+	tk.MustExec("create table stmt_summary_ru(a int primary key, b int)")
+	tk.MustExec("insert into stmt_summary_ru values(1, 10), (2, 20), (3, 30)")
+
+	// Clear summaries after preparing data so only the target statement is checked.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk = newTestKitWithRoot(t, store)
+	tk.MustQuery("select * from stmt_summary_ru where a >= 1").Sort().Check(testkit.Rows(
+		"1 10",
+		"2 20",
+		"3 30",
+	))
+
+	// Statement summary still exposes statement RU v3 through the legacy V2
+	// column names.
+	tk.MustQuery("select exec_count, avg_request_unit_v2, max_request_unit_v2 " +
+		"from information_schema.statements_summary " +
+		"where digest_text = 'select * from `stmt_summary_ru` where `a` >= ?'").Check(testkit.Rows("1 129 129"))
+}
+
 func TestStmtSummaryTablePrivilege(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
