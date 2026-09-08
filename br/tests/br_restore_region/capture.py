@@ -34,7 +34,7 @@ def capture(root, repositories, binaries, snapshots):
                 "--output", str(root / (name + "-source.tar.gz")), "HEAD"])
         identities["repositories"][name] = {"path": repo, "head": head.strip(), "status": status}
     for name, path in binaries.items():
-        _, code = rec.run(name + "-version", [path, "-V" if "br" in name else "--version"], check=False)
+        _, code = rec.run(name + "-version", [path, "-V" if "br" in name or "tidb" in name else "--version"], check=False)
         identities["binaries"][name] = {"path": path, "sha256": digest(path), "version_exit": code}
         if snapshots:
             dest = root / "binaries" / name
@@ -65,12 +65,13 @@ def capture(root, repositories, binaries, snapshots):
         elif "tidb-" in container:
             binary, logfile, config = "/tidb-server", None, "/etc/tidb/tidb.toml"
         elif "copr-worker" in container:
-            binary, logfile, config = "/copr-worker", None, None
+            binary, logfile, config = "/tikv-worker", "/var/log/tikv-worker", "/etc/tikv-worker/config.toml"
         elif "pd-" in container:
             binary, logfile, config = "/pd-server", "/var/log/pd", "/etc/pd/pd.toml"
         else:
             binary, logfile, config = "/opt/bin/minio", None, None
-        rec.run(container + "-version", ["docker", "exec", container, binary, "--version"], check=False)
+        rec.run(container + "-version", ["docker", "exec", container, binary,
+                "-V" if "tidb-" in container else "--version"], check=False)
         rec.run(container + "-binary-sha", ["docker", "exec", container, "sha256sum", binary], check=False)
         if config:
             rec.run(container + "-config", ["docker", "exec", container, "cat", config], check=False)
