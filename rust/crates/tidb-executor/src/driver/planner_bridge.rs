@@ -667,6 +667,62 @@ pub(super) fn materialize_physical_expression(expression: &mut Expression) {
     }
 }
 
+/// Splits an AST predicate into its top-level `AND` conjuncts.
+fn split_ast_conjuncts(expr: &tidb_ast::Expr, out: &mut Vec<tidb_ast::Expr>) {
+    if let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) = expr {
+        split_ast_conjuncts(left, out);
+        split_ast_conjuncts(right, out);
+    } else {
+        out.push(expr.clone());
+    }
+}
+
+/// Keeps only the `WHERE` conjuncts whose every column resolves against ONE
+/// data source's scope. Go derives a data source's statistics from its
+/// `PushedDownConds`; before predicate push-down runs, this is the equivalent
+/// split of the statement predicate, and it keeps a cross-table equality from
+/// being charged to either side as an extra selection factor.
+fn single_table_predicate(
+    expr: &tidb_ast::Expr,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> Option<tidb_ast::Expr> {
+    struct Paths(Vec<Vec<String>>);
+    impl tidb_ast::Visitor for Paths {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(tidb_ast::Expr::Column(path)) = node.downcast_ref::<tidb_ast::Expr>() {
+                self.0.push(path.clone());
+            }
+            false
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut conjuncts = Vec::new();
+    split_ast_conjuncts(expr, &mut conjuncts);
+    let kept = conjuncts.into_iter().filter(|conjunct| {
+        let mut paths = Paths(Vec::new());
+        let mut owned = conjunct.clone();
+        tidb_ast::Visitable::accept(&mut owned, &mut paths);
+        !paths.0.is_empty()
+            && paths
+                .0
+                .iter()
+                .all(|path| resolver.resolve_expression(path).is_some())
+    });
+    let mut iter = kept;
+    let mut combined = iter.next()?;
+    for conjunct in iter {
+        combined = tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(combined),
+            Box::new(conjunct),
+        );
+    }
+    Some(combined)
+}
+
 struct InitStats<'a> {
     range_context: crate::index_range::RangeContext<'a>,
     catalog: &'a Catalog,
@@ -779,9 +835,34 @@ impl OwnedRewrite for InitStats<'_> {
                     }
                 })),
         );
-        if let (Some(_), Some(predicate), Some(TableEntry::Kv(table)), Some(table_stats)) = (
-            self.select,
-            self.select.and_then(|select| select.where_clause.as_ref()),
+        // Go derives a data source's statistics from its own pushed-down
+        // conditions. Before predicate push-down, keep only the statement
+        // conjuncts that resolve against THIS source, so a cross-table
+        // equality cannot scale either side's profile.
+        let source_table = self.catalog.get_in(&source.db_name, &source.table_name);
+        let single_table_where = self.select.and_then(|select| {
+            let where_clause = select.where_clause.as_ref()?;
+            let TableEntry::Kv(table) = source_table? else {
+                return None;
+            };
+            let visible = source
+                .table_as_name
+                .as_deref()
+                .unwrap_or(&source.table_name);
+            let scope = super::from::single_table_scope(
+                visible,
+                Some(source.db_name.clone()),
+                table
+                    .visible_columns()
+                    .iter()
+                    .map(|column| (column.name.clone(), column.field_type.clone()))
+                    .collect(),
+            );
+            let resolver = crate::driver::from::scope_resolver(&scope);
+            single_table_predicate(where_clause, &resolver)
+        });
+        if let (Some(predicate), Some(TableEntry::Kv(table)), Some(table_stats)) = (
+            single_table_where.as_ref(),
             self.catalog.get_in(&source.db_name, &source.table_name),
             source.table_stats.clone(),
         ) {
@@ -1528,7 +1609,7 @@ fn optimize_built_logical(
                 fallback_handler: Some(ctx.range_fallback_handler()),
             },
             catalog,
-            select: (source_count == 1).then_some(select_hint).flatten(),
+            select: select_hint,
             default_string_match_selectivity: ctx.default_string_match_selectivity(),
             selectivity_factor: ctx.selectivity_factor(),
             enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),
@@ -1569,7 +1650,7 @@ fn optimize_built_logical(
                     fallback_handler: Some(ctx.range_fallback_handler()),
                 },
                 catalog,
-                select: (source_count == 1).then_some(select_hint).flatten(),
+                select: select_hint,
                 default_string_match_selectivity: ctx.default_string_match_selectivity(),
                 selectivity_factor: ctx.selectivity_factor(),
                 enable_pseudo_for_outdated_stats: ctx.enable_pseudo_for_outdated_stats(),

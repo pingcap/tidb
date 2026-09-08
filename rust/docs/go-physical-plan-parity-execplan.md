@@ -1161,6 +1161,19 @@ both `oltp_read_only` and `oltp_read_write`.
   `1997-01-01 00:00:00.000000`; new regression
   `a_constant_date_add_in_a_predicate_folds_before_push_down`. Receipt:
   `rust/testport/receipts/planner_session_zone_constant_fold.md`.
+- [x] 2026-09-09: derived each data source's statistics from its OWN
+  conditions. The `InitStats` pre-pass applied the statement's whole `WHERE`
+  to every source and was therefore gated to single-source queries; a join's
+  sources fell back to a reduced estimator that charged a cross-table
+  equality (and the null-rejection filters derived from it) a flat 0.8
+  `SelectionFactor`. q14's filtered `lineitem` source estimated 192,003,719
+  instead of 3,831,625.78, which flipped the greedy join order and inserted
+  Go's absent schema-restore projection. The pass now splits the `WHERE` into
+  conjuncts and keeps only those resolving against each source
+  (`single_table_predicate`), and the Rust-only two-start greedy retry is
+  gone. `tpch_q14_matches_recorded_hash_join_plan` passes; executor 1244
+  passed / 13 failed. Receipt:
+  `rust/testport/receipts/planner_data_source_stats_per_source.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1169,7 +1182,7 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1,242 passed / 14 failed; the 13 statistics-request transport
+  lib serialized: 1,244 passed / 13 failed; the 13 statistics-request transport
   tests still flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
   - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
@@ -1181,9 +1194,9 @@ both `oltp_read_only` and `oltp_read_write`.
     prefer-range override is ported, but the metric-by-metric skyline
     comparison (`accessResult`/`scanResult`/`eqOrInResult`/risk ratio) that
     decides the MergeJoin-vs-IndexHashJoin and IndexJoin-vs-IndexLookUp
-    choices is not. Remaining: `tpcc_grouped_join_matches_go_shared_planner_choice`,
-    `joins::tpcc_check_seven_*`, `aggregates::tpcc_condition_four_*` (analyzed
-    arm), `tpcc_condition_eight_*`, `tpcc_condition_nine_rebuilds_*`,
+    choices is not. Remaining after the 2026-09-09 rounds:
+    `joins::tpcc_check_seven_*`, `aggregates::tpcc_condition_nine_rebuilds_*`,
+    `aggregates::tpcc_condition_eleven_*` (analyzed arm),
     `joins::tpcc_customer_warehouse_*`, `joins::tpcc_stock_level_*`.
   - `pkg/executor` Window executor (`exhaustPhysicalPlans over Window`):
     `tests_executor_suite_statements_source::{column_name_resolution,
@@ -1191,20 +1204,14 @@ both `oltp_read_only` and `oltp_read_write`.
   - `aggregates::tpcc_condition_six_*` now clears the predicate-placement
     assertions (`simplifyOuterJoin` ported) and remains blocked only on the
     same `skylinePruning` choice as the list above.
-  - `pkg/expression` CASE branch casts to the merged control type
-    (`newBaseBuiltinFuncWithFieldTypes`): DONE. Every THEN index and the
-    trailing ELSE now go through `wrap_case_branch`, so a branch beside a
-    decimal takes the merged type and the CASE returns the promoted datum
-    (`DEC:0.0`), and each wrapped branch folds through the resolver's live
-    context, so a constant branch shows the cast's own type (`0.0000`).
-    The `DATE_ADD` literal fold is DONE too: the planner resolver now folds
-    each builtin as it is constructed in the live statement context (Go's
-    `NewFunction`), instead of deferring to one top-level fold that cannot
-    descend through a lazy `and`. What q14 still needs: the
-    identity-projection elimination and the logical equal-condition operand
-    order:
-    `aggregates::tpch_q14_matches_recorded_hash_join_plan`. Receipt:
-    `rust/testport/receipts/expression_case_extract_names.md`.
+  - `aggregates::tpch_q14_matches_recorded_hash_join_plan`: DONE. CASE branch
+    casts, the live-context builtin fold, the `HistColl.StatsVer` planner
+    view, and the per-source data-source statistics together produce Go's
+    recorded tree. Receipts:
+    `rust/testport/receipts/expression_case_extract_names.md`,
+    `rust/testport/receipts/planner_session_zone_constant_fold.md`,
+    `rust/testport/receipts/statistics_handle_storage_audit.md`,
+    `rust/testport/receipts/planner_data_source_stats_per_source.md`.
   - `pkg/executor/aggregate` spill-file lifetime: DONE. Go's parallel
     `dataInDisk` lives from `initForParallelExec` until `HashAggExec.Close`, so
     every partition file stays on disk and charged until `Close`;

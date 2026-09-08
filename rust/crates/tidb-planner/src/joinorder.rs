@@ -1301,30 +1301,6 @@ pub(crate) fn cumulative_cost_by_children(plan: &LogicalPlan) -> Result<f64, Pla
     Ok(cost)
 }
 
-fn cumulative_cost_significantly_less(cost: f64, best_cost: f64) -> bool {
-    cost < best_cost && best_cost - cost > 1.0_f64.max(cost.abs()).max(best_cost.abs()) * 1e-12
-}
-
-fn choose_best_greedy_start(
-    start_count: usize,
-    mut runner: impl FnMut(usize) -> Result<Option<Node>, PlanError>,
-) -> Result<(Option<Node>, isize), PlanError> {
-    let mut best: Option<Node> = None;
-    let mut best_start_index = -1;
-    for start_index in 0..start_count {
-        let candidate = runner(start_index)?;
-        if candidate.as_ref().is_some_and(|candidate| {
-            best.as_ref().is_none_or(|best| {
-                cumulative_cost_significantly_less(candidate.cumulative_cost, best.cumulative_cost)
-            })
-        }) {
-            best = candidate;
-            best_start_index = start_index as isize;
-        }
-    }
-    Ok((best, best_start_index))
-}
-
 fn apply_cartesian_factor(cost: f64, cartesian_factor: f64) -> Result<f64, PlanError> {
     validate_cumulative_cost(cost)?;
     if cartesian_factor <= 0.0 {
@@ -1658,10 +1634,11 @@ fn optimize_greedy(
     if nodes.len() < 2 {
         return Ok(nodes.pop());
     }
-    let (best, _) = choose_best_greedy_start(2, |start_index| {
-        optimize_greedy_with_start(context, detector, &nodes, start_index, group)
-    })?;
-    Ok(best)
+    // Go `joinReorderGreedySolver.solve` starts with `s.curJoinGroup[0]`, the
+    // cheapest node after the stable cost sort, and never retries another
+    // start. Trying the first two starts is a Rust-only enhancement that
+    // changed Go's join order (and therefore the schema-restore Projection).
+    optimize_greedy_with_start(context, detector, &nodes, 0, group)
 }
 
 fn build_bushy_tree_from_dp(
@@ -1851,7 +1828,6 @@ fn optimize_join_group(
     let reordered = reordered_node
         .and_then(|node| node.plan.as_ref().map(|plan| plan.as_ref().clone()))
         .unwrap_or_else(|| group.root.as_ref().clone());
-
     if reordered
         .schema()
         .is_some_and(|schema| schema.equal(&original_schema))
@@ -2517,40 +2493,6 @@ mod tests {
             &[column(1)],
             &[]
         ));
-    }
-
-    #[test]
-    fn choose_best_greedy_start_matches_all_original_subtests() {
-        let (best, index) = choose_best_greedy_start(2, |start| {
-            Ok(Some(Node {
-                cumulative_cost: [100.0, 10.0][start],
-                ..Node::default()
-            }))
-        })
-        .unwrap();
-        assert_eq!(index, 1);
-        assert_eq!(best.unwrap().cumulative_cost, 10.0);
-
-        let (best, index) = choose_best_greedy_start(2, |start| {
-            Ok((start == 1).then_some(Node {
-                cumulative_cost: 10.0,
-                ..Node::default()
-            }))
-        })
-        .unwrap();
-        assert_eq!(index, 1);
-        assert_eq!(best.unwrap().cumulative_cost, 10.0);
-
-        let costs = [14166.666666666668, 14166.666666666666];
-        let (best, index) = choose_best_greedy_start(2, |start| {
-            Ok(Some(Node {
-                cumulative_cost: costs[start],
-                ..Node::default()
-            }))
-        })
-        .unwrap();
-        assert_eq!(index, 0);
-        assert_eq!(best.unwrap().cumulative_cost, costs[0]);
     }
 
     #[test]
