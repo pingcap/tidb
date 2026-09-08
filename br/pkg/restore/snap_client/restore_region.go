@@ -101,10 +101,16 @@ func (importer *SnapFileImporter) buildRestoreRegionRequest(
 			}
 			// Prefixes stay logical, including keyspace bytes. The Store supplies
 			// the Region crop range; no Download UUID or temporary SSTMeta is used.
-			req.Sources = append(req.Sources, &import_sstpb.RestoreRegionSource{
+			source := &import_sstpb.RestoreRegionSource{
 				Name: file.Name, Length: file.Size_, Cf: file.Cf,
-				RewriteRule: &ruleCopy, CipherIv: file.CipherIv,
-			})
+				RewriteRule: &ruleCopy,
+			}
+			// Backup metadata can contain an IV even for plaintext SSTs. The
+			// Worker requires an IV exactly when a source cipher is present.
+			if req.CipherInfo != nil {
+				source.CipherIv = file.CipherIv
+			}
+			req.Sources = append(req.Sources, source)
 		}
 	}
 	// Match the existing Store/Worker protocol limits before any restore work.
