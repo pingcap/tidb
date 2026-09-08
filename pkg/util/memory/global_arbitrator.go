@@ -209,6 +209,21 @@ func readRuntimeMemStats() memStats {
 	}
 }
 
+func Run2() {
+	m := GlobalMemArbitrator()
+	if m == nil {
+		return
+	}
+	s := readRuntimeMemStats()
+	if s.HeapInuse+s.MemOffHeap > m.memRisk() {
+		m.setRuntimeMemStats(s)
+		m.TryRunOneRound()
+	} else {
+		m.trySetRuntimeMemStats(s)
+		m.wake()
+	}
+}
+
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
 func HandleGlobalMemArbitratorRuntime() {
 	if !globalArbitrator.runtimeHandler.TryLock() {

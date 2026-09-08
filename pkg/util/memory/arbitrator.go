@@ -1897,9 +1897,7 @@ func (m *MemArbitrator) implicitRun() { // satisfy any subscription task
 // TryRunOneRound attempts to run one round of memory arbitration if the execution lock can be acquired.
 func (m *MemArbitrator) TryRunOneRound() {
 	if m.execMu.TryLock() {
-		if now().After(m.execMu.startTime.Add(defTaskTickDur)) {
-			m.runOneRound()
-		}
+		m.runOneRound()
 		m.execMu.Unlock()
 	}
 }
