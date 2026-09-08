@@ -164,7 +164,7 @@ func TestMergeOperator(t *testing.T) {
 		require.Equal(t, 7*256*mib, sevenCPUReaderBudget)
 		require.Equal(t, int64(32), sevenCPUReaderBudget/7/int64(simplesst.ConcurrentReaderBufferSizePerConc))
 
-		inputSize := int64(80 * gib)
+		inputSize := 80 * gib
 		partSize := getMergePartSize(inputSize, 33, 16*int(mib))
 		maxOutputSize := inputSize + 33*16*mib
 		expectedPartSize := maxOutputSize / simplesst.MaxUploadPartCount
