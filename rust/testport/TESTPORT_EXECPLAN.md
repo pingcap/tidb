@@ -11416,3 +11416,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (ON UPDATE CASCADE pin): renaming the parent key propagates
  the new value into referencing children. Pinned in
  `crates/tidb-session/tests/fk_on_update_cascade_source.rs`.
+- 2026-09-08 (composite FK pin): a two-column FK enforces the PAIR — a
+ half-matching tuple refuses while the full pair lands. Pinned in
+ `crates/tidb-session/tests/composite_fk_source.rs`.
