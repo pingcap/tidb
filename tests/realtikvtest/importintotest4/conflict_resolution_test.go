@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
@@ -49,7 +48,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
+func (s *mockGCSSuite) TestNextGenExpiredConflictRowCleanup() {
+	t := s.T()
 	if kerneltype.IsClassic() {
 		t.Skip("requires the NextGen distributed task framework")
 	}
@@ -59,26 +59,13 @@ func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
 		sortBucket   = "expired-conflict-sort"
 		dbName       = "expired_conflict_cleanup"
 	)
-	ctx := context.Background()
+	ctx := s.ctx
 	baseSortURI := fmt.Sprintf("gs://%s?endpoint=%s", sortBucket, gcsEndpoint)
-	originalExpiredFileCleanInterval := scheduler.DefaultExpiredFileCleanInterval
-	scheduler.DefaultExpiredFileCleanInterval = 100 * time.Millisecond
-	t.Cleanup(func() {
-		scheduler.DefaultExpiredFileCleanInterval = originalExpiredFileCleanInterval
-	})
 	originalCloudStorageURI := vardef.CloudStorageURI.Load()
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store(originalCloudStorageURI)
 	})
 
-	s := &mockGCSSuite{}
-	s.SetT(t)
-	t.Cleanup(func() {
-		if s.server != nil {
-			s.server.Stop()
-		}
-	})
-	s.SetupSuite()
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortBucket})
 	vardef.CloudStorageURI.Store(baseSortURI)
@@ -86,22 +73,6 @@ func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
 	sortStore, err := importer.GetSortStore(ctx, rootedSortURI)
 	require.NoError(t, err)
 	t.Cleanup(sortStore.Close)
-
-	var jobID int64
-	t.Cleanup(func() {
-		assert.NoError(t, s.tk.ExecToErr("drop database if exists "+dbName))
-	})
-	t.Cleanup(func() {
-		if jobID != 0 {
-			assert.NoError(t, s.tk.ExecToErr("delete from mysql.tidb_import_jobs where id = ?", jobID))
-		}
-	})
-	t.Cleanup(func() {
-		testutils.RemoveAllObjects(t, s.server, sourceBucket)
-	})
-	t.Cleanup(func() {
-		testutils.RemoveAllObjects(t, s.server, sortBucket)
-	})
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: sourceBucket, Name: "data.csv"},
@@ -112,9 +83,8 @@ func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
 	result := s.tk.MustQuery(fmt.Sprintf(`import into t from 'gs://%s/data.csv?endpoint=%s'
 		with cloud_storage_uri='%s', on_duplicate_key='capture'`, sourceBucket, gcsEndpoint, rootedSortURI)).Rows()
 	require.Len(t, result, 1)
-	parsedJobID, err := strconv.ParseInt(result[0][0].(string), 10, 64)
+	jobID, err := strconv.ParseInt(result[0][0].(string), 10, 64)
 	require.NoError(t, err)
-	jobID = parsedJobID
 
 	task := s.getTaskByJob(jobID)
 	require.NotNil(t, task)
