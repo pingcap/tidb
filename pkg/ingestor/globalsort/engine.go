@@ -464,6 +464,7 @@ func (e *Engine) updateActiveIngestDataFlags() {
 		}
 	}
 	e.activeIngestDataFlags = res
+	failpoint.InjectCall("afterUpdateActiveIngestDataFlags")
 }
 
 // handleConcurrencyChange handles the concurrency change for this engine. If
@@ -778,7 +779,9 @@ type MemoryIngestData struct {
 	kvs []simplesst.KVPair
 	ts  uint64
 
-	memBuf          []*membuf.Buffer
+	memBuf         []*membuf.Buffer
+	releaseStarted atomic.Bool
+	// released is published after all release work has completed.
 	released        *atomic.Bool
 	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
@@ -900,7 +903,7 @@ func (m *MemoryIngestData) GetTS() uint64 {
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
 	// Make sure data is not released.
-	intest.Assert(!m.released.Load(), "data shouldn't be released when IncRef")
+	intest.Assert(!m.releaseStarted.Load(), "data shouldn't be released when IncRef")
 }
 
 // DecRef implements IngestData.DecRef.
@@ -911,7 +914,7 @@ func (m *MemoryIngestData) DecRef() {
 }
 
 func (m *MemoryIngestData) release() {
-	if !m.released.CAS(false, true) {
+	if !m.releaseStarted.CAS(false, true) {
 		return
 	}
 	m.kvs = nil
@@ -922,6 +925,7 @@ func (m *MemoryIngestData) release() {
 	if m.onRelease != nil {
 		m.onRelease()
 	}
+	m.released.Store(true)
 }
 
 // Finish implements IngestData.Finish.
