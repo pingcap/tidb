@@ -2763,6 +2763,51 @@ fn correlated_subqueries() {
     );
 }
 
+/// A correlated `EXISTS` in a SELECT field plans as a left-outer-semi Apply, so
+/// it answers exactly one row per OUTER row no matter how many inner rows
+/// match. The apply executor feeds the joiner one inner row per call so a
+/// single output chunk can be filled incrementally; it must therefore stop at
+/// the settling row exactly as Go's `inners.ReachEnd()` does. Without that,
+/// every extra matching inner row appended the outer row again, so `t`'s two
+/// `g = 1` rows produced four rows here and the grouped `SUM` in
+/// [`grouped_correlated_subqueries`] doubled.
+#[test]
+fn correlated_exists_apply_answers_once_per_outer_row() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE t (g BIGINT, v BIGINT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE s (k BIGINT, x BIGINT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO t VALUES (1, 10), (1, 20), (2, 5), (3, 100), (NULL, 7)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO s VALUES (1, 1), (1, 2), (2, 3)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    // `g = 1` matches TWO `s` rows and `g = 2` matches one, yet the row count
+    // stays `t`'s own: the semi apply settles each outer row on its first
+    // match.
+    assert_eq!(
+        run_select_on(
+            "SELECT g, EXISTS(SELECT 1 FROM s WHERE s.k = t.g) FROM t ORDER BY g",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![
+            vec![Datum::Null, Datum::Int(0)],
+            vec![Datum::Int(1), Datum::Int(1)],
+            vec![Datum::Int(1), Datum::Int(1)],
+            vec![Datum::Int(2), Datum::Int(1)],
+            vec![Datum::Int(3), Datum::Int(0)],
+        ]
+    );
+}
+
 /// A correlated subquery nested inside a larger aggregate-path
 /// expression: arithmetic over an aggregate in the select list, and a
 /// comparison against an aggregate in `HAVING`. The Apply sits above the

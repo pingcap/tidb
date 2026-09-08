@@ -1047,6 +1047,18 @@ both `oltp_read_only` and `oltp_read_write`.
   full-range task. `access_path::tests::the_double_read_issues_one_batch_get_per_index_batch`
   now plans `Projection -> IndexLookUpReader` and issues one batch get.
   Receipt: `rust/testport/receipts/planner_prefer_range_scan.md`.
+- [x] 2026-09-09: stopped a semi apply's inner scan at the settling row. The
+  serial `NestedLoopApplyExec` handed `TryToMatchInners` one inner row per
+  call so one output chunk could be filled incrementally, but every
+  semi-family joiner in Go consumes the WHOLE remaining iterator and calls
+  `inners.ReachEnd()` on the row that settles the outer row. The lost stop
+  made each further matching inner row append the outer row (or its 0/1/NULL
+  flag) again, so `SELECT g, EXISTS(...)` fanned out over duplicate inner
+  matches and an `EXISTS` inside `SUM(CASE ...)` doubled the group. The apply
+  now advances past the remaining inner rows once `matched` is reported for
+  the semi family; inner/outer joiners keep the one-row loop because `matched`
+  does not settle their outer row. Receipt:
+  `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

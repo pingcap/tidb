@@ -822,3 +822,56 @@ The remaining
 still fails: `a BETWEEN NULL AND NULL` reaches the scan as two residual
 `Selection` conditions with a full range instead of an empty one, so the
 planner's handle-range build for NULL bounds stays an open boundary.
+
+## Follow-up: the semi-apply inner scan stops at the settling row (2026-09-09)
+
+`NestedLoopApplyExec::next` (`crates/tidb-executor/src/apply.rs`) fed the
+joiner a ONE-ROW iterator per call so one output chunk can be filled
+incrementally. Go's `NestedLoopApplyExec.processOneOuterRow`
+(`pkg/executor/parallel_apply.go:458` at `origin/master`) instead hands
+`TryToMatchInners` the WHOLE remaining `innerIter`, and every semi-family
+joiner calls `inners.ReachEnd()` on the row that settles the outer row
+(`pkg/executor/join/joiner.go`: `semiJoiner:366`, `antiSemiJoiner:511`,
+`leftOuterSemiJoiner:586`, `antiLeftOuterSemiJoiner:752`,
+`nullAwareAntiSemiJoiner:459`, `nullAwareAntiLeftOuterSemiJoiner:673`).
+With a one-row iterator that stop was lost, so every further matching inner
+row appended the outer row (or its 0/1/NULL semi flag) again.
+
+Two captured shapes:
+
+```sql
+-- t: (1,10),(1,20),(2,5),(3,100),(NULL,7); s: (1,1),(1,2),(2,3)
+SELECT g, EXISTS(SELECT 1 FROM s WHERE s.k = t.g) FROM t ORDER BY g;
+-- Port: <nil>|0, 1|1, 1|1, 1|1, 1|1, 2|1, 3|0   (7 rows)
+-- Go:   <nil>|0, 1|1, 1|1, 2|1, 3|0             (5 rows)
+
+SELECT g, SUM(CASE WHEN EXISTS(SELECT 1 FROM s WHERE s.k = t.g)
+              THEN v ELSE 0 END) FROM t GROUP BY g ORDER BY g;
+-- Port: group 1 summed to 60 (each of the two source rows counted twice)
+-- Go:   group 1 sums to 30
+```
+
+The fix adds a `semi_family` join-type test that advances `inner_position`
+past the remaining inner rows once `try_to_match_inners` reports `matched`.
+Inner and outer joiners keep the one-row-per-call loop because `matched`
+does not settle their outer row.
+
+Regression:
+`driver::tests::subqueries::correlated_exists_apply_answers_once_per_outer_row`
+(two `g = 1` outer rows against two `k = 1` inner rows must still answer five
+rows). It fails on the pre-fix executor.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,219 passed / 34 failed (baseline 1,217 / 35; the statistics-request
+# transport flake accounts for 13 of the failures and passes 16/16 in
+# isolation; the 21 real failures are the unchanged skyline/decorrelation/
+# window/spill/q14/q22 blockers minus grouped_correlated_subqueries)
+cargo test -p tidb-planner --lib -- --test-threads=1
+# 999 passed / 0 failed
+cargo check --locked --all-targets -p tidb-executor -p tidb-planner
+rustfmt --edition 2021 --config skip_children=true --check crates/tidb-executor/src/apply.rs crates/tidb-executor/src/driver/tests/subqueries.rs
+git diff --check -- rust
+```

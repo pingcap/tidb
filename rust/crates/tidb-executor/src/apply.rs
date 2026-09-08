@@ -49,7 +49,7 @@
 
 use crate::apply_cache::ApplyCache;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::joiner::{Joiner, NAAJType};
+use crate::joiner::{JoinType, Joiner, NAAJType};
 use crate::mem_quota::StatementMemory;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
@@ -413,6 +413,21 @@ impl<C: Columns> Executor for NestedLoopApplyExec<C> {
                 (self.pending_outer.as_ref(), self.pending_inner.as_ref())
             {
                 let outer_row = outer.get_row(0);
+                // Go hands `TryToMatchInners` the WHOLE remaining inner
+                // iterator; every semi-family joiner calls `inners.ReachEnd()`
+                // on the row that settles the outer row, which ends the apply's
+                // inner loop. This executor feeds one inner row per call so a
+                // single output chunk can be filled incrementally, so that stop
+                // has to be reproduced explicitly -- otherwise each further
+                // matching inner row appends the outer row (or its semi flag)
+                // again, turning `EXISTS`/`IN` into a fan-out.
+                let semi_family = matches!(
+                    self.joiner.join_type(),
+                    JoinType::SemiJoin
+                        | JoinType::AntiSemiJoin
+                        | JoinType::LeftOuterSemiJoin
+                        | JoinType::AntiLeftOuterSemiJoin
+                );
                 while self.inner_position < inner.num_rows() && !req.is_full() {
                     let inner_row = inner.get_row(self.inner_position);
                     let mut iterator = LendingIterator::slice(vec![inner_row]);
@@ -426,6 +441,9 @@ impl<C: Columns> Executor for NestedLoopApplyExec<C> {
                     self.has_match |= matched;
                     self.has_null |= is_null;
                     self.inner_position += 1;
+                    if semi_family && matched {
+                        self.inner_position = inner.num_rows();
+                    }
                 }
                 if self.inner_position < inner.num_rows() {
                     break;
