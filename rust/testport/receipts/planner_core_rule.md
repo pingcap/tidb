@@ -108,3 +108,29 @@ predicate tests and 57/57 consumer tests passed. `make lint` passed, along with
 rustfmt and diff checks. Logs: `/tmp/core-rule-or-green-20260908.log`,
 `/tmp/core-rule-or-consumers-20260908.log`, and
 `/tmp/core-rule-or-ready-lint-20260908.log`. No Go files were changed.
+
+## Follow-up: reconstruct reduced IN through the builder
+
+Parent `ddf4f77c1d`; same complete nineteen-artifact Go inventory and authority.
+Go updateInPredicate invokes NewFunctionInternal after removing matching IN
+members. Rust instead created a bare ScalarFunction with old result metadata.
+The rule now passes the remaining arguments through its statement builder.
+
+Regression `in_ne_rebuild_preserves_derived_string_collation` starts with a
+general-ci column and literal a, plus an explicitly binary-collated literal b.
+After NE removes b, construction from the remaining arguments derives
+general-ci. The old Rust node kept binary collation and returned Int(0) for
+the row A, while the rebuilt expression returns Int(1). The final regression
+failed on that row result before the production fix and additionally checks
+the reconstructed expression's metadata. `/tmp/core-rule-in-red-20260908.log`
+contains the failing 0-versus-1 assertion. An initial ordinary-string probe
+passed and was not used as evidence of the bug.
+
+Ready: the same predicate owner command passed 8/8; logical::rule_tests passed
+57/57; make lint passed. Logs: `/tmp/core-rule-in-green-20260908.log`,
+`/tmp/core-rule-in-consumers-20260908.log`, and
+`/tmp/core-rule-in-ready-lint-20260908.log`. rustfmt and diff checks pass.
+No Go or expression-crate source changed. The Rust construction adapter is
+fallible; a rejected reconstruction retains both original predicates. Its
+error contract and expression-layer constant equality still require separate
+comparison; this receipt does not claim those boundaries fully match Go.

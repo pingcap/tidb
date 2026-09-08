@@ -205,7 +205,11 @@ fn short_circuit(ctx: &RuleContext<'_>, predicates: Vec<Expression>) -> Vec<Expr
     result
 }
 
-fn update_in(in_predicate: &Expression, not_equal: &Expression) -> (Expression, bool) {
+fn update_in(
+    ctx: &RuleContext<'_>,
+    in_predicate: &Expression,
+    not_equal: &Expression,
+) -> (Expression, bool) {
     let (Expression::ScalarFunction(in_function), Expression::ScalarFunction(ne_function)) =
         (in_predicate, not_equal)
     else {
@@ -234,17 +238,15 @@ fn update_in(in_predicate: &Expression, not_equal: &Expression) -> (Expression, 
             values.push(last);
         }
     }
-    (
-        Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
-            in_function.func_name.clone(),
-            in_function
-                .ret_type
-                .clone()
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::Tiny)),
-            values,
-        )),
-        special,
-    )
+    match ctx.builder.new_function(
+        in_function.func_name.lowercase(),
+        in_function.ret_type.clone(),
+        values,
+    ) {
+        Ok(updated) => (updated, special),
+        // If the construction boundary rejects the rewrite, retain both predicates.
+        Err(_) => (in_predicate.clone(), true),
+    }
 }
 
 fn merge_in_and_not_equal(
@@ -269,7 +271,7 @@ fn merge_in_and_not_equal(
                 (PredicateType::In, PredicateType::NotEqual) => (left, right),
                 _ => continue,
             };
-            let (updated, special) = update_in(&predicates[in_offset], &predicates[ne_offset]);
+            let (updated, special) = update_in(ctx, &predicates[in_offset], &predicates[ne_offset]);
             mark_skip(
                 ctx,
                 "NE/INList simplification is triggered",
@@ -762,6 +764,56 @@ mod tests {
         fn append_warning(&self, code: u16, message: &str) {
             self.warnings.borrow_mut().push((code, message.to_owned()));
         }
+    }
+
+    #[test]
+    fn in_ne_rebuild_preserves_derived_string_collation() {
+        let allocator = PlanIdAllocator::new();
+        let builder = RealFunctionBuilder::new(&NoColumns);
+        let mut ctx = test_context(&allocator);
+        ctx.builder = &builder;
+        let string_type = FieldType::new(FieldTypeCode::VarString)
+            .with_charset_name("utf8mb4")
+            .with_collation_name("utf8mb4_general_ci");
+        let col = Expression::Column(Column::new(1, string_type.clone()));
+        let a = Expression::Constant(Constant::new(Datum::new_string("a"), string_type.clone()));
+        let mut explicit_b = Constant::new(
+            Datum::new_string("b"),
+            string_type.with_collation_name("utf8mb4_bin"),
+        );
+        explicit_b
+            .collation
+            .set_coercibility(tidb_expr::expr_collation::Coercibility::EXPLICIT);
+        let b = Expression::Constant(explicit_b);
+        let original = builder
+            .new_function("in", None, vec![col.clone(), a.clone(), b.clone()])
+            .unwrap();
+        let not_equal = builder
+            .new_function("ne", None, vec![col.clone(), b])
+            .unwrap();
+        let expected = builder
+            .new_function("in", original.static_type().cloned(), vec![col, a])
+            .unwrap();
+        let result = merge_in_and_not_equal(&ctx, vec![original, not_equal]);
+        assert_eq!(result.len(), 1);
+        let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(
+            &[FieldType::new(FieldTypeCode::VarString)],
+            1,
+        );
+        chunk.append_string(0, "A");
+        assert_eq!(
+            expected.eval(&NoColumns, chunk.get_row(0)).unwrap(),
+            Datum::Int(1)
+        );
+        assert_eq!(
+            result[0].eval(&NoColumns, chunk.get_row(0)).unwrap(),
+            Datum::Int(1),
+            "the removed explicit binary collation must not survive on IN"
+        );
+        assert!(
+            result[0].equal(&expected),
+            "IN must be rebuilt through the statement builder, including derived collation"
+        );
     }
 
     #[test]

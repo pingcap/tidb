@@ -324,3 +324,15 @@ Go handles AND branches separately: recursively clean each conjunct, append the 
 The pre-fix run failed with two branches instead of three. During validation, the test's whole-expression comparison also exposed a test-construction type mismatch (the convenience function assigns Tiny, the normal-form composer infers its own logical result type). The test now checks the two preserved branches' ordered conjuncts and the middle leaf directly. This retains the original failing branch-count assertion and verifies the actual intended semantics without asserting that unrelated test-helper metadata is identical.
 
 Ready: seven predicate tests, 57 logical-rule tests, make lint, rustfmt check and git diff check pass. Evidence is in the package receipt. Outcome: OR cleanup now preserves Go's conjunction branch boundary. Full package parity remains open; continue the declaration inventory and original test mapping.
+
+
+## IN reconstruction batch (2026-09-08)
+
+
+Progress: revalidated clean worktree at pushed `ddf4f77c1d`; the complete current-master package inventory remains applicable. Re-read Go updateInPredicate and the Rust builder, collation derivation, and IN evaluation consumer boundaries. No expression-package source was edited.
+
+Go reconstructs the reduced IN through NewFunctionInternal. Rust directly constructed ScalarFunction with the original result metadata. A baseline with ordinary strings did not fail; an explicit utf8mb4_bin literal removed by NE exposed stale collation. The remaining column and literal use utf8mb4_general_ci, but the reduced IN retained binary comparison, so an uppercase A row returned 0 instead of the builder-derived 1. The final regression fails on this row result before the production fix and also checks expression metadata against reconstruction through the existing real builder.
+
+Pass RuleContext into update_in and rebuild through its FunctionBuilder. Keep the existing all-values-removed special case and NULL-NE guard. If Rust's fallible construction boundary rejects rebuilding, retain both original predicates; this boundary remains an explicit limitation rather than a claim that Go's NewFunctionInternal error handling has been fully reproduced.
+
+Ready: eight predicate tests, 57 logical-rule consumer tests and make lint pass. Formatting and diff checks pass. Logs and the precise remaining scope are recorded in the receipt. Outcome: successful IN reconstruction now derives metadata from the remaining arguments like the Go call; the full planner/statistics/optimizer goal remains active.
