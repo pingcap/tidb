@@ -95,6 +95,8 @@ func restoreRegionFixture(t *testing.T) (*SnapFileImporter, *restoreRegionTestCl
 
 func TestRestoreRegionRequest(t *testing.T) {
 	importer, _, set, regions := restoreRegionFixture(t)
+	// Real plaintext backups can still contain an IV in their file metadata.
+	set.SSTFiles[0].CipherIv = bytes.Repeat([]byte{2}, 16)
 	req, err := importer.buildRestoreRegionRequest(regions[0], []restore.BackupFileSet{set})
 	require.NoError(t, err)
 	require.Len(t, req.Sources, 2)
@@ -109,11 +111,13 @@ func TestRestoreRegionRequest(t *testing.T) {
 		require.Equal(t, uint64(123), source.Length)
 		require.Equal(t, set.SSTFiles[i].Cf, source.Cf)
 		require.Equal(t, set.RewriteRules.Data[0], source.RewriteRule)
+		require.Empty(t, source.CipherIv)
 	}
 	importer.cipher = &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
 	req, err = importer.buildRestoreRegionRequest(regions[0], []restore.BackupFileSet{set})
 	require.NoError(t, err)
 	require.Nil(t, req.CipherInfo)
+	require.Empty(t, req.Sources[0].CipherIv)
 	importer.cipher.CipherType = encryptionpb.EncryptionMethod_AES256_CTR
 	importer.cipher.CipherKey = bytes.Repeat([]byte{1}, 32)
 	set.SSTFiles[0].CipherIv = bytes.Repeat([]byte{2}, 16)
