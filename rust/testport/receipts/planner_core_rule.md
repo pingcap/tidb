@@ -134,3 +134,26 @@ No Go or expression-crate source changed. The Rust construction adapter is
 fallible; a rejected reconstruction retains both original predicates. Its
 error contract and expression-layer constant equality still require separate
 comparison; this receipt does not claim those boundaries fully match Go.
+
+## Follow-up: bound false OR branches and plan-cache marking
+
+Parent `783d3f9e53`; same complete core/rule inventory and Go authority.
+Go unsatisfiableExpression delegates to logicalop.IsConstFalse, which checks
+the bound constant without a plan-cache guard. pruneEmptyORBranches marks
+the plan uncacheable if that check leads to a mutable branch being pruned.
+Rust reused the guarded logical_constant classifier, retaining such branches
+and never reaching the cache marker. The consumer now uses NULL or successful
+statement-aware conversion to zero directly.
+
+Regression `false_parameter_or_branch_is_pruned_and_disables_plan_cache`
+verifies parameters bound to zero and NULL: the generic classifier remains
+Other, OR pruning removes the branch, and the exact cache reason is emitted
+for each rewrite. Before the fix it failed because the branch remained;
+`/tmp/core-rule-false-red-20260908.log` records that failure.
+
+Ready predicate tests passed 9/9; logical::rule_tests passed 57/57; make lint,
+rustfmt and diff checks passed. Logs: `/tmp/core-rule-false-green-20260908.log`,
+`/tmp/core-rule-false-consumers-20260908.log`, and
+`/tmp/core-rule-false-ready-lint-20260908.log`. The logicalop dependency body
+was read to resolve this call contract; its package was not edited or claimed
+complete. No Go source changed, and the broader package audit remains open.

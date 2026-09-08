@@ -321,10 +321,13 @@ fn remove_redundant_or(ctx: &RuleContext<'_>, expression: Expression) -> Express
 }
 
 fn is_unsatisfiable_expression(ctx: &RuleContext<'_>, expression: &Expression) -> bool {
+    // Go delegates to logicalop.IsConstFalse, which has no plan-cache guard.
+    // The pruning caller marks the plan uncacheable if this removes a parameter.
     matches!(
         expression,
         Expression::Constant(constant)
-            if logical_constant(ctx, constant) == PredicateType::False
+            if matches!(constant.value, Datum::Null)
+                || crate::constraint::constant_to_bool(ctx.eval_context, &constant.value) == Some(0)
     )
 }
 
@@ -764,6 +767,44 @@ mod tests {
         fn append_warning(&self, code: u16, message: &str) {
             self.warnings.borrow_mut().push((code, message.to_owned()));
         }
+    }
+
+    #[test]
+    fn false_parameter_or_branch_is_pruned_and_disables_plan_cache() {
+        #[derive(Default)]
+        struct Marker(std::cell::RefCell<Vec<String>>);
+        impl super::super::rule::PlanCacheMarker for Marker {
+            fn set_skip_plan_cache(&self, reason: &str) {
+                self.0.borrow_mut().push(reason.to_owned());
+            }
+        }
+        let allocator = PlanIdAllocator::new();
+        let marker = Marker::default();
+        let mut ctx = test_context(&allocator);
+        ctx.use_plan_cache = true;
+        ctx.plan_cache_marker = Some(&marker);
+        for value in [Datum::Int(0), Datum::Null] {
+            let mut parameter = Constant::new(value, integer_type());
+            parameter.param_marker = Some(tidb_expr::constant::ParamMarker { order: 0 });
+            let parameter = Expression::Constant(parameter);
+            // Classification is guarded, but Go IsConstFalse reads the bound value.
+            assert_eq!(predicate_type(&ctx, &parameter).1, PredicateType::Other);
+            let scalar = function("eq", vec![column(1), integer(7)]);
+            let remaining = function("eq", vec![column(2), integer(8)]);
+            let result = prune_empty_or_branches(
+                &ctx,
+                vec![scalar, function("or", vec![parameter, remaining.clone()])],
+            );
+            assert_eq!(result.len(), 2);
+            assert!(
+                result[1].equal(&remaining),
+                "bound false/NULL branch must be pruned"
+            );
+        }
+        assert_eq!(
+            *marker.0.borrow(),
+            vec!["OR predicate simplification is triggered"; 2]
+        );
     }
 
     #[test]

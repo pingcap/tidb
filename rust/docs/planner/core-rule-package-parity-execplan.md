@@ -336,3 +336,13 @@ Go reconstructs the reduced IN through NewFunctionInternal. Rust directly constr
 Pass RuleContext into update_in and rebuild through its FunctionBuilder. Keep the existing all-values-removed special case and NULL-NE guard. If Rust's fallible construction boundary rejects rebuilding, retain both original predicates; this boundary remains an explicit limitation rather than a claim that Go's NewFunctionInternal error handling has been fully reproduced.
 
 Ready: eight predicate tests, 57 logical-rule consumer tests and make lint pass. Formatting and diff checks pass. Logs and the precise remaining scope are recorded in the receipt. Outcome: successful IN reconstruction now derives metadata from the remaining arguments like the Go call; the full planner/statistics/optimizer goal remains active.
+
+
+## Bound false OR branch batch (2026-09-08)
+
+
+Progress: revalidated clean worktree at pushed `783d3f9e53`. The complete core/rule inventory remains current. Re-read Go updateOrPredicate/pruneEmptyORBranches and the called logicalop.IsConstFalse body in expression_util.go. No logicalop owner was edited or declared audited as a package.
+
+Go unsatisfiableExpression calls IsConstFalse, which examines the bound constant value without the plan-cache guard used by logicalConstant. The caller disables plan caching after pruning a mutable branch. Rust reused logical_constant and therefore incorrectly suppressed both pruning and the required cache marker for a bound zero/NULL parameter. Use the statement-aware conversion adapter directly, preserving NULL-as-false and conversion-error handling without that extra guard.
+
+The regression first failed because the bound false branch remained. After the fix it verifies both zero and NULL branches are removed, ordinary classification still returns Other for the parameter, and each rewrite emits the exact Go OR-simplification cache reason. Ready: nine predicate tests, 57 logical-rule tests and make lint pass; formatting and diff checks pass. Logs are in the receipt. Outcome: the rule consumer now follows the separate Go false-value and classification contracts. Full package and broader optimizer/statistics parity remain open.
