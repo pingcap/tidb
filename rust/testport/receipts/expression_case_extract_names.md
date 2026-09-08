@@ -131,3 +131,34 @@ cargo test -p tidb-executor --lib -- --test-threads=1
 cargo test -p tidb-planner
 # 1279 passed; 0 failed
 ```
+
+## Follow-up: a constant CASE branch folds through the live context
+
+Go's `BuildCastFunctionWithCheck` (`builtin_cast.go:2655`) folds the cast it
+just built for every target except JSON, so the wrapped `ELSE 0` becomes the
+constant `0.0000` before the CASE node exists. Rust's `build_cast_function`
+deliberately leaves conversion casts unfolded so their diagnostics stay with
+the live statement context, and the planner's own fold skips lazy
+short-circuit parents (`and`/`case`), so the branch kept its `cast(0,
+decimal(31,4) BINARY)` shape.
+
+The CASE arm now folds each wrapped branch with the resolver's live
+`comparison_context()` in `Normal` mode -- the context the deferred fold would
+have used -- reproducing Go's build-time conversion and its warning ownership.
+A non-constant branch is untouched, and the CASE node itself still folds
+through the existing lazy path. `tpch_q14_matches_recorded_hash_join_plan`'s
+projection now reads `case(like(test.part.p_type, PROMO%, 92), mul(...),
+0.0000)`; the test still fails only on its remaining recorded-shape gaps
+(extra identity projection, `DATE_ADD` literal fold, equal-condition operand
+order).
+
+```text
+cargo test -p tidb-expr
+# 1206 passed; 2 failed; 99 ignored -- the same two pre-existing failures
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1242 passed; 14 failed; the same pre-existing set
+
+cargo test -p tidb-planner
+# 1279 passed; 0 failed
+```

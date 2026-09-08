@@ -1184,11 +1184,12 @@ both `oltp_read_only` and `oltp_read_write`.
     (`newBaseBuiltinFuncWithFieldTypes`): DONE. Every THEN index and the
     trailing ELSE now go through `wrap_case_branch`, so a branch beside a
     decimal takes the merged type and the CASE returns the promoted datum
-    (`DEC:0.0`). What q14 still needs: `BuildCastFunction`'s build-time fold
-    of a constant cast (Rust defers it, so the plan prints
-    `cast(0, decimal(31,4) BINARY)` where Go prints `0.0000`), the
-    `DATE_ADD` literal fold, the identity-projection elimination, and the
-    logical equal-condition operand order:
+    (`DEC:0.0`), and each wrapped branch folds through the resolver's live
+    context, so a constant branch shows the cast's own type (`0.0000`).
+    What q14 still needs: the `DATE_ADD` literal fold (the planner's single
+    top-level fold skips lazy `and`/`case` parents, so a constant
+    `DATE_ADD` below a predicate never folds), the identity-projection
+    elimination, and the logical equal-condition operand order:
     `aggregates::tpch_q14_matches_recorded_hash_join_plan`. Receipt:
     `rust/testport/receipts/expression_case_extract_names.md`.
   - `pkg/executor/aggregate` spill-file lifetime: DONE. Go's parallel

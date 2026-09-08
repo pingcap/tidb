@@ -1402,7 +1402,21 @@ fn rewrite_leaf_compound(
             }
             for index in result_indexes {
                 let branch = args[index].clone();
-                args[index] = wrap_case_branch(branch, &ret_type, connection)?;
+                let mut wrapped = wrap_case_branch(branch, &ret_type, connection)?;
+                // Go `BuildCastFunctionWithCheck` (`builtin_cast.go:2655`)
+                // folds the constant cast it just built, which is why a
+                // constant branch renders as the cast's own type
+                // (`0.0000`). Rust's builders defer that fold so conversion
+                // diagnostics stay with the live statement context; this is
+                // that context, and a non-constant branch is untouched.
+                if let Some(context) = resolver.comparison_context() {
+                    crate::constant_fold::fold_constant_in_mode(
+                        &mut wrapped,
+                        context,
+                        ConstantFoldMode::Normal,
+                    );
+                }
+                args[index] = wrapped;
             }
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new("case"),
