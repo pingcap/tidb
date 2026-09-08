@@ -11427,3 +11427,6 @@ risks without claiming repository-wide parity.
  after removing the offender the ALTER lands (affected 0) and the
  constraint is live. Pinned in
  `crates/tidb-session/tests/add_fk_validates_source.rs`.
+- 2026-09-08 (leap clamp pin): YEAR/MONTH interval arithmetic clamps
+ Feb 29/Aug 31 to the target month's last day. Pinned in
+ `crates/tidb-session/tests/leap_clamp_source.rs`.
