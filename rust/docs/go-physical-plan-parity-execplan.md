@@ -1174,6 +1174,15 @@ both `oltp_read_only` and `oltp_read_write`.
   gone. `tpch_q14_matches_recorded_hash_join_plan` passes; executor 1244
   passed / 13 failed. Receipt:
   `rust/testport/receipts/planner_data_source_stats_per_source.md`.
+- [x] 2026-09-09: displayed index-join inner plans with Go's probe count.
+  `propagateProbeParents` gives an index join's INNER child the join as a probe
+  parent, and `GetEstRowCountForDisplay` multiplies its `StatsInfo.RowCount` by
+  the OUTER child's row count. The Rust carried `probe_parents` ids but never
+  propagated or read them, so every inner subtree showed its per-probe
+  statistics. The explain renderer now threads a probe count down the tree and
+  scales only the inner child of an `IndexJoin`/`Apply`. Display-only;
+  executor 1245 passed / 13 failed, same set. Receipt:
+  `rust/testport/receipts/planner_probe_parent_display.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

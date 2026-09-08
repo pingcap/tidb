@@ -964,6 +964,10 @@ fn physical_explain_operator(
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
     ignore_explain_id_suffix: bool,
     index_join_context: Option<IndexJoinExplainContext<'_>>,
+    // Go `GetEstimatedProbeCntFromProbeParents`: the product of the outer
+    // child's row count for every index-join (or apply) parent this operator
+    // sits inside. `EXPLAIN` displays `StatsInfo.RowCount * probeCount`.
+    probe_count: f64,
 ) -> ExplainOperator {
     let mut children = match plan {
         PhysicalPlan::TableReader(reader) => reader
@@ -981,6 +985,7 @@ fn physical_explain_operator(
                     runtime,
                     ignore_explain_id_suffix,
                     index_join_context,
+                    probe_count,
                 )]
             })
             .unwrap_or_default(),
@@ -999,6 +1004,7 @@ fn physical_explain_operator(
                     runtime,
                     ignore_explain_id_suffix,
                     index_join_context,
+                    probe_count,
                 )]
             })
             .unwrap_or_default(),
@@ -1020,6 +1026,7 @@ fn physical_explain_operator(
                 runtime,
                 ignore_explain_id_suffix,
                 index_join_context,
+                probe_count,
             )
         })
         .collect(),
@@ -1040,6 +1047,7 @@ fn physical_explain_operator(
                     runtime,
                     ignore_explain_id_suffix,
                     index_join_context,
+                    probe_count,
                 )
             })
             .collect(),
@@ -1055,6 +1063,7 @@ fn physical_explain_operator(
                     runtime,
                     ignore_explain_id_suffix,
                     index_join_context,
+                    probe_count,
                 )]
             })
             .unwrap_or_default(),
@@ -1076,6 +1085,26 @@ fn physical_explain_operator(
                     PhysicalPlan::IndexJoin(_) => None,
                     _ => index_join_context,
                 };
+                // Go `propagateProbeParents`: the INNER child of an index
+                // join (or apply) carries that join as a probe parent, so its
+                // display row count is multiplied by the join's OUTER row
+                // count. The outer child does not.
+                let inner_child_idx = match plan {
+                    PhysicalPlan::IndexJoin(join) => Some(join.inner_child_idx),
+                    PhysicalPlan::Apply(apply) => Some(apply.hash_join.inner_child_idx),
+                    _ => None,
+                };
+                let child_probe_count = match inner_child_idx {
+                    Some(inner) if index == inner => {
+                        let outer_rows = plan
+                            .children()
+                            .get(1 - inner)
+                            .and_then(|outer| outer.stats_info())
+                            .map_or(1.0, tidb_planner::stats_info::StatsInfo::row_count);
+                        probe_count * outer_rows
+                    }
+                    _ => probe_count,
+                };
                 physical_explain_operator(
                     child,
                     catalog,
@@ -1084,6 +1113,7 @@ fn physical_explain_operator(
                     runtime,
                     ignore_explain_id_suffix,
                     child_context,
+                    child_probe_count,
                 )
             })
             .collect(),
@@ -1135,7 +1165,7 @@ fn physical_explain_operator(
         .stats_info()
         .map(tidb_planner::stats_info::StatsInfo::row_count)
     {
-        operator = operator.with_estimated_rows(rows);
+        operator = operator.with_estimated_rows(rows * probe_count);
     }
     if let Some(rows) = runtime_rows(plan, runtime) {
         operator = operator.with_actual_rows(rows);
@@ -1161,6 +1191,7 @@ fn cte_definitions(
                 runtime,
                 ignore_explain_id_suffix,
                 None,
+                1.0,
             )];
             if let Some(recursive) = cte.recursive_plan.as_deref() {
                 children.push(physical_explain_operator(
@@ -1171,6 +1202,7 @@ fn cte_definitions(
                     runtime,
                     ignore_explain_id_suffix,
                     None,
+                    1.0,
                 ));
             }
             let mut definition = ExplainOperator::new("CTE", cte.id_for_storage)
@@ -1249,6 +1281,7 @@ fn physical_explain_roots(
         runtime,
         ignore_explain_id_suffix,
         None,
+        1.0,
     )];
     cte_definitions(
         physical,

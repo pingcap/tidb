@@ -1078,6 +1078,108 @@ fn tpcc_stock_level_bounds_both_join_leaves() {
     );
 }
 
+/// Go `GetEstimatedProbeCntFromProbeParents` (`plan.go:178`) scales every
+/// index-join INNER operator's displayed row count by the outer child's row
+/// count. The stock-level probe's inner scan holds the clamped one-row
+/// statistics, so its `EXPLAIN` estimate is `1 * 1.25 = 1.25` (and the
+/// Selection above it keeps that scale).
+#[test]
+fn an_index_join_probe_displays_the_outer_probe_count() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (\
+            ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, ol_w_id INT NOT NULL, \
+            ol_number INT NOT NULL, ol_i_id INT NOT NULL, \
+            PRIMARY KEY (ol_w_id, ol_d_id, ol_o_id, ol_number) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE stock (\
+            s_i_id INT NOT NULL, s_w_id INT NOT NULL, s_quantity INT, \
+            PRIMARY KEY (s_w_id, s_i_id) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO order_line VALUES \
+            (3627, 7, 1, 1, 100), (3630, 7, 1, 1, 101), \
+            (3647, 7, 1, 1, 102), (3630, 8, 1, 1, 101)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO stock VALUES \
+            (100, 1, 10), (101, 1, 20), (102, 1, 5), (100, 2, 5)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    for (table_name, column_offsets) in [("order_line", vec![2, 1, 0, 3]), ("stock", vec![1, 0])] {
+        let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
+            panic!("{table_name} is not a KV table");
+        };
+        table.add_index(
+            crate::kv_table::KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+    }
+    let sql = "SELECT /*+ TIDB_INLJ(`order_line`, `stock`)*/ \
+        COUNT(DISTINCT (`s_i_id`)) AS `stock_count` \
+        FROM (`order_line`) JOIN `stock` \
+        WHERE `ol_w_id`=1 AND `ol_d_id`=7 \
+        AND `ol_o_id`<3647 AND `ol_o_id`>=3647-20 \
+        AND `s_w_id`=1 AND `s_i_id`=`ol_i_id` AND `s_quantity`<18";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect();
+    let probe_scan = plan
+        .iter()
+        .find(|line| line.contains("TableRangeScan") && line.contains("table:stock"))
+        .unwrap_or_else(|| panic!("no stock probe scan: {plan:?}"));
+    assert_eq!(
+        probe_scan.split('\t').nth(1),
+        Some("1.25"),
+        "the inner scan must display its one clamped row times the 1.25 outer probes: {plan:?}",
+    );
+}
+
 /// A complete equality on every column of a clustered common handle is a
 /// `Point_Get`, not a `TableRangeScan`: Go's `canConvertPointGet`
 /// (`find_best_task.go:2199`) admits a non-prefix UNIQUE index whose range
