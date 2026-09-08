@@ -175,7 +175,7 @@ func TestMergeOperator(t *testing.T) {
 		require.LessOrEqual(t, (maxOutputSize+partSize-1)/partSize, int64(simplesst.MaxUploadPartCount))
 
 		partSize = getMergePartSize(mib, 1, int(mib))
-		require.Equal(t, minMergePartSize, partSize)
+		require.Equal(t, simplesst.MinUploadPartSize, partSize)
 	})
 
 	oldMaxMergingFilesPerThread := MaxMergingFilesPerThread
