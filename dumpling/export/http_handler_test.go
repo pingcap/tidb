@@ -126,9 +126,9 @@ func TestMetricsHandlerServesTheDumperRegistry(t *testing.T) {
 	body, err := io.ReadAll(rec.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), "dumpling_dump_finished_rows 42")
-	require.Contains(t, string(body), "go_goroutines ")
-	require.Contains(t, string(body), "process_cpu_seconds_total ")
-	require.Contains(t, string(body), "promhttp_metric_handler_requests_total")
+	require.NotContains(t, string(body), "go_goroutines ")
+	require.NotContains(t, string(body), "process_cpu_seconds_total ")
+	require.NotContains(t, string(body), "promhttp_metric_handler_requests_total")
 }
 
 func TestMetricsHandlerPreservesConfiguredMetricFamilies(t *testing.T) {
@@ -137,8 +137,8 @@ func TestMetricsHandlerPreservesConfiguredMetricFamilies(t *testing.T) {
 	d.metrics = newMetrics(conf.PromFactory, nil)
 	d.metrics.registerTo(conf.PromRegistry)
 	defer d.metrics.unregisterFrom(conf.PromRegistry)
-	// Both registries expose this name. The configured family must win
-	// without producing duplicate-metric errors on the scrape.
+	// A configured family with the same name as a default metric must be
+	// served without importing any other default metric families.
 	configured := prometheus.NewGauge(prometheus.GaugeOpts{Name: "go_goroutines", Help: "Configured test value."})
 	configured.Set(123)
 	conf.PromRegistry.MustRegister(configured)
@@ -147,7 +147,7 @@ func TestMetricsHandlerPreservesConfiguredMetricFamilies(t *testing.T) {
 	metricsHandler(d).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "go_goroutines 123\n")
-	require.Contains(t, rec.Body.String(), "process_cpu_seconds_total ")
+	require.NotContains(t, rec.Body.String(), "process_cpu_seconds_total ")
 }
 
 func TestMetricsHandlerWithSharedDefaultGatherer(t *testing.T) {

@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/soheilhy/cmux"
 )
 
@@ -62,51 +61,19 @@ func startDumplingService(tctx *tcontext.Context, addr string, d *Dumper) error 
 	return err
 }
 
-// metricsHandler serves the configured dump metrics while retaining the metric
-// families exposed by the default handler. Registerers that do not implement
-// Gatherer retain the default handler's behavior.
+// metricsHandler serves the configured registry when it supports gathering.
+// Unlike the previous global handler, it does not add unrelated default metrics
+// or promhttp instrumentation. The CLI registers Go and process collectors in
+// its configured registry; embedded callers control their own collectors.
+// Registerers without Gatherer retain the default gatherer as the scrape source.
 func metricsHandler(d *Dumper) http.Handler {
 	gatherer := prometheus.DefaultGatherer
 	if d != nil && d.conf != nil {
 		if configured, ok := d.conf.PromRegistry.(prometheus.Gatherer); ok {
-			gatherer = metricsGatherer{configured: configured, previous: gatherer}
+			gatherer = configured
 		}
 	}
-	return promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer,
-		promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}))
-}
-
-type metricsGatherer struct {
-	configured prometheus.Gatherer
-	previous   prometheus.Gatherer
-}
-
-func (g metricsGatherer) Gather() ([]*dto.MetricFamily, error) {
-	configured, err := g.configured.Gather()
-	if err != nil {
-		return configured, err
-	}
-	// The CLI already installs its registry as DefaultGatherer.
-	if registry, ok := g.configured.(*prometheus.Registry); ok && registry == g.previous {
-		return configured, nil
-	}
-	previous, err := g.previous.Gather()
-	if err != nil {
-		return configured, err
-	}
-	names := make(map[string]struct{}, len(configured))
-	result := make([]*dto.MetricFamily, 0, len(configured)+len(previous))
-	result = append(result, configured...)
-	for _, family := range configured {
-		names[family.GetName()] = struct{}{}
-	}
-	// Prefer the configured family when both sources expose the same name.
-	for _, family := range previous {
-		if _, exists := names[family.GetName()]; !exists {
-			result = append(result, family)
-		}
-	}
-	return result, nil
+	return promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{})
 }
 
 // statusHandler serves the latest dump status snapshot as JSON.
