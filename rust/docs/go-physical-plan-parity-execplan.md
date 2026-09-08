@@ -32,6 +32,19 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] 2026-09-09: closed two DataSource-selectivity gaps found while pinning
+  the plan-time subquery evaluation. `is_not_null_on_column` now unwraps
+  Go's `ast.UnaryNot` shape (`NOT (col IS NULL)`) as well as
+  `col IS NOT NULL`; the parsed NOT form had fallen through to the generic
+  0.8 fallback and charged a NOT NULL column 20% of its rows.
+  `single_table_predicate` now drops conjuncts that contain a subquery, so an
+  unqualified `k IN (SELECT k FROM inner_t)` no longer charges the SUBQUERY's
+  own source the 0.8 fallback (its HashAgg estimates 500 instead of 400).
+  Red/green: new `access_cost::tests::not_is_null_matches_is_not_null` fails
+  before and passes after; executor 1251 passed / 9 failed with no additions;
+  planner 0 failed. Receipt:
+  `testport/receipts/planner_data_source_stats_per_source.md`.
+
 - [x] 2026-09-09: evaluated uncorrelated subqueries at plan time through an
   executor-installed hook, the way Go's `handleScalarSubquery` /
   `handleExistSubquery` call `DoOptimize` + `EvalSubqueryFirstRow`

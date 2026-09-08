@@ -933,8 +933,14 @@ fn selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
     let mut defaults =
         SelectivityDefaults::from_session(default_string_match_selectivity, selectivity_factor);
     defaults.trigger_load = trigger_load;
-    selectivity_of_conjuncts_with_defaults(conjuncts, table, resolver, stats, defaults,
-        crate::index_range::RangeContext::default())
+    selectivity_of_conjuncts_with_defaults(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        defaults,
+        crate::index_range::RangeContext::default(),
+    )
 }
 
 fn selectivity_of_conjuncts_with_defaults(
@@ -1102,23 +1108,44 @@ fn selectivity_of_conjuncts_with_path_context(
                 if real_collection.is_some_and(|stats| !stats.indexes.contains_key(&index.id)) {
                     continue;
                 }
-                let names = index.column_offsets.iter()
-                    .map(|offset| table.columns[*offset].name.to_lowercase()).collect::<Vec<_>>();
-                if defaults.trigger_load && real_collection.is_some()
-                    && names.first().is_some_and(|name| equality_columns.contains(name)) {
+                let names = index
+                    .column_offsets
+                    .iter()
+                    .map(|offset| table.columns[*offset].name.to_lowercase())
+                    .collect::<Vec<_>>();
+                if defaults.trigger_load
+                    && real_collection.is_some()
+                    && names
+                        .first()
+                        .is_some_and(|name| equality_columns.contains(name))
+                {
                     tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(
-                        tidb_model::TableItemID { table_id: table.table_id, id: index.id,
-                            is_index: true, is_sync_load_failed: false }, true,
+                        tidb_model::TableItemID {
+                            table_id: table.table_id,
+                            id: index.id,
+                            is_index: true,
+                            is_sync_load_failed: false,
+                        },
+                        true,
                     );
                 }
-                let complete = !names.is_empty() && names.iter().all(|name| equality_columns.contains(name));
-                indexes.push(PseudoIndex { unique: index.unique, column_lower_names: names });
+                let complete =
+                    !names.is_empty() && names.iter().all(|name| equality_columns.contains(name));
+                indexes.push(PseudoIndex {
+                    unique: index.unique,
+                    column_lower_names: names,
+                });
                 if index.unique && complete {
                     break;
                 }
             }
         }
-        return pseudo_selectivity(&predicates, &indexes, realtime as i64, defaults.selectivity_factor);
+        return pseudo_selectivity(
+            &predicates,
+            &indexes,
+            realtime as i64,
+            defaults.selectivity_factor,
+        );
     }
 
     // Go extracts ordinary-column = correlated-column before assigning
@@ -1382,16 +1409,25 @@ fn selectivity_of_conjuncts_with_path_context(
         let Some(index_columns) = index_columns else {
             continue;
         };
-        let schema_columns = table.columns.iter().map(|column|
-            crate::index_range::RangeColumn::whole(column.name.clone(), column.field_type.clone())
-        ).collect::<Vec<_>>();
-        let Some((built, is_dnf, min_access_conditions_for_dnf)) = crate::index_range::detach_conjuncts_and_build_range_for_index_with_context(
-            &index_columns,
-            &conjuncts,
-            &resolver.time_zone(),
-            range_context,
-            &schema_columns,
-        ) else {
+        let schema_columns = table
+            .columns
+            .iter()
+            .map(|column| {
+                crate::index_range::RangeColumn::whole(
+                    column.name.clone(),
+                    column.field_type.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let Some((built, is_dnf, min_access_conditions_for_dnf)) =
+            crate::index_range::detach_conjuncts_and_build_range_for_index_with_context(
+                &index_columns,
+                &conjuncts,
+                &resolver.time_zone(),
+                range_context,
+                &schema_columns,
+            )
+        else {
             continue;
         };
         let row_count = index_row_count(
@@ -1410,7 +1446,11 @@ fn selectivity_of_conjuncts_with_path_context(
             ..StatsNode::new(
                 StatsNodeType::Index,
                 index.id,
-                if is_dnf { 1 } else { covered_mask(&conjuncts, &built.residual) },
+                if is_dnf {
+                    1
+                } else {
+                    covered_mask(&conjuncts, &built.residual)
+                },
                 index.column_offsets.len(),
             )
         });
@@ -1422,7 +1462,8 @@ fn selectivity_of_conjuncts_with_path_context(
         .iter()
         .fold(0_i64, |mask, node| mask | node.mask);
     let conditions: Vec<ConditionKind> = conjuncts
-        .iter().enumerate()
+        .iter()
+        .enumerate()
         .map(|(index, conjunct)| {
             if covered & (1_i64 << index) != 0 {
                 ConditionKind::Other
@@ -1447,13 +1488,30 @@ fn is_not_null_on_column(
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
 ) -> bool {
-    let tidb_ast::Expr::Is {
-        expr,
-        target: tidb_ast::IsTarget::Null,
-        not: true,
-    } = strip_parens(conjunct)
-    else {
-        return false;
+    let conjunct = strip_parens(conjunct);
+    let expr = match conjunct {
+        tidb_ast::Expr::Is {
+            expr,
+            target: tidb_ast::IsTarget::Null,
+            not: true,
+        } => expr,
+        // Go `cardinality.Selectivity`'s `ast.UnaryNot` arm returns
+        // `1 - childSelectivity`; for `NOT (col IS NULL)` that is exactly the
+        // not-null fraction the mask below models, so the same range applies.
+        // Without this the whole conjunct fell through to the generic 0.8
+        // fallback, which charged a NOT NULL column 20% of its rows.
+        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::NotKeyword, operand) => {
+            let tidb_ast::Expr::Is {
+                expr,
+                target: tidb_ast::IsTarget::Null,
+                not: false,
+            } = strip_parens(operand)
+            else {
+                return false;
+            };
+            expr
+        }
+        _ => return false,
     };
     let tidb_ast::Expr::Column(path) = strip_parens(expr) else {
         return false;
@@ -1516,8 +1574,12 @@ fn physical_column_offsets(
         .iter()
         // Go ExtractColumns visits ordinary columns only. Correlated columns
         // belong to the outer scope even when their names match local names.
-        .filter(|path| !matches!(resolver.resolve_expression(path),
-            Some(tidb_expr::expression::Expression::CorrelatedColumn(_))))
+        .filter(|path| {
+            !matches!(
+                resolver.resolve_expression(path),
+                Some(tidb_expr::expression::Expression::CorrelatedColumn(_))
+            )
+        })
         .map(|path| physical_column_offset(path, table, resolver))
         .collect()
 }
@@ -1623,15 +1685,23 @@ fn dnf_selectivity(
         // Go skips a standalone CorrelatedColumn DNF arm. Its outer value
         // is not a distribution over this table's rows.
         if let tidb_ast::Expr::Column(path) = strip_parens(&item) {
-            if matches!(resolver.resolve_expression(path),
-                Some(tidb_expr::expression::Expression::CorrelatedColumn(_))) {
+            if matches!(
+                resolver.resolve_expression(path),
+                Some(tidb_expr::expression::Expression::CorrelatedColumn(_))
+            ) {
                 continue;
             }
         }
         let mut cnf = Vec::new();
         crate::plan_trace::collect_and(strip_parens(&item), &mut cnf);
-        let current =
-            selectivity_of_conjuncts_with_defaults(&cnf, table, resolver, stats, defaults, range_context);
+        let current = selectivity_of_conjuncts_with_defaults(
+            &cnf,
+            table,
+            resolver,
+            stats,
+            defaults,
+            range_context,
+        );
         selectivity = selectivity + current - selectivity * current;
     }
     (selectivity != 0.0).then_some(selectivity)
@@ -1855,8 +1925,14 @@ fn row_in_selectivity(
             })
             .collect();
         let conjuncts: Vec<&tidb_ast::Expr> = equalities.iter().collect();
-        let current =
-            selectivity_of_conjuncts_with_defaults(&conjuncts, table, resolver, stats, defaults, range_context);
+        let current = selectivity_of_conjuncts_with_defaults(
+            &conjuncts,
+            table,
+            resolver,
+            stats,
+            defaults,
+            range_context,
+        );
         selectivity = selectivity + current - selectivity * current;
     }
     (selectivity != 0.0).then_some(selectivity)
@@ -1944,7 +2020,15 @@ fn condition_kind(
         tidb_ast::Expr::Like { not, .. } => {
             let selectivity = defaults
                 .eval_topn_string_match
-                .then(|| string_match_selectivity(conjunct, table, resolver, stats, defaults.trigger_load))
+                .then(|| {
+                    string_match_selectivity(
+                        conjunct,
+                        table,
+                        resolver,
+                        stats,
+                        defaults.trigger_load,
+                    )
+                })
                 .flatten();
             if *not {
                 ConditionKind::NegatedStringMatch(selectivity)
@@ -1955,7 +2039,15 @@ fn condition_kind(
         tidb_ast::Expr::Regexp { not, .. } => {
             let selectivity = defaults
                 .eval_topn_string_match
-                .then(|| string_match_selectivity(conjunct, table, resolver, stats, defaults.trigger_load))
+                .then(|| {
+                    string_match_selectivity(
+                        conjunct,
+                        table,
+                        resolver,
+                        stats,
+                        defaults.trigger_load,
+                    )
+                })
                 .flatten();
             if *not {
                 ConditionKind::NegatedStringMatch(selectivity)
@@ -1966,7 +2058,15 @@ fn condition_kind(
         tidb_ast::Expr::Func { name, .. } if name.eq_ignore_ascii_case("regexp_like") => {
             let selectivity = defaults
                 .eval_topn_string_match
-                .then(|| string_match_selectivity(conjunct, table, resolver, stats, defaults.trigger_load))
+                .then(|| {
+                    string_match_selectivity(
+                        conjunct,
+                        table,
+                        resolver,
+                        stats,
+                        defaults.trigger_load,
+                    )
+                })
                 .flatten();
             ConditionKind::StringMatch(selectivity)
         }
@@ -1978,7 +2078,15 @@ fn condition_kind(
                 true => {
                     let selectivity = defaults
                         .eval_topn_string_match
-                        .then(|| string_match_selectivity(conjunct, table, resolver, stats, defaults.trigger_load))
+                        .then(|| {
+                            string_match_selectivity(
+                                conjunct,
+                                table,
+                                resolver,
+                                stats,
+                                defaults.trigger_load,
+                            )
+                        })
                         .flatten();
                     // The wrapper is what makes Go's negate family; the
                     // evaluation itself handles the inversion per value.
@@ -1987,11 +2095,16 @@ fn condition_kind(
                 false => ConditionKind::Other,
             }
         }
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => {
-            ConditionKind::Disjunction(dnf_selectivity(conjunct, table, resolver, stats, defaults, range_context))
-        }
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => ConditionKind::Disjunction(
+            dnf_selectivity(conjunct, table, resolver, stats, defaults, range_context),
+        ),
         tidb_ast::Expr::In { .. } => ConditionKind::Disjunction(row_in_selectivity(
-            conjunct, table, resolver, stats, defaults, range_context,
+            conjunct,
+            table,
+            resolver,
+            stats,
+            defaults,
+            range_context,
         )),
         _ => ConditionKind::Other,
     }
@@ -2003,9 +2116,9 @@ fn is_string_match(expr: &tidb_ast::Expr) -> bool {
     match strip_parens(expr) {
         tidb_ast::Expr::Like { .. } | tidb_ast::Expr::Regexp { .. } => true,
         tidb_ast::Expr::Func { name, .. } => name.eq_ignore_ascii_case("regexp_like"),
-        tidb_ast::Expr::Unary(
-            tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner,
-        ) => is_string_match(inner),
+        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
+            is_string_match(inner)
+        }
         _ => false,
     }
 }
@@ -4042,6 +4155,65 @@ mod tests {
         );
         let expected = 1.0 / 1_000.0 * (1.0 - 1.0 / 1_000.0);
         assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+    }
+
+    /// Go `cardinality.Selectivity`'s `ast.UnaryNot` arm returns
+    /// `1 - childSelectivity`, so `NOT (b IS NULL)` filters exactly the rows
+    /// `b IS NOT NULL` keeps. Before the UnaryNot arm was ported the whole
+    /// conjunct fell through to the generic 0.8 fallback, which charged a NOT
+    /// NULL column 20% of its rows.
+    #[test]
+    fn not_is_null_matches_is_not_null() {
+        let table = KvTable::with_storage(
+            83,
+            vec![long_column("a", 1), long_column("b", 2)],
+            Box::new(MemTableStorage::new()),
+        );
+        let equality = tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::Eq,
+            Box::new(tidb_ast::Expr::Column(vec!["a".to_owned()])),
+            Box::new(tidb_ast::Expr::Int("1".to_owned())),
+        );
+        let is_null = || tidb_ast::Expr::Is {
+            expr: Box::new(tidb_ast::Expr::Column(vec!["b".to_owned()])),
+            target: tidb_ast::IsTarget::Null,
+            not: false,
+        };
+        let is_not_null = tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(equality.clone()),
+            Box::new(tidb_ast::Expr::Is {
+                expr: Box::new(tidb_ast::Expr::Column(vec!["b".to_owned()])),
+                target: tidb_ast::IsTarget::Null,
+                not: true,
+            }),
+        );
+        let negated = tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(equality),
+            Box::new(tidb_ast::Expr::Unary(
+                tidb_ast::UnaryOp::NotKeyword,
+                Box::new(tidb_ast::Expr::Paren(Box::new(is_null()))),
+            )),
+        );
+
+        let with_not = selectivity(
+            &negated,
+            &table,
+            &NamedColumnResolver { table: &table },
+            None,
+        );
+        let positive = selectivity(
+            &is_not_null,
+            &table,
+            &NamedColumnResolver { table: &table },
+            None,
+        );
+        let expected = 1.0 / 1_000.0 * (1.0 - 1.0 / 1_000.0);
+        assert!(
+            (with_not - positive).abs() < 1e-12 && (with_not - expected).abs() < 1e-12,
+            "NOT (b IS NULL) = {with_not}, b IS NOT NULL = {positive}, expected {expected}"
+        );
     }
 }
 

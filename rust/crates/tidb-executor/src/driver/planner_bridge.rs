@@ -699,8 +699,41 @@ fn single_table_predicate(
         }
     }
 
+    // A conjunct that CONTAINS a subquery is never one source's own filter:
+    // Go's pre-push-down `DataSource` has no `PushedDownConds`, and the
+    // predicate push-down rules attach subquery-derived predicates (the
+    // semi-join's not-null probe, for instance) later. Without this an
+    // unqualified `k IN (SELECT k FROM t)` resolved against the SUBQUERY's
+    // own source too and charged it the generic 0.8 fallback, halving its NDV.
+    struct ContainsSubquery(bool);
+    impl tidb_ast::Visitor for ContainsSubquery {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() {
+                if matches!(
+                    expr,
+                    tidb_ast::Expr::Subquery(_)
+                        | tidb_ast::Expr::CompareSubquery { .. }
+                        | tidb_ast::Expr::InSubquery { .. }
+                        | tidb_ast::Expr::Exists { .. }
+                ) {
+                    self.0 = true;
+                }
+            }
+            false
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
     let mut conjuncts = Vec::new();
     split_ast_conjuncts(expr, &mut conjuncts);
+    conjuncts.retain(|conjunct| {
+        let mut visitor = ContainsSubquery(false);
+        let mut owned = conjunct.clone();
+        tidb_ast::Visitable::accept(&mut owned, &mut visitor);
+        !visitor.0
+    });
     let resolves = |conjunct: &tidb_ast::Expr| {
         let mut paths = Paths(Vec::new());
         let mut owned = conjunct.clone();

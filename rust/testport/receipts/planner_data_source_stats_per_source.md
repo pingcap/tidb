@@ -129,3 +129,55 @@ cargo test -p tidb-planner
 cargo test -p tidb-expr
 # 1206 passed; 2 failed; the same two pre-existing failures
 ```
+
+## Follow-up: `NOT (col IS NULL)` and subquery conjuncts (2026-09-09)
+
+Two `single_table_predicate` / `Selectivity` gaps surfaced while evaluating
+uncorrelated subqueries at plan time:
+
+1. Go's `cardinality.Selectivity` has an `ast.UnaryNot` arm returning
+   `1 - childSelectivity`; for `NOT (col IS NULL)` that is the same
+   not-null fraction `col IS NOT NULL` filters. The port only recognized the
+   `Is { not: true }` shape, so the parsed `Unary(NotKeyword, Paren(Is {
+   not: false }))` fell through to the generic 0.8 fallback: a NOT NULL column
+   with 10,000 analyzed rows estimated 8,000. `is_not_null_on_column` now
+   unwraps the `NOT` shape too.
+2. An unqualified conjunct that CONTAINS a subquery, such as
+   `k IN (SELECT k FROM inner_t)`, resolved its column paths against the
+   SUBQUERY's own source, so the pre-push-down per-source split charged that
+   source the 0.8 fallback even though Go's `DataSource` has no
+   `PushedDownConds` before predicate push-down. `single_table_predicate` now
+   drops every conjunct containing a subquery node, so `inner_t`'s analyzed
+   profile stays 10,000 rows / NDV 500 (Go's HashAgg over it estimates 500
+   instead of 400).
+
+Regression: new
+`access_cost::tests::not_is_null_matches_is_not_null` asserts
+`NOT (b IS NULL)` and `b IS NOT NULL` produce the same pseudo selectivity
+(`0.001 * 0.999`). It failed before with the 0.8 fallback and passes after.
+The subquery-conjunct half is covered by the existing
+`driver::tests::subqueries::explaining_a_correlated_scalar_type_reads_no_storage`
+fixture, whose inner `HashAgg` now estimates `500.00` (was `400.00`).
+
+```text
+cargo test -p tidb-executor --lib not_is_null_matches_is_not_null
+# ok after; FAILED before (0.0008 vs 0.000999)
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1251 passed; 9 failed; no additions to the baseline set
+
+cargo test -p tidb-planner
+# 1001 + 268 + 6 + 3 passed; 0 failed
+
+cargo check --locked --all-targets -p tidb-planner -p tidb-executor
+rustfmt --edition 2021 --config skip_children=true --check <changed files>
+git diff --check
+# clean
+```
+
+Both changes are executor-side selectivity parity fixes; the remaining
+`tpcc_conditions_ten_and_twelve` gap (297.03 vs 300.00) is the planner's
+`analyzed_filter_selectivity`, which has no histogram access and approximates
+the `h_c_w_id = 1` equality as `1/NDV` instead of the histogram's
+repeat-based `29,702/299,995`. Closing it needs the histogram collection on
+the `DataSource`, which is a separate batch.
