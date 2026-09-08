@@ -11390,3 +11390,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (USING join pin): the USING clause merges the shared column,
   answers bare-name selection, and SELECT * shows it once. Pinned in
   `crates/tidb-session/tests/using_join_source.rs`.
+- 2026-09-08 (RIGHT JOIN pin): every right-side row survives; unmatched
+  left columns come back NULL. Pinned in
+  `crates/tidb-session/tests/right_join_source.rs`.
