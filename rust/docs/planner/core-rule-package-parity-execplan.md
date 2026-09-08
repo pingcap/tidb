@@ -275,3 +275,30 @@ The static partition slice is commit `d6285efd11` on `origin/hparser-integration
 `tidb_expr::Expression`, `Column`, and `Schema` supply Go expression and schema behavior. `plan_builder::catalog::SourceIndex` and `logical::DataSourceColumn` carry the index/table metadata needed by `CheckIndexCanBeKey`. `logical::fold::fold_owned` is the iterative ownership-safe equivalent of Go's recursive `BuildKeyInfoPortal`. No new external dependency is required.
 
 Revision note (2026-08-29): created after the static partition processor integration exposed duplicated and narrowed `rule/util` helpers; establishes nested `util` as the next atomic package.
+
+
+## Current-master re-audit checkpoint (2026-09-08)
+
+The previous whole-package description is historical evidence, not current-master completion proof. Master `f5cf8f6337612c6ae51fb6e384e4bb3469dde680` contains nineteen direct artifacts, including the fourth test file `rule_prune_indexes_internal_test.go`. The complete current inventory, blob identities, line counts, declaration list and honest reading status are recorded in `rust/docs/planner/core-rule-reading-inventory-20260908.md`. Ten direct artifacts were read in full during this checkpoint; remaining files must be read before editing package production code.
+
+The preceding constraint fix is pushed as `feb796539f`. Its new evaluation-context plumbing enables this package's next fix, but `logicalConstant` still ignores conversion events. The next milestone is to finish reading all direct artifacts, review the corresponding Rust owners, reproduce strict/warning/ignore classification regressions, and repair the classifier under the existing statement policy. Run Ready and update the package receipt before committing a behavior batch. No claim of complete optimizer parity is made at this checkpoint.
+
+Reading checkpoint update: fourteen of nineteen direct artifacts have now been read in full. The remaining five are `rule_collect_plan_stats.go`, `rule_partition_processor.go`, `rule_partition_pruning_test.go`, `rule_predicate_simplification.go`, and `rule_prune_indexes.go`. Production code remains unchanged pending completion of the inventory.
+
+Reading checkpoint update: sixteen of nineteen direct artifacts have now been read, including all statistics-load and predicate-simplification code. Preserve Go processCondition double classification when adding warning regression coverage. The partition processor, partition pruning test file and index-pruning implementation remain pending before production edits.
+
+Reading checkpoint update: eighteen of nineteen direct artifacts are now read. All four Go test files and the complete index-pruning implementation are covered. Only the 2149-line partition processor remains; no production edit has been made in this package audit.
+
+
+## Statement conversion batch (2026-09-08)
+
+
+Progress: all nineteen direct artifacts (7460 lines) were read before production edits, including all 2149 partition-processor lines in bounded segments. The inventory records every Git blob and function declaration. No Go source was edited.
+
+The Rust logicalConstant owner discarded conversion events, causing strict-mode `1garbage` to become true and `0garbage` to become false. It also omitted the second leaf classification performed by Go processCondition, dropping observable warnings. Reuse the already-audited constraint conversion adapter with the RuleContext statement evaluation context. Preserve failed conversions as Other; retain the plan-cache guard before conversion. Process leaves twice and preserve unchanged AND/OR expressions instead of unnecessarily rebuilding them.
+
+Regression evidence: three new tests failed against the pre-fix implementation (True versus Other, removed AND operand, and zero versus two warnings). All five predicate owner tests now pass, together with six constraint tests and 57 logical-rule consumer tests. Ready `make lint` passes. Commands and remaining limitations are recorded in `rust/testport/receipts/planner_core_rule.md`.
+
+Decision: keep one crate-private conversion adapter in constraint instead of duplicating diagnostic formatting in the rule. The adapter refactor preserves the preceding constraint batch's behavior, verified by all six tests. No new dependency or public API is introduced.
+
+Outcome: this behavior batch is validated; the package as a whole remains under audit. Source reading is complete but is not proof that all four original Go test artifacts execute equivalently in Rust. Continue with join helper/final deletion semantics, original test mapping, constant propagation, partition processing, statistics-loading consumers, and the remaining planner/statistics packages. Underlying conversion overflow/truncation diagnostics and invalid UTF-8 behavior require their own datatype-package audit.

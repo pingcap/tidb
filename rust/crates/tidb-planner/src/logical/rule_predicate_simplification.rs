@@ -60,16 +60,16 @@ fn logical_constant(ctx: &RuleContext<'_>, constant: &Constant) -> PredicateType
     if matches!(constant.value, Datum::Null) {
         return PredicateType::False;
     }
-    constant
-        .value
-        .to_bool()
-        .map_or(PredicateType::Other, |value| {
-            if value.value == 0 {
+    crate::constraint::constant_to_bool(ctx.eval_context, &constant.value).map_or(
+        PredicateType::Other,
+        |value| {
+            if value == 0 {
                 PredicateType::False
             } else {
                 PredicateType::True
             }
-        })
+        },
+    )
 }
 
 fn predicate_type<'a>(
@@ -149,7 +149,9 @@ fn process_logical(
 ) -> (Expression, PredicateType, bool) {
     let (_, kind) = predicate_type(ctx, &expression);
     if !matches!(kind, PredicateType::Or | PredicateType::And) {
-        return (expression, kind, false);
+        // Go processCondition also classifies leaves twice; conversions can warn.
+        let (_, result_type) = predicate_type(ctx, &expression);
+        return (expression, result_type, false);
     }
     let Expression::ScalarFunction(function) = &expression else {
         unreachable!()
@@ -172,7 +174,13 @@ fn process_logical(
         _ => None,
     };
     let changed = selected.is_some() || left_changed || right_changed;
-    let result = selected.unwrap_or_else(|| rebuild(ctx, &expression, vec![left, right]));
+    let result = selected.unwrap_or_else(|| {
+        if changed {
+            rebuild(ctx, &expression, vec![left, right])
+        } else {
+            expression.clone()
+        }
+    });
     let (_, result_type) = predicate_type(ctx, &result);
     if changed {
         mark_skip(
@@ -735,6 +743,138 @@ mod tests {
             FieldType::new(FieldTypeCode::Tiny),
             args,
         ))
+    }
+
+    struct WarningContext {
+        level: tidb_expr::ErrorLevel,
+        warnings: std::cell::RefCell<Vec<(u16, String)>>,
+    }
+
+    impl tidb_expr::Columns for WarningContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn truncate_level(&self) -> tidb_expr::ErrorLevel {
+            self.level
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn logical_constant_obeys_statement_truncation_policy() {
+        for level in [
+            tidb_expr::ErrorLevel::Error,
+            tidb_expr::ErrorLevel::Warn,
+            tidb_expr::ErrorLevel::Ignore,
+        ] {
+            let context = WarningContext {
+                level,
+                warnings: Default::default(),
+            };
+            let allocator = PlanIdAllocator::new();
+            let mut ctx = test_context(&allocator);
+            ctx.eval_context = &context;
+            for (input, expected) in [
+                ("1garbage", PredicateType::True),
+                ("0garbage", PredicateType::False),
+            ] {
+                let constant = Constant::new(
+                    Datum::new_string(input),
+                    FieldType::new(FieldTypeCode::VarString),
+                );
+                assert_eq!(
+                    logical_constant(&ctx, &constant),
+                    if level == tidb_expr::ErrorLevel::Error {
+                        PredicateType::Other
+                    } else {
+                        expected
+                    }
+                );
+            }
+            let expected = if level == tidb_expr::ErrorLevel::Warn {
+                vec![
+                    (
+                        1292,
+                        "Truncated incorrect DOUBLE value: '1garbage'".to_owned(),
+                    ),
+                    (
+                        1292,
+                        "Truncated incorrect DOUBLE value: '0garbage'".to_owned(),
+                    ),
+                ]
+            } else {
+                vec![]
+            };
+            assert_eq!(*context.warnings.borrow(), expected);
+        }
+    }
+
+    #[test]
+    fn short_circuit_preserves_go_conversion_order_and_cache_guard() {
+        let context = WarningContext {
+            level: tidb_expr::ErrorLevel::Warn,
+            warnings: Default::default(),
+        };
+        let allocator = PlanIdAllocator::new();
+        let mut ctx = test_context(&allocator);
+        ctx.eval_context = &context;
+        let constant = Constant::new(
+            Datum::new_string("1garbage"),
+            FieldType::new(FieldTypeCode::VarString),
+        );
+        assert!(short_circuit(&ctx, vec![Expression::Constant(constant.clone())]).is_empty());
+        // Go processCondition classifies before and after processing, even a leaf.
+        assert_eq!(
+            *context.warnings.borrow(),
+            vec![
+                (
+                    1292,
+                    "Truncated incorrect DOUBLE value: '1garbage'".to_owned()
+                );
+                2
+            ]
+        );
+        context.warnings.borrow_mut().clear();
+        ctx.use_plan_cache = true;
+        let mut parameter = constant;
+        parameter.param_marker = Some(tidb_expr::constant::ParamMarker { order: 0 });
+        assert_eq!(
+            short_circuit(&ctx, vec![Expression::Constant(parameter)]).len(),
+            1
+        );
+        assert!(context.warnings.borrow().is_empty());
+    }
+
+    #[test]
+    fn strict_short_circuit_retains_truncated_operands() {
+        let context = WarningContext {
+            level: tidb_expr::ErrorLevel::Error,
+            warnings: Default::default(),
+        };
+        let allocator = PlanIdAllocator::new();
+        let mut ctx = test_context(&allocator);
+        ctx.eval_context = &context;
+        for (operator, value) in [("and", "1garbage"), ("or", "0garbage")] {
+            let original = function(
+                operator,
+                vec![
+                    column(1),
+                    Expression::Constant(Constant::new(
+                        Datum::new_string(value),
+                        FieldType::new(FieldTypeCode::VarString),
+                    )),
+                ],
+            );
+            let (result, _, changed) = process_logical(&ctx, original.clone());
+            assert!(
+                result.equal(&original),
+                "{operator} must retain a failed conversion"
+            );
+            assert!(!changed);
+        }
+        assert!(context.warnings.borrow().is_empty());
     }
 
     #[test]

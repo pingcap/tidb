@@ -37,36 +37,38 @@ pub fn delete_true_exprs(
             if maybe_over_optimized_4_plan_cache(use_plan_cache, std::slice::from_ref(condition)) {
                 return true;
             }
-            let Ok(converted) = constant.value.to_bool() else {
-                return true;
-            };
-            if converted.event.is_some() {
-                let message = match &constant.value {
-                    Datum::String(value) => format!(
-                        "Truncated incorrect DOUBLE value: '{}'",
-                        tidb_datatype::float_warning_input(
-                            value.as_utf8().expect("ToBool validated the string"),
-                        ),
-                    ),
-                    Datum::Bytes(value) => format!(
-                        "Truncated incorrect DOUBLE value: '{}'",
-                        tidb_datatype::float_warning_input(
-                            std::str::from_utf8(value).expect("ToBool validated the bytes"),
-                        ),
-                    ),
-                    Datum::BinaryLiteral(value) | Datum::Bit(value) => format!(
-                        "Truncated incorrect BINARY value: '{}'",
-                        tidb_datatype::warning_subject_byte_cap(&value.to_string()),
-                    ),
-                    _ => return true,
-                };
-                if context.handle_truncate(&message).is_err() {
-                    return true;
-                }
-            }
-            converted.value != 1
+            constant_to_bool(context, &constant.value) != Some(1)
         })
         .collect()
+}
+
+/// Shared planner equivalent of Datum.ToBool with the statement TypeContext.
+/// A rejected conversion must not become proof that a predicate is true/false.
+pub(crate) fn constant_to_bool(context: &dyn Columns, value: &Datum) -> Option<i64> {
+    let converted = value.to_bool().ok()?;
+    if converted.event.is_some() {
+        let message = match value {
+            Datum::String(value) => format!(
+                "Truncated incorrect DOUBLE value: '{}'",
+                tidb_datatype::float_warning_input(
+                    value.as_utf8().expect("ToBool validated the string")
+                ),
+            ),
+            Datum::Bytes(value) => format!(
+                "Truncated incorrect DOUBLE value: '{}'",
+                tidb_datatype::float_warning_input(
+                    std::str::from_utf8(value).expect("ToBool validated the bytes")
+                ),
+            ),
+            Datum::BinaryLiteral(value) | Datum::Bit(value) => format!(
+                "Truncated incorrect BINARY value: '{}'",
+                tidb_datatype::warning_subject_byte_cap(&value.to_string()),
+            ),
+            _ => return None,
+        };
+        context.handle_truncate(&message).ok()?;
+    }
+    Some(converted.value)
 }
 
 /// Go `DeleteTrueExprsBySchema`: remove exactly
