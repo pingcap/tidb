@@ -48,3 +48,32 @@ The request flags now depend on the Analyze-specific session value and plan ID;
 incorrect propagation would affect TiKV batching or runtime statistics. The
 broader executor package and real TiKV Analyze lifecycle remain outside this
 focused source batch, and no full repository or Bazel build was run locally.
+
+## Follow-up: the test fixtures must sample every row (2026-09-09)
+
+`adjusted_sample_rate(None, None)` returns Go's 0.001 default
+(`pkg/executor/builder.go:3360`: `statsTbl == nil && !hasPD`). That is
+Go-correct, but the test fixtures call `analyze_kv_table(..., None, ...)`
+against tables that have rows and no `mysql.stats_meta` row, so the Bernoulli
+collector kept no sample and every histogram came out empty. The estimate
+tests then read 1.0 for every access path.
+
+The fixtures now say "read every row" explicitly
+(`sample_rate = Some(1.0)`): `driver::tests::scale_analyzed_tpcc_table` and
+the `tests_analyze_suite_source` helpers. `analyze_auto_adjusted_sample_rate_boundaries`
+also pinned the stale `None -> 1.0` expectation; it now pins Go's 0.001
+default and keeps `Some(0) -> 1.0` for a counted-but-empty table.
+
+Regressions repaired (8): `residual_selection_uses_logical_rows_over_access_rows`,
+`analyze_auto_adjusted_sample_rate_boundaries`,
+`analyze_clustered_varchar_primary_key_buckets_without_topn`,
+`analyze_collation_sort_keys_shape_topn_and_histograms`,
+`analyze_extract_topn_entries_and_counts_from_index_and_column`,
+`analyze_full_sampling_on_virtual_or_prefix_column_index`,
+`analyze_partition_publishes_per_partition_then_partition_scoped_statistics`,
+and `full_sampling_keeps_nulls_out_of_column_and_index_distributions`.
+
+Ready validation: `tidb-executor` lib run with `--test-threads=1` reports
+1127 passed / 99 failed with no new failures against the pre-batch failure
+list (the eight above are the only removals); `cargo fmt --all -- --check`
+(three pre-existing drift files only); `git diff --check -- rust`.

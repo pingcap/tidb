@@ -57,9 +57,21 @@ fn analyze_and_publish(
     physical_id: i64,
     options: &AnalyzeOptions,
 ) {
-    let statistics = analyze_kv_table(table, options, None, &ctx())
+    let statistics = analyze_kv_table(table, &full_sample_options(options.clone()), None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
     catalog.set_table_statistics(physical_id, Arc::new(statistics));
+}
+
+/// The fixture's tables have rows but no `mysql.stats_meta.count`, so Go's
+/// `getAdjustedSampleRate` would fall back to its 0.001 default and the
+/// Bernoulli collector would keep no sample at all. A real `ANALYZE` of a
+/// counted table reads every row of a table this small, so these tests say
+/// so explicitly.
+fn full_sample_options(options: AnalyzeOptions) -> AnalyzeOptions {
+    AnalyzeOptions {
+        sample_rate: Some(1.0),
+        ..options
+    }
 }
 
 /// Renders one datum the way Go's testkit prints a TEXT cell.
@@ -139,10 +151,10 @@ fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
     let mut table = kv_table_of(&catalog, "t");
     let statistics = analyze_kv_table(
         &mut table,
-        &AnalyzeOptions {
+        &full_sample_options(AnalyzeOptions {
             num_topn: 2,
             ..AnalyzeOptions::default()
-        },
+        }),
         None,
         &ctx(),
     )
@@ -303,7 +315,7 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
     assert_eq!(partition_ids.len(), 4);
 
     // Whole-table analyze publishes non-pseudo statistics per partition.
-    let options = AnalyzeOptions::default();
+    let options = full_sample_options(AnalyzeOptions::default());
     let mut table = kv_table_of(&catalog, "t");
     for physical_id in &partition_ids {
         let mut partition = table.clone();
@@ -394,11 +406,11 @@ fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
         insert(&mut catalog, &format!("insert into te values ({i}, 0)"));
     }
     let mut table = kv_table_of(&catalog, "te");
-    let options = AnalyzeOptions {
+    let options = full_sample_options(AnalyzeOptions {
         num_buckets: 256,
         num_topn: 20,
         ..AnalyzeOptions::default()
-    };
+    });
     let statistics = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
 
@@ -443,10 +455,10 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
         "insert into sampling_index_virtual_col (a) values (1), (2), (null), (3), (4), (null), (5), (5), (5), (5)",
     );
     let mut table = kv_table_of(&catalog, "sampling_index_virtual_col");
-    let options = AnalyzeOptions {
+    let options = full_sample_options(AnalyzeOptions {
         num_topn: 1,
         ..AnalyzeOptions::default()
-    };
+    });
     let statistics = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
 
@@ -510,15 +522,18 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
 /// which is the number Go's Note rows print — 220000 stored rows give the
 /// 0.500000 of `use min(1, 110000/220000) as the sample-rate=0.5`, and a
 /// small table's storage count 10000 gives the 1.000000 of
-/// `use min(1, 110000/10000)`; a table with no stats row at all reads all of
-/// it (rate 1).
+/// `use min(1, 110000/10000)`. A table with NO `mysql.stats_meta` row at all
+/// is Go's `statsTbl == nil && !hasPD` case, which returns the 0.001 default
+/// (`pkg/executor/builder.go:3360`); only a counted-but-empty table
+/// (`RealtimeCount == 0`) reads every row.
 #[test]
 fn analyze_auto_adjusted_sample_rate_boundaries() {
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
     assert_eq!(adjusted_sample_rate(Some(220_000), None), 0.5);
     assert_eq!(adjusted_sample_rate(Some(10_000), None), 1.0);
     assert_eq!(adjusted_sample_rate(Some(3), None), 1.0);
-    assert_eq!(adjusted_sample_rate(None, None), 1.0);
+    assert_eq!(adjusted_sample_rate(Some(0), None), 1.0);
+    assert_eq!(adjusted_sample_rate(None, None), 0.001);
 }
 
 /// Go `analyze_test.go:509::TestIssue20874`: utf8mb4_unicode_ci /
@@ -541,11 +556,11 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
         "insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')",
     );
     let mut table = kv_table_of(&catalog, "t");
-    let options = AnalyzeOptions {
+    let options = full_sample_options(AnalyzeOptions {
         num_buckets: 2,
         num_topn: 3,
         ..AnalyzeOptions::default()
-    };
+    });
     let statistics = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
 
@@ -664,8 +679,13 @@ fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
         create(&mut catalog, spelling);
         insert(&mut catalog, &format!("insert into {name} values('1111')"));
         let mut table = kv_table_of(&catalog, name);
-        let statistics = analyze_kv_table(&mut table, &AnalyzeOptions::default(), None, &ctx())
-            .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
+        let statistics = analyze_kv_table(
+            &mut table,
+            &full_sample_options(AnalyzeOptions::default()),
+            None,
+            &ctx(),
+        )
+        .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
 
         // show stats_topn is empty: no TopN entries anywhere.
         for column in statistics.columns.values() {

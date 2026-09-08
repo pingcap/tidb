@@ -705,6 +705,13 @@ both `oltp_read_only` and `oltp_read_write`.
   local `LimitExec` and read a full 1,024-entry batch first. The reader now
   hands the cap to `IndexRangeSourceExec::accept_scan_limit`. Receipt:
   `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
+- [x] 2026-09-09: repaired the ANALYZE test fixtures after the Go-correct
+  `adjusted_sample_rate(None, None) = 0.001` default. The fixtures analyze
+  tables that have rows but no `mysql.stats_meta` row, so the Bernoulli
+  collector kept no sample and every histogram was empty; they now request
+  full sampling explicitly, and the stale `None -> 1.0` assertion pins Go's
+  0.001 default instead. Receipt:
+  `rust/testport/receipts/executor_analyze_store_batch.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
