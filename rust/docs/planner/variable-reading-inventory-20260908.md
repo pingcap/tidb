@@ -11,18 +11,18 @@ This is a prerequisite for the planner range-limit transmission repair. Enumerat
 | pkg/sessionctx/variable/embedding_vars_test.go | 141 | b25ed580afde13fba058a94cbb93933b457863e4 | complete |
 | pkg/sessionctx/variable/error.go | 52 | ec5a92cb4b9ee0e81083bdacaf495580fb8c487f | complete |
 | pkg/sessionctx/variable/main_test.go | 34 | 90b6abe8a546ebaaecd6847065a51e7619ab4564 | complete |
-| pkg/sessionctx/variable/mock_globalaccessor.go | 131 | 78449d3f4ee3c9f62e7b8e72c95fd743f149d10f | pending |
-| pkg/sessionctx/variable/mock_globalaccessor_test.go | 57 | d0f4970f5227289671dd1a58bfc48b7505983d9a | pending |
+| pkg/sessionctx/variable/mock_globalaccessor.go | 131 | 78449d3f4ee3c9f62e7b8e72c95fd743f149d10f | complete |
+| pkg/sessionctx/variable/mock_globalaccessor_test.go | 57 | d0f4970f5227289671dd1a58bfc48b7505983d9a | complete |
 | pkg/sessionctx/variable/nextgen_test.go | 84 | 7b5986b3293e257d0b276e8f957d6805343f5873 | complete |
 | pkg/sessionctx/variable/noop.go | 649 | 9466e014911fdac5f8f570310fb6340eb6784ae8 | pending |
-| pkg/sessionctx/variable/removed.go | 68 | f540f3894abe0e471186051ed20dfc8500482603 | pending |
-| pkg/sessionctx/variable/removed_test.go | 29 | 5490a54250bd51b1956600e9024a7c665805d3e3 | pending |
+| pkg/sessionctx/variable/removed.go | 68 | f540f3894abe0e471186051ed20dfc8500482603 | complete |
+| pkg/sessionctx/variable/removed_test.go | 29 | 5490a54250bd51b1956600e9024a7c665805d3e3 | complete |
 | pkg/sessionctx/variable/sequence_state.go | 69 | a78daf52684176b9179a6cdd420b08a438c3796c | complete |
 | pkg/sessionctx/variable/session.go | 4013 | 6ee9f24a21b915c42a1e10dd7378da90d5780474 | pending |
 | pkg/sessionctx/variable/setvar_affect.go | 158 | be61d7f3c5b2cdba5565c88a9c7adddbfd5d63d3 | pending |
 | pkg/sessionctx/variable/slow_log.go | 1216 | 79f7c7c7289b79620ed7a5edd809984c61b38054 | pending |
-| pkg/sessionctx/variable/statusvar.go | 178 | 762693e4af842c17e1ee2377791abab3e631a72d | pending |
-| pkg/sessionctx/variable/statusvar_test.go | 66 | 7336d821a228f19f4224bcc288791e6d2a68f068 | pending |
+| pkg/sessionctx/variable/statusvar.go | 178 | 762693e4af842c17e1ee2377791abab3e631a72d | complete |
+| pkg/sessionctx/variable/statusvar_test.go | 66 | 7336d821a228f19f4224bcc288791e6d2a68f068 | complete |
 | pkg/sessionctx/variable/sysvar.go | 4404 | dc386aa826a9e35b860ace3577f8859cda667be8 | pending |
 | pkg/sessionctx/variable/sysvar_test.go | 2422 | dacf87345db71e486ed229a15077b2c644494848 | pending |
 | pkg/sessionctx/variable/tests/BUILD.bazel | 43 | 820f01709636ba61e6524d3b7b2f816fa39e3bf9 | pending |
@@ -32,7 +32,7 @@ This is a prerequisite for the planner range-limit transmission repair. Enumerat
 | pkg/sessionctx/variable/tests/slowlog/main_test.go | 34 | 09a52e707f12bd8c84d08eb4b49905518ec22dba | pending |
 | pkg/sessionctx/variable/tests/slowlog/slow_log_test.go | 707 | 79afe57e8ef2442c4d71af175e772a6eed600895 | pending |
 | pkg/sessionctx/variable/tests/variable_test.go | 743 | 74b2f17fc5b4d7a402473aa5b55d33fa9bee989a | pending |
-| pkg/sessionctx/variable/tidb_vars.go | 69 | 30576c2c4373b63330c4de8446feb0c90c7abe72 | pending |
+| pkg/sessionctx/variable/tidb_vars.go | 69 | 30576c2c4373b63330c4de8446feb0c90c7abe72 | complete |
 | pkg/sessionctx/variable/variable.go | 844 | b586c0965319f351b2f46bd2cbe292e1e1ebbb11 | pending |
 | pkg/sessionctx/variable/varsutil.go | 557 | 0322d2fd948b13c93b73e320cd3a9d2ba9a0caac | pending |
 | pkg/sessionctx/variable/varsutil_test.go | 728 | 413fbc73c3e46107ee9fe48fcb272289b9b3ef61 | pending |
@@ -45,3 +45,11 @@ Completed BUILD, OWNERS, embedding configuration production/tests, error definit
 
 Next: mock-global-accessor production/tests, removed-variable production/tests, status-variable production/tests, then remaining large files in bounded segments. Complete function inventory as each remaining file is read. The range-size value, validation/setter, statement snapshot and fallback-warning/cache paths remain the intended repair scope.
 
+
+## Second reading checkpoint
+
+Seven additional direct artifacts read completely: mock_globalaccessor.go and its test, removed.go and its test, statusvar.go and its test, tidb_vars.go. Fifteen direct artifacts are now fully read. No production edits were made.
+
+Mock global setters validate before invoking hooks, while SetGlobalSysVarOnly bypasses hooks/validation after checking registration. The test-mode accessor returns an unknown-variable error where the lightweight accessor returns an empty value. Removed-variable lookup is exact-name and returns the source-specific reason. Status collection stops on the first provider error; later providers overwrite duplicate names. Unregistration removes the last matching provider by swapping the final entry. Default statistics expose live connect-attribute counters and session keys examined. TiDB hook declarations include statistics cache capacity and statistics owner controls and must not be mistaken for implementations.
+
+Remaining direct files: noop.go, session.go, setvar_affect.go, slow_log.go, sysvar.go, sysvar_test.go, variable.go, varsutil.go, varsutil_test.go. Nested test packages remain pending. The intended range-limit repair is still open.

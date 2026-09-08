@@ -247,3 +247,9 @@ inventory records every tracked direct/nested artifact and eight fully read
 direct files, including nextgen_test.go, which is absent from the ordinary
 BUILD test list. Remaining files are pending; this is source-reading evidence
 only, with no production fix or new validation claim.
+
+At 398b4c16af, another seven variable artifacts were read completely, bringing
+direct reading coverage to fifteen. The inventory records accessor, removed
+variable, status-variable and registered-hook findings. Nine direct files and
+nested tests remain pending. No production change or test execution is claimed
+for this source-reading checkpoint.
