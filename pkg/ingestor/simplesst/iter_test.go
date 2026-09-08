@@ -99,6 +99,26 @@ func TestMergeKVIter(t *testing.T) {
 	err = iter.Close()
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.Opened.Load())
+
+	iter, err = NewMergeKVIter(
+		ctx,
+		filenames,
+		[]uint64{0, 0, 0},
+		trackStore,
+		5,
+		true,
+		0,
+	)
+	require.NoError(t, err)
+	require.False(t, iter.iter.checkHotspot)
+	got = got[:0]
+	for iter.Next() {
+		got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	}
+	require.NoError(t, iter.Error())
+	require.Equal(t, expected, got)
+	require.NoError(t, iter.Close())
+	require.EqualValues(t, 0, trackStore.Opened.Load())
 }
 
 func TestOneUpstream(t *testing.T) {
@@ -389,6 +409,9 @@ func TestHotspot(t *testing.T) {
 	t.Cleanup(func() {
 		ConcurrentReaderBufferSizePerConc = oldConcurrentReaderBufferSize
 	})
+	require.Equal(t, 0, getConcurrentReaderConcurrency(25))
+	require.Equal(t, 1, getConcurrentReaderConcurrency(26))
+	require.Equal(t, 256, getConcurrentReaderConcurrency(readerMemoryForConcurrency(300)))
 
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
@@ -417,6 +440,20 @@ func TestHotspot(t *testing.T) {
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
+	cappedIter, err := NewMergeKVIter(
+		ctx,
+		filenames,
+		make([]uint64, len(filenames)),
+		store,
+		26,
+		true,
+		readerMemoryForConcurrency(300),
+	)
+	require.NoError(t, err)
+	for _, reader := range cappedIter.iter.readers {
+		require.Equal(t, concurrentReaderTotalConcurrency, reader.r.byteReader.concurrentReader.concurrency)
+	}
+	require.NoError(t, cappedIter.Close())
 
 	// readerBufSize = 8+5+8+5, every KV will cause reload
 	iter, err := NewMergeKVIter(

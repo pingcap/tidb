@@ -188,22 +188,27 @@ func TestMergeOperator(t *testing.T) {
 	testcases := []struct {
 		failpointValue string
 		expectError    error
+		concurrency    int
 	}{
 		{
 			failpointValue: "return(0)",
 			expectError:    nil,
+			concurrency:    0,
 		},
 		{
 			failpointValue: "return(1)",
 			expectError:    errors.Errorf("mock error in mergeOverlappingFilesInternal"),
+			concurrency:    1,
 		},
 		{
 			failpointValue: "return(2)",
 			expectError:    errors.Errorf("task panic: merge_sort, func info: mergeMinimalTask"),
+			concurrency:    1,
 		},
 		{
 			failpointValue: "return(3)",
 			expectError:    context.DeadlineExceeded,
+			concurrency:    1,
 		},
 	}
 
@@ -224,10 +229,11 @@ func TestMergeOperator(t *testing.T) {
 			0,
 			nil,
 			nil,
-			1,
+			tc.concurrency,
 			false,
 			engineapi.OnDuplicateKeyIgnore,
 		)
+		require.Equal(t, max(tc.concurrency, 1), op.concurrency)
 
 		datas := []string{
 			"/tmp/1",
@@ -241,7 +247,6 @@ func TestMergeOperator(t *testing.T) {
 		err := MergeOverlappingFiles(
 			wctx,
 			datas,
-			1,
 			op,
 		)
 

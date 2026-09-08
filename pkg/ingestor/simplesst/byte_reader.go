@@ -37,6 +37,8 @@ var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
 	ConcurrentReaderBufferSizePerConc = int(8 * size.MB)
+	// concurrentReaderTotalConcurrency limits the range-read fan-out for one file.
+	concurrentReaderTotalConcurrency = 256
 )
 
 // byteReader provides structured reading on a byte stream of external storage.

@@ -197,7 +197,6 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 		require.NoError(t, MergeOverlappingFiles(
 			wctx,
 			group,
-			1,
 			op,
 		))
 	}
