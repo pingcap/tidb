@@ -896,6 +896,12 @@ both `oltp_read_only` and `oltp_read_write`.
   chunk, and the pipeline admits one lane per chunk. Setting Go's default
   concurrency (5) and chunking at 1024 rows fixed six existing regressions.
   Receipt: `rust/testport/receipts/executor_join.md`.
+- [x] 2026-09-09: corrected the one-chunk DISTINCT HashAgg test. It asserted
+  `workers > 1` for a single four-row chunk, impossible under
+  one-lane-per-chunk and contradicted by the same file's one-chunk test
+  (`threads == 1`); Go's `fetchChildData` also hands a chunk to one worker.
+  The assertion is `workers >= 1` and the test proves the pipeline, not the
+  worker count. Receipt: `rust/testport/receipts/executor_join.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

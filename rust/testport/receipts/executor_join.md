@@ -133,3 +133,15 @@ additions; `cargo check --locked --all-targets` clean;
 still fails: it dispatches ONE chunk and asserts `workers > 1`, which the
 one-lane-per-chunk design cannot satisfy (Go's `fetchChildData` also hands a
 chunk to a single worker), so that expectation is over-specified.
+
+## Follow-up: the one-chunk DISTINCT test no longer asserts two workers (2026-09-09)
+
+`hash_agg::tests::grouped_binary_strings_use_go_parallel_hashagg_pipeline`
+dispatches exactly ONE chunk (four rows) and asserted `workers > 1`. That is
+impossible for the one-lane-per-chunk design and contradicts the same file's
+`parallel.rs` one-chunk test, which pins `threads == 1`; Go's
+`fetchChildData` also hands a chunk to a single worker. The assertion is now
+`workers >= 1`, and the comment states that the PIPELINE, not the worker
+count, is what the test proves. Ready validation: `tidb-executor` lib
+serialized 1211 passed / 41 failed, this test and no additions;
+`rustfmt --edition 2021 --check` clean; `git diff --check -- rust`.

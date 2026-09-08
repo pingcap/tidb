@@ -3175,7 +3175,11 @@ mod tests {
             .pipeline_run_info()
             .expect("Go admits this DISTINCT HashAgg to its parallel pipeline");
         assert_eq!(dispatched, 1);
-        assert!(workers > 1);
+        // One chunk is handed to exactly ONE partial worker, by this port and
+        // by Go's `fetchChildData` alike (`parallel.rs`'s one-chunk test pins
+        // `threads == 1`). The pipeline -- not the worker count -- is what
+        // this test proves.
+        assert!(workers >= 1);
         let mut rows = Vec::new();
         loop {
             rows.extend((0..output.num_rows()).map(|index| {
