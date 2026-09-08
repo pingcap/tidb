@@ -131,12 +131,23 @@ pub fn enforce_property(
     let mut base = BasePhysicalPlan::new(allocator, "Sort", child.query_block_offset());
     base.base.set_stats(child.stats_info().cloned());
     base.set_children_req_props(vec![Some(sort_req_prop)]);
+    // Go's `prop.SortItems` hold the complete `*expression.Column`, so the
+    // executor can compile a `keyCmpFunc` from `col.GetType()`. This port
+    // reduces a `SortItem` to a `UniqueID` while matching properties, so the
+    // typed column has to be recovered from the child schema here, where the
+    // Sort is materialized. Without it the executor sees a `Column` whose
+    // `ret_type` is `None` and cannot build the compare function.
     let by_items = prop
         .sort_items
         .iter()
         .map(|item| {
+            let column = child
+                .schema()
+                .and_then(|schema| schema.retrieve_column(&item.col))
+                .cloned()
+                .unwrap_or_else(|| item.col.clone());
             tidb_expr::aggregation::ByItems::new(
-                tidb_expr::expression::Expression::Column(item.col.clone()),
+                tidb_expr::expression::Expression::Column(column),
                 item.desc,
             )
         })
@@ -174,6 +185,17 @@ mod tests {
         let mut root = RootTask::default();
         root.set_plan(PhysicalPlan::TableDual(PhysicalTableDual {
             base: op_with_stats("Dual", rows),
+            ..PhysicalTableDual::default()
+        }));
+        Task::Root(root)
+    }
+
+    fn root_task_over_schema(rows: f64, schema: tidb_expr::schema::Schema) -> Task {
+        let mut base = op_with_stats("Dual", rows);
+        base.base.set_schema(Some(schema));
+        let mut root = RootTask::default();
+        root.set_plan(PhysicalPlan::TableDual(PhysicalTableDual {
+            base,
             ..PhysicalTableDual::default()
         }));
         Task::Root(root)
@@ -249,6 +271,38 @@ mod tests {
         assert_eq!(child_prop.task_tp, TaskType::Root);
         assert!((child_prop.expected_cnt - f64::MAX).abs() < f64::EPSILON);
         assert!(!child_prop.can_add_enforcer);
+    }
+
+    #[test]
+    fn the_enforced_sort_by_items_carry_the_child_column_type() {
+        // `SortItem` keeps only a `UniqueID` while properties compare by it,
+        // but Go's `prop.SortItems` hold the complete `*expression.Column` and
+        // the executor compiles `keyCmpFuncs` from `col.GetType()`. A typeless
+        // by-item reaches `SortExec` and fails with "Get unexpected
+        // expression", so materializing the Sort must recover the typed
+        // child column.
+        let allocator = PlanIdAllocator::new();
+        let typed = tidb_expr::column::Column::new(
+            3,
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        let task = enforce_property(
+            &sorted_prop(&[(3, false)]),
+            root_task_over_schema(10.0, tidb_expr::schema::Schema::new(vec![typed])),
+            &allocator,
+        )
+        .expect("enforces");
+        let Some(PhysicalPlan::Sort(sort)) = task.plan() else {
+            panic!("a Sort tops the task, got {:?}", task.plan());
+        };
+        let tidb_expr::expression::Expression::Column(column) = &sort.by_items[0].expr else {
+            panic!("a column by-item");
+        };
+        assert_eq!(column.unique_id, 3);
+        assert!(
+            column.get_static_type().is_some(),
+            "the executor needs the child column's type to compile a compare function"
+        );
     }
 
     #[test]

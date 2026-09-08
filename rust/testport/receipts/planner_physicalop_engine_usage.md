@@ -184,3 +184,49 @@ on `index:Limit, table:TableRowIDScan` and passes after. Ready validation:
 only removals and no additions; `tidb-planner` all four test targets green;
 `cargo fmt --all -- --check` (three pre-existing drift files only);
 `git diff --check -- rust`.
+
+## Follow-up: `EnforceProperty` Sort by-items keep the child column type (2026-09-09)
+
+Go `EnforceProperty` (`enforce.go:41`) copies `prop.SortItems[i].Col` — a
+complete `*expression.Column` — into `PhysicalSort.ByItems`, and `SortExec`
+compiles `keyCmpFuncs[i] = chunk.GetCompareFunc(e.ByItems[i].Expr.GetType(ctx))`
+(`sortexec/sort.go:778-786`). This port stores a `property.SortItem` as a
+`UniqueID` plus direction while matching orders, so `enforce_property`
+materialized `ByItems` from `item.col.clone()`, whose `ret_type` is `None`. The
+executor then compiled no compare function and every such Sort failed with
+`Get unexpected expression` (`sort.rs:399`), because the column fast path
+requires `compare_funcs[index]` to be `Some`.
+
+`enforce_property` now resolves each sort item against the child plan's schema
+(`Schema::retrieve_column`) and falls back to the property column only when the
+child does not expose it. Property equality/hashing still compare `UniqueID`,
+so order matching is unchanged; the executor once again receives a typed column
+exactly as Go does.
+
+Regression: the new
+`enforce::tests::the_enforced_sort_by_items_carry_the_child_column_type` fails
+before the fix (`get_static_type()` was `None`) and passes after. Five executor
+tests that lower a Sort enforcer over a forced merge join or aggregate were
+fixed with no other additions:
+`tests_merge_join_in_disk_source::vectorized_merge_join_smj_matches_hj_rows`,
+`tests_parallel_apply_sql_source::apply_with_other_operators_source`,
+`tests_partition_table_sql_source::partition_table_different_join_matches_regular`,
+`driver::tests::aggregates::aggregation_hints_are_lowered_from_the_shared_physical_plan`,
+and
+`driver::tests::aggregates::distinct_aggregation_family_is_lowered_from_the_shared_physical_plan`.
+Ready validation: `tidb-executor` lib serialized 1168 passed / 69 failed
+versus 1163 / 74 at HEAD (the only flake,
+`hash_agg_spill_tests::each_round_gives_the_statements_budget_back`, passes in
+isolation); `tidb-planner --lib` 993 passed / 0 failed;
+`rustfmt --edition 2021 --check` clean on the changed file;
+`git diff --check -- rust`.
+
+Known remaining divergence, recorded for a later naming batch:
+`driver::tests::joins::a_forced_merge_lowers_the_planner_selected_sort_enforcers`
+now lowers the Sort but still expects `test.ncl.k, test.ncl.o`. Go's
+`FieldName.String()` (`pkg/types/field_name.go:45`) uses `TblName`, and
+`buildDataSource` sets `TblName: tableInfo.Name` (the real table), while this
+port passes the visible alias into the `table` slot; the recorded
+`tests/integrationtest/r/executor/partition/issues.result` renders
+`executor__partition__issues.uk_hp16726.col1` for a query aliased `t1`/`t2`.
+The Rust plan instead prints `test.l.k, test.l.o`.

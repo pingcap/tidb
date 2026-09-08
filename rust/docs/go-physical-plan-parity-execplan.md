@@ -809,6 +809,15 @@ both `oltp_read_only` and `oltp_read_write`.
   failed in the rewriter; it now lowers every subquery form through the same
   handlers the filter path uses. Receipt:
   `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: kept the enforced Sort's by-item column typed. Go copies the
+  complete `prop.SortItems[i].Col` into `PhysicalSort.ByItems`, but this port's
+  `SortItem` carries only a `UniqueID`, so the executor compiled no
+  `keyCmpFunc` and failed with `Get unexpected expression` on every forced
+  merge join. `enforce_property` now resolves each item against the child
+  schema. Five executor tests were fixed with no additions. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`. A recorded
+  divergence remains: this port renders the table alias in column
+  `OrigName` where Go's `FieldName.String()` uses the real table name.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
