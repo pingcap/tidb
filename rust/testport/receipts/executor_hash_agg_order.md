@@ -85,3 +85,65 @@ it prices HashAgg above StreamAgg and the test passes. Ready validation:
 passed / 32 failed, this test removed from the baseline with no additions;
 `cargo check --locked --all-targets -p tidb-planner -p tidb-executor` clean;
 `rustfmt --edition 2021 --check` clean; `git diff --check -- rust` clean.
+
+## Follow-up: a grouped aggregate's GROUP BY list renders sorted (2026-09-09)
+
+Go `BasePhysicalAgg.explainInfo`
+(`pkg/planner/core/operator/physicalop/base_physical_agg.go:865`) renders
+`GroupByItems` through `expression.SortedExplainExpressionList`
+(`pkg/expression/explain.go:232`), which sorts the rendered strings; the
+`AggFuncs` list below it keeps its own order. The Rust `aggregate_info` used
+`expressions_text(group_by)`, so a plan whose group-by column ids were not
+already ascending printed insertion order.
+
+`crates/tidb-executor/src/explain.rs` now renders the `group by:` prefix with
+`sorted_expressions_text` and leaves `funcs:` untouched. The helper already
+sorts and joins with `", "`, which is Go's `slices.Sort` + comma join.
+
+## The q3/q13 explain tests read their own plan's ids
+
+The two tpch tests asserted absolute `Column#N` ids from a Rust-authored golden
+(`tpch_q3_keeps_go_projections_around_grouped_topn` expected `Column#0`..`#3`,
+`tpch_q13_restores_grouped_derived_hash_agg_output` expected
+`Column#0`/`Column#1`). Those ids scale with the fixture schema -- Go's own
+recorded SF50 plan numbers q3's columns `Column#50`..`Column#53` in and
+`Column#37` out, q13's `Column#18`/`Column#19` -- so the tests now read the ids
+the plan under test allocated and pin Go's relationships instead:
+
+- q3: `InjectProjBelowAgg` gives the SUM argument a fresh projection column
+  while the aggregate keeps its own output column (`funcs:sum(Column#16)->
+  Column#15` here), the injected projection holds the argument plus the three
+  carried columns, the aggregate's `group by:` is the sorted rendering of those
+  three, each `firstrow` names its source column, the TopN orders by the
+  aggregate's revenue output, and the final projection restores the select-list
+  order. The old golden had the argument and the result share one column, which
+  is not Go's layout.
+- q13: the outer aggregate's group key is its own `firstrow` carrier, the
+  projection above it restores `c_count, custdist`, the Sort orders by
+  `custdist DESC, c_count DESC`, and the `count(1)` state precedes the carrier.
+
+## Regressions
+
+- `tpch_q3_keeps_go_projections_around_grouped_topn` fails before with
+  `test.lineitem.l_orderkey, Column#15, ...` against the golden's `Column#16`,
+  and passes after; `tpch_q13_restores_grouped_derived_hash_agg_output` fails
+  before with `Column#8:desc, Column#7:desc` against `Column#1:desc,
+  Column#0:desc`, and passes after.
+
+## Validation
+
+Profile: **Ready** for this package batch.
+
+```text
+cargo test -p tidb-executor --lib driver::tests::aggregates::tpch_q3_keeps_go_projections_around_grouped_topn
+cargo test -p tidb-executor --lib driver::tests::aggregates::tpch_q13_restores_grouped_derived_hash_agg_output
+# ok
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1222 passed / 30 failed; both tests removed from the baseline, no additions
+
+cargo check --locked --all-targets -p tidb-executor -p tidb-planner
+rustfmt --edition 2021 --check crates/tidb-executor/src/explain.rs \
+    crates/tidb-executor/src/driver/tests/aggregates.rs
+git diff --check -- rust
+```

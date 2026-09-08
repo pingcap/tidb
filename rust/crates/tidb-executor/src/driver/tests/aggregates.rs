@@ -356,27 +356,58 @@ fn tpch_q3_keeps_go_projections_around_grouped_topn() {
         Some("Projection"),
         "Go InjectProjBelowAgg evaluates q3's complex SUM argument: {rows:#?}",
     );
+    // The absolute `Column#N` ids scale with the fixture schema (Go's own
+    // recorded SF50 plan numbers q3's columns `Column#50`..`Column#53` in and
+    // `Column#37` out), so read the injected projection's own outputs and pin
+    // Go's RELATIONSHIPS: `InjectProjBelowAgg` gives the SUM argument a fresh
+    // projection column while the aggregate keeps its own output column, the
+    // group-by list is the SORTED rendering of the three carried columns, each
+    // carries its source column through `firstrow`, the TopN orders by the
+    // aggregate's revenue output, and the final projection restores the
+    // select-list order.
+    let injected = cell(3, 4);
+    let projected = injected
+        .split("->")
+        .skip(1)
+        .map(|part| part.split(',').next().unwrap_or("").trim().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(projected.len(), 4, "q3's injected projection: {injected}");
+    assert!(
+        injected.starts_with(
+            "mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->"
+        ),
+        "Go InjectProjBelowAgg evaluates q3's complex SUM argument: {injected}",
+    );
+    let (sum_in, orderdate, shippriority, orderkey) =
+        (&projected[0], &projected[1], &projected[2], &projected[3]);
+    let aggregate = cell(2, 4);
+    let sum_out = aggregate
+        .split(&format!("funcs:sum({sum_in})->"))
+        .nth(1)
+        .and_then(|rest| rest.split(',').next())
+        .unwrap_or_else(|| panic!("q3 SUM consumes the injected projection: {aggregate}"));
+    let mut group_cols = [orderdate.clone(), shippriority.clone(), orderkey.clone()];
+    group_cols.sort();
+    assert_eq!(
+        aggregate,
+        format!(
+            "group by:{}, {}, {}, funcs:sum({sum_in})->{sum_out}, \
+             funcs:firstrow({orderdate})->test.orders.o_orderdate, \
+             funcs:firstrow({shippriority})->test.orders.o_shippriority, \
+             funcs:firstrow({orderkey})->test.lineitem.l_orderkey",
+            group_cols[0], group_cols[1], group_cols[2],
+        ),
+    );
     assert_eq!(
         cell(0, 4),
-        "test.lineitem.l_orderkey, Column#0, test.orders.o_orderdate, \
-         test.orders.o_shippriority"
+        format!(
+            "test.lineitem.l_orderkey, {sum_out}, test.orders.o_orderdate, \
+             test.orders.o_shippriority"
+        ),
     );
     assert_eq!(
         cell(1, 4),
-        "Column#0:desc, test.orders.o_orderdate, offset:0, count:10"
-    );
-    assert_eq!(
-        cell(2, 4),
-        "group by:Column#1, Column#2, Column#3, funcs:sum(Column#0)->Column#0, \
-         funcs:firstrow(Column#1)->test.orders.o_orderdate, \
-         funcs:firstrow(Column#2)->test.orders.o_shippriority, \
-         funcs:firstrow(Column#3)->test.lineitem.l_orderkey"
-    );
-    assert_eq!(
-        cell(3, 4),
-        "mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#0, \
-         test.orders.o_orderdate->Column#1, test.orders.o_shippriority->Column#2, \
-         test.lineitem.l_orderkey->Column#3"
+        format!("{sum_out}:desc, test.orders.o_orderdate, offset:0, count:10"),
     );
     assert!(
         rows.iter().any(|row| match &row[4] {
@@ -446,21 +477,54 @@ fn tpch_q13_restores_grouped_derived_hash_agg_output() {
         ["Sort", "Projection", "HashAgg"],
         "q13 must restore the physical aggregate output before sorting: {rows:#?}",
     );
-    assert_eq!(info(0), "Column#1:desc, Column#0:desc");
-    assert_eq!(info(1), "Column#0, Column#1");
     let aggregate = info(2);
     assert!(
         !aggregate.contains("c_orders.c_count"),
         "a computed derived output has no base-column identity: {aggregate}",
     );
+    // The absolute `Column#N` ids scale with the fixture schema (Go's own
+    // recorded SF50 plan numbers them `Column#18`/`Column#19`), so the
+    // assertions read the outer aggregate's own group key and count output
+    // and pin Go's ORDER instead: the count state comes before the
+    // `firstrow` carrier, the carrier repeats the group key, the projection
+    // above restores the select-list order (`c_count, custdist`), and the
+    // Sort orders by `custdist DESC, c_count DESC`.
+    let group_key = aggregate
+        .strip_prefix("group by:")
+        .and_then(|rest| rest.split(',').next())
+        .expect("q13 outer group by");
+    let count_output = aggregate
+        .split("funcs:count(1)->")
+        .nth(1)
+        .and_then(|rest| rest.split(',').next())
+        .expect("q13 outer count output");
+    let carrier = aggregate
+        .split("funcs:firstrow(")
+        .nth(1)
+        .and_then(|rest| rest.split(')').next())
+        .expect("q13 group-key carrier input");
+    assert_eq!(
+        group_key, carrier,
+        "the outer group key is the FIRST_ROW carrier: {aggregate}",
+    );
+    assert_eq!(
+        info(1),
+        format!("{carrier}, {count_output}"),
+        "the projection restores the select-list order: {rows:#?}",
+    );
+    assert_eq!(
+        info(0),
+        format!("{count_output}:desc, {carrier}:desc"),
+        "the Sort orders by custdist then c_count: {rows:#?}",
+    );
     let count = aggregate
         .find("funcs:count(1)->Column#")
         .expect("q13 outer COUNT");
-    let carrier = aggregate
-        .find("funcs:firstrow(Column#0)->Column#0")
+    let carrier_at = aggregate
+        .find(&format!("funcs:firstrow({carrier})->{carrier}"))
         .expect("q13 group-key carrier");
     assert!(
-        count < carrier,
+        count < carrier_at,
         "Go places aggregate states before FIRST_ROW carriers: {aggregate}",
     );
 }

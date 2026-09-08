@@ -282,7 +282,10 @@ fn aggregate_info(
 ) -> String {
     let mut parts = Vec::new();
     if !group_by.is_empty() {
-        parts.push(format!("group by:{}", expressions_text(group_by)));
+        // Go `BasePhysicalAgg.explainInfo` renders the GROUP BY items with
+        // `expression.SortedExplainExpressionList`, which SORTS the rendered
+        // strings; the aggregate list below keeps its own order.
+        parts.push(format!("group by:{}", sorted_expressions_text(group_by)));
     }
     if !functions.is_empty() {
         let functions = functions

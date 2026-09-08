@@ -979,6 +979,16 @@ both `oltp_read_only` and `oltp_read_write`.
   `with_hashagg_concurrency` stamps it onto the optimizer cost environment.
   One executor test fixed. Receipt:
   `rust/testport/receipts/executor_hash_agg_order.md`.
+- [x] 2026-09-09: rendered a grouped aggregate's GROUP BY list in sorted order.
+  Go's `BasePhysicalAgg.explainInfo`
+  (`pkg/planner/core/operator/physicalop/base_physical_agg.go:865`) uses
+  `expression.SortedExplainExpressionList` for `GroupByItems` and keeps the
+  `AggFuncs` order; Rust printed group-by insertion order. The q3/q13 explain
+  tests also stopped pinning absolute `Column#N` ids from a Rust-authored
+  golden and now read the plan's own ids and pin Go's relationships (the
+  injected SUM argument is a fresh column separate from the aggregate output;
+  the count state precedes the group-key carrier). Two executor tests fixed.
+  Receipt: `rust/testport/receipts/executor_hash_agg_order.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
