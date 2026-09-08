@@ -11410,3 +11410,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (ON DELETE SET NULL pin): parent deletion NULLs exactly the
  referencing children. Pinned in
  `crates/tidb-session/tests/fk_on_delete_set_null_source.rs`.
+- 2026-09-08 (ON DELETE CASCADE pin): parent deletion cascades to exactly
+ the referencing children. Pinned in
+ `crates/tidb-session/tests/fk_on_delete_cascade_source.rs`.
