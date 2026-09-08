@@ -142,30 +142,24 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 	if stmt == nil || stmt.StmtNode == nil {
 		return 0
 	}
-	var originalSQL string
-	// Use the normalized SQL length if available, otherwise fallback to the original SQL length.
+
+	sql := stmt.StmtNode.OriginalText()
 	if stmt.Ctx != nil {
-		if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil && sessVars.StmtCtx != nil {
+		if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil &&
+			sessVars.StmtCtx != nil && sessVars.StmtCtx.OriginalSQL != "" {
 			stmtCtx := sessVars.StmtCtx
-			originalSQL = stmtCtx.OriginalSQL
-			if originalSQL != "" {
-				normalizedSQL, _ := stmtCtx.SQLDigest()
-				normalizedSQL = trimStatementRUExplainPrefix(normalizedSQL)
-				if normalizedSQL != "" {
-					return float64(len(normalizedSQL))
-				}
+			normalizedSQL, _ := stmtCtx.SQLDigest()
+			normalizedSQL = trimStatementRUExplainPrefix(normalizedSQL)
+			if normalizedSQL != "" {
+				return float64(len(normalizedSQL))
+			}
+			if sql == "" {
+				sql = stmtCtx.OriginalSQL
 			}
 		}
 	}
-	sql := stmt.StmtNode.OriginalText()
-	if sql == "" {
-		sql = originalSQL
-	}
 	if sql == "" {
 		sql = stmt.StmtNode.Text()
-	}
-	if sql == "" {
-		return 0
 	}
 	return float64(len(sql))
 }
