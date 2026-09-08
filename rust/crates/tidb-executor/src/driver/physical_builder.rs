@@ -1555,9 +1555,22 @@ fn index_inner_reader_payload<'a>(plan: &'a PhysicalPlan) -> Option<(&'a Physica
     }
 }
 
-fn contains_index_inner_reader(plan: &PhysicalPlan) -> bool {
-    index_inner_reader_payload(plan).is_some()
-        || plan.children().iter().any(contains_index_inner_reader)
+/// Whether `plan`'s subtree contains the reader that ANSWERS the index-join
+/// runtime probe: the one reading the join's retained inner table. A subtree
+/// can hold several readers (an inner-side `HashJoin` of two aggregated
+/// branches, for example); only the retained access path consumes the runtime
+/// key, so mere reader presence cannot choose the probe side. Go identifies it
+/// through `IndexJoinInfo`/the chosen `AccessPath`, whose table is what
+/// `join.inner_access_table_id` records here.
+fn contains_index_inner_reader(plan: &PhysicalPlan, table_id: Option<i64>) -> bool {
+    if let Some((embedded, _)) = index_inner_reader_payload(plan) {
+        if retained_table_id(embedded).ok() == table_id {
+            return true;
+        }
+    }
+    plan.children()
+        .iter()
+        .any(|child| contains_index_inner_reader(child, table_id))
 }
 
 fn build_index_inner_reader(
@@ -1730,8 +1743,10 @@ fn build_index_inner_subtree(
                     "an index-join inner HashJoin has the wrong child count",
                 ));
             };
-            let left_has_reader = contains_index_inner_reader(left_plan);
-            let right_has_reader = contains_index_inner_reader(right_plan);
+            let left_has_reader =
+                contains_index_inner_reader(left_plan, join.inner_access_table_id);
+            let right_has_reader =
+                contains_index_inner_reader(right_plan, join.inner_access_table_id);
             if left_has_reader == right_has_reader {
                 return Err(DriverError::unsupported(
                     "an index-join inner HashJoin must contain one retained lookup reader",
@@ -3612,6 +3627,33 @@ mod tests {
             &ctx,
             std::time::Duration::from_secs(1)
         ));
+    }
+
+    /// The index-join inner probe reader is identified by the join's RETAINED
+    /// inner table, not by reader presence: an inner-side HashJoin can hold
+    /// readers on both branches (TPCC condition ten's two aggregated
+    /// subqueries), and only the retained access path consumes the runtime
+    /// key. Matching on presence alone reported "must contain one retained
+    /// lookup reader" for that plan.
+    #[test]
+    fn index_inner_reader_identification_matches_the_retained_table() {
+        let retained_table = 41;
+        let other_table = 42;
+        let retained = table_scan(1, retained_table, 1, 1);
+        let other = table_scan(2, other_table, 1, 1);
+        assert!(contains_index_inner_reader(&retained, Some(retained_table)));
+        assert!(!contains_index_inner_reader(&other, Some(retained_table)));
+
+        let both = union(3, vec![retained.clone(), other.clone()]);
+        let retained_branches = both
+            .children()
+            .iter()
+            .filter(|child| contains_index_inner_reader(child, Some(retained_table)))
+            .count();
+        assert_eq!(
+            retained_branches, 1,
+            "exactly one branch of the inner subtree answers the runtime probe"
+        );
     }
 
     #[test]

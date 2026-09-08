@@ -1116,6 +1116,14 @@ both `oltp_read_only` and `oltp_read_write`.
   plan now matches the Go oracle through its shape and stops on the
   `IndexHashJoin(Build)` costing choice. Receipt:
   `rust/testport/receipts/planner_predicate_push_down.md`.
+- [x] 2026-09-09: identified the index-join inner probe reader by its retained
+  table. The inner-subtree `HashJoin` arm accepted a child as the probe side
+  when its subtree contained ANY reader, so an inner side with readers on both
+  branches failed with `an index-join inner HashJoin must contain one retained
+  lookup reader`. Go identifies the reader through `IndexJoinInfo`/the chosen
+  access path; the check now matches `join.inner_access_table_id`. TPCC
+  condition ten executes and the test reaches its later plan assertions.
+  Receipt: `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

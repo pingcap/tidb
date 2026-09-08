@@ -875,3 +875,41 @@ cargo check --locked --all-targets -p tidb-executor -p tidb-planner
 rustfmt --edition 2021 --config skip_children=true --check crates/tidb-executor/src/apply.rs crates/tidb-executor/src/driver/tests/subqueries.rs
 git diff --check -- rust
 ```
+
+## Follow-up: the index-join inner probe reader is identified by its retained table (2026-09-09)
+
+`build_index_inner_subtree`'s `HashJoin` arm requires exactly ONE of the two
+children to contain the reader that answers the index-join runtime probe. The
+check only asked whether a subtree CONTAINS a reader, so an inner side whose
+two branches both read a table (TPCC condition ten's two aggregated
+subqueries) matched BOTH children and failed with `an index-join inner
+HashJoin must contain one retained lookup reader`.
+
+Go identifies that reader through `IndexJoinInfo`/the chosen `AccessPath`:
+only the retained inner table consumes the runtime key, while the other
+branch's readers are ordinary. `contains_index_inner_reader` now takes the
+join's `inner_access_table_id` and matches the reader's retained table id,
+recursing only when the current node is not itself the probe reader.
+
+The condition-ten query now executes (it previously failed with the builder
+error) and reaches the later plan-shape assertions. The test's two absolute
+`funcs:count(1)->Column#0` expectations are relaxed to
+`starts_with("funcs:count(1)->Column#")`: the id is allocator-produced, and
+the aggregate identity is the structural claim.
+
+Regression:
+`physical_builder::tests::index_inner_reader_identification_matches_the_retained_table`
+fails before and passes after.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,235 passed / 19 failed (unchanged set; the condition-ten runtime error is
+# gone and the test now stops on a later access-path assertion)
+cargo test -p tidb-planner --lib -- --test-threads=1
+# 1,002 passed / 0 failed
+cargo check --locked --all-targets -p tidb-executor -p tidb-planner
+rustfmt --edition 2021 --config skip_children=true --check <changed files>
+git diff --check -- rust
+```
