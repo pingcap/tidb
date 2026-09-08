@@ -227,6 +227,21 @@ impl<C: crate::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> 
         ret_type: Option<FieldType>,
         args: Vec<Expression>,
     ) -> Result<Expression, FunctionBuildError> {
+        // Go `NewFunction`'s `case ast.Cast: return BuildCastFunction(ctx,
+        // args[0], retType)` (`scalar_function.go:208`). This port names the
+        // dedicated cast signatures `cast_decimal`, `cast_char`, ... instead
+        // of the single `ast.Cast`, and the builtin registry refuses them, so
+        // every `cast*` name rebuilds through the cast builder. Without this
+        // a substitution that has to rebuild a cast (for example pushing a
+        // predicate through a projection) reports `hasFail` and the predicate
+        // is not pushed.
+        if func_name.starts_with("cast") && args.len() == 1 {
+            return self.build_cast(
+                args.into_iter().next().expect("one argument"),
+                ret_type,
+                false,
+            );
+        }
         // A nil `RetType` is Go's "infer it": `new_function_impl` replaces an
         // `Unspecified` type with the inferred one, so that is the right
         // spelling for `None`.
@@ -285,6 +300,28 @@ mod tests {
             .build_cast(argument, Some(target), false)
             .expect("a decimal cast builds");
         let Expression::ScalarFunction(function) = cast else {
+            panic!("a cast is a scalar function");
+        };
+        assert_eq!(function.func_name.lowercase(), "cast_decimal");
+    }
+
+    /// Go `NewFunction`'s `case ast.Cast` (`scalar_function.go:208`): a
+    /// `cast` name rebuilds through `BuildCastFunction`. This port names the
+    /// dedicated signatures `cast_decimal`, ..., and the builtin registry
+    /// refuses them, so `new_function` has to route them itself. Without the
+    /// route a substitution that rebuilds a cast reports `hasFail`.
+    #[test]
+    fn new_function_routes_a_dedicated_cast_name_to_the_cast_builder() {
+        let argument =
+            Expression::Column(Column::new(3, FieldType::new(FieldTypeCode::NewDecimal)));
+        let mut target = FieldType::new(FieldTypeCode::NewDecimal);
+        target.set_flen(34);
+        target.set_decimal(2);
+        let builder = RealFunctionBuilder::new(&crate::NoColumns);
+        let rebuilt = builder
+            .new_function("cast_decimal", Some(target), vec![argument])
+            .expect("a dedicated cast name rebuilds through the cast builder");
+        let Expression::ScalarFunction(function) = rebuilt else {
             panic!("a cast is a scalar function");
         };
         assert_eq!(function.func_name.lowercase(), "cast_decimal");
