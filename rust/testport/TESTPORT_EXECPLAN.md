@@ -11430,3 +11430,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (leap clamp pin): YEAR/MONTH interval arithmetic clamps
  Feb 29/Aug 31 to the target month's last day. Pinned in
  `crates/tidb-session/tests/leap_clamp_source.rs`.
+- 2026-09-08 (fractional UNIX pin): UNIX_TIMESTAMP's DECIMAL scale tracks
+ the input's fsp (.5/.4 extend to scale 1). Pinned in
+ `crates/tidb-session/tests/fractional_unix_source.rs`.
