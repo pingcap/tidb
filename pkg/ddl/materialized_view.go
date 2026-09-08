@@ -675,6 +675,92 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	return errors.Trace(e.createTableWithInfoPost(ctx, mvTableInfo, jobW.SchemaID, scatterScope))
 }
 
+func (e *executor) getMaterializedViewSchema(ctx sessionctx.Context, tableName *ast.TableName) (infoschema.InfoSchema, ast.CIStr, error) {
+	is := e.infoCache.GetLatest()
+	schemaName := tableName.Schema
+	if schemaName.O == "" {
+		sessionVars := ctx.GetSessionVars() //nolint:forbidigo
+		if sessionVars.CurrentDB == "" {
+			return is, schemaName, errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = ast.NewCIStr(sessionVars.CurrentDB)
+		tableName.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return is, schemaName, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+	return is, schemaName, nil
+}
+
+func (e *executor) DropMaterializedView(ctx sessionctx.Context, s *ast.DropMaterializedViewStmt) error {
+	is, schemaName, err := e.getMaterializedViewSchema(ctx, s.ViewName)
+	if err != nil {
+		if s.IfExists && infoschema.ErrDatabaseNotExists.Equal(err) {
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, s.ViewName.Name)
+			return nil
+		}
+		return err
+	}
+	tbl, err := is.TableByName(e.ctx, schemaName, s.ViewName.Name)
+	if err != nil {
+		if s.IfExists && infoschema.ErrTableNotExists.Equal(err) {
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, s.ViewName.Name)
+			return nil
+		}
+		return err
+	}
+	if tbl.Meta().MaterializedView == nil {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, s.ViewName.Name, "MATERIALIZED VIEW")
+	}
+
+	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: s.ViewName.Name}}}
+	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, materializedViewObject, true)
+}
+
+func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMaterializedViewLogStmt) error {
+	is, schemaName, err := e.getMaterializedViewSchema(ctx, s.Table)
+	if err != nil {
+		return err
+	}
+	baseTable, err := is.TableByName(e.ctx, schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+	if !isValidMaterializedViewLogBaseTable(schemaName.L, baseTable.Meta()) {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+	baseTableID := baseTable.Meta().ID
+
+	// IF EXISTS only suppresses a missing derived MLog. A missing schema or base
+	// table remains an error because it is required to resolve the logical target.
+	mlogName := model.MaterializedViewLogTableName(baseTable.Meta().Name)
+	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
+	if err != nil {
+		if s.IfExists && infoschema.ErrTableNotExists.Equal(err) {
+			appendDropMaterializedViewNotExistsNote(ctx, schemaName, s.Table.Name)
+			return nil
+		}
+		return err
+	}
+	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
+	}
+	if hasMaterializedViewDependsOnMaterializedViewLog(mlogTable.Meta()) {
+		return errDropMaterializedViewLogDependent(schemaName.O, s.Table.Name.O)
+	}
+
+	failpoint.InjectCall("afterCheckDropMaterializedViewLog")
+	failpoint.Inject("pauseDropMaterializedViewLogAfterCheck", func() {})
+	dropStmt := &ast.DropTableStmt{IfExists: s.IfExists, Tables: []*ast.TableName{{Schema: schemaName, Name: mlogName}}}
+	return e.dropTableObject(ctx, dropStmt.Tables, dropStmt.IfExists, materializedViewLogObject, true)
+}
+
+func appendDropMaterializedViewNotExistsNote(ctx sessionctx.Context, schemaName, tableName ast.CIStr) {
+	ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.FastGenByArgs(
+		ast.Ident{Schema: schemaName, Name: tableName}.String(),
+	))
+}
+
 func initMaterializedViewReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
 	sessionVars := sctx.GetSessionVars() //nolint:forbidigo
@@ -1137,10 +1223,6 @@ func hasVisiblePublicIndexWithPrefixCoveringGroupByColumns(
 	excludedIndexName string,
 ) bool {
 	return mviewutil.HasIndexWithPrefixCoveringColumns(baseTableInfo, groupByCols, excludedIndexName, true)
-}
-
-func buildDeleteMViewRefreshAlertSQL(mviewID int64) string {
-	return sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?", mviewID)
 }
 
 func restoreNodeToCanonicalSQL(node ast.Node) (string, error) {

@@ -394,6 +394,9 @@ func CheckAndUpdateAddedPartitionDefinitions(
 	return updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset)
 }
 
+// clonePartitionDefinitions also deep-clones InValues, unlike
+// PartitionDefinition.Clone. This DDL path requires an independent copy because
+// partition validation may normalize InValues in place.
 func clonePartitionDefinitions(defs []model.PartitionDefinition) []model.PartitionDefinition {
 	cloned := make([]model.PartitionDefinition, len(defs))
 	for i := range defs {
@@ -402,7 +405,6 @@ func clonePartitionDefinitions(defs []model.PartitionDefinition) []model.Partiti
 		for j := range defs[i].InValues {
 			cloned[i].InValues[j] = slices.Clone(defs[i].InValues[j])
 		}
-		cloned[i].StorageClassTransitions = slices.Clone(defs[i].StorageClassTransitions)
 	}
 	return cloned
 }

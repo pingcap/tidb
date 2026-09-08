@@ -3676,8 +3676,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	np = p
 	// If we have ShowPredicateExtractor, we do not buildSelection with Pattern
 	if show.Pattern != nil && buildPattern {
+		patternColumn := p.OutputNames()[0].ColName
+		if show.Tp == ast.ShowStorageClassTransitions {
+			patternColumn = ast.NewCIStr("TABLE_NAME")
+		}
 		show.Pattern.Expr = &ast.ColumnNameExpr{
-			Name: &ast.ColumnName{Name: p.OutputNames()[0].ColName},
+			Name: &ast.ColumnName{Name: patternColumn},
 		}
 		np, err = b.buildSelection(ctx, np, show.Pattern, nil)
 		if err != nil {
@@ -5676,6 +5680,19 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, v.ViewName.Name.L, "", authErr)
+	case *ast.DropMaterializedViewStmt:
+		dbName := v.ViewName.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if dbName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, v.ViewName.Name.L, "", authErr)
 	case *ast.CreateMaterializedViewLogStmt:
 		dbName := v.Table.Schema.L
 		if dbName == "" {
@@ -5692,6 +5709,20 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, dbName, mlogName.L, "", createAuthErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, v.Table.Name.L, "", selectAuthErr)
+	case *ast.DropMaterializedViewLogStmt:
+		dbName := v.Table.Schema.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if dbName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP MATERIALIZED VIEW LOG", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, dbName, mlogName.L, "", authErr)
 	case *ast.OptimizeTableStmt:
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("OPTIMIZE TABLE is not supported")
 	}
@@ -6181,8 +6212,21 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowAffinity:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Leader_store_id", "Voter_store_ids", "Status", "Region_count", "Affinity_region_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong}
+	case ast.ShowStorageClassTransitions:
+		return convertColumnInfosToOutputSchemasAndNames(infoschema.GetStorageClassTransitionsTableColumns())
 	}
-	return convert2OutputSchemasAndNames(names, ftypes, flags)
+	schema, outputNames = convert2OutputSchemasAndNames(names, ftypes, flags)
+	return schema, outputNames
+}
+
+func convertColumnInfosToOutputSchemasAndNames(columns []*model.ColumnInfo) (schema *expression.Schema, outputNames []*types.FieldName) {
+	schema = expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
+	outputNames = make([]*types.FieldName, 0, len(columns))
+	for _, column := range columns {
+		schema.Append(&expression.Column{RetType: column.FieldType.Clone()})
+		outputNames = append(outputNames, &types.FieldName{ColName: column.Name})
+	}
+	return schema, outputNames
 }
 
 func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) (schema *expression.Schema, outputNames []*types.FieldName) {

@@ -62,6 +62,8 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 	UnsafeDDL: {
 		ActionDropSchema,
 		ActionDropTable,
+		ActionDropMaterializedView,
+		ActionDropMaterializedViewLog,
 		ActionDropColumn,
 		ActionAddForeignKey,
 		ActionDropForeignKey,
