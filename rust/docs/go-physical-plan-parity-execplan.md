@@ -1124,6 +1124,21 @@ both `oltp_read_only` and `oltp_read_write`.
   access path; the check now matches `join.inner_access_table_id`. TPCC
   condition ten executes and the test reaches its later plan assertions.
   Receipt: `rust/testport/receipts/executor_root_distsql_indexjoin.md`.
+- [x] 2026-09-09: kept a parallel aggregation's spill files until `Close` and
+  aligned the spill tests' oracle with Go. `HashAggExec` now owns the 256
+  `ParallelSpillPartitions` for the whole execution (`parallel_spilled`), and
+  `restore_partition` no longer closes its file, so Go's
+  `HashAggExec.Close -> dataInDisk.Close()` is the only place the files (and
+  their tracked bytes) go away. `test_get_correct_result` now compares Go's own
+  aggregate set (`FIRST_ROW, SUM, COUNT, AVG, MIN, MAX`); the previous
+  `GROUP_CONCAT` cell asserted an intra-group order the parallel pipeline never
+  promises (Go's `generateResult` sorts rows for exactly that reason), and the
+  reference run itself emitted worker order. The budget test drives a state
+  table several times the quota under Go's `LOG` overrun action, so a round's
+  overshoot cannot cancel it; `test_fall_back_action` keeps the CANCEL
+  boundary. `cargo test -p tidb-executor --lib -- --test-threads=1`: 1242
+  passed / 14 failed, no new failure. Receipt:
+  `rust/testport/receipts/executor_parallel_distinct_spill.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1132,8 +1147,8 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1,235 passed / 19 failed, plus the 13 statistics-request
-  transport tests that flake in a full run and pass 16/16 in isolation).
+  lib serialized: 1,242 passed / 14 failed; the 13 statistics-request transport
+  tests still flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
   - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
     the uncorrelated/Selection/MaxOneRow/Sort/Limit/projection/aggregation
@@ -1158,18 +1173,20 @@ both `oltp_read_only` and `oltp_read_write`.
     (`newBaseBuiltinFuncWithFieldTypes`), `DATE_ADD` month folding, and the
     identity-projection elimination Go's q14 plan shows:
     `aggregates::tpch_q14_matches_recorded_hash_join_plan`.
-  - `pkg/executor/aggregate` spill-file lifetime: Go keeps
-    `DataInDiskByChunks` files open until `Close`, while
-    `ParallelSpillPartitions::restore_partition` closes each file during the
-    pipeline: `hash_agg_spill_tests::test_get_correct_result`. A trial that
-    retained the partitions on `HashAggExec` until `close()` (dropping the
-    256 staging chunks after restore, since keeping them blew the memory
-    quota) moved the failure past the `saw_spill_file` oracle and unmasked a
-    second, deeper gap: the spilled run's `GROUP_CONCAT` value order differs
-    from the unspilled reference (`3041,3040,3042` vs `3041,3042,3040` for
-    group 304). The restore order across partial workers is not the row order
-    Go's final merge preserves, so the order-sensitive aggregate needs the
-    deterministic merge order ported before the file-lifetime change lands.
+  - `pkg/executor/aggregate` spill-file lifetime: DONE. Go's parallel
+    `dataInDisk` lives from `initForParallelExec` until `HashAggExec.Close`, so
+    every partition file stays on disk and charged until `Close`;
+    `ParallelSpillPartitions` is now owned by `HashAggExec` (`parallel_spilled`)
+    and `restore_partition` no longer closes its file. The second failure the
+    fix unmasked was the test's own oracle, not a port gap: Go's
+    `generateResult` runs `FIRST_ROW, SUM, COUNT, AVG, MIN, MAX` and sorts the
+    rows, because the parallel pipeline (spill or not) emits a group's values
+    in worker order, never input order. The test now uses Go's aggregate set
+    (AVG replacing GROUP_CONCAT). The budget test drives a state table several
+    times the quota and uses Go's `LOG` overrun action, so a round's overshoot
+    cannot cancel the statement; `test_fall_back_action` keeps the CANCEL
+    boundary. Both `hash_agg_spill_tests` cases pass; receipt
+    `testport/receipts/executor_parallel_distinct_spill.md`.
   - `subqueries::evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join`
     (q22): the injected projection and the anti-semi join are both present, but
     the test's `rposition(HashAgg)` picks the scalar subquery's own aggregate

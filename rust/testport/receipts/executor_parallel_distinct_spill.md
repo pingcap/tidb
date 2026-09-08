@@ -100,3 +100,74 @@ TMPDIR=/tmp/tidb-codex make lint
 The broader Go aggregate spill suite exercises the live Go executor and is
 not run from the Rust workspace; this receipt covers the dependency-closed
 Rust parallel spill owner and its focused regression.
+
+## Follow-up batch: spill-file lifetime and the dual-run oracle
+
+This batch closes `hash_agg_spill_tests::test_get_correct_result` and
+`hash_agg_spill_tests::each_round_gives_the_statements_budget_back`.
+
+### Go behavior (the oracle)
+
+* `HashAggExec.Close` calls `e.dataInDisk.Close()`
+  (`pkg/executor/aggregate/agg_hash_executor.go`), and the parallel helper's
+  `dataInDisk` is created once in `initForParallelExec` and lives for the whole
+  execution. A spilled partition file therefore stays on disk, and its bytes
+  stay charged to the disk tracker, until `Close`. Rust's
+  `ParallelSpillPartitions::restore_partition` called `file.close()` after each
+  partition, which deleted the file and zeroed `bytes_in_disk` in the middle of
+  `Next`: the test's per-`next()` observation saw no file at all.
+* Go's `generateResult` (`agg_spill_test.go`) runs
+  `FIRST_ROW, SUM, COUNT, AVG, MIN, MAX` and SORTS the rows before comparing.
+  No aggregate in Go's oracle is order-sensitive, and the parallel pipeline
+  does not promise an intra-group order: the fetcher round-robin-dispatches
+  chunks to partial workers and final workers merge partial results in worker
+  order, so a group's `GROUP_CONCAT` is emitted in worker order, not input
+  order. A spill re-partitions the partial states into 256 buckets and restores
+  them in partition order, so it changes that worker order again. The Rust test
+  had replaced Go's `AVG` with `GROUP_CONCAT` and compared the two runs
+  cell-for-cell; the reference run itself already disagreed with input order
+  (`3041,3042,3040` for group 304), which is faithful Go behavior.
+* Go's spill tests run with `tidb_mem_oom_action = LOG`
+  (`GlobalSystemVariableInitialValue` rewrites the initial value under
+  `intest.InTest`) and a mock root exceed action. A round can overshoot the hard
+  limit while already-dispatched chunks finish folding; Go records that, it
+  does not kill the statement. The Rust budget test used `CANCEL` and was
+  therefore load-dependent: under a busy full-suite run the overshoot reached
+  the hard limit and returned `MemoryExceedForQuery`.
+
+### Change
+
+* `HashAggExec` now owns `parallel_spilled: Option<ParallelSpillPartitions>`
+  for the whole execution; `restore_partition` no longer closes its file, and
+  `open`/`close` clear the field so the files are removed exactly at `Close`
+  (Go's `dataInDisk.Close()`).
+* `test_get_correct_result` uses Go's aggregate set (`AVG` replacing
+  `GROUP_CONCAT`), so the dual-run oracle compares only order-insensitive
+  cells.
+* `each_round_gives_the_statements_budget_back` drives a state table several
+  times the quota (so more than one round really happens) and uses Go's `LOG`
+  overrun action. The cancellation boundary stays covered by
+  `test_fall_back_action`, which uses `CANCEL`.
+
+### Ready validation
+
+```text
+cargo test -p tidb-executor --lib hash_agg_spill_tests -- --test-threads=1
+# passed: 4 tests
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1242 passed; 14 failed; the 14 are the pre-existing
+# planner/subquery/window gaps tracked by the ExecPlan; no new failure
+
+cargo check --locked --all-targets -p tidb-executor
+# passed
+
+rustfmt --edition 2021 --config skip_children=true --check \
+  crates/tidb-executor/src/hash_agg.rs \
+  crates/tidb-executor/src/hash_agg/parallel.rs \
+  crates/tidb-executor/src/hash_agg_spill_tests.rs
+# passed
+
+git diff --check
+# passed
+```

@@ -846,7 +846,7 @@ fn decode_spill_entry(
     Ok((key, PipelineGroup { states }))
 }
 
-struct ParallelSpillPartitions {
+pub(super) struct ParallelSpillPartitions {
     field_types: Vec<FieldType>,
     chunks: Vec<Chunk>,
     files: Vec<Option<DataInDiskByChunks>>,
@@ -945,7 +945,8 @@ impl ParallelSpillPartitions {
                 }
             }
         }
-        file.close();
+        // Go keeps every partition file open until `HashAggExec.Close`; the
+        // caller can still observe the spilled bytes after the round.
         Ok(restored)
     }
 }
@@ -1371,9 +1372,21 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             break;
         }
 
+        // Go keeps the parallel spill files on disk until `Close` removes
+        // them (`HashAggExec.dataInDisk`); dropping the helper here would
+        // delete them before the caller can observe the round that spilled.
+        self.parallel_spilled = spilled;
+
         let mut groups = Vec::new();
-        if spilled.as_ref().is_some_and(|spill| spill.has_data) {
-            let spilled = spilled.as_mut().expect("spilled data owns its partitions");
+        if self
+            .parallel_spilled
+            .as_ref()
+            .is_some_and(|spill| spill.has_data)
+        {
+            let spilled = self
+                .parallel_spilled
+                .as_mut()
+                .expect("spilled data owns its partitions");
             // Go restores one of the 256 partitions at a time and merges all
             // partial-result files for that partition before moving on.
             for partition in (0..SPILLED_PARTITION_NUM).rev() {

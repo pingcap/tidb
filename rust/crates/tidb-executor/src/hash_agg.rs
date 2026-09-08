@@ -2141,6 +2141,9 @@ pub struct HashAggExec<C: HashAggContext> {
     parallel_spill_action: Option<Arc<ParallelAggSpillDiskAction>>,
     /// Go `parallelHashAggSpillHelper.status == needSpill`.
     parallel_spill_requested: Arc<AtomicBool>,
+    /// Go `HashAggExec.dataInDisk` for the parallel arm: the 256 spill
+    /// partitions stay open (and on disk) until `Close` drops them.
+    parallel_spilled: Option<parallel::ParallelSpillPartitions>,
     /// Go `HashAggExec.dataInDisk`, created on the first spill.
     data_in_disk: Option<DataInDiskByChunks>,
     /// Go `HashAggExec.tmpChkForSpill`.
@@ -2238,6 +2241,7 @@ impl<C: HashAggContext> HashAggExec<C> {
             spill_action: None,
             parallel_spill_action: None,
             parallel_spill_requested: Arc::new(AtomicBool::new(false)),
+            parallel_spilled: None,
             data_in_disk: None,
             tmp_chk_for_spill,
             num_of_spilled_chks: 0,
@@ -2550,6 +2554,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
             in_disk.close();
         }
         self.data_in_disk = None;
+        self.parallel_spilled = None;
         self.num_of_spilled_chks = 0;
         self.offset_of_spilled_chks = 0;
         self.is_child_drained = false;
@@ -2698,6 +2703,9 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         if let Some(action) = self.parallel_spill_action.take() {
             action.set_finished();
         }
+        // Go `HashAggExec.Close`: `e.dataInDisk.Close()` removes the parallel
+        // spill files as well.
+        self.parallel_spilled = None;
         self.tracker.replace_bytes_used(0);
         self.child.close()
     }
