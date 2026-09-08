@@ -166,3 +166,38 @@ covering every captured alias/qualifier/aggregate spelling. Ready validation:
 only removal and no additions; `tidb-planner` all four test targets green;
 `cargo fmt --all -- --check` (three pre-existing drift files only);
 `git diff --check -- rust`.
+
+## Follow-up: a HAVING scalar subquery no longer leaks its value (2026-09-09)
+
+A correlated scalar subquery in HAVING is lowered by `build_selection` into an
+`Apply` whose inner column widens the plan schema without appending a select
+field (`lower_scalar_subqueries`). Go's trailing `buildProjection`
+(`logical_plan_builder.go:4620`) trims the plan back to the select list, and
+the Rust trim was gated on `fields.len() != old_len` alone, so
+`SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0`
+returned `1 | 10 | 5` instead of `1 | 10`. The gate now also compares the
+plan's schema width to `old_len`.
+
+Regression:
+`select_clauses::a_having_scalar_subquery_does_not_leak_its_value_as_a_result_column`
+fails with the extra `5` before the change and passes after. The larger
+`an_empty_correlated_having_subquery_is_null_and_drops_its_row` now reaches
+its uncorrelated arm (`SELECT a FROM ht HAVING (SELECT count(*) FROM hs) > 0`),
+which still fails with `Unsupported("uncorrelated scalar-subquery evaluation is
+not available to the planner")`; that is the separate uncorrelated-subquery
+boundary, not a regression from this change.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib a_having_scalar_subquery_does_not_leak_its_value_as_a_result_column
+# passed: 1
+cargo test -p tidb-executor --lib driver::tests::select_clauses
+# 11 passed, 1 pre-existing uncorrelated-subquery failure
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,139 passed / 89 failed (baseline 1,138 / 89 plus the new regression)
+cargo fmt -p tidb-planner -p tidb-executor -- --check
+# three pre-existing drift files only
+git diff --check -- rust
+# passed
+```

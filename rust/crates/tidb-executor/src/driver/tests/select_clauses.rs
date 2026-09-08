@@ -517,6 +517,39 @@ fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
     }
 }
 
+/// A correlated scalar subquery in HAVING is lowered into an `Apply` whose
+/// inner column widens the plan schema WITHOUT appending a select field. Go's
+/// trailing `buildProjection` trims the output back to the select list, and
+/// the Rust trim was gated on the field count alone, so the subquery value
+/// leaked as a third result column (`1 | 10 | 5`).
+#[test]
+fn a_having_scalar_subquery_does_not_leak_its_value_as_a_result_column() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE hs (x INT, y INT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO ht VALUES (1, 10), (2, 20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO hs VALUES (10, 5)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1), Datum::Int(10)]]
+    );
+}
+
 /// Go's non-TiKV `splitIntoMultiRanges` fallback produces one full table-key
 /// range, and `TableSampleExecutor` returns that range's first record.
 #[test]

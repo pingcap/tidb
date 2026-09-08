@@ -760,6 +760,11 @@ both `oltp_read_only` and `oltp_read_write`.
   and the precompute passes `false`; the pruning rule stays the demand
   authority. Receipt:
   `rust/testport/receipts/statistics_handle_handletest_audit.md`.
+- [x] 2026-09-09: trimmed the trailing projection when a HAVING scalar
+  subquery widens the plan. The lowered `Apply` adds its inner column without
+  appending a select field, so the field-count gate missed it and the
+  subquery value leaked as an extra result column. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

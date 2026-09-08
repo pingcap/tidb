@@ -3473,8 +3473,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let Some(limit) = &select.limit {
             plan = self.build_limit(plan, limit)?;
         }
-        // `:4620` trim the hidden ORDER BY / HAVING columns back off.
-        if fields.len() != old_len {
+        // `:4620` trim the hidden ORDER BY / HAVING columns back off. A HAVING
+        // scalar subquery is lowered into an Apply by `build_selection`, which
+        // widens the plan schema WITHOUT appending a select field, so the
+        // `fields` length alone is not enough: compare the plan width too.
+        let plan_width = plan.schema().map_or(0, |schema| schema.columns.len());
+        if fields.len() != old_len || plan_width > old_len {
             plan = self.build_trim_projection(plan, old_len);
         }
         self.all_names.pop();
