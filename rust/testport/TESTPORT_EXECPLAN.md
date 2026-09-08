@@ -11384,3 +11384,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (week specifiers pin): %U/%u/%V/%v week modes and the %X/%x
   year-of-week split across a year boundary, plus %d/%e/%a. Pinned in
   `crates/tidb-session/tests/week_specifier_source.rs`.
+- 2026-09-08 (fractional duration pin): TIME_FORMAT's %f field, SEC_TO_TIME
+  fsp preservation, and EXTRACT(MICROSECOND). Pinned in
+  `crates/tidb-session/tests/fractional_duration_source.rs`.
