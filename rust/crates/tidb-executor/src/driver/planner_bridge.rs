@@ -142,6 +142,7 @@ fn locate_list_columns_condition(
     partition: &crate::partition_routing::PartitionSpec,
     condition: &Expression,
     columns: &[tidb_expr::column::Column],
+    context: &crate::StmtContext,
 ) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
     let crate::partition_routing::PartitionKind::ListColumns {
         values,
@@ -159,8 +160,8 @@ fn locate_list_columns_condition(
             Ok(Some(true)) | Err(_) => Ok(ListColumnsLocated::Full),
         },
         Expression::ScalarFunction(function) => match function.func_name.lowercase() {
-            "and" => locate_list_columns_cnf(partition, function.get_args(), columns),
-            "or" => locate_list_columns_dnf(partition, function.get_args(), columns),
+            "and" => locate_list_columns_cnf(partition, function.get_args(), columns, context),
+            "or" => locate_list_columns_dnf(partition, function.get_args(), columns, context),
             _ => {
                 let referenced = tidb_expr::simple_expr::extract_columns(condition);
                 if referenced.len() != 1 {
@@ -173,11 +174,12 @@ fn locate_list_columns_condition(
                     return Ok(ListColumnsLocated::Full);
                 };
                 let detached =
-                    tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition(
+                    tidb_planner::ranger::detacher::detach_partition_range_with_fallback_handler(
                         std::slice::from_ref(condition),
                         std::slice::from_ref(&columns[column_index]),
                         &[tidb_datatype::UNSPECIFIED_LENGTH],
-                        0,
+                        context.range_max_size(),
+                        context.range_fallback_handler(),
                     )
                     .map_err(|error| {
                         tidb_planner::plan_base::PlanError::internal(format!(
@@ -219,10 +221,11 @@ fn locate_list_columns_cnf(
     partition: &crate::partition_routing::PartitionSpec,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
+    context: &crate::StmtContext,
 ) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
     let mut location = None;
     for condition in conditions {
-        match locate_list_columns_condition(partition, condition, columns)? {
+        match locate_list_columns_condition(partition, condition, columns, context)? {
             ListColumnsLocated::Full => {}
             ListColumnsLocated::Location(found) => {
                 if let Some(current) = &mut location {
@@ -240,13 +243,14 @@ fn locate_list_columns_dnf(
     partition: &crate::partition_routing::PartitionSpec,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
+    context: &crate::StmtContext,
 ) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
     if conditions.is_empty() {
         return Ok(ListColumnsLocated::Full);
     }
     let mut location = crate::partition_pruning::ListPartitionLocation::new();
     for condition in conditions {
-        match locate_list_columns_condition(partition, condition, columns)? {
+        match locate_list_columns_condition(partition, condition, columns, context)? {
             ListColumnsLocated::Full => return Ok(ListColumnsLocated::Full),
             ListColumnsLocated::Location(found) => {
                 crate::partition_pruning::union_list_partition_location(&mut location, found);
@@ -260,9 +264,10 @@ fn list_columns_pruned_ids(
     partition: &crate::partition_routing::PartitionSpec,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
+    context: &crate::StmtContext,
 ) -> Result<Option<Vec<i64>>, tidb_planner::plan_base::PlanError> {
     Ok(
-        match locate_list_columns_cnf(partition, conditions, columns)? {
+        match locate_list_columns_cnf(partition, conditions, columns, context)? {
             ListColumnsLocated::Full => None,
             ListColumnsLocated::Location(location) => Some(
                 partition
@@ -326,7 +331,7 @@ fn partition_indices_for_spec(
         partition.kind,
         crate::partition_routing::PartitionKind::ListColumns { .. }
     ) {
-        if let Some(ids) = list_columns_pruned_ids(partition, &conditions, &columns)? {
+        if let Some(ids) = list_columns_pruned_ids(partition, &conditions, &columns, context)? {
             surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
         }
         return Ok(remap_partition_indices(
@@ -336,11 +341,12 @@ fn partition_indices_for_spec(
         ));
     }
     let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; columns.len()];
-    let Ok(detached) = tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition(
+    let Ok(detached) = tidb_planner::ranger::detacher::detach_partition_range_with_fallback_handler(
         &conditions,
         &columns,
         &lengths,
-        0,
+        context.range_max_size(),
+        context.range_fallback_handler(),
     ) else {
         return Ok(remap_partition_indices(
             partition,

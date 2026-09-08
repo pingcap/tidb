@@ -150,3 +150,22 @@ passed. Actual executor StmtContext still uses its own first-reason cache marker
 the utility tracker is not yet connected to that admission consumer. Continue
 production budget/warning/cache wiring before Ready and publication. No commit
 or push; documentation stays local.
+
+
+2026-09-08 partition quota batch Ready evidence: four SQL regressions cover HASH,
+KEY, RANGE, RANGE COLUMNS, LIST and recursive LIST COLUMNS; quota1 preserves rows
+and emits one warning, quota0 emits none. Prepared HASH checks changing parameters
+and no hit. All four passed in /tmp/partition-sql-ready.log. The original HASH
+regression failed before the fix with empty warnings (/tmp/partition-quota-red.log).
+All 64 ranger tests passed (/tmp/partition-ranger-ready.log), and both partition
+rule tests passed (/tmp/partition-rule-ready.log). Commands use
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked
+with -p tidb-session --lib tests_prepared_plan_cache::static_,
+-p tidb-planner --lib ranger::, and -p tidb-planner --lib rule_partition_processor.
+make lint passed (/tmp/partition-batch-ready-lint.log). rustfmt and diff checks
+passed. Final review confirms partition wrapper keeps sort-key conversion and
+consecutive-range merging disabled, recursive calls share one statement handler,
+and cache rebuild zero-quota paths are unchanged. This batch addresses the
+pkg/planner/core/rule partition quota integration; whole-package parity remains
+incomplete. It includes Rust changes, so accompanying receipt updates can ship
+with the meaningful fix commit under the user's publication instruction.

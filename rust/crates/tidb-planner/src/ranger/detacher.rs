@@ -1594,6 +1594,25 @@ pub fn detach_cond_and_build_range_for_partition(
     )
 }
 
+/// Builds partition ranges with the statement's shared quota-fallback handler.
+pub fn detach_partition_range_with_fallback_handler(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+    handler: &tidb_util::context::RangeFallbackHandler,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    detach_cond_and_build_range(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        false,
+        false,
+        Some(handler),
+    )
+}
+
 /// Go `detachCondAndBuildRange`.
 fn detach_cond_and_build_range(
     conditions: &[Expression],

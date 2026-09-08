@@ -892,3 +892,56 @@ were restored byte-for-byte by finally; git diff --check passed afterward.
 These are documented baseline limitations, not new failures or passing tests.
 Targeted batch checks and make lint passed as recorded above. Final source/diff
 review and package-scoped commit construction remain; no publication yet.
+
+
+2026-09-08 publication checkpoint: Rust integration batch dbe2add614 was committed
+and pushed normally to origin/hparser-integration (fc53443c27..dbe2add614).
+Rustfmt --check passed on every changed Rust file; Ready evidence and baseline
+limitations are recorded above. Next iteration reviews remaining ranger callers
+and physical cacheability refusal behavior before changing further Rust code.
+This post-publication checkpoint is documentation-only and remains local under
+the user's instruction; no separate documentation commit or push.
+
+
+Next batch (2026-09-08): ranger callsite audit recorded in
+ranger-callsite-audit-20260908.md. Go partition_processor uses session RangeMaxSize
+for HASH/KEY and LIST/RANGE pruning; Rust partition bridge hardcoded zero.
+static_partition_pruning_respects_range_quota failed with empty warnings before
+wiring (/tmp/partition-quota-red.log) and passes after wiring
+(/tmp/partition-quota-green.log). Added handler-aware partition entry preserving
+convert_to_sort_key=false/merge_consecutive=false, and threaded StmtContext through
+LIST COLUMNS CNF/DNF helpers. Cache rebuild zero-quota calls remain unchanged.
+This is WIP: expand partition variants, cache interaction and unlimited-budget
+coverage; then run Ready before a separate meaningful Rust commit/push.
+
+
+2026-09-08 partition batch coverage: static_list_columns_quota_preserves_recursive_predicates
+passes for nested AND/OR predicates over LIST COLUMNS(a,b), checking all three
+expected rows, one deduplicated warning at quota1, and no warning at quota0
+(/tmp/list-columns-quota-test.log). Prepared HASH regression changes both IN
+parameters between executions, verifies the two correct rows each time, no cache
+hit and one capacity warning (/tmp/partition-quota-prepared.log). This validates
+results and admission but does not yet attribute the admission refusal to quota
+rather than the static-partition cacheability gate. No such stronger claim is
+made. rustfmt applied and git diff --check passes. Remaining: other partition
+variants, partition wrapper option contracts, Ready tests/lint and final review.
+No new commit/push; all current documentation is local.
+
+
+2026-09-08 partition quota batch Ready evidence: four SQL regressions cover HASH,
+KEY, RANGE, RANGE COLUMNS, LIST and recursive LIST COLUMNS; quota1 preserves rows
+and emits one warning, quota0 emits none. Prepared HASH checks changing parameters
+and no hit. All four passed in /tmp/partition-sql-ready.log. The original HASH
+regression failed before the fix with empty warnings (/tmp/partition-quota-red.log).
+All 64 ranger tests passed (/tmp/partition-ranger-ready.log), and both partition
+rule tests passed (/tmp/partition-rule-ready.log). Commands use
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked
+with -p tidb-session --lib tests_prepared_plan_cache::static_,
+-p tidb-planner --lib ranger::, and -p tidb-planner --lib rule_partition_processor.
+make lint passed (/tmp/partition-batch-ready-lint.log). rustfmt and diff checks
+passed. Final review confirms partition wrapper keeps sort-key conversion and
+consecutive-range merging disabled, recursive calls share one statement handler,
+and cache rebuild zero-quota paths are unchanged. This batch addresses the
+pkg/planner/core/rule partition quota integration; whole-package parity remains
+incomplete. It includes Rust changes, so accompanying receipt updates can ship
+with the meaningful fix commit under the user's publication instruction.

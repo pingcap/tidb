@@ -1029,3 +1029,119 @@ fn rejected_range_dml_retains_planning_warnings_without_caching() {
         vec![vec!["9", "7"], vec!["9", "7"]]
     );
 }
+
+#[test]
+fn static_partition_pruning_respects_range_quota() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE partition_quota (a INT) PARTITION BY HASH(a) PARTITIONS 4")
+        .unwrap();
+    session
+        .run("INSERT INTO partition_quota VALUES (1),(2),(3)")
+        .unwrap();
+    session
+        .run("SET tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    session.run("SET tidb_opt_range_max_size = 1").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a FROM partition_quota WHERE a IN (1,2) ORDER BY a")),
+        vec![vec!["1"], vec!["2"]]
+    );
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert!(
+        warnings
+            .iter()
+            .flatten()
+            .any(|s| s.contains("tidb_opt_range_max_size")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn static_list_columns_quota_preserves_recursive_predicates() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE list_quota (a INT, b INT) PARTITION BY LIST COLUMNS(a,b) (PARTITION p0 VALUES IN ((1,1),(2,2)), PARTITION p1 VALUES IN ((3,3),(4,4)))").unwrap();
+    session
+        .run("INSERT INTO list_quota VALUES (1,1),(2,2),(3,3),(4,4)")
+        .unwrap();
+    session
+        .run("SET tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    let sql = "SELECT a,b FROM list_quota WHERE (a IN (1,2) AND b IN (1,2)) OR (a IN (3,4) AND b=3) ORDER BY a";
+    for quota in [1, 0] {
+        session
+            .run(&format!("SET tidb_opt_range_max_size = {quota}"))
+            .unwrap();
+        assert_eq!(
+            row_text(session.run(sql)),
+            vec![vec!["1", "1"], vec!["2", "2"], vec!["3", "3"]]
+        );
+        let warnings = row_text(session.run("SHOW WARNINGS"));
+        assert_eq!(
+            warnings
+                .iter()
+                .flatten()
+                .filter(|s| s.contains("tidb_opt_range_max_size"))
+                .count(),
+            usize::from(quota != 0),
+            "{warnings:?}"
+        );
+    }
+}
+
+#[test]
+fn static_partition_quota_rejects_prepared_cache_and_keeps_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE prepared_partition_quota (a INT) PARTITION BY HASH(a) PARTITIONS 4")
+        .unwrap();
+    session
+        .run("INSERT INTO prepared_partition_quota VALUES (1),(2),(3),(4)")
+        .unwrap();
+    session
+        .run("SET tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    session.run("SET tidb_opt_range_max_size = 1").unwrap();
+    session
+        .run("PREPARE pq FROM 'SELECT a FROM prepared_partition_quota WHERE a IN (?,?) ORDER BY a'")
+        .unwrap();
+    for (a, b) in [(1, 2), (3, 4)] {
+        session.run(&format!("SET @a={a}, @b={b}")).unwrap();
+        assert_eq!(
+            row_text(session.run("EXECUTE pq USING @a,@b")),
+            vec![vec![a.to_string()], vec![b.to_string()]]
+        );
+        assert!(!session.found_in_plan_cache);
+        let warnings = row_text(session.run("SHOW WARNINGS"));
+        assert_eq!(
+            warnings
+                .iter()
+                .flatten()
+                .filter(|s| s.contains("tidb_opt_range_max_size"))
+                .count(),
+            1,
+            "{warnings:?}"
+        );
+    }
+}
+
+#[test]
+fn static_partition_quota_covers_partition_kinds() {
+    for partition in [
+        "KEY(a) PARTITIONS 4",
+        "RANGE(a) (PARTITION p0 VALUES LESS THAN (3), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        "RANGE COLUMNS(a) (PARTITION p0 VALUES LESS THAN (3), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        "LIST(a) (PARTITION p0 VALUES IN (1,2), PARTITION p1 VALUES IN (3,4))",
+    ] {
+        let mut session = Session::new();
+        session.run(&format!("CREATE TABLE kind_quota (a INT) PARTITION BY {partition}")).unwrap();
+        session.run("INSERT INTO kind_quota VALUES (1),(2),(3),(4)").unwrap();
+        session.run("SET tidb_partition_prune_mode = 'static'").unwrap();
+        for quota in [1,0] {
+            session.run(&format!("SET tidb_opt_range_max_size = {quota}")).unwrap();
+            assert_eq!(row_text(session.run("SELECT a FROM kind_quota WHERE a IN (1,2) ORDER BY a")), vec![vec!["1"],vec!["2"]], "{partition}, quota={quota}");
+            let warnings = row_text(session.run("SHOW WARNINGS"));
+            assert_eq!(warnings.iter().flatten().filter(|s| s.contains("tidb_opt_range_max_size")).count(), usize::from(quota != 0), "{partition}, quota={quota}: {warnings:?}");
+        }
+    }
+}
