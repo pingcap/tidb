@@ -1462,18 +1462,159 @@ fn dnf_selectivity(
     }
     let mut items = Vec::new();
     collect_or(conjunct, &mut items);
+    let items = merge_dnf_ast_items(&items, table, resolver);
     if items.len() <= 1 {
         return None;
     }
     let mut selectivity = 0.0_f64;
     for item in items {
         let mut cnf = Vec::new();
-        crate::plan_trace::collect_and(strip_parens(item), &mut cnf);
+        crate::plan_trace::collect_and(strip_parens(&item), &mut cnf);
         let current =
             selectivity_of_conjuncts_with_defaults(&cnf, table, resolver, stats, defaults, range_context);
         selectivity = selectivity + current - selectivity * current;
     }
     (selectivity != 0.0).then_some(selectivity)
+}
+
+// Sized forwarding adapter for the expression rewriter's generic API.
+struct StatisticsResolver<'a> {
+    base: &'a dyn tidb_expr::rewriter::ColumnResolver,
+}
+
+impl tidb_expr::rewriter::ColumnResolver for StatisticsResolver<'_> {
+    fn resolve(&self, path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
+        self.base.resolve(path)
+    }
+
+    fn resolve_column(&self, path: &[String]) -> Option<tidb_expr::column::Column> {
+        self.base.resolve_column(path)
+    }
+
+    fn resolve_expression(&self, path: &[String]) -> Option<tidb_expr::expression::Expression> {
+        self.base.resolve_expression(path)
+    }
+
+    fn clause_message(&self) -> &'static str {
+        self.base.clause_message()
+    }
+
+    fn orig_name(&self, path: &[String]) -> Option<String> {
+        self.base.orig_name(path)
+    }
+
+    fn resolve_constant(&self, path: &[String]) -> Option<tidb_expr::expression::Expression> {
+        self.base.resolve_constant(path)
+    }
+
+    fn has_resolved_constants(&self) -> bool {
+        self.base.has_resolved_constants()
+    }
+
+    fn resolve_default(&self, path: &[String]) -> Option<tidb_expr::expression::Expression> {
+        self.base.resolve_default(path)
+    }
+
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        self.base.time_zone()
+    }
+
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        self.base.date_modes()
+    }
+
+    fn connection_charset_info(&self) -> (&str, &str) {
+        self.base.connection_charset_info()
+    }
+
+    fn tidb_info_len(&self) -> usize {
+        self.base.tidb_info_len()
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.base.like_default_escape()
+    }
+
+    fn no_unsigned_subtraction(&self) -> bool {
+        self.base.no_unsigned_subtraction()
+    }
+
+    fn comparison_context(&self) -> Option<&dyn tidb_expr::Columns> {
+        self.base.comparison_context()
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.base.div_precision_increment()
+    }
+
+    fn current_database(&self) -> Option<String> {
+        self.base.current_database()
+    }
+
+    fn fold_mode(&self) -> tidb_expr::ConstantFoldMode {
+        self.base.fold_mode()
+    }
+
+    fn fold_constant(
+        &self,
+        expression: &mut tidb_expr::expression::Expression,
+        mode: tidb_expr::ConstantFoldMode,
+    ) {
+        self.base.fold_constant(expression, mode);
+    }
+}
+
+// Adapt Go MergeDNFItems4Col to the AST retained by this estimator. Use
+// the native checker, while keeping original ASTs for recursive estimation.
+fn merge_dnf_ast_items(
+    items: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> Vec<tidb_ast::Expr> {
+    let mut unmerged = Vec::new();
+    let mut groups: BTreeMap<usize, tidb_ast::Expr> = BTreeMap::new();
+    for item in items {
+        let merge_column = (|| {
+            let offsets = physical_column_offsets(item, table, resolver)?;
+            if offsets.len() != 1 || table.columns[offsets[0]].id == -1 {
+                return None;
+            }
+            let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+                item,
+                &StatisticsResolver { base: resolver },
+            )
+            .ok()?;
+            let columns = tidb_expr::simple_expr::extract_columns(&rewritten);
+            if columns.len() != 1 {
+                return None;
+            }
+            let checker = tidb_planner::ranger::checker::ConditionChecker {
+                checker_col: Some(&columns[0]),
+                length: -1,
+                opt_prefix_index_single_scan: true,
+            };
+            checker.check(&rewritten).0.then_some(offsets[0])
+        })();
+        if let Some(offset) = merge_column {
+            let next = (*item).clone();
+            if let Some(previous) = groups.remove(&offset) {
+                groups.insert(
+                    offset,
+                    tidb_ast::Expr::Binary(
+                        tidb_ast::BinaryOp::LogicOr,
+                        Box::new(previous),
+                        Box::new(next),
+                    ),
+                );
+            } else {
+                groups.insert(offset, next);
+            }
+        } else {
+            unmerged.push((*item).clone());
+        }
+    }
+    unmerged.extend(groups.into_values());
+    unmerged
 }
 
 fn dnf_columns_have_statistics(
@@ -1931,6 +2072,67 @@ mod tests {
             comment: String::new(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn dnf_merges_same_column_arms_before_independence_estimation() {
+        let table = KvTable::with_storage(
+            92,
+            vec![long_column("a", 1), long_column("b", 2)],
+            Box::new(MemTableStorage::new()),
+        );
+        let estimate = |sql| {
+            let statement = tidb_parser::parse(sql).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            selectivity(
+                select.where_clause.as_ref().unwrap(),
+                &table,
+                &NamedColumnResolver { table: &table },
+                None,
+            )
+        };
+        let simple = estimate("SELECT * FROM t WHERE a=1 OR b=2");
+        let duplicate = estimate("SELECT * FROM t WHERE a=1 OR a=1 OR b=2");
+        // Go merges the a arms and builds their union range before combining
+        // with b under the independence assumption. Repetition adds no mass.
+        assert!(
+            (duplicate - simple).abs() < 1e-12,
+            "simple={simple}, duplicate={duplicate}"
+        );
+        let overlapping = estimate("SELECT * FROM t WHERE a>5 OR a>3 OR b=2");
+        let union = estimate("SELECT * FROM t WHERE a>3 OR b=2");
+        assert!(
+            (overlapping - union).abs() < 1e-12,
+            "overlap={overlapping}, union={union}"
+        );
+        let single = estimate("SELECT * FROM t WHERE a=1 OR a=1");
+        assert!((single - 0.001).abs() < 1e-12, "single={single}");
+        let statement = tidb_parser::parse("SELECT * FROM t WHERE a=1 OR a=3 OR b=2").unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("select")
+        };
+        let quota = selectivity_with_range_context(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            None,
+            SelectivityDefaults::default(),
+            crate::index_range::RangeContext {
+                max_size: 1,
+                fallback_handler: None,
+            },
+        );
+        // Each column group falls back to 0.8; independent union is 0.96.
+        // The single-group guard prevents recursive rebuilding under quota.
+        assert!((quota - 0.96).abs() < 1e-12, "quota={quota}");
     }
 
     #[test]
