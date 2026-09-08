@@ -11357,3 +11357,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (CONTAINS_PATH/QUOTE pin): JSON_CONTAINS_PATH's one/all modes
   and JSON_QUOTE's inner-quote escaping. Pinned in
   `crates/tidb-session/tests/json_quote_contains_path_source.rs`.
+- 2026-09-08 (ARRAY_APPEND/INSERT pin): plain and nested appends, positional
+  inserts, and the wildcard-path refusal. Pinned in
+  `crates/tidb-session/tests/json_array_append_insert_source.rs`.
