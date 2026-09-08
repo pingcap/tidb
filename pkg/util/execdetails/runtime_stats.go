@@ -93,7 +93,7 @@ type basicCopRuntimeStats struct {
 func (e *basicCopRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	buf.WriteString("time:")
-	buf.WriteString(FormatDuration(time.Duration(e.procTimes.sumVal)))
+	buf.WriteString(FormatDuration(time.Duration(e.procTimes.Sum())))
 	buf.WriteString(", loops:")
 	buf.WriteString(strconv.Itoa(int(e.loop)))
 	if e.tiflashStats != nil {
@@ -116,11 +116,11 @@ func (e *basicCopRuntimeStats) String() string {
 // Clone implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	stats := &basicCopRuntimeStats{
-		loop:      e.loop,
-		rows:      e.rows,
-		threads:   e.threads,
-		procTimes: e.procTimes,
+		loop:    e.loop,
+		rows:    e.rows,
+		threads: e.threads,
 	}
+	stats.procTimes.MergePercentile(&e.procTimes)
 	if e.tiflashStats != nil {
 		stats.tiflashStats = &TiflashStats{
 			scanContext:    e.tiflashStats.scanContext.Clone(),
@@ -220,14 +220,14 @@ func (crs *CopRuntimeStats) GetActRows() int64 {
 
 // GetTasks return total tasks of CopRuntimeStats
 func (crs *CopRuntimeStats) GetTasks() int32 {
-	return int32(crs.stats.procTimes.size)
+	return int32(crs.stats.procTimes.Size())
 }
 
 var zeroTimeDetail = util.TimeDetail{}
 
 func (crs *CopRuntimeStats) String() string {
-	procTimes := crs.stats.procTimes
-	totalTasks := procTimes.size
+	procTimes := &crs.stats.procTimes
+	totalTasks := procTimes.Size()
 	isTiFlashCop := crs.storeType == kv.TiFlash
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	{
