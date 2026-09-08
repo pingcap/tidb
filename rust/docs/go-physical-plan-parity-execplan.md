@@ -1333,42 +1333,50 @@ both `oltp_read_only` and `oltp_read_write`.
   lib serialized: 1,258 passed / 4 failed; the 13 statistics-request transport
   tests still flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
-  - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
-    the uncorrelated/Selection/MaxOneRow/Sort/Limit/projection/aggregation
-    arms are ported; the aggregate group-below arm, the `aggDefaultValueMap`
-    (scalar `COUNT`/`BIT_*`) projections, and `pruneRedundantApply` remain.
-    Six `driver::tests::subqueries::*` failures.
-  - `pkg/planner/core` `compareCandidates` (`find_best_task.go:866`): the
-    prefer-range override is ported, but the metric-by-metric skyline
-    comparison (`accessResult`/`scanResult`/`eqOrInResult`/risk ratio) that
-    decides the MergeJoin-vs-IndexHashJoin and IndexJoin-vs-IndexLookUp
-    choices is not. Remaining after the 2026-09-09 rounds:
-    `aggregates::tpcc_condition_eleven_*` (analyzed arm).
-  - `pkg/planner/core` index-join multi-pattern inner child
-    (`extractIndexJoinInnerChildPattern`, `exhaust_physical_plans.go:860`):
-    Go wraps the inner DataSource of an index join with the chain of
-    Projection/Selection/Aggregation/UnionScan nodes above it and rebuilds
-    that chain directly over the constructed inner task. Rust plans the
-    index-join inner by ordinary property propagation, so an Aggregation or
-    Selection inner drops `IndexJoinProp` and no index candidate survives.
-    `aggregates::tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup`
-    (wants `IndexHashJoin` over a grouped `HashAgg` inner) needs this arm.
-  - `joins::tpcc_check_seven_*`: DONE (group NDVs, see the 2026-09-09 entry).
-  - `subqueries::subqueries`: DONE (index-join explain field order, see the
-    2026-09-09 entry).
-  - `aggregates::tpcc_condition_nine_rebuilds_*`: the plan shape and execution
-    now match; the ANALYZED arm still asserts the older Go inner-side
-    statistics model (the constructed inner kept each logical operator's own
-    statistics, while the pinned Go's
+  - `subqueries::correlated_sum_predicate_pulls_above_unique_outer_join`: the
+    `part` source lives in a subquery block, but `InitStats` derives every
+    source from the TOP-LEVEL `SelectStmt` and `single_table_predicate`
+    drops subquery-bearing conjuncts, so `p_name LIKE 'green%'` never reaches
+    the part profile (200000 rows). Go derives each source from its OWN
+    `PushedDownConds` (`deriveStats4DataSource` -> `cardinality.Selectivity`),
+    which the port already has on the `DataSource` at `InitStats` time. The
+    planner-side `analyzed_filter_selectivity` also charges LIKE the 0.8
+    fallback where Go's histogram-aware string match
+    (`GetSelectivityByFilter`/`GetStrMatchDefaultSelectivity` = 0.1) gives
+    the selective estimate that makes the index join win.
+  - `aggregates::tpcc_condition_eleven_*` (analyzed arm): the analyzed
+    statistics collapse the grouped leaves' estimates from 8 to 1.0, which
+    flips two MergeJoins to the IndexJoin family. Measured with a temporary
+    `DSH_TRACE_IJ` hook: pseudo arm build_rows=8/join_rows=8, analyzed arm
+    build_rows=1/join_rows=1. Go floors the group NDV at
+    `EstimateColsNDVWithMatchedLen` (10 for `GROUP BY (w_id,d_id)`), so the
+    collapse is upstream in the analyzed source/aggregation estimate
+    (`logical/aggregation.rs::derive_stats` ->
+    `cardinality/derive_stats.rs::estimate_cols_ndv_with_matched_len` ->
+    `logical/rewrite.rs::analyzed_filter_selectivity`/DataSource arm).
+    Next probe: trace the aggregation's child row count and column NDVs.
+  - `aggregates::tpcc_condition_nine_rebuilds_*`: the plan shape and
+    execution now match (see the 2026-09-09 entry); the ANALYZED arm still
+    asserts the older Go inner-side statistics model (the constructed inner
+    kept each logical operator's own statistics, while the pinned Go's
     `inheritStatsFromBottomTaskForIndexJoinInner` copies the bottom task's
     runtime profile) and the district source's derived
     `not(isnull(cast(d_ytd)))` selectivity, which the pre-push-down
     `InitStats` pass cannot see.
+  - `subqueries::explaining_a_correlated_scalar_type_reads_no_storage`: with
+    the fixture's analyzed stats (inner_t 10000 rows, `k` NDV 500 => the
+    dedup aggregate is 500 rows) Go's OWN cost model also prefers the index
+    join; the recorded `HashJoin` came from a pseudo-stats fixture whose
+    dedup aggregate is 7992 rows. Needs a Go probe at NDV 500 to decide
+    whether the fixture's NDV or the assertion is re-pinned.
+  - `joins::tpcc_check_seven_*`: DONE (group NDVs, see the 2026-09-09 entry).
+  - `subqueries::subqueries`: DONE (index-join explain field order, see the
+    2026-09-09 entry).
   - `pkg/executor` Window executor (`exhaustPhysicalPlans over Window`):
     DONE (ROWS frame + `row_number`, see the 2026-09-09 entry).
-  - `aggregates::tpcc_condition_six_*` now clears the predicate-placement
+  - `aggregates::tpcc_condition_six_*`: clears the predicate-placement
     assertions (`simplifyOuterJoin` ported) and remains blocked only on the
-    same `skylinePruning` choice as the list above.
+    `skylinePruning` choice when it re-enters the set.
   - `aggregates::tpch_q14_matches_recorded_hash_join_plan`: DONE. CASE branch
     casts, the live-context builtin fold, the `HistColl.StatsVer` planner
     view, and the per-source data-source statistics together produce Go's
