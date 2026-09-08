@@ -121,7 +121,7 @@ From `rust`, use `CARGO_INCREMENTAL=0` and shared `CARGO_TARGET_DIR=/tmp/tidb-pa
     cargo test --offline --locked -j12 -p tidb-kvcache
     cargo test --offline --locked -j12 -p tidb-util kvcache
     cargo test --offline --locked -j12 -p tidb-datatype json_path::tests
-    cargo test --offline --locked -j12 -p tidb-executor --test apply_cache_source
+    cargo test --offline --locked -j12 -p tidb-executor --lib tests_executor_internal_source
     cargo test --offline --locked -j12 -p tidb-executor --lib apply::tests
     cargo test --offline --locked -j12 -p tidb-session --lib tests_non_prepared_plan_cache::the_cache_is_bounded_by_its_size_variable -- --exact
     cargo check --offline --locked -j12 -p tidb-kvcache -p tidb-util -p tidb-datatype -p tidb-executor -p tidb-session --all-targets

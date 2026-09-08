@@ -51,6 +51,24 @@ callers to discard the corresponding function results (the global tracker is
 initialized by package `init`). The focused deny-lint regressions failed with
 five and one compiler errors before the edits and pass afterward.
 
+## Semantic receipt repair (2026-09-08)
+
+`tests/kvcache.semantic.toml` still named
+`rust/crates/tidb-executor/tests/apply_cache_source.rs` as evidence and ran
+`cargo test -p tidb-executor --test all apply_cache_source`, but commit
+`e1deac7e86` had deleted that file when it narrowed the apply cache to
+executor internals. The receipt now points at the apply cache's owning receipt
+(`rust/testport/receipts/executor_internal_applycache.md`) and runs the two
+surviving apply-cache gates: `--lib tests_executor_internal_source` (the two
+source-derived tests) and `--lib apply::tests` (the live ApplyExec reuse
+cases). `tests/kvcache_semantic_receipt.rs` now fails when any recorded
+evidence file is absent; it failed with `evidence file
+rust/crates/tidb-executor/tests/apply_cache_source.rs ... does not exist`
+against the pre-fix receipt and passes after. The same batch removed the
+dangling `replacing_a_key_preserves_the_source_tracker_charge` and
+`tests/apply_cache_source.rs` references from `apply_cache.rs`'s module doc and
+the `kvcache-audit-execplan.md` command list.
+
 ## Validation
 
 Profile: **Ready** for this focused parity fix within the continuing

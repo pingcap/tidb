@@ -24,13 +24,17 @@
 //! section. `applyCacheKey` and its `Hash()` method are not a distinct type:
 //! they exist in Go only to satisfy `kvcache.Key`, whose `Hash()` returns the
 //! key bytes unchanged, so the byte slice *is* the key here. Both upstream
-//! tests are ported in `tests/apply_cache_source.rs`.
+//! tests are ported in `crate::tests_executor_internal_source`
+//! (`apply_cache_admits_values_and_evicts_oldest_entries`,
+//! `apply_cache_concurrent_get_and_set_is_safe`), and the live ApplyExec cache
+//! reuse is covered by `apply::tests`. This module's separate external test
+//! file was removed when it was narrowed to executor internals.
 //!
 //! The policy the source owns, reproduced exactly: charge each pair as
 //! `len(key) + value memory`; reject outright an item larger than the quota;
 //! otherwise evict oldest-first until the item fits, then store it. Note that
 //! Go re-charges a replaced key without refunding the old entry, which the
-//! Rust keeps — see `replacing_a_key_preserves_the_source_tracker_charge`.
+//! Rust keeps.
 //!
 //! Narrowed dependencies:
 //!

@@ -34,8 +34,9 @@ functions public and carried a separate `tests/apply_cache_source.rs` suite.
 Those were Rust-only public/test surfaces: Go's package is internal and
 exposes no length/empty/charge observer. The fix narrows the module and cache
 helpers to `pub(crate)`, removes the uncalled `len`/`is_empty` observers and
-the supplemental external test file, and retains source-derived unit tests in
-the crate plus live ApplyExec cache-reuse coverage.
+the supplemental external test file, and retains the two source-derived tests
+in `crate::tests_executor_internal_source` plus live ApplyExec cache-reuse
+coverage in `apply::tests`.
 
 No Go behavior changed; no new Rust API or alternative policy was introduced.
 
