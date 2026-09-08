@@ -230,9 +230,9 @@ func TestLogSlowLogRUV3(t *testing.T) {
 	tk.MustExec("set tidb_slow_log_threshold=0;")
 	tk.MustQuery("select * from t use index (idx) where a in (1) union select * from t use index (idx) where a in (2,3);")
 	tk.MustExec("set tidb_slow_log_threshold=300;")
-	tk.MustQuery("select index_names from `information_schema`.`slow_query` " +
+	tk.MustQuery("select Request_unit_v2 from `information_schema`.`slow_query` " +
 		"where query like 'select%union%' limit 1").
-		Check(testkit.Rows("[t:idx]"))
+		Check(testkit.Rows("101"))
 }
 
 func TestSlowQuerySessionAlias(t *testing.T) {
