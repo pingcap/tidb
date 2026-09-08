@@ -1084,7 +1084,15 @@ both `oltp_read_only` and `oltp_read_write`.
     `DataInDiskByChunks` files open until `Close`, while
     `ParallelSpillPartitions::restore_partition` closes each file during the
     pipeline: `hash_agg_spill_tests::test_get_correct_result`.
-  - `aggregates::{tpcc_condition_eleven_*}` operator list still differs.
+  - `aggregates::tpcc_condition_eleven_*`: the Rust plan has a reordering
+    Projection between the root StreamAgg and the outer MergeJoin
+    (`Projection([10,13,12,15,18,17]) -> Join([10,15,12,13,17,18])`), while a
+    Go `testkit` oracle for the same DDL and SQL shows
+    `StreamAgg -> MergeJoin` with no Projection. The star projection was
+    expanded on the pre-join-reorder schema order; the join reorder then
+    rebuilt the join's schema in a different order and, unlike Go's
+    `restoreSchema` (`rule_join_reorder.go:501`), did not reconcile the two.
+    Fixing it needs the join reorder's schema restoration/order parity.
 - [ ] Run correctness, compatibility, performance, and Ready validation.
 
 ## Surprises & Discoveries
