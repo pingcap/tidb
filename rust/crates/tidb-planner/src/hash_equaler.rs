@@ -96,7 +96,6 @@ impl HashEqualer {
 }
 
 /// Creates a planner hasher initialized to the FNV-1a offset basis.
-#[must_use]
 pub fn new_hash_equaler() -> HashEqualer {
     HashEqualer {
         hash64a: Hash64a::new(OFFSET64),
@@ -228,5 +227,16 @@ impl Hasher for HashEqualer {
 
     fn cache(&self) -> &[u8] {
         &self.cache
+    }
+}
+
+#[cfg(test)]
+mod return_contract_tests {
+    use super::new_hash_equaler;
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        new_hash_equaler();
     }
 }

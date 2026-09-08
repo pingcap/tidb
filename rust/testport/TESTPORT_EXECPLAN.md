@@ -9475,6 +9475,18 @@ risks without claiming repository-wide parity.
   blocked before execution by the unrelated missing `allow_agg_push_down`
   field in `tests/core_logical_cte_topn_prune_source.rs:75`. Evidence is
   recorded in `receipts/planner_cascades_pattern.md`.
+- 2026-09-08 (`pkg/planner/cascades/base` return contract): current Go master
+  `aec988ea500d` was re-read as the complete seven-artifact, 563-line package,
+  including its four production declarations, two benchmarks, three hasher
+  tests, BUILD target, and the absence of fixtures, generated/platform
+  variants, and nested packages. The complete planner base traits, hasher,
+  scheduler/stack contracts, package re-export tests, source-derived hash
+  tests, and direct consumers were inventoried. The one Rust-only
+  `#[must_use]` diagnostic on the Go-shaped `NewHashEqualer` constructor was
+  removed; raw digest adapters remain annotated. The focused deny-on-discard
+  regression failed before the fix with exactly one diagnostic and passes
+  after; all eight package owner tests and the planner library check pass.
+  Evidence is recorded in `receipts/planner_cascades_base.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
