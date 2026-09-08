@@ -28,22 +28,184 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestNextGenExpiredConflictRowCleanup(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("requires the NextGen distributed task framework")
+	}
+
+	const (
+		sourceBucket = "expired-conflict-source"
+		sortBucket   = "expired-conflict-sort"
+		sentinel     = "conflicted-rows/not-a-task/sentinel"
+		dbName       = "expired_conflict_cleanup"
+	)
+	ctx := context.Background()
+	baseSortURI := fmt.Sprintf("gs://%s?endpoint=%s", sortBucket, gcsEndpoint)
+	originalExpiredFileCleanInterval := scheduler.DefaultExpiredFileCleanInterval
+	scheduler.DefaultExpiredFileCleanInterval = 100 * time.Millisecond
+	t.Cleanup(func() {
+		scheduler.DefaultExpiredFileCleanInterval = originalExpiredFileCleanInterval
+	})
+	originalCloudStorageURI := vardef.CloudStorageURI.Load()
+	vardef.CloudStorageURI.Store(baseSortURI)
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(originalCloudStorageURI)
+	})
+
+	var (
+		rootedSortURI string
+		sortStore     storeapi.Storage
+	)
+	s := &mockGCSSuite{}
+	s.SetT(t)
+	t.Cleanup(func() {
+		if s.server != nil {
+			s.server.Stop()
+		}
+	})
+	s.beforeDomainSetup = func() {
+		s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
+		s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortBucket})
+		rootedSortURI = handle.GetCloudStorageURI(context.Background(), nil)
+		var err error
+		sortStore, err = importer.GetSortStore(ctx, rootedSortURI)
+		require.NoError(t, err)
+		t.Cleanup(sortStore.Close)
+		require.NoError(t, sortStore.WriteFile(ctx, sentinel, []byte("sentinel")))
+	}
+	const disableDistTaskFailpoint = "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"
+	require.NoError(t, failpoint.Enable(disableDistTaskFailpoint, `return(true)`))
+	distTaskDisabled := true
+	t.Cleanup(func() {
+		if distTaskDisabled {
+			require.NoError(t, failpoint.Disable(disableDistTaskFailpoint))
+		}
+	})
+	s.SetupSuite()
+	vardef.CloudStorageURI.Store(baseSortURI)
+	require.NoError(t, failpoint.Disable(disableDistTaskFailpoint))
+	distTaskDisabled = false
+	require.NoError(t, domain.GetDomain(s.tk.Session()).InitDistTaskLoop())
+
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		exists, err := sortStore.FileExists(ctx, sentinel)
+		assert.NoError(collect, err)
+		assert.False(collect, exists, "startup cleanup did not remove %s", sentinel)
+	}, 30*time.Second, 100*time.Millisecond)
+
+	var jobID int64
+	var taskKey string
+	t.Cleanup(func() {
+		assert.NoError(t, s.tk.ExecToErr("drop database if exists "+dbName))
+	})
+	t.Cleanup(func() {
+		if jobID != 0 {
+			assert.NoError(t, s.tk.ExecToErr("delete from mysql.tidb_import_jobs where id = ?", jobID))
+		}
+	})
+	t.Cleanup(func() {
+		if taskKey == "" {
+			return
+		}
+		assert.NoError(t, s.tk.ExecToErr(`delete from mysql.tidb_background_subtask where task_key in
+			(select cast(id as char) from mysql.tidb_global_task where task_key = ? union all
+			 select cast(id as char) from mysql.tidb_global_task_history where task_key = ?)`, taskKey, taskKey))
+		assert.NoError(t, s.tk.ExecToErr(`delete from mysql.tidb_background_subtask_history where task_key in
+			(select cast(id as char) from mysql.tidb_global_task where task_key = ? union all
+			 select cast(id as char) from mysql.tidb_global_task_history where task_key = ?)`, taskKey, taskKey))
+		assert.NoError(t, s.tk.ExecToErr("delete from mysql.tidb_global_task where task_key = ?", taskKey))
+		assert.NoError(t, s.tk.ExecToErr("delete from mysql.tidb_global_task_history where task_key = ?", taskKey))
+	})
+	t.Cleanup(func() {
+		testutils.RemoveAllObjects(t, s.server, sourceBucket)
+	})
+	t.Cleanup(func() {
+		testutils.RemoveAllObjects(t, s.server, sortBucket)
+	})
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: sourceBucket, Name: "data.csv"},
+		Content:     []byte("1,one\n1,duplicate\n2,two\n"),
+	})
+	s.prepareAndUseDB(dbName)
+	s.tk.MustExec("create table t (id bigint primary key, value varchar(32))")
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t from 'gs://%s/data.csv?endpoint=%s'
+		with cloud_storage_uri='%s', on_duplicate_key='capture'`, sourceBucket, gcsEndpoint, rootedSortURI)).Rows()
+	require.Len(t, result, 1)
+	parsedJobID, err := strconv.ParseInt(result[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	jobID = parsedJobID
+	taskKey = importinto.TaskKey(jobID)
+
+	task := s.getTaskByJob(jobID)
+	require.NotNil(t, task)
+
+	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepCollectConflicts)
+	require.NotEmpty(t, subtasks)
+	conflictFiles := make([]string, 0)
+	for _, subtask := range subtasks {
+		meta := &importinto.CollectConflictsStepMeta{}
+		require.NoError(t, json.Unmarshal(subtask.Meta, meta))
+		conflictFiles = append(conflictFiles, meta.ConflictedRowFilenames...)
+	}
+	require.NotEmpty(t, conflictFiles)
+	for _, filename := range conflictFiles {
+		exists, err := sortStore.FileExists(ctx, filename)
+		require.NoError(t, err, filename)
+		require.True(t, exists, filename)
+	}
+
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		rows := s.tk.MustQuery("select state from mysql.tidb_global_task_history where id = ?", task.ID).Rows()
+		if !assert.Len(collect, rows, 1) {
+			return
+		}
+		assert.Equal(collect, proto.TaskStateSucceed.String(), rows[0][0])
+	}, 30*time.Second, 100*time.Millisecond)
+	for _, filename := range conflictFiles {
+		exists, err := sortStore.FileExists(ctx, filename)
+		require.NoError(t, err, filename)
+		require.True(t, exists, "ordinary cleanup removed conflict file %s", filename)
+	}
+
+	s.tk.MustExec(`update mysql.tidb_global_task_history
+		set end_time = CURRENT_TIMESTAMP - INTERVAL 8 DAY where id = ?`, task.ID)
+	s.tk.MustQuery(`select state, end_time < CURRENT_TIMESTAMP - INTERVAL 7 DAY
+		from mysql.tidb_global_task_history where id = ?`, task.ID).
+		Check(testkit.Rows("succeed 1"))
+
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		for _, filename := range conflictFiles {
+			exists, err := sortStore.FileExists(ctx, filename)
+			assert.NoError(collect, err, filename)
+			assert.False(collect, exists, "expired conflict file still exists: %s", filename)
+		}
+	}, 30*time.Second, 100*time.Millisecond)
+}
 
 func (s *mockGCSSuite) testSingleFileConflictResolution(tblSQL string, sourceContent string, resultRows []string) {
 	s.T().Helper()

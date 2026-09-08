@@ -33,11 +33,12 @@ import (
 type mockGCSSuite struct {
 	suite.Suite
 
-	server  *fakestorage.Server
-	store   kv.Storage
-	tk      *testkit.TestKit
-	taskMgr *storage.TaskManager
-	ctx     context.Context
+	server            *fakestorage.Server
+	store             kv.Storage
+	tk                *testkit.TestKit
+	taskMgr           *storage.TaskManager
+	ctx               context.Context
+	beforeDomainSetup func()
 }
 
 var (
@@ -66,6 +67,9 @@ func (s *mockGCSSuite) SetupSuite() {
 	}
 	s.server, err = fakestorage.NewServerWithOptions(opt)
 	s.Require().NoError(err)
+	if s.beforeDomainSetup != nil {
+		s.beforeDomainSetup()
+	}
 	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
 	s.tk = testkit.NewTestKit(s.T(), s.store)
 
