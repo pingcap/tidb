@@ -259,3 +259,9 @@ direct reading coverage to sixteen files. Integer parse-overflow errors,
 bound-clamping warnings, relaxed validation warning restoration and hook/alias
 ordering are recorded as pending range-limit integration requirements. Eight
 direct files and nested tests remain unread; no behavior change is claimed.
+
+At 9f99bd62f1, completed the hint allowlist and conversion helper production/test
+files (1443 lines), bringing direct coverage to nineteen. The range-size option
+is hint-updatable in Go, so the eventual repair must test SET_VAR propagation.
+Five direct files and all nested test packages remain pending. This checkpoint
+records reading evidence only; no Rust behavior fix or Ready validation claim.
