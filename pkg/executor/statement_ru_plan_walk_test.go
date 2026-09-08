@@ -104,6 +104,37 @@ func (observation *StatementRUOwnerObservationForTest) RecordedSuccessForTest() 
 }
 
 func TestStatementRUCalculationTraversal(t *testing.T) {
+	t.Run("DML requires typed processed work", func(t *testing.T) {
+		ctx := mock.NewContext()
+		plan := physicalop.Insert{}.Init(ctx)
+		tree := plannercore.FlattenPhysicalPlan(plan, false).Main
+		for _, tc := range []struct {
+			name  string
+			stats *execdetails.WriteRuntimeStats
+			want  statementRUOperatorState
+		}{
+			{"missing", nil, statementRUOperatorUnsupported},
+			{"zero", &execdetails.WriteRuntimeStats{}, statementRUOperatorComplete},
+			{"processed", &execdetails.WriteRuntimeStats{CPUWork: 6}, statementRUOperatorComplete},
+			{"negative", &execdetails.WriteRuntimeStats{CPUWork: -1}, statementRUOperatorInvalid},
+			{"overflow", &execdetails.WriteRuntimeStats{CPUWork: math.Inf(1)}, statementRUOperatorInvalid},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				coll := execdetails.NewRuntimeStatsColl(nil)
+				if tc.stats != nil {
+					coll.RegisterStats(plan.ID(), tc.stats)
+				}
+				calculator := &statementRUCalculator{}
+				result := calculateStatementRUPlanChildFirst(tree, 0, coll, calculator, 10, statementRURawUnits{}, nil)
+				require.Equal(t, tc.want, result.state)
+				if tc.want == statementRUOperatorComplete {
+					require.Equal(t, tc.stats.CPUWork, calculator.units.CPUWork)
+				}
+			})
+		}
+		result := calculateStatementRUPlanChildFirst(tree, 0, nil, &statementRUCalculator{}, 10, statementRURawUnits{}, nil)
+		require.Equal(t, statementRUOperatorUnsupported, result.state)
+	})
 	setPlan := func(fixture statementRUSimpleSelectFixture, plan base.PhysicalPlan) {
 		fixture.stmt.Plan = plan
 		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
@@ -221,6 +252,14 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture.stmt.finishStatementRUForTest(nil)
 		require.Equal(t, int64(1), calibrationCount.Load())
 		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
+		flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		wantUnits.OperatorNum = float64(len(flat.Main))
+		for _, tree := range flat.CTEs {
+			wantUnits.OperatorNum += float64(len(tree))
+		}
+		for _, tree := range flat.ScalarSubQueries {
+			wantUnits.OperatorNum += float64(len(tree))
+		}
 		require.Equal(t, wantUnits, snapshot.Units)
 		require.InDelta(t, calculateStatementRUResultOnly(wantUnits).TotalRU,
 			testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
@@ -328,29 +367,31 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			flat,
 			fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl,
 			metrics,
+			statementRUWriteSnapshot{},
 			statementRUCalculationSetup{frontendCompileBytes: 7},
 			true,
 		)
 		require.True(t, ok)
 		require.Equal(t, statementRURawUnits{
+			OperatorNum:          8,
 			CPUWork:              20,
 			NetBytes:             11,
 			FrontendCompileBytes: 7,
 		}, finalized.units)
-		require.Equal(t, float64(38), finalized.result.TotalRU)
+		require.Equal(t, float64(46), finalized.result.TotalRU)
 		require.Equal(t, finalized.result.TotalRU, operators.TotalRU)
-		require.Equal(t, float64(20), operators.Main[0].SelfRU)
-		require.Equal(t, float64(20), operators.Main[0].CumRU)
-		require.Equal(t, float64(6), operators.CTEs[0][0].CumRU)
-		require.Equal(t, float64(12), operators.ScalarSubQueries[0][0].CumRU)
+		require.Equal(t, float64(21), operators.Main[0].SelfRU)
+		require.Equal(t, float64(22), operators.Main[0].CumRU)
+		require.Equal(t, float64(9), operators.CTEs[0][0].CumRU)
+		require.Equal(t, float64(15), operators.ScalarSubQueries[0][0].CumRU)
 		require.Equal(t, 101, operators.Main[0].Operator.Origin.ID())
 		require.Equal(t, 101, operators.CTEs[0][1].Operator.Origin.ID())
 		require.Equal(t, 101, operators.ScalarSubQueries[0][1].Operator.Origin.ID())
 		require.NotSame(t, operators.Main[0].Operator, operators.CTEs[0][1].Operator)
 		require.NotSame(t, operators.Main[0].Operator, operators.ScalarSubQueries[0][1].Operator)
-		require.Equal(t, float64(20), operators.Main[0].SelfRU)
-		require.Equal(t, float64(6), operators.CTEs[0][1].SelfRU)
-		require.Equal(t, float64(12), operators.ScalarSubQueries[0][1].SelfRU)
+		require.Equal(t, float64(21), operators.Main[0].SelfRU)
+		require.Equal(t, float64(7), operators.CTEs[0][1].SelfRU)
+		require.Equal(t, float64(13), operators.ScalarSubQueries[0][1].SelfRU)
 	})
 	newJoin := func(
 		fixture statementRUSimpleSelectFixture,

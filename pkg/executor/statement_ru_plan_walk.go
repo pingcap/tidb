@@ -28,7 +28,22 @@ import (
 	plannercoreutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/tikv/client-go/v2/util"
 )
+
+// statementRUWriteSnapshot owns the committed payload used by one RU calculation.
+// It is independent of RUv2 accumulation and does not retain live commit details.
+type statementRUWriteSnapshot struct {
+	keys  int64
+	bytes int64
+}
+
+func snapshotStatementRUWrites(details *util.CommitDetails) statementRUWriteSnapshot {
+	if details == nil {
+		return statementRUWriteSnapshot{}
+	}
+	return statementRUWriteSnapshot{keys: int64(details.WriteKeys), bytes: int64(details.WriteSize)}
+}
 
 type statementRUFinalOutcome uint32
 
@@ -121,8 +136,8 @@ func (a *ExecStmt) abortStatementRU() {
 	})
 }
 
-// recordStatementRURootEOF records that the root executor returned an empty
-// chunk. A successful statement does not imply this: a caller can
+// recordStatementRURootEOF records completion of a no-delay executor or the
+// empty chunk ending a result set. A successful statement does not imply this: a caller can
 // close a RecordSet cleanly before consuming all rows, for example when writing
 // rows to the client fails. Publishing that partial work as the statement's RU
 // would undercount, so RU v3 metric publication requires this independent bit.
@@ -172,6 +187,21 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) {
 			sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 			return
 		}
+		if statementRUIsCommitPlan(a.Plan) {
+			if !owner.rootEOF.Load() {
+				return
+			}
+			// COMMIT has no flattened physical operator. Its transaction
+			// payload belongs here, after the session has committed successfully.
+			calculator := newStatementRUCalculator(calculationSetup)
+			writes := snapshotStatementRUWrites(sessVars.StmtCtx.GetExecDetails().CommitDetail)
+			calculator.units.WriteKeys = float64(writes.keys)
+			calculator.units.WriteBytes = float64(writes.bytes)
+			finalized, publishFinalized = calculator.finalize()
+			finalized.writeSQL = true // An empty COMMIT is still a write-side statement.
+			return
+		}
+
 		flat := getFlatPlan(sessVars.StmtCtx)
 		if flat == nil {
 			return
@@ -186,6 +216,7 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) {
 			flat,
 			sessVars.StmtCtx.RuntimeStatsColl,
 			sessVars.RUV2Metrics,
+			snapshotStatementRUWrites(sessVars.StmtCtx.GetExecDetails().CommitDetail),
 			calculationSetup,
 			owner.rootEOF.Load(),
 		)
@@ -204,21 +235,23 @@ func calculateStatementRU(
 	flat *plannercore.FlatPhysicalPlan,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
 ) (statementRUFinalizedSnapshot, bool) {
-	return calculateStatementRUInternal(flat, runtimeStatsColl, metrics, setup, rootEOF, nil)
+	return calculateStatementRUInternal(flat, runtimeStatsColl, metrics, writes, setup, rootEOF, nil)
 }
 
 func calculateStatementRUWithOperators(
 	flat *plannercore.FlatPhysicalPlan,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
 ) (statementRUFinalizedSnapshot, *plannercore.ExplainRUResult, bool) {
 	operatorRUs := plannercore.NewExplainRUResult(flat)
-	finalized, ok := calculateStatementRUInternal(flat, runtimeStatsColl, metrics, setup, rootEOF, operatorRUs)
+	finalized, ok := calculateStatementRUInternal(flat, runtimeStatsColl, metrics, writes, setup, rootEOF, operatorRUs)
 	if !ok {
 		return statementRUFinalizedSnapshot{}, nil, false
 	}
@@ -241,11 +274,12 @@ func calculateStatementRUInternal(
 	flat *plannercore.FlatPhysicalPlan,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	metrics *execdetails.RUV2Metrics,
+	writes statementRUWriteSnapshot,
 	setup statementRUCalculationSetup,
 	rootEOF bool,
 	operatorRUs *plannercore.ExplainRUResult,
 ) (statementRUFinalizedSnapshot, bool) {
-	if !rootEOF || flat == nil || len(flat.Main) == 0 {
+	if !rootEOF || flat == nil || len(flat.Main) == 0 || flat.Main[0] == nil || flat.Main[0].Origin == nil {
 		return statementRUFinalizedSnapshot{}, false
 	}
 	calculator := newStatementRUCalculator(setup)
@@ -259,12 +293,19 @@ func calculateStatementRUInternal(
 		}
 		calculator.units.NetBytes = float64(netBytes)
 	}
+	if statementRUIsWritePlan(flat.Main[0].Origin) || statementRUIsCommitPlan(flat.Main[0].Origin) {
+		calculator.units.WriteKeys = float64(writes.keys)
+		calculator.units.WriteBytes = float64(writes.bytes)
+	}
 
 	// The forest consumes only currently visible typed evidence. Response-level
 	// total-key-size, repeated Sort/TopN lifecycle, and recursive/Apply execution-
 	// opportunity evidence are not all available yet, so the finalized calibration
 	// remains Incomplete and the result is neither exact nor a mathematical upper
 	// or lower bound. Invalid values and malformed tree structure still fail closed.
+	if statementRUIsWritePlan(flat.Main[0].Origin) {
+		calculator.units.WriteStatement = 1
+	}
 	mainRootUnits := calculator.units
 	mainResult := calculateStatementRUPlan(
 		flat.Main,
@@ -479,6 +520,32 @@ func calculateStatementRUPlanChildFirst(
 	beforeOperator := calculator.units
 
 	switch origin := operator.Origin.(type) {
+	case *physicalop.Insert, *physicalop.Update, *physicalop.Delete:
+		if !operator.IsRoot || runtimeStatsColl == nil {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		work, found := runtimeStatsColl.GetRootWriteCPUWork(operator.Origin.ID())
+		if !found {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if !addStatementRUCPUWork(calculator, work) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+		// DML lookup leaves have no scan-byte producer in this model yet.
+		// Count their plan occurrence without inventing byte/CPU evidence.
+		if calculator.units.WriteStatement == 0 || !operator.IsRoot || len(children) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *physicalop.PhysicalUnionScan:
+		// The transaction buffer overlay has no additional typed work producer.
+		if calculator.units.WriteStatement == 0 || !operator.IsRoot || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	case *plannercore.Simple:
+		if !operator.IsRoot || len(children) != 0 || !statementRUIsCommitPlan(origin) {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
 	case *plannercore.Analyze:
 		// ANALYZE can issue independent requests for indexes, partitions, and
 		// split ranges. Its scan-byte estimate is accumulated once per logical
@@ -716,6 +783,7 @@ func calculateStatementRUPlanChildFirst(
 		return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 	}
 
+	calculator.units.OperatorNum++
 	if operatorRUs != nil {
 		if len(operatorRUs) != len(tree) {
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
@@ -1063,6 +1131,10 @@ func mergeStatementRUUnitDelta(calculator *statementRUCalculator, delta statemen
 func addStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits {
 	return statementRURawUnits{
 		CPUWork:              left.CPUWork + right.CPUWork,
+		WriteStatement:       left.WriteStatement + right.WriteStatement,
+		OperatorNum:          left.OperatorNum + right.OperatorNum,
+		WriteKeys:            left.WriteKeys + right.WriteKeys,
+		WriteBytes:           left.WriteBytes + right.WriteBytes,
 		ScanBytes:            left.ScanBytes + right.ScanBytes,
 		NetBytes:             left.NetBytes + right.NetBytes,
 		FrontendCompileBytes: left.FrontendCompileBytes + right.FrontendCompileBytes,
@@ -1074,6 +1146,10 @@ func addStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits
 func subtractStatementRURawUnits(left, right statementRURawUnits) statementRURawUnits {
 	return statementRURawUnits{
 		CPUWork:              left.CPUWork - right.CPUWork,
+		WriteStatement:       left.WriteStatement - right.WriteStatement,
+		OperatorNum:          left.OperatorNum - right.OperatorNum,
+		WriteKeys:            left.WriteKeys - right.WriteKeys,
+		WriteBytes:           left.WriteBytes - right.WriteBytes,
 		ScanBytes:            left.ScanBytes - right.ScanBytes,
 		NetBytes:             left.NetBytes - right.NetBytes,
 		FrontendCompileBytes: left.FrontendCompileBytes - right.FrontendCompileBytes,

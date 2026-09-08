@@ -233,7 +233,7 @@ func BenchmarkStatementRUForestCalculation(b *testing.B) {
 			setup := statementRUCalculationSetup{frontendCompileBytes: 7}
 
 			b.Run("result-only", func(b *testing.B) {
-				if _, ok := calculateStatementRU(flat, coll, nil, setup, true); !ok {
+				if _, ok := calculateStatementRU(flat, coll, nil, statementRUWriteSnapshot{}, setup, true); !ok {
 					b.Fatal("benchmark fixture must complete ResultOnly calculation")
 				}
 				b.ResetTimer()
@@ -242,7 +242,7 @@ func BenchmarkStatementRUForestCalculation(b *testing.B) {
 				// publication are outside the timed region.
 				b.ReportAllocs()
 				for b.Loop() {
-					finalized, ok := calculateStatementRU(flat, coll, nil, setup, true)
+					finalized, ok := calculateStatementRU(flat, coll, nil, statementRUWriteSnapshot{}, setup, true)
 					statementRUFinalizedSink = finalized
 					statementRUCalculatedSink = ok
 				}
@@ -263,7 +263,7 @@ func BenchmarkStatementRUForestCalculation(b *testing.B) {
 			})
 
 			b.Run("explain-calculation", func(b *testing.B) {
-				if _, result, ok := calculateStatementRUWithOperators(flat, coll, nil, setup, true); !ok || result == nil {
+				if _, result, ok := calculateStatementRUWithOperators(flat, coll, nil, statementRUWriteSnapshot{}, setup, true); !ok || result == nil {
 					b.Fatal("benchmark fixture must complete EXPLAIN calculation")
 				}
 				b.ResetTimer()
@@ -271,7 +271,7 @@ func BenchmarkStatementRUForestCalculation(b *testing.B) {
 				// It excludes EXPLAIN row formatting and SQL execution.
 				b.ReportAllocs()
 				for b.Loop() {
-					finalized, result, ok := calculateStatementRUWithOperators(flat, coll, nil, setup, true)
+					finalized, result, ok := calculateStatementRUWithOperators(flat, coll, nil, statementRUWriteSnapshot{}, setup, true)
 					statementRUFinalizedSink = finalized
 					statementRUExplainSink = result
 					statementRUCalculatedSink = ok

@@ -188,8 +188,8 @@ func TestExplainAnalyzeRUFormatEndToEndMonotonicity(t *testing.T) {
 
 		rows := explainRU(t, "select * from t_unistore_ru_scan_attribution")
 		require.Positive(t, getOperatorRU(t, rows, "TableReader", cumRUColumn))
-		require.Zero(t, getOperatorRU(t, rows, "TableFullScan", selfRUColumn))
-		require.Zero(t, getOperatorRU(t, rows, "TableFullScan", cumRUColumn))
+		require.Equal(t, float64(1), getOperatorRU(t, rows, "TableFullScan", selfRUColumn))
+		require.Equal(t, float64(1), getOperatorRU(t, rows, "TableFullScan", cumRUColumn))
 	})
 
 	t.Run("Selection selfRU increases with input rows", func(t *testing.T) {
@@ -331,7 +331,7 @@ func TestExplainAnalyzeRUFormatEndToEndMonotonicity(t *testing.T) {
 		require.Positive(t, getOperatorRU(t, scalarRows, "MergeJoin", cumRUColumn))
 	})
 
-	t.Run("correlated scalar Apply keeps wrapper RU at zero", func(t *testing.T) {
+	t.Run("correlated scalar Apply charges its plan occurrence", func(t *testing.T) {
 		tk.MustExec("drop table if exists t_unistore_ru_apply_outer, t_unistore_ru_apply_inner")
 		tk.MustExec("create table t_unistore_ru_apply_outer(a int)")
 		tk.MustExec("create table t_unistore_ru_apply_inner(a int, b int)")
@@ -339,7 +339,7 @@ func TestExplainAnalyzeRUFormatEndToEndMonotonicity(t *testing.T) {
 		tk.MustExec("insert into t_unistore_ru_apply_inner values (1, 10), (2, 20)")
 		rows := explainRU(t, "select a, (select /*+ no_decorrelate() */ b from t_unistore_ru_apply_inner where t_unistore_ru_apply_inner.a = t_unistore_ru_apply_outer.a) from t_unistore_ru_apply_outer")
 		requireForestReconciliation(t, rows)
-		require.Zero(t, getOperatorRU(t, rows, "Apply", selfRUColumn))
+		require.Equal(t, float64(1), getOperatorRU(t, rows, "Apply", selfRUColumn))
 		require.Positive(t, getOperatorRU(t, rows, "Apply", cumRUColumn))
 	})
 }

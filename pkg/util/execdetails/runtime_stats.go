@@ -75,6 +75,8 @@ const (
 	TpExplainRURuntimeStats
 	// TpHashStateRuntimeStats is the tp for typed hash-state evidence.
 	TpHashStateRuntimeStats
+	// TpWriteRuntimeStats is the type for processed DML work.
+	TpWriteRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -92,6 +94,28 @@ const (
 	hashStateRowsComplete
 	hashStateRowsInvalid
 )
+
+// WriteRuntimeStats records processed DML work for one executor Open lifecycle.
+// The executor owns it until Close registers it; successful finalization consumes it.
+type WriteRuntimeStats struct {
+	CPUWork float64
+}
+
+// String keeps the typed accounting evidence out of textual execution details.
+func (*WriteRuntimeStats) String() string { return "" }
+
+// Tp implements RuntimeStats.
+func (*WriteRuntimeStats) Tp() int { return TpWriteRuntimeStats }
+
+// Clone implements RuntimeStats.
+func (s *WriteRuntimeStats) Clone() RuntimeStats { return &WriteRuntimeStats{CPUWork: s.CPUWork} }
+
+// Merge implements RuntimeStats.
+func (s *WriteRuntimeStats) Merge(other RuntimeStats) {
+	if other, ok := other.(*WriteRuntimeStats); ok {
+		s.CPUWork += other.CPUWork
+	}
+}
 
 // HashStateRowsSnapshot is a value-only snapshot of hash-backed operator
 // state. Rows counts entries admitted to lookup/group structures. Its state
@@ -859,6 +883,20 @@ func (e *RuntimeStatsColl) GetCopRowsSnapshot(planID int) CopRowsSnapshot {
 		snapshot.Invalid = snapshot.Invalid || snapshot.ObservedSummaries > snapshot.ExpectedSummaries
 	}
 	return snapshot
+}
+
+// GetRootWriteCPUWork returns a scalar snapshot, distinguishing missing evidence from zero work.
+func (e *RuntimeStatsColl) GetRootWriteCPUWork(planID int) (float64, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if root := e.rootStats[planID]; root != nil {
+		for _, stats := range root.groupRss {
+			if provider, ok := stats.(*WriteRuntimeStats); ok {
+				return provider.CPUWork, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // GetRootHashStateRowsSnapshot returns the typed hash-state provider's scalar

@@ -1,0 +1,50 @@
+# RUv3 plan occurrences and committed write payload
+create table ru_write_units (id int primary key, v varchar(10000));
+explain analyze format='ru' select 1;
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Projection_3	root	1	39.00	40.00	100.00%	
+└─TableDual_4	root	1	1.00	1.00	2.50%	
+explain analyze format='ru' insert into ru_write_units values (1, repeat('x', 10000));
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Insert_1	root	0	10118.00	10118.00	100.00%	
+explain analyze format='ru' update ru_write_units set v = 'short' where id = 1;
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Update_3	root	0	116.00	117.00	100.00%	
+└─Point_Get_1	root	1	1.00	1.00	0.85%	
+explain analyze format='ru' delete from ru_write_units where id = 1;
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Delete_2	root	0	91.00	92.00	100.00%	
+└─Point_Get_1	root	1	1.00	1.00	1.09%	
+explain analyze format='ru' update ru_write_units set v = 'none' where id = 99;
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Update_3	root	0	81.00	82.00	100.00%	
+└─Point_Get_1	root	0	1.00	1.00	1.22%	
+begin;
+explain analyze format='ru' insert into ru_write_units values (2, 'explicit');
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Insert_1	root	0	81.00	81.00	100.00%	
+commit;
+select id, length(v) from ru_write_units;
+id	length(v)
+2	8
+drop table ru_write_units;
+# Processed write rows include IGNORE and unchanged UPDATE; secondary indexes add CPU work
+create table ru_write_cpu(id int primary key, v int, key(v));
+explain analyze format='ru' insert into ru_write_cpu values (1, 10), (2, 20);
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Insert_1	root	0	221.00	221.00	100.00%	
+explain analyze format='ru' insert ignore into ru_write_cpu values (1, 10);
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Insert_1	root	0	79.00	79.00	100.00%	
+explain analyze format='ru' update ru_write_cpu set v=v where id=1;
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Update_3	root	0	71.00	72.00	100.00%	
+└─Point_Get_1	root	1	1.00	1.00	1.39%	
+explain analyze format='ru' replace into ru_write_cpu values (2, 30);
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Insert_1	root	0	180.00	180.00	100.00%	
+explain analyze format='ru' delete from ru_write_cpu where id=2;
+id	task	actRows	selfRU	cumRU	cumRU%	detail
+Delete_2	root	0	126.00	127.00	100.00%	
+└─Point_Get_1	root	1	1.00	1.00	0.79%	
+drop table ru_write_cpu;
