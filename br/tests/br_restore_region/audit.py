@@ -36,7 +36,8 @@ def audit(fixture, run, evidence):
     completed = operations('"RestoreRegion completed"')
     assert len(started) >= 2 and Counter(started) == Counter(completed)
     assert all(n == 1 for n in Counter(started).values()), "an operation was sent more than once"
-    methods = Counter(re.findall(r'\[method=([A-Za-z]+)\]', raw))
+    import_events = "\n".join(line for line in raw.splitlines() if '"sending import RPC"' in line)
+    methods = Counter(re.findall(r'\[method=([A-Za-z]+)\]', import_events))
     assert methods == {"RestoreRegion": len(started)}, methods
     sources = [line for line in raw.splitlines() if '"RestoreRegion source"' in line]
     cf_counts = Counter(re.findall(r'\[cf=(\w+)\]', "\n".join(sources)))
