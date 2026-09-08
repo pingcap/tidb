@@ -458,7 +458,7 @@ type mergeSortStepExecutor struct {
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
-func (m *mergeSortStepExecutor) Init(context.Context) error {
+func (*mergeSortStepExecutor) Init(context.Context) error {
 	return nil
 }
 
