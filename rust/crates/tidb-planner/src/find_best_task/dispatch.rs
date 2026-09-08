@@ -2666,7 +2666,16 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 // the duplicates is therefore both an execution-schema and
                 // a plan-cost contract, not an index-width heuristic.
                 cost_columns.extend(ds.common_handle_cols.iter().cloned());
-                cost_columns.extend(ds.handle_cols.iter().cloned());
+                // Go `InitSchema` (`physical_index_scan.go:363`) appends the
+                // handle only when the index schema does not already carry
+                // one (`setHandle`). A common handle was just appended, and
+                // this port keeps `handle_cols` as the SAME columns as
+                // `common_handle_cols` for such a table, so appending both
+                // would price three extra INT slots and flip the range-path
+                // choice back to the table scan.
+                if ds.common_handle_cols.is_empty() {
+                    cost_columns.extend(ds.handle_cols.iter().cloned());
+                }
                 let scan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
                     base,
                     table_id: ds.physical_table_id,

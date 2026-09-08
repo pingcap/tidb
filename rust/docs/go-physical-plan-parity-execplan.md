@@ -1070,6 +1070,22 @@ both `oltp_read_only` and `oltp_read_write`.
   `grouped_correlated_subqueries` now passes (the two fixes together; the
   executor half is the entry above). Receipt:
   `rust/testport/receipts/planner_decorrelate_solver.md`.
+- [x] 2026-09-09: dropped a projection whose outputs are all pruned.
+  `LogicalProjection.PruneColumns` guards only the `LogicalTableDual` escape
+  with `allPruned`; the deletion loop runs either way and `:139` then returns
+  the child. The Rust port skipped the loop when every output was unused, so a
+  join-reorder restore projection survived: condition eleven planned
+  `StreamAgg -> Projection[10,13,12,15,18,17] -> MergeJoin` where the Go
+  oracle has `StreamAgg -> MergeJoin`. The dual escape is now ported too.
+  Receipt: `rust/testport/receipts/planner_column_prune_and_index_cost.md`.
+- [x] 2026-09-09: priced a covering index's common handle once.
+  `PhysicalIndexScan.InitSchema` appends `CommonHandleCols` and adds a separate
+  handle column only when the schema lacks one; the port appended
+  `common_handle_cols` AND `handle_cols`, which are the same columns on a
+  common-handle table, so a narrow covering index range lost to the clustered
+  table range. With the duplicate slots removed the Go oracle's
+  `IndexRangeScan` wins. Receipt:
+  `rust/testport/receipts/planner_column_prune_and_index_cost.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1078,8 +1094,8 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1219 passed / 34 failed; 21 real failures, the other 13 are
-  the statistics-request transport flake that passes 16/16 in isolation).
+  lib serialized: 1,233 passed / 21 failed, plus the 13 statistics-request
+  transport tests that flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
   - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
     the uncorrelated/Selection/MaxOneRow/Sort/Limit arms are ported; the
@@ -1125,15 +1141,13 @@ both `oltp_read_only` and `oltp_read_write`.
     inline rather than evaluated separately. Both depend on the
     separate-evaluation path (`DoOptimize` + `EvalSubqueryFirstRow`) that the
     planner crate cannot reach; see the `expression_rewriter` module header.
-  - `aggregates::tpcc_condition_eleven_*`: the Rust plan has a reordering
-    Projection between the root StreamAgg and the outer MergeJoin
-    (`Projection([10,13,12,15,18,17]) -> Join([10,15,12,13,17,18])`), while a
-    Go `testkit` oracle for the same DDL and SQL shows
-    `StreamAgg -> MergeJoin` with no Projection. The star projection was
-    expanded on the pre-join-reorder schema order; the join reorder then
-    rebuilt the join's schema in a different order and, unlike Go's
-    `restoreSchema` (`rule_join_reorder.go:501`), did not reconcile the two.
-    Fixing it needs the join reorder's schema restoration/order parity.
+  - `aggregates::tpcc_condition_eleven_*`: the unanalyzed plan now matches the
+    Go `testkit` oracle exactly (two MergeJoins, three RangeScans, no
+    Projection) after the empty-projection and common-handle index-pricing
+    fixes above. The analyzed arm still picks
+    `IndexHashJoin(IndexJoin(...))` where Go keeps two MergeJoins, so it is the
+    same `skylinePruning`/`compareCandidates` gap as the cluster above, now
+    measured on the ANALYZED statistics path.
 - [ ] Run correctness, compatibility, performance, and Ready validation.
 
 ## Surprises & Discoveries

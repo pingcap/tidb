@@ -259,27 +259,41 @@ impl LogicalProjection {
         schema: &mut Schema,
     ) -> (Vec<Column>, bool) {
         let mut used = schema_producer::get_used_list(parent_used_cols, schema);
-        let mut all_pruned = true;
         for (i, keep) in used.iter_mut().enumerate() {
             if *keep || tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
             {
                 *keep = true;
-                all_pruned = false;
                 break;
             }
         }
-        if !all_pruned {
-            for i in (0..used.len()).rev() {
-                if !used[i]
-                    && !tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
-                {
-                    schema.columns.remove(i);
-                    self.exprs.remove(i);
-                }
+        // Go runs this deletion loop even when every output is pruned: the
+        // projection then empties and its caller replaces it with the child
+        // (`logical_projection.go:139`). Skipping it kept the columns alive, so
+        // a restore projection over a reordered join survived column pruning
+        // while Go drops it (the child supplies the row count).
+        for i in (0..used.len()).rev() {
+            if !used[i]
+                && !tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
+            {
+                schema.columns.remove(i);
+                self.exprs.remove(i);
             }
         }
         let child_used = extract_columns_from_expressions(&self.exprs, None);
         (child_used, schema.columns.is_empty())
+    }
+
+    /// Go `LogicalProjection.PruneColumns`'s `allPruned` test
+    /// (`logical_projection.go:109`): no output column is used by the parent
+    /// and no expression carries a `SET_VAR`/`SLEEP` side effect. The
+    /// enum-level driver pairs this with "the child is a `LogicalTableDual`"
+    /// to keep the projection instead of emptying it.
+    #[must_use]
+    pub fn all_outputs_pruned(&self, parent_used_cols: &[Column], schema: &Schema) -> bool {
+        let used = schema_producer::get_used_list(parent_used_cols, schema);
+        !used.iter().enumerate().any(|(i, keep)| {
+            *keep || tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
+        })
     }
 
     /// Go `LogicalProjection.buildSchemaByExprs(selfSchema)`

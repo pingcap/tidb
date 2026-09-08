@@ -2572,8 +2572,11 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
     let customer_warehouse = customer_aggregation
         .find("funcs:firstrow(test.customer.c_w_id)->test.customer.c_w_id")
         .expect("customer warehouse carrier");
+    // The ROOT StreamAgg aggregates the cop partial count, so its argument is
+    // the partial-count column, not `1`; the cop child owns the `count(1)`.
+    // Go's recorded root is `funcs:count(Column#93)->Column#41`.
     let synthetic_count = customer_aggregation
-        .find("funcs:count(1)")
+        .find("funcs:count(")
         .expect("synthetic customer row count");
     assert!(
         customer_district < customer_warehouse && customer_warehouse < synthetic_count,
@@ -2738,6 +2741,59 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
                     && detail.contains("keep order:true")
             }),
         "{analyzed:#?}"
+    );
+}
+
+/// A NARROW clustered table still prefers its covering index range. Go's
+/// `PhysicalIndexScan.InitSchema` (`physical_index_scan.go:363`) builds the
+/// physical index schema as the index columns plus `CommonHandleCols`, and
+/// only appends a separate handle column when that schema does not already
+/// carry one. This port keeps `handle_cols` equal to `common_handle_cols` for
+/// a common-handle table, so appending both priced three duplicate INT slots:
+/// the covering index range then lost to the clustered table range on a table
+/// without a wide payload column (the sibling test's 1000-byte payload masked
+/// the same mistake).
+#[test]
+fn a_narrow_covering_index_range_prices_the_common_handle_once() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL,             o_c_id INT, o_entry_d DATETIME, o_carrier_id INT, o_ol_cnt INT, o_all_local INT,             PRIMARY KEY (o_w_id,o_d_id,o_id) CLUSTERED,             KEY idx_order (o_w_id,o_d_id,o_c_id,o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    let sql = "SELECT o_w_id, o_d_id, count(*) FROM orders WHERE o_w_id = 1                GROUP BY o_w_id, o_d_id";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let plan = (0..rows.len())
+        .map(|row| (cell(row, 0), cell(row, 3), cell(row, 4)))
+        .collect::<Vec<_>>();
+    assert!(
+        plan.iter().any(|(operator, access, info)| {
+            operator.contains("IndexRangeScan")
+                && access.contains("idx_order")
+                && info.contains("range:[1,1]")
+                && info.contains("keep order:true")
+        }),
+        "{plan:#?}"
+    );
+    assert!(
+        plan.iter()
+            .all(|(operator, _, _)| !operator.contains("TableRangeScan")),
+        "{plan:#?}"
     );
 }
 

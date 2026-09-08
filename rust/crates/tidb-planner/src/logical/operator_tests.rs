@@ -390,6 +390,25 @@ fn projection_prunes_unused_outputs_and_reports_child_needs() {
     );
 }
 
+/// Go `LogicalProjection.PruneColumns`'s all-pruned tail
+/// (`logical_projection.go:139`): the deletion loop runs even when NO output
+/// is used, so the projection empties and the caller replaces it with its
+/// child. Skipping the loop kept a join-reorder restore projection alive
+/// where Go drops it.
+#[test]
+fn projection_pruning_empties_when_no_output_is_used() {
+    let mut projection = LogicalProjection::new(
+        BaseLogicalPlan::with_id(1, LogicalProjection::TYPE, 0),
+        vec![col_expr(10), col_expr(11)],
+    );
+    let mut output = schema(&[1, 2]);
+    let (child_used, empty) = projection.prune_columns_local(&[], &mut output);
+    assert!(empty, "every output was pruned, so the projection is empty");
+    assert!(child_used.is_empty());
+    assert!(projection.exprs.is_empty());
+    assert!(output.columns.is_empty());
+}
+
 /// Go `LogicalProjection.buildSchemaByExprs` (`logical_projection.go:505`)
 /// and `BuildKeyInfo` (`:163`): a key survives only when its columns are
 /// projected as bare references.

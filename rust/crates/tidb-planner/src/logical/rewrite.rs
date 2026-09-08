@@ -1085,6 +1085,8 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
         parent_used_cols: Vec<Column>,
     ) -> Descend<Self::Down, Self::Up> {
         let child_count = node.children().len();
+        let child_is_table_dual =
+            matches!(node.children().first(), Some(LogicalPlan::TableDual(_)));
         let schemas = child_schemas(node);
         let mut own_schema = effective_schema(node);
         let empty = Schema::default();
@@ -1096,6 +1098,26 @@ impl OwnedRewrite for PruneColumns<'_, '_> {
             }
             // Go `LogicalProjection.PruneColumns` (`logical_projection.go:105`).
             LogicalPlan::Projection(op) => {
+                // Go's `LogicalTableDual` escape: an all-pruned projection
+                // over a dual is KEPT and reset to a single zero column,
+                // because the dual owns no output columns of its own. Go
+                // returns `p, nil` there, so the dual is not pruned either.
+                if !op.exprs.is_empty()
+                    && child_is_table_dual
+                    && op.all_outputs_pruned(&parent_used_cols, &own_schema)
+                {
+                    let zero = Expression::Constant(Constant::new_zero());
+                    let ret_type = zero.static_type().cloned().unwrap_or_else(|| {
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny)
+                    });
+                    op.exprs.truncate(1);
+                    op.exprs[0] = zero;
+                    let column = Column::new(self.ctx.column_allocator.alloc(), ret_type);
+                    own_schema.columns.truncate(1);
+                    own_schema.columns[0] = column;
+                    set_own_schema(node, own_schema);
+                    return Descend::Stop(());
+                }
                 let (child_used, emptied) =
                     op.prune_columns_local(&parent_used_cols, &mut own_schema);
                 set_own_schema(node, own_schema);
