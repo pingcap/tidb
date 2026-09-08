@@ -154,6 +154,8 @@ fn clone_subplan(ctx: &RuleContext<'_>, plan: &LogicalPlan) -> Option<LogicalPla
         }
         LogicalPlan::DataSource(source) => {
             let mut cloned = source.clone();
+            // Go resets each split source to all paths before pruning it again.
+            cloned.possible_access_paths = cloned.all_possible_access_paths.clone();
             let mut base = BaseLogicalPlan::new(
                 ctx.allocator,
                 source.base.base.tp(),
@@ -416,6 +418,54 @@ mod tests {
             order_by_items: Vec::new(),
             grouping_id: 0,
         }
+    }
+
+    #[test]
+    fn split_source_clone_restores_all_access_paths() {
+        use crate::access_path::IndexAccessPath;
+        use crate::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
+        let path = |index_id| {
+            DataSourceAccessPath::Index(IndexAccessPath::new(LiveIndexCandidate {
+                index_id,
+                ranges: vec![],
+                proven_equality_range: false,
+                point_statistics: IndexPointStatistics {
+                    topn_count: None,
+                    cms_count: None,
+                    histogram_count: 0,
+                },
+                row_size: 8.0,
+                scan_factor: 1.0,
+                index_scan_cost_factor: 1.0,
+            }))
+        };
+        let allocator = PlanIdAllocator::new();
+        let ctx = test_context(&allocator);
+        let all_paths = vec![path(11), path(22)];
+        let original = LogicalPlan::DataSource(DataSource {
+            base: BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0),
+            all_possible_access_paths: all_paths.clone(),
+            possible_access_paths: vec![all_paths[1].clone()],
+            ..DataSource::default()
+        });
+        let LogicalPlan::DataSource(mut first) = clone_subplan(&ctx, &original).unwrap() else {
+            panic!("source clone expected")
+        };
+        let LogicalPlan::DataSource(second) = clone_subplan(&ctx, &original).unwrap() else {
+            panic!("source clone expected")
+        };
+        // Each split aggregate must reconsider every path, in the original order.
+        assert_eq!(first.possible_access_paths, all_paths);
+        assert_eq!(second.possible_access_paths, all_paths);
+        first.possible_access_paths.clear();
+        first.all_possible_access_paths.clear();
+        assert_eq!(second.possible_access_paths, all_paths);
+        assert_eq!(second.all_possible_access_paths, all_paths);
+        let LogicalPlan::DataSource(original) = original else {
+            unreachable!()
+        };
+        assert_eq!(original.possible_access_paths, vec![all_paths[1].clone()]);
+        assert_eq!(original.all_possible_access_paths, all_paths);
     }
 
     #[test]

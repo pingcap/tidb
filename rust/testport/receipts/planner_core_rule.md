@@ -157,3 +157,38 @@ rustfmt and diff checks passed. Logs: `/tmp/core-rule-false-green-20260908.log`,
 `/tmp/core-rule-false-ready-lint-20260908.log`. The logicalop dependency body
 was read to resolve this call contract; its package was not edited or claimed
 complete. No Go source changed, and the broader package audit remains open.
+
+## Follow-up: MAX/MIN split source candidates
+
+Parent `568aa00db6`; same Go authority and complete core/rule inventory.
+The complete Go MAX/MIN file (267 lines), its sole Go test file (37 lines),
+and the complete Rust owner were re-read. Rust owner:
+`rust/crates/tidb-planner/src/logical/rule_max_min_elimination.rs`.
+
+Go cloneSubPlans restores PossibleAccessPaths from AllPossibleAccessPaths for
+each cloned source. Rust retained the original pruned subset through its
+generic clone. The rule clone now restores the full path list before its
+split aggregate is pruned.
+
+Regression split_source_clone_restores_all_access_paths failed before the fix
+with only index 22 instead of indices 11 and 22. It now verifies both independent
+clones restore path order and that modifying one clone leaves its sibling and
+the original unchanged. These are structural path candidates, not execution
+admission proofs. Red evidence: `/tmp/core-rule-maxmin-red-20260908.log`.
+
+Ready commands:
+
+    cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-planner --lib logical::rule_max_min_elimination::tests
+    cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-planner --lib logical::rule_tests
+    make lint
+    rustfmt +nightly-2026-08-22 --edition 2021 --check rust/crates/tidb-planner/src/logical/rule_max_min_elimination.rs
+    git diff --check
+
+Results: 3/3 MAX/MIN tests and 57/57 consumer tests; lint and formatting/diff
+checks pass. The owner suite includes the original Go empty scalar aggregate
+regression's Rust counterpart and nullable single-MAX transformation coverage.
+Logs: `/tmp/core-rule-maxmin-green-20260908.log`,
+`/tmp/core-rule-maxmin-consumers-20260908.log`, and
+`/tmp/core-rule-maxmin-ready-lint-20260908.log`. Handle-path control flow and
+range-size policy remain pending comparisons; no whole-rule/package completion
+is claimed. No Go files changed.

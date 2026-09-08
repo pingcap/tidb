@@ -346,3 +346,15 @@ Progress: revalidated clean worktree at pushed `783d3f9e53`. The complete core/r
 Go unsatisfiableExpression calls IsConstFalse, which examines the bound constant value without the plan-cache guard used by logicalConstant. The caller disables plan caching after pruning a mutable branch. Rust reused logical_constant and therefore incorrectly suppressed both pruning and the required cache marker for a bound zero/NULL parameter. Use the statement-aware conversion adapter directly, preserving NULL-as-false and conversion-error handling without that extra guard.
 
 The regression first failed because the bound false branch remained. After the fix it verifies both zero and NULL branches are removed, ordinary classification still returns Other for the parameter, and each rewrite emits the exact Go OR-simplification cache reason. Ready: nine predicate tests, 57 logical-rule tests and make lint pass; formatting and diff checks pass. Logs are in the receipt. Outcome: the rule consumer now follows the separate Go false-value and classification contracts. Full package and broader optimizer/statistics parity remain open.
+
+
+## MAX/MIN cloned access-path batch (2026-09-08)
+
+
+Progress: revalidated clean worktree at pushed `568aa00db6`. Re-read the complete Go MAX/MIN implementation and its sole original test, plus the complete Rust rule owner. The full nineteen-artifact package inventory remains applicable. The original Go TestMaxMinEliminateSkipsEmptyScalarAgg maps to Rust max_min_eliminate_skips_empty_scalar_aggregation and is included in this batch's passing tests.
+
+Go cloneSubPlans copies AllPossibleAccessPaths and then resets PossibleAccessPaths to that complete list. Rust's generic DataSource clone retained a previously pruned subset. Reset the rule-specific clone's possible list from its copied all-path list before pruning the new aggregate. This avoids carrying a path decision made for the old aggregate into each split aggregate.
+
+Regression split_source_clone_restores_all_access_paths starts with paths 11 and 22 but a pruned candidate list containing only 22. Before the fix its first clone incorrectly retained only 22. After the fix two independent clones have both paths in order; clearing one clone's lists leaves the other and the original untouched. The path candidates are used to test cloning, not to claim physical task admission or execution coverage.
+
+Ready: three MAX/MIN owner tests and 57 logical-rule tests pass, plus make lint, formatting and diff checks. Logs are in the package receipt. Remaining MAX/MIN comparisons include handle-path early-return semantics and range-size context, and broad package parity is still unproven.
