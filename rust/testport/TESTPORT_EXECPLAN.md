@@ -11469,3 +11469,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (self-CHECK pin): `check (a < a * 0)` blocks every non-NULL
  value while NULL passes (UNKNOWN = pass). Pinned in
  `crates/tidb-session/tests/self_check_source.rs`.
+- 2026-09-08 (CHECK over stored generated pin): the constraint evaluates
+ the RECOMPUTED stored value — a = -5 (b would be -10) violates. Pinned
+ in `crates/tidb-session/tests/check_stored_generated_source.rs`.
