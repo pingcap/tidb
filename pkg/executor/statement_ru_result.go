@@ -48,8 +48,7 @@ type statementRURawUnits struct {
 	// the TiKV coprocessor response-body byte count finalized in statement-local
 	// RUv2 metrics.
 	NetBytes float64
-	// FrontendCompileBytes is the UTF-8 byte length of the source SQL text seen
-	// by the compiler.
+	// FrontendCompileBytes is the UTF-8 byte length of the normalized SQL text.
 	FrontendCompileBytes float64
 	// HashStateRows counts entries admitted to completed, operator-owned hash
 	// lookup or group-state structures.
@@ -143,9 +142,23 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 	if stmt == nil || stmt.StmtNode == nil {
 		return 0
 	}
+	var originalSQL string
+	// use the normalized SQL length if available, otherwise fallback to the original SQL length.
+	if stmt.Ctx != nil {
+		if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil && sessVars.StmtCtx != nil {
+			stmtCtx := sessVars.StmtCtx
+			originalSQL = stmtCtx.OriginalSQL
+			if originalSQL != "" {
+				normalizedSQL, _ := stmtCtx.SQLDigest()
+				if normalizedSQL != "" {
+					return float64(len(normalizedSQL))
+				}
+			}
+		}
+	}
 	sql := stmt.StmtNode.OriginalText()
-	if sql == "" && stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil && stmt.Ctx.GetSessionVars().StmtCtx != nil {
-		sql = stmt.Ctx.GetSessionVars().StmtCtx.OriginalSQL
+	if sql == "" {
+		sql = originalSQL
 	}
 	if sql == "" {
 		sql = stmt.StmtNode.Text()
