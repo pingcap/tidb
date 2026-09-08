@@ -302,3 +302,13 @@ Regression evidence: three new tests failed against the pre-fix implementation (
 Decision: keep one crate-private conversion adapter in constraint instead of duplicating diagnostic formatting in the rule. The adapter refactor preserves the preceding constraint batch's behavior, verified by all six tests. No new dependency or public API is introduced.
 
 Outcome: this behavior batch is validated; the package as a whole remains under audit. Source reading is complete but is not proof that all four original Go test artifacts execute equivalently in Rust. Continue with join helper/final deletion semantics, original test mapping, constant propagation, partition processing, statistics-loading consumers, and the remaining planner/statistics packages. Underlying conversion overflow/truncation diagnostics and invalid UTF-8 behavior require their own datatype-package audit.
+
+
+## Join propagation filter batch (2026-09-08)
+
+
+Progress: revalidated clean worktree at pushed `35433b5de2`. The complete nineteen-artifact current-master reading inventory remains applicable. Re-read Go applyPredicateSimplificationHelper and the Rust join entry point, then inspected the propagation callback consumer without changing the expression package.
+
+Go passes the supplied validity filter to PropagateConstant even when propagateConstant is false. Rust's ordinary path did this, but its join path passed None. A DNF containing `(a=b AND a>7) OR c=9` therefore admitted a derived `b>7` predicate rejected by the caller. The regression first failed on missing callback invocation and then, independently, on the resulting expression mismatch. Pass valid through the existing call; no new algorithm or additional behavior is introduced.
+
+Ready evidence: all six predicate owner tests and 57 logical-rule consumer tests pass, as does make lint. Red logs are `/tmp/core-rule-join-red-20260908.log` and `/tmp/core-rule-join-shape-red-20260908.log`; green logs and commands are recorded in the package receipt. Outcome: join propagation now respects the caller's filter on this path. Continue the remaining package audit; the join final-deletion implementation and other predicate helpers are still open comparisons.

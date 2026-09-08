@@ -625,7 +625,7 @@ pub fn apply_predicate_simplification_for_join(
             ctx.builder,
             ctx.use_plan_cache,
             predicates.clone(),
-            None,
+            valid,
         );
         if outcome.conditions.len() == 1 {
             predicates = outcome.conditions;
@@ -760,6 +760,57 @@ mod tests {
         fn append_warning(&self, code: u16, message: &str) {
             self.warnings.borrow_mut().push((code, message.to_owned()));
         }
+    }
+
+    #[test]
+    fn join_simplification_preserves_filter_without_full_propagation() {
+        let allocator = PlanIdAllocator::new();
+        let ctx = test_context(&allocator);
+        let predicates = vec![function(
+            "or",
+            vec![
+                function(
+                    "and",
+                    vec![
+                        function("eq", vec![column(1), column(2)]),
+                        function("gt", vec![column(1), integer(7)]),
+                    ],
+                ),
+                function("eq", vec![column(3), integer(9)]),
+            ],
+        )];
+        let calls = std::cell::Cell::new(0);
+        let reject = |_: &Expression| {
+            calls.set(calls.get() + 1);
+            false
+        };
+        let expected =
+            apply_predicate_simplification(&ctx, predicates.clone(), false, Some(&reject));
+        let ordinary_calls = calls.replace(0);
+        assert!(
+            ordinary_calls > 0,
+            "the DNF must derive a filtered column predicate"
+        );
+        let actual = apply_predicate_simplification_for_join(
+            &ctx,
+            predicates,
+            &Schema::new(vec![]),
+            &Schema::new(vec![]),
+            false,
+            Some(&reject),
+        );
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert!(
+                actual.equal(expected),
+                "join simplification must not add rejected predicates"
+            );
+        }
+        assert_eq!(
+            calls.get(),
+            ordinary_calls,
+            "Go uses the same filtered propagation when the switch is false"
+        );
     }
 
     #[test]

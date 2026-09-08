@@ -63,3 +63,27 @@ The original Go test mapping, join final-deletion path, constant propagation,
 partition processing and statistics consumers still require comparison.
 The datatype conversion layer's merged overflow/truncation events and invalid
 UTF-8 behavior are not repaired here. No Go source or fixtures were changed.
+
+## Follow-up: join propagation validity filter
+
+Parent `35433b5de2`; same Go authority and complete package inventory.
+Go applyPredicateSimplificationHelper passes its validity callback to the
+ordinary propagator even when full propagation is disabled. The Rust join
+wrapper passed None and could retain rejected derived DNF predicates.
+It now forwards valid, matching the ordinary wrapper and the Go call.
+
+Regression `join_simplification_preserves_filter_without_full_propagation`
+uses `(a=b AND a>7) OR c=9` and a rejecting callback. It verifies both callback
+invocation and expression equality with the ordinary simplifier, for which Go
+uses the same helper. Before the fix, independent runs failed on zero versus
+one callback and on the extra derived predicate. Red logs:
+`/tmp/core-rule-join-red-20260908.log` and
+`/tmp/core-rule-join-shape-red-20260908.log`.
+
+Ready commands use the same toolchain and flags above: predicate owner filter
+`logical::rule_predicate_simplification::tests` passed 6/6 and consumer filter
+`logical::rule_tests` passed 57/57. `make lint` passed. Logs:
+`/tmp/core-rule-join-green-20260908.log`,
+`/tmp/core-rule-join-consumers-20260908.log`, and
+`/tmp/core-rule-join-ready-lint-20260908.log`. Formatting and diff checks are
+performed before commit. This does not close the remaining package audit.
