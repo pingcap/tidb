@@ -80,6 +80,28 @@ pub(crate) fn point_get_value(column: &FieldType, value: &Datum) -> Option<Datum
     }
 }
 
+/// Whether a constant cannot be represented in its column's domain.
+///
+/// Go `getNameValuePairs` returns the pair with `isTableDual` when
+/// `d.ConvertTo` reports `types.ErrOverflow`, and `tryPointGetPlan` then plans
+/// a `TableDual`: a value outside the column's domain can equal no stored
+/// value, so the statement's answer is the empty set. Rust's callers use this
+/// to answer the same empty set without a storage read. The event, not the
+/// value, is the signal: `convert_to` clamps to a representable value and
+/// records the overflow.
+pub(crate) fn point_get_value_overflowed(column: &FieldType, value: &Datum) -> bool {
+    if value.is_null() || !can_convert_in_point_get(column, value) {
+        return false;
+    }
+    match value.convert_to(column, tidb_datatype::STRICT_FLAGS) {
+        Ok(converted) => matches!(
+            converted.event,
+            Some(tidb_datatype::ScalarConversionEvent::Overflow(_))
+        ),
+        Err(_) => false,
+    }
+}
+
 /// Whether a parameter that fails its column conversion provably matches no
 /// stored value, so the statement's answer is the empty set without any
 /// storage read. Go serves such an EXECUTE from its re-optimized plan
@@ -192,6 +214,32 @@ mod tests {
     #[test]
     fn a_null_constant_is_never_a_point_key() {
         assert_eq!(point_get_value(&int_column(), &Datum::Null), None);
+    }
+
+    #[test]
+    fn an_out_of_range_constant_overflows_its_column_domain() {
+        // Go `getNameValuePairs` returns `isTableDual` on `ErrOverflow`; the
+        // event is the Rust signal because `convert_to` clamps and records it.
+        assert!(point_get_value_overflowed(
+            &int_column(),
+            &Datum::new_string("99999999999999999999999999")
+        ));
+        assert!(point_get_value_overflowed(
+            &int_column(),
+            &Datum::Real(1e300)
+        ));
+        assert!(!point_get_value_overflowed(
+            &int_column(),
+            &Datum::new_string("1")
+        ));
+        assert!(!point_get_value_overflowed(&int_column(), &Datum::Int(1)));
+        assert!(!point_get_value_overflowed(&int_column(), &Datum::Null));
+        // A too-long string is a TRUNCATION, not an overflow, and Go's
+        // `ErrTruncatedWrongVal` arm keeps comparing it.
+        assert!(!point_get_value_overflowed(
+            &varchar_column(3),
+            &Datum::new_string("abcdef")
+        ));
     }
 
     fn varchar_column(flen: i64) -> FieldType {

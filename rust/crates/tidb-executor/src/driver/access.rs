@@ -30,7 +30,7 @@
 //! and the cap is offered last, after the residual `WHERE` is known, because
 //! a residual filter above the source forbids one.
 //!
-use super::point_get_key::{names_no_rows, point_get_value};
+use super::point_get_key::{names_no_rows, point_get_value, point_get_value_overflowed};
 use super::*;
 use std::sync::Arc;
 
@@ -261,6 +261,12 @@ impl PreparedPointGetPlan {
             }
             key_values.push(match point_get_value(handle_type, value) {
                 Some(value) => value,
+                None if point_get_value_overflowed(handle_type, value) => {
+                    // Go `getNameValuePairs`'s `ErrOverflow` arm: a value
+                    // outside the column's domain can equal no stored row, so
+                    // the empty set IS the answer (Go plans a `TableDual`).
+                    return execution(None, None, Vec::new());
+                }
                 None if names_no_rows(handle_type, value) => {
                     // A parameter longer than the column's capacity compares
                     // equal to no stored value: the empty set IS the answer,
@@ -285,6 +291,16 @@ impl PreparedPointGetPlan {
                     ResidualCheck::Equal(
                         match point_get_value(&self.output.columns[*position].1, value) {
                             Some(value) => value,
+                            None if point_get_value_overflowed(
+                                &self.output.columns[*position].1,
+                                value,
+                            ) =>
+                            {
+                                // The residual equality can never hold, so
+                                // no row passes; Go's `ErrOverflow` arm plans
+                                // the same empty answer.
+                                return execution(None, None, Vec::new());
+                            }
                             None if names_no_rows(&self.output.columns[*position].1, value) => {
                                 return execution(None, None, Vec::new());
                             }
@@ -1831,6 +1847,17 @@ fn try_fast_point_physical_plan_with_allocator_mode(
         &scope.zone,
     )?
     else {
+        if point_get_predicate_overflows(&PointPlanStmt::of_select(select), &columns, &scope.zone) {
+            // Go `tryPointGetPlan`'s `isTableDual` arm: the predicate can
+            // equal no stored row, so the answer is empty and no read runs.
+            let mut base = tidb_planner::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
+            base.base
+                .set_stats(Some(tidb_planner::stats_info::StatsInfo::new(0.0, [])));
+            base.base.set_schema(Some(schema));
+            return Ok(Some(tidb_planner::physical::PhysicalPlan::TableDual(
+                tidb_planner::physical::PhysicalTableDual::new(base, 0),
+            )));
+        }
         return Ok(None);
     };
     if !point_get_consumes_where(select, table, &columns, &scope.zone) {
@@ -2650,6 +2677,32 @@ impl<'a> PointPlanStmt<'a> {
             into_vars: Vec::new(),
         })
     }
+}
+
+/// Go `getNameValuePairs`'s `ErrOverflow` arm at the fast-plan boundary: a
+/// `WHERE` conjunct whose constant cannot be represented in its column's
+/// domain can equal no stored row, so the whole conjunction is unsatisfiable
+/// and Go plans a `TableDual` instead of reading. `name_value_pairs` only
+/// returns true for a pure conjunction of equalities, so every pair it yields
+/// is ANDed into the predicate.
+fn point_get_predicate_overflows(
+    select: &PointPlanStmt<'_>,
+    columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    let Some(where_clause) = select.where_clause else {
+        return false;
+    };
+    let mut pairs = Vec::new();
+    if !name_value_pairs(where_clause, &mut pairs, zone) {
+        return false;
+    }
+    pairs.iter().any(|pair| {
+        columns
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
+            .is_some_and(|(_, field_type)| point_get_value_overflowed(field_type, &pair.value))
+    })
 }
 
 /// The row a point get reads, when the statement qualifies for one.

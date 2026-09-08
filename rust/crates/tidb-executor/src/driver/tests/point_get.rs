@@ -2244,3 +2244,93 @@ fn shared_planner_answers_limit_when_the_where_detaches_nothing() {
         assert_eq!(values.len(), 1, "{sql} should return one row");
     }
 }
+
+/// Go `getNameValuePairs`'s `ErrOverflow` arm: a bound value outside the
+/// handle column's domain can equal no stored row, so the prepared point plan
+/// answers the empty set without a storage read (Go plans a `TableDual`).
+#[test]
+fn prepared_point_plan_answers_an_out_of_range_handle_without_reading() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE prepared_overflow (id BIGINT PRIMARY KEY, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO prepared_overflow VALUES (1, 10)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let stmt = tidb_parser::parse("SELECT v FROM prepared_overflow WHERE id = ?").unwrap();
+    let zone: tidb_datatype::SessionTimeZone = Default::default();
+    let plan = std::sync::Arc::new(
+        build_prepared_point_get_plan(&stmt, 1, &catalog, DEFAULT_DATABASE, &zone)
+            .expect("the BIGINT handle point read should build one plan"),
+    );
+    let execution = plan
+        .bind(&[Datum::new_string("99999999999999999999999999")], &zone)
+        .expect("an out-of-range value still binds to the empty answer");
+    let decode = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone);
+    let fast = run_prepared_point_get(
+        &execution,
+        &mut catalog,
+        DEFAULT_DATABASE,
+        &decode,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .expect("the prepared plan stays valid");
+    assert!(fast.1.is_empty(), "an out-of-range handle names no rows");
+}
+
+/// Go `tryPointGetPlan`'s `isTableDual` arm for a plain statement: a `WHERE`
+/// constant outside the handle column's domain can equal no stored row, so
+/// the plan is a `TableDual` instead of a full scan.
+#[test]
+fn out_of_range_point_literal_plans_a_table_dual() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE plain_overflow (id BIGINT PRIMARY KEY, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO plain_overflow VALUES (1, 10)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT v FROM plain_overflow WHERE id = '99999999999999999999999999'";
+    let rows = crate::run_select_on(sql, &catalog, &ctx).unwrap();
+    assert!(rows.is_empty(), "an out-of-range handle names no rows");
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("expected a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("expected a select");
+    };
+    let (_, explain) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        DEFAULT_DATABASE,
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let operators = explain
+        .iter()
+        .filter_map(|row| match &row[0] {
+            Datum::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+            Datum::String(text) => Some(String::from_utf8_lossy(text.bytes()).into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        operators.iter().any(|name| name.contains("TableDual")),
+        "expected a TableDual operator, got {operators:?}"
+    );
+}

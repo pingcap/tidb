@@ -634,6 +634,17 @@ both `oltp_read_only` and `oltp_read_write`.
   `DirectUnaryRuntimeConfig::default()` uses it. The focused test passes in
   the default build, and under `--features tidb-config/nextgen` an inverted
   assertion fails with `left: NextGeneration`, proving both arms.
+- [x] 2026-09-08: ported Go `tryPointGetPlan`'s `isTableDual` arm for an
+  out-of-range equality constant. Go's `getNameValuePairs` keeps the original
+  datum and sets `isTableDual` when `ConvertTo` reports `ErrOverflow`, so the
+  fast plan is a `TableDual`; Rust declined and scanned the table.
+  `point_get_value_overflowed` now distinguishes that event, and both the
+  prepared bind and the plain fast plan answer the empty set without a read.
+  `prepared_point_plan_answers_an_out_of_range_handle_without_reading` failed
+  at `bind` before the fix, and
+  `out_of_range_point_literal_plans_a_table_dual` now sees `TableDual`
+  instead of `TableFullScan`. Receipt:
+  `rust/testport/receipts/executor_point_get_overflow.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
