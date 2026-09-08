@@ -11419,3 +11419,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (composite FK pin): a two-column FK enforces the PAIR — a
  half-matching tuple refuses while the full pair lands. Pinned in
  `crates/tidb-session/tests/composite_fk_source.rs`.
+- 2026-09-08 (DROP FOREIGN KEY pin): dropping the constraint re-enables
+ violating inserts; the previously refused row lands. Pinned in
+ `crates/tidb-session/tests/drop_foreign_key_source.rs`.
