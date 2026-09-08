@@ -1051,24 +1051,59 @@ fn selectivity_of_conjuncts_with_path_context(
             && stats.indexes.is_empty()
     });
     if conjuncts.len() > 63 || empty_collection {
-        let predicates: Vec<PseudoPredicate> = conjuncts
-            .iter()
-            .map(|conjunct| {
-                let mut predicate = pseudo_predicate(conjunct, table, resolver);
-                if empty_collection {
-                    if let PseudoPredicate::Resolved { column, .. } = &mut predicate {
-                        *column = None;
+        let real_collection = stats.filter(|stats| !stats.cache_pseudo && stats.row_count != 0);
+        let mut predicates = Vec::new();
+        let mut equality_columns = BTreeSet::new();
+        for conjunct in &conjuncts {
+            let mut predicate = pseudo_predicate(conjunct, table, resolver);
+            if let PseudoPredicate::Resolved { kind, column } = &mut predicate {
+                if let Some(collection) = real_collection {
+                    if let Some(offsets) = physical_column_offsets(conjunct, table, resolver) {
+                        if let [offset] = offsets[..] {
+                            let id = table.columns[offset].id;
+                            if defaults.trigger_load {
+                                queue_column_stats_load_if_invalid(table, collection, id, None);
+                            }
+                            if !collection.columns.contains_key(&id) {
+                                *column = None;
+                            }
+                        }
                     }
                 }
-                predicate
-            })
-            .collect();
-        return pseudo_selectivity(
-            &predicates,
-            &if empty_collection { Vec::new() } else { pseudo_unique_indexes(table) },
-            realtime as i64,
-            defaults.selectivity_factor,
-        );
+                if *kind == PseudoFunctionKind::Equality {
+                    if let Some(column) = column {
+                        equality_columns.insert(column.lower_name.clone());
+                        if column.unique_key_flag {
+                            return 1.0 / realtime;
+                        }
+                    }
+                }
+            }
+            predicates.push(predicate);
+        }
+        let mut indexes = Vec::new();
+        if !equality_columns.is_empty() {
+            for index in table.indexes() {
+                if real_collection.is_some_and(|stats| !stats.indexes.contains_key(&index.id)) {
+                    continue;
+                }
+                let names = index.column_offsets.iter()
+                    .map(|offset| table.columns[*offset].name.to_lowercase()).collect::<Vec<_>>();
+                if defaults.trigger_load && real_collection.is_some()
+                    && names.first().is_some_and(|name| equality_columns.contains(name)) {
+                    tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(
+                        tidb_model::TableItemID { table_id: table.table_id, id: index.id,
+                            is_index: true, is_sync_load_failed: false }, true,
+                    );
+                }
+                let complete = !names.is_empty() && names.iter().all(|name| equality_columns.contains(name));
+                indexes.push(PseudoIndex { unique: index.unique, column_lower_names: names });
+                if index.unique && complete {
+                    break;
+                }
+            }
+        }
+        return pseudo_selectivity(&predicates, &indexes, realtime as i64, defaults.selectivity_factor);
     }
 
     // A pseudo table is not a table without statistics as far as
@@ -2009,25 +2044,6 @@ fn has_unique_key_flag(table: &KvTable, offset: usize) -> bool {
         .any(|index| index.unique && index.column_offsets == [offset])
 }
 
-/// The unique indexes `pseudoSelectivity`'s `ForEachIndexImmutable` walk can
-/// return `1/RealtimeCount` from, in the shape its port takes.
-fn pseudo_unique_indexes(table: &KvTable) -> Vec<PseudoIndex> {
-    table
-        .indexes()
-        .iter()
-        .filter(|index| index.unique)
-        .map(|index| PseudoIndex {
-            unique: true,
-            column_lower_names: index
-                .column_offsets
-                .iter()
-                .filter_map(|offset| table.columns.get(*offset))
-                .map(|column| column.name.to_lowercase())
-                .collect(),
-        })
-        .collect()
-}
-
 /// Whether an expression is one of Go's `expression.Constant`s, for
 /// `getConstantColumnID`'s two-argument test.
 fn is_constant_literal(expr: &tidb_ast::Expr) -> bool {
@@ -2089,6 +2105,197 @@ mod tests {
             comment: String::new(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn oversized_pseudo_load_respects_unique_return_and_index_prefix() {
+        for (unique, reverse) in [(false, false), (true, false), (false, true)] {
+            let table_id = if unique {
+                9403
+            } else if reverse {
+                9404
+            } else {
+                9402
+            };
+            let mut table = KvTable::new(table_id, vec![long_column("a", 1), long_column("b", 2)]);
+            table.add_index(
+                KvIndex {
+                    id: 8,
+                    name: "ia".to_owned(),
+                    comment: String::new(),
+                    unique,
+                    column_offsets: if unique {
+                        vec![0]
+                    } else if reverse {
+                        vec![1, 0]
+                    } else {
+                        vec![0, 1]
+                    },
+                    prefix_lengths: if unique { vec![-1] } else { vec![-1, -1] },
+                    visible: true,
+                    global: false,
+                    global_index_version: 0,
+                    clustered_primary: false,
+                },
+                false,
+            );
+            let column = |id| ColumnStats {
+                histogram: tidb_stats::Histogram {
+                    id,
+                    ndv: 10,
+                    ..Default::default()
+                },
+                topn: None,
+                cms: None,
+                stats_ver: 2,
+                unsigned: false,
+            };
+            let index = IndexStats {
+                histogram: tidb_stats::Histogram {
+                    id: 8,
+                    ndv: 10,
+                    ..Default::default()
+                },
+                topn: None,
+                cms: None,
+                stats_ver: 2,
+                num_columns: if unique { 1 } else { 2 },
+                unique,
+            };
+            let stats = TableStatistics::new(
+                10000,
+                0,
+                BTreeMap::from([(1, column(1)), (2, column(2))]),
+                BTreeMap::from([(8, index)]),
+            );
+            let items =
+                [(1, false), (2, false), (8, true)].map(|(id, is_index)| tidb_model::TableItemID {
+                    table_id,
+                    id,
+                    is_index,
+                    is_sync_load_failed: false,
+                });
+            let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+            for item in items {
+                needed.delete(item);
+            }
+            let sql = format!(
+                "SELECT * FROM t WHERE a=1 AND {}",
+                vec!["b!=2"; 64].join(" AND ")
+            );
+            let statement = tidb_parser::parse(&sql).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            let actual = selectivity(
+                select.where_clause.as_ref().unwrap(),
+                &table,
+                &NamedColumnResolver { table: &table },
+                Some(&stats),
+            );
+            let queued = items.map(|item| {
+                needed
+                    .all_items()
+                    .iter()
+                    .any(|entry| entry.table_item_id == item)
+            });
+            for item in items {
+                needed.delete(item);
+            }
+            assert_eq!(
+                queued,
+                [true, !unique, !unique && !reverse],
+                "unique={unique}"
+            );
+            let expected = if unique { 0.0001 } else { 0.001 };
+            assert!((actual - expected).abs() < 1e-12, "actual={actual}");
+        }
+    }
+
+    #[test]
+    fn pseudo_fallback_requests_column_statistics() {
+        let table = KvTable::new(9401, vec![long_column("a", 1)]);
+        let mut stats = TableStatistics::new(10000, 0, BTreeMap::new(), BTreeMap::new());
+        stats.cache_pseudo = false;
+        stats.column_stats_existence.insert(1, true);
+        let item = tidb_model::TableItemID {
+            table_id: 9401,
+            id: 1,
+            is_index: false,
+            is_sync_load_failed: false,
+        };
+        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        needed.delete(item);
+        let statement = tidb_parser::parse("SELECT * FROM t WHERE a != 2").unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("select")
+        };
+        let actual = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        let queued = needed
+            .all_items()
+            .iter()
+            .any(|loaded| loaded.table_item_id == item);
+        needed.delete(item);
+        assert!((actual - 0.8).abs() < 1e-12);
+        assert!(
+            queued,
+            "Go pseudoSelectivity checks column load even for NE"
+        );
+        let _ = selectivity_with_range_context(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+            SelectivityDefaults {
+                trigger_load: false,
+                ..Default::default()
+            },
+            crate::index_range::RangeContext::default(),
+        );
+        let suppressed = needed
+            .all_items()
+            .iter()
+            .any(|loaded| loaded.table_item_id == item);
+        needed.delete(item);
+        assert!(
+            !suppressed,
+            "eager precompute leaves loading to predicate collection"
+        );
+        stats.cache_pseudo = true;
+        let sql = format!("SELECT * FROM t WHERE {}", vec!["a!=2"; 64].join(" AND "));
+        let statement = tidb_parser::parse(&sql).unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("select")
+        };
+        let _ = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        let synthetic_load = needed
+            .all_items()
+            .iter()
+            .any(|loaded| loaded.table_item_id == item);
+        needed.delete(item);
+        assert!(
+            !synthetic_load,
+            "synthetic pseudo statistics cannot trigger loading"
+        );
     }
 
     #[test]
