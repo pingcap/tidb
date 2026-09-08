@@ -171,11 +171,11 @@ pub(crate) fn analyzed_filter_selectivity(
         return Some(1.0);
     }
 
-    let mut selectivity = 1.0_f64;
+    let mut selectivity_total = 1.0_f64;
     let mut recognized = false;
     for condition in conditions {
         let Expression::ScalarFunction(function) = condition else {
-            selectivity *= crate::cost_factors::SELECTION_FACTOR;
+            selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
             continue;
         };
         let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
@@ -202,31 +202,100 @@ pub(crate) fn analyzed_filter_selectivity(
                         .collect(),
                 )
             }
+            // Go `GetSelectivityByFilter` -> `GetStrMatchSelectivity`: a
+            // single-column LIKE estimates from the column's sampled values.
+            // Without a usable histogram sample Go falls back to
+            // `GetStrMatchDefaultSelectivity` (0.1), NOT the generic 0.8
+            // `SelectionFactor`; the latter kept a `p_name LIKE 'green%'`
+            // source at 80% of its rows and flipped a downstream join.
+            ("like", [Expression::Column(column), Expression::Constant(pattern), rest @ ..])
+                if rest
+                    .iter()
+                    .all(|argument| matches!(argument, Expression::Constant(_))) =>
+            {
+                let selectivity = histogram_prefix_selectivity(table_stats, column, &pattern.value)
+                    .unwrap_or(DEFAULT_STRING_MATCH_SELECTIVITY);
+                selectivity_total *= selectivity;
+                recognized = true;
+                continue;
+            }
             _ => {
-                selectivity *= crate::cost_factors::SELECTION_FACTOR;
+                selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
                 continue;
             }
         };
         if let Some(histogram_selectivity) =
             histogram_point_selectivity(table_stats, column, &values)
         {
-            selectivity *= histogram_selectivity;
+            selectivity_total *= histogram_selectivity;
             recognized = true;
             continue;
         }
         let ndv = table_stats.col_ndv(column.unique_id);
         if ndv > 0.0 {
-            selectivity *= (values.len() as f64 / ndv).min(1.0);
+            selectivity_total *= (values.len() as f64 / ndv).min(1.0);
             recognized = true;
         } else {
-            selectivity *= crate::cost_factors::SELECTION_FACTOR;
+            selectivity_total *= crate::cost_factors::SELECTION_FACTOR;
         }
     }
     if recognized {
-        Some(selectivity.max(1.0 / table_stats.row_count().max(1.0)))
+        Some(selectivity_total.max(1.0 / table_stats.row_count().max(1.0)))
     } else {
-        Some(selectivity)
+        Some(selectivity_total)
     }
+}
+
+/// Go `GetStrMatchDefaultSelectivity`: the fallback used when a LIKE has no
+/// usable histogram sample.
+const DEFAULT_STRING_MATCH_SELECTIVITY: f64 = 0.1;
+
+/// A `prefix%` LIKE estimated from the column histogram's bucket bounds: sum
+/// the rows of every bucket whose lower or upper bound starts with the
+/// prefix, over the realtime row count. `None` when the pattern is not a
+/// plain trailing-`%` prefix or the collection carries no histogram.
+fn histogram_prefix_selectivity(
+    table_stats: &StatsInfo,
+    column: &tidb_expr::column::Column,
+    pattern: &tidb_datatype::Datum,
+) -> Option<f64> {
+    let pattern = match pattern {
+        tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        tidb_datatype::Datum::String(string) => {
+            String::from_utf8_lossy(string.bytes()).into_owned()
+        }
+        _ => return None,
+    };
+    let prefix = pattern.strip_suffix('%')?;
+    if prefix.is_empty() || prefix.contains('%') || prefix.contains('_') {
+        return None;
+    }
+    let hist_coll = table_stats.hist_coll()?;
+    let column_stats = hist_coll.histogram(column.unique_id)?;
+    if column_stats.histogram.buckets.is_empty() {
+        return None;
+    }
+    let realtime = hist_coll.realtime_count();
+    if realtime <= 0 {
+        return None;
+    }
+    let starts_with = |value: &tidb_datatype::Datum| match value {
+        tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).starts_with(prefix),
+        tidb_datatype::Datum::String(string) => {
+            String::from_utf8_lossy(string.bytes()).starts_with(prefix)
+        }
+        _ => false,
+    };
+    let mut matched = 0.0_f64;
+    let mut previous = 0.0_f64;
+    for bucket in &column_stats.histogram.buckets {
+        let rows = (bucket.count as f64 - previous).max(0.0);
+        previous = bucket.count as f64;
+        if starts_with(&bucket.lower_bound) || starts_with(&bucket.upper_bound) {
+            matched += rows;
+        }
+    }
+    Some((matched / realtime as f64).max(1.0 / realtime as f64))
 }
 
 /// Go `cardinality.Selectivity`'s equality arm over the loaded histogram:
@@ -2631,6 +2700,90 @@ mod analyzed_filter_selectivity_tests {
         assert!(
             (selectivity - 0.1).abs() > 1e-9,
             "the NDV fallback must not answer a loaded histogram"
+        );
+    }
+
+    /// Go `GetSelectivityByFilter` -> `GetStrMatchSelectivity`: a plain
+    /// `prefix%` LIKE estimates from the histogram's bucket bounds, and a
+    /// pattern the histogram cannot answer falls back to
+    /// `GetStrMatchDefaultSelectivity` (0.1), never the generic 0.8.
+    #[test]
+    fn a_prefix_like_uses_the_histogram_then_the_string_match_default() {
+        let unique_id = 7;
+        let varchar = || FieldType::new(FieldTypeCode::VarString);
+        let histogram = Histogram {
+            id: 1,
+            ndv: 3,
+            last_update_version: 1,
+            buckets: vec![
+                Bucket {
+                    count: 1,
+                    repeat: 1,
+                    ndv: 1,
+                    lower_bound: Datum::Bytes(b"green alpha".to_vec()),
+                    upper_bound: Datum::Bytes(b"green alpha".to_vec()),
+                },
+                Bucket {
+                    count: 101,
+                    repeat: 1,
+                    ndv: 100,
+                    lower_bound: Datum::Bytes(b"red 002".to_vec()),
+                    upper_bound: Datum::Bytes(b"red 101".to_vec()),
+                },
+            ],
+            ..Histogram::default()
+        };
+        let hist_coll = HistColl::new(false, 128, [])
+            .with_histograms([(
+                unique_id,
+                std::sync::Arc::new(ColumnStats {
+                    histogram,
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )])
+            .with_modify_count(0);
+        let table_stats = StatsInfo::new(128.0, [(unique_id, 3.0)]).with_hist_coll(hist_coll);
+        let like = |pattern: &str| {
+            Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new("like"),
+                FieldType::new(FieldTypeCode::LongLong),
+                vec![
+                    Expression::Column(Column::new(unique_id, varchar())),
+                    Expression::Constant(Constant::new(
+                        Datum::Bytes(pattern.as_bytes().to_vec()),
+                        varchar(),
+                    )),
+                ],
+            ))
+        };
+
+        // One bucket's bounds start with `green`; its single row over 128.
+        let selectivity =
+            analyzed_filter_selectivity(&table_stats, &[like("green%")]).expect("analyzed");
+        assert!(
+            (selectivity - 1.0 / 128.0).abs() < 1e-12,
+            "{selectivity} != {}",
+            1.0 / 128.0
+        );
+
+        // No bucket bound starts with `blue`, so the sampled estimate is
+        // empty and floors at Go's one-row minimum.
+        let selectivity =
+            analyzed_filter_selectivity(&table_stats, &[like("blue%")]).expect("analyzed");
+        assert!(
+            (selectivity - 1.0 / 128.0).abs() < 1e-12,
+            "an empty histogram sample floors at one row: {selectivity}"
+        );
+
+        // Without a histogram the pattern answers the 0.1 default.
+        let bare = StatsInfo::new(128.0, [(unique_id, 3.0)]);
+        let selectivity = analyzed_filter_selectivity(&bare, &[like("green%")]).expect("analyzed");
+        assert!(
+            (selectivity - 0.1).abs() < 1e-12,
+            "the default string-match selectivity is 0.1, not 0.8: {selectivity}"
         );
     }
 }

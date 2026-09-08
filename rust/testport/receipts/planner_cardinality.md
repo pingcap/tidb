@@ -102,3 +102,44 @@ limited to the zero-repeat fallback; the focused regression and full package
 suite cover the changed path. Compatibility/performance risk is low because
 the guard only changes an exact-zero histogram fallback and adds no new
 runtime work.
+
+## Follow-up: a prefix LIKE estimates from the histogram, not 0.8 (2026-09-09)
+
+Go `cardinality.Selectivity` routes a single-column LIKE through
+`GetSelectivityByFilter` -> `GetStrMatchSelectivity`, which samples the
+column's histogram/TopN and falls back to
+`GetStrMatchDefaultSelectivity` (0.1), never the generic 0.8
+`SelectionFactor`. The port's `analyzed_filter_selectivity` charged LIKE 0.8,
+so a source inside a subquery block (whose predicate never reaches the
+top-level `InitStats` split) kept 80% of its rows.
+
+`subqueries::correlated_sum_predicate_pulls_above_unique_outer_join`'s
+`part` source therefore estimated `200000 * 0.8 = 160000` rows, which made
+the `part x partsupp` MergeJoin cheaper than the index join. The arm now
+recognizes `like(col, const[, escape])`, sums the rows of every histogram
+bucket whose lower or upper bound starts with a plain trailing-`%` prefix,
+floors at one row, and falls back to 0.1 when the collection has no
+histogram.
+
+Regression: new
+`logical::rewrite::analyzed_filter_selectivity_tests::a_prefix_like_uses_the_histogram_then_the_string_match_default`
+pins the histogram prefix estimate (1 row of 128), the one-row floor for a
+prefix no bucket matches, and the 0.1 default without a histogram. The
+executor failure `correlated_sum_predicate_pulls_above_unique_outer_join`
+passes.
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1 correlated_sum_predicate
+# ok after; FAILED before
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1259 passed; 3 failed; no additions to the baseline set
+
+cargo test -p tidb-planner
+# 1004 + 268 + 6 + 3 passed; 0 failed
+
+cargo check --locked --all-targets -p tidb-planner -p tidb-executor
+rustfmt --edition 2021 --config skip_children=true --check <changed files>
+git diff --check
+# clean
+```

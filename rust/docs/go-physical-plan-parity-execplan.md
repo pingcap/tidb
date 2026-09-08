@@ -1322,6 +1322,16 @@ both `oltp_read_only` and `oltp_read_write`.
   `issue52984_named_window_self_frame_runs_repeatedly` pass; executor 1258
   passed / 4 failed. Receipt:
   `rust/testport/receipts/executor_window_rows_frame.md`.
+- [x] 2026-09-09: estimated a prefix LIKE from the column histogram like Go.
+  `analyzed_filter_selectivity` charged every LIKE the generic 0.8
+  `SelectionFactor`, so a source whose predicate never reaches the
+  top-level `InitStats` split kept 80% of its rows. `correlated_sum_predicate`'s
+  `part` source estimated 160000 rows and its MergeJoin beat the index join.
+  The arm now recognizes `like(col, const[, escape])`, sums the rows of every
+  histogram bucket whose bounds start with a plain trailing-`%` prefix,
+  floors at one row, and falls back to Go's 0.1 string-match default.
+  Executor 1259 passed / 3 failed. Receipt:
+  `rust/testport/receipts/planner_cardinality.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1330,20 +1340,13 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1,258 passed / 4 failed; the 13 statistics-request transport
+  lib serialized: 1,259 passed / 3 failed; the 13 statistics-request transport
   tests still flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
-  - `subqueries::correlated_sum_predicate_pulls_above_unique_outer_join`: the
-    `part` source lives in a subquery block, but `InitStats` derives every
-    source from the TOP-LEVEL `SelectStmt` and `single_table_predicate`
-    drops subquery-bearing conjuncts, so `p_name LIKE 'green%'` never reaches
-    the part profile (200000 rows). Go derives each source from its OWN
-    `PushedDownConds` (`deriveStats4DataSource` -> `cardinality.Selectivity`),
-    which the port already has on the `DataSource` at `InitStats` time. The
-    planner-side `analyzed_filter_selectivity` also charges LIKE the 0.8
-    fallback where Go's histogram-aware string match
-    (`GetSelectivityByFilter`/`GetStrMatchDefaultSelectivity` = 0.1) gives
-    the selective estimate that makes the index join win.
+  - `subqueries::correlated_sum_predicate_pulls_above_unique_outer_join`:
+    DONE (a prefix LIKE now estimates from the histogram / the 0.1
+    string-match default, see the 2026-09-09 entry). Receipt:
+    `rust/testport/receipts/planner_cardinality.md`.
   - `aggregates::tpcc_condition_eleven_*` (analyzed arm): the analyzed
     statistics collapse the grouped leaves' estimates from 8 to 1.0, which
     flips two MergeJoins to the IndexJoin family. Measured with a temporary
