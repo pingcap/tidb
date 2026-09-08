@@ -11387,3 +11387,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (fractional duration pin): TIME_FORMAT's %f field, SEC_TO_TIME
   fsp preservation, and EXTRACT(MICROSECOND). Pinned in
   `crates/tidb-session/tests/fractional_duration_source.rs`.
+- 2026-09-08 (USING join pin): the USING clause merges the shared column,
+  answers bare-name selection, and SELECT * shows it once. Pinned in
+  `crates/tidb-session/tests/using_join_source.rs`.
