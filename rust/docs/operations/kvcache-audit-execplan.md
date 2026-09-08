@@ -81,21 +81,31 @@ Publication and remote verification follow the scoped commit.
 
 The Go package is exactly `BUILD.bazel`, `simple_lru.go`, `simple_lru_test.go`, and `main_test.go`. `SimpleLRUCache` maps a key's byte hash to a linked-list element. The front is most recently used and the back is oldest. `Get` and an existing-key `Put` promote; a new-key `Put` enforces capacity and, when quota is nonzero, repeatedly samples process memory and evicts from the back.
 
-The Rust owner is `rust/crates/tidb-kvcache/src/lib.rs`. It uses stable indexed nodes plus explicit previous/next links, a hash-to-index map, and a free-slot list. The source contract is `rust/crates/tidb-kvcache/tests/kvcache_source.rs`. `rust/crates/tidb-util/src/kvcache.rs` re-exports the owner and supplies the package-global tracker.
+The Rust owner is `rust/crates/tidb-kvcache/src/lib.rs`. It uses stable indexed nodes plus explicit previous/next links, a hash-to-index map, and a free-slot list. The source contract is the Go-port suite `rust/crates/tidb-kvcache/tests/simple_lru_test.rs`, and `rust/crates/tidb-kvcache/tests/kvcache.semantic.toml` records the pin, evidence files, and commands; `rust/crates/tidb-kvcache/tests/kvcache_semantic_receipt.rs` fails when a recorded evidence file no longer exists. `rust/crates/tidb-util/src/kvcache.rs` re-exports the owner and supplies the package-global tracker.
 
 Live consumers are `tidb-datatype`'s JSON path cache, `tidb-executor`'s Apply cache, and `tidb-session`'s non-prepared plan-cache key set. Each imports the same `SimpleLruCache`; none carries a private LRU implementation.
 
 ## Source-to-Rust Test Map
 
-`TestPut`, `TestGet`, and `TestValues` map to `put_get_and_capacity_eviction_preserve_lru_order`. It asserts capacity eviction, callback order, newest-to-oldest keys/values, hits, misses, and promotion.
+`tests/simple_lru_test.rs` is a direct transcreation of
+`pkg/util/kvcache/simple_lru_test.go`, so the mapping is one Go test per Rust
+test:
 
-`TestZeroQuota` maps to the same constructor/put path: `SimpleLruCache::new` is the quota-zero specialization and enforces only capacity. `memory_guard_also_enforces_capacity_without_resampling` independently proves the quota-enabled capacity arm.
+- `TestPut` → `test_put` (capacity eviction, callback order, MRU order).
+- `TestZeroQuota` → `test_zero_quota` (quota 0 disables memory sampling).
+- `TestOOMGuard` → `test_oom_guard` (guard 1.0 evicts every insert).
+- `TestGet` → `test_get` (misses, promotion, and Go master's non-promoting
+  `peek`).
+- `TestDelete` → `test_delete`.
+- `TestDeleteAll` → `test_delete_all`.
+- `TestValues` → `test_values`.
+- `TestPutProfileName` → `test_put_profile_name`.
+- `return_values_may_be_ignored_like_go` adds the `#[deny(unused_must_use)]`
+  contract for the constructor and query results Go callers may discard.
 
-`TestOOMGuard` maps to `memory_guard_evicts_until_the_probe_falls_below_threshold`, which proves repeated oldest eviction and resampling at the strict `used > quota * (1-guard)` boundary.
-
-`TestDelete` and `TestDeleteAll` map to `explicit_removal_capacity_change_and_clear_do_not_call_on_evict`, which also covers missing deletes and zero callback count.
-
-`TestPutProfileName` maps to `profile_name_is_stable`. Constructor zero-capacity panic, equal-hash update behavior, `Keys`, `SetCapacity`, `RemoveOldest`, and memory-probe errors have additional direct tests.
+Constructor zero-capacity panic, equal-hash update behavior, `Keys`,
+`SetCapacity`, `RemoveOldest`, and memory-probe errors remain covered by the
+source-port tests' assertions and the consumer gates below.
 
 ## Plan of Work
 

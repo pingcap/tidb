@@ -69,6 +69,15 @@ dangling `replacing_a_key_preserves_the_source_tracker_charge` and
 `tests/apply_cache_source.rs` references from `apply_cache.rs`'s module doc and
 the `kvcache-audit-execplan.md` command list.
 
+A follow-up (2026-09-08) found the same class of drift in this ExecPlan: it
+named `tests/kvcache_source.rs` as the source contract and mapped the Go tests
+to Rust test names that no longer exist. The ExecPlan now names the actual
+`tests/simple_lru_test.rs` suite (one Rust test per Go test), and
+`every_crate_path_recorded_by_the_audit_execplan_exists` fails when any
+`rust/crates/...` path the ExecPlan records is absent; it failed with
+`audit execplan path rust/crates/tidb-kvcache/tests/kvcache_source.rs does
+not exist` before the repair.
+
 ## Validation
 
 Profile: **Ready** for this focused parity fix within the continuing

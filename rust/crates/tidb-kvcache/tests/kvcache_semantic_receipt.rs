@@ -75,3 +75,35 @@ fn every_evidence_file_recorded_by_the_semantic_receipt_exists() {
         "the apply-cache evidence must be its owning receipt, not the removed external test file"
     );
 }
+
+/// Every `rust/crates/...` path the owning ExecPlan names must exist.
+///
+/// The audit ExecPlan is the map a reviewer follows; a renamed or deleted
+/// owner or test file leaves it pointing at nothing, which is how the stale
+/// `tests/kvcache_source.rs` reference survived until this guard.
+#[test]
+fn every_crate_path_recorded_by_the_audit_execplan_exists() {
+    let root = repository_root();
+    let execplan =
+        std::fs::read_to_string(root.join("rust/docs/operations/kvcache-audit-execplan.md"))
+            .expect("the audit execplan is checked in");
+    let is_path_character = |character: char| {
+        character.is_ascii_alphanumeric() || matches!(character, '/' | '_' | '.' | '-')
+    };
+    let mut checked = 0;
+    for token in execplan.split(|character: char| !is_path_character(character)) {
+        let Some(relative) = token.strip_prefix("rust/crates/") else {
+            continue;
+        };
+        let path = format!("rust/crates/{relative}");
+        assert!(
+            root.join(&path).exists(),
+            "audit execplan path {path} does not exist"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 4,
+        "the execplan must reference the owner, its contract, and the consumers"
+    );
+}
