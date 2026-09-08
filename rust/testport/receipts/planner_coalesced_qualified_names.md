@@ -239,3 +239,34 @@ cargo fmt -p tidb-planner -p tidb-executor -- --check
 git diff --check -- rust
 # passed
 ```
+
+## Follow-up: the SELECT list lowers every subquery form (2026-09-09)
+
+Go's `expressionRewriter` lowers a direct subquery, a quantified comparison,
+an IN, and an EXISTS into an Apply or semi-join wherever they appear. The Rust
+projection path (`PlanBuilder::lower_scalar_subqueries`) matched only
+`Expr::Subquery`, so `select (c) > all (select c from t) from t` reached
+`rewrite_expr_resolved` and failed with "expression form is not yet supported
+by the rewriter". The lowerer now handles all four forms, using the same
+`handle_*_subquery` handlers the filter path already used.
+
+Regression:
+`tests_executor_suite_statements_source::a_select_field_quantified_subquery_is_lowered`
+plans and evaluates the `> ALL` form; it failed with the unsupported-rewriter
+error before and passes after.
+
+Boundary: a SELECT-field `IN`/`EXISTS` now plans but trips the column-pruning
+"unexpected zero-column output schema" panic, so the regression covers the
+quantified-comparison form only. `column_name_resolution` still needs window
+physical planning for its last assertion.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib a_select_field_quantified_subquery_is_lowered
+# passed: 1
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,151 passed / 81 failed (baseline 1,150 / 81 plus the new regression)
+cargo check -p tidb-planner
+# passed
+```

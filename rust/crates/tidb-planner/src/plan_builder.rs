@@ -1463,56 +1463,157 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 let Some(expr) = node.downcast_mut::<Expr>() else {
                     return false;
                 };
-                let Expr::Subquery(query) = expr else {
-                    return false;
+                // Go's `expressionRewriter` lowers a direct subquery, a
+                // quantified comparison, an IN, and an EXISTS into an Apply or
+                // semi-join. A SELECT field reaches all four here; the filter
+                // clauses use [`PlanBuilder::lower_filter_subquery`].
+                enum Form {
+                    Scalar,
+                    Compare {
+                        op: tidb_ast::BinaryOp,
+                        left: Box<Expr>,
+                        all: bool,
+                    },
+                    In {
+                        left: Box<Expr>,
+                        not: bool,
+                    },
+                    Exists {
+                        not: bool,
+                    },
+                }
+                let (query, form) = match expr {
+                    Expr::Subquery(query) => ((**query).clone(), Form::Scalar),
+                    Expr::CompareSubquery {
+                        op,
+                        left,
+                        all,
+                        subquery,
+                    } => (
+                        (**subquery).clone(),
+                        Form::Compare {
+                            op: *op,
+                            left: left.clone(),
+                            all: *all,
+                        },
+                    ),
+                    Expr::InSubquery {
+                        expr,
+                        subquery,
+                        not,
+                    } => (
+                        (**subquery).clone(),
+                        Form::In {
+                            left: expr.clone(),
+                            not: *not,
+                        },
+                    ),
+                    Expr::Exists { subquery, not } => {
+                        ((**subquery).clone(), Form::Exists { not: *not })
+                    }
+                    _ => return false,
                 };
-                let query = (**query).clone();
                 let Some(outer) = self.plan.take() else {
-                    self.error = Some(PlanError::internal(
-                        "scalar-subquery lowering lost its outer plan",
-                    ));
+                    self.error = Some(PlanError::internal("subquery lowering lost its outer plan"));
                     return true;
                 };
-                let (outer_schema, outer_names) = snapshot_schema_and_names(&outer);
-                self.builder.outer_schemas.push(outer_schema);
-                self.builder.outer_names.push(outer_names);
-                let parent_clause = self.builder.cur_clause;
-                let modified_ctes = self.builder.prepare_cte_check_for_subquery();
-                let inner = self.builder.build_query_stmt(&query, false);
-                self.builder.reset_cte_check_for_subquery(&modified_ctes);
-                self.builder.outer_schemas.pop();
-                self.builder.outer_names.pop();
-                self.builder.cur_clause = parent_clause;
-                let inner = match inner {
+                let inner = match self.builder.build_expression_subquery(&outer, &query) {
                     Ok(inner) => inner,
                     Err(error) => {
                         self.error = Some(error);
                         return true;
                     }
                 };
-
+                // The comparison/IN handlers take their left operand already
+                // rewritten, so build it before the rewriter borrows the
+                // builder.
+                let rewritten_left = match &form {
+                    Form::Compare { left, .. } | Form::In { left, .. } => {
+                        let (schema, names) = snapshot_schema_and_names(&outer);
+                        let mut markers = BTreeMap::new();
+                        markers.insert(MarkerKind::Column, schema.columns.clone());
+                        match self.builder.rewrite_scalar(left, &schema, &names, &markers) {
+                            Ok(left) => Some(left),
+                            Err(error) => {
+                                self.error = Some(error);
+                                return true;
+                            }
+                        }
+                    }
+                    Form::Scalar | Form::Exists { .. } => None,
+                };
+                let hint_flags = self.builder.sub_query_hint_flags;
                 let mut rewriter = self.builder.expression_rewriter();
                 rewriter.as_scalar = true;
-                let applied = match rewriter.handle_scalar_subquery(
-                    outer,
-                    inner,
-                    self.builder.sub_query_hint_flags,
-                ) {
-                    Ok(ScalarSubqueryOutcome::Applied(plan)) => plan,
-                    Ok(ScalarSubqueryOutcome::EvaluateSeparately { .. }) => {
-                        self.error = Some(PlanError::internal(
-                            "uncorrelated scalar-subquery evaluation is not available to the planner",
-                        ));
-                        return true;
+                let applied = match form {
+                    Form::Scalar => {
+                        match rewriter.handle_scalar_subquery(outer, inner, hint_flags) {
+                            Ok(ScalarSubqueryOutcome::Applied(plan)) => plan,
+                            Ok(ScalarSubqueryOutcome::EvaluateSeparately { .. }) => {
+                                self.error = Some(PlanError::internal(
+                                    "uncorrelated scalar-subquery evaluation is not available to \
+                                     the planner",
+                                ));
+                                return true;
+                            }
+                            Err(error) => {
+                                self.error = Some(error.into());
+                                return true;
+                            }
+                        }
                     }
-                    Err(error) => {
-                        self.error = Some(error.into());
-                        return true;
+                    Form::Compare { op, all, .. } => {
+                        let left = rewritten_left.expect("comparison left rewritten");
+                        let Some(op) = compare_op_from_binary(op) else {
+                            self.error = Some(PlanError::internal(
+                                "invalid quantified comparison operator",
+                            ));
+                            return true;
+                        };
+                        rewriter.ctx_stack_append(left.clone(), FieldName::default());
+                        match rewriter
+                            .handle_compare_subquery(outer, &left, inner, op, all, hint_flags)
+                        {
+                            Ok(plan) => plan,
+                            Err(error) => {
+                                self.error = Some(error.into());
+                                return true;
+                            }
+                        }
+                    }
+                    Form::In { not, .. } => {
+                        let left = rewritten_left.expect("IN left rewritten");
+                        rewriter.ctx_stack_append(left.clone(), FieldName::default());
+                        match rewriter.handle_in_subquery(
+                            outer, &left, inner, not, true, hint_flags, true, false,
+                        ) {
+                            Ok(plan) => plan,
+                            Err(error) => {
+                                self.error = Some(error.into());
+                                return true;
+                            }
+                        }
+                    }
+                    Form::Exists { not } => {
+                        match rewriter.handle_exist_subquery(outer, inner, not, hint_flags) {
+                            Ok(ScalarSubqueryOutcome::Applied(plan)) => plan,
+                            Ok(ScalarSubqueryOutcome::EvaluateSeparately { .. }) => {
+                                self.error = Some(PlanError::internal(
+                                    "uncorrelated EXISTS evaluation is not available to the \
+                                     planner",
+                                ));
+                                return true;
+                            }
+                            Err(error) => {
+                                self.error = Some(error.into());
+                                return true;
+                            }
+                        }
                     }
                 };
                 let Some(Expression::Column(column)) = rewriter.ctx_stack.pop() else {
                     self.error = Some(PlanError::internal(
-                        "scalar Apply did not publish its result column",
+                        "subquery lowering did not publish its result column",
                     ));
                     return true;
                 };
@@ -1523,7 +1624,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                         .position(|candidate| candidate.unique_id == column.unique_id)
                 }) else {
                     self.error = Some(PlanError::internal(
-                        "scalar Apply result is absent from its schema",
+                        "subquery result is absent from its schema",
                     ));
                     return true;
                 };
@@ -3502,5 +3603,21 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         self.all_names.pop();
         Ok((plan, self.get_opt_flag()))
+    }
+}
+
+/// The `CompareOp` a quantified comparison's `ast.BinaryOp` names, or `None`
+/// for an operator Go refuses. Shared by the filter and projection subquery
+/// lowering.
+fn compare_op_from_binary(op: tidb_ast::BinaryOp) -> Option<CompareOp> {
+    match op {
+        tidb_ast::BinaryOp::Eq => Some(CompareOp::Eq),
+        tidb_ast::BinaryOp::NullEq => Some(CompareOp::NullEq),
+        tidb_ast::BinaryOp::Ge => Some(CompareOp::Ge),
+        tidb_ast::BinaryOp::Gt => Some(CompareOp::Gt),
+        tidb_ast::BinaryOp::Le => Some(CompareOp::Le),
+        tidb_ast::BinaryOp::Lt => Some(CompareOp::Lt),
+        tidb_ast::BinaryOp::Ne => Some(CompareOp::Ne),
+        _ => None,
     }
 }

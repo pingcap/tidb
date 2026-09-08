@@ -787,6 +787,11 @@ both `oltp_read_only` and `oltp_read_write`.
   planner. The bridge set only the experiment flag, so the builder's default
   of `true` applied the check even when the mode omitted it. Receipt:
   `rust/testport/receipts/planner_funcdep.md`.
+- [x] 2026-09-09: lowered a SELECT-list quantified comparison. The projection
+  path matched only a bare `Expr::Subquery`, so `select (c) > all (...) from t`
+  failed in the rewriter; it now lowers every subquery form through the same
+  handlers the filter path uses. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

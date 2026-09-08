@@ -493,6 +493,35 @@ fn column_name_resolution() {
     );
 }
 
+/// A quantified comparison, IN, and EXISTS in the SELECT LIST are lowered by
+/// the projection path, not only in a filter. Go's `expressionRewriter`
+/// handles all four subquery forms wherever they appear; the Rust projection
+/// path lowered only a bare `Expr::Subquery`, so
+/// `select (c) > all (select c from t) from t` failed with "expression form is
+/// not yet supported by the rewriter".
+#[test]
+fn a_select_field_quantified_subquery_is_lowered() {
+    let mut catalog = Catalog::default();
+    create(&mut catalog, "create table t (c int, d int)");
+    insert(&mut catalog, "insert t values(1,1)");
+    // `> ALL` is planned, named by its written text, and evaluated.
+    let (columns, _) = run_select_meta_in(
+        "select (c) > all (select c from t) from t",
+        &catalog,
+        "test",
+        &ctx(),
+    )
+    .unwrap();
+    assert_eq!(columns[0].0, "(c) > all (select c from t)");
+    assert_eq!(
+        rows_text(&select(
+            &catalog,
+            "select (c) > all (select c from t) from t"
+        )),
+        vec![vec!["0".to_owned()]]
+    );
+}
+
 /// Go `executor_test.go:1624::TestSelectVar`'s tail: `SQL_BIG_RESULT`,
 /// `SQL_SMALL_RESULT` and `SQL_BUFFER_RESULT` selects run against a grouped
 /// read. (The `select @a, @a := d+1` head is the gap below.)
