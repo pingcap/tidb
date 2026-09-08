@@ -32,6 +32,22 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] 2026-09-09: corrected two index-join cost INPUTS to match Go's static
+  enumeration. `constructIndexJoinStatic` fills `BasePhysicalJoin`'s
+  `OuterJoinKeys`/`InnerJoinKeys` and leaves `LeftJoinKeys`/`RightJoinKeys`
+  empty until `completePhysicalIndexJoin`, and the v2 cost reads
+  `len(p.RightJoinKeys)`/`len(p.LeftJoinKeys)`, so a static candidate's hash
+  table is priced with ZERO keys; the coster had passed the logical join's
+  key counts. `enumerateIndexJoinByOuterIdx` also sets
+  `avgInnerRowCnt = p.EqualCondOutCnt / buildRows`, and the dispatcher had
+  divided the join's FULL profile (already scaled by every other condition)
+  instead of the equal-condition output. Executor lib 1254 passed / 8 failed
+  with no additions. The remaining join-choice gap is the join-key NDV:
+  Go's check-seven `EqualCondOutCnt` is 3,045,479 (max key NDV ~3000) while
+  this port's is 30,074,400 (max 300) because the scaled `ColNDVs` differ;
+  `StatsInfo::Scale` needs a Go oracle for `ScaleNDV`/`RiskScaleNDVSkewRatio`
+  and the group-NDV path before the IndexHashJoin can win.
+
 - [x] 2026-09-09: ported the predicate-column statistics-loading model that
   Go's lite initialization uses. `predicate_column_names` walks every query
   block for columns compared against constants; `InitStats` maps them to each

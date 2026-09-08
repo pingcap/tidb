@@ -705,8 +705,15 @@ impl Ver2Coster {
                         build_row_size: Self::row_size(build),
                         probe_rows_one: Self::rows(probe),
                         probe_row_size: Self::row_size(probe),
-                        num_right_join_keys: join.right_join_keys.len(),
-                        num_left_join_keys: join.left_join_keys.len(),
+                        // Go `constructIndexJoinStatic` fills `BasePhysicalJoin`'s
+                        // `OuterJoinKeys`/`InnerJoinKeys` and leaves
+                        // `LeftJoinKeys`/`RightJoinKeys` EMPTY until
+                        // `completePhysicalIndexJoin` runs after the inner task is
+                        // chosen. The v2 cost reads `len(p.RightJoinKeys)` /
+                        // `len(p.LeftJoinKeys)`, so a static candidate's hash table
+                        // is priced with ZERO keys.
+                        num_right_join_keys: 0,
+                        num_left_join_keys: 0,
                         num_ranges: 1.0,
                         is_semi_join: matches!(
                             join.join_type,

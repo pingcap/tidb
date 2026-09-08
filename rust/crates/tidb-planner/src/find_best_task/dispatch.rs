@@ -543,11 +543,11 @@ fn exhaust_physical_plans(
                         .and_then(LogicalPlan::stats_info)
                         .map_or(1.0, crate::stats_info::StatsInfo::row_count)
                         .max(1.0);
-                    let joined_rows = op
-                        .base
-                        .base
-                        .stats_info()
-                        .map_or(outer_rows, crate::stats_info::StatsInfo::row_count);
+                    // Go `enumerateIndexJoinByOuterIdx`: `avgInnerRowCnt =
+                    // p.EqualCondOutCnt / buildRows`. The equal-condition
+                    // output is what the per-outer-row probe sees; the join's
+                    // own profile is already scaled by every OTHER condition.
+                    let joined_rows = op.equal_cond_out_cnt;
                     child_props[inner_idx].index_join_prop =
                         Some(crate::physical_property::IndexJoinRuntimeProp {
                             other_conditions: op.other_conditions.clone(),
