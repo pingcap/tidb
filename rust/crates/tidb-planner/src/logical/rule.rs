@@ -598,6 +598,8 @@ pub struct RuleContext<'a> {
     /// Go `SCtx().GetExprCtx()`'s construction half; see
     /// [`FunctionBuilder`].
     pub builder: &'a dyn FunctionBuilder,
+    /// The statement evaluation context used by Go's constraint conversions.
+    pub eval_context: &'a dyn tidb_expr::Columns,
     /// Go `SCtx().GetSessionVars().StmtCtx.UseCache`, which
     /// `MaybeOverOptimized4PlanCache` gates on.
     pub use_plan_cache: bool,

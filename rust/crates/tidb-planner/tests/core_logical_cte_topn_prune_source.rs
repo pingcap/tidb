@@ -76,6 +76,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         allocator,
         column_allocator: &COLUMN_ALLOCATOR,
         builder: &PreservingFunctionBuilder,
+        eval_context: &tidb_expr::NoColumns,
         use_plan_cache: false,
         plan_cache_marker: None,
         // Go's `AllowDeriveTopN` defaults ON.

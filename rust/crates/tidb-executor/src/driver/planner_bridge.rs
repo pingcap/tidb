@@ -1457,6 +1457,7 @@ fn optimize_built_logical(
         column_allocator: column_ids,
         builder: &function_builder,
         use_plan_cache,
+        eval_context: ctx,
         plan_cache_marker: Some(ctx),
         allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),

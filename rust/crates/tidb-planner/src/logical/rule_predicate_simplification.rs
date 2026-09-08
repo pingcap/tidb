@@ -576,7 +576,7 @@ pub fn apply_predicate_simplification(
         .map(|predicate| remove_redundant_or(ctx, predicate))
         .collect();
     predicates = prune_empty_or_branches(ctx, predicates);
-    crate::constraint::delete_true_exprs(ctx.use_plan_cache, predicates)
+    crate::constraint::delete_true_exprs(ctx.use_plan_cache, ctx.eval_context, predicates)
 }
 
 /// Go `applyPredicateSimplificationForJoin`.

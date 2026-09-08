@@ -190,6 +190,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         allocator: context.allocator,
         column_allocator: context.column_allocator,
         builder: context.builder,
+        eval_context: context.eval_context,
         use_plan_cache: context.use_plan_cache,
         plan_cache_marker: context.plan_cache_marker,
         allow_derive_topn: context.allow_derive_topn,

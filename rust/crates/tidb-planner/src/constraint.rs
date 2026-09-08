@@ -14,15 +14,20 @@
 
 //! Go `pkg/planner/core/constraint/exprs.go`.
 
-use tidb_datatype::FieldTypeFlags;
+use tidb_datatype::{Datum, FieldTypeFlags};
 use tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
+use tidb_expr::Columns;
 
 /// Go `DeleteTrueExprs`: remove constants that successfully convert to SQL
 /// true, except parameter/deferred constants whose removal would over-optimize
 /// a reusable plan.
-pub fn delete_true_exprs(use_plan_cache: bool, conditions: Vec<Expression>) -> Vec<Expression> {
+pub fn delete_true_exprs(
+    use_plan_cache: bool,
+    context: &dyn Columns,
+    conditions: Vec<Expression>,
+) -> Vec<Expression> {
     conditions
         .into_iter()
         .filter(|condition| {
@@ -32,10 +37,34 @@ pub fn delete_true_exprs(use_plan_cache: bool, conditions: Vec<Expression>) -> V
             if maybe_over_optimized_4_plan_cache(use_plan_cache, std::slice::from_ref(condition)) {
                 return true;
             }
-            constant
-                .value
-                .to_bool()
-                .map_or(true, |value| value.value != 1)
+            let Ok(converted) = constant.value.to_bool() else {
+                return true;
+            };
+            if converted.event.is_some() {
+                let message = match &constant.value {
+                    Datum::String(value) => format!(
+                        "Truncated incorrect DOUBLE value: '{}'",
+                        tidb_datatype::float_warning_input(
+                            value.as_utf8().expect("ToBool validated the string"),
+                        ),
+                    ),
+                    Datum::Bytes(value) => format!(
+                        "Truncated incorrect DOUBLE value: '{}'",
+                        tidb_datatype::float_warning_input(
+                            std::str::from_utf8(value).expect("ToBool validated the bytes"),
+                        ),
+                    ),
+                    Datum::BinaryLiteral(value) | Datum::Bit(value) => format!(
+                        "Truncated incorrect BINARY value: '{}'",
+                        tidb_datatype::warning_subject_byte_cap(&value.to_string()),
+                    ),
+                    _ => return true,
+                };
+                if context.handle_truncate(&message).is_err() {
+                    return true;
+                }
+            }
+            converted.value != 1
         })
         .collect()
 }
@@ -120,6 +149,7 @@ mod tests {
 
         let result = delete_true_exprs(
             true,
+            &tidb_expr::NoColumns,
             vec![
                 plain_true,
                 false_value.clone(),
@@ -133,6 +163,117 @@ mod tests {
         assert!(matches!(result[1], Expression::Constant(_)));
         assert!(matches!(result[2], Expression::Column(_)));
         assert!(matches!(result[3], Expression::Constant(_)));
+    }
+
+    struct WarningContext {
+        level: tidb_expr::ErrorLevel,
+        warnings: std::cell::RefCell<Vec<(u16, String)>>,
+    }
+
+    impl WarningContext {
+        fn new(level: tidb_expr::ErrorLevel) -> Self {
+            Self {
+                level,
+                warnings: Default::default(),
+            }
+        }
+    }
+
+    impl Columns for WarningContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn truncate_level(&self) -> tidb_expr::ErrorLevel {
+            self.level
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn conversion_uses_statement_warning_and_ignore_policy() {
+        for level in [
+            tidb_expr::ErrorLevel::Error,
+            tidb_expr::ErrorLevel::Warn,
+            tidb_expr::ErrorLevel::Ignore,
+        ] {
+            let context = WarningContext::new(level);
+            let input = [
+                Datum::new_string(" 1garbage "),
+                Datum::Bytes(b"0garbage".to_vec()),
+                Datum::new_string("2"),
+            ]
+            .into_iter()
+            .map(|value| {
+                Expression::Constant(Constant::new(
+                    value,
+                    FieldType::new(FieldTypeCode::VarString),
+                ))
+            })
+            .collect();
+            let result = delete_true_exprs(false, &context, input);
+            assert_eq!(
+                result.len(),
+                if level == tidb_expr::ErrorLevel::Error {
+                    2
+                } else {
+                    1
+                }
+            );
+            let warnings = context.warnings.borrow();
+            if level == tidb_expr::ErrorLevel::Warn {
+                assert_eq!(
+                    *warnings,
+                    vec![
+                        (
+                            1292,
+                            "Truncated incorrect DOUBLE value: '1garbage'".to_owned()
+                        ),
+                        (
+                            1292,
+                            "Truncated incorrect DOUBLE value: '0garbage'".to_owned()
+                        )
+                    ]
+                );
+            } else {
+                assert!(warnings.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn binary_truncation_and_plan_cache_guard_use_the_same_context() {
+        let context = WarningContext::new(tidb_expr::ErrorLevel::Warn);
+        let literal = tidb_datatype::BinaryLiteral::from(vec![1; 9]);
+        let expected = format!("Truncated incorrect BINARY value: '{literal}'");
+        let constant = Constant::new(Datum::BinaryLiteral(literal), integer_type(false));
+        assert!(delete_true_exprs(
+            false,
+            &context,
+            vec![Expression::Constant(constant.clone())]
+        )
+        .is_empty());
+        assert_eq!(*context.warnings.borrow(), vec![(1292, expected)]);
+        context.warnings.borrow_mut().clear();
+        let mut parameter = constant;
+        parameter.param_marker = Some(ParamMarker { order: 0 });
+        assert_eq!(
+            delete_true_exprs(true, &context, vec![Expression::Constant(parameter)]).len(),
+            1
+        );
+        assert!(context.warnings.borrow().is_empty());
+    }
+
+    #[test]
+    fn strict_conversion_does_not_delete_truncated_true_constant() {
+        let condition = Expression::Constant(Constant::new(
+            Datum::new_string("1garbage"),
+            FieldType::new(FieldTypeCode::VarString),
+        ));
+        let context = WarningContext::new(tidb_expr::ErrorLevel::Error);
+        assert_eq!(delete_true_exprs(false, &context, vec![condition]).len(), 1);
+        assert!(context.warnings.borrow().is_empty());
     }
 
     #[test]
@@ -158,7 +299,7 @@ mod tests {
     #[test]
     #[deny(unused_must_use)]
     fn source_return_values_may_be_ignored_like_go() {
-        delete_true_exprs(true, vec![]);
+        delete_true_exprs(true, &tidb_expr::NoColumns, vec![]);
         delete_true_exprs_by_schema(&Schema::new(vec![]), vec![]);
     }
 }

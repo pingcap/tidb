@@ -10,6 +10,12 @@ The pinned `pkg/planner/core/constraint` package removes predicates that are pro
 
 ## Progress
 
+- [x] (2026-09-08) Re-read both package artifacts at Go master `f5cf8f6337612c6ae51fb6e384e4bb3469dde680` (84 lines), all three functions, and the complete Rust owner/tests. There are no Go tests, fixtures, generated/platform variants, or extra build inputs.
+- [x] (2026-09-08) Traced the conversion dependency and caller: `Datum::to_bool` returns an event which `DeleteTrueExprs` currently ignores; the Go helper uses statement type-context policy. The earlier `core/rule.logicalConstant` independently has the same gap and is a separate package batch.
+- [x] (2026-09-08) Observed strict regression fail (0 retained versus 1), passed the live statement context to the API, and verified 6/6 owner tests plus consumer compilation and Ready lint.
+- [x] (2026-09-08) Validated strict/warn/ignore conversion, plan-cache suppression, schema proof, 57/57 consuming rule tests, consumer compilation, Ready lint, rustfmt and diff checks.
+- [ ] Push this constraint correction; continue the separate core/rule classifier audit.
+
 - [x] (2026-08-30) Read and inventoried the complete pinned package: production `exprs.go` and `BUILD.bazel`; no tests, fixtures, generated artifacts, build/platform variants, benchmarks, fuzz targets, or examples.
 - [x] (2026-08-30) Added one native Rust owner for both production functions and routed the ordinary simplifier and join predicate-pushdown path through it.
 - [x] (2026-08-30) Added focused executable coverage for every source branch and the consuming join behavior; Ready validation passed.
@@ -56,3 +62,9 @@ Acceptance requires that ordinary constants are removed only when conversion suc
 ## Idempotence and Recovery
 
 All edits are ordinary source changes. Re-running formatting, tests, checks, and lint is safe. If a behavior test fails, inspect the expression function spelling and static field flags; do not add a query-specific exception.
+
+## September 8 conversion policy correction
+
+The constraint package's Go `DeleteTrueExprs` must delete a constant only after its `Datum.ToBool` conversion succeeds under the statement's type policy. Add an explicit evaluation-context argument to the Rust function, carrying the existing `Columns` policy and warning sink through `RuleContext` and the live executor adapter. Preserve a failing constant for strict truncation, delete successful true constants in warning/ignore mode, and publish conversion warnings even when a converted false constant remains. Binary literal diagnostics must use the source BINARY spelling; string/bytes use DOUBLE. Keep source NULL rejection, order and plan-cache protection.
+
+This batch does not claim the earlier `pkg/planner/core/rule.logicalConstant` classifier is repaired: it currently discards the same event before the constraint call. Record it as the next package audit rather than silently expanding this package's ownership. The current direct API and required call plumbing are the acceptance boundary. Run all `constraint::tests`, compile the consuming executor, run `make lint`, and check formatting/diff. Add no Go files and do not change the Go oracle.

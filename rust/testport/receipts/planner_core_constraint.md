@@ -1,7 +1,7 @@
 # `pkg/planner/core/constraint` — Go-master parity audit receipt
 
 Go authority: `origin/master` at
-`aec988ea500de42dd6c8b2cf429dff907ce5bd41`.
+`f5cf8f6337612c6ae51fb6e384e4bb3469dde680`.
 
 ## Complete Go inventory
 
@@ -64,3 +64,56 @@ tests, Bazel execution, and cross-platform planner builds were not run.
   changed.
 - Not verified locally: full workspace tests, Bazel execution, and
   cross-platform planner builds.
+
+## 2026-09-08 re-audit: statement conversion policy
+
+The complete two-artifact package and all three Go functions were read again
+before editing. Inventory remains 84 lines with no extra source, test, fixture,
+generated/platform file or build input. Both Rust exported functions, the
+schema helper, every existing owner test and every `DeleteTrueExprs` call site
+were reviewed. The dependency review followed `Datum.ToBool`, `StrToFloat`,
+`BinaryLiteral.ToInt`, and the existing Rust statement truncation interface.
+
+The Rust true-condition helper ignored `Converted.event`. A strict conversion
+of `1garbage` therefore deleted the predicate; Go retains it because `ToBool`
+returns an error. The regression was observed failing before the production
+edit (zero retained expressions, expected one). The helper now receives the
+statement evaluation context, routes DOUBLE/BINARY truncation through the
+existing error/warning/ignore policy, and deletes only successfully converted
+true values. False constants can publish warnings while remaining in the list.
+Plan-cache protected constants never convert or publish warnings. Schema
+proof and condition order are preserved.
+
+`RuleContext` carries the same borrowed evaluation context as the live
+executor's `StmtContext`; join-reorder fallback retains it, and both test
+constructors provide `NoColumns`. The predicate-simplification call forwards
+that context to the corrected helper. These are dependency-call adaptations,
+not completion claims for the core/rule, core, executor, or base packages.
+
+Ready checks (all exit 0):
+
+- `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-planner --lib constraint::tests` — 6/6 passed.
+- `cargo +nightly-2026-08-22 check --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-executor --lib` — passed.
+- `make lint` — passed with Go 1.26.2.
+- `rustfmt +nightly-2026-08-22 --check rust/crates/tidb-planner/src/constraint.rs` and `git diff --check` — passed.
+
+Logs: `/tmp/constraint-red-20260908.log`, `/tmp/constraint-green-20260908.log`,
+`/tmp/constraint-consumer-20260908.log`, `/tmp/constraint-ready-lint-20260908.log`.
+`cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-planner --lib logical::rule_tests` also passed 57/57 (`/tmp/constraint-rules-20260908.log`).
+
+### Remaining cross-package findings
+
+This re-audit does not certify complete optimizer parity. Before the constraint
+call, `pkg/planner/core/rule.logicalConstant` has an independent truncation-event
+loss in Rust; it must be repaired in that package's own complete audit. Also,
+the datatype `Converted` carrier merges numeric-prefix truncation and overflow
+into one event, whereas Go `StrToFloat` can emit both diagnostics; its raw
+non-UTF-8 string conversion boundary remains a datatype-owner issue. These
+findings qualify the earlier blanket parity claim. They are not hidden by the
+focused green tests and remain in the continuing loop.
+
+The direct constraint API changes to require a statement context; every
+in-repository caller has been updated. Performance remains linear in the
+condition count and warning formatting occurs only for conversion events.
+Full workspace tests, Bazel execution, cross-platform builds and full SQL
+optimizer warning equivalence have not been established by this batch.
