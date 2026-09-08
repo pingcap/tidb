@@ -213,3 +213,21 @@ Ready: the MAX/MIN owner command above passes 4/4 and logical::rule_tests passes
 `/tmp/core-rule-handle-consumers-20260908.log`, and
 `/tmp/core-rule-handle-ready-lint-20260908.log`. Range-size policy and other
 unverified package behavior remain open. No Go source was edited.
+
+## Audit checkpoint: range context and order-aware traversal
+
+At `69b5be8c52`, MAX/MIN still passes zero to ranger despite Go passing
+SessionVars.RangeMaxSize. Rust ranger already has a memory-limit input and
+DNF fallback; the missing value spans session statement snapshots, executor
+StmtContext, RuleContext, and the rule call. The sysvar registration alone
+does not make it effective. Full-chain correction and regression remain open.
+
+The complete 245-line Go order-aware owner and complete Rust counterpart
+were compared function by function. The ExecPlan records all eight Go
+declarations and their Rust mappings, including the separate vertex traversal
+needed by Rust ownership. No confirmed new owner mismatch in this pass;
+joinorder choice/annotation and ordering dependencies remain unproven.
+The two existing owner tests pass via the usual cargo command with filter
+logical::rule_order_aware_join_reorder::tests; log
+`/tmp/core-rule-order-audit-20260908.log`. No production changes or Ready
+behavior claim are part of this checkpoint.
