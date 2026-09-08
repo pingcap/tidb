@@ -415,7 +415,6 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				require.NotEmpty(t, row[3], "missing RU after normal stop: %v", rows)
 			}
 		})
-
 	})
 
 	t.Run("producer plans publish only supported operator trees", func(t *testing.T) {
