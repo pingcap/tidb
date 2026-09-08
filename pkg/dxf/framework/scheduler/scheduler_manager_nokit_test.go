@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -134,9 +136,16 @@ func TestRunExpiredFileClean(t *testing.T) {
 		succeeded.EXPECT().CleanExpiredFiles(mgr.ctx, nil, "s3://bucket/dxf/").Return(nil).Times(2)
 		RegisterCleanerFactory(proto.ImportInto, func() Cleaner { return failed })
 		RegisterCleanerFactory(proto.TaskTypeExample, func() Cleaner { return succeeded })
+		counter := dxfmetric.ScheduleEventCounter.WithLabelValues("-", dxfmetric.EventExpiredFileCleanupFailed)
+		before := &dto.Metric{}
+		require.NoError(t, counter.Write(before))
 
 		mgr.runExpiredFileClean()
 		mgr.runExpiredFileClean()
+
+		after := &dto.Metric{}
+		require.NoError(t, counter.Write(after))
+		require.Equal(t, before.GetCounter().GetValue()+2, after.GetCounter().GetValue())
 	})
 
 	t.Run("empty URI skips factories", func(t *testing.T) {

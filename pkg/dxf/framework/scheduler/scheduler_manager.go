@@ -48,7 +48,7 @@ var (
 	// DefaultCleanUpInterval is the interval of task cleanup.
 	DefaultCleanUpInterval = 10 * time.Minute
 	// DefaultExpiredFileCleanInterval is the interval of owner-side expired-file cleanup.
-	DefaultExpiredFileCleanInterval = DefaultCleanUpInterval
+	DefaultExpiredFileCleanInterval = 3 * time.Hour
 	// metric scraping mostly happens at 15s intervals, it's meaningless to update
 	// internal collected date more frequently, so we align with that.
 	defaultCollectMetricsInterval = 15 * time.Second
@@ -444,6 +444,8 @@ func (sm *Manager) expiredFileCleanLoop() {
 }
 
 func (sm *Manager) runExpiredFileClean() {
+	// NextGen deployments use one cluster-wide cloud storage URI for global sort,
+	// so the current global setting covers the conflict files from every task.
 	cloudStorageURI := handle.GetCloudStorageURI(sm.ctx, sm.store)
 	if cloudStorageURI == "" {
 		return
@@ -459,6 +461,8 @@ func (sm *Manager) runExpiredFileClean() {
 			if ctxErr := sm.ctx.Err(); ctxErr != nil && goerrors.Is(err, ctxErr) {
 				return
 			}
+			// Expired-file cleanup is owner-wide rather than task-specific.
+			dxfmetric.ScheduleEventCounter.WithLabelValues("-", dxfmetric.EventExpiredFileCleanupFailed).Inc()
 			sm.logger.Warn("expired file cleanup failed",
 				zap.Stringer("task-type", factory.taskType),
 				zap.Error(errors.Trace(err)))
