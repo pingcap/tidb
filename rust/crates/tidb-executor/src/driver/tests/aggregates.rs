@@ -3537,12 +3537,17 @@ fn float_sum_and_avg_use_the_real_domain() {
 /// the final projection).
 #[test]
 fn aggregate_having_and_order_by() {
+    // Go's SERIAL HashAgg emits its groups in `groupKeys` first-seen order;
+    // the parallel pipeline shuffles them by final worker. The assertions
+    // below that do not write an ORDER BY therefore pin the serial path,
+    // which is what Go selects with both hashagg concurrencies at 1.
+    let ctx = || crate::StmtContext::for_query().with_hashagg_concurrency(1, 1);
     let mut catalog = test_catalog();
     crate::run_create_table_on("CREATE TABLE g (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO g VALUES (1, 10), (1, 20), (2, 5), (3, 7), (3, 8)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &ctx(),
     )
     .unwrap();
 
@@ -3551,7 +3556,7 @@ fn aggregate_having_and_order_by() {
         run_select_on(
             "SELECT a, COUNT(*) FROM g GROUP BY a HAVING COUNT(*) > 1",
             &catalog,
-            &crate::StmtContext::for_query()
+            &ctx()
         )
         .unwrap(),
         vec![
@@ -3564,7 +3569,7 @@ fn aggregate_having_and_order_by() {
         run_select_on(
             "SELECT a FROM g GROUP BY a HAVING SUM(b) > 15",
             &catalog,
-            &crate::StmtContext::for_query()
+            &ctx()
         )
         .unwrap(),
         vec![vec![Datum::Int(1)]]
@@ -3574,7 +3579,7 @@ fn aggregate_having_and_order_by() {
         run_select_on(
             "SELECT a FROM g GROUP BY a ORDER BY SUM(b) DESC",
             &catalog,
-            &crate::StmtContext::for_query()
+            &ctx()
         )
         .unwrap(),
         vec![
@@ -3588,7 +3593,7 @@ fn aggregate_having_and_order_by() {
         run_select_on(
             "SELECT a, SUM(b) FROM g GROUP BY a HAVING COUNT(*) > 1 ORDER BY SUM(b) LIMIT 1",
             &catalog,
-            &crate::StmtContext::for_query()
+            &ctx()
         )
         .unwrap(),
         vec![vec![
@@ -3601,7 +3606,7 @@ fn aggregate_having_and_order_by() {
         run_select_on(
             "SELECT a, SUM(b) AS total FROM g GROUP BY a ORDER BY total",
             &catalog,
-            &crate::StmtContext::for_query()
+            &ctx()
         )
         .unwrap(),
         vec![
@@ -3625,7 +3630,7 @@ fn aggregate_having_and_order_by() {
         run_select_on(
             "SELECT COUNT(*) FROM g GROUP BY a HAVING a > 1",
             &catalog,
-            &crate::StmtContext::for_query()
+            &ctx()
         )
         .unwrap(),
         vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
@@ -3635,7 +3640,7 @@ fn aggregate_having_and_order_by() {
         run_select_on(
             "SELECT COUNT(*) FROM g HAVING COUNT(*) > 100",
             &catalog,
-            &crate::StmtContext::for_query()
+            &ctx()
         )
         .unwrap(),
         Vec::<Vec<Datum>>::new()
@@ -3647,33 +3652,29 @@ fn aggregate_having_and_order_by() {
 /// aggregates. The plain path silently returned duplicates before.
 #[test]
 fn select_distinct() {
+    // Go's SERIAL HashAgg emits its groups in `groupKeys` first-seen order
+    // (`unparallelExec` walks that slice), while the parallel pipeline -- the
+    // default concurrency -- shuffles them by final worker. The order-sensitive
+    // assertions below therefore pin the serial path, which is what Go selects
+    // when both `tidb_hashagg_{partial,final}_concurrency` are 1.
+    let ctx = || crate::StmtContext::for_query().with_hashagg_concurrency(1, 1);
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE d2 (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
         "INSERT INTO d2 VALUES (1, 1), (1, 2), (1, 1), (2, 2)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &ctx(),
     )
     .unwrap();
 
     assert_eq!(
-        run_select_on(
-            "SELECT DISTINCT a FROM d2",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .unwrap(),
+        run_select_on("SELECT DISTINCT a FROM d2", &catalog, &ctx()).unwrap(),
         vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
     );
     // Every projected column takes part, so (1,1) collapses but (1,2)
     // stays.
     assert_eq!(
-        run_select_on(
-            "SELECT DISTINCT a, b FROM d2",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .unwrap(),
+        run_select_on("SELECT DISTINCT a, b FROM d2", &catalog, &ctx()).unwrap(),
         vec![
             vec![Datum::Int(1), Datum::Int(1)],
             vec![Datum::Int(1), Datum::Int(2)],
@@ -3682,24 +3683,15 @@ fn select_distinct() {
     );
     // Without DISTINCT every row survives.
     assert_eq!(
-        run_select_on(
-            "SELECT a FROM d2",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .unwrap()
-        .len(),
+        run_select_on("SELECT a FROM d2", &catalog, &ctx())
+            .unwrap()
+            .len(),
         4
     );
 
     // DISTINCT applies to the projected expression, not the source rows.
     assert_eq!(
-        run_select_on(
-            "SELECT DISTINCT a + b FROM d2",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .unwrap(),
+        run_select_on("SELECT DISTINCT a + b FROM d2", &catalog, &ctx()).unwrap(),
         vec![
             vec![Datum::Int(2)],
             vec![Datum::Int(3)],
@@ -3713,29 +3705,19 @@ fn select_distinct() {
         run_select_on(
             "SELECT DISTINCT a FROM d2 ORDER BY a DESC",
             &catalog,
-            &crate::StmtContext::for_query()
+            &ctx()
         )
         .unwrap(),
         vec![vec![Datum::Int(2)], vec![Datum::Int(1)]]
     );
     // LIMIT applies after the dedup.
     assert_eq!(
-        run_select_on(
-            "SELECT DISTINCT a FROM d2 LIMIT 1",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .unwrap(),
+        run_select_on("SELECT DISTINCT a FROM d2 LIMIT 1", &catalog, &ctx()).unwrap(),
         vec![vec![Datum::Int(1)]]
     );
     // A WHERE below it still filters.
     assert_eq!(
-        run_select_on(
-            "SELECT DISTINCT a FROM d2 WHERE b = 2",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .unwrap(),
+        run_select_on("SELECT DISTINCT a FROM d2 WHERE b = 2", &catalog, &ctx()).unwrap(),
         vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
     );
 
@@ -3744,14 +3726,14 @@ fn select_distinct() {
     run_insert_on(
         "INSERT INTO g3 VALUES (1, 5), (2, 5), (3, 9)",
         &mut catalog,
-        &crate::StmtContext::for_query(),
+        &ctx(),
     )
     .unwrap();
     assert_eq!(
         run_select_on(
             "SELECT DISTINCT SUM(v) FROM g3 GROUP BY k",
             &catalog,
-            &crate::StmtContext::for_query()
+            &ctx()
         )
         .unwrap(),
         vec![

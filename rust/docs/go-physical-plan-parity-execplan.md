@@ -964,6 +964,13 @@ both `oltp_read_only` and `oltp_read_write`.
   The `TestUnion2` arms Go compares with `r.Sort()` are compared as a set too.
   `union2_matrix` fixed. Receipt:
   `rust/testport/receipts/executor_set_opr_usage.md`.
+- [x] 2026-09-09: pinned the serial HashAgg path in the two executor tests that
+  assert a row order without an `ORDER BY`. Go's `unparallelExec` walks
+  `groupKeys` in first-seen order, while `parallelExec` reads a Go-map-backed
+  result map; the Rust default concurrency is 5, so `select_distinct` and
+  `aggregate_having_and_order_by` saw final-worker order. Both now use
+  `with_hashagg_concurrency(1, 1)`, which is Go's serial selection. Receipt:
+  `rust/testport/receipts/executor_hash_agg_order.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
