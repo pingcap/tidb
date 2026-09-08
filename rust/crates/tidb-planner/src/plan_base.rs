@@ -310,6 +310,13 @@ pub enum PlanErrorKind {
         /// The table name from `TableInfo.Name.O`.
         table: String,
     },
+    /// Go `plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, clauseMsg)`.
+    UnknownColumnInClause {
+        /// The name as written, including any qualifier.
+        column: String,
+        /// Go's `clauseMsg` spelling, for example `having clause`.
+        clause: String,
+    },
     /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (1222).
     WrongNumberOfColumnsInSelect,
     /// Go `dbterror.ErrViewWrongList` (1353).
@@ -393,6 +400,17 @@ impl PlanError {
         Self {
             message: format!("Key '{key}' doesn't exist in table '{table}'"),
             kind: PlanErrorKind::KeyNotExists { key, table },
+        }
+    }
+
+    /// Go `plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, clauseMsg)`.
+    #[must_use]
+    pub fn unknown_column_in_clause(column: impl Into<String>, clause: impl Into<String>) -> Self {
+        let column = column.into();
+        let clause = clause.into();
+        Self {
+            message: format!("Unknown column '{column}' in '{clause}'"),
+            kind: PlanErrorKind::UnknownColumnInClause { column, clause },
         }
     }
 

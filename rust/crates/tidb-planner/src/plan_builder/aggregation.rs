@@ -789,26 +789,21 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 return true;
             }
             // `:2841` "For SQLs like: select a from t b having b.a" — a
-            // QUALIFIED name falls back to the source plan.
-            if find_field_name(names, &path).is_some() {
-                // The column is not projected, so it becomes a hidden extra
-                // field the trailing projection trims off, exactly as an
-                // unprojected ORDER BY column does.
-                let extra = fields[old_len..]
-                    .iter()
-                    .position(|field| field.expr == *node)
-                    .unwrap_or_else(|| {
-                        fields.push(ProjectionField {
-                            expr: node.clone(),
-                            column_reference: true,
-                            alias: None,
-                            text: None,
-                            hidden: true,
-                        });
-                        fields.len() - 1 - old_len
-                    });
-                marker::substitute(node, PlanMarker::new(MarkerKind::Column, old_len + extra));
-                return true;
+            // QUALIFIED name the select list does not name may still resolve
+            // through the source plan, but Go then requires a SELECT FIELD
+            // holding that source column (`resolveFromPlan`'s final loop over
+            // `selectFields`). An UNQUALIFIED name never falls back, and a
+            // qualified source column the select list does not project is
+            // 1054.
+            if path.len() > 1 && find_field_name(names, &path).is_some() {
+                if let Some(index) = fields[..old_len].iter().position(|field| {
+                    !field.hidden
+                        && matches!(&field.expr, Expr::Column(candidate)
+                            if column_paths_match(candidate, &path))
+                }) {
+                    marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
+                    return true;
+                }
             }
             // `:2887` a name no scope knows may still be a CORRELATED column,
             // which the rewriter resolves against `outer_names`; only a name
@@ -818,10 +813,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .iter()
                 .any(|scope| find_field_name(scope, &path).is_some())
             {
-                error = Some(PlanError::internal(format!(
-                    "Unknown column '{}' in 'having clause'",
-                    path.last().cloned().unwrap_or_default()
-                )));
+                error = Some(PlanError::unknown_column_in_clause(
+                    path.join("."),
+                    "having clause",
+                ));
             }
             true
         });

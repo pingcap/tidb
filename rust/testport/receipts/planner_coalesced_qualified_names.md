@@ -141,3 +141,28 @@ the pre-existing flaky `access_cost::index_async_load_queue_tests` pair);
 `cargo check --all-targets` for `tidb-planner`, `tidb-executor`, `tidb-exec`,
 and `tidb-session`; `cargo fmt --all -- --check` (three pre-existing drift
 files only); `git diff --check -- rust`.
+
+## Follow-up: HAVING resolves against the SELECT LIST (2026-09-09)
+
+Go `havingWindowAndOrderbyExprResolver.Leave` (`logical_plan_builder.go:2852`)
+falls back to the source plan only for a QUALIFIED name
+(`a.curClause == havingClause && v.Name.Table.L != ""`), and `resolveFromPlan`
+then requires a SELECT FIELD holding that source column (`:2786`). An
+unqualified name never falls back, and a qualified source column the select
+list does not project is `ErrUnknownColumn` (1054).
+
+The Rust resolver instead appended any source column as a hidden field, so
+`SELECT a FROM ht HAVING b > 0` returned rows where TiDB raises 1054. It now
+requires a qualified name that the source knows AND a non-hidden select field
+whose column matches it; everything else is
+`PlanErrorKind::UnknownColumnInClause`, a new typed planner error mapped to
+`DriverError::UnknownColumnInClause` so the 1054 column/clause pair survives
+the planner boundary.
+
+Regression: `select_clauses::plain_having_filters_and_sees_only_the_select_list`
+failed on `SELECT a FROM ht HAVING b > 0` returning rows and passes after,
+covering every captured alias/qualifier/aggregate spelling. Ready validation:
+`tidb-executor` lib serialized 1132 passed / 94 failed with that test as the
+only removal and no additions; `tidb-planner` all four test targets green;
+`cargo fmt --all -- --check` (three pre-existing drift files only);
+`git diff --check -- rust`.
