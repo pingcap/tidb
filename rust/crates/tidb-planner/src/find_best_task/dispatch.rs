@@ -1992,7 +1992,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     },
                     |result| result.access_conds.clone(),
                 );
-                let table_filters = if common_handle.is_some() {
+                let mut table_filters = if common_handle.is_some() {
                     common_detach.as_ref().map_or_else(
                         || ds.pushed_down_conds.clone(),
                         |result| result.remained_conds.clone(),
@@ -2003,6 +2003,25 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                         &table_access_conds,
                     )
                 };
+                if prop.index_join_prop.is_some() {
+                    // Go `constructDS2TableScanTask` re-attaches every
+                    // inner-only access condition as an explicit probe-side
+                    // Selection (`exhaust_physical_plans.go:913-917`); the
+                    // runtime ranges come from the join keys, so a static
+                    // predicate such as `o_w_id = 1` is a residual filter.
+                    if let Some(schema) = ds.base.base.schema() {
+                        for condition in &table_access_conds {
+                            if tidb_expr::expr_util::normal_form::expr_from_schema(
+                                condition, schema,
+                            ) && !table_filters
+                                .iter()
+                                .any(|existing| existing.equal(condition))
+                            {
+                                table_filters.push(condition.clone());
+                            }
+                        }
+                    }
+                }
                 let table_stats = ds
                     .table_stats
                     .clone()

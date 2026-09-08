@@ -89,9 +89,17 @@ same function pair owns:
   is evaluable on the inner schema to the probe scan's filter list
   (`ranger.AppendConditionsIfNotExist`). The runtime ranges come from the join
   keys, so a static predicate such as `h_w_id = 1` is a residual filter and
-  the plan keeps the `IndexRangeScan -> Selection` shape. The index arm now
-  appends the chosen path's `access_conds` to `remained_conds` when
-  `index_join_prop` is set.
+  the plan keeps the `IndexRangeScan -> Selection` shape. Both inner arms now
+  append the chosen path's `access_conds` when `index_join_prop` is set: the
+  index arm adds them to `remained_conds`, and the table/common-handle arm
+  adds the ones evaluable on the DataSource schema to `table_filters`
+  (`constructDS2TableScanTask`'s `innerOnlyAccessConds`). TPCC condition 04's
+  analyzed plan needs the table-arm half: its `TableReader(Probe) ->
+  Selection -> TableRangeScan` probe. That test's stale absolute column ids
+  were also replaced with the Go oracle's `Column#12`/`Column#13` (captured
+  from a `testkit.CreateMockStore` probe of the same fixture); the injected
+  projection's own ids stay structural because the statement-wide allocation
+  order differs by two.
 * **The scan and its Selection carry different counts.**
   `constructDS2IndexScanTask` sets the scan to
   `tmpPath.CountAfterAccess = rowCount / selectivity(indexConds)` and the
