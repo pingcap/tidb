@@ -1037,6 +1037,16 @@ both `oltp_read_only` and `oltp_read_write`.
   `correlated_subqueries`); the left-outer-semi family stays `Apply` until the
   pruning-projection alignment is ported. Receipt:
   `rust/testport/receipts/planner_decorrelate_solver.md`.
+- [x] 2026-09-09: ported `skylinePruning`'s prefer-range override
+  (`pkg/planner/core/find_best_task.go:1877`). Under unreliable statistics
+  (`tidb_opt_prefer_range_scan`, default ON) a full-scan path is dropped once
+  a range-scan path with an `=`/`IN` prefix survives, so the range path wins
+  even when it prices higher. The Rust candidate loop now computes
+  `index_path_is_preferred_range` before the loop and suppresses full-range
+  table paths for every property, with the preferred task replacing a chosen
+  full-range task. `access_path::tests::the_double_read_issues_one_batch_get_per_index_batch`
+  now plans `Projection -> IndexLookUpReader` and issues one batch get.
+  Receipt: `rust/testport/receipts/planner_prefer_range_scan.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1052,12 +1062,11 @@ both `oltp_read_only` and `oltp_read_write`.
     aggregation pull-up arm, the projection arm, the aggregate group-below arm
     and `pruneRedundantApply` remain. Nine
     `driver::tests::subqueries::*` failures.
-  - `pkg/planner/core` `skylinePruning`/`compareCandidates`
-    (`find_best_task.go:1778`+): the Rust access-path chooser compares costs
-    only, so `prefer_range` (`tidb_opt_prefer_range_scan`) never keeps a
-    range path. `access_path::tests::the_double_read_issues_one_batch_get_per_index_batch`
-    and the MergeJoin-vs-IndexHashJoin choices in
-    `tpcc_grouped_join_matches_go_shared_planner_choice`,
+  - `pkg/planner/core` `compareCandidates` (`find_best_task.go:866`): the
+    prefer-range override is ported, but the metric-by-metric skyline
+    comparison (`accessResult`/`scanResult`/`eqOrInResult`/risk ratio) that
+    decides the MergeJoin-vs-IndexHashJoin and IndexJoin-vs-IndexLookUp
+    choices is not. Remaining: `tpcc_grouped_join_matches_go_shared_planner_choice`,
     `joins::tpcc_check_seven_*`, `aggregates::tpcc_condition_four_*` (analyzed
     arm), `tpcc_condition_eight_*`, `tpcc_condition_nine_rebuilds_*`,
     `joins::tpcc_customer_warehouse_*`, `joins::tpcc_stock_level_*`.

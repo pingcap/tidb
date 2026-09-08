@@ -134,6 +134,12 @@ pub struct DispatchContext<'a> {
     pub index_join_skyline_threshold: f64,
     /// Go `SessionVars.IsMPPAllowed()`, which controls MPP candidates.
     pub mpp_allowed: bool,
+    /// Go `SessionVars.GetAllowPreferRangeScan()` (`tidb_opt_prefer_range_scan`,
+    /// default ON): under unreliable statistics a range-scan path carrying an
+    /// `=`/`IN` prefix wins over a full table scan even when its estimated
+    /// cost is higher. The executor does not expose the session override yet,
+    /// so callers use Go's default.
+    pub prefer_range_scan: bool,
     /// Go `BaseLogicalPlan.taskMap`, keyed by the logical plan object and
     /// property. Numeric plan IDs are explain identities and are deliberately
     /// shared by static-partition DataSource copies.
@@ -170,6 +176,8 @@ impl<'a> DispatchContext<'a> {
             index_join_skyline_threshold: 1_000.0,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
+            // Go `tidb_opt_prefer_range_scan` defaults ON.
+            prefer_range_scan: true,
             task_map: HashMap::new(),
             column_ids: None,
         }
@@ -273,6 +281,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_mpp_allowed(mut self, allowed: bool) -> Self {
         self.mpp_allowed = allowed;
+        self
+    }
+
+    /// Go `SessionVars.GetAllowPreferRangeScan()`.
+    #[must_use]
+    pub const fn with_prefer_range_scan(mut self, value: bool) -> Self {
+        self.prefer_range_scan = value;
         self
     }
 
@@ -1637,6 +1652,61 @@ fn find_best_task_4_logical_data_source(
     find_best_task_4_logical_data_source_without_enforcer(ds, prop, ctx)
 }
 
+/// Go `skylinePruning`'s `indexFilters := c.eqOrInCount > 0 || ...` combined
+/// with `!c.isFullRange`: whether this index path is one the prefer-range
+/// override keeps. This runs BEFORE the candidate loop so a preferred
+/// range-scan path can suppress the full table scan for EVERY property,
+/// exactly as Go removes the full-scan path from `candidates`.
+fn index_path_is_preferred_range(
+    ds: &crate::logical::DataSource,
+    source_index: &crate::plan_builder::catalog::SourceIndex,
+    ctx: &DispatchContext<'_>,
+) -> bool {
+    let mut resolved_index_prefix = source_index
+        .columns
+        .iter()
+        .map_while(|index_column| {
+            ds.schema_column_for_index_column(index_column)
+                .cloned()
+                .map(|column| (column, index_column.length))
+        })
+        .collect::<Vec<_>>();
+    let declared_index_prefix_complete = resolved_index_prefix.len() == source_index.columns.len();
+    if !source_index.unique
+        && !source_index.primary
+        && declared_index_prefix_complete
+        && ds.handle_is_int
+    {
+        if let Some(handle) = ds.handle_cols.first().filter(|handle| {
+            !handle.ret_type.as_ref().is_some_and(|ty| ty.is_unsigned())
+                && !resolved_index_prefix
+                    .iter()
+                    .any(|(column, _)| column.unique_id == handle.unique_id)
+        }) {
+            resolved_index_prefix.push((handle.clone(), tidb_datatype::UNSPECIFIED_LENGTH));
+        }
+    }
+    if !declared_index_prefix_complete {
+        return false;
+    }
+    let index_cols = resolved_index_prefix
+        .iter()
+        .map(|(column, _)| column.clone())
+        .collect::<Vec<_>>();
+    let index_lengths = resolved_index_prefix
+        .iter()
+        .map(|(_, length)| *length)
+        .collect::<Vec<_>>();
+    if ds.pushed_down_conds.is_empty() || index_cols.is_empty() {
+        return false;
+    }
+    let Ok(detach) = ctx.detach_index_range(&ds.pushed_down_conds, &index_cols, &index_lengths)
+    else {
+        return false;
+    };
+    detach.eq_or_in_count > 0 && !crate::ranger::types::has_full_range(&detach.ranges, false)
+}
+
 fn find_best_task_4_logical_data_source_without_enforcer(
     ds: &crate::logical::DataSource,
     prop: &PhysicalProperty,
@@ -1697,6 +1767,28 @@ fn find_best_task_4_logical_data_source_without_enforcer(
     let desc = ordered && prop.sort_items[0].desc;
     let mut best = Task::invalid_task();
     let mut best_index_join_skyline_count = None;
+    // Go `skylinePruning`'s `preferRange` override
+    // (`find_best_task.go:1877`): when statistics are unreliable, a range-scan
+    // path with an `=`/`IN` prefix (`c.eqOrInCount > 0`) survives against a
+    // full table scan even though its estimated cost is higher. Go removes
+    // the full-scan path from the candidate list, so the later cost
+    // comparison never sees it.
+    let prefer_range = ctx.prefer_range_scan
+        && prop.index_join_prop.is_none()
+        && ds.table_stats.as_ref().is_none_or(|stats| {
+            stats.stats_version() == tidb_stats::PSEUDO_VERSION || stats.row_count() < 1.0
+        });
+    let preferred_index_exists = prefer_range
+        && ds.enumerated_paths.iter().any(|path| match path {
+            crate::access_path::PossiblePath::Index { index } => ds
+                .indexes
+                .get(*index)
+                .is_some_and(|source_index| index_path_is_preferred_range(ds, source_index, ctx)),
+            _ => false,
+        });
+    let mut best_preferred_range: Option<Task> = None;
+    let mut best_is_preferred_range = false;
+    let mut best_is_full_range = true;
     'paths: for path in &ds.enumerated_paths {
         if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
             && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
@@ -1711,6 +1803,8 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             }
         }
         let mut index_join_skyline_count = None;
+        let mut cur_preferred_range = false;
+        let mut cur_is_full_range = true;
         let cop = match path {
             crate::access_path::PossiblePath::Table { primary_index, .. } => {
                 if (!ordered && ds.force_keep_order_table_path)
@@ -1825,6 +1919,13 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 };
                 if empty_range {
                     return Ok(empty_range_dual_task(ds, ctx));
+                }
+                cur_is_full_range = crate::ranger::types::has_full_range(&ranges, false);
+                if preferred_index_exists && cur_is_full_range {
+                    // Go's prefer-range pass drops every full-scan path once a
+                    // range-scan path survives, so the table candidate is not
+                    // offered to any property.
+                    continue 'paths;
                 }
                 let table_access_conds = common_detach.as_ref().map_or_else(
                     || {
@@ -2328,6 +2429,14 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                 {
                     return Ok(empty_range_dual_task(ds, ctx));
                 }
+                // Go `indexFilters := c.eqOrInCount > 0 || ...` plus
+                // `!c.isFullRange`: this candidate is what the prefer-range
+                // override keeps.
+                cur_is_full_range = crate::ranger::types::has_full_range(&ranges, false);
+                cur_preferred_range = detach
+                    .as_ref()
+                    .is_some_and(|result| result.eq_or_in_count > 0)
+                    && !cur_is_full_range;
                 let remained_conds = detach.as_ref().map_or_else(
                     || ds.pushed_down_conds.clone(),
                     |result| result.remained_conds.clone(),
@@ -2720,9 +2829,27 @@ fn find_best_task_4_logical_data_source_without_enforcer(
             Some(wins) => wins,
             None => best.invalid() || compare_task_cost(ctx.coster, &cur, &best)?,
         };
+        let better_than_preferred_range = cur_preferred_range
+            && best_preferred_range.as_ref().is_none_or(|best_range| {
+                compare_task_cost(ctx.coster, &cur, best_range).unwrap_or(false)
+            });
         if current_wins {
+            best_is_preferred_range = cur_preferred_range;
+            best_is_full_range = cur_is_full_range;
+            if better_than_preferred_range {
+                best_preferred_range = Some(cur.clone());
+            }
             best = cur;
             best_index_join_skyline_count = index_join_skyline_count;
+        } else if better_than_preferred_range {
+            best_preferred_range = Some(cur);
+        }
+    }
+    if prefer_range && best_is_full_range {
+        if let Some(range_task) = best_preferred_range {
+            if !best_is_preferred_range {
+                best = range_task;
+            }
         }
     }
     Ok(best)
