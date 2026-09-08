@@ -268,3 +268,23 @@ GOPATH=/Users/chenhuansheng/go \\
 TMPDIR=/tmp/tidb-codex-go-lint make lint
 # passed
 ```
+
+## Follow-up: the YEAR/BIT underflow assertion names the unsigned domain (2026-09-09)
+
+`driver::tests::column_type_flags::year_and_bit_columns_are_unsigned`
+asserted the constant text `BIGINT value is out of range` for four unsigned
+underflows, even though its own captured-session block records TiDB's answer
+as `BIGINT UNSIGNED value is out of range`. Go's `ErrDataOutOfRange` renders
+`%s value is out of range in '%s'` (`pkg/errno/errname.go:680`), with the
+domain word and the offending expression both varying per statement, so a
+constant assertion cannot be Go's contract.
+
+The production evaluator already emits the Go-shaped text
+(`BIGINT UNSIGNED value is out of range in '(test.y.a - 2000)'`, and the
+`b`/`c`/`d` spellings likewise); the test now pins each statement's exact
+message. No production behavior changed.
+
+Ready validation: `cargo test --locked -p tidb-executor --lib column_type_flags`
+— 2 passed; `tidb-executor` lib 1117 passed / 109 failed with no new failures;
+`cargo fmt --all -- --check` (three pre-existing drift files only);
+`git diff --check -- rust`.

@@ -36,10 +36,10 @@ fn flag_table() -> Catalog {
 /// e varchar(5))` with the row `(1990, 1, 1, 1, 'x')`:
 ///
 /// ```text
-/// select a - 2000 from y   ERR   1690 BIGINT UNSIGNED value is out of range
-/// select b - 2000 from y   ERR
-/// select c - 2000 from y   ERR
-/// select d - 2000 from y   ERR
+/// select a - 2000 from y   ERR   1690 BIGINT UNSIGNED value is out of range in '(test.y.a - 2000)'
+/// select b - 2000 from y   ERR   1690 BIGINT UNSIGNED value is out of range in '(test.y.b - 2000)'
+/// select c - 2000 from y   ERR   1690 BIGINT UNSIGNED value is out of range in '(test.y.c - 2000)'
+/// select d - 2000 from y   ERR   1690 BIGINT UNSIGNED value is out of range in '(test.y.d - 2000)'
 /// select a + 0    from y   1990
 /// ```
 ///
@@ -56,18 +56,33 @@ fn year_and_bit_columns_are_unsigned() {
     let catalog = flag_table();
     let query = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
 
-    for sql in [
-        "SELECT a - 2000 FROM y",
-        "SELECT b - 2000 FROM y",
+    // Go's `ErrDataOutOfRange` message is `%s value is out of range in '%s'`;
+    // an unsigned underflow spells the first `%s` `BIGINT UNSIGNED` and the
+    // second the offending expression, so every arm carries its own text.
+    for (sql, message) in [
+        (
+            "SELECT a - 2000 FROM y",
+            "BIGINT UNSIGNED value is out of range in '(test.y.a - 2000)'",
+        ),
+        (
+            "SELECT b - 2000 FROM y",
+            "BIGINT UNSIGNED value is out of range in '(test.y.b - 2000)'",
+        ),
         // The two columns whose flags come from DECLARED modifiers instead;
         // they answered this before the port and must still answer it, so the
         // two flag sources are proven not to clobber each other.
-        "SELECT c - 2000 FROM y",
-        "SELECT d - 2000 FROM y",
+        (
+            "SELECT c - 2000 FROM y",
+            "BIGINT UNSIGNED value is out of range in '(test.y.c - 2000)'",
+        ),
+        (
+            "SELECT d - 2000 FROM y",
+            "BIGINT UNSIGNED value is out of range in '(test.y.d - 2000)'",
+        ),
     ] {
         let error = query(sql).expect_err(sql).to_mysql_error();
         assert_eq!(error.code, 1690, "{sql}");
-        assert_eq!(error.message, "BIGINT value is out of range", "{sql}");
+        assert_eq!(error.message, message, "{sql}");
     }
 
     // The boundary rows: the same columns, in the same statement shape, whose
