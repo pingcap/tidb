@@ -47,28 +47,32 @@ fn check_column_can_use_index(
                 .is_some_and(|child| check_column_can_use_index(child, column, conditions))
         }
         LogicalPlan::DataSource(source) => {
-            source
-                .all_possible_access_paths
-                .iter()
-                .any(|path| match path {
+            for path in &source.all_possible_access_paths {
+                let can_use = match path {
                     DataSourceAccessPath::Table(path) => {
                         if path.store() != AccessPathStore::TiKv {
-                            return false;
+                            continue;
                         }
                         if source.handle_is_int {
-                            return source.handle_cols.first().is_some_and(|handle| {
-                                handle.unique_id == column.unique_id
-                                    && crate::ranger::detacher::detach_conds_for_column(
-                                        &conditions,
-                                        column,
-                                        true,
-                                    )
-                                    .1
-                                    .is_empty()
-                            });
+                            if source
+                                .handle_cols
+                                .first()
+                                .is_some_and(|handle| handle.unique_id == column.unique_id)
+                            {
+                                // Go stops the complete search on this matching handle,
+                                // including when residual filters make it unusable.
+                                return crate::ranger::detacher::detach_conds_for_column(
+                                    &conditions,
+                                    column,
+                                    true,
+                                )
+                                .1
+                                .is_empty();
+                            }
+                            continue;
                         }
                         if source.common_handle_cols.is_empty() {
-                            return false;
+                            continue;
                         }
                         crate::ranger::detacher::detach_cond_and_build_range_for_index(
                             &conditions,
@@ -91,7 +95,7 @@ fn check_column_can_use_index(
                             .iter()
                             .find(|index| index.id == path.candidate().index_id)
                         else {
-                            return false;
+                            continue;
                         };
                         let resolved = index
                             .columns
@@ -104,7 +108,7 @@ fn check_column_can_use_index(
                             })
                             .collect::<Vec<_>>();
                         if resolved.is_empty() {
-                            return false;
+                            continue;
                         }
                         let columns = resolved
                             .iter()
@@ -130,7 +134,12 @@ fn check_column_can_use_index(
                         })
                     }
                     DataSourceAccessPath::IndexMerge => false,
-                })
+                };
+                if can_use {
+                    return true;
+                }
+            }
+            false
         }
         _ => false,
     }
@@ -418,6 +427,118 @@ mod tests {
             order_by_items: Vec::new(),
             grouping_id: 0,
         }
+    }
+
+    #[test]
+    fn integer_handle_residual_stops_before_later_covering_index() {
+        use crate::access_path::{
+            IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor, ResolvedTableScanKind,
+            TableAccessPath, TableScanExplainIdSuffix,
+        };
+        use crate::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
+        use crate::logical::data_source::DataSourceColumn;
+        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use crate::tikv_scan_spec::TiKvTableScanSpec;
+        let allocator = PlanIdAllocator::new();
+        let handle = column(1, false);
+        let other = column(2, false);
+        let mut base = BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0);
+        base.base
+            .set_schema(Some(Schema::new(vec![handle.clone(), other.clone()])));
+        let table = DataSourceAccessPath::Table(
+            TableAccessPath::from_source_table_scan(
+                ResolvedTableDescriptor::new(
+                    1,
+                    false,
+                    ResolvedTableScanKind::Full,
+                    TableScanExplainIdSuffix::IncludePlanId,
+                ),
+                TiKvTableScanSpec::new(1, vec![]),
+                PointGetAdmission::NotEligible,
+                10.0,
+            )
+            .unwrap(),
+        );
+        let index = DataSourceAccessPath::Index(IndexAccessPath::new(LiveIndexCandidate {
+            index_id: 11,
+            ranges: vec![],
+            proven_equality_range: false,
+            point_statistics: IndexPointStatistics {
+                topn_count: None,
+                cms_count: None,
+                histogram_count: 0,
+            },
+            row_size: 8.0,
+            scan_factor: 1.0,
+            index_scan_cost_factor: 1.0,
+        }));
+        let mut source = DataSource {
+            base,
+            handle_is_int: true,
+            handle_cols: vec![handle.clone()],
+            columns: vec![
+                DataSourceColumn {
+                    id: 1,
+                    name: "a".to_owned(),
+                    ..Default::default()
+                },
+                DataSourceColumn {
+                    id: 2,
+                    name: "b".to_owned(),
+                    ..Default::default()
+                },
+            ],
+            indexes: vec![SourceIndex {
+                id: 11,
+                columns: vec![
+                    SourceIndexColumn {
+                        name: "b".to_owned(),
+                        offset: 1,
+                        length: -1,
+                    },
+                    SourceIndexColumn {
+                        name: "a".to_owned(),
+                        offset: 0,
+                        length: -1,
+                    },
+                ],
+                ..Default::default()
+            }],
+            all_possible_access_paths: vec![index.clone()],
+            ..DataSource::default()
+        };
+        let condition =
+            Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+                tidb_ast::CiString::new("eq"),
+                FieldType::new(FieldTypeCode::Tiny),
+                vec![
+                    Expression::Column(other),
+                    Expression::Constant(tidb_expr::constant::Constant::new(
+                        tidb_datatype::Datum::Int(1),
+                        FieldType::new(FieldTypeCode::Long),
+                    )),
+                ],
+            ));
+        assert!(check_column_can_use_index(
+            &LogicalPlan::DataSource(source.clone()),
+            &handle,
+            vec![condition.clone()]
+        ));
+        source.all_possible_access_paths = vec![table.clone(), index.clone()];
+        assert!(
+            !check_column_can_use_index(
+                &LogicalPlan::DataSource(source.clone()),
+                &handle,
+                vec![condition.clone()]
+            ),
+            "Go returns false immediately for residual predicates on the matching integer handle"
+        );
+        source.all_possible_access_paths = vec![index, table];
+        assert!(check_column_can_use_index(
+            &LogicalPlan::DataSource(source),
+            &handle,
+            vec![condition]
+        ));
     }
 
     #[test]

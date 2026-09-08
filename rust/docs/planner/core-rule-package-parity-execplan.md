@@ -358,3 +358,13 @@ Go cloneSubPlans copies AllPossibleAccessPaths and then resets PossibleAccessPat
 Regression split_source_clone_restores_all_access_paths starts with paths 11 and 22 but a pruned candidate list containing only 22. Before the fix its first clone incorrectly retained only 22. After the fix two independent clones have both paths in order; clearing one clone's lists leaves the other and the original untouched. The path candidates are used to test cloning, not to claim physical task admission or execution coverage.
 
 Ready: three MAX/MIN owner tests and 57 logical-rule tests pass, plus make lint, formatting and diff checks. Logs are in the package receipt. Remaining MAX/MIN comparisons include handle-path early-return semantics and range-size context, and broad package parity is still unproven.
+
+
+## MAX/MIN handle-path control flow (2026-09-08)
+
+
+Progress: revalidated clean state at pushed `09166c4a45`; the complete core/rule inventory remains applicable. Go checkColCanUseIndex returns immediately on a matching integer handle, whether detachment succeeds completely or leaves filters. Rust's Iterator::any interpreted that false as permission to try later indexes. Replace the any closure with an ordered loop and preserve the source return versus continue distinction.
+
+Regression integer_handle_residual_stops_before_later_covering_index constructs handle a and covering index (b,a) with b=1. Index alone succeeds; [table,index] must return false at the handle residual; [index,table] succeeds before reaching the handle. The middle assertion failed before the fix. The initial test import typo was corrected before collecting behavioral red evidence.
+
+Ready: all four MAX/MIN tests and 57 logical-rule tests pass, together with make lint, rustfmt and diff checks. Logs are recorded in the receipt. Outcome: ordered path search now matches this Go early-return branch. Range-size context and other package declarations remain pending; broader completion is not claimed.

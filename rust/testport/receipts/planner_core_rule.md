@@ -192,3 +192,24 @@ Logs: `/tmp/core-rule-maxmin-green-20260908.log`,
 `/tmp/core-rule-maxmin-ready-lint-20260908.log`. Handle-path control flow and
 range-size policy remain pending comparisons; no whole-rule/package completion
 is claimed. No Go files changed.
+
+## Follow-up: integer-handle early return
+
+Parent `09166c4a45`; unchanged Go authority and complete package inventory.
+Go checkColCanUseIndex returns false immediately if its matching integer
+handle has residual filter conditions. Rust's any closure kept searching
+later paths. The ordered loop now distinguishes this whole-search return from
+unrelated-path continuation.
+
+Regression integer_handle_residual_stops_before_later_covering_index uses
+integer handle a, index (b,a), and b=1. It checks index-only success,
+table-before-index failure, and index-before-table success. The original
+implementation failed the table-before-index assertion; behavioral red
+evidence is `/tmp/core-rule-handle-red-20260908.log` (after fixing a test import).
+
+Ready: the MAX/MIN owner command above passes 4/4 and logical::rule_tests passes
+57/57. make lint, rustfmt and diff checks pass. Logs:
+`/tmp/core-rule-handle-green-20260908.log`,
+`/tmp/core-rule-handle-consumers-20260908.log`, and
+`/tmp/core-rule-handle-ready-lint-20260908.log`. Range-size policy and other
+unverified package behavior remain open. No Go source was edited.
