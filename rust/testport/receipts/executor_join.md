@@ -98,3 +98,38 @@ Profile: Ready for this package batch.
   packages were inventoried but not re-run in this focused batch.
 - Rust cross-crate join integration and distributed SQL behavior remain
   unverified locally.
+
+## Follow-up: the parallel probe/hash-agg test harnesses now match Go (2026-09-09)
+
+Six tests that verify the bounded parallel worker paths were unreachable
+because their HARNESS, not the production code, differed from Go:
+
+- `join_tests::join_with_memory` / `join_with_types` left
+  `JoinExec::parallelism` at its `1` default. Go's
+  `HashJoinConcurrency()` falls back to `tidb_executor_concurrency` (5) when
+  `tidb_hash_join_concurrency` is unset, and the production builder calls
+  `set_parallelism(hash_join.concurrency)`; the harness did not. With
+  `parallelism == 1` the gate at `join.rs:2704` never admits the parallel
+  probe path.
+- `hash_agg::tests::source` and `final_decimal_avg_source` produced ONE chunk
+  regardless of row count, but a real executor child's `next` fills at most
+  one `max_chunk_size` chunk. The pipeline admits one lane per CHUNK, so a
+  single-chunk source can only ever use one worker. They now chunk at 1024
+  rows like `MultiChunkSource`.
+
+This fixed `hash_agg::tests::{integer_count_agg_uses_parallel_worker_window,
+final_decimal_avg_uses_parallel_worker_window}` and
+`join::tests::{exact_integer_hash_join_uses_parallel_probe_window,
+general_residual_unique_integer_join_uses_parallel_probe_window,
+decimal_residual_unique_integer_join_uses_parallel_probe_window,
+parallel_exact_integer_probe_marks_preserved_build_rows}` — six of the
+existing regressions, no new tests needed. Ready validation:
+`tidb-executor` lib serialized 1210 passed / 42 failed, the six above and no
+additions; `cargo check --locked --all-targets` clean;
+`rustfmt --edition 2021 --check` clean on both files;
+`git diff --check -- rust`.
+
+`hash_agg::tests::grouped_binary_strings_use_go_parallel_hashagg_pipeline`
+still fails: it dispatches ONE chunk and asserts `workers > 1`, which the
+one-lane-per-chunk design cannot satisfy (Go's `fetchChildData` also hands a
+chunk to a single worker), so that expectation is over-specified.

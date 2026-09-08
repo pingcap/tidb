@@ -2986,16 +2986,24 @@ mod tests {
         Expression::Column(c)
     }
 
+    /// A test source over the given rows, split into `MAX_CHUNK_SIZE`-row
+    /// chunks like a real executor child (whose `next` fills at most one
+    /// chunk). The parallel pipeline admits one lane per CHUNK, so a
+    /// single-chunk source would exercise only one worker.
     fn source(rows: &[(i64, Option<i64>)]) -> Box<dyn Executor> {
         // Two long columns: group key, value (None = NULL).
         let fields = vec![long(), long()];
-        let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
-        for (g, v) in rows {
-            data.append_int64(0, *g);
-            match v {
-                Some(v) => data.append_int64(1, *v),
-                None => data.append_null(1),
+        let mut chunks = Vec::new();
+        for batch in rows.chunks(1024) {
+            let mut data = Chunk::new_with_capacity(&fields, batch.len().max(1));
+            for (g, v) in batch {
+                data.append_int64(0, *g);
+                match v {
+                    Some(v) => data.append_int64(1, *v),
+                    None => data.append_null(1),
+                }
             }
+            chunks.push(data);
         }
         let mut cols = Vec::new();
         for i in 0..2 {
@@ -3003,9 +3011,10 @@ mod tests {
             c.index = i;
             cols.push(c);
         }
-        Box::new(OneChunkSource {
+        Box::new(MultiChunkSource {
             meta: ExecutorMeta::new(Schema::new(cols), 0, rows.len().max(1), 1024),
-            data: Some(data),
+            chunks,
+            cursor: 0,
         })
     }
 
@@ -3425,20 +3434,28 @@ mod tests {
     fn final_decimal_avg_source(groups: i64) -> Box<dyn Executor> {
         let decimal_type = decimal_with_shape(20, 2);
         let fields = vec![long(), long(), decimal_type.clone()];
-        let mut data = Chunk::new_with_capacity(&fields, (groups as usize) * 2);
+        // Chunk like a real child so the parallel pipeline admits more than
+        // one lane (one lane per chunk).
+        let mut chunks = Vec::new();
+        let mut data = Chunk::new_with_capacity(&fields, 1024);
         for group in 0..groups {
-            data.append_int64(0, group);
-            data.append_int64(1, 2);
-            data.append_datum(
-                2,
-                &Datum::Decimal(tidb_datatype::Decimal::from_literal("3.00")),
-            );
-            data.append_int64(0, group);
-            data.append_int64(1, 1);
-            data.append_datum(
-                2,
-                &Datum::Decimal(tidb_datatype::Decimal::from_literal("4.00")),
-            );
+            for (count, value) in [(2, "3.00"), (1, "4.00")] {
+                data.append_int64(0, group);
+                data.append_int64(1, count);
+                data.append_datum(
+                    2,
+                    &Datum::Decimal(tidb_datatype::Decimal::from_literal(value)),
+                );
+                if data.num_rows() >= 1024 {
+                    chunks.push(std::mem::replace(
+                        &mut data,
+                        Chunk::new_with_capacity(&fields, 1024),
+                    ));
+                }
+            }
+        }
+        if data.num_rows() > 0 {
+            chunks.push(data);
         }
         let columns = fields
             .into_iter()
@@ -3449,9 +3466,10 @@ mod tests {
                 column
             })
             .collect();
-        Box::new(OneChunkSource {
+        Box::new(MultiChunkSource {
             meta: ExecutorMeta::new(Schema::new(columns), 0, (groups as usize) * 2, 1024),
-            data: Some(data),
+            chunks,
+            cursor: 0,
         })
     }
 

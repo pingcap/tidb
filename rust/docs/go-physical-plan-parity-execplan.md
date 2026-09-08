@@ -890,6 +890,12 @@ both `oltp_read_only` and `oltp_read_write`.
   `rust/testport/receipts/planner_coalesced_qualified_names.md`. The exact-text
   tests remain blocked on the plan-column-id ordering (`Column#12` vs Go's
   `Column#1`).
+- [x] 2026-09-09: made the parallel probe/hash-agg test harnesses match Go.
+  `join_of`/`join_with_types` left `JoinExec::parallelism` at 1, so the
+  parallel probe gate never opened; the hash-agg `source` helpers produced one
+  chunk, and the pipeline admits one lane per chunk. Setting Go's default
+  concurrency (5) and chunking at 1024 rows fixed six existing regressions.
+  Receipt: `rust/testport/receipts/executor_join.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

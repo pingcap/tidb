@@ -152,7 +152,7 @@ pub(super) fn join_with_memory(
     } else {
         2 * width
     };
-    JoinExec::new(
+    let mut executor = JoinExec::new(
         ExecutorMeta::new(schema_of(output_width), 1, CHUNK, CHUNK),
         kind,
         conditions,
@@ -160,7 +160,13 @@ pub(super) fn join_with_memory(
         Box::new(RowSource::new(right, width)),
         NoColumns,
         memory,
-    )
+    );
+    // Go's `HashJoinConcurrency()` falls back to `tidb_executor_concurrency`
+    // (5) when `tidb_hash_join_concurrency` is unset; the production builder
+    // sets it from the plan. The test harness must too, or the bounded
+    // parallel probe path never runs.
+    executor.set_parallelism(5);
+    executor
 }
 
 fn join_with_types(
@@ -175,7 +181,7 @@ fn join_with_types(
         .chain(right_types)
         .cloned()
         .collect::<Vec<_>>();
-    JoinExec::new(
+    let mut executor = JoinExec::new(
         ExecutorMeta::new(schema_with_types(&output_types), 1, CHUNK, CHUNK),
         JoinKind::Inner,
         conditions,
@@ -183,7 +189,9 @@ fn join_with_types(
         Box::new(RowSource::with_types(right, right_types)),
         NoColumns,
         StatementMemory::default(),
-    )
+    );
+    executor.set_parallelism(5);
+    executor
 }
 
 fn run_datums(join: &mut JoinExec<NoColumns>) -> Vec<Vec<Datum>> {
