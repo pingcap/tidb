@@ -12,6 +12,12 @@ After this plan is complete, setting `tidb_opt_fix_control` through session, glo
 
 ## Progress
 
+- [x] (2026-09-08) Created isolated worktree `tidb-planner-statistics-parity-20260908` at Rust `6a4a8f8fc56be7d7f3728c30e7c47b41f87cc451`; read all seven current Go-master package artifacts (712 lines) at `f5cf8f6337612c6ae51fb6e384e4bb3469dde680`, including all 17 constants, nine exported functions, test helpers, both fixtures, and Bazel metadata. No generated/platform files or additional inputs exist. The Go checkout differs only in the Fix44855 comment; fixtures are identical.
+- [x] (2026-09-08) Added a regression for invalid suffixes following overflowing hexadecimal exponents; standalone Go `strconv.ParseFloat` returns positive zero and syntax errors in all four cases.
+- [x] (2026-09-08) Observed the regression fail with infinity instead of zero; validated exponent digits before overflow classification. Package tests pass 7/7 and the unchanged live session fixture passes 1/1.
+- [x] (2026-09-08) Ready `make lint`, targeted tests, rustfmt and diff checks passed; package receipt updated.
+- [ ] Commit and push the validated package batch.
+
 - [x] (2026-08-11 12:58Z) Pinned the seven-artifact Go package at its last-change commit `811a10e115d416aadcc9407ac4df0fdd4deb1181`, tree `c7f04c91c529664398fda49f92bd7c5bbc0b1404`; `git diff --quiet <pin>..HEAD -- pkg/planner/util/fixcontrol` succeeds.
 - [x] (2026-08-11 12:58Z) Ran the initial Rust regression and recorded unresolved imports for the typed API and 17 issue constants; the aggregate test target also has unrelated existing compile drift in `cost_factors.rs` and `row_size.rs`.
 - [x] (2026-08-11 12:58Z) Implemented the issue catalog, source-shaped parser errors, typed string/bool/int/float getters, and Go-compatible hexadecimal/special float parsing; focused `tidb-planner` unit tests pass.
@@ -177,3 +183,11 @@ The 17 exported constants are 52592, 33031, 43817, 44262, 44389, 44830, 44823, 4
 `tidb_executor::StmtContext` carries a cloned `OptimizerFixControl` and exposes a read-only accessor. `driver::access` and `driver::dml` consult `FIX_52592`. `Session::statement_read_shape` and `apply_set_var_hints` share direct-AST hint extraction so pre-execution classification and execution agree for the claimed producer surface.
 
 Plan revision note: created after the source pin, direct artifact audit, parser/getter RED and focused GREEN, numeric grammar review, external-consumer boundary correction, and discovery of the pre-execution MaxTS/SET_VAR ordering risk.
+
+## September 8 exponent correction
+
+The complete package re-audit found a numeric parsing edge in `rust/crates/tidb-planner/src/fix_control.rs::parse_go_hex_float`: Rust integer parsing can report overflow before examining a later invalid exponent character. Go float parsing validates the entire exponent, returning syntax error and positive zero even for a zero mantissa or negative sign. Validate the optional-sign-stripped normalized exponent as nonempty ASCII digits before integer conversion. Preserve existing valid overflow, underflow, rounding, and underscore handling. The focused test exercises the public getter and its default fallback.
+
+From repository root run `cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -q -p tidb-planner --lib fix_control::tests`, then the session fixture target documented above, `make lint`, `rustfmt +nightly-2026-08-22 --check rust/crates/tidb-planner/src/fix_control.rs`, and `git diff --check`. Record failures faithfully and do not claim Ready until required gates pass. Fetch the integration branch before pushing; use a normal fast-forward push and rebase/revalidate if concurrent changes require it.
+
+Revision note (2026-09-08): started current-master package re-audit and exponent-syntax regression under the user's authorized continuous Rust-only package loop. Other planner/statistics packages remain outside this package claim.

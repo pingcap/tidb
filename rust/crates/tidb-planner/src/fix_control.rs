@@ -384,6 +384,14 @@ fn parse_go_hex_float(
     else {
         return (0.0, Some(float_error(input, false)));
     };
+    // Go validates the entire exponent before classifying range errors. Rust's
+    // integer parser can stop at overflow without examining an invalid suffix.
+    let exponent_digits = exponent_text
+        .strip_prefix(['+', '-'])
+        .unwrap_or(&exponent_text);
+    if !exponent_digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return (0.0, Some(float_error(input, false)));
+    }
     enum Exponent {
         Finite(i64),
         PositiveOverflow,
@@ -688,6 +696,26 @@ mod tests {
             assert!(exists, "{source}");
             assert_eq!(actual.to_bits(), expected_bits, "{source}");
             assert_eq!(error.is_some(), has_error, "{source}");
+        }
+    }
+
+    #[test]
+    fn hex_float_rejects_invalid_suffix_after_exponent_overflow() {
+        for source in [
+            "0x1p18446744073709551616x",
+            "0x1p-18446744073709551616x",
+            "0x0p18446744073709551616x",
+            "-0x1p-18446744073709551616x",
+        ] {
+            let control = OptimizerFixControl::from(BTreeMap::from([(1, source.to_owned())]));
+            let (value, exists, error) = control.get_float(1);
+            assert!(exists);
+            assert_eq!(value.to_bits(), 0.0_f64.to_bits(), "{source}");
+            assert_eq!(
+                error.unwrap().to_string(),
+                format!("strconv.ParseFloat: parsing \"{source}\": invalid syntax")
+            );
+            assert_eq!(control.get_float_with_default(1, 1234.5), 1234.5);
         }
     }
 
