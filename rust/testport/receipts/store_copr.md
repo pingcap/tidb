@@ -151,3 +151,33 @@ Ready evidence for this package-level follow-up:
 
 The complete 20-artifact root inventory remains the atomic Go package boundary;
 the nested `copr_test` and `metrics` packages are unchanged separate claims.
+
+## Rust transcreation re-verification (2026-09-08)
+
+The Go-side pins above (`a74cc596…`, `1c1a334d2b…`) are not objects in this
+worktree's repository history, so they cannot be re-verified locally. The
+inventory was re-derived from the fetched `origin/master`
+`f5cf8f6337612c6ae51fb6e384e4bb3469dde680`: the root package has 20 tracked
+artifacts, 11,288 lines, 52 top-level `Test`/`Benchmark` declarations, and 336
+`func` declarations. The line-count drift from the table above is in
+`BUILD.bazel` (130→135), `coprocessor.go` (3,270→3,273), and
+`coprocessor_test.go` (1,518→1,633).
+
+The four dependency-closed leaf artifacts this domain owns are verified
+complete against that pin:
+
+- `coprocessor_cache.go` → `tidb-distsql/src/copr_cache.rs`: six Go tests plus
+  the oversized-range-key and negative-`Tp` branches in
+  `crates/tidb-distsql/tests/copr_cache_source.rs` (13 tests).
+- `ema.go` → `tidb-distsql/src/read_bytes_ema.rs` and
+  `paging_response_read_bytes` in `cop_paging.rs`: five Go cases plus the
+  zero-timestamp branch in `read_bytes_ema_source.rs`, and the classic/NextGen
+  arms in `cop_paging_source.rs`.
+- `key_ranges.go` → `tidb-txnkv/src/key_ranges.rs`: every Go split/slice case
+  plus the unanchored methods in `key_ranges_source.rs`.
+- `metrics/metrics.go` → `tidb-distsql/src/copr_cache_metrics.rs`: counters
+  only, because `tidb-server`'s `/metrics` handler is still unported.
+
+Validation: `cargo test --offline --locked -j12 -p tidb-distsql --test all
+copr_cache` (13 passed), `… read_bytes_ema` (7 passed), `cargo test --offline
+--locked -j12 -p tidb-txnkv --test all key_ranges` (5 passed).

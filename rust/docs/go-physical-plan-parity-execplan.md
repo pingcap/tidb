@@ -619,11 +619,20 @@ both `oltp_read_only` and `oltp_read_write`.
   `TruncateKeyExprs` entry, so the `rank_topn_test.go` multi-column case is
   ported. Parallel worker panic recovery and comparison-loop cancellation are
   covered by focused receipts.
-- [ ] Complete the `pkg/store/copr` package inventory in Rust. Previously
-  absent MPP probe, cache metrics, and range diagnostics owners are now
-  implemented, and Go master’s query-scoped per-store limiter is enforced by
-  the Rust direct-unary TiKV dispatch; remaining integration, metrics, and
-  package test rows are still partial.
+- [x] 2026-09-08: re-verified the four dependency-closed `pkg/store/copr` leaf
+  owners against `origin/master` `f5cf8f6337`: the coprocessor cache, paging
+  EMA, key ranges, and cache counters are complete, and the two Go production
+  branches with no Go test — oversized range keys and a negative `Tp` — now
+  have focused Rust regressions. Receipt pins that are not objects in this
+  repository were re-derived (20 root artifacts, 11,288 lines, 52 test
+  declarations).
+- [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
+  dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
+  cache counters) are verified complete, and the MPP probe and range
+  diagnostics have owners. Go master's query-scoped per-store limiter is
+  enforced by the Rust direct-unary TiKV dispatch. The worker lifecycle,
+  region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
+  live-store test matrix remain partial.
 - [ ] Run correctness, compatibility, performance, and Ready validation.
 
 ## Surprises & Discoveries
