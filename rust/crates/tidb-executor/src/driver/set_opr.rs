@@ -161,23 +161,48 @@ pub(super) fn validate_set_opr_usage(stmt: &tidb_ast::SetOprStmt) -> Result<(), 
 }
 
 /// Runs the set-operation part of Go's AST preprocessor over a complete
-/// query. Go visits CTE definitions as child queries, so validating only the
-/// outer `SetOprStmt` would incorrectly accept a malformed UNION inside a
-/// WITH body.
+/// query.
+///
+/// Go's preprocessor is a full `ast.Visitor`, so EVERY child query is
+/// visited: a CTE definition, a derived table in `FROM`, a scalar subquery, an
+/// `IN`/`EXISTS` subquery, and a nested set operation all reach
+/// `checkSetOprSelectList`. Validating only the outer `SetOprStmt` (plus its
+/// own `WITH`) accepted
+/// `select 1 from (select a from t0 limit 1 union all select a from t0 limit 1) tmp`,
+/// which Go rejects with 1221.
 pub(crate) fn validate_query_usage(query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
-    let with = match query {
-        tidb_ast::QueryStmt::Select(select) => select.with.as_ref(),
-        tidb_ast::QueryStmt::SetOpr(set_opr) => {
-            validate_set_opr_usage(set_opr)?;
-            set_opr.with.as_ref()
+    struct SetOprUsage {
+        error: Option<DriverError>,
+    }
+
+    impl tidb_ast::Visitor for SetOprUsage {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if self.error.is_some() {
+                return true;
+            }
+            if let Some(set_opr) = node.downcast_ref::<tidb_ast::SetOprStmt>() {
+                if let Err(error) = validate_set_opr_usage(set_opr) {
+                    self.error = Some(error);
+                    return true;
+                }
+            }
+            false
         }
-    };
-    if let Some(with) = with {
-        for cte in &with.ctes {
-            validate_query_usage(&cte.query)?;
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            self.error.is_none()
         }
     }
-    Ok(())
+
+    // `Visitable` walks a MUTABLE child graph, which is what Go's visitor
+    // takes; the check itself only reads, so a clone is enough.
+    let mut owned = query.clone();
+    let mut visitor = SetOprUsage { error: None };
+    tidb_ast::Visitable::accept(&mut owned, &mut visitor);
+    match visitor.error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// Runs a set-operation statement: `UNION`, `EXCEPT` or `INTERSECT`.

@@ -955,6 +955,15 @@ both `oltp_read_only` and `oltp_read_write`.
   the forced-merge-join Sort enforcer rendered `test.l.k` where Go records
   `test.ncl.k`. One executor test fixed. Receipt:
   `rust/testport/receipts/planner_coalesced_qualified_names.md`.
+- [x] 2026-09-09: validated set-operation usage over every child query. Go's
+  preprocessor is a full `ast.Visitor`, so `checkSetOprSelectList`
+  (`preprocess.go:858`) fires for a malformed UNION inside a derived table or
+  any other subquery; the Rust recursed only into the outer `SetOprStmt` and
+  its `WITH` CTEs, accepting
+  `select 1 from (select a from t0 limit 1 union all select a from t0 limit 1) tmp`.
+  The `TestUnion2` arms Go compares with `r.Sort()` are compared as a set too.
+  `union2_matrix` fixed. Receipt:
+  `rust/testport/receipts/executor_set_opr_usage.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

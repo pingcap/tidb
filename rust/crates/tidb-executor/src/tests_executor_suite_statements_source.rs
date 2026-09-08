@@ -80,6 +80,24 @@ fn assert_rows(catalog: &Catalog, sql: &str, expected: &[&str]) {
     assert_eq!(actual, expected, "sql: {sql}");
 }
 
+/// Go `(*testkit.Result).Sort()`: the same comparison with both sides sorted.
+///
+/// A `UNION` (not `UNION ALL`) is deduplicated by an aggregation, and Go's
+/// parallel HashAgg emits its groups in map order, so the statement has NO
+/// defined output order. Go's `TestUnion2` calls `r.Sort()` on exactly these
+/// arms; comparing the rows positionally would pin an order the engine never
+/// promised.
+fn assert_rows_sorted(catalog: &Catalog, sql: &str, expected: &[&str]) {
+    let mut actual = rows_text(&select(catalog, sql));
+    actual.sort();
+    let mut expected: Vec<Vec<String>> = expected
+        .iter()
+        .map(|row| row.split(' ').map(str::to_owned).collect())
+        .collect();
+    expected.sort();
+    assert_eq!(actual, expected, "sql: {sql}");
+}
+
 /// Go `executor_test.go:1108::TestUnion2` — the UNION contract matrix. The
 /// arms below are Go's literals; NULL sorts first under `order by a`,
 /// UNION dedups while UNION ALL does not, `limit`/`offset` apply to the
@@ -189,14 +207,14 @@ fn union2_matrix() {
 
     create(&mut catalog, "CREATE TABLE tdec (a DECIMAL(4,2))");
     insert(&mut catalog, "INSERT INTO tdec VALUE(12.34)");
-    assert_rows(
+    assert_rows_sorted(
         &catalog,
         "SELECT 1 AS c UNION select a FROM tdec",
         &["1.00", "12.34"],
     );
 
     // #issue3771
-    assert_rows(
+    assert_rows_sorted(
         &catalog,
         "SELECT 'a' UNION SELECT CONCAT('a', -4)",
         &["a", "a-4"],
