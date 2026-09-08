@@ -364,7 +364,14 @@ fn point_access(catalog: &Catalog, table_id: i64, index_id: Option<i64>) -> Scan
 #[derive(Clone, Copy)]
 struct IndexJoinExplainContext<'a> {
     table_id: i64,
+    /// Go `indexJoinResult.chosenPath.IdxCols` at each matched key offset: the
+    /// INNER index columns the outer keys probe.
+    inner_keys: &'a [tidb_expr::column::Column],
+    /// Go `prop.IndexJoinProp.OuterJoinKeys`, paired with `inner_keys`.
     outer_keys: &'a [tidb_expr::column::Column],
+    /// Go `indexJoinResult.chosenAccess`: the conditions that extend the
+    /// per-probe range past the equality keys.
+    access_conditions: &'a [tidb_expr::expression::Expression],
 }
 
 fn is_index_join_table_range(
@@ -644,10 +651,27 @@ fn physical_operator_info(
         PhysicalPlan::TableScan(scan) => {
             let mut parts = Vec::new();
             if is_index_join_table_range(plan, index_join_context) {
-                parts.push(format!(
-                    "range: decided by [{}]",
-                    columns_text(index_join_context.expect("index join context").outer_keys)
-                ));
+                let context = index_join_context.expect("index join context");
+                // Go `indexJoinPathRangeInfo`: `eq(inner_idx_col, outer_key)`
+                // for every matched key, then `chosenAccess`.
+                let mut decided = context
+                    .inner_keys
+                    .iter()
+                    .zip(context.outer_keys)
+                    .map(|(inner, outer)| {
+                        format!(
+                            "eq({}, {})",
+                            expression_text(&tidb_expr::expression::Expression::Column(
+                                inner.clone()
+                            )),
+                            expression_text(&tidb_expr::expression::Expression::Column(
+                                outer.clone()
+                            ))
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                decided.extend(context.access_conditions.iter().map(expression_text));
+                parts.push(format!("range: decided by [{}]", decided.join(" ")));
             } else if scan
                 .scan_kind()
                 .is_some_and(|kind| kind.plan_type() == "TableRangeScan")
@@ -909,7 +933,9 @@ fn physical_explain_operator(
                             join.inner_access_table_id
                                 .map(|table_id| IndexJoinExplainContext {
                                     table_id,
+                                    inner_keys: &join.inner_join_keys,
                                     outer_keys: &join.outer_join_keys,
+                                    access_conditions: &join.other_conditions,
                                 })
                         }),
                     PhysicalPlan::IndexJoin(_) => None,

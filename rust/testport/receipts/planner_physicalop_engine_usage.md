@@ -257,3 +257,30 @@ passed / 67 failed versus 1173 / 68, no additions;
 `cargo check --locked --all-targets -p tidb-executor` clean;
 `rustfmt --edition 2021 --check` clean on the changed file;
 `git diff --check -- rust`.
+
+## Follow-up: the index-join `range: decided by [...]` contents (2026-09-09)
+
+Go's `indexJoinPathRangeInfo` (`pkg/planner/core/index_join_path.go:611`)
+builds the inner scan's range text as `eq(innerIdxCol, outerKey)` for every
+matched key followed by each `chosenAccess` condition. The Rust
+`IndexJoinExplainContext` carried only the outer key COLUMNS and printed them
+comma-separated, so a probe that also narrowed the next key column lost both
+the equality pairs and the bounds: `range: decided by [test.district.d_w_id,
+test.district.d_id]` instead of `[eq(test.order_line.ol_w_id,
+test.district.d_w_id) eq(test.order_line.ol_d_id, test.district.d_id)
+ge(test.order_line.ol_o_id, minus(test.district.d_next_o_id, 20))
+lt(test.order_line.ol_o_id, test.district.d_next_o_id)]`.
+
+The context now carries the join's `inner_join_keys` and its
+`other_conditions` (the available stand-in for `chosenAccess`), and the
+TableScan arm renders `eq(inner, outer)` pairs then those conditions,
+space-separated like Go.
+
+Regression: `driver::tests::joins::an_outer_comparison_on_the_next_key_column_narrows_every_probe_range`
+now also asserts the two `eq(...)` pairs; it failed on the missing bounds and
+passes after. Ready validation: `tidb-executor` lib serialized 1176 passed /
+67 failed versus 1176 / 67, the only delta being the fix plus the known
+`hash_agg_spill_tests::each_round_gives_the_statements_budget_back` flake
+(passes in isolation); `cargo check --locked --all-targets -p tidb-executor`
+clean; `rustfmt --edition 2021 --check` clean on both changed files;
+`git diff --check -- rust`.

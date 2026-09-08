@@ -1898,12 +1898,14 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
         plan.iter().any(|line| {
             line.contains("TableRangeScan")
                 && line.contains("table:order_line")
+                && line.contains("eq(test.order_line.ol_w_id, test.district.d_w_id)")
+                && line.contains("eq(test.order_line.ol_d_id, test.district.d_id)")
                 && line
                     .contains("ge(test.order_line.ol_o_id, minus(test.district.d_next_o_id, 20))")
                 && line.contains("lt(test.order_line.ol_o_id, test.district.d_next_o_id)")
         }),
-        "the inner range must carry both outer-derived bounds exactly as Go \
-         prints them inside `range: decided by [...]`: {plan:#?}",
+        "the inner range must carry Go's `eq(inner, outer)` pairs and both \
+         outer-derived bounds inside `range: decided by [...]`: {plan:#?}",
     );
 }
 
