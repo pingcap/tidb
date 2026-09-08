@@ -102,3 +102,42 @@ GOPATH=/tmp/tidb-codex-gopath TMPDIR=/tmp/tidb-codex-tmp make lint
 Formatting, whitespace, and the executor all-target check pass; the existing
 workspace warnings remain non-fatal. `make lint` is run again immediately
 before the batch commit and passes (including the Go dashboard linter).
+
+## Follow-up: aggregate fields keep their written label (2026-09-09)
+
+Go `buildProjectionField` (`pkg/planner/core/logical_plan_builder.go:1573`)
+takes the child-schema origin name only when the field's AST node is a
+`*ast.ColumnNameExpr` (`innerNode.(*ast.ColumnNameExpr) && isCol`). The Rust
+`ProjectionField` lost that distinction: `extract_agg_funcs_in_select_fields`
+(`aggregation.rs:237`) rewrites a field's `expr` to a `#agg#N` marker, which
+is an `Expr::Column`, so `projection_field_name` matched the origin-name
+branch and returned the aggregation's empty output name. A derived table over
+an aggregate therefore became `Column#1` instead of `count(*)`.
+
+`ProjectionField` now records `column_reference` from the AST at construction
+(looking through parentheses and a unary `+` with
+`inner_from_parentheses_and_unary_plus`), and the naming branch tests it.
+
+The executor's wildcard result naming had the same symptom from the other
+side: `result_columns` (`driver/physical_builder.rs`) fell back to
+`schema_column_name`, whose `orig_name` is lost when projection elimination
+removes the naming projection. Go captures `names := p.OutputNames()` before
+optimization (`pkg/planner/optimize.go:525`) and `physical_plan_for_logical`
+already stores those names on the physical root; `result_columns` now reads
+them before the schema fallback.
+
+Regressions:
+
+- `plan_builder::from_tests::test_derived_aggregate_takes_the_written_field_label`
+  pins the derived output name `count(*)`.
+- `driver::tests::table_round_trip::count_star_field_keeps_its_written_label`
+  failed with `left: ["Column#1"], right: ["count(*)"]` before the executor
+  change and passes after.
+
+Ready validation: `tidb-planner` lib 990 passed / 0 failed and its four test
+targets 268 / 6 / 3 passed; `tidb-executor` lib 1116 passed / 110 failed (no
+new failures; the only diff against the pre-batch list is the fixed case and
+the pre-existing flaky `access_cost::index_async_load_queue_tests` pair);
+`cargo check --all-targets` for `tidb-planner`, `tidb-executor`, `tidb-exec`,
+and `tidb-session`; `cargo fmt --all -- --check` (three pre-existing drift
+files only); `git diff --check -- rust`.

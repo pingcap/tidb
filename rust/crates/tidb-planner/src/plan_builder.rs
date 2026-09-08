@@ -224,6 +224,7 @@ use crate::plan_base::{PlanError, PlanIdAllocator};
 use catalog::TableSource;
 use handle_col_helper::{HandleColHelper, HandleColMap, PlanHandleCols};
 use marker::{MarkerKind, PlanMarker};
+use only_full_group_by::inner_from_parentheses_and_unary_plus;
 
 /// Go `model.ExtraPhysTblID` (`meta/model/table.go:43`).
 pub const EXTRA_PHYS_TBL_ID: i64 = -3;
@@ -352,6 +353,13 @@ impl Default for OuterCte {
 pub struct ProjectionField {
     /// The projected expression, with any [`marker`] already substituted in.
     pub expr: Expr,
+    /// Whether Go's `getInnerFromParenthesesAndUnaryPlus(field.Expr)` is a
+    /// `*ast.ColumnNameExpr`, recorded BEFORE
+    /// `extract_agg_funcs_in_select_fields` overwrites `expr` with a `#agg#N`
+    /// marker. `buildProjectionField` takes the origin-name branch only for a
+    /// column reference; a rewritten aggregate is an `Expr::Column` too, but
+    /// Go names it from the field text.
+    pub column_reference: bool,
     /// Go `SelectField.AsName`.
     pub alias: Option<String>,
     /// Go `SelectField.Text()`: the exact source bytes, which name a computed
@@ -2461,6 +2469,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             path.push(name.names.column.original.clone());
             fields.push(ProjectionField {
                 expr: Expr::Column(path),
+                column_reference: true,
                 alias: None,
                 text: Some(name.names.column.original.clone()),
                 hidden: false,
@@ -2478,8 +2487,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         resolved_index: Option<usize>,
     ) -> FieldName {
         // `:1537` "Field is a column reference": the origin names survive, and
-        // only `ColName` takes the alias.
-        if let (Expr::Column(_), Some(index)) = (&field.expr, resolved_index) {
+        // only `ColName` takes the alias. Go tests the field's AST node
+        // (`innerNode.(*ast.ColumnNameExpr)`), not the rewritten expression:
+        // an aggregate field's rewritten `expr` is an `Expr::Column` marker
+        // too, but Go names it from the field text.
+        if let (true, Some(index)) = (field.column_reference, resolved_index) {
             if let Some(origin) = names.get(index) {
                 let mut name = origin.clone();
                 if let Some(alias) = &field.alias {
@@ -2522,6 +2534,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
                     expr: expr.clone(),
+                    column_reference: matches!(
+                        inner_from_parentheses_and_unary_plus(expr),
+                        Expr::Column(_)
+                    ),
                     alias: alias.clone(),
                     text: fields
                         .text(index)
@@ -2577,6 +2593,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
                 SelectField::Expr { expr, alias } => expanded.push(ProjectionField {
                     expr: expr.clone(),
+                    column_reference: matches!(
+                        inner_from_parentheses_and_unary_plus(expr),
+                        Expr::Column(_)
+                    ),
                     alias: alias.clone(),
                     text: fields
                         .text(index)
@@ -2639,6 +2659,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 None => {
                     fields.push(ProjectionField {
                         expr: expr.clone(),
+                        column_reference: true,
                         alias: None,
                         text: None,
                         hidden: true,
@@ -3332,6 +3353,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let position = fields.len();
                 fields.push(ProjectionField {
                     expr: PlanMarker::new(MarkerKind::Agg, having_offset + index).as_expr(),
+                    column_reference: false,
                     alias: Some(format!("sel_agg_{position}")),
                     text: None,
                     hidden: true,

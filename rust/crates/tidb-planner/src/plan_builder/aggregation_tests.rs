@@ -787,18 +787,21 @@ fn test_resolve_from_select_fields_precedence() {
     let fields = vec![
         ProjectionField {
             expr: Expr::Column(vec!["b".to_owned()]),
+            column_reference: true,
             alias: Some("x".to_owned()),
             text: None,
             hidden: false,
         },
         ProjectionField {
             expr: Expr::Column(vec!["c".to_owned()]),
+            column_reference: true,
             alias: None,
             text: None,
             hidden: false,
         },
         ProjectionField {
             expr: Expr::Column(vec!["hidden".to_owned()]),
+            column_reference: true,
             alias: None,
             text: None,
             hidden: true,
@@ -877,12 +880,14 @@ fn test_add_alias_name_gives_every_field_an_explicit_alias() {
     let mut fields = vec![
         ProjectionField {
             expr: Expr::Column(vec!["t".to_owned(), "b".to_owned()]),
+            column_reference: true,
             alias: None,
             text: None,
             hidden: false,
         },
         ProjectionField {
             expr: Expr::Int("1".to_owned()),
+            column_reference: false,
             alias: None,
             text: Some("1".to_owned()),
             hidden: false,

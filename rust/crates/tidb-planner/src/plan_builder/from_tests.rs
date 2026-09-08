@@ -1064,3 +1064,21 @@ fn test_build_mem_table_produces_the_table_s_own_schema() {
     // The handle helper got exactly one push, as every leaf builder owes it.
     assert_eq!(builder.handle_helper.depth(), 1);
 }
+
+/// Go `buildResultSetNode`'s derived-table naming reads the subquery plan's
+/// `OutputNames`, which `buildProjectionFieldNameFromExpressions` fills from
+/// the field's WRITTEN text for a non-column expression. An aggregate field's
+/// rewritten expression is an `Expr::Column` marker too, so the origin-name
+/// branch must test the field's AST node, not the rewritten one.
+#[test]
+fn test_derived_aggregate_takes_the_written_field_label() {
+    let harness = Harness::new();
+    let plan = build(&harness, "SELECT * FROM (SELECT count(*) FROM t1) AS d");
+    assert_eq!(
+        plan.output_names()
+            .iter()
+            .map(|name| name.names.column.original.clone())
+            .collect::<Vec<_>>(),
+        vec!["count(*)".to_owned()]
+    );
+}

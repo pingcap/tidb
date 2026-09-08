@@ -685,6 +685,13 @@ both `oltp_read_only` and `oltp_read_write`.
   allocation order rather than Go's behavior; Go's own recorded plans show
   `group by:Column#100, ... funcs:firstrow(Column#100)`. Receipt:
   `rust/testport/receipts/planner_inject_extra_projection.md`.
+- [x] 2026-09-09: restored the written label of an aggregate field inside a
+  derived table. `ProjectionField` now records whether the field's AST node is
+  a column reference before aggregate extraction rewrites it to a `#agg#N`
+  marker, and `result_columns` reads the physical root's captured output names
+  before falling back to the schema, so `SELECT * FROM (SELECT count(*) FROM
+  t) d` reports `count(*)` instead of `Column#1`. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

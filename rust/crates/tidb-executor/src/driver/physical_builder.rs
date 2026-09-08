@@ -3087,7 +3087,11 @@ fn schema_column_name(column: &Column, ordinal: usize) -> String {
         .map_or_else(|| format!("Column#{}", ordinal + 1), str::to_owned)
 }
 
-fn result_columns(select: &tidb_ast::SelectStmt, schema: &Schema) -> Vec<(String, FieldType)> {
+fn result_columns(
+    select: &tidb_ast::SelectStmt,
+    schema: &Schema,
+    output_names: &[tidb_datatype::FieldName],
+) -> Vec<(String, FieldType)> {
     let expression_names = select
         .fields
         .fields()
@@ -3110,7 +3114,16 @@ fn result_columns(select: &tidb_ast::SelectStmt, schema: &Schema) -> Vec<(String
             let name = if expression_names.len() == schema.len() {
                 expression_names[index].clone()
             } else {
-                schema_column_name(column, index)
+                // A wildcard's name is not in the AST: it belongs to the
+                // relation the `*` expands to. Go reads it from the logical
+                // plan's `OutputNames` captured before optimization
+                // (`planner/optimize.go:525`), because projection elimination
+                // can leave the physical root without the naming projection.
+                output_names
+                    .get(index)
+                    .map(|field| field.names.column.original.clone())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| schema_column_name(column, index))
             };
             let field_type = column
                 .ret_type
@@ -3159,7 +3172,11 @@ pub(super) fn planned_result_columns(
     select: &tidb_ast::SelectStmt,
     physical: &PhysicalPlan,
 ) -> Result<Vec<(String, FieldType)>, DriverError> {
-    Ok(result_columns(select, &plan_schema(physical)?))
+    Ok(result_columns(
+        select,
+        &plan_schema(physical)?,
+        physical.base().base.output_names(),
+    ))
 }
 
 /// Go's common query execution seam: both SELECT and set-operation logical
@@ -3174,7 +3191,9 @@ pub(super) fn execute_query(
     ctx.publish_process_plan_info(crate::process_plan_info(physical, catalog));
     let root = build(physical, catalog, ctx)?;
     let columns = match query {
-        tidb_ast::QueryStmt::Select(select) => result_columns(select, root.schema()),
+        tidb_ast::QueryStmt::Select(select) => {
+            result_columns(select, root.schema(), physical.base().base.output_names())
+        }
         tidb_ast::QueryStmt::SetOpr(_) => physical_result_columns(physical, root.schema()),
     };
     ctx.notify_before_executor_first_run();

@@ -929,6 +929,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let index = fields.len();
                 fields.push(ProjectionField {
                     expr: node.clone(),
+                    column_reference: true,
                     alias: None,
                     text: None,
                     hidden: true,

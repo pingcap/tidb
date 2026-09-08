@@ -381,6 +381,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let position = fields.len();
             fields.push(ProjectionField {
                 expr: agg.clone(),
+                column_reference: false,
                 alias: Some(format!("sel_subq_agg_{position}")),
                 text: None,
                 hidden: true,
@@ -799,6 +800,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .unwrap_or_else(|| {
                         fields.push(ProjectionField {
                             expr: node.clone(),
+                            column_reference: true,
                             alias: None,
                             text: None,
                             hidden: true,
