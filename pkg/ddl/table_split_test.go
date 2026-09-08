@@ -71,16 +71,37 @@ func TestTableSplit(t *testing.T) {
 	require.Len(t, re.Rows(), 1)
 
 	// Explicit split options should take effect even when automatic table splitting is disabled.
-	tk.MustExec(`create table t_pre_split_disabled (
+	tk.MustExec(`create table t_pre_split_with_split_table_disabled (
 		a bigint
 	) shard_row_id_bits = 2 pre_split_regions = 2`)
-	re = tk.MustQuery("show table t_pre_split_disabled regions")
+	re = tk.MustQuery("show table t_pre_split_with_split_table_disabled regions")
 	require.Len(t, re.Rows(), 4)
 
-	tk.MustExec(`create table t_split_policy_disabled (
+	tk.MustExec(`create table t_split_policy_with_split_table_disabled (
 		a bigint primary key
 	) split between (0) and (10000) regions 4`)
-	re = tk.MustQuery("show table t_split_policy_disabled regions")
+	re = tk.MustQuery("show table t_split_policy_with_split_table_disabled regions")
+	require.Len(t, re.Rows(), 4)
+
+	tk.MustExec("create table t_alter_split_policy_with_split_table_disabled (a bigint primary key)")
+	re = tk.MustQuery("show table t_alter_split_policy_with_split_table_disabled regions")
+	require.Len(t, re.Rows(), 1)
+	tk.MustExec("alter table t_alter_split_policy_with_split_table_disabled split between (0) and (10000) regions 4")
+	re = tk.MustQuery("show table t_alter_split_policy_with_split_table_disabled regions")
+	require.Len(t, re.Rows(), 4)
+	tk.MustExec("truncate table t_alter_split_policy_with_split_table_disabled")
+	re = tk.MustQuery("show table t_alter_split_policy_with_split_table_disabled regions")
+	require.Len(t, re.Rows(), 4)
+
+	tk.MustExec(`create table t_add_partition_with_split_table_disabled (
+		a bigint primary key
+	) partition by range(a) (
+		partition p0 values less than (100),
+		partition p1 values less than (200)
+	) split between (0) and (10000) regions 4`)
+	tk.MustExec(`alter table t_add_partition_with_split_table_disabled
+		add partition (partition p2 values less than (300))`)
+	re = tk.MustQuery("show table t_add_partition_with_split_table_disabled partition (p2) regions")
 	require.Len(t, re.Rows(), 4)
 
 	infoSchema := dom.InfoSchema()

@@ -172,8 +172,8 @@ const (
 
 var (
 	// EnableSplitTableRegion controls whether to split a new Region for a newly
-	// created table without pre-split configuration. It takes effect only if the
-	// Storage supports splitting Regions.
+	// created table without pre-split configuration or Region split policies. It
+	// takes effect only if the Storage supports splitting Regions.
 	EnableSplitTableRegion = uint32(0)
 )
 
