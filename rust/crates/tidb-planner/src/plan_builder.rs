@@ -734,6 +734,10 @@ pub struct PlanScopeResolver<'a> {
     /// Whether integer subtraction must keep a signed result domain for this
     /// statement (`NO_UNSIGNED_SUBTRACTION`).
     no_unsigned_subtraction: bool,
+    /// The statement's `div_precision_increment`, which shapes every `/`
+    /// result's decimal scale. Go reads it from the statement context while
+    /// building the operator.
+    div_precision_increment: u32,
     /// The live statement context used by Go's comparison constant
     /// refinement to retain build-time conversion warnings.
     warning_context: Option<&'a dyn tidb_expr::Columns>,
@@ -766,6 +770,7 @@ impl<'a> PlanScopeResolver<'a> {
             connection_collation: connection_collation.to_owned(),
             like_default_escape: b'\\',
             no_unsigned_subtraction: false,
+            div_precision_increment: 4,
             warning_context: None,
             clause_message: "expression",
         }
@@ -797,6 +802,7 @@ impl<'a> PlanScopeResolver<'a> {
             connection_collation: connection_collation.to_owned(),
             like_default_escape: b'\\',
             no_unsigned_subtraction: false,
+            div_precision_increment: 4,
             warning_context: None,
             clause_message: "expression",
         }
@@ -815,6 +821,14 @@ impl<'a> PlanScopeResolver<'a> {
     #[must_use]
     pub const fn with_like_default_escape(mut self, escape: u8) -> Self {
         self.like_default_escape = escape;
+        self
+    }
+
+    /// Attach the statement's `div_precision_increment`, which shapes every
+    /// `/` result's decimal scale.
+    #[must_use]
+    pub const fn with_div_precision_increment(mut self, increment: u32) -> Self {
+        self.div_precision_increment = increment;
         self
     }
 
@@ -903,6 +917,10 @@ impl ColumnResolver for PlanScopeResolver<'_> {
 
     fn no_unsigned_subtraction(&self) -> bool {
         self.no_unsigned_subtraction
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.div_precision_increment
     }
 
     fn comparison_context(&self) -> Option<&dyn tidb_expr::Columns> {
@@ -1399,6 +1417,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_connection_charset_info(self.ctx.connection_charset_info())
         .with_like_default_escape(self.ctx.like_default_escape())
         .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
+        .with_div_precision_increment(self.ctx.div_precision_increment())
         .with_clause_message(self.cur_clause.message())
         .with_warning_context(self.ctx);
         let resolver = match (full_schema, full_names) {

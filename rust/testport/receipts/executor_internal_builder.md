@@ -76,3 +76,34 @@ statement sets 5. It failed with `left: None, right: Some(5)` before the
 wiring and passes after. `cargo test -p tidb-exec --test all cop_scan` — 15
 passed, 1 pre-existing failure (`a_limit_over_a_fully_lowered_builtin_
 predicate_travels_with_it`, which fails on the clean baseline too).
+
+## Follow-up: the planner resolver carries the statement's division scale (2026-09-09)
+
+The executor's DAG request carried `div_precision_increment`, but the
+PLANNER-side expression builder did not: `PlanScopeResolver` used the
+`ColumnResolver` trait's default of 4, so a `/` built through
+`PlanBuilder::rewrite_scalar` minted its decimal scale from 4 regardless of
+the statement. `avg(a/b)` under `div_precision_increment = 10` therefore
+answered `1.21428571428571` (division scale 4 + AVG increment 10) instead of
+Go's `1.21428571428571428550` (10 + 10).
+
+`PlanScopeResolver` now carries `div_precision_increment`, initialized from
+`StmtContext::div_precision_increment()` at every `rewrite_scalar`, with the
+same trait default of 4 for context-free resolvers.
+
+Regression: `tests_executor_suite_statements_source::decimal_div_precision_increment`
+failed at `avg_div(10)` and passes after; the `div(4/7/30)` and `avg(4)`
+assertions are unchanged.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib decimal_div_precision_increment
+# passed: 1
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 81 failures against the rebased baseline's 82 (only the target fixed)
+cargo fmt -p tidb-planner -- --check
+# pre-existing joinorder.rs / logical/rewrite.rs drift only
+git diff --check -- rust
+# passed
+```
