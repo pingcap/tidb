@@ -341,3 +341,32 @@ while Go's `HashAggFinalWorker.generateResultAndSend` iterates
 `partialResultMap.M` (a Go map, so its order is randomized). The test
 over-specifies that unordered output; the divergence is recorded here rather
 than hidden behind a reordered assertion.
+
+## Follow-up: a computed projection column has no `OrigName` (2026-09-09)
+
+Go `buildProjectionField` (`logical_plan_builder.go:1573`) returns a column
+reference UNCHANGED — keeping its own `OrigName` — and builds a computed
+field's fresh `Column` with `UniqueID`/`RetType`/`CorrelatedColUniqueID` only,
+NO `OrigName`. The alias lives on the `FieldName`. This port wrote
+`output.orig_name = name.display_name()` for every projection output, so a
+computed column rendered its alias in EXPLAIN (`plus(...)->revenue`,
+`revenue:desc`) where Go renders `Column#N`.
+
+`build_projection` now leaves the output column's `OrigName` as the source
+column's (direct reference) or empty (computed), matching Go.
+
+Regression: the new
+`driver::tests::aggregates::a_computed_projection_column_explains_as_column_not_its_alias`
+fails before (`->revenue`) and passes after (`->Column#N`). Ready validation:
+`tidb-executor` lib serialized 1204 passed / 48 failed with no additions and
+no `statistics_request_tests` failures (an earlier full-suite run showed 13 of
+them, which are the documented full-run flake — they pass 16/16 in their own
+group); `cargo check --locked --all-targets` clean;
+`rustfmt --edition 2021 --check` clean on both changed files;
+`git diff --check -- rust`.
+
+Remaining blocker for the tests that assert the exact text
+(`grouped_rows_follow_the_reordered_join_tree`, `tpch_q13`,
+`tpcc_condition_{four,nine}`): the rendered `Column#N` still carries this
+port's allocation id (`Column#12` where Go records `Column#1`), a separate
+plan-column-id ordering divergence.

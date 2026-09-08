@@ -2915,7 +2915,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
             };
             output.index = projection_columns.len() as i64;
-            output.orig_name = name.display_name();
+            // Go `buildProjectionField`: a column reference is returned
+            // UNCHANGED (keeping its own `OrigName`), and a computed
+            // expression's fresh `Column` is built with NO `OrigName`. The
+            // alias lives on the `FieldName`, never on the column, which is
+            // why EXPLAIN prints `expr->Column#N` rather than the alias.
             output.is_hidden = field.hidden;
             projection_columns.push(output);
             projection_names.push(name);

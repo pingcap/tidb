@@ -70,6 +70,51 @@ fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
 }
 
 #[test]
+fn a_computed_projection_column_explains_as_column_not_its_alias() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE alias_agg (g BIGINT, v BIGINT)", &mut catalog)
+        .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO alias_agg VALUES (1,10)", &mut catalog, &ctx).unwrap();
+
+    // Go `buildProjectionField`: a computed field's fresh `Column` has NO
+    // `OrigName`, so its alias never reaches the operator text.
+    let sql = "SELECT v + 0 AS revenue FROM alias_agg";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let text = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        text.iter()
+            .any(|line| line.contains("Projection") && line.contains("->Column#")),
+        "the projection explains its output column: {text:#?}"
+    );
+    assert!(
+        !text.iter().any(|line| line.contains("->revenue")),
+        "the alias must not appear in the operator text: {text:#?}"
+    );
+}
+
+#[test]
 fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 

@@ -882,6 +882,14 @@ both `oltp_read_only` and `oltp_read_write`.
   runtime negation wraps, so the arm uses `wrapping_neg()`. The placeholder's
   origin is still unlocated and recorded as a separate follow-up. Receipt:
   `rust/testport/receipts/planner_physicalop_engine_usage.md`.
+- [x] 2026-09-09: left a computed projection column's `OrigName` empty like Go's
+  `buildProjectionField`. The port wrote the alias into every projection output
+  column, so EXPLAIN rendered `plus(...)->revenue` and `revenue:desc` where Go
+  renders `Column#N`; the alias belongs to the `FieldName`. A direct column
+  keeps its own `OrigName`. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`. The exact-text
+  tests remain blocked on the plan-column-id ordering (`Column#12` vs Go's
+  `Column#1`).
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
