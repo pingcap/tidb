@@ -1194,6 +1194,13 @@ impl Session {
             .with_plan(|statement, physical| {
                 self.run_with_columns_using(sql, false, |session| {
                     session.begin_prepared_statement_boundary(statement);
+                    for (level, code, message) in execution.take_planning_warnings() {
+                        session.append_warning(
+                            crate::WarningLevel::from_executor(level),
+                            code,
+                            message,
+                        );
+                    }
                     session.execute_parsed_statement_with_select_plan(
                         sql,
                         statement.clone(),
@@ -1227,6 +1234,13 @@ impl Session {
             .with_plan(|statement, physical| {
                 self.run_with_columns_using(sql, false, |session| {
                     session.begin_prepared_statement_boundary(statement);
+                    for (level, code, message) in execution.take_planning_warnings() {
+                        session.append_warning(
+                            crate::WarningLevel::from_executor(level),
+                            code,
+                            message,
+                        );
+                    }
                     session.execute_parsed_statement_with_dml_plan(
                         sql,
                         statement.clone(),

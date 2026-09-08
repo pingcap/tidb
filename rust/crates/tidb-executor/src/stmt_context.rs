@@ -243,6 +243,39 @@ pub struct ProcessPlanInfo {
     pub stats_info: std::collections::HashMap<String, u64>,
 }
 
+struct StatementRangeFallback {
+    tracker: Arc<tidb_util::context::PlanCacheTracker>,
+    handler: tidb_util::context::RangeFallbackHandler,
+    cache_started: AtomicBool,
+}
+
+struct PlannerWarningAppender {
+    warnings: Arc<Mutex<Vec<(WarningLevel, u16, String)>>>,
+}
+
+impl tidb_util::context::WarnAppender for PlannerWarningAppender {
+    fn append_warning(&self, err: tidb_util::context::WarnErr) {
+        self.append(WarningLevel::Warning, err);
+    }
+
+    fn append_note(&self, err: tidb_util::context::WarnErr) {
+        self.append(WarningLevel::Note, err);
+    }
+}
+
+impl PlannerWarningAppender {
+    fn append(&self, level: WarningLevel, err: tidb_util::context::WarnErr) {
+        let code = match &err {
+            tidb_util::context::WarnErr::Terror(error) => error.code().value() as u16,
+            tidb_util::context::WarnErr::Message(_) => 1105,
+        };
+        self.warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((level, code, err.to_string()));
+    }
+}
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -649,6 +682,7 @@ pub struct StmtContext {
     stats_load_pseudo_timeout: bool,
     /// Go `SessionVars.OptIndexPruneThreshold`.
     opt_index_prune_threshold: i32,
+    range_max_size: i64,
     /// Go `RangerContext.OptPrefixIndexSingleScan`.
     opt_prefix_index_single_scan: bool,
     /// Go `SessionVars.AlwaysKeepJoinKey`.
@@ -686,6 +720,7 @@ pub struct StmtContext {
         Arc<Mutex<HashMap<i64, Option<Arc<crate::access_cost::TableStatistics>>>>>,
     /// Go `StmtCtx.SetSkipPlanCache`'s first reason.
     skip_plan_cache_reason: Arc<Mutex<Option<String>>>,
+    range_fallback: Arc<OnceLock<StatementRangeFallback>>,
     /// Go `StmtCtx.StatsLoad`: requests are started by
     /// `CollectPredicateColumnsPoint` and consumed later by
     /// `SyncWaitStatsLoadPoint`.
@@ -956,6 +991,7 @@ impl StmtContext {
             stats_load_sync_wait_ms: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64,
             stats_load_pseudo_timeout: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT,
             opt_index_prune_threshold: 20,
+            range_max_size: tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_SIZE,
             opt_prefix_index_single_scan: true,
             always_keep_join_key: tidb_vardef::defaults::DEF_OPT_ALWAYS_KEEP_JOIN_KEY,
             enable_unsafe_substitute: false,
@@ -973,6 +1009,7 @@ impl StmtContext {
             plan_replayer_capture_enabled: false,
             table_runtime_statistics: Arc::default(),
             skip_plan_cache_reason: Arc::default(),
+            range_fallback: Arc::default(),
             pending_statistics_load: Arc::default(),
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
@@ -1255,6 +1292,19 @@ impl StmtContext {
         self.stats_load_pseudo_timeout = pseudo_timeout;
         self.max_execution_time_ms = max_execution_time_ms;
         self
+    }
+
+    /// Sets the range-building memory quota; zero means unlimited.
+    #[must_use]
+    pub const fn with_range_max_size(mut self, bytes: i64) -> Self {
+        self.range_max_size = bytes;
+        self
+    }
+
+    /// Go `SessionVars.RangeMaxSize`.
+    #[must_use]
+    pub const fn range_max_size(&self) -> i64 {
+        self.range_max_size
     }
 
     /// Sets `@@tidb_opt_index_prune_threshold` for this statement.
@@ -1632,6 +1682,40 @@ impl StmtContext {
             .take()
     }
 
+    fn statement_range_fallback(&self) -> &StatementRangeFallback {
+        self.range_fallback.get_or_init(|| {
+            let warnings = Arc::new(PlannerWarningAppender {
+                warnings: Arc::clone(&self.warnings),
+            });
+            let tracker = Arc::new(tidb_util::context::PlanCacheTracker::new(warnings.clone()));
+            let handler =
+                tidb_util::context::RangeFallbackHandler::new(Arc::clone(&tracker), warnings);
+            StatementRangeFallback {
+                tracker,
+                handler,
+                cache_started: AtomicBool::new(false),
+            }
+        })
+    }
+
+    pub(crate) fn start_prepared_range_tracking(&self) {
+        let state = self.statement_range_fallback();
+        if !state.cache_started.swap(true, Ordering::AcqRel) {
+            state
+                .tracker
+                .set_cache_type(tidb_util::context::PlanCacheType::SessionPrepared);
+            state.tracker.set_force_plan_cache(
+                self.optimizer_fix_control
+                    .get_bool_with_default(tidb_planner::fix_control::FIX_49736, false),
+            );
+            state.tracker.enable_plan_cache();
+        }
+    }
+
+    pub(crate) fn range_fallback_handler(&self) -> &tidb_util::context::RangeFallbackHandler {
+        &self.statement_range_fallback().handler
+    }
+
     /// Go `StmtCtx.SetSkipPlanCache`.
     pub fn set_skip_plan_cache(&self, reason: impl Into<String>) {
         let mut current = self
@@ -1646,6 +1730,11 @@ impl StmtContext {
     /// Whether this statement must not publish a prepared-plan cache entry.
     #[must_use]
     pub fn skip_plan_cache(&self) -> bool {
+        if self.range_fallback.get().is_some_and(|state| {
+            state.cache_started.load(Ordering::Acquire) && !state.tracker.use_cache()
+        }) {
+            return true;
+        }
         self.skip_plan_cache_reason
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3488,6 +3577,37 @@ impl Columns for StmtContext {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn range_fallback_honors_force_plan_cache() {
+        let (control, _) =
+            tidb_planner::fix_control::OptimizerFixControl::parse("49736:ON").unwrap();
+        let context = super::StmtContext::for_query().with_optimizer_fix_control(control);
+        context.start_prepared_range_tracking();
+        for _ in 0..2 {
+            context.range_fallback_handler().record_range_fallback(1);
+        }
+        assert!(!context.skip_plan_cache());
+        let warnings = context.take_warnings();
+        assert_eq!(warnings.len(), 3);
+    }
+
+    #[test]
+    fn range_fallback_shares_statement_warnings_and_cache_admission() {
+        let context = super::StmtContext::default();
+        context.start_prepared_range_tracking();
+        let clone = context.clone();
+        clone.range_fallback_handler().record_range_fallback(1);
+        assert!(context.skip_plan_cache());
+        context.start_prepared_range_tracking();
+        context.range_fallback_handler().record_range_fallback(1);
+        assert!(clone.skip_plan_cache());
+        let warnings = context.take_warnings();
+        assert_eq!(warnings.len(), 2);
+        let fresh = super::StmtContext::default();
+        assert!(!fresh.skip_plan_cache());
+        assert!(fresh.take_warnings().is_empty());
+    }
+
     use super::*;
 
     #[test]

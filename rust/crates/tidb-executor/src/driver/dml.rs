@@ -2311,6 +2311,7 @@ impl CachedDmlPlan {
 /// One bound execution rebuilt from a retained prepared DML definition.
 #[derive(Debug)]
 pub struct PreparedDmlExecution {
+    planning_warnings: std::sync::Mutex<Vec<(crate::WarnLevel, u16, String)>>,
     plan: Arc<PreparedDmlPlan>,
     cached_plan: Arc<std::sync::Mutex<CachedDmlPlan>>,
     generation: u64,
@@ -2447,7 +2448,7 @@ impl PreparedDmlPlan {
             None => {
                 let ctx = ctx?;
                 let bound = super::bind_prepared_statement(statement, params).ok()?;
-                let physical = cached_dml_physical_plan(
+                let (physical, cacheable) = cached_dml_physical_plan(
                     &bound,
                     catalog,
                     current_database,
@@ -2464,25 +2465,33 @@ impl PreparedDmlPlan {
                     physical,
                     generation: 0,
                 };
-                let generation = plan.bind(params)?;
+                // A rejected candidate executes once without a cache rebuild or insertion.
+                let generation = if cacheable { plan.bind(params)? } else { 0 };
                 let plan = Arc::new(std::sync::Mutex::new(plan));
                 cached_plans.retain(|entry| {
                     entry.schema_version == schema_version
                         && entry.stats_version_hash == stats_version_hash
                         && entry.environment == *environment
                 });
-                cached_plans.push(CachedDmlPlanEntry {
-                    schema_version,
-                    stats_version_hash,
-                    environment: environment.clone(),
-                    parameter_types,
-                    limit_values,
-                    plan: Arc::clone(&plan),
-                });
+                if cacheable {
+                    cached_plans.push(CachedDmlPlanEntry {
+                        schema_version,
+                        stats_version_hash,
+                        environment: environment.clone(),
+                        parameter_types,
+                        limit_values,
+                        plan: Arc::clone(&plan),
+                    });
+                }
                 (plan, generation, false)
             }
         };
         Some(PreparedDmlExecution {
+            planning_warnings: std::sync::Mutex::new(if cache_hit {
+                Vec::new()
+            } else {
+                ctx.map_or_else(Vec::new, crate::StmtContext::take_warnings)
+            }),
             plan: Arc::clone(self),
             cached_plan,
             generation,
@@ -2511,6 +2520,16 @@ impl PreparedDmlPlan {
 }
 
 impl PreparedDmlExecution {
+    /// Takes warnings produced by this execution's cache-miss planning once.
+    pub fn take_planning_warnings(&self) -> Vec<(crate::WarnLevel, u16, String)> {
+        std::mem::take(
+            &mut *self
+                .planning_warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
     /// The immutable PREPARE-time definition used for schema ownership.
     #[must_use]
     pub fn plan(&self) -> &PreparedDmlPlan {
@@ -2576,7 +2595,7 @@ fn cached_dml_physical_plan(
     current_database: &str,
     ctx: &crate::StmtContext,
     cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
-) -> Option<tidb_planner::physical::PhysicalPlan> {
+) -> Option<(tidb_planner::physical::PhysicalPlan, bool)> {
     let Stmt::Dml(dml) = statement else {
         return None;
     };
@@ -2615,6 +2634,7 @@ fn cached_dml_physical_plan(
         }
         _ => return None,
     };
+    ctx.start_prepared_range_tracking();
     let mut root = physical_dml_plan_with_cache_mode(
         operator,
         source.as_ref(),
@@ -2633,10 +2653,10 @@ fn cached_dml_physical_plan(
         promote_cached_dml_point_source(&mut root);
     }
     if ctx.skip_plan_cache() {
-        return None;
+        return Some((root, false));
     }
     tidb_planner::physical_plan_cache::plan_cacheable(&root, cacheability).ok()?;
-    Some(root)
+    Some((root, true))
 }
 
 fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPlan) {

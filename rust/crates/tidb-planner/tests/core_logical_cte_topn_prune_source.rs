@@ -81,10 +81,13 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         plan_cache_marker: None,
         // Go's `AllowDeriveTopN` defaults ON.
         allow_derive_topn: true,
+        allow_agg_push_down: false,
         disabled_rules: Default::default(),
         statistics_load: None,
         partition_pruning: None,
         opt_index_prune_threshold: 20,
+        range_max_size: 0,
+        range_fallback_handler: None,
         always_keep_join_key: true,
         enable_unsafe_substitute: false,
         enable_semi_join_rewrite: false,

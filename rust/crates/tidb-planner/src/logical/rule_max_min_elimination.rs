@@ -33,10 +33,29 @@ use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanError;
 
 fn check_column_can_use_index(
+    ctx: &RuleContext<'_>,
     plan: &LogicalPlan,
     column: &Column,
     mut conditions: Vec<Expression>,
 ) -> bool {
+    let detach = |columns: &[Column], lengths: &[i64]| {
+        if let Some(handler) = ctx.range_fallback_handler {
+            crate::ranger::detacher::detach_index_range_with_fallback_handler(
+                &conditions,
+                columns,
+                lengths,
+                ctx.range_max_size,
+                handler,
+            )
+        } else {
+            crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                &conditions,
+                columns,
+                lengths,
+                ctx.range_max_size,
+            )
+        }
+    };
     match plan {
         LogicalPlan::Selection(selection) => {
             conditions.extend(selection.conditions.iter().cloned());
@@ -44,9 +63,75 @@ fn check_column_can_use_index(
                 .base
                 .children()
                 .first()
-                .is_some_and(|child| check_column_can_use_index(child, column, conditions))
+                .is_some_and(|child| check_column_can_use_index(ctx, child, column, conditions))
         }
         LogicalPlan::DataSource(source) => {
+            // Logical planning has enumerated paths before costing constructs
+            // DataSourceAccessPath. Go's AllPossibleAccessPaths already contains
+            // these hint-filtered entries at this stage.
+            if source.all_possible_access_paths.is_empty() {
+                use crate::access_path::PossiblePath;
+                for path in &source.enumerated_paths {
+                    let (columns, lengths): (Vec<Column>, Vec<i64>) = match path {
+                        PossiblePath::Table {
+                            is_int_handle: true,
+                            ..
+                        } => {
+                            if source
+                                .handle_cols
+                                .first()
+                                .is_some_and(|handle| handle.unique_id == column.unique_id)
+                            {
+                                return crate::ranger::detacher::detach_conds_for_column(
+                                    &conditions,
+                                    column,
+                                    true,
+                                )
+                                .1
+                                .is_empty();
+                            }
+                            continue;
+                        }
+                        PossiblePath::Table {
+                            is_int_handle: false,
+                            ..
+                        } => (
+                            source.common_handle_cols.clone(),
+                            source.common_handle_lens.clone(),
+                        ),
+                        PossiblePath::Index { index } => {
+                            let Some(index) = source.indexes.get(*index) else {
+                                continue;
+                            };
+                            index
+                                .columns
+                                .iter()
+                                .map_while(|index_column| {
+                                    source
+                                        .schema_column_for_index_column(index_column)
+                                        .cloned()
+                                        .map(|column| (column, index_column.length))
+                                })
+                                .unzip()
+                        }
+                        PossiblePath::TiFlashTable => continue,
+                    };
+                    if columns.is_empty() {
+                        continue;
+                    }
+                    if detach(&columns, &lengths).is_ok_and(|result| {
+                        result.remained_conds.is_empty()
+                            && (0..=result.eq_cond_count).any(|offset| {
+                                columns.get(offset).is_some_and(|index_column| {
+                                    index_column.unique_id == column.unique_id
+                                })
+                            })
+                    }) {
+                        return true;
+                    }
+                }
+                return false;
+            }
             for path in &source.all_possible_access_paths {
                 let can_use = match path {
                     DataSourceAccessPath::Table(path) => {
@@ -74,20 +159,18 @@ fn check_column_can_use_index(
                         if source.common_handle_cols.is_empty() {
                             continue;
                         }
-                        crate::ranger::detacher::detach_cond_and_build_range_for_index(
-                            &conditions,
-                            &source.common_handle_cols,
-                            &source.common_handle_lens,
-                            0,
+                        detach(&source.common_handle_cols, &source.common_handle_lens).is_ok_and(
+                            |result| {
+                                result.remained_conds.is_empty()
+                                    && (0..=result.eq_cond_count).any(|offset| {
+                                        source.common_handle_cols.get(offset).is_some_and(
+                                            |index_column| {
+                                                index_column.unique_id == column.unique_id
+                                            },
+                                        )
+                                    })
+                            },
                         )
-                        .is_ok_and(|result| {
-                            result.remained_conds.is_empty()
-                                && (0..=result.eq_cond_count).any(|offset| {
-                                    source.common_handle_cols.get(offset).is_some_and(
-                                        |index_column| index_column.unique_id == column.unique_id,
-                                    )
-                                })
-                        })
                     }
                     DataSourceAccessPath::Index(path) => {
                         let Some(index) = source
@@ -118,13 +201,7 @@ fn check_column_can_use_index(
                             .iter()
                             .map(|(_, length)| *length)
                             .collect::<Vec<_>>();
-                        crate::ranger::detacher::detach_cond_and_build_range_for_index(
-                            &conditions,
-                            &columns,
-                            &lengths,
-                            0,
-                        )
-                        .is_ok_and(|result| {
+                        detach(&columns, &lengths).is_ok_and(|result| {
                             result.remained_conds.is_empty()
                                 && (0..=result.eq_cond_count).any(|offset| {
                                     columns.get(offset).is_some_and(|index_column| {
@@ -256,7 +333,7 @@ fn split_aggregations(
         let Expression::Column(column) = &function.args()[0] else {
             return None;
         };
-        if !check_column_can_use_index(child, column, Vec::new()) {
+        if !check_column_can_use_index(ctx, child, column, Vec::new()) {
             return None;
         }
     }
@@ -520,13 +597,39 @@ mod tests {
                 ],
             ));
         assert!(check_column_can_use_index(
+            &test_context(&allocator),
             &LogicalPlan::DataSource(source.clone()),
             &handle,
             vec![condition.clone()]
         ));
+        use std::sync::Arc;
+        use tidb_util::context::{
+            PlanCacheTracker, PlanCacheType, RangeFallbackHandler, StaticWarnHandler, WarnHandler,
+        };
+        let warnings = Arc::new(StaticWarnHandler::new(0));
+        let tracker = Arc::new(PlanCacheTracker::new(warnings.clone()));
+        tracker.set_cache_type(PlanCacheType::SessionPrepared);
+        tracker.enable_plan_cache();
+        let handler = RangeFallbackHandler::new(tracker.clone(), warnings.clone());
+        let mut quota_context = test_context(&allocator);
+        quota_context.range_max_size = 1;
+        quota_context.range_fallback_handler = Some(&handler);
+        assert!(
+            !check_column_can_use_index(
+                &quota_context,
+                &LogicalPlan::DataSource(source.clone()),
+                &handle,
+                vec![condition.clone()],
+            ),
+            "range quota fallback must prevent MAX/MIN index admission"
+        );
+        assert!(!tracker.use_cache());
+        assert_eq!(tracker.plan_cache_unqualified(), "in-list is too long");
+        assert_eq!(warnings.warning_count(), 2);
         source.all_possible_access_paths = vec![table.clone(), index.clone()];
         assert!(
             !check_column_can_use_index(
+                &test_context(&allocator),
                 &LogicalPlan::DataSource(source.clone()),
                 &handle,
                 vec![condition.clone()]
@@ -535,6 +638,7 @@ mod tests {
         );
         source.all_possible_access_paths = vec![index, table];
         assert!(check_column_can_use_index(
+            &test_context(&allocator),
             &LogicalPlan::DataSource(source),
             &handle,
             vec![condition]

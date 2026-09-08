@@ -1,5 +1,43 @@
 # `pkg/util/ranger` parity receipt
 
+## Local range-fallback prerequisite refresh (2026-09-08)
+
+Current Rust batch carries the shared fallback handler through all six index
+range quota exits, including recursive and DNF construction. DNF accounting now
+uses actual range memory usage. The MAX/MIN logical rule consumes hint-filtered
+paths and the session quota; prepared execution preserves cache-admission state
+and planning warnings across statement boundaries. Rejected candidates execute
+once without cache insertion. Focused red/green evidence is recorded below.
+
+Validation now includes 64 ranger tests, five MAX/MIN tests, two executor context
+tests, six SQL regression tests and two logical integration tests, all passing,
+plus successful make lint. Expanded session tests have 11 failures with identical names and panic
+payloads on HEAD; current WIP adds seven passing tests. This is a bounded integration batch, not a claim of whole
+planner/statistics/optimizer parity. Final review and publication remain pending.
+
+Authority for the current audit is f5cf8f6337612c6ae51fb6e384e4bb3469dde680.
+Compared all 13 tracked artifacts with the recorded follow-up authority
+a0cdff369bd4c7060a840e3943049a79470e8af4. Only four files differ, and all four
+were fully re-read: bench_test.go (268 lines, blob
+8156f263d1627a6ca662c266bce9078c0b0c2ccc), detacher.go (1616 lines,
+f69fa894d8e6816caf8e2bfe90db444dbad7f245), points.go (1054 lines,
+5ad1caf7c5c87260bb22e83a7a1f3daa8aa9b541), ranger.go (988 lines,
+5f3ced201ee7bf154016143adf37951c59e8ee33). The nested context package was
+also fully read again; the remaining unchanged artifacts retain the prior
+reading evidence. No new tracked fixture/generated/platform artifacts exist.
+
+The numeric fallback behavior alone does not complete parity: recursive quota
+events must reach shared warning/cache handlers even if candidate ranges are
+discarded. Public wrappers currently discard Rust internal cache-skip state.
+The current batch wires MAX/MIN; other callers and partition wrappers remain
+explicit follow-up audit surfaces. Documentation-only changes remain local.
+
+Point conversion observations: IN skips impossible YEAR/ENUM values and sorts
+before prefix cutting; NOT IN builds its complement before prefix cutting and
+sort-key conversion. LIKE uses separate trimmed and untrimmed sort keys for
+PAD SPACE lower and upper bounds. These source contracts remain unchanged by
+the in-place conversion refactor and must remain intact during fallback work.
+
 - **Source baseline:** Go `master` (`0bc44483e3e41a8ea917d4382dc202369468d200`)
 - **Rust baseline:** `hparser-integration` (`5a005978dda57fbb3373a303660ea0a5f7990b38`)
 - **Audit boundary:** `pkg/util/ranger`, including its nested `context` package
@@ -77,3 +115,38 @@ regression now pins both directions: `a > CAST(-1 AS DECIMAL)` clamps to
 `[0,+inf]`, while `a < ...` has no points. The existing ranger suite and the
 source-derived session EXPLAIN regression cover the downstream TableDual
 decision.
+
+
+2026-09-08 Rust ranger WIP: handler-aware index detachment now carries the shared
+RangeFallbackHandler through recursive candidate construction and records quota
+fallback at construction time. The focused cache-admission regression failed
+before wiring and passes afterward. Expanded DNF/recursive coverage exposed a
+second mismatch: the DNF accumulator used a hardcoded estimate that omitted
+collators and datum payloads, unlike Go Ranges.MemUsage. The composite predicate
+(a = 10 and b = 40) or (a = 20 and b = 50), with quota one byte below the full
+range footprint, failed before replacing the estimate with ranges_mem_usage.
+Both focused tests now pass, including unlimited construction, ordinary residual
+DNF without a quota event, and repeated handler calls. Logs:
+/tmp/ranger-quota-events-expanded-20260908.log (red),
+/tmp/ranger-quota-events-expanded-green-20260908.log (2 passed).
+This is WIP: production session/MAX-MIN budget and cache/warning sink integration
+remain pending; no Ready claim, commit or push. Documentation-only evidence
+continues to remain local under the user's instruction.
+
+
+2026-09-08 WIP continuation: all 64 ranger unit tests passed before the final
+edge-case extensions (/tmp/ranger-suite-20260908.log). Added exact-budget tests
+for simple DNF, composite DNF and recursive IN fanout; all retain full access
+without warning at equality. Extended shared-handler coverage for forced cache.
+The initial expected count of three warnings was incorrect: pinned Go detacher.go
+410 and 550 attempt both the IN prefix and the column-condition retry, generating
+two fallback events per build. Source inspection confirmed this construction-time
+behavior; two builds now assert four risk warnings and one capacity warning,
+with cache admission retained. This assertion correction is not a production
+bug fix or fail-before evidence. Final focused command:
+cargo +nightly-2026-08-22 test --manifest-path rust/Cargo.toml --offline --locked -p tidb-planner range_quota_events --lib -- --test-threads=1
+passed both tests (/tmp/ranger-quota-forced-green-20260908.log). git diff --check
+passed. Actual executor StmtContext still uses its own first-reason cache marker;
+the utility tracker is not yet connected to that admission consumer. Continue
+production budget/warning/cache wiring before Ready and publication. No commit
+or push; documentation stays local.

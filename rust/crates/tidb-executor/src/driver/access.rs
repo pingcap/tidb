@@ -565,6 +565,7 @@ pub struct PreparedSelectExecution {
     cache_hit: bool,
     cached_plan: Arc<std::sync::Mutex<super::planner_bridge::CachedSelectPlan>>,
     generation: u64,
+    planning_warnings: std::sync::Mutex<Vec<(crate::WarnLevel, u16, String)>>,
 }
 
 impl PreparedSelectPlan {
@@ -732,23 +733,26 @@ impl PreparedSelectPlan {
                         && entry.stats_version_hash == stats_version_hash
                         && entry.environment == *environment
                 });
-                let mut plan = super::planner_bridge::cached_query_plan(
+                let (mut plan, cacheable) = super::planner_bridge::cached_query_plan(
                     &query,
                     catalog,
                     current_database,
                     ctx,
                     environment.plan_cacheability(self.parameter_count),
                 )?;
-                let generation = plan.bind(values)?;
+                // A rejected cache candidate still executes its already-bound plan.
+                let generation = if cacheable { plan.bind(values)? } else { 0 };
                 let plan = Arc::new(std::sync::Mutex::new(plan));
-                cached_plans.push(CachedSelectPlanEntry {
-                    schema_version,
-                    stats_version_hash,
-                    environment: environment.clone(),
-                    parameter_types,
-                    limit_values,
-                    plan: Arc::clone(&plan),
-                });
+                if cacheable {
+                    cached_plans.push(CachedSelectPlanEntry {
+                        schema_version,
+                        stats_version_hash,
+                        environment: environment.clone(),
+                        parameter_types,
+                        limit_values,
+                        plan: Arc::clone(&plan),
+                    });
+                }
                 (plan, generation, false)
             }
         };
@@ -758,6 +762,11 @@ impl PreparedSelectPlan {
             cache_hit,
             cached_plan,
             generation,
+            planning_warnings: std::sync::Mutex::new(if cache_hit {
+                Vec::new()
+            } else {
+                ctx.map_or_else(Vec::new, crate::StmtContext::take_warnings)
+            }),
         })
     }
 
@@ -848,6 +857,16 @@ pub(crate) fn prepared_parameter_types_compatible(
 }
 
 impl PreparedSelectExecution {
+    /// Takes warnings produced by this execution's cache-miss planning once.
+    pub fn take_planning_warnings(&self) -> Vec<(crate::WarnLevel, u16, String)> {
+        std::mem::take(
+            &mut *self
+                .planning_warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
     /// The immutable plan whose schema identity gates this execution.
     #[must_use]
     pub fn plan(&self) -> &PreparedSelectPlan {

@@ -673,6 +673,8 @@ pub struct RangeDetacher<'a> {
     pub convert_to_sort_key: bool,
     /// Go `rangeMaxSize`.
     pub range_max_size: i64,
+    /// Shared statement handler, retained across recursive candidate construction.
+    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
     /// Go's session `RegardNULLAsPoint` (default true).
     pub regard_null_as_point: bool,
     /// Go's session `OptPrefixIndexSingleScan` (default true).
@@ -688,6 +690,12 @@ pub struct RangeDetacher<'a> {
 }
 
 impl RangeDetacher<'_> {
+    fn record_range_fallback(&self) {
+        if let Some(handler) = self.range_fallback_handler {
+            handler.record_range_fallback(self.range_max_size);
+        }
+    }
+
     /// Go `buildRangeOnColsByCNFCond` (`ranger.go:553`): the leading eq/in
     /// chain appends column by column; the tail's non-equal conditions
     /// intersect into ONE more column's points.
@@ -735,6 +743,7 @@ impl RangeDetacher<'_> {
             };
             ranges = new_ranges;
             if fallback {
+                self.record_range_fallback();
                 return Ok((
                     ranges,
                     access_conds[..i].to_vec(),
@@ -787,6 +796,7 @@ impl RangeDetacher<'_> {
             };
             ranges = new_ranges;
             if fallback {
+                self.record_range_fallback();
                 return Ok((
                     ranges,
                     access_conds[..eq_and_in_count].to_vec(),
@@ -939,6 +949,7 @@ pub fn detach_simple_cond_and_build_range_for_index(
         convert_to_sort_key: true,
         range_max_size,
         regard_null_as_point: true,
+        range_fallback_handler: None,
         opt_prefix_index_single_scan: true,
         skip_plan_cache_reason: None,
         fix_44389: false,
@@ -1090,13 +1101,9 @@ fn is_same_value(lhs: &Option<ValueInfo>, rhs: &Option<ValueInfo>) -> bool {
     }
 }
 
-/// This port's stand-in for `Ranges.MemUsage` in the DNF accumulation
-/// (Go sizes with `unsafe.Sizeof`; see `ranger.rs`'s module header).
+/// Go `Ranges.MemUsage`, including collators and variable-length datum payloads.
 fn ranges_mem_estimate(ranges: &super::types::Ranges) -> i64 {
-    ranges
-        .iter()
-        .map(|ran| 96 + 72 * (ran.low_val.len() as i64 + ran.high_val.len() as i64))
-        .sum()
+    super::types::ranges_mem_usage(ranges)
 }
 
 impl RangeDetacher<'_> {
@@ -1126,6 +1133,7 @@ impl RangeDetacher<'_> {
                 merge_consecutive: false,
                 convert_to_sort_key: self.convert_to_sort_key,
                 range_max_size: self.range_max_size,
+                range_fallback_handler: self.range_fallback_handler,
                 regard_null_as_point: self.regard_null_as_point,
                 opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                 skip_plan_cache_reason: None,
@@ -1254,6 +1262,7 @@ impl RangeDetacher<'_> {
                 merge_consecutive: self.merge_consecutive,
                 convert_to_sort_key: self.convert_to_sort_key,
                 range_max_size: self.range_max_size,
+                range_fallback_handler: self.range_fallback_handler,
                 regard_null_as_point: self.regard_null_as_point,
                 opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                 skip_plan_cache_reason: None,
@@ -1274,6 +1283,7 @@ impl RangeDetacher<'_> {
                     self.range_max_size,
                 );
                 if range_fallback {
+                    self.record_range_fallback();
                     // Go: the tail's ACCESS conds demote to remained, and
                     // the point ranges stand as the answer.
                     res.ranges = new_ranges;
@@ -1393,6 +1403,7 @@ impl RangeDetacher<'_> {
                 total_mem += ranges_mem_estimate(&res.ranges);
                 total_ranges.extend(res.ranges);
                 if self.range_max_size > 0 && total_mem > self.range_max_size {
+                    self.record_range_fallback();
                     return Ok((
                         super::points::full_range(),
                         Vec::new(),
@@ -1455,6 +1466,7 @@ impl RangeDetacher<'_> {
                     &mut self.skip_plan_cache_reason,
                 )?;
                 if fallback {
+                    self.record_range_fallback();
                     return Ok((
                         super::points::full_range(),
                         Vec::new(),
@@ -1466,6 +1478,7 @@ impl RangeDetacher<'_> {
                 total_mem += ranges_mem_estimate(&ranges);
                 total_ranges.extend(ranges);
                 if self.range_max_size > 0 && total_mem > self.range_max_size {
+                    self.record_range_fallback();
                     return Ok((
                         super::points::full_range(),
                         Vec::new(),
@@ -1540,7 +1553,26 @@ pub fn detach_cond_and_build_range_for_index(
     lengths: &[i64],
     range_max_size: i64,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
-    detach_cond_and_build_range(conditions, cols, lengths, range_max_size, true, true)
+    detach_cond_and_build_range(conditions, cols, lengths, range_max_size, true, true, None)
+}
+
+/// Builds index ranges with the statement's shared quota-fallback handler.
+pub fn detach_index_range_with_fallback_handler(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+    handler: &tidb_util::context::RangeFallbackHandler,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    detach_cond_and_build_range(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        true,
+        true,
+        Some(handler),
+    )
 }
 
 /// Go `DetachCondAndBuildRangeForPartition`: no sort key, no
@@ -1551,7 +1583,15 @@ pub fn detach_cond_and_build_range_for_partition(
     lengths: &[i64],
     range_max_size: i64,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
-    detach_cond_and_build_range(conditions, cols, lengths, range_max_size, false, false)
+    detach_cond_and_build_range(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        false,
+        false,
+        None,
+    )
 }
 
 /// Go `detachCondAndBuildRange`.
@@ -1562,6 +1602,7 @@ fn detach_cond_and_build_range(
     range_max_size: i64,
     convert_to_sort_key: bool,
     merge_consecutive: bool,
+    range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
     let new_tp_slice: Vec<tidb_datatype::FieldType> = cols
         .iter()
@@ -1578,6 +1619,7 @@ fn detach_cond_and_build_range(
         merge_consecutive,
         convert_to_sort_key,
         range_max_size,
+        range_fallback_handler,
         regard_null_as_point: true,
         opt_prefix_index_single_scan: true,
         skip_plan_cache_reason: None,

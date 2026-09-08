@@ -1464,6 +1464,8 @@ fn optimize_built_logical(
         statistics_load: Some(&statistics_load),
         partition_pruning: Some(&partition_pruning),
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
+        range_max_size: ctx.range_max_size(),
+        range_fallback_handler: Some(ctx.range_fallback_handler()),
         always_keep_join_key: ctx.always_keep_join_key(),
         enable_unsafe_substitute: ctx.enable_unsafe_substitute(),
         enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
@@ -1588,13 +1590,17 @@ pub(crate) fn cached_query_plan(
     current_database: &str,
     ctx: &crate::StmtContext,
     cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
-) -> Option<CachedSelectPlan> {
-    let physical = cached_physical_query_plan(query, catalog, current_database, ctx, cacheability)?;
-    Some(CachedSelectPlan {
-        statement: tidb_ast::Stmt::Query(tidb_ast::NodeBox::new(query.clone())),
-        physical,
-        generation: 0,
-    })
+) -> Option<(CachedSelectPlan, bool)> {
+    let (physical, cacheable) =
+        cached_physical_query_plan(query, catalog, current_database, ctx, cacheability)?;
+    Some((
+        CachedSelectPlan {
+            statement: tidb_ast::Stmt::Query(tidb_ast::NodeBox::new(query.clone())),
+            physical,
+            generation: 0,
+        },
+        cacheable,
+    ))
 }
 
 /// Builds and admits the physical source tree shared by cached queries and
@@ -1605,16 +1611,17 @@ pub(crate) fn cached_physical_query_plan(
     current_database: &str,
     ctx: &crate::StmtContext,
     cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
-) -> Option<PhysicalPlan> {
+) -> Option<(PhysicalPlan, bool)> {
     if matches!(query, tidb_ast::QueryStmt::Select(select) if select.rollup) {
         return None;
     }
+    ctx.start_prepared_range_tracking();
     let (_, physical) = planner_physical_query(query, catalog, current_database, ctx, true).ok()?;
     if ctx.skip_plan_cache() {
-        return None;
+        return Some((physical, false));
     }
     tidb_planner::physical_plan_cache::plan_cacheable(&physical, cacheability).ok()?;
-    Some(physical)
+    Some((physical, true))
 }
 
 #[cfg(test)]

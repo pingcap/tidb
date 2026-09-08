@@ -63,6 +63,7 @@ pub(crate) struct StatementVarSnapshot {
     stats_load_pseudo_timeout: bool,
     plan_replayer_capture_enabled: bool,
     opt_index_prune_threshold: i32,
+    range_max_size: i64,
     opt_prefix_index_single_scan: bool,
     always_keep_join_key: bool,
     allow_agg_push_down: bool,
@@ -671,6 +672,12 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i32>().ok())
                 .unwrap_or(20),
+            range_max_size: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_RANGE_MAX_SIZE)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_SIZE),
             opt_prefix_index_single_scan: on(
                 tidb_vardef::tidb_vars::TIDB_OPT_PREFIX_INDEX_SINGLE_SCAN,
             ),
@@ -842,6 +849,7 @@ impl Session {
         let stats_load_pseudo_timeout = snapshot.stats_load_pseudo_timeout;
         let plan_replayer_capture_enabled = snapshot.plan_replayer_capture_enabled;
         let opt_index_prune_threshold = snapshot.opt_index_prune_threshold;
+        let range_max_size = snapshot.range_max_size;
         let opt_prefix_index_single_scan = snapshot.opt_prefix_index_single_scan;
         let always_keep_join_key = snapshot.always_keep_join_key;
         let allow_agg_push_down = snapshot.allow_agg_push_down;
@@ -1015,6 +1023,7 @@ impl Session {
                 .with_index_usage_collector(index_usage_collector)
                 .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
                 .with_opt_index_prune_threshold(opt_index_prune_threshold)
+                .with_range_max_size(range_max_size)
                 .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
                 .with_always_keep_join_key(always_keep_join_key)
                 .with_enable_unsafe_substitute(enable_unsafe_substitute)
@@ -1113,6 +1122,7 @@ impl Session {
         .with_index_usage_collector(index_usage_collector)
         .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta))
         .with_opt_index_prune_threshold(opt_index_prune_threshold)
+        .with_range_max_size(range_max_size)
         .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
         .with_always_keep_join_key(always_keep_join_key)
         .with_enable_unsafe_substitute(enable_unsafe_substitute)
@@ -1294,6 +1304,21 @@ pub(crate) const fn scanner_sql_mode_of(mode: tidb_mysql::SqlMode) -> tidb_parse
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn range_quota_uses_session_snapshot_and_refreshes_after_set() {
+        let mut session = crate::Session::new();
+        let original = session.statement_context(false);
+        assert_eq!(original.range_max_size(), 67_108_864);
+        for quota in [1_i64, 0, i64::MAX] {
+            session
+                .run(&format!("SET tidb_opt_range_max_size = {quota}"))
+                .unwrap();
+            assert_eq!(session.statement_context(false).range_max_size(), quota);
+            assert_eq!(session.statement_context(true).range_max_size(), quota);
+        }
+        assert_eq!(original.range_max_size(), 67_108_864);
+    }
+
     use super::*;
 
     #[test]

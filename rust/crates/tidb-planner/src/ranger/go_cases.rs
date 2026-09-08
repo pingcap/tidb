@@ -2031,6 +2031,163 @@ fn range_fallback_ladder_matches_go() {
     );
 }
 
+#[test]
+fn range_quota_events_reach_shared_handler() {
+    use std::sync::Arc;
+    use tidb_util::context::{
+        PlanCacheTracker, PlanCacheType, RangeFallbackHandler, StaticWarnHandler, WarnHandler,
+    };
+    let table = MinAccessTable::new();
+    let stmt = tidb_parser::parse("select * from t1 where a in (10,20,30)").unwrap();
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        panic!("query")
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("select")
+    };
+    let expression = rewrite_expr_resolved(&select.where_clause.unwrap(), &table).unwrap();
+    let conds = split_cnf_items(&expression);
+    let cols = vec![table.columns[0].clone()];
+    let warnings = Arc::new(StaticWarnHandler::new(0));
+    let tracker = Arc::new(PlanCacheTracker::new(warnings.clone()));
+    tracker.set_cache_type(PlanCacheType::SessionPrepared);
+    tracker.enable_plan_cache();
+    let handler = RangeFallbackHandler::new(tracker.clone(), warnings.clone());
+    let result = super::detacher::detach_index_range_with_fallback_handler(
+        &conds,
+        &cols,
+        &[-1],
+        1,
+        &handler,
+    )
+    .unwrap();
+    assert!(result.access_conds.is_empty());
+    assert!(!result.remained_conds.is_empty());
+    assert!(
+        !tracker.use_cache(),
+        "quota fallback must prevent cache admission"
+    );
+    assert_eq!(tracker.plan_cache_unqualified(), "in-list is too long");
+    let messages = warnings
+        .copy_warnings()
+        .into_iter()
+        .map(|w| w.err.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0], "skip prepared plan-cache: in-list is too long");
+    assert!(messages[1].contains("Memory capacity of 1 bytes"));
+
+    // Forced cache keeps admission enabled and repeats the risk warning, while
+    // the capacity warning remains once per shared handler, as in Go.
+    let warnings = Arc::new(StaticWarnHandler::new(0));
+    let tracker = Arc::new(PlanCacheTracker::new(warnings.clone()));
+    tracker.set_cache_type(PlanCacheType::SessionPrepared);
+    tracker.enable_plan_cache();
+    tracker.set_force_plan_cache(true);
+    let handler = RangeFallbackHandler::new(tracker.clone(), warnings.clone());
+    for _ in 0..2 {
+        super::detacher::detach_index_range_with_fallback_handler(
+            &conds,
+            &cols,
+            &[-1],
+            1,
+            &handler,
+        )
+        .unwrap();
+    }
+    assert!(tracker.use_cache());
+    let messages = warnings
+        .copy_warnings()
+        .into_iter()
+        .map(|w| w.err.to_string())
+        .collect::<Vec<_>>();
+    // Each build first attempts the IN prefix, then retries it as a column
+    // condition (Go detacher.go:410 and :550). Both attempts report fallback.
+    assert_eq!(messages.len(), 5);
+    assert_eq!(
+        messages[0],
+        "force plan-cache: may use risky cached plan: in-list is too long"
+    );
+    assert!(messages[1].contains("Memory capacity of 1 bytes"));
+    for message in &messages[2..] {
+        assert_eq!(message, &messages[0]);
+    }
+}
+
+#[test]
+fn range_quota_events_cover_recursive_and_dnf_builds() {
+    use std::sync::Arc;
+    use tidb_util::context::{
+        PlanCacheTracker, PlanCacheType, RangeFallbackHandler, StaticWarnHandler, WarnHandler,
+    };
+    let table = MinAccessTable::new();
+    for (predicate, column_count, expect_fallback) in [
+        ("a = 10 or a = 20 or a = 30", 1, true),
+        ("(a = 10 and b = 40) or (a = 20 and b = 50)", 2, true),
+        ("a in (10,20,30) and b in (40,50,60)", 2, true),
+        ("a = 10 or b = 20", 1, false),
+    ] {
+        let stmt = tidb_parser::parse(&format!("select * from t1 where {predicate}")).unwrap();
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+            panic!("select")
+        };
+        let expression = rewrite_expr_resolved(&select.where_clause.unwrap(), &table).unwrap();
+        let conds = split_cnf_items(&expression);
+        let cols = table.columns[..column_count].to_vec();
+        let lengths = vec![-1; column_count];
+        let full =
+            super::detacher::detach_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+                .unwrap();
+        let quota = if expect_fallback {
+            super::types::ranges_mem_usage(&full.ranges) - 1
+        } else {
+            10_000
+        };
+        let warnings = Arc::new(StaticWarnHandler::new(0));
+        let tracker = Arc::new(PlanCacheTracker::new(warnings.clone()));
+        tracker.set_cache_type(PlanCacheType::SessionPrepared);
+        tracker.enable_plan_cache();
+        let handler = RangeFallbackHandler::new(tracker.clone(), warnings.clone());
+        // Unlimited builds must never report quota fallback, including residual DNF.
+        super::detacher::detach_index_range_with_fallback_handler(
+            &conds, &cols, &lengths, 0, &handler,
+        )
+        .unwrap();
+        assert!(tracker.use_cache(), "{predicate}");
+        assert_eq!(warnings.warning_count(), 0, "{predicate}");
+        if expect_fallback {
+            // Go falls back only above the budget, not at equality.
+            let exact = super::detacher::detach_index_range_with_fallback_handler(
+                &conds,
+                &cols,
+                &lengths,
+                quota + 1,
+                &handler,
+            )
+            .unwrap();
+            assert!(exact.remained_conds.is_empty(), "{predicate}");
+            assert!(tracker.use_cache(), "{predicate}");
+            assert_eq!(warnings.warning_count(), 0, "{predicate}");
+        }
+        for _ in 0..2 {
+            let result = super::detacher::detach_index_range_with_fallback_handler(
+                &conds, &cols, &lengths, quota, &handler,
+            )
+            .unwrap();
+            assert!(!result.remained_conds.is_empty(), "{predicate}");
+        }
+        assert_eq!(!tracker.use_cache(), expect_fallback, "{predicate}");
+        assert_eq!(
+            warnings.warning_count(),
+            if expect_fallback { 2 } else { 0 },
+            "{predicate}"
+        );
+    }
+}
+
 /// Go `TestRangeFallbackForBuildTableRange` (`ranger_test.go:2246`) and
 /// `TestRangeFallbackForBuildColumnRange` (`:2282`): under quota the
 /// table path answers `[[-inf,+inf]]` and the column path `[[NULL,+inf]]`

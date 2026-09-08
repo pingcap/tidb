@@ -765,3 +765,267 @@ fn a_literal_fts_search_is_cacheable() {
     session.run("EXECUTE st").unwrap();
     assert_eq!(cache_flag(&mut session), "1");
 }
+
+#[test]
+fn range_quota_fallback_is_visible_to_sql_and_prepared_cache() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE range_quota (a INT, b INT, KEY ab(a,b))")
+        .unwrap();
+    session
+        .run("INSERT INTO range_quota VALUES (1,9),(2,7),(3,5)")
+        .unwrap();
+    session.run("SET tidb_opt_range_max_size = 1").unwrap();
+    session
+        .run("PREPARE rq FROM 'SELECT MAX(b), MIN(b) FROM range_quota WHERE a = ?'")
+        .unwrap();
+    session.run("SET @a = 1").unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            row_text(session.run("EXECUTE rq USING @a")),
+            vec![vec!["9", "9"]]
+        );
+        assert!(
+            !session.found_in_plan_cache,
+            "fallback plan must not be cached"
+        );
+        let warnings = row_text(session.run("SHOW WARNINGS"));
+        assert!(
+            warnings
+                .iter()
+                .flatten()
+                .any(|value| value.contains("skip prepared plan-cache: in-list is too long")),
+            "{warnings:?}"
+        );
+
+        assert!(
+            warnings
+                .iter()
+                .flatten()
+                .any(|value| value.contains("tidb_opt_range_max_size")),
+            "{warnings:?}"
+        );
+    }
+}
+
+#[test]
+fn range_quota_max_min_respects_filtered_index_paths() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE quota_hints (a INT, b INT, KEY ab(a,b))")
+        .unwrap();
+    session
+        .run("INSERT INTO quota_hints VALUES (1,9),(1,7),(2,5)")
+        .unwrap();
+    session.run("SET tidb_opt_range_max_size = 1").unwrap();
+    for hint in ["IGNORE INDEX(ab)", "USE INDEX()"] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT MAX(b), MIN(b) FROM quota_hints {hint} WHERE a=1"
+            ))),
+            vec![vec!["9", "7"]]
+        );
+        let warnings = row_text(session.run("SHOW WARNINGS"));
+        assert!(
+            !warnings
+                .iter()
+                .flatten()
+                .any(|text| text.contains("tidb_opt_range_max_size")),
+            "{warnings:?}"
+        );
+    }
+    assert_eq!(
+        row_text(session.run("SELECT MAX(b), MIN(b) FROM quota_hints FORCE INDEX(ab) WHERE a=1")),
+        vec![vec!["9", "7"]]
+    );
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|row| row
+                .iter()
+                .any(|text| text.contains("tidb_opt_range_max_size")))
+            .count(),
+        1
+    );
+    session.run("SET tidb_opt_range_max_size = 0").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT MAX(b), MIN(b) FROM quota_hints FORCE INDEX(ab) WHERE a=1")),
+        vec![vec!["9", "7"]]
+    );
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert!(
+        !warnings
+            .iter()
+            .flatten()
+            .any(|text| text.contains("tidb_opt_range_max_size")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn forced_range_fallback_warning_reaches_sql() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE forced_quota (a INT, b INT, KEY ab(a,b))")
+        .unwrap();
+    session
+        .run("INSERT INTO forced_quota VALUES (1,9),(1,7)")
+        .unwrap();
+    session.run("SET tidb_opt_range_max_size = 1").unwrap();
+    session
+        .run("SET tidb_opt_fix_control = '49736:ON'")
+        .unwrap();
+    session
+        .run("PREPARE fq FROM 'SELECT MAX(b), MIN(b) FROM forced_quota WHERE a = ?'")
+        .unwrap();
+    session.run("SET @a = 1").unwrap();
+    assert_eq!(
+        row_text(session.run("EXECUTE fq USING @a")),
+        vec![vec!["9", "7"]]
+    );
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert!(
+        warnings
+            .iter()
+            .flatten()
+            .any(|text| text.contains("force plan-cache: may use risky cached plan")),
+        "{warnings:?}"
+    );
+    assert_eq!(
+        row_text(session.run("EXECUTE fq USING @a")),
+        vec![vec!["9", "7"]]
+    );
+    assert!(
+        session.found_in_plan_cache,
+        "forced fallback plan should be reused"
+    );
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert!(
+        warnings.is_empty(),
+        "cached execution replayed planning warnings: {warnings:?}"
+    );
+}
+
+#[test]
+fn forced_range_fallback_dml_warning_reaches_sql() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE quota_src (a INT, b INT, KEY ab(a,b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE quota_dst (hi INT, lo INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO quota_src VALUES (1,9),(1,7)")
+        .unwrap();
+    session.run("SET tidb_opt_range_max_size = 1").unwrap();
+    session
+        .run("SET tidb_opt_fix_control = '49736:ON'")
+        .unwrap();
+    session.run("PREPARE fd FROM 'INSERT INTO quota_dst SELECT MAX(b), MIN(b) FROM quota_src WHERE a = ?'").unwrap();
+    session.run("SET @a = 1").unwrap();
+    session.run("EXECUTE fd USING @a").unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert!(
+        warnings
+            .iter()
+            .flatten()
+            .any(|text| text.contains("force plan-cache: may use risky cached plan")),
+        "{warnings:?}"
+    );
+    session.run("EXECUTE fd USING @a").unwrap();
+    assert!(
+        session.found_in_plan_cache,
+        "forced DML plan should be reused"
+    );
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    assert!(
+        warnings.is_empty(),
+        "cached DML replayed planning warnings: {warnings:?}"
+    );
+    assert_eq!(
+        row_text(session.run("SELECT * FROM quota_dst")),
+        vec![vec!["9", "7"], vec!["9", "7"]]
+    );
+}
+
+#[test]
+fn forced_range_planning_warning_precedes_dml_execution_warning() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE order_src (a INT, b INT, KEY ab(a,b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE order_dst (hi TINYINT UNSIGNED, lo INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO order_src VALUES (1,300),(1,7)")
+        .unwrap();
+    session.run("SET tidb_opt_range_max_size = 1").unwrap();
+    session
+        .run("SET tidb_opt_fix_control = '49736:ON'")
+        .unwrap();
+    session.run("PREPARE od FROM 'INSERT IGNORE INTO order_dst SELECT MAX(b), MIN(b) FROM order_src WHERE a = ?'").unwrap();
+    session.run("SET @a = 1").unwrap();
+    session.run("EXECUTE od USING @a").unwrap();
+    let warnings = row_text(session.run("SHOW WARNINGS"));
+    let planning = warnings
+        .iter()
+        .position(|row| {
+            row.iter()
+                .any(|s| s.contains("force plan-cache: may use risky cached plan"))
+        })
+        .expect("planning warning");
+    let execution = warnings
+        .iter()
+        .position(|row| row.iter().any(|s| s.contains("Out of range")))
+        .expect("execution warning");
+    assert!(planning < execution, "{warnings:?}");
+    assert_eq!(
+        row_text(session.run("SELECT * FROM order_dst")),
+        vec![vec!["255", "7"]]
+    );
+}
+
+#[test]
+fn rejected_range_dml_retains_planning_warnings_without_caching() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE reject_src (a INT, b INT, KEY ab(a,b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE reject_dst (hi INT, lo INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO reject_src VALUES (1,9),(1,7)")
+        .unwrap();
+    session.run("SET tidb_opt_range_max_size = 1").unwrap();
+    session.run("PREPARE rd FROM 'INSERT INTO reject_dst SELECT MAX(b), MIN(b) FROM reject_src WHERE a = ?'").unwrap();
+    session.run("SET @a = 1").unwrap();
+    for _ in 0..2 {
+        session.run("EXECUTE rd USING @a").unwrap();
+        assert!(!session.found_in_plan_cache);
+        let warnings = row_text(session.run("SHOW WARNINGS"));
+        assert!(
+            warnings
+                .iter()
+                .flatten()
+                .any(|s| s.contains("skip prepared plan-cache: in-list is too long")),
+            "{warnings:?}"
+        );
+        assert_eq!(
+            warnings
+                .iter()
+                .flatten()
+                .filter(|s| s.contains("tidb_opt_range_max_size"))
+                .count(),
+            1,
+            "{warnings:?}"
+        );
+    }
+    assert_eq!(
+        row_text(session.run("SELECT * FROM reject_dst")),
+        vec![vec!["9", "7"], vec!["9", "7"]]
+    );
+}
