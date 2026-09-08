@@ -1349,15 +1349,20 @@ both `oltp_read_only` and `oltp_read_write`.
     `rust/testport/receipts/planner_cardinality.md`.
   - `aggregates::tpcc_condition_eleven_*` (analyzed arm): the analyzed
     statistics collapse the grouped leaves' estimates from 8 to 1.0, which
-    flips two MergeJoins to the IndexJoin family. Measured with a temporary
-    `DSH_TRACE_IJ` hook: pseudo arm build_rows=8/join_rows=8, analyzed arm
-    build_rows=1/join_rows=1. Go floors the group NDV at
-    `EstimateColsNDVWithMatchedLen` (10 for `GROUP BY (w_id,d_id)`), so the
-    collapse is upstream in the analyzed source/aggregation estimate
-    (`logical/aggregation.rs::derive_stats` ->
-    `cardinality/derive_stats.rs::estimate_cols_ndv_with_matched_len` ->
-    `logical/rewrite.rs::analyzed_filter_selectivity`/DataSource arm).
-    Next probe: trace the aggregation's child row count and column NDVs.
+    flips two MergeJoins to the IndexJoin family. Measured with temporary
+    hooks: pseudo arm `child_rows=10 child_ndvs=[(13,8),(12,8)]`, analyzed
+    arm `child_rows=9000 child_ndvs=[(13,1),(12,1)]` for new_order (the
+    `no_w_id = 1` selectivity 0.1 scales every column NDV, including the
+    independent `no_d_id`). That collapse is GO'S OWN `StatsInfo.Scale`
+    behavior (`property/stats_info.go:69-86` ->
+    `cardinality.ScaleNDV` with `DefOptRiskScaleNDVSkewRatio = 1.0`), so
+    restoring a larger estimate would diverge from Go. Go still records two
+    MergeJoins at these estimates, which points at the UNPORTED
+    `compareCandidates`/`skylinePruning` access-path choice
+    (`find_best_task.go:731,866`) rather than the estimate: with the index
+    join's scan metrics dominated by the grouped probe, Go's skyline removes
+    the index-join candidates before cost comparison. Next step: port
+    `compareCandidates`'s metric-by-metric comparison.
   - `aggregates::tpcc_condition_nine_rebuilds_*`: the plan shape and
     execution now match (see the 2026-09-09 entry); the ANALYZED arm still
     asserts the older Go inner-side statistics model (the constructed inner
