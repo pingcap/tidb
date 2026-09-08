@@ -1894,10 +1894,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 		return false
 	}
 
-	if er.err != nil {
-		return false
-	}
-	return true
+	return er.err == nil
 }
 
 // newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.
