@@ -1948,6 +1948,13 @@ fn condition_kind(
                 ConditionKind::StringMatch(selectivity)
             }
         }
+        tidb_ast::Expr::Func { name, .. } if name.eq_ignore_ascii_case("regexp_like") => {
+            let selectivity = defaults
+                .eval_topn_string_match
+                .then(|| string_match_selectivity(conjunct, table, resolver, stats, defaults.trigger_load))
+                .flatten();
+            ConditionKind::StringMatch(selectivity)
+        }
         // Go `GetExprInsideIsTruth` unwraps a NOT wrapper for the str-match
         // classification (`selectivity.go:299-304`); a wrapped string match
         // is classified — and evaluated — through the wrapper.
@@ -1980,6 +1987,7 @@ fn condition_kind(
 fn is_string_match(expr: &tidb_ast::Expr) -> bool {
     match strip_parens(expr) {
         tidb_ast::Expr::Like { .. } | tidb_ast::Expr::Regexp { .. } => true,
+        tidb_ast::Expr::Func { name, .. } => name.eq_ignore_ascii_case("regexp_like"),
         tidb_ast::Expr::Unary(
             tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner,
         ) => is_string_match(inner),
@@ -3701,6 +3709,49 @@ mod tests {
         // evaluates the wrapper; the estimate mirrors the plain LIKE's
         // 0.525 complement shape — here the wrapper is evaluated directly.
         assert!((actual - 0.475).abs() < 1e-12, "{actual} != 0.475");
+    }
+
+    #[test]
+    fn regexp_like_uses_string_match_statistics_and_defaults() {
+        let (table, stats) = stats_v2_name_column_fixture();
+        let resolver = NamedColumnResolver { table: &table };
+        for (pattern, flags, selected) in [
+            ("needle", None, 0.525),
+            ("NEEDLE", Some("i"), 0.525),
+            ("NEEDLE", Some("c"), 0.0),
+        ] {
+            for negate in [false, true] {
+                let mut args = vec![
+                    tidb_ast::Expr::Column(vec!["name".to_owned()]),
+                    tidb_ast::Expr::String(pattern.to_owned()),
+                ];
+                if let Some(flags) = flags {
+                    args.push(tidb_ast::Expr::String(flags.to_owned()));
+                }
+                let mut predicate = tidb_ast::Expr::Func {
+                    name: "ReGeXp_LiKe".to_owned(),
+                    args,
+                    origin_position: 0,
+                };
+                if negate {
+                    predicate = tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not, Box::new(predicate));
+                }
+                let expected: f64 = if negate { 1.0 - selected } else { selected };
+                let actual = selectivity(&predicate, &table, &resolver, Some(&stats));
+                assert!(
+                    (actual - expected.max(0.01)).abs() < 1e-12,
+                    "pattern={pattern} flags={flags:?} negate={negate}: {actual}"
+                );
+                let explicit = selectivity_with_default_string_match_selectivity(
+                    &predicate,
+                    &table,
+                    &resolver,
+                    Some(&stats),
+                    0.25,
+                );
+                assert_eq!(explicit, if negate { 0.75 } else { 0.25 });
+            }
+        }
     }
 
     #[test]
