@@ -367,9 +367,14 @@ these.
    and immutable-key paths (`tidb-datatype/src/collation.rs`), and the
    Go `TestUTF8CollatorCompare` vector table — including `a` = `a `
    equal and `a\t` distinct — pins it (`collation_tests.rs`). What
-   remains open about `CHAR(n)` lives in the write-time flen handling
-   (`ProduceStrWithSpecifiedTp`), which belongs to the *Cast* family
-   below, not to an eval builtin.
+   The formerly-residual write-time `CHAR(n)`/`BINARY(n)` flen handling
+   (`ProduceStrWithSpecifiedTp`) is also absorbed (2026-09-13): the write
+   path truncates at the declared width with Go's verbatim `Data Too Long,
+   field len N, data len M` diagnostic, zero-pads a short BINARY value to
+   `flen` (`datum_convert.rs` `pad_zero` arm), and trims a non-binary
+   `CHAR(M)`'s trailing spaces (`write_cast.rs`
+   `truncate_char_trailing_spaces`), pinned by the Go-fixture and
+   `insert_strict_truncate_source` suites.
 5. *Cast* — **mostly absorbed (2026-09-04/05):** to/from signed and unsigned
    across int, decimal and real are long done; the arithmetic flen/decimal
    rules (`setFlenDecimal4RealOrDecimal`, `setType4DivDecimal` and their
