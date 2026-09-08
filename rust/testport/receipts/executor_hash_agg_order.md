@@ -57,3 +57,31 @@ cargo check --locked --all-targets -p tidb-executor
 rustfmt --edition 2021 --check crates/tidb-executor/src/driver/tests/aggregates.rs
 git diff --check -- rust
 ```
+
+## Follow-up: the HashAgg cost reads the session's final concurrency (2026-09-09)
+
+Go `getPlanCostVer24PhysicalHashAgg` (`plan_cost_ver2.go:675`) divides the
+aggregation, grouping, hash-build and hash-probe CPU by
+`HashAggFinalConcurrency()`, which is the session's resolved
+`tidb_hashagg_final_concurrency` (an unset value falls back to
+`tidb_executor_concurrency`). The Rust coster hard-coded `5.0`, so a SERIAL
+session still costed a HashAgg as if five final workers ran and picked it over
+the StreamAgg Go chooses.
+
+`Ver2Coster` now reads `self.session.hashagg_final_concurrency`, and
+`StmtContext::with_hashagg_concurrency` stamps the same value onto the
+optimizer cost environment so the statement's resolved worker count reaches the
+coster (the production session already builds `CostEnv` from the session vars).
+
+`driver::tests::aggregates::joined_integer_sum_uses_root_stream_agg` was
+authored from the tpcds comparison that ran every concurrency variable at 1; it
+now pins that serial session instead of the five-worker default, which is what
+makes Go's cost model choose the root StreamAgg.
+
+Regression: with the hard-coded `5.0` the coster prices HashAgg at
+2161701 and StreamAgg at 2534069 and picks HashAgg; with the session value (1)
+it prices HashAgg above StreamAgg and the test passes. Ready validation:
+`tidb-planner` lib 998 passed / 0 failed; `tidb-executor` lib serialized 1220
+passed / 32 failed, this test removed from the baseline with no additions;
+`cargo check --locked --all-targets -p tidb-planner -p tidb-executor` clean;
+`rustfmt --edition 2021 --check` clean; `git diff --check -- rust` clean.

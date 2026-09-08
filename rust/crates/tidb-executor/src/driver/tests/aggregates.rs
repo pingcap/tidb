@@ -2981,7 +2981,11 @@ fn joined_integer_sum_uses_root_stream_agg() {
         &mut catalog,
     )
     .unwrap();
-    let ctx = crate::StmtContext::for_query();
+    // Go picks the serial root StreamAgg only when the HashAgg's divided
+    // CPU cost loses; with the default five final workers it picks HashAgg.
+    // The tpcds matrix this test was authored from ran every concurrency
+    // variable at 1, so pin the same serial session.
+    let ctx = crate::StmtContext::for_query().with_hashagg_concurrency(1, 1);
     run_insert_on(
         "INSERT INTO sum_orders VALUES (1,10,7),(2,20,11),(3,30,13)",
         &mut catalog,

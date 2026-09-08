@@ -971,6 +971,14 @@ both `oltp_read_only` and `oltp_read_write`.
   `aggregate_having_and_order_by` saw final-worker order. Both now use
   `with_hashagg_concurrency(1, 1)`, which is Go's serial selection. Receipt:
   `rust/testport/receipts/executor_hash_agg_order.md`.
+- [x] 2026-09-09: made the HashAgg cost read the session's final concurrency.
+  Go divides the HashAgg's CPU by `HashAggFinalConcurrency()`, the resolved
+  `tidb_hashagg_final_concurrency`; the Rust coster hard-coded 5, so a serial
+  session still picked HashAgg over the root StreamAgg Go chooses.
+  `Ver2Coster` reads `self.session.hashagg_final_concurrency`, and
+  `with_hashagg_concurrency` stamps it onto the optimizer cost environment.
+  One executor test fixed. Receipt:
+  `rust/testport/receipts/executor_hash_agg_order.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

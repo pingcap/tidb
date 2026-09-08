@@ -569,10 +569,13 @@ impl Ver2Coster {
                         self.factors.task_mem(task_type),
                         1.0,
                     ),
-                    // Go reads HashAggFinalConcurrency(), which resolves to
-                    // tidb_executor_concurrency's default of 5
-                    // (vardef.DefExecutorConcurrency).
-                    5.0,
+                    // Go reads `HashAggFinalConcurrency()`, which is the
+                    // session's resolved `tidb_hashagg_final_concurrency` (the
+                    // unset value falls back to `tidb_executor_concurrency`).
+                    // It is NOT always 5: a serial session makes the HashAgg's
+                    // divided CPU cost lose to a StreamAgg, which is exactly
+                    // how Go picks the serial root StreamAgg.
+                    self.session.hashagg_final_concurrency,
                     task_type,
                     &self.children_cost(plan, task_type, is_child_of_inl),
                 )

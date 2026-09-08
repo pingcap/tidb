@@ -2000,10 +2000,17 @@ impl StmtContext {
     }
 
     /// Attaches Go's two resolved HashAgg worker counts.
+    ///
+    /// Go's cost model reads `HashAggFinalConcurrency()` directly from the
+    /// session, so the optimizer cost environment has to see the same value;
+    /// otherwise a serial statement would still be costed as if five final
+    /// workers were running and would pick a HashAgg over the StreamAgg Go
+    /// chooses.
     #[must_use]
     pub const fn with_hashagg_concurrency(mut self, partial: usize, final_: usize) -> Self {
         self.hashagg_partial_concurrency = partial;
         self.hashagg_final_concurrency = final_;
+        self.optimizer_cost_env.session.hashagg_final_concurrency = final_ as f64;
         self
     }
 
