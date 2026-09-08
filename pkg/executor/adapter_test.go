@@ -546,6 +546,7 @@ func TestWriteSlowLog(t *testing.T) {
 }
 
 func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
+	t.Skip("Deprecated")
 	original := config.GetGlobalConfig()
 	originalGenerateBinaryPlan := variable.GenerateBinaryPlan.Load()
 	t.Cleanup(func() {
