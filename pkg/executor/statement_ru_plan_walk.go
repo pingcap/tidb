@@ -142,10 +142,10 @@ func (a *ExecStmt) recordStatementRURootEOF() {
 // TODO: when the statement-RU failure metric lands, count the bounded failure
 // reasons at these fail-closed exits and publisher recoveries. Until then there
 // is deliberately no recorder-shaped no-op API.
-func (a *ExecStmt) finishStatementRU(terminalErr error) {
+func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 	owner := a.statementRUOwner
 	if owner == nil {
-		return
+		return 0
 	}
 
 	var finalized statementRUFinalizedSnapshot
@@ -217,7 +217,9 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) {
 	})
 	if publishFinalized {
 		publishStatementRUFinalizedSnapshot(a, finalized)
+		return finalized.result.TotalRU
 	}
+	return 0
 }
 
 func calculateStatementRUPointLookup(
