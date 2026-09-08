@@ -44,8 +44,7 @@ var (
 )
 
 const (
-	maxMergeReaderMemoryPerCore       = 256 * units.MiB
-	minMergePartSize            int64 = 16 * units.MiB
+	maxMergeReaderMemoryPerCore = 256 * units.MiB
 )
 
 var _ execute.Collector = &mergeCollector{}
@@ -390,5 +389,5 @@ func getMergePartSize(inputSize int64, fileCount, blockSize int) int64 {
 	if maxOutputSize%simplesst.MaxUploadPartCount != 0 {
 		partSize++
 	}
-	return max(minMergePartSize, partSize)
+	return max(simplesst.MinUploadPartSize, partSize)
 }
