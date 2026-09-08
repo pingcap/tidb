@@ -16,7 +16,6 @@ package scheduler
 
 import (
 	"context"
-	goerrors "errors"
 	"slices"
 	"time"
 
@@ -458,7 +457,7 @@ func (sm *Manager) runExpiredFileClean() {
 			continue
 		}
 		if err := cleaner.CleanExpiredFiles(sm.ctx, sm.taskMgr, cloudStorageURI); err != nil {
-			if ctxErr := sm.ctx.Err(); ctxErr != nil && goerrors.Is(err, ctxErr) {
+			if sm.ctx.Err() != nil {
 				return
 			}
 			// Expired-file cleanup is owner-wide rather than task-specific.

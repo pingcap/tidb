@@ -165,7 +165,7 @@ func TestRunExpiredFileClean(t *testing.T) {
 		require.False(t, constructorCalled)
 	})
 
-	t.Run("cancellation error stops the current sweep", func(t *testing.T) {
+	t.Run("manager cancellation stops the current sweep regardless of cleaner error", func(t *testing.T) {
 		ClearCleanerFactory()
 		t.Cleanup(ClearCleanerFactory)
 		setCloudStorageURIForTest(t, "s3://bucket")
@@ -179,7 +179,7 @@ func TestRunExpiredFileClean(t *testing.T) {
 			string,
 		) error {
 			mgr.Cancel()
-			return context.Canceled
+			return errors.New("storage cancellation error")
 		})
 		constructorCalls := 0
 		RegisterCleanerFactory(proto.ImportInto, func() Cleaner {
@@ -208,7 +208,10 @@ func TestExpiredFileCleanLoop(t *testing.T) {
 
 		ctrl := gomock.NewController(t)
 		mgr := NewManager(context.Background(), nil, nil, "1", proto.NodeResourceForTest)
-		t.Cleanup(mgr.Cancel)
+		t.Cleanup(func() {
+			mgr.Cancel()
+			waitManagerLoops(t, mgr)
+		})
 		callCh := make(chan struct{}, 1)
 		cleaner := mock.NewMockExpiredFileCleaner(ctrl)
 		cleaner.EXPECT().CleanExpiredFiles(mgr.ctx, nil, "s3://bucket/dxf/").DoAndReturn(func(
@@ -242,9 +245,12 @@ func TestExpiredFileCleanLoop(t *testing.T) {
 		setCloudStorageURIForTest(t, "s3://bucket")
 
 		mgr := NewManager(context.Background(), nil, nil, "1", proto.NodeResourceForTest)
-		t.Cleanup(mgr.Cancel)
 		cleanupCalled := make(chan struct{}, 1)
 		ctrl := gomock.NewController(t)
+		t.Cleanup(func() {
+			mgr.Cancel()
+			waitManagerLoops(t, mgr)
+		})
 		cleaner := mock.NewMockExpiredFileCleaner(ctrl)
 		cleaner.EXPECT().CleanExpiredFiles(mgr.ctx, nil, "s3://bucket/dxf/").DoAndReturn(func(
 			context.Context,
