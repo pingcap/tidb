@@ -9,3 +9,12 @@ jobs = 12
 # crates at once, so a higher per-crate thread count mostly oversubscribes a
 # machine that is often also running a TiUP cluster and a sysbench workload.
 rustflags = ["-Zthreads=8"]
+
+[env]
+# The test harness runs each test on a thread with a 2 MiB default stack.
+# The vendored `tikv-client-rs` mock's async lock-resolution future chain
+# (`third_party/tikv-client-rs/src/transaction/lock.rs`, reached through the
+# mock transaction commit path) overflows that in a debug build, so several
+# `tidb-txnkv` integration tests abort with `has overflowed its stack`.
+# 32 MiB is the size those tests need; it costs one thread's stack per test.
+RUST_MIN_STACK = "33554432"

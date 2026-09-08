@@ -4,6 +4,13 @@ Run commands from `rust/`. Cargo always uses 12 jobs.
 Run Cargo commands serially in this workspace; concurrent commands contend on
 the same target-directory lock and are slower than one `-j12` invocation.
 
+`.cargo/config.toml` sets `RUST_MIN_STACK=33554432`. The vendored
+`tikv-client-rs` mock's async lock-resolution future chain
+(`third_party/tikv-client-rs/src/transaction/lock.rs`) overflows the 2 MiB
+default test-thread stack in a debug build, aborting several `tidb-txnkv`
+integration tests with `has overflowed its stack`. Cargo applies the variable
+to the test binaries it runs, so no shell override is needed.
+
 ## Commands
 
 A unit-test filter without `--lib` starts every integration-test binary. Select

@@ -829,20 +829,24 @@ where
 mod detached_flusher_tests {
     use super::*;
 
-    fn flush_threads() -> usize {
-        std::fs::read_dir("/proc/self/task")
-            .map(|entries| {
-                entries
-                    .filter_map(std::result::Result::ok)
-                    .filter(|entry| {
-                        // /proc comm truncates to 15 chars.
-                        std::fs::read_to_string(format!("{}/comm", entry.path().display()))
-                            .map(|comm| comm.trim().starts_with("txn-secondary"))
-                            .unwrap_or(false)
-                    })
-                    .count()
-            })
-            .unwrap_or(0)
+    /// Counts this process's detached-flusher OS threads.
+    ///
+    /// Go names the goroutine's OS thread `txn-secondary`, and the test
+    /// observes it through `/proc/self/task`, which only Linux provides.
+    /// `None` means this platform cannot answer, so the thread-count assertion
+    /// is skipped there instead of reading as zero threads.
+    fn flush_threads() -> Option<usize> {
+        std::fs::read_dir("/proc/self/task").ok().map(|entries| {
+            entries
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| {
+                    // /proc comm truncates to 15 chars.
+                    std::fs::read_to_string(format!("{}/comm", entry.path().display()))
+                        .map(|comm| comm.trim().starts_with("txn-secondary"))
+                        .unwrap_or(false)
+                })
+                .count()
+        })
     }
 
     fn one_request() -> OwnedTransactionCommitRequest {
@@ -880,10 +884,15 @@ mod detached_flusher_tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let after = flush_threads();
-        assert_eq!(
-            after,
-            before + 1,
-            "exactly one persistent flusher thread, not one per commit"
-        );
+        // The thread-name observation needs Linux `/proc`; the queue-drain
+        // assertion above already runs everywhere, and the one-worker property
+        // is structural (`DETACHED_FLUSH_QUEUE` is a `OnceLock`).
+        if let (Some(before), Some(after)) = (before, after) {
+            assert_eq!(
+                after,
+                before + 1,
+                "exactly one persistent flusher thread, not one per commit"
+            );
+        }
     }
 }
