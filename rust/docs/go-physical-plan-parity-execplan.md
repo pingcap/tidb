@@ -1334,6 +1334,27 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Surprises & Discoveries
 
+- Observation (2026-09-09): the three remaining join-choice failures all turn
+  on MergeJoin versus IndexJoin/IndexHashJoin under the synthetic
+  `scale_analyzed_tpcc_table` statistics, not on the cost FORMULAS. With a
+  temporary candidate-cost trace:
+  - `tpcc_check_seven`: MergeJoin 29,585,708 vs IndexJoin(hash) 45,275,950;
+    Go's captured analyzed plan chooses IndexHashJoin while its own
+    pre-analyze plan (which the same test asserts) chooses MergeJoin, so the
+    choice flips with the analyzed stats. A real-ANALYZE Go probe for the
+    `k IN (SELECT k FROM inner_t)` shape chose IndexJoin like this port, which
+    points at either (a) the synthetic helper's histogram/row-size shape or
+    (b) our possible-properties claiming the merge order without the sort
+    enforcer Go may add. `getPlanCostVer24PhysicalMergeJoin` and the Rust
+    `merge_join_cost` are line-for-line equivalent (child costs + filter +
+    group, times `tidb_opt_merge_join_cost_factor`, default 1.0).
+  - `correlated_sum_predicate_pulls_above_unique_outer_join` wants an
+    `IndexHashJoin(Build)` where this port builds a MergeJoin; same family.
+  Next step for the final rounds: diff `prepare_possible_properties`' claimed
+  orders against Go's `DataSource.PreparePossibleProperties` /
+  `tryToGetChildReqProp` for common-handle point-range scans before touching
+  any cost formula.
+
 - Observation: commit `e2788410d8` was benchmark-shaped rather than
   Go-shaped. It named `bulk_insert.lua` in production code, recognized only
   all-integer VALUES lists on a narrow heap-table shape, and returned from a
