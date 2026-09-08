@@ -105,7 +105,7 @@ pub fn func_prop(name: &str) -> FuncProp {
         | "substring_index" | "trim" | "elt"
         /* operators */
         | "ge" | "le" | "gt" | "lt" | "eq" | "ne" | "nulleq" | "if" | "ifnull" | "in"
-        | "case_when" | "cast"
+        | "case" | "cast"
         /* string comparing */
         | "like" | "ilike" | "strcmp"
         /* regex */

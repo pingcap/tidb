@@ -606,7 +606,7 @@ pub(crate) fn build_cast_function(
     ) {
         if let Expression::ScalarFunction(control) = &expr {
             let name = control.func_name.lowercase();
-            if matches!(name, "if" | "case_when" | "elt") {
+            if matches!(name, "if" | "case" | "elt") {
                 let is_hybrid = |e: &Expression| {
                     e.static_type()
                         .is_some_and(|ft| ft.is_hybrid() && ft.code() != FieldTypeCode::Bit)
@@ -614,7 +614,7 @@ pub(crate) fn build_cast_function(
                 let len = control.args.len();
                 let branch_indexes: Vec<usize> = match name {
                     "if" => vec![1, 2],
-                    "case_when" => {
+                    "case" => {
                         let mut indexes: Vec<usize> = (1..len).step_by(2).collect();
                         if len % 2 == 1 {
                             indexes.push(len - 1);
@@ -641,7 +641,7 @@ pub(crate) fn build_cast_function(
                         // Go rebuilds the control function over the wrapped
                         // args and adopts the rebuilt signature's ret type;
                         // the OUTER cast still wraps the rebuilt node.
-                        let inferred = if name == "case_when" {
+                        let inferred = if name == "case" {
                             let branches: Vec<Expression> = args
                                 .iter()
                                 .skip(1)
@@ -649,7 +649,7 @@ pub(crate) fn build_cast_function(
                                 .chain((args.len() % 2 == 1).then(|| args.last()).flatten())
                                 .cloned()
                                 .collect();
-                            crate::rewriter::builtin_return_type("case_when", &branches)
+                            crate::rewriter::builtin_return_type("case", &branches)
                         } else if name == "elt" {
                             crate::rewriter::builtin_return_type("elt", &args)
                         } else {

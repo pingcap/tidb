@@ -1936,7 +1936,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // branches (the `Expr::Case` arm of `rewrite_expr_resolved`), which
         // is Go's own `thenArgs`.
         "if" if args.len() == 3 => super::control_type::infer_type4_control_funcs("if", &args[1..])?,
-        "case_when" | "ifnull" | "coalesce" => {
+        "case" | "ifnull" | "coalesce" => {
             super::control_type::infer_type4_control_funcs(name, args)?
         }
         _ => return None,

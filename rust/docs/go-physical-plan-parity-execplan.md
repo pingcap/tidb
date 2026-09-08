@@ -989,6 +989,17 @@ both `oltp_read_only` and `oltp_read_write`.
   injected SUM argument is a fresh column separate from the aggregate output;
   the count state precedes the group-key carrier). Two executor tests fixed.
   Receipt: `rust/testport/receipts/executor_hash_agg_order.md`.
+- [x] 2026-09-09: aligned CASE and EXTRACT with Go's expression names. Go keys
+  the control builtin by `ast.Case` = `case`, so the Rust `case_when` name
+  broke `new_function` rebuilds (the aggregation-push-down projection crossing
+  refused), left the CASE fold handler dead, and printed the wrong name in
+  EXPLAIN; every literal is now `case`. Go also keeps
+  `EXTRACT(unit FROM value)` as `extract(unit, value)`, while Rust rewrote it
+  to `unit(value)`; the rewriter and chunk evaluator now build and evaluate
+  Go's two-argument call. Projection expressions render through Go's
+  `StringWithCtx` (bare string constants) while conditions keep
+  `ExplainInfo` (quoted). One executor test fixed. Receipt:
+  `rust/testport/receipts/expression_case_extract_names.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

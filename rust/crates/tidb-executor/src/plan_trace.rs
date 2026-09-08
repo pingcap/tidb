@@ -34,10 +34,29 @@ fn collect_physical_or<'a>(expression: &'a Expression, out: &mut Vec<&'a Express
     out.push(expression);
 }
 
+/// Which of Go's two expression renderers a caller needs.
+///
+/// Go renders a physical plan's operator text through `Expression.ExplainInfo`
+/// for conditions (Selection/Join/aggregate arguments) but through
+/// `Expression.StringWithCtx` for Projection/Expand expressions
+/// (`ExplainExpressionList`, `explain.go:188`). The two differ in how a
+/// nested string constant prints: `ExplainInfo` quotes it
+/// (`Constant.format`, `explain.go:176`), while `StringWithCtx` prints
+/// `TruncatedStringify` bare (`constant.go:181`) -- which is why Go's own q14
+/// recording shows `case(like(test.part.p_type, PROMO%, 92), ..., 0.0000)`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExpressionTextStyle {
+    /// Go `Expression.ExplainInfo`: string constants are quoted.
+    Explain,
+    /// Go `Expression.StringWithCtx`: string constants print bare.
+    StringWithCtx,
+}
+
 /// Renders the physical-expression subset used by physical-plan EXPLAIN.
 pub(crate) fn physical_expression_text_with_columns(
     expression: &Expression,
     column_names: &[Option<String>],
+    style: ExpressionTextStyle,
 ) -> Option<String> {
     match expression {
         Expression::Column(column) if column.unique_id < 0 => {
@@ -69,11 +88,12 @@ pub(crate) fn physical_expression_text_with_columns(
                 let mut rendered = physical_expression_text_with_columns(
                     parts.pop().expect("OR has an operand"),
                     column_names,
+                    style,
                 )?;
                 for part in parts.into_iter().rev() {
                     rendered = format!(
                         "or({}, {rendered})",
-                        physical_expression_text_with_columns(part, column_names)?
+                        physical_expression_text_with_columns(part, column_names, style)?
                     );
                 }
                 return Some(rendered);
@@ -81,7 +101,9 @@ pub(crate) fn physical_expression_text_with_columns(
             let arguments = function
                 .args
                 .iter()
-                .map(|argument| physical_expression_text_with_columns(argument, column_names))
+                .map(|argument| {
+                    physical_expression_text_with_columns(argument, column_names, style)
+                })
                 .collect::<Option<Vec<_>>>()?;
             match function.func_name.lowercase() {
                 "cast_decimal" => {
@@ -102,10 +124,32 @@ pub(crate) fn physical_expression_text_with_columns(
                 name => Some(format!("{name}({})", arguments.join(", "))),
             }
         }
-        Expression::Constant(constant) if constant.param_marker.is_none() => {
-            explain_constant(constant)
-        }
+        Expression::Constant(constant) if constant.param_marker.is_none() => match style {
+            ExpressionTextStyle::Explain => explain_constant(constant),
+            ExpressionTextStyle::StringWithCtx => string_with_ctx_constant(constant),
+        },
         Expression::Constant(_) | Expression::CorrelatedColumn(_) => None,
+    }
+}
+
+/// Go `Constant.StringWithCtx` (`constant.go:181`): the Projection
+/// renderer, which prints a string constant WITHOUT quotes.
+fn string_with_ctx_constant(constant: &tidb_expr::constant::Constant) -> Option<String> {
+    if constant.deferred_expr.is_some() || constant.param_marker.is_some() {
+        return None;
+    }
+    let value = constant
+        .value
+        .truncated_stringify()
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())?;
+    if constant.subquery_ref_id > 0 {
+        Some(format!(
+            "ScalarQueryCol#{}({value})",
+            constant.subquery_ref_id
+        ))
+    } else {
+        Some(value)
     }
 }
 
@@ -199,7 +243,7 @@ pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_a
 
 #[cfg(test)]
 mod tests {
-    use super::physical_expression_text_with_columns;
+    use super::{physical_expression_text_with_columns, ExpressionTextStyle};
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::expression::Expression;
@@ -210,7 +254,11 @@ mod tests {
     #[test]
     fn a_min_unique_id_column_renders_without_overflow() {
         let column = Column::new(i64::MIN, FieldType::new(FieldTypeCode::LongLong));
-        let rendered = physical_expression_text_with_columns(&Expression::Column(column), &[]);
+        let rendered = physical_expression_text_with_columns(
+            &Expression::Column(column),
+            &[],
+            ExpressionTextStyle::Explain,
+        );
         assert_eq!(
             rendered.as_deref(),
             Some("ScalarQueryCol#-9223372036854775808")

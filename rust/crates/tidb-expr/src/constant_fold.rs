@@ -480,7 +480,7 @@ fn is_deferred_function(name: &str, arg_count: usize) -> bool {
 fn is_lazy_short_circuit(name: &str) -> bool {
     matches!(
         name,
-        "if" | "ifnull" | "case" | "case_when" | "and" | "or" | "xor" | "nullif" | "coalesce"
+        "if" | "ifnull" | "case" | "and" | "or" | "xor" | "nullif" | "coalesce"
             // Go `TryFoldFunctions` (function_traits.go:81) puts `ast.Interval`
             // in the try-fold scope: its arguments are try-folded and any
             // warning keeps the function unfolded. Skipping the arguments in

@@ -1361,11 +1361,11 @@ fn rewrite_leaf_compound(
                 })
                 .cloned()
                 .collect();
-            let ret_type = builtin_return_type("case_when", &branches).ok_or(
-                EvalError::Unsupported("a CASE whose branches have different types"),
-            )?;
+            let ret_type = builtin_return_type("case", &branches).ok_or(EvalError::Unsupported(
+                "a CASE whose branches have different types",
+            ))?;
             Ok(Expression::ScalarFunction(ScalarFunction::new(
-                CiString::new("case_when"),
+                CiString::new("case"),
                 ret_type,
                 args,
             )))
@@ -1454,23 +1454,20 @@ fn rewrite_leaf_compound(
 #[inline(never)]
 fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
     match expr {
-        // `EXTRACT(unit FROM value)` is sugar for the SAME single-argument
-        // function `unit` already names, exactly as the AST evaluator treats
-        // it (see `crate::eval_in`'s own `Expr::Extract` arm) — so it is
-        // rewritten into that builtin call and needs no chunk machinery of
-        // its own. This includes a composite unit (`HOUR_MINUTE`,
-        // `DAY_SECOND`, ...): `time_fn::dispatch` names a function for those
-        // too (`time_fn::calendar::extract_composite`), and
-        // `builtin_return_type` below types them the same `int()` as every
-        // other EXTRACT unit.
-        Expr::Extract { unit, value } => rewrite_expr_resolved(
-            &Expr::Func {
-                name: unit.clone(),
-                args: vec![(**value).clone()],
-                origin_position: 0,
-            },
-            resolver,
-        ),
+        // Go's parser keeps `EXTRACT(unit FROM value)` as a two-argument
+        // `extract` call: `parseExtractFunc` builds `FuncCallExpr{FnName:
+        // ast.Extract, Args: [TimeUnitExpr, value]}` and the rewriter turns
+        // the unit into a VARCHAR constant (`expression_rewriter.go:1838`).
+        // Go's `extractFunctionClass.getFunction` then types the VALUE per
+        // unit; this port's shared unit functions coerce the value the same
+        // way, so the call is built here with the unit as the first argument
+        // and the value second, exactly as the AST evaluator's own
+        // `Expr::Extract` arm evaluates it (`crate::eval_in`).
+        Expr::Extract { unit, value } => {
+            let unit = constant(Datum::new_string(unit.clone()), FieldTypeCode::VarString);
+            let value = rewrite_expr_resolved(value, resolver)?;
+            Ok(scalar("extract", vec![unit, value]))
+        }
         // The first GET_FORMAT argument is grammar, not an expression. Go's
         // parser turns it into the signature's first ETString constant and
         // collapses TIMESTAMP into DATETIME before evaluation.

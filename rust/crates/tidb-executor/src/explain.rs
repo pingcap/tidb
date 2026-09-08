@@ -78,7 +78,24 @@ fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
 }
 
 fn expression_text(expression: &tidb_expr::expression::Expression) -> String {
-    crate::plan_trace::physical_expression_text_with_columns(expression, &[]).unwrap_or_default()
+    crate::plan_trace::physical_expression_text_with_columns(
+        expression,
+        &[],
+        crate::plan_trace::ExpressionTextStyle::Explain,
+    )
+    .unwrap_or_default()
+}
+
+/// Go `Expression.StringWithCtx`: the renderer `ExplainExpressionList` uses
+/// for a Projection's own expressions, where a nested string constant prints
+/// bare instead of quoted.
+fn expression_string_text(expression: &tidb_expr::expression::Expression) -> String {
+    crate::plan_trace::physical_expression_text_with_columns(
+        expression,
+        &[],
+        crate::plan_trace::ExpressionTextStyle::StringWithCtx,
+    )
+    .unwrap_or_default()
 }
 
 /// Go appends `stats:pseudo` only when a scan's `StatsInfo.StatsVersion` is
@@ -110,12 +127,12 @@ fn projection_text(
         .iter()
         .enumerate()
         .map(|(index, expression)| {
-            let rendered = expression_text(expression);
+            let rendered = expression_string_text(expression);
             let Some(output) = schema.and_then(|schema| schema.columns.get(index)) else {
                 return rendered;
             };
             let output =
-                expression_text(&tidb_expr::expression::Expression::Column(output.clone()));
+                expression_string_text(&tidb_expr::expression::Expression::Column(output.clone()));
             match expression {
                 // A column projected under the SAME identity prints once;
                 // a re-projected column with a different UniqueID prints both.
