@@ -10,6 +10,11 @@ s3-key-id = "minioadmin"
 s3-secret-key = "minioadmin"
 s3-bucket = "next-gen-test"
 s3-region = "local"
+remote-compactor-addr = "http://127.0.0.1:19000/compact"
+
+[kvengine]
+build-columnar = true
+build-fts-index = true
 
 # Disable remote coprocessor otherwise analyze table will report "other error: empty string" error.
 # [kvengine]

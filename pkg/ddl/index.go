@@ -717,8 +717,8 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName ast.CIStr, i
 	return false, nil
 }
 
-func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	tblInfo, from, invisible, err := checkAlterIndexVisibility(jobCtx.metaMut, job)
+func onAlterIndexVisibility(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	tblInfo, from, invisible, err := checkAlterIndexVisibility(sctx, jobCtx.infoCache, jobCtx.metaMut, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
@@ -892,7 +892,7 @@ func checkAndBuildIndexInfo(
 func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropIndex(jobCtx, job)
+		ver, err = onDropIndex(w.sess.Session(), jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -934,6 +934,13 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver 
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
+		// Reject before the first schema mutation when Columnar Storage is off.
+		// Submit-path already checks; re-check here so ON->OFF between enqueue and
+		// owner execution cannot persist a columnar index.
+		if err := w.checkColumnarStorageEnabled(1, false); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, wrapColumnarStorageGateForColumnarIndex(err)
+		}
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != indexInfo.State)
@@ -1089,7 +1096,15 @@ func (*worker) checkColumnarIndexProcessFromTiKV(jobCtx *jobContext, tbl table.T
 		}
 		tikvStores[store.Store.ID] = store
 	}
-	progress, err := infosync.CalculateColumnarIndexProgress(tbl.Meta().ID, indexID, tikvStores)
+	indexInfo := tbl.Meta().FindIndexByID(indexID)
+	if indexInfo == nil {
+		return false, 0, errors.Errorf("could not find indexInfo by %d", indexID)
+	}
+	columnarIndexType := indexInfo.GetColumnarIndexType()
+	if columnarIndexType == model.ColumnarIndexTypeNA {
+		return false, 0, errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.GenWithStackByArgs("Columnar does not support index types."))
+	}
+	progress, err := infosync.CalculateColumnarIndexProgress(tbl.Meta().ID, indexID, columnarIndexType, tikvStores)
 	if err != nil {
 		return false, 0, err
 	}
@@ -1161,7 +1176,7 @@ func (w *worker) checkColumnarIndexProcessOnce(jobCtx *jobContext, tbl table.Tab
 func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropIndex(jobCtx, job)
+		ver, err = onDropIndex(w.sess.Session(), jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1215,8 +1230,20 @@ SwitchIndexState:
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
+		var statsProvider autoPreSplitStatsProvider
+		for _, idxArg := range args.IndexArgs {
+			if idxArg.AutoPreSplit {
+				statsProvider = w.ddlCtx.statsHandle
+				break
+			}
+		}
+		err = preSplitIndexRegions(
+			jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos,
+			job.ReorgMeta, args, statsProvider)
 		if err != nil {
+			if dbterror.ErrPausedDDLJob.Equal(err) {
+				return ver, nil
+			}
 			if !isRetryableJobError(err, job.ErrorCount) {
 				job.State = model.JobStateCancelled
 			}
@@ -2073,8 +2100,8 @@ func runReorgJobAndHandleErr(
 	return true, ver, nil
 }
 
-func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	tblInfo, allIndexInfos, ifExists, err := checkDropIndex(jobCtx.infoCache, jobCtx.metaMut, job)
+func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	tblInfo, allIndexInfos, ifExists, err := checkDropIndex(sctx, jobCtx.infoCache, jobCtx.metaMut, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
 			job.Warning = toTError(err)
@@ -2241,7 +2268,7 @@ func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	tblInfo.Indices = slices.Delete(tblInfo.Indices, offset, offset+1)
 }
 
-func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
+func checkDropIndex(sctx sessionctx.Context, infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -2274,7 +2301,81 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
+	effectiveBaseTableInfo := buildEffectiveBaseTableInfoForDropIndexMViewMinMaxConstraints(
+		tblInfo,
+		indexInfos,
+		job.Type == model.ActionDropPrimaryKey,
+	)
+	for _, idxArg := range args.IndexArgs {
+		if err := checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
+			sctx,
+			infoCache,
+			job,
+			tblInfo,
+			effectiveBaseTableInfo,
+			idxArg.IndexName,
+			"DROP INDEX",
+		); err != nil {
+			return nil, nil, false, err
+		}
+	}
 	return tblInfo, indexInfos, false, nil
+}
+
+func buildEffectiveBaseTableInfoForDropIndexMViewMinMaxConstraints(
+	baseTableInfo *model.TableInfo,
+	indexInfos []*model.IndexInfo,
+	dropPrimaryKey bool,
+) *model.TableInfo {
+	effectiveBaseTableInfo := baseTableInfo.Clone()
+	for _, indexInfo := range indexInfos {
+		removeIndexInfo(effectiveBaseTableInfo, indexInfo)
+	}
+	if dropPrimaryKey {
+		effectiveBaseTableInfo.PKIsHandle = false
+	}
+	return effectiveBaseTableInfo
+}
+
+func buildEffectiveBaseTableInfoForAlterIndexVisibilityMViewMinMaxConstraints(
+	baseTableInfo *model.TableInfo,
+	indexName ast.CIStr,
+	invisible bool,
+) *model.TableInfo {
+	effectiveBaseTableInfo := baseTableInfo.Clone()
+	setIndexVisibility(effectiveBaseTableInfo, indexName, invisible)
+	return effectiveBaseTableInfo
+}
+
+func checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
+	sctx sessionctx.Context,
+	infoCache *infoschema.InfoCache,
+	job *model.Job,
+	baseTableInfo *model.TableInfo,
+	effectiveBaseTableInfo *model.TableInfo,
+	indexName ast.CIStr,
+	op string,
+) error {
+	// Multi-schema changes validate against the final effective table shape.
+	// Checking each sub-job here would inspect an intermediate owner state.
+	if job.MultiSchemaInfo != nil || !hasMaterializedViewDependsOnBaseTable(baseTableInfo) {
+		return nil
+	}
+	if err := checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
+		context.Background(),
+		infoCache.GetLatest(),
+		sctx,
+		ast.NewCIStr(job.SchemaName),
+		baseTableInfo,
+		effectiveBaseTableInfo,
+		ast.CIStr{},
+		indexName,
+		op,
+	); err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, job *model.Job) error {
@@ -2327,7 +2428,7 @@ func checkRenameIndex(t *meta.Mutator, job *model.Job) (tblInfo *model.TableInfo
 	return tblInfo, from, to, errors.Trace(err)
 }
 
-func checkAlterIndexVisibility(t *meta.Mutator, job *model.Job) (*model.TableInfo, ast.CIStr, bool, error) {
+func checkAlterIndexVisibility(sctx sessionctx.Context, infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, ast.CIStr, bool, error) {
 	var (
 		indexName ast.CIStr
 		invisible bool
@@ -2354,6 +2455,20 @@ func checkAlterIndexVisibility(t *meta.Mutator, job *model.Job) (*model.TableInf
 	if skip {
 		job.State = model.JobStateDone
 		return nil, indexName, invisible, nil
+	}
+	if invisible {
+		effectiveBaseTableInfo := buildEffectiveBaseTableInfoForAlterIndexVisibilityMViewMinMaxConstraints(tblInfo, indexName, true)
+		if err := checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
+			sctx,
+			infoCache,
+			job,
+			tblInfo,
+			effectiveBaseTableInfo,
+			indexName,
+			"ALTER INDEX INVISIBLE",
+		); err != nil {
+			return nil, indexName, invisible, err
+		}
 	}
 	return tblInfo, indexName, invisible, nil
 }

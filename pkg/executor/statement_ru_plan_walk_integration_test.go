@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -34,12 +35,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 const (
@@ -113,12 +116,17 @@ func drainStatementRURecordSet(t *testing.T, rs sqlexec.RecordSet) error {
 	}
 }
 
-func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
-	originalCollectExecutionInfo := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+func enableStatementRUExecutionInfo(t *testing.T) {
+	t.Helper()
+	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
 	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
 	t.Cleanup(func() {
-		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(originalCollectExecutionInfo)
+		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(original)
 	})
+}
+
+func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -142,7 +150,7 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 		observedConnectionID uint64,
 		state string,
-		_, scanBytes, _, _ float64,
+		_, scanBytes, _, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -197,12 +205,20 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 }
 
 func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("producer plans publish only supported operator trees", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
+		tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b), index idx_c(c))")
 		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+		tk.MustExec("create table nullable_join(a int)")
+		tk.MustExec("insert into nullable_join values (1), (null), (2)")
+		tk.MustExec("create table naaj_a(a int, b int, c int)")
+		tk.MustExec("create table naaj_b(a int, b int, c int)")
+		tk.MustExec("insert into naaj_a values (1, 1, 1)")
+		tk.MustExec("insert into naaj_b values (1, 2, 2), (1, null, 3)")
 		tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = off")
 
 		var observation *statementRUObservation
@@ -212,12 +228,14 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			}
 		})
 		type calibrationObservation struct {
-			count         int
-			state         string
-			cpuWork       float64
-			scanBytes     float64
-			netBytes      float64
-			frontendBytes float64
+			count          int
+			state          string
+			cpuWork        float64
+			scanBytes      float64
+			netBytes       float64
+			frontendBytes  float64
+			hashStateRows  float64
+			joinOutputRows float64
 		}
 		connectionID := tk.Session().GetSessionVars().ConnectionID
 		var calibrationMu sync.Mutex
@@ -225,7 +243,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 			observedConnectionID uint64,
 			state string,
-			cpuWork, scanBytes, netBytes, frontendCompileBytes float64,
+			cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -238,16 +256,24 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			calibration.scanBytes = scanBytes
 			calibration.netBytes = netBytes
 			calibration.frontendBytes = frontendCompileBytes
+			calibration.hashStateRows = hashStateRows
+			calibration.joinOutputRows = joinOutputRows
 		})
 		type operatorExpectation func(base.Plan) bool
 		testCases := []struct {
 			name           string
+			before         []string
+			after          []string
 			query          string
 			rows           [][]any
 			expectOperator operatorExpectation
 			sortRows       bool
 			wantPublish    bool
 			wantCPUWork    bool
+			wantHashState  bool
+			wantHashRows   float64
+			wantJoinOutput bool
+			wantRootAndCop bool
 		}{
 			{name: "Selection", query: "select * from t ignore index (idx_b) where b > 10", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSelection], sortRows: true, wantPublish: true, wantCPUWork: true},
 			{name: "Sort", query: "select * from t ignore index (idx_b) order by b desc", rows: testkit.Rows("3 30 300", "2 20 200", "1 10 100"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSort], wantPublish: true, wantCPUWork: true},
@@ -255,10 +281,32 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			{name: "Limit", query: "select * from t ignore index (idx_b) limit 2", rows: testkit.Rows("1 10 100", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalLimit], wantPublish: true, wantCPUWork: true},
 			{name: "IndexReader", query: "select b from t use index (idx_b) where b >= 20", rows: testkit.Rows("20", "30"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexReader], sortRows: true, wantPublish: true},
 			{name: "IndexLookup", query: "select * from t use index (idx_b) where b >= 20", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexLookUpReader], sortRows: true, wantPublish: true},
-			{name: "unsupported Projection", query: "select b + 1 from t ignore index (idx_b)", rows: testkit.Rows("11", "21", "31"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalProjection], sortRows: true},
+			{name: "IndexMergeReader", query: "select /*+ USE_INDEX_MERGE(t, idx_b, idx_c) */ * from t where b = 10 or c = 200", rows: testkit.Rows("1 10 100", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexMergeReader], sortRows: true, wantPublish: true},
+			{name: "UnionScan", before: []string{"begin", "insert into t values (4, 40, 400)"}, after: []string{"rollback"}, query: "select * from t ignore index (idx_b, idx_c) where a >= 3", rows: testkit.Rows("3 30 300", "4 40 400"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalUnionScan], sortRows: true, wantPublish: true, wantCPUWork: true},
+			{name: "HashJoin optimized", before: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantJoinOutput: true},
+			{name: "HashJoin legacy", before: []string{"set tidb_hash_join_version = 'legacy'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantJoinOutput: true},
+			{name: "HashJoin legacy excludes ordinary null keys", before: []string{"set tidb_hash_join_version = 'legacy'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(n1, n2) */ * from nullable_join n1 join nullable_join n2 on n1.a = n2.a", rows: testkit.Rows("1 1", "2 2"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 2, wantJoinOutput: true},
+			{name: "HashJoin legacy NAAJ includes null bucket", before: []string{"set tidb_hash_join_version = 'legacy'", "set tidb_enable_null_aware_anti_join = on"}, after: []string{"set tidb_enable_null_aware_anti_join = default", "set tidb_hash_join_version = 'optimized'"}, query: "select * from naaj_a where (a, b) not in (select a, b from naaj_b)", rows: testkit.Rows(), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 2},
+			{name: "MergeJoin", query: "select /*+ MERGE_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalMergeJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "IndexJoin", query: "select /*+ INL_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "IndexHashJoin", query: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "HashAgg parallel", query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
+			{name: "HashAgg serial", before: []string{"set tidb_hashagg_partial_concurrency = 1", "set tidb_hashagg_final_concurrency = 1"}, after: []string{"set tidb_hashagg_partial_concurrency = default", "set tidb_hashagg_final_concurrency = default"}, query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
+			{name: "StreamAgg", query: "select /*+ STREAM_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalStreamAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantRootAndCop: true},
+			{name: "Projection", query: "select b + 1 from t ignore index (idx_b)", rows: testkit.Rows("11", "21", "31"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalProjection], sortRows: true, wantPublish: true, wantCPUWork: true},
+			{name: "Window", query: "select row_number() over () from t ignore index (idx_b, idx_c)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalWindow], sortRows: true, wantPublish: true, wantCPUWork: true},
+			{name: "Shuffle Window", query: "select sum(a) over(partition by a order by b) from t ignore index (idx_b, idx_c)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalShuffle], sortRows: true, wantPublish: true, wantCPUWork: true},
 		}
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
+				for _, sql := range tc.before {
+					tk.MustExec(sql)
+				}
+				defer func() {
+					for _, sql := range tc.after {
+						tk.MustExec(sql)
+					}
+				}()
 				observation = nil
 				calibrationMu.Lock()
 				calibration = calibrationObservation{}
@@ -304,6 +352,14 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
 					return operator != nil && operator.Origin != nil && tc.expectOperator(operator.Origin)
 				}), "query plan does not contain expected operator: %s; flat plan: %v", tc.query, planSummary)
+				if tc.wantRootAndCop {
+					require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
+						return operator != nil && operator.IsRoot && tc.expectOperator(operator.Origin)
+					}), "query plan does not contain expected root operator: %s; flat plan: %v", tc.query, planSummary)
+					require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
+						return operator != nil && !operator.IsRoot && tc.expectOperator(operator.Origin)
+					}), "query plan does not contain expected cop operator: %s; flat plan: %v", tc.query, planSummary)
+				}
 
 				calibrationMu.Lock()
 				published := calibration
@@ -319,6 +375,15 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				require.GreaterOrEqual(t, published.netBytes, float64(0))
 				if tc.wantCPUWork {
 					require.Positive(t, published.cpuWork)
+				}
+				if tc.wantHashState {
+					require.Positive(t, published.hashStateRows)
+				}
+				if tc.wantHashRows > 0 {
+					require.Equal(t, tc.wantHashRows, published.hashStateRows)
+				}
+				if tc.wantJoinOutput {
+					require.Positive(t, published.joinOutputRows)
 				}
 			})
 		}
@@ -507,6 +572,8 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 }
 
 func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("successful session outcome is consumed by delayed terminal", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
@@ -653,12 +720,44 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 }
 
 func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
 	tk.MustExec("create table t(id int primary key, v int)")
-	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	// UniStore's Get and BatchGet handlers do not populate ExecDetailsV2. Add
+	// deterministic details to the otherwise real responses so this test
+	// exercises client-go's response accounting and TiDB's terminal retrieval.
+	responseHook := func(req *tikvrpc.Request, resp *tikvrpc.Response) {
+		if req == nil || resp == nil {
+			return
+		}
+		newExecDetails := func(totalKeys, processedKeys, processedKeysSize uint64) *kvrpcpb.ExecDetailsV2 {
+			return &kvrpcpb.ExecDetailsV2{ScanDetailV2: &kvrpcpb.ScanDetailV2{
+				TotalVersions:         totalKeys,
+				ProcessedVersions:     processedKeys,
+				ProcessedVersionsSize: processedKeysSize,
+			}}
+		}
+		switch typedResp := resp.Resp.(type) {
+		case *kvrpcpb.GetResponse:
+			typedResp.ExecDetailsV2 = newExecDetails(2, 1, 37)
+		case *kvrpcpb.BatchGetResponse:
+			typedResp.ExecDetailsV2 = newExecDetails(5, 2, 74)
+		}
+	}
+	unistore.UnistoreRPCClientResponseHook.Store(&responseHook)
+	t.Cleanup(func() {
+		unistore.UnistoreRPCClientResponseHook.Store(nil)
+	})
+	testfailpoint.Enable(t,
+		"github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook",
+		"return(true)",
+	)
 
 	var observation *statementRUObservation
 	testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
@@ -666,6 +765,27 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 			return
 		}
 		observation = observeInstalledStatementRUOwner(stmt)
+	})
+	type calibrationObservation struct {
+		state     string
+		scanBytes float64
+		netBytes  float64
+	}
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	calibrations := make([]calibrationObservation, 0, 2)
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64,
+		state string,
+		_, scanBytes, netBytes, _, _, _ float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		calibrations = append(calibrations, calibrationObservation{
+			state:     state,
+			scanBytes: scanBytes,
+			netBytes:  netBytes,
+		})
 	})
 
 	rs, err := tk.Exec("select v from t where id = ?", 1)
@@ -679,13 +799,28 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 	stmtCtx.SetPlan(nil)
 	stmtCtx.SetFlatPlan(nil)
 	require.NoError(t, rs.Close())
-	flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
-	require.NotEmpty(t, flat.Main)
-	require.Same(t, observation.stmt.Plan, flat.Main[0].Origin)
 	require.True(t, observation.owner.ConsumedForTest())
-	// FinishExecuteStmt publishes the effective plan to StmtCtx before the RU
-	// terminal. This does not prove that an independently cached flat plan owns it.
+	// FinishExecuteStmt publishes the effective plan before the RU terminal, but
+	// concrete point plans no longer populate or traverse the flat-plan cache.
 	require.Same(t, observation.stmt.Plan, stmtCtx.GetPlan())
+	require.Nil(t, stmtCtx.GetFlatPlan())
+	require.Len(t, calibrations, 1)
+	require.Equal(t, "incomplete", calibrations[0].state)
+	require.Equal(t, float64(74), calibrations[0].scanBytes)
+	require.Positive(t, calibrations[0].netBytes)
+
+	observation = nil
+	rs, err = tk.Exec("select v from t where id in (1, 2)")
+	require.NoError(t, err)
+	require.NotNil(t, observation)
+	require.IsType(t, &physicalop.BatchPointGetPlan{}, observation.stmt.Plan)
+	require.NoError(t, drainStatementRURecordSet(t, rs))
+	require.NoError(t, rs.Close())
+	require.True(t, observation.owner.ConsumedForTest())
+	require.Len(t, calibrations, 2)
+	require.Equal(t, "incomplete", calibrations[1].state)
+	require.Equal(t, float64(185), calibrations[1].scanBytes)
+	require.Positive(t, calibrations[1].netBytes)
 
 	t.Run("post-execution panic consumes owner", func(t *testing.T) {
 		observation = nil
@@ -726,14 +861,14 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 }
 
 func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("real scalar SQL", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery = 1")
-		tk.MustExec("create table t1(a int)")
 		tk.MustExec("create table t2(a int)")
-		tk.MustExec("insert into t1 values (1)")
 		tk.MustExec("insert into t2 values (1)")
 
 		var observation *statementRUObservation
@@ -743,8 +878,25 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			}
 			observation = observeInstalledStatementRUOwner(stmt)
 		})
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationCount atomic.Int64
+		var scanBytes float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			_, observedScanBytes, _, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			calibrationCount.Add(1)
+			scanBytes = observedScanBytes
+		})
 
-		rs, err := tk.Exec("select * from t1 where a = (select a from t2 limit 1)")
+		// The main tree is a TableDual, so every scan byte belongs to the
+		// independently executed scalar-subquery tree.
+		rs, err := tk.Exec("select (select a from t2 limit 1)")
 		require.NoError(t, err)
 		require.NoError(t, drainStatementRURecordSet(t, rs))
 		require.NoError(t, rs.Close())
@@ -754,6 +906,142 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 		require.Positive(t, expectedTotal)
 		require.Positive(t, expectedScalar)
 		require.True(t, observation.owner.ConsumedForTest())
+		require.Equal(t, int64(1), calibrationCount.Load())
+		require.Positive(t, scanBytes)
+	})
+
+	t.Run("shared CTE producer is one statement tree", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationCount atomic.Int64
+		var scanBytes []float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			_, observedScanBytes, _, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			calibrationCount.Add(1)
+			scanBytes = append(scanBytes, observedScanBytes)
+		})
+
+		run := func(query string) *plannercore.FlatPhysicalPlan {
+			observation = nil
+			rs, err := tk.Exec(query)
+			require.NoError(t, err)
+			require.NoError(t, drainStatementRURecordSet(t, rs))
+			require.NoError(t, rs.Close())
+			require.NotNil(t, observation)
+			return requireStatementRUTerminalFlatPlan(t, observation.stmt)
+		}
+		doubleConsumer := run("with cte as (select a from t where a > 0) select a from cte where a = 1 union all select a from cte where a > 1")
+		tripleConsumer := run("with cte as (select a from t where a > 0) select a from cte where a = 1 union all select a from cte where a > 1 union all select a from cte where a = 999")
+		require.NotNil(t, observation)
+		require.Len(t, doubleConsumer.CTEs, 1, "one IDForStorage producer must remain one forest tree despite two consumers")
+		require.Len(t, tripleConsumer.CTEs, 1, "one IDForStorage producer must remain one forest tree despite three consumers")
+		require.True(t, observation.owner.ConsumedForTest())
+		require.Equal(t, int64(2), calibrationCount.Load())
+		require.Len(t, scanBytes, 2)
+		require.Positive(t, scanBytes[0], "the main tree has only CTE consumers; scan evidence must come from the producer tree")
+		require.Equal(t, scanBytes[0], scanBytes[1], "adding a consumer must not charge the shared producer again")
+	})
+
+	t.Run("dependent CTE producers are distinct statement trees", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationCount atomic.Int64
+		var scanBytes float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			_, observedScanBytes, _, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			calibrationCount.Add(1)
+			scanBytes = observedScanBytes
+		})
+
+		query := "with c1 as (select a from t where a > 0), c2 as (select a from c1 where a > 1) select a from c2 union all select a from c2 union all select a from c1 where a = 1"
+		rs, err := tk.Exec(query)
+		require.NoError(t, err)
+		require.NoError(t, drainStatementRURecordSet(t, rs))
+		require.NoError(t, rs.Close())
+		require.NotNil(t, observation)
+		flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
+		require.Len(t, flat.CTEs, 2, "c1 and c2 must each own one deduplicated producer tree")
+		require.True(t, observation.owner.ConsumedForTest())
+		require.Equal(t, int64(1), calibrationCount.Load())
+		require.Positive(t, scanBytes, "the physical scan owned by c1 must contribute to the statement")
+	})
+
+	t.Run("recursive CTE consumes accumulated rounds once", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var cpuWork []float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			observedCPUWork, _, _, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			cpuWork = append(cpuWork, observedCPUWork)
+		})
+
+		tk.MustQuery("with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 3) select * from cte").Check(testkit.Rows("1", "2", "3"))
+		tk.MustQuery("with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 6) select * from cte").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+		tk.MustQuery("with recursive cte(n) as (select 1 where false union all select n + 1 from cte where n < 3) select * from cte").Check(testkit.Rows())
+
+		require.Len(t, cpuWork, 3)
+		require.Greater(t, cpuWork[1], cpuWork[0], "more recursive rounds must contribute more accumulated linear work")
+		require.GreaterOrEqual(t, cpuWork[2], float64(0), "an empty seed is a legal best-effort zero, not invalid evidence")
+	})
+
+	t.Run("scalar cardinality semantics stay unchanged", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery = 1")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2)")
+
+		tk.MustQuery("select (select a from t where a = 3)").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("select (select a from t where a = 1)").Check(testkit.Rows("1"))
+		_, err := tk.Exec("select (select a from t)")
+		require.ErrorContains(t, err, "Subquery returns more than 1 row")
 	})
 
 	t.Run("prepared execute and rebuild use terminal-returned trees", func(t *testing.T) {
@@ -839,6 +1127,8 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 }
 
 func TestStatementRUCursorExclusion(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("current-session restricted result set", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
@@ -929,6 +1219,8 @@ func TestStatementRUCursorExclusion(t *testing.T) {
 }
 
 func TestStatementRURetryAndReplay(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
 	t.Run("pessimistic retry keeps production owner disabled", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		writer := testkit.NewTestKit(t, store)

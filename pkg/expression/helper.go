@@ -20,7 +20,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -37,6 +39,48 @@ func boolToInt64(v bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+// MaterializedScheduleTimeToUnixSeconds converts a materialized schedule time
+// interpreted in scheduleTimeZone to Unix seconds for persisting in internal
+// MV system tables.
+func MaterializedScheduleTimeToUnixSeconds(t *types.Time, scheduleTimeZone *time.Location) (*int64, error) {
+	if t == nil {
+		return nil, nil
+	}
+	if scheduleTimeZone == nil {
+		return nil, errors.New("materialized schedule timezone is unavailable")
+	}
+	goTime, err := t.GoTime(scheduleTimeZone)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	unixSeconds := goTime.Unix()
+	return &unixSeconds, nil
+}
+
+// MaterializedScheduleTypeFlagsWithSQLMode derives the type conversion flags
+// used to build and evaluate materialized view schedule expressions.
+func MaterializedScheduleTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
+	return types.StrictFlags.
+		WithTruncateAsWarning(!mode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(mode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!mode.HasStrictMode() || mode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
+}
+
+// MaterializedScheduleErrLevelsWithSQLMode derives the error levels used to
+// build and evaluate materialized view schedule expressions.
+func MaterializedScheduleErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
+	return errctx.LevelMap{
+		errctx.ErrGroupTruncate:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupBadNull:   errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupNoDefault: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
+			!mode.HasErrorForDivisionByZeroMode(),
+			!mode.HasStrictMode(),
+		),
+	}
 }
 
 // IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.
