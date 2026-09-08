@@ -9552,6 +9552,16 @@ risks without claiming repository-wide parity.
   focused deny-on-discard regression failed before the fix with exactly two
   diagnostics and passes after; the planner library check passes. Evidence is
   recorded in `receipts/planner_core_partidx.md`.
+- 2026-09-08 (`pkg/planner/core/constraint` return contracts): current Go
+  master `aec988ea500d` was re-read as the complete two-artifact, 84-line
+  package, including its true-condition/schema proof source, BUILD target, and
+  absence of tests, fixtures, generated/platform variants, and nested packages.
+  The dependency-closed `constraint.rs` owner, inline tests, logical join and
+  predicate-simplification consumers were inventoried. Two Rust-only
+  `#[must_use]` diagnostics were removed from the Go-shaped condition-filter
+  slice results. The focused deny-on-discard regression failed before the fix
+  with exactly two diagnostics and passes after; the planner library check
+  passes. Evidence is recorded in `receipts/planner_core_constraint.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200

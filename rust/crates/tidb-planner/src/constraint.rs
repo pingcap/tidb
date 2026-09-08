@@ -22,7 +22,6 @@ use tidb_expr::schema::Schema;
 /// Go `DeleteTrueExprs`: remove constants that successfully convert to SQL
 /// true, except parameter/deferred constants whose removal would over-optimize
 /// a reusable plan.
-#[must_use]
 pub fn delete_true_exprs(use_plan_cache: bool, conditions: Vec<Expression>) -> Vec<Expression> {
     conditions
         .into_iter()
@@ -44,7 +43,6 @@ pub fn delete_true_exprs(use_plan_cache: bool, conditions: Vec<Expression>) -> V
 /// Go `DeleteTrueExprsBySchema`: remove exactly
 /// `NOT(ISNULL(not-null-column))` when `schema` resolves that column and its
 /// own field type carries the NOT NULL flag.
-#[must_use]
 pub fn delete_true_exprs_by_schema(
     schema: &Schema,
     conditions: Vec<Expression>,
@@ -155,5 +153,12 @@ mod tests {
             ],
         );
         assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        delete_true_exprs(true, vec![]);
+        delete_true_exprs_by_schema(&Schema::new(vec![]), vec![]);
     }
 }
