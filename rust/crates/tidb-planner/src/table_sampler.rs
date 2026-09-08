@@ -37,7 +37,6 @@ pub struct TableSampleInfo {
 
 impl TableSampleInfo {
     /// Go `(*TableSampleInfo).MemoryUsage`, expressed over Rust-owned values.
-    #[must_use]
     pub fn memory_usage(&self) -> i64 {
         let column_bytes = self
             .full_schema
@@ -69,7 +68,6 @@ impl TableSampleInfo {
 }
 
 /// Go `NewTableSampleInfo`.
-#[must_use]
 pub fn new_table_sample_info(
     node: Option<&TableSample>,
     full_schema: &Schema,
@@ -110,5 +108,20 @@ mod tests {
         assert_eq!(info.full_schema.columns[0].unique_id, 7);
         assert_eq!(info.partition_ids, [11, 12]);
         assert!(info.memory_usage() >= i64::try_from(std::mem::size_of_val(&info)).unwrap());
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        let schema = Schema::new(vec![]);
+        let node = TableSample {
+            method: Some(SampleMethod::Region),
+            expr: None,
+            unit: None,
+            repeatable: None,
+        };
+        new_table_sample_info(None, &schema, vec![]);
+        let info = new_table_sample_info(Some(&node), &schema, vec![]).unwrap();
+        info.memory_usage();
     }
 }

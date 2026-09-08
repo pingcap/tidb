@@ -9510,6 +9510,17 @@ risks without claiming repository-wide parity.
   deny-on-discard regression failed before the fix with exactly 13 diagnostics
   and passes after; the planner library check and Ready lint pass. Evidence is
   recorded in `receipts/planner_util_costusage.md`.
+- 2026-09-08 (`pkg/planner/util/tablesampler` return contracts): current Go
+  master `aec988ea500d` was re-read as the complete two-artifact, 74-line
+  package, including its table-sample metadata and memory-accounting source,
+  BUILD target, and absence of tests, fixtures, generated/platform variants,
+  and nested packages. The dependency-closed `table_sampler.rs` owner, inline
+  owner test, and direct planner/read-only-scan consumers were inventoried.
+  Two Rust-only `#[must_use]` diagnostics were removed from the Go-shaped
+  metadata constructor and memory query. The focused deny-on-discard
+  regression failed before the fix with exactly two diagnostics and passes
+  after; the planner library check passes. Evidence is recorded in
+  `receipts/planner_util_tablesampler.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
