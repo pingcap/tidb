@@ -478,9 +478,10 @@ mod list_columns_pruning_tests {
     fn list_columns_prunes_each_referenced_column_and_intersects_tuple_groups() {
         let spec = list_columns_spec();
         let columns = vec![column(1, 11, 0), column(2, 12, 1)];
+        let context = crate::StmtContext::for_query();
 
         assert_eq!(
-            list_columns_pruned_ids(&spec, &[equals(&columns[1], 7)], &columns).unwrap(),
+            list_columns_pruned_ids(&spec, &[equals(&columns[1], 7)], &columns, &context).unwrap(),
             Some(vec![502, 503]),
             "a predicate on the second partition column is prunable; Go also retains DEFAULT"
         );
@@ -489,6 +490,7 @@ mod list_columns_pruning_tests {
                 &spec,
                 &[equals(&columns[0], 1), equals(&columns[1], 9)],
                 &columns,
+                &context,
             )
             .unwrap(),
             Some(vec![503]),
@@ -499,6 +501,7 @@ mod list_columns_pruning_tests {
                 &spec,
                 &[or(vec![equals(&columns[1], 6), equals(&columns[0], 9)])],
                 &columns,
+                &context,
             )
             .unwrap(),
             Some(vec![501, 502, 503]),
