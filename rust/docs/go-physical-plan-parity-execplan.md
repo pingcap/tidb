@@ -1295,6 +1295,21 @@ both `oltp_read_only` and `oltp_read_write`.
   `joins::tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves`
   now picks `IndexHashJoin`; executor 1255 passed / 7 failed. Receipt:
   `rust/testport/receipts/planner_data_source_stats_per_source.md`.
+- [x] 2026-09-09: ordered an index join's explain fields like Go and admitted
+  its runtime probe over a pruned source. `PhysicalIndexJoin.ExplainInfoInternal`
+  prints `inner:` before `left side:`; the port printed them in the opposite
+  order, so `driver::tests::subqueries` failed on field order alone and now
+  passes. The runtime probe path admission resolved index columns by
+  `IndexColumn.Offset` (a TABLE position) against the source's pruned schema,
+  so TPC-C condition nine's `idx_h_w_id(h_w_id)` probe was refused; all three
+  users now resolve by name, the cop partial aggregate is the priced inner
+  candidate, and the executor runs it locally above the lookup leaf. Condition
+  nine now plans and executes Go's grouped IndexHashJoin shape; its analyzed
+  arm still pins the older constructed-inner statistics model. Executor 1256
+  passed / 6 failed. Receipts:
+  `rust/testport/receipts/planner_physical_index_join_explain.md`,
+  `rust/testport/receipts/planner_index_join_runtime_probe_paths.md`,
+  `rust/testport/receipts/executor_index_lookup_partial_aggregate.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1303,7 +1318,7 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1,255 passed / 7 failed; the 13 statistics-request transport
+  lib serialized: 1,256 passed / 6 failed; the 13 statistics-request transport
   tests still flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
   - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
@@ -1327,6 +1342,16 @@ both `oltp_read_only` and `oltp_read_write`.
     `aggregates::tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup`
     (wants `IndexHashJoin` over a grouped `HashAgg` inner) needs this arm.
   - `joins::tpcc_check_seven_*`: DONE (group NDVs, see the 2026-09-09 entry).
+  - `subqueries::subqueries`: DONE (index-join explain field order, see the
+    2026-09-09 entry).
+  - `aggregates::tpcc_condition_nine_rebuilds_*`: the plan shape and execution
+    now match; the ANALYZED arm still asserts the older Go inner-side
+    statistics model (the constructed inner kept each logical operator's own
+    statistics, while the pinned Go's
+    `inheritStatsFromBottomTaskForIndexJoinInner` copies the bottom task's
+    runtime profile) and the district source's derived
+    `not(isnull(cast(d_ytd)))` selectivity, which the pre-push-down
+    `InitStats` pass cannot see.
   - `pkg/executor` Window executor (`exhaustPhysicalPlans over Window`):
     `tests_executor_suite_statements_source::{column_name_resolution,
     issue52984_named_window_self_frame_runs_repeatedly}`.

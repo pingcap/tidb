@@ -1409,13 +1409,14 @@ fn path_matches_index_join_runtime(
             let Some(index) = ds.indexes.get(*index) else {
                 return false;
             };
-            let Some(schema) = ds.base.base.schema() else {
-                return false;
-            };
             let fixed = equality_fixed_ids(ds);
             let mut matched_runtime_key = false;
             for index_column in &index.columns {
-                let Some(column) = schema.columns.get(index_column.offset) else {
+                // `IndexColumn.Offset` indexes the TABLE's column list, not
+                // the DataSource's pruned schema; resolve by name as
+                // `schema_column_for_index_column` (Go's `ds.Columns`
+                // alignment) does.
+                let Some(column) = ds.schema_column_for_index_column(index_column) else {
                     return false;
                 };
                 if inner_ids.contains(&column.unique_id) {
@@ -1510,12 +1511,10 @@ fn index_join_path_is_max_one_row(
             let Some(source_index) = ds.indexes.get(*index) else {
                 return false;
             };
-            let schema = ds.base.base.schema();
             let columns = source_index
                 .columns
                 .iter()
-                .filter_map(|column| schema.and_then(|schema| schema.columns.get(column.offset)))
-                .cloned()
+                .filter_map(|column| ds.schema_column_for_index_column(column).cloned())
                 .collect::<Vec<_>>();
             (columns, source_index.unique)
         }
@@ -1561,11 +1560,10 @@ fn index_join_feedback(
         ),
         crate::access_path::PossiblePath::Index { index } => {
             let source_index = ds.indexes.get(*index);
-            let schema = ds.base.base.schema();
             let columns = source_index
                 .into_iter()
                 .flat_map(|index| &index.columns)
-                .filter_map(|column| schema.and_then(|schema| schema.columns.get(column.offset)))
+                .filter_map(|column| ds.schema_column_for_index_column(column))
                 .collect::<Vec<_>>();
             let lengths = source_index
                 .map(|index| index.columns.iter().map(|column| column.length).collect())

@@ -2416,7 +2416,16 @@ pub fn get_hash_aggs(
     if !prop.is_sort_item_empty() {
         return Vec::new();
     }
-    let task_types: &[TaskType] = if prop.no_cop_push_down {
+    let task_types: &[TaskType] = if prop.index_join_prop.is_some() {
+        // Go's index-join inner side is CONSTRUCTED, not enumerated:
+        // `constructIndexJoinInnerSideTaskWithAggCheck` attaches the
+        // bottom-most aggregation straight onto the constructed cop task
+        // (`Attach2Task` -> `attach2Task4PhysicalHashAgg`), so the
+        // two-phase form is the only one Go prices. Enumerate only the cop
+        // child properties here; `attach_agg_over_cop` still falls back to
+        // a root aggregate when the split is impossible.
+        &[TaskType::CopSingleRead, TaskType::CopMultiRead]
+    } else if prop.no_cop_push_down {
         &[TaskType::Root]
     } else {
         &[
