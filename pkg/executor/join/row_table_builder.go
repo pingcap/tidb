@@ -523,27 +523,45 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 
 	hashJoinCtx.hashTableContext.memoryTracker.Consume(totalMemUsage)
 
-	for partIdx, seg := range segs {
-		seg.rawData = make([]byte, 0, b.helpers[partIdx].rawDataLen)
-		seg.hashValues = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
-		seg.rowStartOffset = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
-		seg.validJoinKeyPos = make([]int, 0, b.helpers[partIdx].validRowNum)
+	check := func() error {
+		return nil
+	}
+	if memory.UsingGlobalMemArbitration() && totalMemUsage > int64(memory.ServerMemoryLimit.Load())/20 {
+		logutil.BgLogger().Info("row table build memory usage exceeds 5% of server memory limit, trigger memory arbitrator", zap.Int64("memoryUsage", totalMemUsage), zap.Int64("memoryLimit", int64(memory.ServerMemoryLimit.Load())))
+		check = func() error {
+			memory.Run2()
+			if killer := &hashJoinCtx.SessCtx.GetSessionVars().SQLKiller; killer.GetKillSignal() != 0 {
+				logutil.BgLogger().Warn("SQL killed during row table build due to memory limit", zap.Uint64("sessionID", hashJoinCtx.SessCtx.GetSessionVars().ConnectionID), zap.Int64("memoryUsage", totalMemUsage), zap.Int64("memoryLimit", int64(memory.ServerMemoryLimit.Load())))
+				for _, seg := range segs {
+					seg.rawData = nil
+					seg.hashValues = nil
+					seg.rowStartOffset = nil
+					seg.validJoinKeyPos = nil
+				}
+				runtime.GC()
+				hashJoinCtx.hashTableContext.memoryTracker.Consume(-totalMemUsage)
+				return killer.HandleSignal()
+			}
+			return nil
+		}
 	}
 
-	if memory.UsingGlobalMemArbitration() && totalMemUsage > int64(memory.ServerMemoryLimit.Load())/20 {
-		memory.Run2()
-		logutil.BgLogger().Info("row table build memory usage exceeds 5% of server memory limit, trigger memory arbitrator", zap.Int64("memoryUsage", totalMemUsage), zap.Int64("memoryLimit", int64(memory.ServerMemoryLimit.Load())))
-		if killer := &hashJoinCtx.SessCtx.GetSessionVars().SQLKiller; killer.GetKillSignal() != 0 {
-			logutil.BgLogger().Warn("SQL killed during row table build due to memory limit", zap.Uint64("sessionID", hashJoinCtx.SessCtx.GetSessionVars().ConnectionID), zap.Int64("memoryUsage", totalMemUsage), zap.Int64("memoryLimit", int64(memory.ServerMemoryLimit.Load())))
-			for _, seg := range segs {
-				seg.rawData = nil
-				seg.hashValues = nil
-				seg.rowStartOffset = nil
-				seg.validJoinKeyPos = nil
-			}
-			runtime.GC()
-			hashJoinCtx.hashTableContext.memoryTracker.Consume(-totalMemUsage)
-			return killer.HandleSignal()
+	for partIdx, seg := range segs {
+		seg.rawData = make([]byte, 0, b.helpers[partIdx].rawDataLen)
+		if err := check(); err != nil {
+			return err
+		}
+		seg.hashValues = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
+		if err := check(); err != nil {
+			return err
+		}
+		seg.rowStartOffset = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
+		if err := check(); err != nil {
+			return err
+		}
+		seg.validJoinKeyPos = make([]int, 0, b.helpers[partIdx].validRowNum)
+		if err := check(); err != nil {
+			return err
 		}
 	}
 	return nil
