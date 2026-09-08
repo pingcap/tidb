@@ -1113,15 +1113,9 @@ func TestRootRuntimeStats(t *testing.T) {
 		require.Zero(t, zeroRows.Rows)
 	})
 
-	t.Run("checked hash state lifecycle", func(t *testing.T) {
-		zeroValue := (&HashStateRuntimeStats{}).HashStateRowsSnapshot()
-		require.False(t, zeroValue.Complete())
-		require.False(t, zeroValue.Invalid())
-
+	t.Run("accumulated hash construction", func(t *testing.T) {
 		state := NewHashStateRuntimeStats()
-		require.False(t, state.HashStateRowsSnapshot().Complete())
-		state.Complete()
-		require.True(t, state.HashStateRowsSnapshot().Complete())
+		require.False(t, state.HashStateRowsSnapshot().Invalid())
 		require.Zero(t, state.HashStateRowsSnapshot().Rows)
 		require.Empty(t, state.String())
 
@@ -1129,19 +1123,14 @@ func TestRootRuntimeStats(t *testing.T) {
 		second := NewHashStateRuntimeStats()
 		second.AddRows(3)
 		second.AddRows(2)
-		second.Complete()
 		merged.Merge(second)
-		require.True(t, merged.HashStateRowsSnapshot().Complete())
 		require.Equal(t, int64(5), merged.HashStateRowsSnapshot().Rows)
+		require.Zero(t, state.HashStateRowsSnapshot().Rows, "Clone must not share the counter")
 
-		partial := NewHashStateRuntimeStats()
-		merged.Merge(partial)
-		require.False(t, merged.HashStateRowsSnapshot().Complete())
+		// A later execution that builds nothing must retain earlier work.
+		merged.Merge(NewHashStateRuntimeStats())
+		require.Equal(t, int64(5), merged.HashStateRowsSnapshot().Rows)
 		require.False(t, merged.HashStateRowsSnapshot().Invalid())
-		invalid := NewHashStateRuntimeStats()
-		invalid.Invalidate()
-		merged.Merge(invalid)
-		require.True(t, merged.HashStateRowsSnapshot().Invalid())
 
 		concurrent := NewHashStateRuntimeStats()
 		var wg sync.WaitGroup
@@ -1153,12 +1142,21 @@ func TestRootRuntimeStats(t *testing.T) {
 			}()
 		}
 		wg.Wait()
-		concurrent.Complete()
-		concurrentSnapshot := concurrent.HashStateRowsSnapshot()
-		require.True(t, concurrentSnapshot.Complete())
-		require.Equal(t, int64(32), concurrentSnapshot.Rows)
-		concurrent.Complete()
+		require.Equal(t, int64(32), concurrent.HashStateRowsSnapshot().Rows)
+
+		// Overflow must stay invalid through further additions and merges.
+		concurrent.AddRows(1 << 63)
+		concurrent.AddRows(^uint64(0))
 		require.True(t, concurrent.HashStateRowsSnapshot().Invalid())
+		merged.Merge(concurrent)
+		merged.Merge(second)
+		require.True(t, merged.HashStateRowsSnapshot().Invalid())
+
+		maxRows := NewHashStateRuntimeStats()
+		maxRows.AddRows(1<<63 - 1)
+		require.False(t, maxRows.HashStateRowsSnapshot().Invalid())
+		maxRows.AddRows(1)
+		require.True(t, maxRows.HashStateRowsSnapshot().Invalid())
 	})
 }
 

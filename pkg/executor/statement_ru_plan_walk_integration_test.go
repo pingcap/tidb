@@ -207,6 +207,217 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 	enableStatementRUExecutionInfo(t)
 
+	t.Run("normal early termination", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table empty_outer(a int primary key, b int)")
+		tk.MustExec("create table populated_inner(a int primary key, b int, key(b))")
+		tk.MustExec("insert into populated_inner values (1,1),(2,2)")
+		tk.MustExec("create table unsigned_inner(a bigint unsigned primary key, b int)")
+		tk.MustExec("insert into unsigned_inner values(1,1)")
+		tk.MustExec("create table range_outer(a int)")
+		tk.MustExec("insert into range_outer values(-1)")
+		tk.MustExec("create table repeat_outer(a int,b int)")
+		tk.MustExec("insert into repeat_outer values(1,1),(2,1),(3,2)")
+		var count atomic.Int64
+		var hashRows atomic.Int64
+		var scanBytes atomic.Int64
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			id uint64, state string, _, observedScanBytes, _, _, observedHashRows, _ float64,
+		) {
+			if id == connectionID {
+				require.Equal(t, "incomplete", state)
+				hashRows.Store(int64(observedHashRows))
+				scanBytes.Store(int64(observedScanBytes))
+				count.Add(1)
+			}
+		})
+		tk.MustExec("set cte_max_recursion_depth=3000")
+		tk.MustExec("create table many_groups(a int primary key, b int)")
+		tk.MustExec("insert into many_groups with recursive c as (select 1 as n union all select n+1 from c where n<2000) select n,n from c")
+		for _, tc := range []struct{ hint, operator string }{
+			{"INL_JOIN(i)", "IndexJoin"},
+			{"INL_HASH_JOIN(i)", "IndexHashJoin"},
+		} {
+			t.Run(tc.hint, func(t *testing.T) {
+				query := "select /*+ " + tc.hint + " */ o.a from empty_outer o join populated_inner i on o.a=i.a"
+				require.Contains(t, fmt.Sprint(tk.MustQuery("explain "+query).Rows()), tc.operator)
+				count.Store(0)
+				tk.MustQuery(query).Check(testkit.Rows())
+				require.Equal(t, int64(1), count.Load(), "normal empty result must publish RU")
+			})
+		}
+		for _, tc := range []struct{ name, operator, query string }{
+			{"hash join limit", "HashJoin", "select /*+ HASH_JOIN(o,i) */ o.a from many_groups o join many_groups i on o.a=i.a limit 1"},
+			{"lookup filtered outer", "IndexJoin", "select /*+ INL_JOIN(i) */ o.a,i.b from populated_inner o left join populated_inner i on o.a=i.a and o.b>100"},
+			{"apply empty request", "Apply", "select o.a,(select /*+ NO_DECORRELATE() */ sum(i.b) from unsigned_inner i where i.a<o.a) from range_outer o"},
+			{"apply synthetic outer row", "Apply", "select count(*),(select /*+ NO_DECORRELATE() */ sum(i.b) from populated_inner i where i.a>o.a) from empty_outer o where o.b=1"},
+			{"cte empty seed", "CTE", "with recursive c as (select a from empty_outer union all select c.a+1 from c join populated_inner i on c.a=i.a where c.a<10) select * from c"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				require.Contains(t, fmt.Sprint(tk.MustQuery("explain "+tc.query).Rows()), tc.operator)
+				count.Store(0)
+				tk.MustQuery(tc.query)
+				require.Equal(t, int64(1), count.Load(), "normal completion must publish RU")
+			})
+		}
+
+		t.Run("Readers with empty scan results", func(t *testing.T) {
+			tk.MustExec("create table reader_data(a int primary key, b int, c int, d int, key idx_b(b), key idx_c(c))")
+			tk.MustExec("insert into reader_data values(1,1,1,1),(2,2,2,2)")
+			var stmt *executor.ExecStmt
+			testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(current *executor.ExecStmt) {
+				if current.Ctx == tk.Session() {
+					stmt = current
+				}
+			})
+			for _, tc := range []struct {
+				name, query string
+				matches     func(base.Plan) bool
+			}{
+				{"TableReader", "select d from reader_data ignore index(idx_b,idx_c) where a>10", isStatementRUPlanType[*physicalop.PhysicalTableReader]},
+				{"IndexReader", "select b from reader_data use index(idx_b) where b>10", isStatementRUPlanType[*physicalop.PhysicalIndexReader]},
+				{"IndexLookUpReader", "select d from reader_data use index(idx_b) where b>10", isStatementRUPlanType[*physicalop.PhysicalIndexLookUpReader]},
+				{"IndexMergeReader", "select /*+ USE_INDEX_MERGE(reader_data,idx_b,idx_c) */ d from reader_data where b>10 or c>10", isStatementRUPlanType[*physicalop.PhysicalIndexMergeReader]},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					count.Store(0)
+					tk.MustQuery(tc.query).Check(testkit.Rows())
+					require.Equal(t, int64(1), count.Load(), "empty scan results must publish RU")
+					flat := requireStatementRUTerminalFlatPlan(t, stmt)
+					var reader base.Plan
+					for _, op := range flat.Main {
+						if op.IsRoot && tc.matches(op.Origin) {
+							reader = op.Origin
+						}
+					}
+					require.NotNil(t, reader, "query must use %s", tc.name)
+					coll := tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl
+					require.Zero(t, coll.GetRootRowsSnapshot(reader.ID()).Rows)
+					var scans []base.PhysicalPlan
+					var skippedTable base.PhysicalPlan
+					switch reader := reader.(type) {
+					case *physicalop.PhysicalTableReader:
+						scans = append(scans, reader.TablePlan)
+					case *physicalop.PhysicalIndexReader:
+						scans = append(scans, reader.IndexPlan)
+					case *physicalop.PhysicalIndexLookUpReader:
+						scans = append(scans, reader.IndexPlan)
+						skippedTable = reader.TablePlan
+						require.NotNil(t, skippedTable)
+					case *physicalop.PhysicalIndexMergeReader:
+						require.Len(t, reader.PartialPlansRaw, 2)
+						scans = append(scans, reader.PartialPlansRaw...)
+						skippedTable = reader.TablePlan
+						require.NotNil(t, skippedTable)
+					}
+					for _, scan := range scans {
+						rows := coll.GetCopRowsSnapshot(scan.ID())
+						require.True(t, rows.Observed(), "the scan must execute and report an empty result")
+						require.Zero(t, rows.Rows)
+					}
+					if skippedTable != nil {
+						for _, op := range physicalop.FlattenListPushDownPlan(skippedTable) {
+							require.False(t, coll.GetCopRowsSnapshot(op.ID()).Observed(), "empty index results must not execute the table side")
+							_, found := coll.GetCopScanDetail(op.ID())
+							require.False(t, found, "the skipped table side must have no scan details")
+						}
+					}
+				})
+			}
+		})
+
+		for _, version := range []string{"legacy", "optimized"} {
+			t.Run("empty hash build "+version, func(t *testing.T) {
+				tk.MustExec("set tidb_hash_join_version='" + version + "'")
+				count.Store(0)
+				tk.MustQuery("select /*+ HASH_JOIN(o,i) HASH_JOIN_BUILD(i) */ o.a from many_groups o join empty_outer i on o.a=i.a").Check(testkit.Rows())
+				require.Equal(t, int64(1), count.Load())
+				require.Zero(t, hashRows.Load())
+				require.Positive(t, scanBytes.Load(), "the first probe fetch must remain chargeable")
+			})
+		}
+
+		t.Run("union limit with deferred aggregation", func(t *testing.T) {
+			tk.MustExec("set tidb_executor_concurrency=1")
+			count.Store(0)
+			rows := tk.MustQuery("select a from many_groups union all select sum(b) from populated_inner limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, int64(1), count.Load())
+			require.Positive(t, scanBytes.Load())
+		})
+
+		t.Run("shared CTE with skipped consumers", func(t *testing.T) {
+			var stmt *executor.ExecStmt
+			testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(current *executor.ExecStmt) {
+				if current.Ctx == tk.Session() {
+					stmt = current
+				}
+			})
+			cte := "with c as (select /*+ HASH_AGG() */ b,sum(a) total from populated_inner group by b) "
+			count.Store(0)
+			tk.MustQuery(cte + "select o.a,(select /*+ NO_DECORRELATE() */ sum(total) from c where c.b<o.b),(select /*+ NO_DECORRELATE() */ sum(total) from c where c.b>o.b) from empty_outer o").Check(testkit.Rows())
+			require.Equal(t, int64(1), count.Load())
+			require.Len(t, plannercore.FlattenPhysicalPlan(stmt.Plan, false).CTEs, 1)
+			require.Zero(t, hashRows.Load(), "an unopened producer constructs no groups")
+
+			tk.MustQuery(cte + "select total from c union all select total from c").Sort().Check(testkit.Rows("1", "1", "2", "2"))
+			wantHashRows, wantScanBytes := hashRows.Load(), scanBytes.Load()
+			require.Positive(t, wantHashRows)
+			count.Store(0)
+			tk.MustQuery(cte + "select total from c union all select (select /*+ NO_DECORRELATE() */ sum(total) from c where c.b<o.b) from empty_outer o").Sort().Check(testkit.Rows("1", "2"))
+			require.Equal(t, int64(1), count.Load())
+			require.Len(t, plannercore.FlattenPhysicalPlan(stmt.Plan, false).CTEs, 1)
+			require.Equal(t, wantHashRows, hashRows.Load())
+			require.Equal(t, wantScanBytes, scanBytes.Load(), "a skipped consumer must not erase or duplicate producer scans")
+		})
+
+		for _, concurrency := range []string{"1", "4"} {
+			t.Run("hash agg partial output concurrency "+concurrency, func(t *testing.T) {
+				tk.MustExec("set tidb_hashagg_partial_concurrency=" + concurrency)
+				tk.MustExec("set tidb_hashagg_final_concurrency=" + concurrency)
+				count.Store(0)
+				rows := tk.MustQuery("select /*+ HASH_AGG() */ b,count(*) from many_groups group by b limit 1").Rows()
+				require.Len(t, rows, 1)
+				require.Equal(t, "1", rows[0][1])
+				require.Equal(t, int64(1), count.Load())
+				if concurrency == "1" {
+					// Both the TiKV partial aggregate and root aggregate build 2000 groups.
+					require.Equal(t, int64(4000), hashRows.Load(), "all serial groups were built before the first output")
+				} else {
+					require.Greater(t, hashRows.Load(), int64(2000))
+					require.LessOrEqual(t, hashRows.Load(), int64(4000))
+				}
+			})
+		}
+
+		for _, parallel := range []string{"off", "on"} {
+			t.Run("deferred apply parallel "+parallel, func(t *testing.T) {
+				tk.MustExec("set tidb_enable_parallel_apply=" + parallel)
+				tk.MustExec("set tidb_executor_concurrency=4")
+				count.Store(0)
+				tk.MustQuery("select o.a,(select /*+ NO_DECORRELATE() */ sum(i.b) from populated_inner i where i.b<o.b) from empty_outer o").Check(testkit.Rows())
+				require.Equal(t, int64(1), count.Load(), "an unopened inner must publish known zero")
+				if parallel == "on" {
+					checkApplyPlan(t, tk, "select o.a,(select /*+ NO_DECORRELATE() */ sum(i.b) from populated_inner i where i.b<o.b) from empty_outer o", 4)
+				}
+				count.Store(0)
+				tk.MustQuery("select o.a,(select /*+ NO_DECORRELATE() */ sum(i.b) from populated_inner i where i.b<o.b) from repeat_outer o").Sort().Check(testkit.Rows("1 <nil>", "2 <nil>", "3 1"))
+				require.Equal(t, int64(1), count.Load(), "repeated keys and inner opens must retain actual work")
+			})
+		}
+
+		t.Run("explain freezes after producer close", func(t *testing.T) {
+			rows := tk.MustQuery("explain analyze format='ru' select /*+ HASH_AGG() */ b,count(*) from many_groups group by b limit 1").Rows()
+			for _, row := range rows {
+				require.NotEmpty(t, row[3], "missing RU after normal stop: %v", rows)
+			}
+		})
+
+	})
+
 	t.Run("producer plans publish only supported operator trees", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
