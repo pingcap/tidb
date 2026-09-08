@@ -836,6 +836,13 @@ both `oltp_read_only` and `oltp_read_write`.
   cast and panicked with `fixed append requires a fixed column`;
   `coerce_to_ret_type` now produces the zero-padded `Datum::Bit`. Receipt:
   `rust/testport/receipts/cast_hybrid_push.md`.
+- [x] 2026-09-09: restored the join `left side:` clause and NULL-safe key
+  names. Go's `explainJoinLeftSide` appends `, left side:<child>` for every
+  non-inner join, and renders each equal condition's own name (`nulleq` for a
+  set-operator semi join). The Rust `join_info` printed neither, so
+  `INTERSECT`/`EXCEPT` explain chains lost the nested semi join and its
+  NULL-safe equality. Receipt:
+  `rust/testport/receipts/planner_physicalop_engine_usage.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

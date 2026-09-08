@@ -126,21 +126,59 @@ fn join_type_text(join_type: tidb_planner::find_best_task::LogicalJoinType) -> &
     }
 }
 
+/// Go `Plan.TP()` (normalized) / `Plan.ExplainID().String()` (row) for a
+/// physical child. The base plan's own `tp` is the logical operator name
+/// ("Join"), so the child's PHYSICAL name has to come from
+/// [`physical_operator_name`].
+fn plan_explain_id(plan: &PhysicalPlan, ignore_suffix: bool) -> String {
+    let name = physical_operator_name(plan, None);
+    if ignore_suffix {
+        name
+    } else {
+        format!("{}_{}", name, plan.base().base.id())
+    }
+}
+
+/// Go `PhysicalHashJoin`/`PhysicalMergeJoin`'s operator text.
+///
+/// `explainJoinLeftSide` (`physical_index_join.go:135`) appends
+/// `, left side:<child>` for every join that is NOT an inner join, using the
+/// child's plan TYPE under a normalized (brief) explain and its explain id
+/// otherwise.
 fn join_info(
     join_type: tidb_planner::find_best_task::LogicalJoinType,
+    left_child: Option<&PhysicalPlan>,
+    ignore_explain_id_suffix: bool,
     left_keys: &[tidb_expr::column::Column],
     right_keys: &[tidb_expr::column::Column],
+    is_null_eq: &[bool],
     left_conditions: &[tidb_expr::expression::Expression],
     right_conditions: &[tidb_expr::expression::Expression],
     other_conditions: &[tidb_expr::expression::Expression],
 ) -> String {
     let mut parts = vec![join_type_text(join_type).to_owned()];
+    if join_type != tidb_planner::find_best_task::LogicalJoinType::Inner {
+        if let Some(child) = left_child {
+            parts.push(format!(
+                "left side:{}",
+                plan_explain_id(child, ignore_explain_id_suffix)
+            ));
+        }
+    }
     let equal = left_keys
         .iter()
         .zip(right_keys)
-        .map(|(left, right)| {
+        .enumerate()
+        .map(|(index, (left, right))| {
+            // Go renders each `EqualCondition`'s OWN function name; a
+            // set-operator semi join keys on `<=>` (`nulleq`).
+            let operator = if is_null_eq.get(index).copied().unwrap_or(false) {
+                "nulleq"
+            } else {
+                "eq"
+            };
             format!(
-                "eq({}, {})",
+                "{operator}({}, {})",
                 expression_text(&tidb_expr::expression::Expression::Column(left.clone())),
                 expression_text(&tidb_expr::expression::Expression::Column(right.clone()))
             )
@@ -509,22 +547,36 @@ fn physical_operator_info(
         PhysicalPlan::Projection(projection) => expressions_text(&projection.exprs),
         PhysicalPlan::HashJoin(join) => join_info(
             join.join_type,
+            join.base.children().first(),
+            ignore_explain_id_suffix,
             &join.left_join_keys,
             &join.right_join_keys,
+            &join.is_null_eq,
             &join.left_conditions,
             &join.right_conditions,
             &join.other_conditions,
         ),
         PhysicalPlan::MergeJoin(join) => join_info(
             join.join_type,
+            join.base.children().first(),
+            ignore_explain_id_suffix,
             &join.left_join_keys,
             &join.right_join_keys,
+            &join.is_null_eq,
             &join.left_conditions,
             &join.right_conditions,
             &join.other_conditions,
         ),
         PhysicalPlan::IndexJoin(join) => {
             let mut parts = vec![join_type_text(join.join_type).to_owned()];
+            if join.join_type != tidb_planner::find_best_task::LogicalJoinType::Inner {
+                if let Some(left) = join.base.children().first() {
+                    parts.push(format!(
+                        "left side:{}",
+                        plan_explain_id(left, ignore_explain_id_suffix)
+                    ));
+                }
+            }
             if let Some(inner) = join.base.children().get(join.inner_child_idx) {
                 parts.push(format!(
                     "inner:{}",
@@ -578,8 +630,11 @@ fn physical_operator_info(
         }
         PhysicalPlan::Apply(apply) => join_info(
             apply.hash_join.join_type,
+            apply.hash_join.base.children().first(),
+            ignore_explain_id_suffix,
             &apply.hash_join.left_join_keys,
             &apply.hash_join.right_join_keys,
+            &apply.hash_join.is_null_eq,
             &apply.hash_join.left_conditions,
             &apply.hash_join.right_conditions,
             &apply.hash_join.other_conditions,
@@ -1701,5 +1756,71 @@ mod tests {
             None,
         );
         assert!(info.contains("equal cond:nulleq(Column#1, Column#3) eq(Column#2, Column#4)"));
+    }
+
+    #[test]
+    fn a_non_inner_join_explains_its_left_side_like_go() {
+        let column =
+            |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+        let child = || PhysicalPlan::HashJoin(tidb_planner::physical::PhysicalHashJoin::default());
+
+        let mut outer = tidb_planner::physical::PhysicalHashJoin::default();
+        outer.join_type = tidb_planner::find_best_task::LogicalJoinType::LeftOuterSemi;
+        outer.left_join_keys = vec![column(1)];
+        outer.right_join_keys = vec![column(2)];
+        outer.base.set_children(vec![child()]);
+        let info = physical_operator_info(
+            &PhysicalPlan::HashJoin(outer),
+            &Catalog::default(),
+            true,
+            None,
+        );
+        assert!(
+            info.starts_with(
+                "left outer semi join, left side:HashJoin, equal:[eq(Column#1, Column#2)]"
+            ),
+            "{info}"
+        );
+
+        // Go's `explainJoinLeftSide` writes nothing for an INNER join.
+        let mut inner = tidb_planner::physical::PhysicalHashJoin::default();
+        inner.join_type = tidb_planner::find_best_task::LogicalJoinType::Inner;
+        inner.left_join_keys = vec![column(1)];
+        inner.right_join_keys = vec![column(2)];
+        inner.base.set_children(vec![child()]);
+        let info = physical_operator_info(
+            &PhysicalPlan::HashJoin(inner),
+            &Catalog::default(),
+            true,
+            None,
+        );
+        assert!(
+            info.starts_with("inner join, equal:[eq(Column#1, Column#2)]"),
+            "{info}"
+        );
+    }
+
+    #[test]
+    fn a_null_safe_join_key_explains_as_nulleq() {
+        let column =
+            |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
+        let mut join = tidb_planner::physical::PhysicalHashJoin::default();
+        join.join_type = tidb_planner::find_best_task::LogicalJoinType::Semi;
+        join.left_join_keys = vec![column(1), column(2)];
+        join.right_join_keys = vec![column(3), column(4)];
+        join.is_null_eq = vec![true, false];
+        join.base.set_children(vec![PhysicalPlan::HashJoin(
+            tidb_planner::physical::PhysicalHashJoin::default(),
+        )]);
+        let info = physical_operator_info(
+            &PhysicalPlan::HashJoin(join),
+            &Catalog::default(),
+            true,
+            None,
+        );
+        assert!(
+            info.starts_with("semi join, left side:HashJoin, equal:[nulleq(Column#1, Column#3) eq(Column#2, Column#4)]"),
+            "{info}"
+        );
     }
 }

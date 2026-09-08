@@ -230,3 +230,30 @@ port passes the visible alias into the `table` slot; the recorded
 `tests/integrationtest/r/executor/partition/issues.result` renders
 `executor__partition__issues.uk_hp16726.col1` for a query aliased `t1`/`t2`.
 The Rust plan instead prints `test.l.k, test.l.o`.
+
+## Follow-up: the join left-side clause and NULL-safe key names (2026-09-09)
+
+Two operator-text clauses were missing from every join.
+
+- Go's `explainJoinLeftSide` (`physical_index_join.go:135`) appends
+  `, left side:<child>` after the join type for every join that is NOT an
+  inner join, rendering the child's `TP()` under a normalized (brief) explain
+  and `ExplainID().String()` otherwise. `PhysicalHashJoin`,
+  `PhysicalMergeJoin`, and `PhysicalIndexJoin` all call it. The Rust
+  `join_info`/IndexJoin arm printed no such clause. It now does, and because
+  the base plan's own `tp` is the logical name (`Join`), the child's PHYSICAL
+  name comes from `physical_operator_name` via a new `plan_explain_id`.
+- Go renders each equal condition's OWN function name. A set-operator semi
+  join keys on `<=>` (`nulleq`, `buildSemiJoinForSetOperator`), but `join_info`
+  hardcoded `eq`. It now selects `nulleq` from the join's `is_null_eq` flags,
+  which the planner derives from the condition's function name.
+
+Regression: the new
+`explain::tests::a_non_inner_join_explains_its_left_side_like_go` and
+`explain::tests::a_null_safe_join_key_explains_as_nulleq` fail before and pass
+after. `driver::tests::set_operations::intersect_and_except_explain_as_go_semi_join_chains`
+was fixed by both. Ready validation: `tidb-executor` lib serialized 1176
+passed / 67 failed versus 1173 / 68, no additions;
+`cargo check --locked --all-targets -p tidb-executor` clean;
+`rustfmt --edition 2021 --check` clean on the changed file;
+`git diff --check -- rust`.
