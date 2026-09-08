@@ -102,3 +102,41 @@ column-id numbers can differ when an earlier discarded Go subtree consumed an
 id; live schemas and registered expression ids remain collision-free and have
 the same dependency semantics. No repository-wide planner parity claim is made
 by this package receipt.
+
+## Follow-up: the session's ONLY_FULL_GROUP_BY flag reaches the planner (2026-09-09)
+
+Go's `checkOnlyFullGroupBy` runs only when `sql_mode` has
+`ONLY_FULL_GROUP_BY` (`logical_plan_builder.go:3731`). The executor bridge set
+`builder.new_only_full_group_by_check` (the `tidb_enable_new_only_full_group_by_check`
+experiment flag) but never `builder.only_full_group_by`, so the builder kept
+its default of `true` and the check fired even when the session's mode omitted
+the flag. `SELECT 1 + c, COUNT(*) FROM t` therefore failed under a context with
+the mode off.
+
+The bridge now forwards `ctx.only_full_group_by()` at every `PlanBuilder`
+construction alongside the experiment flag.
+
+Regression:
+`tests_executor_suite_statements_source::the_session_only_full_group_by_flag_reaches_the_planner`
+asserts the query is accepted with the flag off and rejected with 8123 when
+the flag is on. It failed before the forwarding (the flag-off arm raised
+`Unsupported("In aggregated query without GROUP BY ... only_full_group_by")`)
+and passes after.
+
+Ready validation from `rust/`:
+
+```text
+cargo test -p tidb-executor --lib the_session_only_full_group_by_flag_reaches_the_planner
+# passed: 1
+cargo test -p tidb-executor --lib statistics_request_tests
+# passed: 16 (their full-suite failures are the documented global async-load
+# flake; they pass in isolation)
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1,150 passed / 81 failed against the 1,149 / 81 baseline: the new regression
+# is the only delta, plus the documented hash-agg spill flake in one run
+cargo fmt -p tidb-executor -- --check
+# pre-existing drift only (ddl.rs, ddl/alter_table.rs, access_cost.rs,
+# index_range.rs)
+git diff --check -- rust
+# passed
+```

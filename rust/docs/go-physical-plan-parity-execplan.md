@@ -783,6 +783,10 @@ both `oltp_read_only` and `oltp_read_write`.
   `/` built through `rewrite_scalar` minted its decimal scale from 4 and
   `avg(a/b)` ignored the statement's increment. Receipt:
   `rust/testport/receipts/executor_internal_builder.md`.
+- [x] 2026-09-09: forwarded the session's `ONLY_FULL_GROUP_BY` flag into the
+  planner. The bridge set only the experiment flag, so the builder's default
+  of `true` applied the check even when the mode omitted it. Receipt:
+  `rust/testport/receipts/planner_funcdep.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

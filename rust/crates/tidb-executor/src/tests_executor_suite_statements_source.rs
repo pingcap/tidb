@@ -414,6 +414,40 @@ fn point_get_order_by_unknown_column_is_1054() {
     assert_eq!(sql_error.message, "Unknown column 'j' in 'order clause'");
 }
 
+/// The session's `ONLY_FULL_GROUP_BY` flag reaches the planner. Go calls
+/// `checkOnlyFullGroupBy` only when `sql_mode` has the flag
+/// (`logical_plan_builder.go:3731`), so a non-aggregated select field beside
+/// an aggregate is accepted when the mode omits it and rejected (8123) when
+/// the mode has it. The executor bridge forwarded only
+/// `tidb_enable_new_only_full_group_by_check`, leaving the builder's default
+/// of `true`, so the mode was ignored.
+#[test]
+fn the_session_only_full_group_by_flag_reaches_the_planner() {
+    let mut catalog = Catalog::default();
+    create(&mut catalog, "create table t (c int, d int)");
+    let names = |ctx: &StmtContext| -> Vec<String> {
+        let (columns, _) =
+            run_select_meta_in("select 1 + c, count(*) from t", &catalog, "test", ctx)
+                .unwrap_or_else(|error| panic!("{error:?}"));
+        columns.into_iter().map(|(name, _)| name).collect()
+    };
+    assert_eq!(
+        names(&ctx().with_only_full_group_by(false)),
+        vec!["1 + c".to_owned(), "count(*)".to_owned()]
+    );
+    let error = run_select_meta_in(
+        "select 1 + c, count(*) from t",
+        &catalog,
+        "test",
+        &ctx().with_only_full_group_by(true),
+    )
+    .expect_err("ONLY_FULL_GROUP_BY must reject a non-aggregated select field");
+    assert!(
+        format!("{error:?}").contains("only_full_group_by"),
+        "expected the 8123 message, got {error:?}"
+    );
+}
+
 /// Go `executor_test.go:1534::TestColumnName`: result-field names. An
 /// expression keeps its written text (`1 + c`), aggregates print `count(*)`,
 /// aliases replace names in both directions (`select c d, d c`), a plain

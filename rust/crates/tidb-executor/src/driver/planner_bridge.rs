@@ -589,6 +589,7 @@ pub(crate) fn logical_from_scope(
     let column_ids = ColumnIdAllocator::new();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
+    builder.only_full_group_by = ctx.only_full_group_by();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
@@ -841,20 +842,20 @@ impl OwnedRewrite for InitStats<'_> {
                     .map(|column| (column.name.clone(), column.field_type.clone()))
                     .collect(),
             );
-            let selectivity =
-                crate::access_cost::selectivity_with_range_context(
-                    predicate,
-                    table,
-                    &crate::driver::from::scope_resolver(&scope),
-                    statistics,
-                    tidb_planner::selectivity_greedy::SelectivityDefaults {
-                        trigger_load: false,
-                        ..tidb_planner::selectivity_greedy::SelectivityDefaults::from_session(
-                            self.default_string_match_selectivity, self.selectivity_factor,
-                        )
-                    },
-                    self.range_context,
-                );
+            let selectivity = crate::access_cost::selectivity_with_range_context(
+                predicate,
+                table,
+                &crate::driver::from::scope_resolver(&scope),
+                statistics,
+                tidb_planner::selectivity_greedy::SelectivityDefaults {
+                    trigger_load: false,
+                    ..tidb_planner::selectivity_greedy::SelectivityDefaults::from_session(
+                        self.default_string_match_selectivity,
+                        self.selectivity_factor,
+                    )
+                },
+                self.range_context,
+            );
             source.base.base.set_stats(Some(table_stats.scale(
                 selectivity,
                 tidb_planner::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
@@ -1054,7 +1055,8 @@ fn optimize_cte_tree(
     let (mut optimized, ()) = fold_owned(
         &mut InitStats {
             range_context: crate::index_range::RangeContext {
-                max_size: ctx.range_max_size(), fallback_handler: Some(ctx.range_fallback_handler()),
+                max_size: ctx.range_max_size(),
+                fallback_handler: Some(ctx.range_fallback_handler()),
             },
             catalog,
             select: None,
@@ -1300,6 +1302,7 @@ fn planner_optimized_query_with_allocators(
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
+    builder.only_full_group_by = ctx.only_full_group_by();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
@@ -1342,6 +1345,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone());
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
+    builder.only_full_group_by = ctx.only_full_group_by();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
@@ -1512,7 +1516,8 @@ fn optimize_built_logical(
     let (plan, ()) = fold_owned(
         &mut InitStats {
             range_context: crate::index_range::RangeContext {
-                max_size: ctx.range_max_size(), fallback_handler: Some(ctx.range_fallback_handler()),
+                max_size: ctx.range_max_size(),
+                fallback_handler: Some(ctx.range_fallback_handler()),
             },
             catalog,
             select: (source_count == 1).then_some(select_hint).flatten(),
@@ -1551,9 +1556,10 @@ fn optimize_built_logical(
     if ctx.static_partition_prune() {
         optimized = fold_owned(
             &mut InitStats {
-            range_context: crate::index_range::RangeContext {
-                max_size: ctx.range_max_size(), fallback_handler: Some(ctx.range_fallback_handler()),
-            },
+                range_context: crate::index_range::RangeContext {
+                    max_size: ctx.range_max_size(),
+                    fallback_handler: Some(ctx.range_fallback_handler()),
+                },
                 catalog,
                 select: (source_count == 1).then_some(select_hint).flatten(),
                 default_string_match_selectivity: ctx.default_string_match_selectivity(),
@@ -1686,6 +1692,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let session_zone = ctx.session_zone();
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
     builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
+    builder.only_full_group_by = ctx.only_full_group_by();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
