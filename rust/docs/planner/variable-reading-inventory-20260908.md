@@ -1,0 +1,47 @@
+# Session variable package reading inventory
+
+Go authority: `f5cf8f6337612c6ae51fb6e384e4bb3469dde680`.
+This is a prerequisite for the planner range-limit transmission repair. Enumerating a file does not mean reading it. Production edits remain pending complete package reading.
+
+| Artifact | Lines | Blob | Read status |
+| --- | ---: | --- | --- |
+| pkg/sessionctx/variable/BUILD.bazel | 134 | 5a0c79884f29404be6521624f903b6b3f11280e4 | complete |
+| pkg/sessionctx/variable/OWNERS | 11 | bc24856b5d5093da82c8698e437c062b00dc3bcd | complete |
+| pkg/sessionctx/variable/embedding_vars.go | 83 | e55a3e262859a509729ab6e2645a10f8a37ea05d | complete |
+| pkg/sessionctx/variable/embedding_vars_test.go | 141 | b25ed580afde13fba058a94cbb93933b457863e4 | complete |
+| pkg/sessionctx/variable/error.go | 52 | ec5a92cb4b9ee0e81083bdacaf495580fb8c487f | complete |
+| pkg/sessionctx/variable/main_test.go | 34 | 90b6abe8a546ebaaecd6847065a51e7619ab4564 | complete |
+| pkg/sessionctx/variable/mock_globalaccessor.go | 131 | 78449d3f4ee3c9f62e7b8e72c95fd743f149d10f | pending |
+| pkg/sessionctx/variable/mock_globalaccessor_test.go | 57 | d0f4970f5227289671dd1a58bfc48b7505983d9a | pending |
+| pkg/sessionctx/variable/nextgen_test.go | 84 | 7b5986b3293e257d0b276e8f957d6805343f5873 | complete |
+| pkg/sessionctx/variable/noop.go | 649 | 9466e014911fdac5f8f570310fb6340eb6784ae8 | pending |
+| pkg/sessionctx/variable/removed.go | 68 | f540f3894abe0e471186051ed20dfc8500482603 | pending |
+| pkg/sessionctx/variable/removed_test.go | 29 | 5490a54250bd51b1956600e9024a7c665805d3e3 | pending |
+| pkg/sessionctx/variable/sequence_state.go | 69 | a78daf52684176b9179a6cdd420b08a438c3796c | complete |
+| pkg/sessionctx/variable/session.go | 4013 | 6ee9f24a21b915c42a1e10dd7378da90d5780474 | pending |
+| pkg/sessionctx/variable/setvar_affect.go | 158 | be61d7f3c5b2cdba5565c88a9c7adddbfd5d63d3 | pending |
+| pkg/sessionctx/variable/slow_log.go | 1216 | 79f7c7c7289b79620ed7a5edd809984c61b38054 | pending |
+| pkg/sessionctx/variable/statusvar.go | 178 | 762693e4af842c17e1ee2377791abab3e631a72d | pending |
+| pkg/sessionctx/variable/statusvar_test.go | 66 | 7336d821a228f19f4224bcc288791e6d2a68f068 | pending |
+| pkg/sessionctx/variable/sysvar.go | 4404 | dc386aa826a9e35b860ace3577f8859cda667be8 | pending |
+| pkg/sessionctx/variable/sysvar_test.go | 2422 | dacf87345db71e486ed229a15077b2c644494848 | pending |
+| pkg/sessionctx/variable/tests/BUILD.bazel | 43 | 820f01709636ba61e6524d3b7b2f816fa39e3bf9 | pending |
+| pkg/sessionctx/variable/tests/main_test.go | 35 | eaa52297b5d03dad004edfe4fa3754110bba36e3 | pending |
+| pkg/sessionctx/variable/tests/session_test.go | 1083 | 25e5edf470bf49a5e2a71768b9309e0375985904 | pending |
+| pkg/sessionctx/variable/tests/slowlog/BUILD.bazel | 25 | 2b31b0864bd6ff058784990530efc691f4bd46b6 | pending |
+| pkg/sessionctx/variable/tests/slowlog/main_test.go | 34 | 09a52e707f12bd8c84d08eb4b49905518ec22dba | pending |
+| pkg/sessionctx/variable/tests/slowlog/slow_log_test.go | 707 | 79afe57e8ef2442c4d71af175e772a6eed600895 | pending |
+| pkg/sessionctx/variable/tests/variable_test.go | 743 | 74b2f17fc5b4d7a402473aa5b55d33fa9bee989a | pending |
+| pkg/sessionctx/variable/tidb_vars.go | 69 | 30576c2c4373b63330c4de8446feb0c90c7abe72 | pending |
+| pkg/sessionctx/variable/variable.go | 844 | b586c0965319f351b2f46bd2cbe292e1e1ebbb11 | pending |
+| pkg/sessionctx/variable/varsutil.go | 557 | 0322d2fd948b13c93b73e320cd3a9d2ba9a0caac | pending |
+| pkg/sessionctx/variable/varsutil_test.go | 728 | 413fbc73c3e46107ee9fe48fcb272289b9b3ef61 | pending |
+
+The nested tests and tests/slowlog directories are separate packages, recorded here to avoid losing cross-package test coverage. The direct BUILD lists fourteen production sources and seven ordinary test sources; nextgen_test.go is a separate nextgen build-tag variant and is not listed in that ordinary test target. No doc.go or fixture/generated source was found in this tracked tree.
+
+## Reading checkpoint
+
+Completed BUILD, OWNERS, embedding configuration production/tests, error definitions, TestMain, nextgen tests and sequence state. Embedding normalization and configuration-version changes were read as package prerequisites, not targets for unrelated changes. Nextgen tests reject fair locking ON, bulk DML and nonleader replica reads. Sequence SetAllStates merges entries rather than replacing the existing map; preserve this source behavior in any later comparison. No Rust implementation or tests were changed in this checkpoint.
+
+Next: mock-global-accessor production/tests, removed-variable production/tests, status-variable production/tests, then remaining large files in bounded segments. Complete function inventory as each remaining file is read. The range-size value, validation/setter, statement snapshot and fallback-warning/cache paths remain the intended repair scope.
+

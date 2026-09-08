@@ -241,3 +241,9 @@ rebind range fallback handling to warnings and plan-cache state; this expands
 the required evidence for the pending range-limit transmission repair.
 No Rust behavior changed, no tests were claimed run for this reading step,
 and the range-limit gap remains open pending variable/session inventories.
+
+Variable prerequisite checkpoint at f252a064aa: the new variable reading
+inventory records every tracked direct/nested artifact and eight fully read
+direct files, including nextgen_test.go, which is absent from the ordinary
+BUILD test list. Remaining files are pending; this is source-reading evidence
+only, with no production fix or new validation claim.
