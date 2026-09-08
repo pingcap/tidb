@@ -1098,7 +1098,18 @@ fn build_index_reader(
         ));
     }
     let schema = plan_schema(plan)?;
-    let (source_schema, keep, extra_handle) = reader_output_offsets(&schema, scan, &table)?;
+    // A cop partial aggregate's reader OUTPUT is the aggregate's result, not
+    // the table row; the source must still read the aggregate's INPUT columns.
+    // When the table plan is that aggregate, derive the kept columns from its
+    // child's row schema (the table scan), exactly the schema Go resolves the
+    // aggregate's arguments against.
+    let cop_row_schema = table_plan
+        .filter(|plan| matches!(plan, PhysicalPlan::HashAgg(_) | PhysicalPlan::StreamAgg(_)))
+        .and_then(|plan| plan.children().first())
+        .and_then(PhysicalPlan::schema)
+        .cloned();
+    let offset_schema = cop_row_schema.as_ref().unwrap_or(&schema);
+    let (source_schema, keep, extra_handle) = reader_output_offsets(offset_schema, scan, &table)?;
     let ranges = if scan.ranges.is_empty() {
         vec![IndexRange::full()]
     } else {

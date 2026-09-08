@@ -37,3 +37,32 @@ Focused and source-shaped regressions:
   failures listed in the historical receipts.
 
 No Go, generated, platform, Bazel, or module files changed.
+
+## Follow-up: the index reader keeps the cop aggregate's INPUT columns (2026-09-09)
+
+`build_index_reader` derived the index source's kept columns and row schema
+from the IndexLookUp's OUTPUT schema. When the table plan is a cop partial
+aggregate, that output is the aggregate's RESULT (`Column#12, Column#13,
+Column#14, a`), whose id-less columns map to no stored column, so
+`reader_output_offsets` kept only `a`. `reader_partial_aggregate` then resolved
+the aggregate's arguments (`sum(b)`) against a row schema that no longer held
+`b`, and `accept_partial_aggregate` additionally refused the stage because
+`input_offsets` exceeded `keep.len()`; the partial aggregate was silently
+dropped and the root HashAgg's `Column#12` reference failed with
+`a physical expression does not resolve in its child`.
+
+The reader now derives the kept columns from the cop aggregate's CHILD schema
+(the table scan's row schema) whenever the table plan is a `HashAgg`/
+`StreamAgg` — the same schema Go resolves the aggregate's arguments against.
+
+Regression: `tests_partition_table_sql_source::{direct_reading_with_agg_matches_regular,
+parallel_apply_over_partitions_matches_regular}` fail before and pass after.
+Ready validation: `tidb-executor` lib serialized 1213 passed / 39 failed, those
+two and no additions; `cargo check --locked --all-targets` clean;
+`rustfmt --edition 2021 --check` clean; `git diff --check -- rust`.
+
+`driver::tests::aggregates::tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup`
+still fails on a SEPARATE stale reference: after the aggregation-elimination
+rewrite, `not(isnull(cast_decimal(d_ytd)))` still names the pre-rewrite
+`d_ytd` (`UniqueID 10`) while the child schema carries the cast's output
+(`UniqueID 13`).

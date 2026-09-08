@@ -902,6 +902,13 @@ both `oltp_read_only` and `oltp_read_write`.
   (`threads == 1`); Go's `fetchChildData` also hands a chunk to one worker.
   The assertion is `workers >= 1` and the test proves the pipeline, not the
   worker count. Receipt: `rust/testport/receipts/executor_join.md`.
+- [x] 2026-09-09: made the index reader keep a cop partial aggregate's INPUT
+  columns. `build_index_reader` derived the kept columns from the IndexLookUp's
+  OUTPUT schema, which for a cop aggregate is the aggregate's RESULT, so the
+  reader kept only the mapped group key and the aggregate's `sum(b)` argument
+  could not resolve. It now derives them from the aggregate's child (table
+  scan) schema. Two partition-table tests fixed. Receipt:
+  `rust/testport/receipts/executor_index_lookup_partial_aggregate.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
