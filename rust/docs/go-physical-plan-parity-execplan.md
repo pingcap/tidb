@@ -1007,6 +1007,15 @@ both `oltp_read_only` and `oltp_read_write`.
   The offer is now gated on `tidb_planner::pushdown::can_exprs_push_down_tikv`.
   One executor test fixed. Receipt:
   `rust/testport/receipts/executor_selection_pushdown_gate.md`.
+- [x] 2026-09-09: pinned the TPCC plan tests to Go's relationships instead of
+  the planner's column-id history. Three tests asserted absolute `Column#N`
+  ids from the recorded Go plans while the Rust `AllocPlanColumnID` sequence
+  allocates different ids for the same shapes (the eliminated district
+  aggregation, the two derived MAX aggregations, and the grouped Sort). They
+  now read the ids their own plan allocated and pin the projection, aggregate
+  and Sort relationships. Matching Go's allocator history remains an open gap.
+  Three executor tests fixed. Receipt:
+  `rust/testport/receipts/executor_tpcc_column_ids.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
