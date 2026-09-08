@@ -1401,9 +1401,20 @@ fn selectivity_of_conjuncts_with_path_context(
         });
     }
 
-    let conditions: Vec<ConditionKind> = conjuncts
+    // Go classifies only predicates left uncovered by the selected nodes.
+    // Rewriting covered predicates can repeat statement warnings or folds.
+    let covered = tidb_planner::selectivity_greedy::get_usable_sets_by_greedy(&mut nodes)
         .iter()
-        .map(|conjunct| condition_kind(conjunct, table, resolver, stats, defaults, range_context))
+        .fold(0_i64, |mask, node| mask | node.mask);
+    let conditions: Vec<ConditionKind> = conjuncts
+        .iter().enumerate()
+        .map(|(index, conjunct)| {
+            if covered & (1_i64 << index) != 0 {
+                ConditionKind::Other
+            } else {
+                condition_kind(conjunct, table, resolver, stats, defaults, range_context)
+            }
+        })
         .collect();
     combine_selectivity(
         &mut nodes,
@@ -1850,6 +1861,68 @@ fn condition_kind(
     defaults: SelectivityDefaults,
     range_context: crate::index_range::RangeContext<'_>,
 ) -> ConditionKind {
+    let literal = strip_parens(conjunct);
+    let signed_literal = matches!(literal,
+        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Minus | tidb_ast::UnaryOp::Plus, inner)
+        if matches!(strip_parens(inner), tidb_ast::Expr::Int(_) | tidb_ast::Expr::Decimal(_) | tidb_ast::Expr::Float(_)));
+    {
+        // The session rewriter can fold a nonliteral AST into a Constant.
+        // Classify the rewritten node rather than restricting its input shape.
+        if let Ok(expression) = tidb_expr::rewriter::rewrite_expr_resolved(
+            conjunct,
+            &StatisticsResolver { base: resolver },
+        ) {
+            let value = match &expression {
+                tidb_expr::expression::Expression::Constant(constant)
+                    if constant.param_marker.is_none() && constant.deferred_expr.is_none() =>
+                {
+                    Some(constant.value.clone())
+                }
+                _ if signed_literal => {
+                    let fallback = tidb_expr::ZonedNoColumns(resolver.time_zone());
+                    let ctx = resolver.comparison_context().unwrap_or(&fallback);
+                    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+                    chunk.set_num_virtual_rows(1);
+                    expression.eval(ctx, chunk.get_row(0)).ok()
+                }
+                _ => None,
+            };
+            if let Some(value) = value {
+                if value == Datum::Null {
+                    return ConditionKind::ConstantFalse;
+                }
+                if let Ok(converted) = value.to_bool() {
+                    let accepted = match &converted.event {
+                        None => true,
+                        Some(tidb_datatype::ScalarConversionEvent::Truncated) => {
+                            let text = match &value {
+                                Datum::String(value) => value.as_utf8().ok(),
+                                Datum::Bytes(value) => std::str::from_utf8(value).ok(),
+                                _ => None,
+                            };
+                            text.is_some_and(|text| {
+                                let fallback = tidb_expr::ZonedNoColumns(resolver.time_zone());
+                                let ctx = resolver.comparison_context().unwrap_or(&fallback);
+                                ctx.handle_truncate(&format!(
+                                    "Truncated incorrect DOUBLE value: '{}'",
+                                    tidb_datatype::float_warning_input(text)
+                                ))
+                                .is_ok()
+                            })
+                        }
+                        _ => false,
+                    };
+                    if accepted {
+                        return if converted.value == 0 {
+                            ConditionKind::ConstantFalse
+                        } else {
+                            ConditionKind::ConstantTrue
+                        };
+                    }
+                }
+            }
+        }
+    }
     match conjunct {
         // Go's `NOT LIKE` is `unaryNot(like(...))`, which the source unwraps
         // before classifying; this AST carries the negation on the node.
@@ -2186,6 +2259,156 @@ mod tests {
             origin_default: None,
             comment: String::new(),
             generated: None,
+        }
+    }
+
+    #[test]
+    fn covered_predicates_do_not_reenter_residual_rewriting() {
+        struct Resolver(std::cell::Cell<usize>);
+        impl ColumnResolver for Resolver {
+            fn resolve(&self, _: &[String]) -> Option<(usize, FieldType, i64)> {
+                Some((0, FieldType::new(FieldTypeCode::LongLong), 1))
+            }
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+            fn fold_constant(
+                &self,
+                _: &mut tidb_expr::expression::Expression,
+                _: tidb_expr::ConstantFoldMode,
+            ) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+        let table = KvTable::new(9603, vec![long_column("a", 1)]);
+        let resolver = Resolver(std::cell::Cell::new(0));
+        let predicate = tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::Eq,
+            Box::new(tidb_ast::Expr::Column(vec!["a".to_owned()])),
+            Box::new(tidb_ast::Expr::Int("1".to_owned())),
+        );
+        let actual = selectivity(&predicate, &table, &resolver, None);
+        assert!((actual - 0.001).abs() < 1e-12);
+        assert_eq!(
+            resolver.0.get(),
+            0,
+            "covered column range must bypass residual fold hooks"
+        );
+    }
+
+    #[test]
+    fn constant_truth_respects_statement_truncation_policy() {
+        struct Context {
+            level: tidb_expr::ErrorLevel,
+            warnings: std::cell::RefCell<Vec<(u16, String)>>,
+        }
+        impl tidb_expr::Columns for Context {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn truncate_level(&self) -> tidb_expr::ErrorLevel {
+                self.level
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.warnings.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+        impl ColumnResolver for Context {
+            fn resolve(&self, _: &[String]) -> Option<(usize, FieldType, i64)> {
+                None
+            }
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                tidb_datatype::SessionTimeZone::utc()
+            }
+            fn comparison_context(&self) -> Option<&dyn tidb_expr::Columns> {
+                Some(self)
+            }
+            fn fold_constant(
+                &self,
+                expression: &mut tidb_expr::expression::Expression,
+                mode: tidb_expr::ConstantFoldMode,
+            ) {
+                tidb_expr::fold_constant_in_mode(expression, self, mode);
+            }
+        }
+        let table = KvTable::new(9602, vec![long_column("a", 1)]);
+        for (level, expected, warnings) in [
+            (tidb_expr::ErrorLevel::Warn, 1.0, 1),
+            (tidb_expr::ErrorLevel::Ignore, 1.0, 0),
+            (tidb_expr::ErrorLevel::Error, 0.8, 0),
+        ] {
+            let ctx = Context {
+                level,
+                warnings: Default::default(),
+            };
+            let arithmetic = tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Plus,
+                Box::new(tidb_ast::Expr::Int("1".to_owned())),
+                Box::new(tidb_ast::Expr::Int("1".to_owned())),
+            );
+            assert!((selectivity(&arithmetic, &table, &ctx, None) - 1.0).abs() < 1e-12);
+            let predicate = tidb_ast::Expr::String("1abc".to_owned());
+            let actual = selectivity(&predicate, &table, &ctx, None);
+            assert!((actual - expected).abs() < 1e-12, "{level:?}: {actual}");
+            assert_eq!(ctx.warnings.borrow().len(), warnings);
+            if warnings != 0 {
+                assert_eq!(
+                    ctx.warnings.borrow()[0],
+                    (1292, "Truncated incorrect DOUBLE value: '1abc'".to_owned())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn constant_conditions_use_truth_in_selectivity() {
+        let table = KvTable::new(9601, vec![long_column("a", 1)]);
+        for value in [Datum::Int(0), Datum::Int(1)] {
+            let parameter = tidb_ast::Expr::ParamMarker {
+                offset: 0,
+                order: 0,
+                in_execute: true,
+                value: Some(value),
+                projection_offset: 0,
+            };
+            let actual = selectivity(
+                &parameter,
+                &table,
+                &NamedColumnResolver { table: &table },
+                None,
+            );
+            assert!(
+                (actual - 0.8).abs() < 1e-12,
+                "parameter must remain cache-sensitive: {actual}"
+            );
+        }
+
+        for (condition, expected) in [
+            ("1", 1.0),
+            ("0", 0.0001),
+            ("NULL", 0.0001),
+            ("-1", 1.0),
+            ("0.0", 0.0001),
+            ("'1'", 1.0),
+            ("'0'", 0.0001),
+            ("'1abc'", 1.0),
+            ("'abc'", 0.0001),
+        ] {
+            let statement =
+                tidb_parser::parse(&format!("SELECT * FROM t WHERE {condition}")).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            let actual = selectivity(
+                select.where_clause.as_ref().unwrap(),
+                &table,
+                &NamedColumnResolver { table: &table },
+                None,
+            );
+            assert!((actual - expected).abs() < 1e-12, "{condition}: {actual}");
         }
     }
 
