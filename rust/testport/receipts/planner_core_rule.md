@@ -265,3 +265,9 @@ files (1443 lines), bringing direct coverage to nineteen. The range-size option
 is hint-updatable in Go, so the eventual repair must test SET_VAR propagation.
 Five direct files and all nested test packages remain pending. This checkpoint
 records reading evidence only; no Rust behavior fix or Ready validation claim.
+
+At 620d61522f, read the entire noop catalog and slow_log.go (1865 lines),
+including warning collection, used-statistics output and all rule accessors and
+parsers. Direct coverage is twenty-one artifacts; session.go, sysvar.go,
+sysvar_test.go and nested tests remain pending. No Rust edit or test execution
+is claimed for this prerequisite reading batch.

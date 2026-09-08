@@ -14,13 +14,13 @@ This is a prerequisite for the planner range-limit transmission repair. Enumerat
 | pkg/sessionctx/variable/mock_globalaccessor.go | 131 | 78449d3f4ee3c9f62e7b8e72c95fd743f149d10f | complete |
 | pkg/sessionctx/variable/mock_globalaccessor_test.go | 57 | d0f4970f5227289671dd1a58bfc48b7505983d9a | complete |
 | pkg/sessionctx/variable/nextgen_test.go | 84 | 7b5986b3293e257d0b276e8f957d6805343f5873 | complete |
-| pkg/sessionctx/variable/noop.go | 649 | 9466e014911fdac5f8f570310fb6340eb6784ae8 | pending |
+| pkg/sessionctx/variable/noop.go | 649 | 9466e014911fdac5f8f570310fb6340eb6784ae8 | complete |
 | pkg/sessionctx/variable/removed.go | 68 | f540f3894abe0e471186051ed20dfc8500482603 | complete |
 | pkg/sessionctx/variable/removed_test.go | 29 | 5490a54250bd51b1956600e9024a7c665805d3e3 | complete |
 | pkg/sessionctx/variable/sequence_state.go | 69 | a78daf52684176b9179a6cdd420b08a438c3796c | complete |
 | pkg/sessionctx/variable/session.go | 4013 | 6ee9f24a21b915c42a1e10dd7378da90d5780474 | pending |
 | pkg/sessionctx/variable/setvar_affect.go | 158 | be61d7f3c5b2cdba5565c88a9c7adddbfd5d63d3 | complete |
-| pkg/sessionctx/variable/slow_log.go | 1216 | 79f7c7c7289b79620ed7a5edd809984c61b38054 | pending |
+| pkg/sessionctx/variable/slow_log.go | 1216 | 79f7c7c7289b79620ed7a5edd809984c61b38054 | complete |
 | pkg/sessionctx/variable/statusvar.go | 178 | 762693e4af842c17e1ee2377791abab3e631a72d | complete |
 | pkg/sessionctx/variable/statusvar_test.go | 66 | 7336d821a228f19f4224bcc288791e6d2a68f068 | complete |
 | pkg/sessionctx/variable/sysvar.go | 4404 | dc386aa826a9e35b860ace3577f8859cda667be8 | pending |
@@ -74,3 +74,16 @@ All 34 varsutil.go functions were read: BoolToOnOff, int32ToBoolStr, checkCollat
 Conversion details: TiDBOptOn accepts case-insensitive ON or exact 1; OnOffWarn switches on canonical uppercase values. Memory limits accept integer byte/unit and percentage forms with a nonzero lower-bound warning; schema cache additionally caps above MaxInt64. Snapshot setting clears TxnReadTS after parsing even on a parse error, while setTxnReadTS mutates only after successful timestamp conversion. Analyze-skip validation trims names and retains duplicates; the map parser does not trim each item. These are source observations, not new repair scope.
 
 The ten tests read are TestTiDBOptOn, TestNewSessionVars, TestVarsutil, TestValidate, TestValidateStmtSummary, TestConcurrencyVariables, TestHelperFuncs, TestSessionStatesSystemVar, TestOnOffHelpers and TestAssertionLevel, plus assertFieldsGreaterThanZero. Tests cover session defaults, optimizer variable assignment, nextgen replica restrictions, warning clamping, timezone limits, scope errors, concurrency inheritance and state retention. No Rust edits or test execution are claimed for this reading checkpoint.
+
+## Compatibility catalog and slow-log reading checkpoint
+
+
+At parent 620d61522f, read noop.go in three bounded segments (649 lines) and slow_log.go in four (1216 lines). Twenty-one direct artifacts are complete. The remaining direct files are session.go, sysvar.go and sysvar_test.go; nested tests, including slowlog tests, remain pending.
+
+noop.go contains the complete noopSysVars catalog and inline validators, with no named functions. Scope, default, type, bounds, aliases, hint flags and validators were inspected entry by entry. Read-only transaction aliases, offline mode and server read-only settings delegate to checkReadOnly. SQLAutoIsNull separately enforces the same-scope noop setting, warning in WARN mode and failing in OFF mode. SecureAuth rejects OFF. CharacterSetFilesystem validates charset names. OptimizerSwitch has ScopeNone despite its hint flag; optimizer_search_depth, optimizer_prune_level and eq_range_index_dive_limit are compatibility catalog entries. A hint flag alone is not evidence of optimizer execution behavior.
+
+slow_log.go declarations read: JSONSQLWarnForSlowLog, extractMsgFromSQLWarn, CollectWarningsForSlowLog, SlowQueryLogItems, kvExecDetailFormat, SessionVars.SlowLogFormat, writeSlowLogItem, SlowLogFieldAccessor, makeExecDetailAccessor, makeKVExecDetailAccessor, numericComparable, MatchEqual, matchGE, uint64FromNonNegative, matchZero, ParseString, parseInt64, parseUint64, parseFloat64, parseBool, SlowLogRuleFieldAccessors (all inline setters/matchers), ParseSlowLogFieldValue, parseSlowLogRuleEntry, parseSlowLogRuleSet, ParseSessionSlowLogRules, encodeRules and ParseGlobalSlowLogRules. All constants, the rule regex, sentinel and CRC64 table were read.
+
+SlowLogFormat sorts used-statistics IDs and backoff names; statistics formatting delegates to UsedStatsInfoForTable.WriteToSlowLog. Ordinary warnings precede extra warnings and only the latter carry IsExtra. Warning and connection-attribute JSON disable HTML escaping. Optimizer phase timings include logical, physical, binding-match, stats-sync-wait and stats-derive. CurrentDBChanged is cleared after emitting use; SQL receives a semicolon only when absent. Nil KV detail emits zero fields. These are source observations pending Rust comparison.
+
+Rule parsing rejects negative signed thresholds and nonfinite or negative floats. Missing execution detail matches only numeric zero; signed scan/write counters must be nonnegative before unsigned comparison. Database/resource-group equality is case-insensitive. Duplicate condition names overwrite earlier values; condition/map encoding order is not sorted. The ten-rule limit counts semicolon-separated pieces before empty rules are skipped. Session rules reject explicit Conn_ID; global rules allow it and checksum the encoded result. No production edit, regression execution or Ready validation is claimed for this prerequisite checkpoint.
