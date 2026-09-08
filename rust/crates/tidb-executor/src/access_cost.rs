@@ -1041,14 +1041,31 @@ fn selectivity_of_conjuncts_with_path_context(
     // `selectivity.go:69-73`: past 63 conditions the mask no longer fits an
     // int64, and the source gives up on nodes entirely -- for a loaded
     // histogram collection just as much as for a pseudo one.
-    if conjuncts.len() > 63 {
+    // Real cached collections may have no objects even when their existence
+    // metadata is populated. Zero-row and synthetic tables are replaced with
+    // PseudoTable, whose column/index objects are conceptually present.
+    let empty_collection = stats.is_some_and(|stats| {
+        !stats.cache_pseudo
+            && stats.row_count != 0
+            && stats.columns.is_empty()
+            && stats.indexes.is_empty()
+    });
+    if conjuncts.len() > 63 || empty_collection {
         let predicates: Vec<PseudoPredicate> = conjuncts
             .iter()
-            .map(|conjunct| pseudo_predicate(conjunct, table, resolver))
+            .map(|conjunct| {
+                let mut predicate = pseudo_predicate(conjunct, table, resolver);
+                if empty_collection {
+                    if let PseudoPredicate::Resolved { column, .. } = &mut predicate {
+                        *column = None;
+                    }
+                }
+                predicate
+            })
             .collect();
         return pseudo_selectivity(
             &predicates,
-            &pseudo_unique_indexes(table),
+            &if empty_collection { Vec::new() } else { pseudo_unique_indexes(table) },
             realtime as i64,
             defaults.selectivity_factor,
         );
@@ -1060,9 +1077,9 @@ fn selectivity_of_conjuncts_with_path_context(
     // (`pkg/statistics/table.go:1034-1061`), so `coll.ColNum()` is non-zero
     // and `Selectivity` takes its ORDINARY body. Only the per-node row count
     // differs: the pseudo equal/less/between rates rather than a histogram.
-    // (`pseudoSelectivity`, a MINIMUM over per-operator rates, is reached only
-    // down the `len(exprs) > 63` arm above -- it cannot compound, and says
-    // 10.00 rows for `a = 1 and b = 2` where TiDB prints 1.00.)
+    // `pseudoSelectivity` instead takes a MINIMUM over per-operator rates.
+    // It applies to oversized condition lists and genuinely empty collections,
+    // not synthetic PseudoTable entries.
     let loaded = stats.filter(|stats| !stats.pseudo);
 
     let extracted_offsets = extracted_column_offsets(&conjuncts, table, resolver);
@@ -2072,6 +2089,76 @@ mod tests {
             comment: String::new(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn empty_real_histogram_collection_uses_pseudo_minimum() {
+        let mut table = KvTable::with_storage(
+            93,
+            vec![long_column("a", 1), long_column("b", 2)],
+            Box::new(MemTableStorage::new()),
+        );
+        let mut stats = TableStatistics::new(10000, 0, BTreeMap::new(), BTreeMap::new());
+        // A real cache entry can have no loaded objects; unlike PseudoTable,
+        // its HistColl is empty even when GetStatsTable marks it pseudo.
+        stats.cache_pseudo = false;
+        let statement = tidb_parser::parse("SELECT * FROM t WHERE a=1 AND b=2").unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("select")
+        };
+        let actual = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        assert!((actual - 0.001).abs() < 1e-12, "actual={actual}");
+        stats.column_stats_existence.insert(1, true);
+        let with_metadata = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        assert!((with_metadata - 0.001).abs() < 1e-12);
+        stats.cache_pseudo = true;
+        let synthetic = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        assert!((synthetic - 0.0001).abs() < 1e-12, "synthetic={synthetic}");
+
+        table.add_index(
+            KvIndex {
+                id: 9,
+                name: "unique_a".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![0],
+                prefix_lengths: vec![-1],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        stats.cache_pseudo = false;
+        let unique_without_objects = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        assert!(
+            (unique_without_objects - 0.001).abs() < 1e-12,
+            "unique metadata must not replace missing objects: {unique_without_objects}"
+        );
     }
 
     #[test]
