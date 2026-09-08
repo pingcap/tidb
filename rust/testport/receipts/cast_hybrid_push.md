@@ -78,3 +78,30 @@ cargo +nightly-2026-08-22 clippy --offline --locked -p tidb-expr --all-targets
   rebuild uses. Non-hybrid shapes are byte-identical before and after.
 - Compatibility: no API change; `builtin_return_type` re-export is
   crate-internal.
+
+## Follow-up: a cast to `BIT` returns the byte carrier, not an integer (2026-09-09)
+
+`mysql.TypeBit`'s eval type is `ETInt`, so `ScalarFunction::coerce_to_ret_type`
+kept a cast-to-`BIT` result in the integer family. Go stores a BIT cell as
+bytes: `chunk.AppendDatum` maps `KindMysqlBit` to `AppendBytes`, and
+`getFixedLen(TypeBit)` is `VarElemLen`, so a BIT chunk column is var-length and
+cannot accept `AppendInt64`. A `UNION ALL` of `bit(15)` and `bit(20)` therefore
+panicked with `fixed append requires a fixed column` in
+`tidb-chunk/src/column.rs`, because the union inserted the `bit(15) -> bit(20)`
+cast (`FieldType.Equal` compares flen, `pkg/parser/types/field_type.go:371`)
+and the projection wrote an integer into the union's var-length column.
+
+`coerce_to_ret_type` now converts an `Int`/`UInt` result under a `Bit` result
+type to `Datum::Bit(BinaryLiteral::from_uint(value, width))`, where `width` is
+the target's `(flen + 7) / 8` bytes. This matches Go's recorded
+`TestUnionIssue` output `"\x00\x00\x0F", "\x00\x00\xFF", "\x00\xFF\xFF"`; a
+value already carrying the bytes is left unchanged.
+
+Regression: the new
+`tests::aggregation_arithmetic_cast_source::test_cast_signed_to_bit_returns_zero_padded_bytes`
+fails before (returns `Int(15)`) and passes after (`Bit([0, 0, 15])`).
+`tidb-executor --lib` serialized is 1173 passed / 68 failed, fixing
+`tests_issuetest_b135_source::union_issue_data_type_and_null_arms` with no
+additions. `tidb-expr --lib` is 1204 passed / 2 failed, both pre-existing and
+unrelated (`build_expression_without_enough_columns` and the documented
+network `json_schema_valid_resolves_file_and_http_references`).

@@ -858,6 +858,32 @@ impl ScalarFunction {
             }
         }
         if same_eval_family(&value, ret_type) {
+            // `mysql.TypeBit`'s eval type is `ETInt`, so the family check
+            // would keep an integer here. A BIT value's canonical carrier is
+            // instead the zero-padded byte string (`Datum::Bit`), which is
+            // what Go's `chunk.AppendDatum` stores for `KindMysqlBit` and
+            // what a var-length BIT chunk column can hold. A cast to BIT is
+            // the scalar function that produces such an integer, so convert
+            // it here; a value already carrying the bytes is left alone.
+            if ret_type.code() == tidb_datatype::FieldTypeCode::Bit {
+                let width = (ret_type.flen() > 0)
+                    .then(|| u8::try_from((ret_type.flen() + 7) / 8).ok())
+                    .flatten()
+                    .and_then(|bytes| tidb_datatype::BinaryLiteralWidth::try_from(bytes).ok());
+                match value {
+                    Datum::Int(v) => {
+                        return Ok(Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(
+                            v as u64, width,
+                        )));
+                    }
+                    Datum::UInt(v) => {
+                        return Ok(Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(
+                            v, width,
+                        )));
+                    }
+                    _ => {}
+                }
+            }
             return Ok(value);
         }
         // COALESCE is built with `newBaseBuiltinFuncWithTp`, so its ARGUMENTS

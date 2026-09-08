@@ -829,6 +829,13 @@ both `oltp_read_only` and `oltp_read_write`.
   `rust/testport/receipts/planner_coalesced_qualified_names.md`. The executor
   test that exercises this now clears the 1054 and fails only on the
   unordered parallel-HashAgg row order (Go iterates a Go map there).
+- [x] 2026-09-09: made a cast to `BIT` return the byte carrier. `TypeBit`'s
+  eval type is `ETInt`, so the result stayed an integer, but Go stores a BIT
+  cell as bytes (`chunk.AppendDatum`'s `KindMysqlBit` arm over a var-length
+  column). A `UNION ALL` of `bit(15)` and `bit(20)` inserted the widening
+  cast and panicked with `fixed append requires a fixed column`;
+  `coerce_to_ret_type` now produces the zero-padded `Datum::Bit`. Receipt:
+  `rust/testport/receipts/cast_hybrid_push.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

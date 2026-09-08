@@ -1189,6 +1189,49 @@ fn test_cast_func_sig_as_int() {
     }
 }
 
+/// `mysql.TypeBit`'s eval type is `ETInt`, so a cast to BIT produces an
+/// integer -- but the value's canonical carrier is the zero-padded byte
+/// string Go's `chunk.AppendDatum` stores for `KindMysqlBit`. A var-length
+/// BIT chunk column can only hold those bytes; keeping the integer panicked
+/// `finish_append_fixed` when a UNION projected one into such a column.
+#[test]
+fn test_cast_signed_to_bit_returns_zero_padded_bytes() {
+    let ctx = WarningCtx::default();
+    let mut bit20 = FieldType::new(C::Bit);
+    bit20.set_flen(20);
+    let out = cast_eval(
+        "cast_signed",
+        const_typed(Datum::Int(15), FieldType::new(C::LongLong)),
+        bit20,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        out,
+        Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(
+            15,
+            Some(tidb_datatype::BinaryLiteralWidth::try_from(3u8).unwrap())
+        ))
+    );
+
+    let mut bit1 = FieldType::new(C::Bit);
+    bit1.set_flen(1);
+    let out = cast_eval(
+        "cast_signed",
+        const_typed(Datum::UInt(1), FieldType::new(C::LongLong)),
+        bit1,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        out,
+        Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(
+            1,
+            Some(tidb_datatype::BinaryLiteralWidth::try_from(1u8).unwrap())
+        ))
+    );
+}
+
 #[test]
 fn test_cast_func_sig_as_real() {
     let ctx = WarningCtx::default();
