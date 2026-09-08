@@ -181,3 +181,49 @@ Both changes are executor-side selectivity parity fixes; the remaining
 the `h_c_w_id = 1` equality as `1/NDV` instead of the histogram's
 repeat-based `29,702/299,995`. Closing it needs the histogram collection on
 the `DataSource`, which is a separate batch.
+
+## Follow-up: the DataSource rule reads the loaded histograms (2026-09-09)
+
+The gap above is closed. `HistColl` now carries the loaded column histograms
+(Go `HistColl.Columns`), keyed by planner unique id, plus `ModifyCount` and
+`PKIsHandle`; `InitStats` populates them from the catalog's `TableStatistics`
+and `analyzed_filter_selectivity` estimates an `eq`/`in` condition through
+`get_row_count_by_column_ranges` on the closed point ranges, dividing by the
+source's row count. Without a loaded histogram for the column the NDV
+approximation remains.
+
+`PKIsHandle` matters: Go passes `pkIsHandle=true` only when the ESTIMATED
+column is the single integer handle (`colStats.IsHandle`), not for every key
+column of a common handle and not for a heap table's synthetic `_tidb_rowid`.
+Passing the row-size `is_handle` flag alone made every point range on
+`customer.c_w_id`/`orders.o_w_id` estimate one row and collapsed condition
+twelve's plan to a root StreamAgg.
+
+Result on condition ten: `h_c_w_id = 1` now estimates
+`29_702 * 300_000/299_995 / 300_000 = 0.0990083` and the grouped history
+HashAgg `297.02` (was `300.00`; Go's captured plan prints `297.03`). The
+remaining 0.01 is Go's `EstimateColumnNDV` borrowing the loaded index's
+299,995-row analyzed count for the evicted `h_c_id` (`3000.05` instead of
+`3000`), which needs the predicate-column loading model at `InitStats` time.
+
+Regression: new
+`logical::rewrite::analyzed_filter_selectivity_tests::equality_uses_the_loaded_histogram_repeat`
+builds a 299,995-row histogram whose bucket repeats 29,702 times and asserts
+the equality estimates the repeat, not `1/NDV`. It fails when the histogram
+path is disabled and passes with it.
+
+```text
+cargo test -p tidb-planner --lib equality_uses_the_loaded_histogram_repeat
+# ok after; FAILED with the histogram path disabled
+
+cargo test -p tidb-planner
+# 1002 + 268 + 6 + 3 passed; 0 failed
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1252 passed; 9 failed; no additions to the baseline set
+
+cargo check --locked --all-targets -p tidb-planner -p tidb-executor
+rustfmt --edition 2021 --config skip_children=true --check <changed files>
+git diff --check
+# clean
+```

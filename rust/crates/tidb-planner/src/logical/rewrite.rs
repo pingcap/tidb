@@ -152,10 +152,13 @@ fn all_join_leaf_schemas(node: &LogicalPlan) -> Vec<Schema> {
 }
 
 /// Histogram-backed `Selectivity` for the equality shapes whose complete
-/// inputs already live in [`StatsInfo`]. Go estimates a column/constant
-/// equality as one value out of the column NDV (and an IN list as its number
-/// of values out of that NDV). Returning `None` keeps genuinely pseudo tables
-/// on `pseudoSelectivity`; it must not overwrite loaded NDVs with the pseudo
+/// inputs already live in [`StatsInfo`]. Go's `Selectivity` estimates a
+/// column/constant equality through the loaded histogram (bucket `Repeat` /
+/// bucket NDV / uniform fallback), and an IN list as the sum of its point
+/// estimates. When the collection carries the loaded histograms this port now
+/// takes the same route; without them it falls back to one value out of the
+/// column NDV. Returning `None` keeps genuinely pseudo tables on
+/// `pseudoSelectivity`; it must not overwrite loaded NDVs with the pseudo
 /// 1/1000 equality rate.
 pub(crate) fn analyzed_filter_selectivity(
     table_stats: &StatsInfo,
@@ -176,27 +179,44 @@ pub(crate) fn analyzed_filter_selectivity(
             continue;
         };
         let (column, values) = match (function.func_name.lowercase(), function.args.as_slice()) {
-            (
-                "eq" | "nulleq",
-                [Expression::Column(column), Expression::Constant(_)]
-                | [Expression::Constant(_), Expression::Column(column)],
-            ) => (column, 1_usize),
+            ("eq" | "nulleq", [Expression::Column(column), Expression::Constant(value)]) => {
+                (column, vec![value.value.clone()])
+            }
+            ("eq" | "nulleq", [Expression::Constant(value), Expression::Column(column)]) => {
+                (column, vec![value.value.clone()])
+            }
             ("in", [Expression::Column(column), values @ ..])
                 if !values.is_empty()
                     && values
                         .iter()
                         .all(|value| matches!(value, Expression::Constant(_))) =>
             {
-                (column, values.len())
+                (
+                    column,
+                    values
+                        .iter()
+                        .filter_map(|value| match value {
+                            Expression::Constant(constant) => Some(constant.value.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                )
             }
             _ => {
                 selectivity *= crate::cost_factors::SELECTION_FACTOR;
                 continue;
             }
         };
+        if let Some(histogram_selectivity) =
+            histogram_point_selectivity(table_stats, column, &values)
+        {
+            selectivity *= histogram_selectivity;
+            recognized = true;
+            continue;
+        }
         let ndv = table_stats.col_ndv(column.unique_id);
         if ndv > 0.0 {
-            selectivity *= (values as f64 / ndv).min(1.0);
+            selectivity *= (values.len() as f64 / ndv).min(1.0);
             recognized = true;
         } else {
             selectivity *= crate::cost_factors::SELECTION_FACTOR;
@@ -207,6 +227,52 @@ pub(crate) fn analyzed_filter_selectivity(
     } else {
         Some(selectivity)
     }
+}
+
+/// Go `cardinality.Selectivity`'s equality arm over the loaded histogram:
+/// `getRowCountByColumnRanges` on the closed point ranges of `values`,
+/// divided by the source's row count.
+///
+/// `None` when the collection carries no histogram for this column, which is
+/// every profile built without a catalog and every pseudo collection; the
+/// caller then keeps the NDV approximation.
+fn histogram_point_selectivity(
+    table_stats: &StatsInfo,
+    column: &tidb_expr::column::Column,
+    values: &[tidb_datatype::Datum],
+) -> Option<f64> {
+    let hist_coll = table_stats.hist_coll()?;
+    let column_stats = hist_coll.histogram(column.unique_id)?;
+    if column_stats.histogram.is_empty() || values.is_empty() {
+        return None;
+    }
+    let realtime = hist_coll.realtime_count();
+    if realtime <= 0 {
+        return None;
+    }
+    let ranges = values
+        .iter()
+        .cloned()
+        .map(crate::cardinality::row_count_estimator::ColumnRange::point)
+        .collect::<Vec<_>>();
+    // Go's `Selectivity` passes `pkIsHandle=true` only when the ESTIMATED
+    // column is the single integer handle (`colStats.IsHandle`); a common
+    // handle's key columns are ordinary columns here, and a heap table's
+    // synthetic `_tidb_rowid` is not one of its stored columns at all.
+    let column_is_handle = hist_coll.pk_is_handle()
+        && hist_coll
+            .column(column.unique_id)
+            .is_some_and(|row_size| row_size.is_handle);
+    let estimate = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+        Some(column_stats.as_ref()),
+        &ranges,
+        tidb_datatype::Collation::Binary,
+        realtime,
+        hist_coll.modify_count(),
+        column_is_handle,
+        crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+    );
+    Some((estimate.est / table_stats.row_count()).min(1.0))
 }
 
 fn covered_condition_mask(conditions: &[Expression], access: &[Expression]) -> u64 {
@@ -589,12 +655,20 @@ pub(crate) fn pseudo_range_filter_selectivity(
             .collect::<Vec<_>>();
         let detached = match range_fallback_handler {
             Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler(
-                conditions, &index_columns, &lengths, range_max_size, handler,
+                conditions,
+                &index_columns,
+                &lengths,
+                range_max_size,
+                handler,
             ),
             None => crate::ranger::detacher::detach_cond_and_build_range_for_index(
-                conditions, &index_columns, &lengths, range_max_size,
+                conditions,
+                &index_columns,
+                &lengths,
+                range_max_size,
             ),
-        }.ok()?;
+        }
+        .ok()?;
         let mask = if detached.is_dnf_cond && !detached.access_conds.is_empty() {
             1
         } else {
@@ -613,8 +687,14 @@ pub(crate) fn pseudo_range_filter_selectivity(
         nodes.push(StatsNode {
             selectivity: count / rows,
             partial_cover: detached.is_dnf_cond && !detached.remained_conds.is_empty(),
-            min_access_conditions_for_dnf: i32::try_from(detached.min_access_conds_for_dnf_cond).unwrap_or(i32::MAX),
-            ..StatsNode::new(StatsNodeType::Index, index.id, mask as i64, index.columns.len())
+            min_access_conditions_for_dnf: i32::try_from(detached.min_access_conds_for_dnf_cond)
+                .unwrap_or(i32::MAX),
+            ..StatsNode::new(
+                StatsNodeType::Index,
+                index.id,
+                mask as i64,
+                index.columns.len(),
+            )
         });
     }
 
@@ -2480,5 +2560,77 @@ fn recursive_derive_stats_with_range_quota(
     match fold.failure.take() {
         Some(error) => (plan, Err(error)),
         None => (plan, Ok((stats, reload))),
+    }
+}
+
+#[cfg(test)]
+mod analyzed_filter_selectivity_tests {
+    use super::analyzed_filter_selectivity;
+    use crate::cardinality::row_count_estimator::ColumnStats;
+    use crate::stats_info::{HistColl, StatsInfo};
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+    use tidb_expr::constant::Constant;
+    use tidb_expr::expression::Expression;
+    use tidb_expr::scalar_function::ScalarFunction;
+    use tidb_stats::{Bucket, Histogram};
+
+    /// Go `cardinality.Selectivity`'s equality arm reads the loaded
+    /// histogram: when the value is a bucket's upper bound the estimate is
+    /// that bucket's `Repeat`, not `1/NDV`. The rule used to ignore the
+    /// histogram and divide by the NDV, so a 299,995-row sampled histogram
+    /// with a 29,702-value repeat estimated 0.1 instead of 0.099008.
+    #[test]
+    fn equality_uses_the_loaded_histogram_repeat() {
+        let unique_id = 7;
+        let histogram = Histogram {
+            id: 1,
+            ndv: 10,
+            last_update_version: 1,
+            buckets: vec![Bucket {
+                count: 299_995,
+                repeat: 29_702,
+                ndv: 10,
+                lower_bound: Datum::Int(1),
+                upper_bound: Datum::Int(1),
+            }],
+            ..Histogram::default()
+        };
+        let hist_coll = HistColl::new(false, 300_000, [])
+            .with_histograms([(
+                unique_id,
+                std::sync::Arc::new(ColumnStats {
+                    histogram,
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                }),
+            )])
+            .with_modify_count(0);
+        let table_stats = StatsInfo::new(300_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
+
+        let long = || FieldType::new(FieldTypeCode::LongLong);
+        let condition = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("eq"),
+            long(),
+            vec![
+                Expression::Column(Column::new(unique_id, long())),
+                Expression::Constant(Constant::new(Datum::Int(1), long())),
+            ],
+        ));
+        let selectivity = analyzed_filter_selectivity(&table_stats, &[condition])
+            .expect("an analyzed profile keeps the equality");
+
+        // 29_702 * (300_000 / 299_995) / 300_000.
+        let expected = 29_702.0 * (300_000.0 / 299_995.0) / 300_000.0;
+        assert!(
+            (selectivity - expected).abs() < 1e-12,
+            "{selectivity} != {expected}"
+        );
+        assert!(
+            (selectivity - 0.1).abs() > 1e-9,
+            "the NDV fallback must not answer a loaded histogram"
+        );
     }
 }

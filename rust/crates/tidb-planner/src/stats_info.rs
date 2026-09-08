@@ -18,8 +18,10 @@
 //! This module owns the complete value behavior of Go `property.StatsInfo`.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::cardinality::ndv::GroupNdv;
+use crate::cardinality::row_count_estimator::ColumnStats;
 use crate::cardinality::row_size::RowSizeColumnStats;
 
 /// Go `statistics.HistColl`, narrowed to the fields cost model v2 reads.
@@ -28,11 +30,34 @@ use crate::cardinality::row_size::RowSizeColumnStats;
 /// map: its PRESENCE changes `getAvgRowSize`. A base table carries a
 /// collection even when it is pseudo, while joins, projections, and
 /// aggregations construct a fresh `StatsInfo` with a nil collection.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct HistColl {
     pseudo: bool,
     realtime_count: i64,
     columns: BTreeMap<i64, RowSizeColumnStats>,
+    /// Go `HistColl.Columns`' histogram-bearing entries, keyed by planner
+    /// `Column.UniqueID`. The row-size map above is `Copy`; the histograms are
+    /// shared so a plan carrying the collection does not deep-copy them.
+    /// Empty for pseudo collections and for profiles built without a catalog.
+    histograms: BTreeMap<i64, Arc<ColumnStats>>,
+    /// Go `HistColl.ModifyCount`, which the row-count estimator's skew
+    /// branches read.
+    modify_count: i64,
+    /// Go `HistColl.PKIsHandle`: the table's handle is ONE integer column, so
+    /// a point range on it names at most one row. A common handle is false
+    /// even though every handle column is a key column.
+    pk_is_handle: bool,
+}
+
+impl PartialEq for HistColl {
+    /// Go's `HistColl` equality is not observable to the planner; the
+    /// histogram payloads are ignored so a shared collection still compares
+    /// equal to its rebuilt twin.
+    fn eq(&self, other: &Self) -> bool {
+        self.pseudo == other.pseudo
+            && self.realtime_count == other.realtime_count
+            && self.columns == other.columns
+    }
 }
 
 impl HistColl {
@@ -48,7 +73,40 @@ impl HistColl {
             pseudo,
             realtime_count,
             columns: columns.into_iter().collect(),
+            histograms: BTreeMap::new(),
+            modify_count: 0,
+            pk_is_handle: false,
         }
+    }
+
+    /// Attaches the loaded column histograms, keyed by planner unique id.
+    #[must_use]
+    pub fn with_histograms(
+        mut self,
+        histograms: impl IntoIterator<Item = (i64, Arc<ColumnStats>)>,
+    ) -> Self {
+        self.histograms = histograms.into_iter().collect();
+        self
+    }
+
+    /// Sets Go `HistColl.ModifyCount`.
+    #[must_use]
+    pub const fn with_modify_count(mut self, modify_count: i64) -> Self {
+        self.modify_count = modify_count;
+        self
+    }
+
+    /// Sets Go `HistColl.PKIsHandle`.
+    #[must_use]
+    pub const fn with_pk_is_handle(mut self, pk_is_handle: bool) -> Self {
+        self.pk_is_handle = pk_is_handle;
+        self
+    }
+
+    /// Go `HistColl.PKIsHandle`.
+    #[must_use]
+    pub const fn pk_is_handle(&self) -> bool {
+        self.pk_is_handle
     }
 
     /// Go `HistColl.Pseudo`.
@@ -63,10 +121,22 @@ impl HistColl {
         self.realtime_count
     }
 
-    /// The histogram for one planner column, when it is loaded.
+    /// Go `HistColl.ModifyCount`.
+    #[must_use]
+    pub const fn modify_count(&self) -> i64 {
+        self.modify_count
+    }
+
+    /// The row-size record for one planner column, when it is loaded.
     #[must_use]
     pub fn column(&self, unique_id: i64) -> Option<RowSizeColumnStats> {
         self.columns.get(&unique_id).copied()
+    }
+
+    /// The loaded histogram for one planner column, when it is present.
+    #[must_use]
+    pub fn histogram(&self, unique_id: i64) -> Option<&Arc<ColumnStats>> {
+        self.histograms.get(&unique_id)
     }
 }
 

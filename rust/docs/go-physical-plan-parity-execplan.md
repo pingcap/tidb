@@ -32,6 +32,23 @@ both `oltp_read_only` and `oltp_read_write`.
 
 ## Progress
 
+- [x] 2026-09-09: the DataSource-statistics rule now estimates `eq`/`in`
+  conditions through the LOADED histograms, matching Go's
+  `deriveStats4DataSource` -> `cardinality.Selectivity`. `HistColl` carries
+  the column histograms (Go `HistColl.Columns`), `ModifyCount` and
+  `PKIsHandle`; `InitStats` fills them from the catalog; the rule calls
+  `get_row_count_by_column_ranges` on the closed point ranges. The
+  `PKIsHandle` gate must ask whether the ESTIMATED column is the single
+  integer handle, not whether it is any key column: the loose form made every
+  point range on `customer.c_w_id` estimate one row and flipped condition
+  twelve to a root StreamAgg. Condition ten's `h_c_w_id = 1` now estimates
+  the histogram repeat (297.02 vs Go's captured 297.03; the last 0.01 is
+  Go's evicted-column NDV borrowing, queued). Red/green: new
+  `analyzed_filter_selectivity_tests::equality_uses_the_loaded_histogram_repeat`
+  fails with the histogram path disabled and passes with it; planner 1002
+  passed / 0 failed; executor 1252 passed / 9 failed, no additions. Receipt:
+  `testport/receipts/planner_data_source_stats_per_source.md`.
+
 - [x] 2026-09-09: closed two DataSource-selectivity gaps found while pinning
   the plan-time subquery evaluation. `is_not_null_on_column` now unwraps
   Go's `ast.UnaryNot` shape (`NOT (col IS NULL)`) as well as

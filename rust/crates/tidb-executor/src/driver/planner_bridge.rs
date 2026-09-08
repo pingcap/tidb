@@ -917,13 +917,29 @@ impl OwnedRewrite for InitStats<'_> {
                 ))
             })
             .collect::<Vec<_>>();
+        // The planner's DataSource-statistics rule reads the loaded
+        // histograms through `HistColl`; Go's `deriveStats4DataSource` uses
+        // the histogram-aware `Selectivity`, not an NDV approximation.
+        let histograms = source
+            .table_columns
+            .iter()
+            .filter_map(|column| {
+                let loaded = statistics?.columns.get(&column.id)?;
+                Some((column.unique_id, std::sync::Arc::new(loaded.clone())))
+            })
+            .collect::<Vec<_>>();
         source.table_stats = Some(
             StatsInfo::new(row_count, ndvs)
-                .with_hist_coll(HistColl::new(
-                    statistics.is_none_or(|statistics| statistics.pseudo),
-                    row_count as i64,
-                    row_size_columns,
-                ))
+                .with_hist_coll(
+                    HistColl::new(
+                        statistics.is_none_or(|statistics| statistics.pseudo),
+                        row_count as i64,
+                        row_size_columns,
+                    )
+                    .with_histograms(histograms)
+                    .with_modify_count(statistics.map_or(0, |statistics| statistics.modify_count))
+                    .with_pk_is_handle(source.handle_is_int),
+                )
                 .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |statistics| {
                     if statistics.pseudo || statistics.stats_ver <= 0 {
                         tidb_stats::PSEUDO_VERSION
