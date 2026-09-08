@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "mview_log_write_basic_test.go",
         "mview_log_write_test.go",
         "write_test.go",
     ],
