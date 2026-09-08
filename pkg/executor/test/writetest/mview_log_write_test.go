@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -104,6 +105,12 @@ func execAsMViewMaintenance(tk *testkit.TestKit, sql string) {
 		vars.InRestrictedSQL = origRestr
 	}()
 	tk.MustExec(sql)
+}
+
+func skipMLogTestRequiringMDLDisabled(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 }
 
 func TestMLogInsertGeneratedColumn(t *testing.T) {
@@ -570,6 +577,8 @@ func TestMLogPrunedColumns(t *testing.T) {
 }
 
 func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
+	skipMLogTestRequiringMDLDisabled(t)
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -619,6 +628,8 @@ func TestMLogOnlineDDLAddUntrackedColumn(t *testing.T) {
 // concurrent online DDL is visible in metadata before it becomes public, and mlog
 // tracking must reject it until the base DDL finishes.
 func TestMLogAddColumnRejectsNonPublicBaseColumn(t *testing.T) {
+	skipMLogTestRequiringMDLDisabled(t)
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -659,6 +670,8 @@ func TestMLogAddColumnRejectsNonPublicBaseColumn(t *testing.T) {
 // tracked-column set; after it is public, the new tracked column participates in
 // update logging.
 func TestMLogOnlineDDLAddTrackedColumn(t *testing.T) {
+	skipMLogTestRequiringMDLDisabled(t)
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -746,6 +759,8 @@ func TestMLogOnlineDDLAddTrackedColumn(t *testing.T) {
 }
 
 func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {
+	skipMLogTestRequiringMDLDisabled(t)
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -796,7 +811,6 @@ func TestMLogOnlineDDLDropTrackedColumnRejected(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_mview_enable = on")
-	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
 
 	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
 	tk.MustExec("create materialized view log on t (id, tracked)")

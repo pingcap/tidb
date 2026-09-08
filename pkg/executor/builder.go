@@ -3068,7 +3068,7 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 			// Using the table in v.PartitionedTable returns a proper error, while using the original table can't.
 			for _, p := range v.PartitionedTable {
 				if info.TblID == p.Meta().ID {
-					tblID2table[info.TblID] = p
+					tbl = p
 				}
 			}
 		}
