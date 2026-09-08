@@ -74,38 +74,32 @@ impl OptimizerFixControl {
     }
 
     /// The raw source-shaped map, in numeric-key order.
-    #[must_use]
     pub fn as_map(&self) -> &BTreeMap<u64, String> {
         &self.values
     }
 
     /// Fetches a raw string value and preserves key absence.
-    #[must_use]
     pub fn get_str(&self, key: u64) -> Option<&str> {
         self.values.get(&key).map(String::as_str)
     }
 
     /// Fetches a raw string value or the caller's default.
-    #[must_use]
     pub fn get_str_with_default<'a>(&'a self, key: u64, default: &'a str) -> &'a str {
         self.get_str(key).unwrap_or(default)
     }
 
     /// Fetches a boolean value; only case-insensitive `ON` and exact `1` are true.
-    #[must_use]
     pub fn get_bool(&self, key: u64) -> Option<bool> {
         self.get_str(key)
             .map(|value| value.eq_ignore_ascii_case("ON") || value == "1")
     }
 
     /// Fetches a boolean value or the caller's default when the key is absent.
-    #[must_use]
     pub fn get_bool_with_default(&self, key: u64, default: bool) -> bool {
         self.get_bool(key).unwrap_or(default)
     }
 
     /// Fetches a signed decimal integer as Go's `(value, exists, parseErr)` triple.
-    #[must_use]
     pub fn get_int(&self, key: u64) -> (i64, bool, Option<IntParseError>) {
         let Some(raw) = self.get_str(key) else {
             return (0, false, None);
@@ -115,7 +109,6 @@ impl OptimizerFixControl {
     }
 
     /// Fetches an integer or the caller's default on absence or parse failure.
-    #[must_use]
     pub fn get_int_with_default(&self, key: u64, default: i64) -> i64 {
         let (value, exists, error) = self.get_int(key);
         if exists && error.is_none() {
@@ -126,7 +119,6 @@ impl OptimizerFixControl {
     }
 
     /// Fetches a float as Go's `(value, exists, parseErr)` triple.
-    #[must_use]
     pub fn get_float(&self, key: u64) -> (f64, bool, Option<FloatParseError>) {
         let Some(raw) = self.get_str(key) else {
             return (0.0, false, None);
@@ -136,7 +128,6 @@ impl OptimizerFixControl {
     }
 
     /// Fetches a float or the caller's default on absence or parse failure.
-    #[must_use]
     pub fn get_float_with_default(&self, key: u64, default: f64) -> f64 {
         let (value, exists, error) = self.get_float(key);
         if exists && error.is_none() {
@@ -809,5 +800,20 @@ mod tests {
             warnings,
             ["repeated assignment for fix control: 1. existing value: \"\\u0085\". new value: \"\\u200b\"."]
         );
+    }
+
+    #[test]
+    #[deny(unused_must_use)]
+    fn source_return_values_may_be_ignored_like_go() {
+        let (control, _) = OptimizerFixControl::parse("1:ON").unwrap();
+        control.as_map();
+        control.get_str(1);
+        control.get_str_with_default(1, "default");
+        control.get_bool(1);
+        control.get_bool_with_default(1, false);
+        control.get_int(1);
+        control.get_int_with_default(1, 0);
+        control.get_float(1);
+        control.get_float_with_default(1, 0.0);
     }
 }

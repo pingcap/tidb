@@ -9521,6 +9521,17 @@ risks without claiming repository-wide parity.
   regression failed before the fix with exactly two diagnostics and passes
   after; the planner library check passes. Evidence is recorded in
   `receipts/planner_util_tablesampler.md`.
+- 2026-09-08 (`pkg/planner/util/fixcontrol` return contracts): current Go
+  master `aec988ea500d` was re-read as the complete seven-artifact, 707-line
+  package, including both production files, both test files, `TestMain`, the
+  two JSON fixtures, BUILD library/test targets, and shard configuration. The
+  dependency-closed `fix_control.rs` owner, planner/session consumers, and
+  source fixture parity test were inventoried. Nine Rust-only `#[must_use]`
+  diagnostics were removed from the Go-shaped string, boolean, integer, and
+  float getter results. The focused deny-on-discard regression failed before
+  the fix with exactly nine diagnostics and passes after; the session fixture
+  test and planner library check pass. Evidence is recorded in
+  `receipts/planner_util_fixcontrol.md`.
 - 2026-09-05 (`pkg/ddl` clustered-handle MODIFY type guard): Rust now refuses
   clustered primary-key handle changes that require reorganization, including
   integer-family and signedness changes, with Go's exact 8200
