@@ -60,6 +60,11 @@ pub enum EvalError {
     /// appends (`clauseMsg`, `planbuilder.go:132`) belongs to the resolving
     /// caller; renderers without one use Go's `expressionClause` spelling.
     UnknownColumn(String),
+    /// Go `plannererrors.ErrBadField` (1054) with the clause the name was
+    /// written in (`clauseMsg`), so the renderer prints
+    /// `Unknown column 'x' in 'order clause'` rather than Go's
+    /// `expressionClause` default.
+    UnknownColumnInClause(String, &'static str),
     /// Go `expression.ErrFunctionNotExists` (1305).
     FunctionNotExists(String),
     /// Go `plannererrors.ErrNoDB` (1046), raised before 1305 when resolving an

@@ -63,6 +63,12 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.resolve_expression(path)
     }
 
+    /// Forwarded: the clause an unknown-column error names belongs to the
+    /// statement's rewriter, and this decorator wraps it for sub-expressions.
+    fn clause_message(&self) -> &'static str {
+        self.base.clause_message()
+    }
+
     fn orig_name(&self, path: &[String]) -> Option<String> {
         self.base.orig_name(path)
     }

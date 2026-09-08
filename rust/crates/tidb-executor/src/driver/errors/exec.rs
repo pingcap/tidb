@@ -174,6 +174,11 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         EvalError::UnknownColumn(column) => {
             MysqlError::new(1054, format!("Unknown column '{column}' in 'expression'"))
         }
+        // Go `ErrBadField` with the clause the name was written in
+        // (`clauseMsg`), for example `Unknown column 'j' in 'order clause'`.
+        EvalError::UnknownColumnInClause(column, clause) => {
+            MysqlError::new(1054, format!("Unknown column '{column}' in '{clause}'"))
+        }
         EvalError::UnsupportedOperandPair(lhs, rhs) => MysqlError::unknown(format!(
             "a binary operation between a {lhs:?} and a {rhs:?} value is not supported yet"
         )),

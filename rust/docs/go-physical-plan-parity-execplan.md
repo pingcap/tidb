@@ -645,6 +645,23 @@ both `oltp_read_only` and `oltp_read_write`.
   `out_of_range_point_literal_plans_a_table_dual` now sees `TableDual`
   instead of `TableFullScan`. Receipt:
   `rust/testport/receipts/executor_point_get_overflow.md`.
+- [x] 2026-09-08: stopped admitting a unique PREFIX index to the point-get
+  conversion. Go's `canConvertPointGet` is
+  `path.Index.Unique && !path.Index.HasPrefixIndex()`
+  (`find_best_task.go:2204`); Rust checked only the first half, so
+  `SELECT a FROM u WHERE a = 'abcxyz'` on `UNIQUE KEY uidx (a(3))` built an
+  index `Point_Get` that the executor builder then refused with
+  `Unsupported`. The conversion now also requires no declared prefix length,
+  and the test that pins Go's IndexLookUp behavior passes.
+- [x] 2026-09-08: unknown-column errors now name the clause Go's `clauseMsg`
+  names. `EvalError::UnknownColumnInClause` carries it, the plan resolver
+  supplies it from `cur_clause`, and the sub-expression decorator forwards it;
+  `SELECT no_col FROM uc` reports `in 'field list'` and
+  `SELECT a FROM uc WHERE nc = 1` reports `in 'where clause'`. A name only in
+  `ORDER BY` still reports `field list` because Rust appends it as a hidden
+  projection field instead of running Go's `orderByResolver` pass; that
+  remains open. Receipt:
+  `rust/testport/receipts/executor_point_get_admission.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

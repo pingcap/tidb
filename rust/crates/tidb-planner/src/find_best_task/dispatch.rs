@@ -2179,6 +2179,18 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     .collect::<Vec<_>>();
                 let declared_index_prefix_complete =
                     resolved_index_prefix.len() == source_index.columns.len();
+                // Go `find_best_task.go:2204`: `canConvertPointGet =
+                // path.Index.Unique && !path.Index.HasPrefixIndex()`. A prefix
+                // entry holds `'abc'` where the row holds `'abcdef'`, and a
+                // point get has no residual predicate to notice, so a prefix
+                // index must stay an IndexReader/IndexLookUp candidate.
+                let declared_index_has_prefix = crate::ranger::ranger::has_prefix(
+                    &source_index
+                        .columns
+                        .iter()
+                        .map(|column| column.length)
+                        .collect::<Vec<_>>(),
+                );
                 // Go `fillIndexPath` appends the signed integer table handle
                 // to every complete non-unique secondary-index prefix.  It
                 // is a real trailing execution key part, so predicates on
@@ -2268,6 +2280,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
                     && (ds.partition_definition_ids.is_empty()
                         || ds.physical_table_id != ds.table_id)
                     && source_index.unique
+                    && !declared_index_has_prefix
                     && declared_index_prefix_complete
                     && !ranges.is_empty()
                     && ranges.iter().all(|range| {

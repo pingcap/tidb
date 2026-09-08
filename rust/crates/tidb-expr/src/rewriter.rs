@@ -86,6 +86,14 @@ pub trait ColumnResolver {
         self.resolve_column(path).map(Expression::Column)
     }
 
+    /// Go `clauseMsg` (`planbuilder.go:132`): the clause an unknown-column
+    /// error names. Go's plan-aware rewriter reads it from `er.clause()`; the
+    /// default is Go's `expressionClause` spelling, which is what a resolver
+    /// without a statement clause reports.
+    fn clause_message(&self) -> &'static str {
+        "expression"
+    }
+
     /// Resolves the Go `Column.OrigName` carried by a source column. The
     /// planner uses this metadata for EXPLAIN and diagnostics after a column
     /// crosses a Projection or aggregate boundary; execution still binds by
@@ -713,9 +721,9 @@ fn rewrite_expr_resolved_inner(
         if let Some(constant) = resolver.resolve_constant(path) {
             return Ok(constant);
         }
-        let mut resolved = resolver
-            .resolve_expression(path)
-            .ok_or_else(|| EvalError::UnknownColumn(path.join(".")))?;
+        let mut resolved = resolver.resolve_expression(path).ok_or_else(|| {
+            EvalError::UnknownColumnInClause(path.join("."), resolver.clause_message())
+        })?;
         if let (Expression::Column(column), Some(orig_name)) =
             (&mut resolved, resolver.orig_name(path))
         {

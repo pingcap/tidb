@@ -188,7 +188,7 @@ pub(crate) fn eval_func(
         // may stay untyped; every other build error remains observable.
         let rewrite_argument = |argument| match crate::rewriter::rewrite_expr(argument) {
             Ok(rewritten) => Ok(Some(rewritten)),
-            Err(EvalError::UnknownColumn(_)) => Ok(None),
+            Err(EvalError::UnknownColumn(_) | EvalError::UnknownColumnInClause(..)) => Ok(None),
             Err(error) => Err(error),
         };
         let rewritten_count = rewrite_argument(count)?;

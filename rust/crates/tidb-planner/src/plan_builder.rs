@@ -729,6 +729,9 @@ pub struct PlanScopeResolver<'a> {
     /// The live statement context used by Go's comparison constant
     /// refinement to retain build-time conversion warnings.
     warning_context: Option<&'a dyn tidb_expr::Columns>,
+    /// Go `er.clause()`: the clause an unknown-column error names. The
+    /// default is Go's `expressionClause` spelling.
+    clause_message: &'static str,
 }
 
 impl<'a> PlanScopeResolver<'a> {
@@ -756,6 +759,7 @@ impl<'a> PlanScopeResolver<'a> {
             like_default_escape: b'\\',
             no_unsigned_subtraction: false,
             warning_context: None,
+            clause_message: "expression",
         }
     }
 
@@ -786,6 +790,7 @@ impl<'a> PlanScopeResolver<'a> {
             like_default_escape: b'\\',
             no_unsigned_subtraction: false,
             warning_context: None,
+            clause_message: "expression",
         }
     }
 
@@ -802,6 +807,14 @@ impl<'a> PlanScopeResolver<'a> {
     #[must_use]
     pub const fn with_like_default_escape(mut self, escape: u8) -> Self {
         self.like_default_escape = escape;
+        self
+    }
+
+    /// Attach the clause an unknown-column error must name, Go's
+    /// `er.clause()` (`planbuilder.go:132`).
+    #[must_use]
+    pub const fn with_clause_message(mut self, clause: &'static str) -> Self {
+        self.clause_message = clause;
         self
     }
 
@@ -868,6 +881,10 @@ pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
+    fn clause_message(&self) -> &'static str {
+        self.clause_message
+    }
+
     fn like_default_escape(&self) -> u8 {
         self.like_default_escape
     }
@@ -1374,6 +1391,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_connection_charset_info(self.ctx.connection_charset_info())
         .with_like_default_escape(self.ctx.like_default_escape())
         .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
+        .with_clause_message(self.cur_clause.message())
         .with_warning_context(self.ctx);
         let resolver = match (full_schema, full_names) {
             (Some(schema), Some(names)) => resolver.with_full_scope(schema, names),
