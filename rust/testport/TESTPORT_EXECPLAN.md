@@ -11413,3 +11413,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (ON DELETE CASCADE pin): parent deletion cascades to exactly
  the referencing children. Pinned in
  `crates/tidb-session/tests/fk_on_delete_cascade_source.rs`.
+- 2026-09-08 (ON UPDATE CASCADE pin): renaming the parent key propagates
+ the new value into referencing children. Pinned in
+ `crates/tidb-session/tests/fk_on_update_cascade_source.rs`.
