@@ -41,6 +41,14 @@ warehouse priced at one row, the greedy join order matches Go and
 `optimize_join_group` (`crates/tidb-planner/src/joinorder.rs`) emits the
 schema-restoring projection its existing `Schema::equal` check was waiting for.
 
+The same fix corrected `tpcc_grouped_join_matches_go_shared_planner_choice`'s
+expectation. A `testkit.CreateMockStore` probe of that fixture's clustered
+`PRIMARY KEY (d_w_id, d_id)` DDL produces `Projection -> StreamAgg ->
+Projection -> MergeJoin -> [TableReader(Build) district range:[1,1]
+keep order:true, Point_Get(Probe) warehouse]`, which is exactly what the port
+now plans; the test's previous `HashAgg -> IndexHashJoin` expectation came from
+a non-clustered fixture and was stale.
+
 ## Validation
 
 ```text

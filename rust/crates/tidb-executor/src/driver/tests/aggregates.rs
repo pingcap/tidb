@@ -1216,17 +1216,24 @@ fn tpcc_grouped_join_matches_go_shared_planner_choice() {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
     };
+    // Go's plan for this fixture (probed with `testkit.CreateMockStore`, the
+    // same clustered `PRIMARY KEY (d_w_id, d_id)` DDL):
+    //   Projection -> StreamAgg -> Projection(district.d_w_id, district.d_ytd,
+    //   warehouse.w_ytd) -> MergeJoin(left key warehouse.w_id, right key
+    //   district.d_w_id) -> [TableReader(Build) district range:[1,1]
+    //   keep order:true, Point_Get(Probe) warehouse]
+    // The earlier HashAgg -> IndexHashJoin expectation came from a
+    // non-clustered fixture and is stale for this DDL.
     assert_eq!(
         (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
         vec![
             "Projection",
-            "└─HashAgg",
+            "└─StreamAgg",
             "  └─Projection",
-            "    └─IndexHashJoin",
-            "      ├─Point_Get(Build)",
-            "      └─TableReader(Probe)",
-            "        └─Selection",
-            "          └─TableRangeScan",
+            "    └─MergeJoin",
+            "      ├─TableReader(Build)",
+            "      │ └─TableRangeScan",
+            "      └─Point_Get(Probe)",
         ],
     );
     assert!(cell(1, 4).contains("group by:test.district.d_w_id"));
