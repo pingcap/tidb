@@ -303,6 +303,39 @@ func (d *Checker) CreateMaterializedView(ctx sessionctx.Context, stmt *ast.Creat
 	return d.realExecutor.CreateMaterializedView(ctx, stmt)
 }
 
+// DropMaterializedView implements the DDL interface.
+func (d *Checker) DropMaterializedView(ctx sessionctx.Context, stmt *ast.DropMaterializedViewStmt) error {
+	return d.realExecutor.DropMaterializedView(ctx, stmt)
+}
+
+// DropMaterializedViewLog implements the DDL interface.
+func (d *Checker) DropMaterializedViewLog(ctx sessionctx.Context, stmt *ast.DropMaterializedViewLogStmt) error {
+	err := d.realExecutor.DropMaterializedViewLog(ctx, stmt)
+	if err != nil || d.closed.Load() {
+		return err
+	}
+	if err := d.tracker.DropMaterializedViewLog(ctx, stmt); err != nil {
+		panic(err)
+	}
+	schemaName := stmt.Table.Schema
+	if schemaName.O == "" {
+		schemaName = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	d.checkTableInfo(ctx, schemaName, model.MaterializedViewLogTableName(stmt.Table.Name))
+	d.checkTableInfo(ctx, schemaName, stmt.Table.Name)
+	return nil
+}
+
+// AlterMaterializedView applies ALTER MATERIALIZED VIEW to the real executor.
+func (d *Checker) AlterMaterializedView(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewStmt) error {
+	return d.realExecutor.AlterMaterializedView(ctx, stmt)
+}
+
+// AlterMaterializedViewLog applies ALTER MATERIALIZED VIEW LOG to the real executor.
+func (d *Checker) AlterMaterializedViewLog(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewLogStmt) error {
+	return d.realExecutor.AlterMaterializedViewLog(ctx, stmt)
+}
+
 // DropTable implements the DDL interface.
 func (d *Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	err = d.realExecutor.DropTable(ctx, stmt)
@@ -599,6 +632,11 @@ func (d *Checker) OwnerManager() owner.Manager {
 // GetID implements the DDL interface.
 func (d *Checker) GetID() string {
 	return d.realDDL.GetID()
+}
+
+// StorageClassTransitionStatuses implements the DDL interface.
+func (d *Checker) StorageClassTransitionStatuses() []ddl.StorageClassTransitionStatus {
+	return d.realDDL.StorageClassTransitionStatuses()
 }
 
 // DoDDLJob implements the DDL interface.

@@ -311,10 +311,10 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 	return getOrDecodeArgs[*BatchCreateTableArgs](&BatchCreateTableArgs{}, job)
 }
 
-// DropTableArgs is the arguments for drop table/view/sequence job.
+// DropTableArgs is the arguments for table-like object, view, and sequence drop jobs.
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
-	// below fields are only for drop table.
+	// The following fields are only for DROP TABLE and materialized view drop jobs.
 	// when dropping multiple tables, the Identifiers is the same, but each drop-table
 	// runs in a separate job.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
@@ -327,8 +327,9 @@ type DropTableArgs struct {
 }
 
 func (a *DropTableArgs) getArgsV1(job *Job) []any {
-	// only drop-table job has in args, drop view/sequence job has no args.
-	if job.Type == ActionDropTable {
+	// Only table-like drop jobs have submission arguments in V1.
+	switch job.Type {
+	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog:
 		return []any{a.Identifiers, a.FKCheck}
 	}
 	return nil
@@ -339,7 +340,8 @@ func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
 }
 
 func (a *DropTableArgs) decodeV1(job *Job) error {
-	if job.Type == ActionDropTable {
+	switch job.Type {
+	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog:
 		return job.decodeArgs(&a.Identifiers, &a.FKCheck)
 	}
 	return nil
@@ -711,6 +713,76 @@ func (a *ModifyTableCommentArgs) decodeV1(job *Job) error {
 // GetModifyTableCommentArgs gets the args for ActionModifyTableComment.
 func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 	return getOrDecodeArgs[*ModifyTableCommentArgs](&ModifyTableCommentArgs{}, job)
+}
+
+// AlterMaterializedViewRefreshArgs contains ALTER MATERIALIZED VIEW refresh arguments.
+type AlterMaterializedViewRefreshArgs struct {
+	RefreshMethod                 string           `json:"refresh_method,omitempty"`
+	RefreshStartWith              string           `json:"refresh_start_with,omitempty"`
+	RefreshNext                   string           `json:"refresh_next,omitempty"`
+	RefreshScheduleTimeZone       TimeZoneLocation `json:"refresh_schedule_time_zone,omitempty"`
+	UpdateRefreshScheduleTimeZone bool             `json:"update_refresh_schedule_time_zone,omitempty"`
+}
+
+func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
+	refreshScheduleTimeZone := a.RefreshScheduleTimeZone.Clone()
+	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext, &refreshScheduleTimeZone, a.UpdateRefreshScheduleTimeZone}
+}
+
+func (a *AlterMaterializedViewRefreshArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.RefreshMethod, &a.RefreshStartWith, &a.RefreshNext, &a.RefreshScheduleTimeZone, &a.UpdateRefreshScheduleTimeZone))
+}
+
+// GetAlterMaterializedViewRefreshArgs decodes ALTER MATERIALIZED VIEW refresh arguments.
+func GetAlterMaterializedViewRefreshArgs(job *Job) (*AlterMaterializedViewRefreshArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewRefreshArgs](&AlterMaterializedViewRefreshArgs{}, job)
+}
+
+// AlterMaterializedViewAttributesArgs contains ALTER MATERIALIZED VIEW attribute arguments.
+type AlterMaterializedViewAttributesArgs struct {
+	AlertWarningSec    int64 `json:"alert_warning_sec,omitempty"`
+	AlertOverdueSec    int64 `json:"alert_overdue_sec,omitempty"`
+	AlertRefreshFailed bool  `json:"alert_refresh_failed,omitempty"`
+}
+
+func (a *AlterMaterializedViewAttributesArgs) getArgsV1(*Job) []any {
+	return []any{a.AlertWarningSec, a.AlertOverdueSec, a.AlertRefreshFailed}
+}
+
+func (a *AlterMaterializedViewAttributesArgs) decodeV1(job *Job) error {
+	if err := job.decodeArgs(&a.AlertWarningSec, &a.AlertOverdueSec, &a.AlertRefreshFailed); err == nil {
+		return nil
+	}
+	a.AlertRefreshFailed = false
+	return errors.Trace(job.decodeArgs(&a.AlertWarningSec, &a.AlertOverdueSec))
+}
+
+// GetAlterMaterializedViewAttributesArgs decodes ALTER MATERIALIZED VIEW attribute arguments.
+func GetAlterMaterializedViewAttributesArgs(job *Job) (*AlterMaterializedViewAttributesArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewAttributesArgs](&AlterMaterializedViewAttributesArgs{}, job)
+}
+
+// AlterMaterializedViewLogPurgeArgs contains ALTER MATERIALIZED VIEW LOG purge arguments.
+type AlterMaterializedViewLogPurgeArgs struct {
+	PurgeMethod                 string           `json:"purge_method,omitempty"`
+	PurgeStartWith              string           `json:"purge_start_with,omitempty"`
+	PurgeNext                   string           `json:"purge_next,omitempty"`
+	PurgeScheduleTimeZone       TimeZoneLocation `json:"purge_schedule_time_zone,omitempty"`
+	UpdatePurgeScheduleTimeZone bool             `json:"update_purge_schedule_time_zone,omitempty"`
+}
+
+func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
+	purgeScheduleTimeZone := a.PurgeScheduleTimeZone.Clone()
+	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext, &purgeScheduleTimeZone, a.UpdatePurgeScheduleTimeZone}
+}
+
+func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.PurgeMethod, &a.PurgeStartWith, &a.PurgeNext, &a.PurgeScheduleTimeZone, &a.UpdatePurgeScheduleTimeZone))
+}
+
+// GetAlterMaterializedViewLogPurgeArgs decodes ALTER MATERIALIZED VIEW LOG purge arguments.
+func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPurgeArgs, error) {
+	return getOrDecodeArgs[*AlterMaterializedViewLogPurgeArgs](&AlterMaterializedViewLogPurgeArgs{}, job)
 }
 
 // ModifyTableCharsetAndCollateArgs is the arguments for ActionModifyTableCharsetAndCollate ddl.

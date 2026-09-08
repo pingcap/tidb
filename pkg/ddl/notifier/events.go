@@ -104,6 +104,45 @@ func (s *SchemaChangeEvent) GetCreateTableInfo() *model.TableInfo {
 	return s.inner.TableInfo
 }
 
+// NewAlterMaterializedViewRefreshEvent creates a schema change event for an MV refresh metadata change.
+func NewAlterMaterializedViewRefreshEvent(tableInfo, oldTableInfo *model.TableInfo) *SchemaChangeEvent {
+	return &SchemaChangeEvent{inner: &jsonSchemaChangeEvent{
+		Tp: model.ActionAlterMaterializedViewRefresh, TableInfo: tableInfo, OldTableInfo: oldTableInfo,
+	}}
+}
+
+// GetAlterMaterializedViewRefreshInfo returns the changed MV table info.
+func (s *SchemaChangeEvent) GetAlterMaterializedViewRefreshInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionAlterMaterializedViewRefresh)
+	return s.inner.TableInfo
+}
+
+// NewAlterMaterializedViewAttributesEvent creates a schema change event for an MV attributes change.
+func NewAlterMaterializedViewAttributesEvent(tableInfo, oldTableInfo *model.TableInfo) *SchemaChangeEvent {
+	return &SchemaChangeEvent{inner: &jsonSchemaChangeEvent{
+		Tp: model.ActionAlterMaterializedViewAttributes, TableInfo: tableInfo, OldTableInfo: oldTableInfo,
+	}}
+}
+
+// GetAlterMaterializedViewAttributesInfo returns the changed MV table info.
+func (s *SchemaChangeEvent) GetAlterMaterializedViewAttributesInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionAlterMaterializedViewAttributes)
+	return s.inner.TableInfo
+}
+
+// NewAlterMaterializedViewLogPurgeEvent creates a schema change event for an MLog purge metadata change.
+func NewAlterMaterializedViewLogPurgeEvent(tableInfo, oldTableInfo *model.TableInfo) *SchemaChangeEvent {
+	return &SchemaChangeEvent{inner: &jsonSchemaChangeEvent{
+		Tp: model.ActionAlterMaterializedViewLogPurge, TableInfo: tableInfo, OldTableInfo: oldTableInfo,
+	}}
+}
+
+// GetAlterMaterializedViewLogPurgeInfo returns the changed MLog table info.
+func (s *SchemaChangeEvent) GetAlterMaterializedViewLogPurgeInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionAlterMaterializedViewLogPurge)
+	return s.inner.TableInfo
+}
+
 // NewTruncateTableEvent creates a SchemaChangeEvent whose type is
 // ActionTruncateTable.
 func NewTruncateTableEvent(

@@ -15,6 +15,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -209,6 +210,41 @@ func TestTTLInfoClone(t *testing.T) {
 	require.Equal(t, "test_expr", ttlInfo.IntervalExprStr)
 	require.Equal(t, 5, ttlInfo.IntervalTimeUnit)
 	require.Equal(t, true, ttlInfo.Enable)
+}
+
+func TestStorageClassTransitionsJSONIncludesAfterSeconds(t *testing.T) {
+	for _, seconds := range []uint{0, 17} {
+		rules := []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 30, AfterSeconds: seconds}}
+		for _, metadata := range []any{
+			TableInfo{StorageClassTransitions: rules},
+			PartitionDefinition{StorageClassTransitions: rules},
+		} {
+			data, err := json.Marshal(metadata)
+			require.NoError(t, err)
+			var fields map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(data, &fields))
+			// CSE requires after_seconds to be present even for days-only rules.
+			expected := fmt.Sprintf(`[{"tier":"IA","after_days":30,"after_seconds":%d}]`, seconds)
+			require.JSONEq(t, expected, string(fields["storage_class_transitions"]))
+		}
+	}
+}
+
+func TestTableInfoCloneStorageClassTransitions(t *testing.T) {
+	tblInfo := &TableInfo{
+		StorageClassTransitions: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 30}},
+		Partition: &PartitionInfo{Definitions: []PartitionDefinition{{
+			ID:                      1,
+			StorageClassTransitions: []StorageClassTransitRule{{Tier: StorageClassTierIA, AfterDays: 7}},
+		}}},
+	}
+
+	cloned := tblInfo.Clone()
+	cloned.StorageClassTransitions[0].Tier = StorageClassTierStandard
+	cloned.Partition.Definitions[0].StorageClassTransitions[0].Tier = StorageClassTierStandard
+
+	require.Equal(t, StorageClassTierIA, tblInfo.StorageClassTransitions[0].Tier)
+	require.Equal(t, StorageClassTierIA, tblInfo.Partition.Definitions[0].StorageClassTransitions[0].Tier)
 }
 
 func TestMaterializedViewInfoClone(t *testing.T) {
