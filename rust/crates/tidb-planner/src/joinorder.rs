@@ -263,7 +263,6 @@ pub struct ConflictDetector {
     inner_edges: Vec<Edge>,
     non_inner_edges: Vec<Edge>,
     all_inner_join: bool,
-    derive_stats_threshold: i32,
 }
 
 /// Go `joinorder.CheckConnectionResult`.
@@ -325,7 +324,11 @@ impl Edge {
 }
 
 impl ConflictDetector {
-    fn build(&mut self, group: &JoinGroup) -> Result<Vec<Node>, PlanError> {
+    fn build(
+        &mut self,
+        group: &JoinGroup,
+        context: &RuleContext<'_>,
+    ) -> Result<Vec<Node>, PlanError> {
         self.all_inner_join = group.all_inner_join;
         self.group_vertexes.clear();
         self.inner_edges.clear();
@@ -336,10 +339,10 @@ impl ConflictDetector {
             // Go `ConflictDetector.Build` derives every leaf vertex before
             // reading its cumulative cost. The logical-rule phase runs
             // before the later whole-plan physical-optimization derivation.
-            let (vertex, result) = crate::logical::rewrite::recursive_derive_stats(
+            let (vertex, result) = crate::logical::rewrite::recursive_derive_stats_with_context(
                 vertex.as_ref().clone(),
                 Vec::new(),
-                self.derive_stats_threshold,
+                context,
             );
             result?;
             let vertex = Rc::new(vertex);
@@ -651,7 +654,6 @@ impl ConflictDetector {
         context: &RuleContext<'_>,
         mut check_result: CheckConnectionResult,
         vertex_hints: &BTreeMap<i32, JoinMethodHint>,
-        join_reorder_threshold: i32,
     ) -> Result<Node, PlanError> {
         let mut existing_non_inner = if check_result.applied_non_inner_edge.is_some() {
             Some(make_non_inner_join(
@@ -675,10 +677,10 @@ impl ConflictDetector {
                     .ok_or_else(|| PlanError::internal("failed to make join plan"))?,
             )
         };
-        let (plan, stats_result) = crate::logical::rewrite::recursive_derive_stats(
+        let (plan, stats_result) = crate::logical::rewrite::recursive_derive_stats_with_context(
             plan,
             Vec::new(),
-            join_reorder_threshold,
+            context,
         );
         let (stats, _) = stats_result?;
         let cumulative_cost = stats.row_count()
@@ -1360,7 +1362,6 @@ fn check_connection_and_make_join(
         context,
         result.clone(),
         vertex_hints,
-        context.join_reorder_threshold,
     )?;
     Ok(Some((result, node)))
 }
@@ -1446,7 +1447,6 @@ fn make_join_with_detector(
         context,
         connection,
         vertex_hints,
-        context.join_reorder_threshold,
     )
 }
 
@@ -1833,11 +1833,8 @@ fn optimize_join_group(
         .cloned()
         .ok_or_else(|| PlanError::internal("join group root has no schema"))?;
     let original_names = group.root.output_names().to_vec();
-    let mut detector = ConflictDetector {
-        derive_stats_threshold: context.join_reorder_threshold,
-        ..ConflictDetector::default()
-    };
-    let nodes = detector.build(group)?;
+    let mut detector = ConflictDetector::default();
+    let nodes = detector.build(group, context)?;
     let reordered_node = if i32::try_from(group.vertexes.len()).unwrap_or(i32::MAX)
         > context.join_reorder_threshold
     {
@@ -2747,8 +2744,10 @@ mod tests {
             selection_conditions: BTreeMap::new(),
         };
 
+        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let context = crate::logical::rule_tests::test_context(&allocator);
         let mut detector = ConflictDetector::default();
-        let nodes = detector.build(&group).unwrap();
+        let nodes = detector.build(&group, &context).unwrap();
         assert_eq!(nodes.len(), 2);
         assert_eq!(detector.inner_edges.len(), 1);
         assert_eq!(detector.non_inner_edges.len(), 0);
@@ -2761,7 +2760,7 @@ mod tests {
         let allocator = crate::plan_base::PlanIdAllocator::new();
         let context = crate::logical::rule_tests::test_context(&allocator);
         let mut greedy_detector = ConflictDetector::default();
-        let greedy_nodes = greedy_detector.build(&group).unwrap();
+        let greedy_nodes = greedy_detector.build(&group, &context).unwrap();
         let greedy = optimize_greedy(&context, &mut greedy_detector, greedy_nodes, &group)
             .unwrap()
             .unwrap();
@@ -2769,7 +2768,7 @@ mod tests {
         assert_eq!(greedy.used_edges.len(), 1);
 
         let mut dp_detector = ConflictDetector::default();
-        let dp_nodes = dp_detector.build(&group).unwrap();
+        let dp_nodes = dp_detector.build(&group, &context).unwrap();
         let dp = optimize_dp(&context, &mut dp_detector, dp_nodes, &group)
             .unwrap()
             .unwrap();

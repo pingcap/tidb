@@ -407,3 +407,33 @@ fn comparison_condition_to_constant(name: &str, col: i64, value: i64) -> ScalarF
         ],
     )
 }
+
+#[test]
+fn pseudo_column_range_quota_changes_statistics_cover() {
+    // Go getMaskAndRanges drops the access mask after column-range fallback.
+    // The uncovered bounds receive SelectionFactor once instead of 1/40.
+    let allocator = PlanIdAllocator::new();
+    for (quota, expected) in [(1, 8000.0), (0, 250.0)] {
+        let mut source = stated_source(&allocator, &[1], 10_000.0, &[(1, 8_000.0)]);
+        let LogicalPlan::DataSource(op) = &mut source else {
+            unreachable!()
+        };
+        op.table_scan_penalty.pseudo_stats = true;
+        op.columns = vec![super::data_source::DataSourceColumn {
+            id: 1,
+            name: "a".to_owned(),
+            is_primary_key: false,
+            is_not_null: false,
+        }];
+        op.pushed_down_conds = vec![
+            Expression::ScalarFunction(comparison_condition_to_constant("ge", 1, 1)),
+            Expression::ScalarFunction(comparison_condition_to_constant("le", 1, 3)),
+        ];
+        let mut context = super::rule_tests::test_context(&allocator);
+        context.range_max_size = quota;
+        let (stats, _) = source
+            .recursive_derive_stats_with_context(&[], &context)
+            .unwrap();
+        assert_eq!(stats.row_count(), expected, "quota={quota}");
+    }
+}

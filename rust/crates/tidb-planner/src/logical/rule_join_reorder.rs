@@ -790,10 +790,10 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
         plans
             .into_iter()
             .map(|plan| {
-                let (plan, result) = crate::logical::rewrite::recursive_derive_stats(
+                let (plan, result) = crate::logical::rewrite::recursive_derive_stats_with_context(
                     plan,
                     Vec::new(),
-                    self.context.join_reorder_threshold,
+                    self.context,
                 );
                 result?;
                 let cumulative_cost = crate::joinorder::cumulative_cost_by_children(&plan)?;
@@ -1373,10 +1373,10 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
     }
 
     fn derive_join(&self, plan: LogicalPlan) -> Result<LogicalPlan, PlanError> {
-        let (plan, result) = crate::logical::rewrite::recursive_derive_stats(
+        let (plan, result) = crate::logical::rewrite::recursive_derive_stats_with_context(
             plan,
             Vec::new(),
-            self.context.join_reorder_threshold,
+            self.context,
         );
         result?;
         Ok(plan)

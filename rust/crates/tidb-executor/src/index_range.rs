@@ -70,6 +70,30 @@ use tidb_datatype::{Collation, Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::rewrite_expr_resolved;
 
+/// Session range budget shared by recursive statistics range builders.
+#[derive(Clone, Copy)]
+pub(crate) struct RangeContext<'a> {
+    pub max_size: i64,
+    pub fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+}
+
+impl Default for RangeContext<'_> {
+    fn default() -> Self {
+        Self {
+            max_size: 64 * 1024 * 1024,
+            fallback_handler: None,
+        }
+    }
+}
+
+impl RangeContext<'_> {
+    fn record_fallback(self) {
+        if let Some(handler) = self.fallback_handler {
+            handler.record_range_fallback(self.max_size);
+        }
+    }
+}
+
 /// One index key part as the ranger sees it: the column it names, its type,
 /// and how much of it the index actually stores.
 ///
@@ -2264,6 +2288,15 @@ pub(crate) fn detach_conds_for_column<'a>(
     conditions: &[&'a Expr],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> IndexRanges<'a> {
+    detach_conds_for_column_with_context(column, conditions, zone, RangeContext::default()).0
+}
+
+pub(crate) fn detach_conds_for_column_with_context<'a>(
+    column: &RangeColumn,
+    conditions: &[&'a Expr],
+    zone: &tidb_datatype::SessionTimeZone,
+    context: RangeContext<'_>,
+) -> (IndexRanges<'a>, bool) {
     // `buildColumnRange` (`ranger.go:491-526`) intersects the point set of
     // EVERY condition it took, with no equality prefix and no per-column walk
     // -- there is only one column, so `a IN (1,2,3) AND a > 1` narrows to
@@ -2298,12 +2331,40 @@ pub(crate) fn detach_conds_for_column<'a>(
     let mut ranges = Vec::new();
     if access_count > 0 {
         convert_points_in_place(&mut points, &column.field_type);
-        ranges = points_to_ranges(&points, column);
+        // Reuse Go's conversion and budget check before materializing ranges.
+        // Column histograms use raw values, so no index sort-key conversion.
+        let native_points = points.iter().map(|point| tidb_planner::ranger::points::Point {
+            value: point.value.clone(), excl: point.excl, start: point.start,
+        }).collect();
+        let native = tidb_planner::ranger::ranger::points_to_ranges(
+            native_points, &column.field_type, context.max_size, &mut None,
+        );
+        let (built, fallback) = match native {
+            Ok(result) => result,
+            // An unsupported conversion contributes no statistics node.
+            Err(_) => return (IndexRanges {
+                ranges: Vec::new(), access_count: 0, column_count: 0,
+                access_columns: Vec::new(), eq_or_in_count: 0,
+                residual: conditions.to_vec(),
+            }, false),
+        };
+        if fallback {
+            context.record_fallback();
+            return (IndexRanges {
+                ranges: Vec::new(), access_count: 0, column_count: 0,
+                access_columns: Vec::new(), eq_or_in_count: 0,
+                residual: conditions.to_vec(),
+            }, true);
+        }
+        ranges = built.into_iter().map(|range| IndexRange {
+            low: range.low_val, high: range.high_val,
+            low_exclusive: range.low_exclude, high_exclusive: range.high_exclude,
+        }).collect();
         if column.prefix_len != UNSPECIFIED_LENGTH {
             ranges = union_ranges(ranges, true);
         }
     }
-    IndexRanges {
+    (IndexRanges {
         ranges,
         access_count,
         column_count: usize::from(access_count > 0),
@@ -2316,7 +2377,7 @@ pub(crate) fn detach_conds_for_column<'a>(
         // caller is the only user of this entry point and never reads it.
         eq_or_in_count: 0,
         residual,
-    }
+    }, false)
 }
 
 /// Builds the ranges for a row-valued `IN` over the leading index columns.
@@ -2480,6 +2541,129 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index<'a>(
     )
 }
 
+/// Statistics entry carrying the statement range budget.
+pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
+    index_columns: &[RangeColumn],
+    conjuncts: &[&'a Expr],
+    zone: &tidb_datatype::SessionTimeZone,
+    context: RangeContext<'_>,
+) -> Option<IndexRanges<'a>> {
+    struct Resolver<'a> {
+        columns: &'a [RangeColumn],
+        zone: &'a tidb_datatype::SessionTimeZone,
+    }
+    impl tidb_expr::rewriter::ColumnResolver for Resolver<'_> {
+        fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+            self.zone.clone()
+        }
+        fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+            let name = path.last()?;
+            let position = self
+                .columns
+                .iter()
+                .position(|column| column.name.eq_ignore_ascii_case(name))?;
+            Some((
+                position,
+                self.columns[position].field_type.clone(),
+                position as i64 + 1,
+            ))
+        }
+    }
+    let resolver = Resolver {
+        columns: index_columns,
+        zone,
+    };
+    let rewritten = conjuncts
+        .iter()
+        .map(|condition| rewrite_expr_resolved(condition, &resolver).ok())
+        .collect::<Vec<_>>();
+    let conditions = rewritten.iter().flatten().cloned().collect::<Vec<_>>();
+    let columns = index_columns
+        .iter()
+        .enumerate()
+        .map(|(position, column)| {
+            let mut result = tidb_expr::column::Column::default();
+            result.unique_id = position as i64 + 1;
+            result.index = position as i64;
+            result.ret_type = Some(column.field_type.clone());
+            result
+        })
+        .collect::<Vec<_>>();
+    let lengths = index_columns
+        .iter()
+        .map(|column| column.prefix_len)
+        .collect::<Vec<_>>();
+    let detached = match context.fallback_handler {
+        Some(handler) => tidb_planner::ranger::detacher::detach_index_range_with_fallback_handler(
+            &conditions,
+            &columns,
+            &lengths,
+            context.max_size,
+            handler,
+        ),
+        None => tidb_planner::ranger::detacher::detach_cond_and_build_range_for_index(
+            &conditions,
+            &columns,
+            &lengths,
+            context.max_size,
+        ),
+    }
+    .ok()?;
+    if detached.access_conds.is_empty() {
+        return None;
+    }
+    let residual = conjuncts
+        .iter()
+        .zip(&rewritten)
+        .filter_map(|(original, expression)| match expression {
+            Some(expression)
+                if detached
+                    .access_conds
+                    .iter()
+                    .any(|access| access.equal(expression))
+                    && !detached
+                        .remained_conds
+                        .iter()
+                        .any(|residual| residual.equal(expression)) =>
+            {
+                None
+            }
+            _ => Some(*original),
+        })
+        .collect();
+    let access_columns = detached
+        .access_conds
+        .iter()
+        .flat_map(tidb_expr::simple_expr::extract_columns)
+        .filter_map(|column| usize::try_from(column.unique_id - 1).ok())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let column_count = detached
+        .ranges
+        .iter()
+        .map(|range| range.low_val.len())
+        .max()
+        .unwrap_or(0);
+    Some(IndexRanges {
+        ranges: detached
+            .ranges
+            .into_iter()
+            .map(|range| IndexRange {
+                low: range.low_val,
+                high: range.high_val,
+                low_exclusive: range.low_exclude,
+                high_exclusive: range.high_exclude,
+            })
+            .collect(),
+        access_count: detached.access_conds.len(),
+        column_count,
+        access_columns,
+        eq_or_in_count: detached.eq_or_in_count,
+        residual,
+    })
+}
+
 fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
     index_columns: &[RangeColumn],
     conjuncts: &[&'a Expr],
@@ -2537,6 +2721,78 @@ fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
 mod tests {
     use super::*;
     use crate::plan_trace::range_text;
+
+    #[test]
+    fn dnf_range_quota_checks_the_accumulated_union() {
+        for sql in [
+            "SELECT * FROM t WHERE (a=1 AND b=2) OR (a=3 AND b=4)",
+            "SELECT * FROM t WHERE (a,b) IN ((1,2),(3,4))",
+        ] {
+            let statement = tidb_parser::parse(sql).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            let predicate = select.where_clause.as_ref().unwrap();
+            let index = columns(&["a", "b"]);
+            for quota in [1, 512, 0] {
+                let built = detach_conjuncts_and_build_range_for_index_with_context(
+                    &index,
+                    &[predicate],
+                    &tidb_datatype::SessionTimeZone::utc(),
+                    RangeContext {
+                        max_size: quota,
+                        fallback_handler: None,
+                    },
+                );
+                if quota == 0 {
+                    let built = built.unwrap();
+                    assert_eq!(built.ranges.len(), 2);
+                    assert!(built.residual.is_empty());
+                } else {
+                    // Each two-column point fits512bytes; their union does not.
+                    assert!(built.is_none(), "quota={quota}: {built:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn composite_range_quota_preserves_prefix_and_residual() {
+        let statement =
+            tidb_parser::parse("SELECT * FROM t WHERE a IN (1,3) AND b IN (2,4)").unwrap();
+        let tidb_ast::Stmt::Query(query) = statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("select")
+        };
+        let predicate = select.where_clause.as_ref().unwrap();
+        let mut conjuncts = Vec::new();
+        collect_conjuncts(&predicate, &mut conjuncts);
+        let index = columns(&["a", "b"]);
+        // Two integer ranges fit512bytes; the four two-column products do not.
+        for (quota, columns_used, residuals) in [(512, 1, 1), (0, 2, 0)] {
+            let built = detach_conjuncts_and_build_range_for_index_with_context(
+                &index,
+                &conjuncts,
+                &tidb_datatype::SessionTimeZone::utc(),
+                RangeContext {
+                    max_size: quota,
+                    fallback_handler: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(built.column_count, columns_used, "quota={quota}");
+            assert_eq!(built.residual.len(), residuals, "quota={quota}");
+            if quota != 0 {
+                assert!(std::ptr::eq(built.residual[0], conjuncts[1]));
+                assert_eq!(built.ranges.len(), 2);
+            }
+        }
+    }
 
     /// The `range:` cell EXPLAIN would print for a derived range list, which
     /// is the exact text the Go corpus below was captured from.

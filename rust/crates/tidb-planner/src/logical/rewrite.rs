@@ -464,6 +464,8 @@ fn pseudo_range_filter_selectivity(
     table_stats: &StatsInfo,
     conditions: &[Expression],
     schema: &Schema,
+    range_max_size: i64,
+    range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
 ) -> Option<f64> {
     if conditions.is_empty() || table_stats.row_count() == 0.0 {
         return Some(1.0);
@@ -485,9 +487,14 @@ fn pseudo_range_filter_selectivity(
             &access,
             field_type,
             crate::ranger::checker::UNSPECIFIED_LENGTH,
-            0,
+            range_max_size,
         )
         .ok()?;
+        if !range_result.remained_conds.is_empty() {
+            if let Some(handler) = range_fallback_handler {
+                handler.record_range_fallback(range_max_size);
+            }
+        }
         let mask = covered_condition_mask(conditions, &range_result.access_conds);
         if mask == 0 {
             continue;
@@ -532,13 +539,14 @@ fn pseudo_range_filter_selectivity(
             .iter()
             .map(|(_, length)| *length)
             .collect::<Vec<_>>();
-        let detached = crate::ranger::detacher::detach_cond_and_build_range_for_index(
-            conditions,
-            &index_columns,
-            &lengths,
-            0,
-        )
-        .ok()?;
+        let detached = match range_fallback_handler {
+            Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler(
+                conditions, &index_columns, &lengths, range_max_size, handler,
+            ),
+            None => crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                conditions, &index_columns, &lengths, range_max_size,
+            ),
+        }.ok()?;
         let mask = covered_condition_mask(conditions, &detached.access_conds);
         if mask == 0 {
             continue;
@@ -1878,12 +1886,14 @@ pub fn split_cnf(predicates: &[Expression]) -> Vec<Expression> {
 /// * `SessionVars.TiDBOptJoinReorderThreshold` arrives as a parameter;
 ///   `DefTiDBOptJoinReorderThreshold` is `0`, which is what
 ///   [`LogicalPlan::recursive_derive_stats`] passes.
-struct DeriveStatsFold {
+struct DeriveStatsFold<'a> {
     /// The first failure, per the module header's first-failure discipline.
     failure: RewriteFailure,
     /// Go `SCtx().GetSessionVars().TiDBOptJoinReorderThreshold`, read by
     /// `cardinality.EstimateFullJoinRowCount`.
     join_reorder_threshold: i32,
+    range_max_size: i64,
+    range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
 }
 
 /// What one `ascend` arm decided.
@@ -1930,7 +1940,7 @@ fn join_key_estimate(keys: &[tidb_expr::column::Column], profile: &StatsInfo) ->
     }
 }
 
-impl OwnedRewrite for DeriveStatsFold {
+impl OwnedRewrite for DeriveStatsFold<'_> {
     /// Go's `cumColGroups`, one copy per child.
     type Down = Vec<Vec<tidb_expr::column::Column>>;
     /// Go's `(*property.StatsInfo, bool)` return, plus the node's
@@ -2024,6 +2034,8 @@ impl OwnedRewrite for DeriveStatsFold {
                                 &table_stats,
                                 &op.pushed_down_conds,
                                 &self_schema,
+                                self.range_max_size,
+                                self.range_fallback_handler,
                             )
                         } else {
                             analyzed_filter_selectivity(&table_stats, &op.pushed_down_conds)
@@ -2300,9 +2312,42 @@ pub fn recursive_derive_stats(
     col_groups: Vec<Vec<tidb_expr::column::Column>>,
     join_reorder_threshold: i32,
 ) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
+    recursive_derive_stats_with_range_quota(
+        plan,
+        col_groups,
+        join_reorder_threshold,
+        64 * 1024 * 1024,
+        None,
+    )
+}
+
+/// Derives stats using the session settings shared by logical optimization.
+pub fn recursive_derive_stats_with_context(
+    plan: LogicalPlan,
+    col_groups: Vec<Vec<tidb_expr::column::Column>>,
+    context: &RuleContext<'_>,
+) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
+    recursive_derive_stats_with_range_quota(
+        plan,
+        col_groups,
+        context.join_reorder_threshold,
+        context.range_max_size,
+        context.range_fallback_handler,
+    )
+}
+
+fn recursive_derive_stats_with_range_quota(
+    plan: LogicalPlan,
+    col_groups: Vec<Vec<tidb_expr::column::Column>>,
+    join_reorder_threshold: i32,
+    range_max_size: i64,
+    range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
+) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
     let mut fold = DeriveStatsFold {
         failure: RewriteFailure::default(),
         join_reorder_threshold,
+        range_max_size,
+        range_fallback_handler,
     };
     let (plan, (stats, reload, _schema)) = fold_owned(&mut fold, plan, col_groups);
     match fold.failure.take() {

@@ -826,11 +826,12 @@ fn range_quota_max_min_respects_filtered_index_paths() {
             vec![vec!["9", "7"]]
         );
         let warnings = row_text(session.run("SHOW WARNINGS"));
-        assert!(
-            !warnings
-                .iter()
-                .flatten()
-                .any(|text| text.contains("tidb_opt_range_max_size")),
+        // Index hints remove physical candidates, but Go Selectivity still
+        // builds the ordinary-column histogram range for a=1.
+        assert_eq!(
+            warnings.iter().flatten()
+                .filter(|text| text.contains("tidb_opt_range_max_size")).count(),
+            1,
             "{warnings:?}"
         );
     }
@@ -1272,6 +1273,89 @@ fn integer_handle_range_quota_preserves_filters_and_rejects_cache() {
                 1,
                 "{tp}: {warnings:?}"
             );
+        }
+    }
+}
+
+#[test]
+fn logical_column_range_quota_warns_without_an_index() {
+    // Go cardinality.getMaskAndRanges builds ordinary-column ranges with
+    // RangeMaxSize even when physical planning can only use a table scan.
+    let mut session = Session::new();
+    session.run("CREATE TABLE logical_quota (a INT)").unwrap();
+    session
+        .run("INSERT INTO logical_quota VALUES (1),(2),(3),(4)")
+        .unwrap();
+    for quota in [1, 0] {
+        session
+            .run(&format!("SET tidb_opt_range_max_size = {quota}"))
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT a FROM logical_quota WHERE a IN (1,2) ORDER BY a")),
+            vec![vec!["1"], vec!["2"]]
+        );
+        let warnings = row_text(session.run("SHOW WARNINGS"));
+        assert_eq!(
+            warnings
+                .iter()
+                .flatten()
+                .filter(|s| s.contains("tidb_opt_range_max_size"))
+                .count(),
+            usize::from(quota != 0),
+            "quota={quota}: {warnings:?}"
+        );
+    }
+}
+
+#[test]
+fn logical_range_quota_rejects_unindexed_prepared_cache() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE unindexed_quota (a INT)").unwrap();
+    session
+        .run("INSERT INTO unindexed_quota VALUES (1),(2),(3),(4)")
+        .unwrap();
+    session.run("SET tidb_opt_range_max_size = 1").unwrap();
+    session
+        .run("PREPARE uq FROM 'SELECT a FROM unindexed_quota WHERE a IN (?,?) ORDER BY a'")
+        .unwrap();
+    for (a, b) in [(1, 2), (3, 4)] {
+        session.run(&format!("SET @a={a}, @b={b}")).unwrap();
+        assert_eq!(
+            row_text(session.run("EXECUTE uq USING @a,@b")),
+            vec![vec![a.to_string()], vec![b.to_string()]]
+        );
+        assert!(!session.found_in_plan_cache);
+        let warnings = row_text(session.run("SHOW WARNINGS"));
+        assert_eq!(
+            warnings
+                .iter()
+                .flatten()
+                .filter(|s| s.contains("tidb_opt_range_max_size"))
+                .count(),
+            1,
+            "{warnings:?}"
+        );
+    }
+}
+
+#[test]
+fn logical_range_quota_reaches_join_and_cte_statistics() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE nested_quota (a INT)").unwrap();
+    session
+        .run("INSERT INTO nested_quota VALUES (1),(2),(3),(4)")
+        .unwrap();
+    for quota in [1, 0] {
+        session
+            .run(&format!("SET tidb_opt_range_max_size = {quota}"))
+            .unwrap();
+        for query in [
+            "SELECT t.a FROM nested_quota t JOIN nested_quota u ON t.a=u.a WHERE t.a IN (1,2) ORDER BY t.a",
+            "WITH q AS (SELECT a FROM nested_quota WHERE a IN (1,2) LIMIT 2) SELECT a FROM q ORDER BY a",
+        ] {
+            assert_eq!(row_text(session.run(query)), vec![vec!["1"],vec!["2"]], "{query}");
+            let warnings = row_text(session.run("SHOW WARNINGS"));
+            assert_eq!(warnings.iter().flatten().filter(|s| s.contains("tidb_opt_range_max_size")).count(), usize::from(quota != 0), "{query}: {warnings:?}");
         }
     }
 }

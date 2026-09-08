@@ -842,6 +842,27 @@ pub(crate) fn selectivity_with_default_string_match_selectivity_and_factor(
     )
 }
 
+/// Estimates a predicate with the statement's range quota and fallback sink.
+pub(crate) fn selectivity_with_range_context(
+    predicate: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
+) -> f64 {
+    let mut conjuncts = Vec::new();
+    crate::plan_trace::collect_and(predicate, &mut conjuncts);
+    selectivity_of_conjuncts_with_defaults(
+        &conjuncts,
+        table,
+        resolver,
+        stats,
+        defaults,
+        range_context,
+    )
+}
+
 /// [`selectivity`] over conditions already split out of the `AND` tree, which
 /// is the shape Go's `cardinality.Selectivity` takes and the shape the index
 /// filters arrive in.
@@ -897,7 +918,8 @@ fn selectivity_of_conjuncts_with_default_string_match_selectivity_and_factor(
     let mut defaults =
         SelectivityDefaults::from_session(default_string_match_selectivity, selectivity_factor);
     defaults.trigger_load = trigger_load;
-    selectivity_of_conjuncts_with_defaults(conjuncts, table, resolver, stats, defaults)
+    selectivity_of_conjuncts_with_defaults(conjuncts, table, resolver, stats, defaults,
+        crate::index_range::RangeContext::default())
 }
 
 fn selectivity_of_conjuncts_with_defaults(
@@ -906,8 +928,17 @@ fn selectivity_of_conjuncts_with_defaults(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
     defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
 ) -> f64 {
-    selectivity_of_conjuncts_with_path_context(conjuncts, table, resolver, stats, true, defaults)
+    selectivity_of_conjuncts_with_path_context(
+        conjuncts,
+        table,
+        resolver,
+        stats,
+        true,
+        defaults,
+        range_context,
+    )
 }
 
 /// Go `cardinality.Selectivity(..., nil)` for filters estimated after an
@@ -927,6 +958,7 @@ fn selectivity_of_conjuncts_without_paths(
         stats,
         false,
         SelectivityDefaults::default(),
+        crate::index_range::RangeContext::default(),
     )
 }
 
@@ -987,6 +1019,7 @@ fn selectivity_of_conjuncts_with_path_context(
     stats: Option<&TableStatistics>,
     has_filled_paths: bool,
     defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
 ) -> f64 {
     let realtime = realtime_row_count(stats);
     // `selectivity.go:61`: no rows or no conditions is 100% selectivity.
@@ -1064,11 +1097,15 @@ fn selectivity_of_conjuncts_with_path_context(
             .fold(0_i64, |mask, (index, _)| mask | (1_i64 << index));
         // Go `getMaskAndRanges` down the `ranger.ColumnRangeType` arm: a range
         // over the COLUMN itself, so no index prefix length is in play.
-        let built = crate::index_range::detach_conds_for_column(
+        let (built, range_fallback) = crate::index_range::detach_conds_for_column_with_context(
             &crate::index_range::RangeColumn::whole(column.name.clone(), column.field_type.clone()),
             &conjuncts,
             &resolver.time_zone(),
+            range_context,
         );
+        if range_fallback {
+            continue;
+        }
         // `BuildColumnRange` with no access condition returns the full range
         // and an empty mask, which the greedy cover can never select. `IS NOT
         // NULL` is the one full range the statistics path still consumes.
@@ -1214,10 +1251,11 @@ fn selectivity_of_conjuncts_with_path_context(
         let Some(index_columns) = index_columns else {
             continue;
         };
-        let Some(built) = crate::index_range::detach_conjuncts_and_build_range_for_index(
+        let Some(built) = crate::index_range::detach_conjuncts_and_build_range_for_index_with_context(
             &index_columns,
             &conjuncts,
             &resolver.time_zone(),
+            range_context,
         ) else {
             continue;
         };
@@ -1243,7 +1281,7 @@ fn selectivity_of_conjuncts_with_path_context(
 
     let conditions: Vec<ConditionKind> = conjuncts
         .iter()
-        .map(|conjunct| condition_kind(conjunct, table, resolver, stats, defaults))
+        .map(|conjunct| condition_kind(conjunct, table, resolver, stats, defaults, range_context))
         .collect();
     combine_selectivity(&mut nodes, &conditions, 1.0, realtime as i64, defaults)
 }
@@ -1411,6 +1449,7 @@ fn dnf_selectivity(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
     defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
 ) -> Option<f64> {
     let mut items = Vec::new();
     collect_or(conjunct, &mut items);
@@ -1422,7 +1461,7 @@ fn dnf_selectivity(
         let mut cnf = Vec::new();
         crate::plan_trace::collect_and(strip_parens(item), &mut cnf);
         let current =
-            selectivity_of_conjuncts_with_defaults(&cnf, table, resolver, stats, defaults);
+            selectivity_of_conjuncts_with_defaults(&cnf, table, resolver, stats, defaults, range_context);
         selectivity = selectivity + current - selectivity * current;
     }
     (selectivity != 0.0).then_some(selectivity)
@@ -1451,6 +1490,7 @@ fn row_in_selectivity(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
     defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
 ) -> Option<f64> {
     let tidb_ast::Expr::In { expr, list, not } = strip_parens(conjunct) else {
         return None;
@@ -1486,7 +1526,7 @@ fn row_in_selectivity(
             .collect();
         let conjuncts: Vec<&tidb_ast::Expr> = equalities.iter().collect();
         let current =
-            selectivity_of_conjuncts_with_defaults(&conjuncts, table, resolver, stats, defaults);
+            selectivity_of_conjuncts_with_defaults(&conjuncts, table, resolver, stats, defaults, range_context);
         selectivity = selectivity + current - selectivity * current;
     }
     (selectivity != 0.0).then_some(selectivity)
@@ -1504,6 +1544,7 @@ fn condition_kind(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
     defaults: SelectivityDefaults,
+    range_context: crate::index_range::RangeContext<'_>,
 ) -> ConditionKind {
     match conjunct {
         // Go's `NOT LIKE` is `unaryNot(like(...))`, which the source unwraps
@@ -1548,10 +1589,10 @@ fn condition_kind(
             }
         }
         tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => {
-            ConditionKind::Disjunction(dnf_selectivity(conjunct, table, resolver, stats, defaults))
+            ConditionKind::Disjunction(dnf_selectivity(conjunct, table, resolver, stats, defaults, range_context))
         }
         tidb_ast::Expr::In { .. } => ConditionKind::Disjunction(row_in_selectivity(
-            conjunct, table, resolver, stats, defaults,
+            conjunct, table, resolver, stats, defaults, range_context,
         )),
         _ => ConditionKind::Other,
     }
@@ -2225,6 +2266,7 @@ mod tests {
             &NamedColumnResolver { table: &table },
             Some(&stats),
             defaults,
+            crate::index_range::RangeContext::default(),
         );
         // A malformed pattern is Go's error arm: the whole estimation
         // declines and the condition falls to the string-match default tail.

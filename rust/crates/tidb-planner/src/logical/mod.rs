@@ -979,6 +979,19 @@ impl LogicalPlan {
         result
     }
 
+    /// Derives statistics with the same session context as the logical rules.
+    pub fn recursive_derive_stats_with_context(
+        &mut self,
+        col_groups: &[Vec<Column>],
+        context: &rule::RuleContext<'_>,
+    ) -> Result<(StatsInfo, bool), PlanError> {
+        let plan = std::mem::replace(self, Self::TableDual(LogicalTableDual::default()));
+        let (plan, result) =
+            rewrite::recursive_derive_stats_with_context(plan, col_groups.to_vec(), context);
+        *self = plan;
+        result
+    }
+
     /// Go `DeriveStats(childStats, selfSchema, childSchema, reloads)` (`<10th>`).
     ///
     /// This is the one rule body that IS dependency-closed, so it is ported

@@ -666,6 +666,7 @@ pub(super) fn materialize_physical_expression(expression: &mut Expression) {
 }
 
 struct InitStats<'a> {
+    range_context: crate::index_range::RangeContext<'a>,
     catalog: &'a Catalog,
     select: Option<&'a tidb_ast::SelectStmt>,
     default_string_match_selectivity: f64,
@@ -841,14 +842,18 @@ impl OwnedRewrite for InitStats<'_> {
                     .collect(),
             );
             let selectivity =
-                crate::access_cost::selectivity_with_default_string_match_selectivity_and_factor(
+                crate::access_cost::selectivity_with_range_context(
                     predicate,
                     table,
                     &crate::driver::from::scope_resolver(&scope),
                     statistics,
-                    self.default_string_match_selectivity,
-                    self.selectivity_factor,
-                    false,
+                    tidb_planner::selectivity_greedy::SelectivityDefaults {
+                        trigger_load: false,
+                        ..tidb_planner::selectivity_greedy::SelectivityDefaults::from_session(
+                            self.default_string_match_selectivity, self.selectivity_factor,
+                        )
+                    },
+                    self.range_context,
                 );
             source.base.base.set_stats(Some(table_stats.scale(
                 selectivity,
@@ -1048,6 +1053,9 @@ fn optimize_cte_tree(
     let optimized = check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
     let (mut optimized, ()) = fold_owned(
         &mut InitStats {
+            range_context: crate::index_range::RangeContext {
+                max_size: ctx.range_max_size(), fallback_handler: Some(ctx.range_fallback_handler()),
+            },
             catalog,
             select: None,
             default_string_match_selectivity: ctx.default_string_match_selectivity(),
@@ -1068,7 +1076,7 @@ fn optimize_cte_tree(
         rule_context,
         visiting,
     )?;
-    optimized.recursive_derive_stats(&[])?;
+    optimized.recursive_derive_stats_with_context(&[], rule_context)?;
     let logical = prepare_possible_properties(optimized).0;
     let physical = physical_plan_for_logical(&logical, plan_ids, column_ids, ctx)?;
     Ok((logical, physical))
@@ -1503,6 +1511,9 @@ fn optimize_built_logical(
     // that rule list, rather than delaying them until physical optimization.
     let (plan, ()) = fold_owned(
         &mut InitStats {
+            range_context: crate::index_range::RangeContext {
+                max_size: ctx.range_max_size(), fallback_handler: Some(ctx.range_fallback_handler()),
+            },
             catalog,
             select: (source_count == 1).then_some(select_hint).flatten(),
             default_string_match_selectivity: ctx.default_string_match_selectivity(),
@@ -1540,6 +1551,9 @@ fn optimize_built_logical(
     if ctx.static_partition_prune() {
         optimized = fold_owned(
             &mut InitStats {
+            range_context: crate::index_range::RangeContext {
+                max_size: ctx.range_max_size(), fallback_handler: Some(ctx.range_fallback_handler()),
+            },
                 catalog,
                 select: (source_count == 1).then_some(select_hint).flatten(),
                 default_string_match_selectivity: ctx.default_string_match_selectivity(),
@@ -1566,7 +1580,7 @@ fn optimize_built_logical(
         &rule_context,
         &mut HashSet::new(),
     )?;
-    optimized.recursive_derive_stats(&[])?;
+    optimized.recursive_derive_stats_with_context(&[], &rule_context)?;
     let logical = prepare_possible_properties(optimized).0;
     Ok(logical)
 }
